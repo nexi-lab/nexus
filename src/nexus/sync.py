@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
+    from nexus import NexusFilesystem
 
 
 class SyncStats:
@@ -69,7 +69,7 @@ def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
 
 
 async def copy_file(
-    nx: "NexusFS",
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     is_source_local: bool,
@@ -163,7 +163,7 @@ async def copy_file(
 
 
 async def sync_directories(
-    nx: "NexusFS",
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     delete: bool = False,
@@ -204,9 +204,9 @@ async def sync_directories(
             and source_files_abs
             and isinstance(source_files_abs[0], dict)
         ):
-            source_files_str: list[str] = [f["path"] for f in source_files_abs]  # type: ignore[index]
+            source_files_str: list[str] = [f["path"] for f in source_files_abs]
         else:
-            source_files_str = source_files_abs  # type: ignore[assignment]
+            source_files_str = source_files_abs
         # Convert to relative paths
         source_files_rel = [str(PurePosixPath(f).relative_to(source)) for f in source_files_str]
 
@@ -226,9 +226,9 @@ async def sync_directories(
                 and dest_files_abs
                 and isinstance(dest_files_abs[0], dict)
             ):
-                dest_files_str: list[str] = [f["path"] for f in dest_files_abs]  # type: ignore[index]
+                dest_files_str: list[str] = [f["path"] for f in dest_files_abs]
             else:
-                dest_files_str = dest_files_abs  # type: ignore[assignment]
+                dest_files_str = dest_files_abs
             dest_files_rel = [str(PurePosixPath(f).relative_to(dest)) for f in dest_files_str]
 
     # Copy files from source to dest with optional progress bar
@@ -305,7 +305,7 @@ async def sync_directories(
 
 
 async def copy_recursive(
-    nx: "NexusFS",
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     checksum: bool = True,
@@ -321,7 +321,7 @@ async def copy_recursive(
 
 
 async def move_file(
-    nx: "NexusFS",
+    nx: "NexusFilesystem",
     source: str,
     dest: str,
     force: bool = False,

@@ -463,7 +463,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -490,7 +490,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -518,7 +518,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -542,7 +542,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -571,7 +571,7 @@ class TestStatRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -602,7 +602,7 @@ class TestStatRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -623,7 +623,7 @@ class TestStatRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),

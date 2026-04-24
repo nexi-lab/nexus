@@ -4,7 +4,7 @@ These tests explicitly verify CAS backend behavior (deduplication).
 """
 
 import tempfile
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -43,14 +43,12 @@ def local_backend(temp_dir: Path) -> CASLocalBackend:
 
 
 @pytest.fixture
-async def embedded_cas(
-    temp_dir: Path, local_backend: CASLocalBackend
-) -> AsyncGenerator[NexusFS, None]:
+def embedded_cas(temp_dir: Path, local_backend: CASLocalBackend) -> Generator[NexusFS, None, None]:
     """Create an Embedded instance (CAS always enabled) with isolated database.
 
     (Environment variable isolation is handled by the global conftest fixture)
     """
-    emb = await create_nexus_fs(
+    emb = create_nexus_fs(
         backend=local_backend,
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -73,8 +71,7 @@ async def embedded_cas(
         time.sleep(0.05)  # 50ms extra delay on Windows
 
 
-@pytest.mark.asyncio
-async def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
+def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
     """Test writing and reading with CAS."""
     content = b"Hello, CAS World!"
 
@@ -84,10 +81,7 @@ async def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
     assert result == content
 
 
-@pytest.mark.asyncio
-async def test_cas_automatic_deduplication(
-    embedded_cas: NexusFS, local_backend: CASLocalBackend
-) -> None:
+def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
     """Test that identical content is automatically deduplicated."""
     content = b"Duplicate content"
 
@@ -109,8 +103,7 @@ async def test_cas_automatic_deduplication(
     assert meta1.physical_path == meta2.physical_path  # Same physical location
 
 
-@pytest.mark.asyncio
-async def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
+def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
     """Test that delete removes content from CAS.
 
     Issue #1320: sys_unlink is now metadata-only — content cleanup is
@@ -134,10 +127,7 @@ async def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocal
     assert not local_backend.content_exists(content_hash)
 
 
-@pytest.mark.asyncio
-async def test_cas_update_file_content(
-    embedded_cas: NexusFS, local_backend: CASLocalBackend
-) -> None:
+def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
     """Test updating file content with version tracking (v0.3.5).
 
     With version tracking enabled, old content is preserved in CAS
@@ -168,10 +158,7 @@ async def test_cas_update_file_content(
     assert local_backend.content_exists(hash2)
 
 
-@pytest.mark.asyncio
-async def test_cas_storage_efficiency(
-    embedded_cas: NexusFS, local_backend: CASLocalBackend
-) -> None:
+def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
     """Test storage efficiency with multiple files."""
     content = b"x" * 1000
 
@@ -191,8 +178,7 @@ async def test_cas_storage_efficiency(
     assert local_backend.get_content_size(content_hash) == len(content)
 
 
-@pytest.mark.asyncio
-async def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
+def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
     """Test that different content produces different hashes."""
     embedded_cas.write("/file1.txt", b"Content A")
     embedded_cas.write("/file2.txt", b"Content B")
@@ -204,8 +190,7 @@ async def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> 
     assert meta1.etag != meta2.etag
 
 
-@pytest.mark.asyncio
-async def test_cas_list_files(embedded_cas: NexusFS) -> None:
+def test_cas_list_files(embedded_cas: NexusFS) -> None:
     """Test listing files with CAS."""
     embedded_cas.write("/dir1/file1.txt", b"Content 1")
     embedded_cas.write("/dir1/file2.txt", b"Content 2")
@@ -218,8 +203,7 @@ async def test_cas_list_files(embedded_cas: NexusFS) -> None:
     assert "/dir2/file3.txt" in all_files
 
 
-@pytest.mark.asyncio
-async def test_cas_binary_content(embedded_cas: NexusFS) -> None:
+def test_cas_binary_content(embedded_cas: NexusFS) -> None:
     """Test CAS with binary content."""
     content = bytes(range(256))
 
@@ -229,8 +213,7 @@ async def test_cas_binary_content(embedded_cas: NexusFS) -> None:
     assert result == content
 
 
-@pytest.mark.asyncio
-async def test_cas_empty_content(embedded_cas: NexusFS) -> None:
+def test_cas_empty_content(embedded_cas: NexusFS) -> None:
     """Test CAS with empty content."""
     embedded_cas.write("/empty.txt", b"")
 
@@ -238,8 +221,7 @@ async def test_cas_empty_content(embedded_cas: NexusFS) -> None:
     assert result == b""
 
 
-@pytest.mark.asyncio
-async def test_cas_large_content(embedded_cas: NexusFS) -> None:
+def test_cas_large_content(embedded_cas: NexusFS) -> None:
     """Test CAS with large content."""
     content = b"x" * (1024 * 1024)  # 1MB
 
@@ -250,8 +232,7 @@ async def test_cas_large_content(embedded_cas: NexusFS) -> None:
     assert result == content
 
 
-@pytest.mark.asyncio
-async def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
+def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     """Test that metadata is stored correctly with CAS."""
     content = b"Test metadata"
 
@@ -266,8 +247,7 @@ async def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     assert len(meta.etag) == 64  # SHA-256 hash length
 
 
-@pytest.mark.asyncio
-async def test_cas_concurrent_deduplication(
+def test_cas_concurrent_deduplication(
     embedded_cas: NexusFS, local_backend: CASLocalBackend
 ) -> None:
     """Test deduplication with multiple writes of same content."""
@@ -290,8 +270,7 @@ async def test_cas_concurrent_deduplication(
     assert local_backend.content_exists(content_hash)
 
 
-@pytest.mark.asyncio
-async def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:
+def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:
     """Test that updating content preserves created_at timestamp."""
     embedded_cas.write("/test.txt", b"Original")
 

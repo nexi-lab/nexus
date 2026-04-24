@@ -1,7 +1,7 @@
 """Operation undo service — extracted from CLI layer (S24).
 
 Orchestrates reversal of filesystem operations logged by OperationLogger.
-Uses router for CAS content retrieval and kernel primitives for state mutation.
+Uses kernel + DLC for CAS content retrieval and kernel primitives for state mutation.
 
 References:
     - docs/architecture/ops-scenario-matrix.md  (S24: Operations Undo)
@@ -38,24 +38,24 @@ class OperationUndoService:
     def __init__(
         self,
         *,
-        router: Any,
-        write_fn: Any,
-        delete_fn: Any,
-        rename_fn: Any,
-        exists_fn: Any,
+        dlc: Any = None,
+        write_fn: Any = None,
+        delete_fn: Any = None,
+        rename_fn: Any = None,
+        exists_fn: Any = None,
         fallback_backend: Any | None = None,
     ) -> None:
         """Initialise the undo service.
 
         Args:
-            router: PathRouter for resolving paths to backends.
+            dlc: DriverLifecycleCoordinator for routing + backend refs.
             write_fn: ``(path, content) -> None`` kernel write primitive.
             delete_fn: ``(path) -> None`` kernel delete primitive.
             rename_fn: ``(old, new) -> None`` kernel rename primitive.
             exists_fn: ``(path) -> bool`` kernel existence check.
             fallback_backend: Optional legacy backend for CAS reads.
         """
-        self._router = router
+        self._dlc = dlc
         self._write = write_fn
         self._delete = delete_fn
         self._rename = rename_fn
@@ -173,10 +173,13 @@ class OperationUndoService:
     # ------------------------------------------------------------------
 
     def _read_content_from_cas(self, path: str, content_hash: str) -> bytes:
-        """Read content from CAS via router, with optional fallback."""
+        """Read content from CAS via DLC, with optional fallback."""
         try:
-            route = self._router.route(path)
-            result: bytes = route.backend.read_content(content_hash)
+            resolved = self._dlc.resolve_path(path, "root") if self._dlc else None
+            if resolved is None:
+                raise RuntimeError(f"No backend found for path: {path}")
+            backend, _backend_path, _mount_point = resolved
+            result: bytes = backend.read_content(content_hash)
             return result
         except Exception:
             if self._fallback_backend is not None:

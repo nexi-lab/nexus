@@ -56,13 +56,15 @@ class _StubFS:
         yield
 
     def sys_read(self, path, *, count=None, offset=0, context=None):
-        """Stub sys_read for read_range fallback path."""
+        """Stub sys_read for read_range and stream_range fallback path."""
         meta = self.metadata.get(path)
         if meta is None:
             raise NexusFileNotFoundError(path)
         content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
             meta.etag or ""
         )
+        if offset:
+            content = content[offset:]
         if count is not None:
             content = content[:count]
         return content
@@ -113,38 +115,38 @@ class TestReadRange:
     """Tests for read_range() byte-range reading."""
 
     @pytest.mark.asyncio
-    async def test_returns_correct_slice(self, stub_fs):
+    def test_returns_correct_slice(self, stub_fs):
         result = stub_fs.read_range("/test/file.txt", 0, 5)
         assert result == b"Hello"
 
     @pytest.mark.asyncio
-    async def test_middle_slice(self, stub_fs):
+    def test_middle_slice(self, stub_fs):
         result = stub_fs.read_range("/test/file.txt", 7, 12)
         assert result == b"World"
 
     @pytest.mark.asyncio
-    async def test_empty_when_start_equals_end(self, stub_fs):
+    def test_empty_when_start_equals_end(self, stub_fs):
         result = stub_fs.read_range("/test/file.txt", 5, 5)
         assert result == b""
 
     @pytest.mark.asyncio
-    async def test_negative_start_raises_value_error(self, stub_fs):
+    def test_negative_start_raises_value_error(self, stub_fs):
         with pytest.raises(ValueError, match="start must be non-negative"):
             stub_fs.read_range("/test/file.txt", -1, 10)
 
     @pytest.mark.asyncio
-    async def test_end_less_than_start_raises_value_error(self, stub_fs):
+    def test_end_less_than_start_raises_value_error(self, stub_fs):
         with pytest.raises(ValueError, match="end.*must be >= start"):
             stub_fs.read_range("/test/file.txt", 10, 5)
 
     @pytest.mark.asyncio
-    async def test_file_not_found_returns_error(self, stub_fs):
+    def test_file_not_found_returns_error(self, stub_fs):
         stub_fs.metadata.get.return_value = None
         with pytest.raises(NexusFileNotFoundError):
             stub_fs.read_range("/test/missing.txt", 0, 10)
 
     @pytest.mark.asyncio
-    async def test_file_with_no_etag_raises_not_found(self, stub_fs):
+    def test_file_with_no_etag_raises_not_found(self, stub_fs):
         meta = MagicMock()
         meta.etag = None
         stub_fs.metadata.get.return_value = meta
@@ -152,46 +154,51 @@ class TestReadRange:
             stub_fs.read_range("/test/empty.txt", 0, 10)
 
     @pytest.mark.asyncio
-    async def test_beyond_content_returns_truncated(self, stub_fs):
+    def test_beyond_content_returns_truncated(self, stub_fs):
         """Reading beyond file size returns available bytes."""
         content = b"Hello, World! This is test content."
         result = stub_fs.read_range("/test/file.txt", 30, 1000)
         assert result == content[30:]  # Python slice handles out-of-bounds
 
     @pytest.mark.asyncio
-    async def test_full_range_returns_all_content(self, stub_fs):
+    def test_full_range_returns_all_content(self, stub_fs):
         content = b"Hello, World! This is test content."
         result = stub_fs.read_range("/test/file.txt", 0, len(content))
         assert result == content
 
     @pytest.mark.asyncio
-    async def test_zero_to_zero_returns_empty(self, stub_fs):
+    def test_zero_to_zero_returns_empty(self, stub_fs):
         result = stub_fs.read_range("/test/file.txt", 0, 0)
         assert result == b""
 
 
 class TestStreamRange:
-    """Tests for stream_range() chunked byte-range streaming."""
+    """Tests for stream_range() chunked byte-range streaming.
 
-    def test_yields_chunks(self, stub_fs):
-        chunks = list(stub_fs.stream_range("/test/file.txt", 0, 12))
-        assert chunks == [b"Hello", b", Wor", b"ld!"]
+    Since §12, stream_range delegates to sys_read(offset, count) and yields
+    chunks in Python — no direct backend.stream_range call.
+    """
+
+    def test_yields_correct_content(self, stub_fs):
+        """stream_range returns the correct byte range, chunked."""
+        chunks = list(stub_fs.stream_range("/test/file.txt", 0, 12, chunk_size=5))
+        combined = b"".join(chunks)
+        assert combined == b"Hello, World!"
 
     def test_file_not_found_raises(self, stub_fs):
         stub_fs.metadata.get.return_value = None
         with pytest.raises(NexusFileNotFoundError):
             list(stub_fs.stream_range("/test/missing.txt", 0, 10))
 
-    def test_passes_chunk_size_to_backend(self, stub_fs):
-        list(stub_fs.stream_range("/test/file.txt", 0, 100, chunk_size=4096))
-        backend = stub_fs.router.route.return_value.backend
-        backend.stream_range.assert_called_once()
-        call_kwargs = backend.stream_range.call_args
-        assert call_kwargs.kwargs.get("chunk_size") == 4096
+    def test_respects_chunk_size(self, stub_fs):
+        """Chunks are at most chunk_size bytes."""
+        chunks = list(stub_fs.stream_range("/test/file.txt", 0, 12, chunk_size=5))
+        for chunk in chunks[:-1]:
+            assert len(chunk) == 5
+        assert len(chunks[-1]) <= 5
 
-    def test_passes_start_and_end_to_backend(self, stub_fs):
-        list(stub_fs.stream_range("/test/file.txt", 10, 50))
-        backend = stub_fs.router.route.return_value.backend
-        args = backend.stream_range.call_args
-        assert args.args[1] == 10  # start
-        assert args.args[2] == 50  # end
+    def test_correct_range_offset(self, stub_fs):
+        """stream_range with non-zero start returns correct slice."""
+        chunks = list(stub_fs.stream_range("/test/file.txt", 7, 11))
+        combined = b"".join(chunks)
+        assert combined == b"World"

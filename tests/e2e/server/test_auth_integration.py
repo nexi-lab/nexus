@@ -46,7 +46,7 @@ async def test_app():
 
     auth_tmpdir = tempfile.mkdtemp(prefix="nexus-test-auth-")
     backend = CASLocalBackend(root_path=auth_tmpdir)
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(os.path.join(auth_tmpdir, "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=":memory:"),

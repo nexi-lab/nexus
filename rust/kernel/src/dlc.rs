@@ -7,7 +7,7 @@
 //! zone_manager) will call DLC directly when Rust-ified.
 //!
 //! Responsibilities:
-//!   1. Add/remove backend in kernel MountTable via `Kernel::add_mount`
+//!   1. Add/remove backend in kernel VFSRouter via `Kernel::add_mount`
 //!   2. Write DT_MOUNT metadata to per-mount metastore
 //!   3. Populate dcache with mount point entry
 //!   4. Upgrade LockManager to distributed for root zone federation mounts
@@ -15,7 +15,7 @@
 
 use crate::dcache::CachedEntry;
 use crate::kernel::{Kernel, KernelError};
-use crate::mount_table::canonicalize_mount_path as canonicalize;
+use crate::vfs_router::canonicalize_mount_path as canonicalize;
 use dashmap::DashMap;
 use std::sync::Arc;
 

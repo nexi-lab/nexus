@@ -131,7 +131,7 @@ async def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     backend = CASLocalBackend(root_path=tmpdir)
     metadata_store = DictMetastore()
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

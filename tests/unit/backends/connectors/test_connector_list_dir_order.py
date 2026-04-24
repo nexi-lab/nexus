@@ -261,7 +261,7 @@ def test_sys_readdir_propagates_connector_backend_error(tmp_path: Path) -> None:
         permissions=PermissionConfig(enforce=False),
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
-    kernel.sys_setattr("/ext", entry_type=DT_MOUNT, backend=backend)
+    kernel.sys_setattr("/ext", entry_type=DT_MOUNT, backend=backend, is_external=True)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
 
     with pytest.raises(BackendError, match="connector 503"):

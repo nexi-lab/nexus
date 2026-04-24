@@ -51,7 +51,7 @@ async def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
     # Create NexusFS with full service wiring
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

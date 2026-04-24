@@ -201,33 +201,42 @@ class SlimNexusFS:
             PathNotMountedError,
         )
         from nexus.contracts.types import OperationContext
-        from nexus.core.path_utils import validate_path
-        from nexus.core.router import ExternalRouteResult
+        from nexus.core.path_utils import extract_zone_id, validate_path
 
         try:
             normalized = validate_path(path)
         except Exception:
             return None
 
-        router = getattr(self._kernel, "router", None)
-        if router is None:
+        _py_kernel = getattr(self._kernel, "_kernel", None)
+        _dlc = getattr(self._kernel, "_driver_coordinator", None)
+        if _dlc is None:
             return None
 
         caller_ctx = getattr(self, "_ctx", None)
         is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        try:
-            route = router.route(normalized, zone_id=zone_id)
-        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+        if _py_kernel is not None:
+            try:
+                rr = _py_kernel.route(normalized, zone_id)
+            except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+                return None
+            except Exception:
+                return None
+            info = _dlc.get_mount_info_canonical(rr.mount_point)
+            if info is None:
+                return None
+            backend_path = getattr(rr, "backend_path", "") or ""
+            user_mp = extract_zone_id(rr.mount_point)[1]
+        else:
             return None
 
-        if not isinstance(route, ExternalRouteResult):
+        if not getattr(info, "is_external", False):
             return None
 
-        backend = getattr(route, "backend", None)
-        backend_path = getattr(route, "backend_path", "") or ""
-        mount_point = getattr(route, "mount_point", "") or ""
+        backend = getattr(info, "backend", None)
+        mount_point = user_mp or ""
         if backend is None or getattr(backend, "read_content", None) is None:
             return None
 
@@ -292,31 +301,41 @@ class SlimNexusFS:
             PathNotMountedError,
         )
         from nexus.contracts.types import OperationContext
-        from nexus.core.path_utils import validate_path
-        from nexus.core.router import ExternalRouteResult, RouteResult
+        from nexus.core.path_utils import extract_zone_id, validate_path
 
         try:
             normalized = validate_path(path)
         except Exception:
             return None
 
-        router = getattr(self._kernel, "router", None)
-        if router is None:
+        _py_kernel = getattr(self._kernel, "_kernel", None)
+        _dlc = getattr(self._kernel, "_driver_coordinator", None)
+        if _dlc is None:
             return None
 
         caller_ctx = getattr(self, "_ctx", None)
         is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        try:
-            route = router.route(normalized, zone_id=zone_id)
-        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+        if _py_kernel is not None:
+            try:
+                rr = _py_kernel.route(normalized, zone_id)
+            except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+                return None
+            except Exception:
+                return None
+            info = _dlc.get_mount_info_canonical(rr.mount_point)
+            if info is None:
+                return None
+            backend_path = rr.backend_path or ""
+            user_mp = extract_zone_id(rr.mount_point)[1]
+        else:
             return None
 
-        if not isinstance(route, RouteResult) or isinstance(route, ExternalRouteResult):
+        if getattr(info, "is_external", False):
             return None
 
-        backend = route.backend
+        backend = info.backend
         # Path-addressed + local-root gate.  CAS backends use content_id
         # (hash), not backend_path, so they'd raise on read_content("", ...)
         # — stays with _slim_metastore_read's hash-based fallback.
@@ -328,8 +347,7 @@ class SlimNexusFS:
         if read_content is None:
             return None
 
-        backend_path = route.backend_path or ""
-        mount_point = route.mount_point or ""
+        mount_point = user_mp or ""
         if caller_ctx is not None:
             ctx = _dc_replace(
                 caller_ctx,
@@ -389,7 +407,6 @@ class SlimNexusFS:
             PathNotMountedError,
         )
         from nexus.core.path_utils import validate_path
-        from nexus.core.router import ExternalRouteResult, RouteResult
 
         try:
             normalized = validate_path(path)
@@ -398,13 +415,19 @@ class SlimNexusFS:
         meta = self._kernel.metadata.get(normalized)
         if meta is None or not meta.etag:
             return None
+        _rust_kernel = getattr(self._kernel, "_kernel", None)
+        if _rust_kernel is None:
+            return None
         try:
-            route = self._kernel.router.route(normalized)
-        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+            _rr = _rust_kernel.route(normalized, self._kernel._zone_id)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError, ValueError):
             return None
-        if not isinstance(route, RouteResult) or isinstance(route, ExternalRouteResult):
+        if _rr.is_external:
             return None
-        backend = route.backend
+        _dlc_info = self._kernel._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+        if _dlc_info is None:
+            return None
+        backend = _dlc_info.backend
         expected_name = (meta.backend_name or "").split(":", 1)[0].split("@", 1)[0]
         actual_name = getattr(backend, "name", None)
         if expected_name and actual_name and expected_name != actual_name:
@@ -490,8 +513,8 @@ class SlimNexusFS:
         resolved = self._resolve_external_route(path)
         if resolved is None:
             return None
-        route, ctx, normalized = resolved
-        backend = route.backend
+        mount_info, ctx, normalized = resolved
+        backend = mount_info.backend
         write_content = getattr(backend, "write_content", None)
         if write_content is None:
             return None
@@ -536,7 +559,7 @@ class SlimNexusFS:
 
             now = datetime.now(UTC)
             new_version = (existing_meta.version + 1) if existing_meta else 1
-            backend_name_full = route.backend.name if getattr(route.backend, "name", None) else ""
+            backend_name_full = backend.name if getattr(backend, "name", None) else ""
             metadata = FileMetadata(
                 path=normalized,
                 backend_name=backend_name_full,
@@ -552,7 +575,7 @@ class SlimNexusFS:
                 else (getattr(ctx, "subject_id", None) or getattr(ctx, "user_id", None) or "local"),
             )
             if not is_remote:
-                route.metastore.put(metadata)
+                self._kernel.metadata.put(metadata)
 
         return {
             "path": normalized,
@@ -590,53 +613,53 @@ class SlimNexusFS:
         return self._slim_lock_pool[hash(path) % self._SLIM_LOCK_STRIPES]
 
     def _resolve_external_route(self, path: str) -> tuple[Any, Any, str] | None:
-        """Route ``path`` and return ``(route, augmented_ctx, normalized_path)``.
+        """Route ``path`` and return ``(mount_info, augmented_ctx, normalized_path)``.
 
         Returns a tuple for any route whose mount root is DT_EXTERNAL_STORAGE
-        — this covers both the first-write case (router returns
-        ``ExternalRouteResult`` because no file metadata yet) and the
-        subsequent-write case (router returns ``RouteResult`` because
-        file metadata now exists and takes precedence over mount-root
-        metadata).  Every other route type (non-connector CAS, path-local,
-        pipe, stream) falls back to the kernel path.
+        — this covers both the first-write case (is_external flag on DLC
+        mount info) and the subsequent-write case (file metadata exists
+        and mount root is DT_EXTERNAL_STORAGE).  Every other route type
+        (non-connector CAS, path-local, pipe, stream) falls back to the
+        kernel path.
+
+        Uses DLC.resolve_path() (Phase G pattern) so this works in both
+        full-kernel and slim mode as long as the DLC has a kernel ref.
         """
-        from nexus.contracts.exceptions import InvalidPathError, PathNotMountedError
         from nexus.contracts.types import OperationContext
         from nexus.core.path_utils import validate_path
-        from nexus.core.router import ExternalRouteResult, RouteResult
 
         try:
             normalized = validate_path(path)
         except Exception:
             return None
 
-        router = getattr(self._kernel, "router", None)
-        if router is None:
+        _dlc = getattr(self._kernel, "_driver_coordinator", None)
+        if _dlc is None:
             return None
 
         caller_ctx = getattr(self, "_ctx", None)
         is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        try:
-            route = router.route(normalized, zone_id=zone_id)
-        except (PathNotMountedError, InvalidPathError):
+        # Route via DLC.resolve_path() — delegates to Rust kernel internally
+        resolved = _dlc.resolve_path(normalized, zone_id)
+        if resolved is None:
+            return None
+        backend, backend_path, user_mp = resolved
+        info = _dlc.get_mount_info(user_mp, zone_id)
+        if info is None:
             return None
 
-        if not isinstance(route, (ExternalRouteResult, RouteResult)):
-            return None
-
-        if not isinstance(route, ExternalRouteResult):
-            # Non-external RouteResult is only eligible when the mount
+        if not getattr(info, "is_external", False):
+            # Non-external route is only eligible when the mount
             # ROOT is DT_EXTERNAL_STORAGE — i.e. a connector mount where
             # file metadata was persisted on a previous write and now
             # shadows the mount-root external flag in the router.
-            mount_meta = self._kernel.metadata.get(route.mount_point)
+            mount_meta = self._kernel.metadata.get(user_mp)
             if mount_meta is None or not mount_meta.is_external_storage:
                 return None
 
-        backend_path = getattr(route, "backend_path", "") or ""
-        mount_point = getattr(route, "mount_point", "") or ""
+        mount_point = user_mp or ""
         if caller_ctx is not None:
             ctx = _dc_replace(
                 caller_ctx,
@@ -654,7 +677,7 @@ class SlimNexusFS:
                 virtual_path=normalized,
                 mount_path=mount_point,
             )
-        return route, ctx, normalized
+        return info, ctx, normalized
 
     def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
         """Write multiple files atomically in a single transaction.
@@ -786,29 +809,38 @@ class SlimNexusFS:
             PathNotMountedError,
         )
         from nexus.core.path_utils import validate_path
-        from nexus.core.router import ExternalRouteResult, RouteResult
 
         try:
             normalized = validate_path(path, allow_root=True)
         except Exception:
             return kernel_entries
 
-        router = getattr(self._kernel, "router", None)
-        if router is None:
+        _py_kernel = getattr(self._kernel, "_kernel", None)
+        _dlc = getattr(self._kernel, "_driver_coordinator", None)
+        if _dlc is None:
             return kernel_entries
 
         caller_ctx = getattr(self, "_ctx", None)
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        try:
-            route = router.route(normalized, zone_id=zone_id)
-        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+        if _py_kernel is not None:
+            try:
+                rr = _py_kernel.route(normalized, zone_id)
+            except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+                return kernel_entries
+            except Exception:
+                return kernel_entries
+            info = _dlc.get_mount_info_canonical(rr.mount_point)
+            if info is None:
+                return kernel_entries
+            _backend_path = rr.backend_path or ""
+        else:
             return kernel_entries
 
-        if not isinstance(route, RouteResult) or isinstance(route, ExternalRouteResult):
+        if getattr(info, "is_external", False):
             return kernel_entries
 
-        backend = route.backend
+        backend = info.backend
         if not getattr(backend, "has_root_path", False):
             return kernel_entries
         if type(backend).__name__.startswith("CAS"):
@@ -887,7 +919,7 @@ class SlimNexusFS:
                 if recursive and is_dir:
                     _walk(next_backend, next_virtual)
 
-        _walk(route.backend_path or "", virtual_prefix)
+        _walk(_backend_path, virtual_prefix)
 
         if not added:
             return kernel_entries
@@ -933,7 +965,7 @@ class SlimNexusFS:
 
         normalized = validate_path(path)
         meta = self._kernel.metadata.get(normalized)
-        if meta is not None and (meta.is_mount or meta.is_external_storage):
+        if meta is not None and meta.is_mount:
             raise ValueError(
                 f"Cannot delete mount root '{normalized}' — use unmount() to remove a mount."
             )
@@ -951,8 +983,8 @@ class SlimNexusFS:
         resolved = self._resolve_external_route(path)
         if resolved is None:
             return False
-        route, ctx, normalized = resolved
-        backend = route.backend
+        mount_info, ctx, normalized = resolved
+        backend = mount_info.backend
         delete_content = getattr(backend, "delete_content", None)
         if delete_content is None:
             return False
@@ -1079,12 +1111,7 @@ class SlimNexusFS:
         meta: FileMetadata | None = None
 
         if meta is not None:
-            is_dir = (
-                meta.is_dir
-                or meta.is_mount
-                or meta.is_external_storage
-                or meta.mime_type == "inode/directory"
-            )
+            is_dir = meta.is_dir or meta.is_mount or meta.mime_type == "inode/directory"
             return _make_stat_dict(
                 path=meta.path,
                 size=meta.size or (4096 if is_dir else 0),
@@ -1400,7 +1427,7 @@ class SlimNexusFS:
         Returns:
             Sorted list of mount point paths.
         """
-        return sorted(m.mount_point for m in self._kernel.router.list_mounts())
+        return self._kernel._driver_coordinator.mount_points()
 
     def unmount(self, mount_point: str) -> None:
         """Remove a mount and clean up all associated state.
@@ -1419,7 +1446,7 @@ class SlimNexusFS:
 
         normalized = validate_path(mount_point, allow_root=False)
         meta = self._kernel.metadata.get(normalized)
-        if meta is None or not (meta.is_mount or meta.is_external_storage):
+        if meta is None or not meta.is_mount:
             raise ValueError(f"'{normalized}' is not a mount point")
 
         # 1. Remove from runtime mount table

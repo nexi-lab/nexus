@@ -42,7 +42,7 @@ use crate::metastore::{FileMetadata as KernelFileMetadata, Metastore, MetastoreE
 /// state machine (``ZoneConsensus::coherence_id``). Every crosslink
 /// mount of the same zone has a different ``mount_point`` but shares
 /// the SAME ``coherence_id``, which is how
-/// ``MountTable::mount_points_for_coherence_key`` fans out apply-side
+/// ``VFSRouter::mount_points_for_coherence_key`` fans out apply-side
 /// dcache invalidation across all surfaces of the zone (R20.6 option B).
 pub struct ZoneMetastore {
     node: ZoneConsensus<FullStateMachine>,

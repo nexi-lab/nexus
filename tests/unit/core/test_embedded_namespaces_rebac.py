@@ -29,10 +29,10 @@ def cleanup_windows_db():
 
 
 @pytest.mark.asyncio
-async def test_workspace_namespace_operations():
+def test_workspace_namespace_operations():
     """Test basic operations in workspace namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             parsing=ParseConfig(auto_parse=False),
             backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
@@ -75,10 +75,10 @@ async def test_workspace_namespace_operations():
 
 
 @pytest.mark.asyncio
-async def test_shared_namespace_operations():
+def test_shared_namespace_operations():
     """Test basic operations in shared namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
@@ -115,10 +115,10 @@ async def test_shared_namespace_operations():
 
 
 @pytest.mark.asyncio
-async def test_external_namespace_operations():
+def test_external_namespace_operations():
     """Test basic operations in external namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
@@ -154,10 +154,10 @@ async def test_external_namespace_operations():
 
 
 @pytest.mark.asyncio
-async def test_multi_namespace_operations_single_zone():
+def test_multi_namespace_operations_single_zone():
     """Test operations across multiple namespaces for single zone."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
@@ -189,10 +189,10 @@ async def test_multi_namespace_operations_single_zone():
 
 
 @pytest.mark.asyncio
-async def test_namespace_isolation_between_zones():
+def test_namespace_isolation_between_zones():
     """Test that different zones' workspaces are isolated."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(tmpdir),
             metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),

@@ -308,8 +308,6 @@ def main(
 
         # --- Create local NexusFS -------------------------------------------
         try:
-            import asyncio
-
             import nexus
 
             connect_config: dict[str, object] = {"profile": deployment_profile}
@@ -337,9 +335,9 @@ def main(
                 from nexus.config import load_config
 
                 config_obj = load_config(Path(config_path))
-                nx = asyncio.run(nexus.connect(config=config_obj))
+                nx = nexus.connect(config=config_obj)
             else:
-                nx = asyncio.run(nexus.connect(config=connect_config))
+                nx = nexus.connect(config=connect_config)
 
         except Exception as e:
             click.echo(f"Error: Failed to initialize NexusFS: {e}", err=True)

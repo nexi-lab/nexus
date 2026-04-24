@@ -192,7 +192,7 @@ def _save_manifest(data_dir: str, manifest: dict[str, Any]) -> None:
         json.dump(manifest, f, indent=2)
 
 
-async def _get_nexus_client(config: dict[str, Any]) -> Any:
+def _get_nexus_client(config: dict[str, Any]) -> Any:
     """Connect to a running Nexus server via gRPC, or fall back to local.
 
     For remote presets (shared/demo), reads runtime state from
@@ -232,7 +232,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
         url = conn.get("NEXUS_URL", f"http://localhost:{http_port}")
 
         try:
-            nx = await nexus.connect(
+            nx = nexus.connect(
                 config={
                     "profile": "remote",
                     "url": url,
@@ -271,7 +271,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
 
     # No server running — fall back to local data dir
     data_dir = config.get("data_dir", "./nexus-data")
-    return await nexus.connect(config={"data_dir": data_dir})
+    return nexus.connect(config={"data_dir": data_dir})
 
 
 # ---------------------------------------------------------------------------
@@ -1554,7 +1554,7 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
 
     # Connect to Nexus
     try:
-        nx = await _get_nexus_client(config)
+        nx = _get_nexus_client(config)
     except Exception as e:
         console.print(f"[nexus.error]Error:[/nexus.error] Could not connect to Nexus: {e}")
         console.print(
@@ -1771,7 +1771,7 @@ async def _async_demo_reset() -> None:
 
     # Delete permission tuples (best-effort, before file deletion)
     try:
-        nx = await _get_nexus_client(config)
+        nx = _get_nexus_client(config)
     except Exception as e:
         console.print(f"[nexus.warning]Warning:[/nexus.warning] Could not connect to Nexus: {e}")
         nx = None

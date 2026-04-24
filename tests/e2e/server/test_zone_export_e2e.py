@@ -42,7 +42,7 @@ async def nexus_fs(temp_dir):
     data_dir = temp_dir / "data"
     data_dir.mkdir()
 
-    fs = await create_nexus_fs(
+    fs = create_nexus_fs(
         backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),

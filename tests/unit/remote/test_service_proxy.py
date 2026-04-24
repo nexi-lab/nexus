@@ -128,7 +128,6 @@ class TestBootRemoteServices:
 
     def test_registers_all_canonical_services(self):
         """_boot_remote_services registers all canonical services via coordinator (#1708)."""
-        import asyncio
         from unittest.mock import MagicMock, patch
 
         from nexus.factory._remote import _boot_remote_services
@@ -146,7 +145,7 @@ class TestBootRemoteServices:
                 return len(_CANONICAL_NAMES)
 
             mock_enlist.side_effect = _fake_enlist
-            asyncio.run(_boot_remote_services(nfs, call_rpc))
+            _boot_remote_services(nfs, call_rpc)
 
             # enlist_wired_services was called with coordinator and a dict covering all canonical keys
             mock_enlist.assert_called_once()
@@ -164,7 +163,6 @@ class TestBootRemoteServices:
 
     def test_all_slots_are_same_proxy_instance(self):
         """All slots share one proxy instance (universal pass-through)."""
-        import asyncio
         from unittest.mock import MagicMock, patch
 
         from nexus.factory._remote import _boot_remote_services
@@ -180,7 +178,7 @@ class TestBootRemoteServices:
                 return len(_CANONICAL_NAMES)
 
             mock_enlist.side_effect = _fake_enlist
-            asyncio.run(_boot_remote_services(nfs, call_rpc))
+            _boot_remote_services(nfs, call_rpc)
 
             wired_dict = mock_enlist.call_args[0][1]
             proxies = list(wired_dict.values())

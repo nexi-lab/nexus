@@ -82,7 +82,7 @@ def extract_items(result: str | list | dict) -> list:
 async def nexus_fs(isolated_db, tmp_path):
     """Create a real NexusFS instance with CASLocalBackend for testing."""
     backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
         record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
@@ -562,7 +562,7 @@ class TestServerConfiguration:
     async def test_server_with_local_backend(self, isolated_db, tmp_path):
         """Test server creation with CASLocalBackend."""
         backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),

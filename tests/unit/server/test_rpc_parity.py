@@ -199,6 +199,12 @@ def test_all_public_methods_are_exposed_or_excluded():
         "unregister_intercept_stat",  # Internal - INTERCEPT hook unregistration
         "unregister_intercept_access",  # Internal - INTERCEPT hook unregistration
         "dispatch_event",  # Internal - Rust kernel event dispatch
+        "notify_mount",  # Internal - DLC mount notification
+        "notify_unmount",  # Internal - DLC unmount notification
+        "register_mount_hook",  # Internal - hook registration
+        "register_unmount_hook",  # Internal - hook registration
+        "unregister_mount_hook",  # Internal - hook management
+        "unregister_unmount_hook",  # Internal - hook management
         "resolve_read",  # Internal - PRE-DISPATCH resolver
         "resolve_write",  # Internal - PRE-DISPATCH resolver
         "resolve_delete",  # Internal - PRE-DISPATCH resolver

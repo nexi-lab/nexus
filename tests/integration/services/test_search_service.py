@@ -4,7 +4,7 @@ Tests initialization, glob search, grep search, file listing,
 helper methods, and error handling for missing dependencies.
 
 SearchService uses dependency injection with MetastoreABC,
-PermissionEnforcer, PathRouter, and NexusFSGateway.
+PermissionEnforcer, DriverLifecycleCoordinator (DLC), and NexusFSGateway.
 """
 
 import re
@@ -52,17 +52,17 @@ def mock_permission_enforcer():
 
 
 @pytest.fixture
-def mock_router():
-    """Create a mock PathRouter."""
-    router = MagicMock()
-    router.get_mount_points.return_value = [
+def mock_dlc():
+    """Create a mock DriverLifecycleCoordinator."""
+    dlc = MagicMock()
+    dlc.mount_points.return_value = [
         "/archives",
         "/external",
         "/shared",
         "/system",
         "/workspace",
     ]
-    return router
+    return dlc
 
 
 @pytest.fixture
@@ -73,7 +73,6 @@ def mock_gateway():
     gw.read_bulk.return_value = {}
     gw.get_routing_params.return_value = (None, None, False)
     gw.has_descendant_access.return_value = True
-    gw.get_backend_directory_entries.return_value = set()
     gw.record_read_if_tracking.return_value = None
     gw.session_factory = MagicMock()
     gw.backend = MagicMock()
@@ -81,12 +80,12 @@ def mock_gateway():
 
 
 @pytest.fixture
-def service(mock_metadata_store, mock_permission_enforcer, mock_router, mock_gateway):
+def service(mock_metadata_store, mock_permission_enforcer, mock_dlc, mock_gateway):
     """Create a SearchService with all mocked dependencies."""
     return SearchService(
         metadata_store=mock_metadata_store,
         permission_enforcer=mock_permission_enforcer,
-        router=mock_router,
+        dlc=mock_dlc,
         gateway=mock_gateway,
         enforce_permissions=True,
     )
@@ -123,19 +122,19 @@ class TestSearchServiceInit:
     """Tests for SearchService construction."""
 
     def test_init_stores_all_dependencies(
-        self, mock_metadata_store, mock_permission_enforcer, mock_router, mock_gateway
+        self, mock_metadata_store, mock_permission_enforcer, mock_dlc, mock_gateway
     ):
         """Service stores all injected dependencies."""
         svc = SearchService(
             metadata_store=mock_metadata_store,
             permission_enforcer=mock_permission_enforcer,
-            router=mock_router,
+            dlc=mock_dlc,
             gateway=mock_gateway,
             enforce_permissions=True,
         )
         assert svc.metadata is mock_metadata_store
         assert svc._permission_enforcer is mock_permission_enforcer
-        assert svc.router is mock_router
+        assert svc._dlc is mock_dlc
         assert svc._gw is mock_gateway
         assert svc._enforce_permissions is True
 
@@ -144,7 +143,7 @@ class TestSearchServiceInit:
         svc = SearchService(metadata_store=mock_metadata_store)
         assert svc.metadata is mock_metadata_store
         assert svc._permission_enforcer is None
-        assert svc.router is None
+        assert svc._dlc is None
         assert svc._gw is None
         assert svc._enforce_permissions is True
 
@@ -174,7 +173,7 @@ class TestSearchServiceInit:
         assert svc._record_store is mock_record_store
 
     def test_list_slow_path_passes_zone_id_to_tiger_pushdown(
-        self, mock_metadata_store, mock_permission_enforcer, mock_router, mock_gateway
+        self, mock_metadata_store, mock_permission_enforcer, mock_dlc, mock_gateway
     ):
         """Predicate pushdown must request the bitmap for the current list zone."""
         meta = MagicMock()
@@ -190,7 +189,7 @@ class TestSearchServiceInit:
         svc = SearchService(
             metadata_store=mock_metadata_store,
             permission_enforcer=mock_permission_enforcer,
-            router=mock_router,
+            dlc=mock_dlc,
             gateway=mock_gateway,
             enforce_permissions=True,
         )
@@ -431,8 +430,8 @@ class TestGlobHelpers:
         assert service._should_prepend_recursive_wildcard("workspace/file.py") is False
         assert service._should_prepend_recursive_wildcard("shared/docs/readme.md") is False
 
-    def test_get_namespace_prefixes_from_router(self, service, mock_router):
-        """_get_namespace_prefixes reads from router's get_mount_points."""
+    def test_get_namespace_prefixes_from_dlc(self, service, mock_dlc):
+        """_get_namespace_prefixes reads from dlc's mount_points."""
         prefixes = service._get_namespace_prefixes()
         assert "workspace/" in prefixes
         assert "shared/" in prefixes

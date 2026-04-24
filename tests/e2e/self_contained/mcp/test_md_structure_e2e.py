@@ -103,7 +103,7 @@ def 認証(トークン):
 @pytest.fixture
 async def nexus_fs(isolated_db, tmp_path):
     backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
         record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),

@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace as _dc_replace
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.path_utils import validate_path
 
@@ -28,29 +27,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _WriteContentResult(NamedTuple):
-    """Result of content-only write phase."""
-
-    content_hash: str
-    size: int
-    metadata: "FileMetadata"  # Built metadata ready for metastore
-    new_version: int
-    is_new: bool  # True if file didn't exist before
-    old_etag: str | None
-    old_metadata: "FileMetadata | None"  # Pre-write metadata for post-write hooks
-    context: "OperationContext"  # Augmented context (with backend_path/virtual_path)
-    zone_id: str | None
-    agent_id: str | None
-    is_remote: bool  # Remote backend — skip local metadata.put
-
-
 class InternalMixin:
     """Shared helpers for NexusFS mixins: context, validation, .readme overlay, events."""
 
     _kernel: Any  # Rust Kernel — single stub, other attrs via MRO
     _zone_id: str
     _init_cred: Any
-    router: Any
+    _driver_coordinator: Any
 
     # ── Context helpers ──────────────────────────────────────────────
 
@@ -179,16 +162,19 @@ class InternalMixin:
             return None
         try:
             _, _, is_admin = self._get_context_identity(ctx)
-            route = self.router.route(path, zone_id=self._zone_id)
+            _rr = self._kernel.route(path, self._zone_id)
+            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
         except Exception:
             return None
 
-        backend = getattr(route, "backend", None)
+        backend = _di.backend if _di else None
         if backend is None:
             return None
 
-        mount_point = getattr(route, "mount_point", "") or ""
-        backend_path = getattr(route, "backend_path", "") or ""
+        from nexus.core.path_utils import extract_zone_id as _ezi
+
+        mount_point = _ezi(_rr.mount_point)[1] or ""
+        backend_path = _rr.backend_path or ""
 
         from nexus.backends.connectors.schema_generator import (
             _parse_readme_path_parts,
@@ -269,16 +255,19 @@ class InternalMixin:
             return
         try:
             _, _, is_admin = self._get_context_identity(context)
-            route = self.router.route(path, zone_id=self._zone_id)
+            _rr = self._kernel.route(path, self._zone_id)
+            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
         except Exception:
             return  # non-routable path — let the real call surface the error
 
-        backend = getattr(route, "backend", None)
+        backend = _di.backend if _di else None
         if backend is None:
             return
 
-        backend_path = getattr(route, "backend_path", "") or ""
-        mount_point = getattr(route, "mount_point", "") or ""
+        from nexus.core.path_utils import extract_zone_id as _ezi
+
+        backend_path = _rr.backend_path or ""
+        mount_point = _ezi(_rr.mount_point)[1] or ""
 
         from nexus.backends.connectors.schema_generator import overlay_owns_path
 
@@ -315,16 +304,19 @@ class InternalMixin:
             return None
         try:
             _, _, is_admin = self._get_context_identity(context)
-            route = self.router.route(path, zone_id=self._zone_id)
+            _rr = self._kernel.route(path, self._zone_id)
+            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
         except Exception:
             return None
 
-        backend = getattr(route, "backend", None)
+        backend = _di.backend if _di else None
         if backend is None:
             return None
 
-        mount_point = getattr(route, "mount_point", "") or ""
-        backend_path = getattr(route, "backend_path", "") or ""
+        from nexus.core.path_utils import extract_zone_id as _ezi
+
+        mount_point = _ezi(_rr.mount_point)[1] or ""
+        backend_path = _rr.backend_path or ""
 
         from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
 
@@ -333,43 +325,4 @@ class InternalMixin:
         except Exception:
             return None
 
-    # ── Post-write event dispatch ────────────────────────────────────
-
-    def _dispatch_write_events(
-        self,
-        path: str,
-        result: _WriteContentResult,
-        content: bytes,
-    ) -> dict[str, Any]:
-        """Post-write event dispatch (sync, outside lock).
-
-        Fires INTERCEPT POST hooks. OBSERVE dispatch happens inside the
-        kernel's ``sys_write`` via the ThreadPool (§11 Phase 5) — Python
-        only owns the POST-hook path because hook contexts need the GIL.
-
-        Returns:
-            Dict with metadata {etag, version, modified_at, size}.
-        """
-        from nexus.contracts.vfs_hooks import WriteHookContext
-
-        _write_ctx = WriteHookContext(
-            path=path,
-            content=content,
-            context=result.context,
-            zone_id=result.zone_id,
-            agent_id=result.agent_id,
-            is_new_file=result.is_new,
-            content_hash=result.content_hash,
-            metadata=result.metadata,
-            old_metadata=result.old_metadata,
-            new_version=result.new_version,
-        )
-        self._kernel.dispatch_post_hooks("write", _write_ctx)
-
-        # Return metadata for optimistic concurrency control
-        return {
-            "etag": result.content_hash,
-            "version": result.new_version,
-            "modified_at": result.metadata.modified_at,
-            "size": result.size,
-        }
+    # _dispatch_write_events deleted — callers inline the post-hook dispatch.

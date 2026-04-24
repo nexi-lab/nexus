@@ -2,8 +2,8 @@
 
 Tier 1: sys_watch (blocking wait for file changes)
 
-Delegates to Rust kernel sys_watch which blocks on Condvar until
-a matching event arrives or timeout expires. Pure Rust FileWatcher.
+Delegates to kernel FileWatcher primitive which races local OBSERVE
+(in-memory futures, ~0µs) and optional remote watcher (federation).
 """
 
 from __future__ import annotations
@@ -15,12 +15,17 @@ from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+    from nexus.core.file_watcher import FileWatcher
 
 
 class WatchMixin:
-    """File watching: sys_watch → Rust kernel FileWatcher."""
+    """File watching: sys_watch → FileWatcher."""
 
-    _kernel: Any  # Rust Kernel
+    # Provided by NexusFS.__init__
+    _file_watcher: "FileWatcher"
+    _kernel: Any
+
+    def _resolve_cred(self, context: Any) -> Any: ...
 
     @rpc_expose(description="Wait for file changes on a path")
     def sys_watch(
@@ -29,17 +34,21 @@ class WatchMixin:
         timeout: float = 30.0,
         *,
         recursive: bool = False,  # noqa: ARG002
-        context: "OperationContext | None" = None,  # noqa: ARG002
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
-        """Wait for file changes (inotify(7)). Blocks until event or timeout.
+        """Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout.
 
-        Tier 1 syscall. Delegates to Rust kernel FileWatcher which blocks
-        on Condvar. Returns dict with event_type + path, or None on timeout.
+        Delegates to Rust kernel sys_watch (FileWatchRegistry.wait_for_event).
         """
         path = validate_path(path, allow_root=True)
-        timeout_ms = max(1, int(timeout * 1000))
-        result = self._kernel.sys_watch(path, timeout_ms)
-        if result is None:
-            return None
-        event_type, event_path = result
-        return {"type": event_type, "path": event_path}
+        self._resolve_cred(context)  # validate credentials
+
+        # Rust kernel path: blocking wait via Condvar (or stub returning None)
+        if self._kernel is not None:
+            event = self._kernel.sys_watch(path, int(timeout * 1000))
+            if event is None:
+                return None
+            return {"event_type": event.event_type, "path": event.path}
+
+        # No kernel: return None (watch not available)
+        return None

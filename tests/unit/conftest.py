@@ -128,7 +128,7 @@ def isolated_db(tmp_path, monkeypatch):
 
     Usage:
         async def test_something(isolated_db, tmp_path):
-            nx = await make_test_nexus(tmp_path, use_raft=True)
+            nx = make_test_nexus(tmp_path, use_raft=True)
             # Test code here
             nx.close()
 

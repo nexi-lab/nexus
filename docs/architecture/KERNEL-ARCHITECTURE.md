@@ -118,10 +118,10 @@ Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks
 (PermissionCheckHook). No hook registered = no check = zero overhead.
 
 **Zone identity:** `self._zone_id = ROOT_ZONE_ID` — kernel namespace partition
-(analogous to Linux `sb->s_dev`). PathRouter canonicalizes all paths to
-`/{zone_id}/{path}` for zone-aware LPM routing. Standalone: always `"root"`.
-Federation: set at link time. All primitives (LockManager, FileEvent) receive
-canonical paths — zone handling is PathRouter's responsibility, not theirs.
+(analogous to Linux `sb->s_dev`). VFSRouter (Rust kernel primitive) canonicalizes
+all paths to `/{zone_id}/{path}` for zone-aware LPM routing. Standalone: always
+`"root"`. Federation: set at link time. All primitives (LockManager, FileEvent)
+receive canonical paths — zone handling is VFSRouter's responsibility, not theirs.
 
 **Source of truth:** `contracts/protocols/service_lifecycle.py`
 
@@ -168,6 +168,11 @@ program against the contract, kernel implements it.
 `NexusFS` is the kernel implementation of `NexusFilesystem`. It wires
 primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
+
+All kernel methods are synchronous (`def`, not `async def`). Blocking
+waits (advisory locks, stream reads) use Rust Condvar with GIL release.
+Exception: `sys_watch` uses asyncio futures to wait for file events.
+Async exists only at the transport layer (gRPC, HTTP).
 
 Kernel syscalls, all POSIX-aligned, all path-addressed:
 
@@ -434,8 +439,8 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
   upsert, read/write via `sys_read`/`sys_write`, destroyed via `sys_unlink`),
   per-pipe lock for MPMC safety. Reads are destructive (consumed on read).
 - **MemoryPipeBackend (kpipe)** — Lock-free **SPSC** kernel primitive (`kfifo` analogue),
-  no internal synchronization. PipeManager wraps with per-pipe `asyncio.Lock`
-  for **MPMC** safety. Direct MemoryPipeBackend access is kernel-internal only.
+  no internal synchronization. Kernel manages pipe lifecycle directly.
+  Direct MemoryPipeBackend access is kernel-internal only.
 
 **DT_STREAM (StreamManager + pluggable StreamBackend):**
 

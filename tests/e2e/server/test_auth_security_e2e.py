@@ -97,7 +97,7 @@ async def _create_nexus_fs(
 
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / f'records{suffix}.db'}")
 
-    return await create_nexus_fs(
+    return create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

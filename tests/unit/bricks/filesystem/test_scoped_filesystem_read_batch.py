@@ -17,8 +17,8 @@ from tests.conftest import make_test_nexus
 
 
 @pytest.fixture()
-async def nx(tmp_path):
-    return await make_test_nexus(tmp_path)
+def nx(tmp_path):
+    return make_test_nexus(tmp_path)
 
 
 @pytest.fixture()
@@ -35,7 +35,7 @@ class TestScopedReadBatchHappyPath:
     """User-relative paths are correctly scoped and unscoped."""
 
     @pytest.mark.asyncio
-    async def test_scoped_path_is_transparent(self, nx, scoped, user_root):
+    def test_scoped_path_is_transparent(self, nx, scoped, user_root):
         """User writes to /workspace/file.txt, reads back the same path."""
         full_path = f"{user_root}/workspace/file.txt"
         nx.write(full_path, b"scoped content")
@@ -49,7 +49,7 @@ class TestScopedReadBatchHappyPath:
         )
 
     @pytest.mark.asyncio
-    async def test_multiple_scoped_paths(self, nx, scoped, user_root):
+    def test_multiple_scoped_paths(self, nx, scoped, user_root):
         for name in ("a.txt", "b.txt"):
             nx.write(f"{user_root}/files/{name}", f"content_{name}".encode())
 
@@ -64,34 +64,34 @@ class TestScopedReadBatchCrossScopeRejection:
     """Global namespace paths are rejected for non-admin callers."""
 
     @pytest.mark.asyncio
-    async def test_memory_namespace_raises(self, scoped):
+    def test_memory_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
             scoped.read_batch(["/memory/other_user/secret.txt"])
 
     @pytest.mark.asyncio
-    async def test_skills_namespace_raises(self, scoped):
+    def test_skills_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
             scoped.read_batch(["/skills/some_skill.py"])
 
     @pytest.mark.asyncio
-    async def test_system_namespace_raises(self, scoped):
+    def test_system_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
             scoped.read_batch(["/system/config.json"])
 
     @pytest.mark.asyncio
-    async def test_mnt_namespace_raises(self, scoped):
+    def test_mnt_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
             scoped.read_batch(["/mnt/gmail/INBOX"])
 
     @pytest.mark.asyncio
-    async def test_mixed_scoped_and_global_raises(self, nx, scoped, user_root):
+    def test_mixed_scoped_and_global_raises(self, nx, scoped, user_root):
         """A single global path in a mixed batch should raise before reading anything."""
         nx.write(f"{user_root}/workspace/ok.txt", b"ok")
         with pytest.raises(AccessDeniedError):
             scoped.read_batch(["/workspace/ok.txt", "/memory/secret.txt"])
 
     @pytest.mark.asyncio
-    async def test_partial_mode_still_raises_for_global_paths(self, scoped):
+    def test_partial_mode_still_raises_for_global_paths(self, scoped):
         """Scope violation is not swallowed by partial mode."""
         with pytest.raises(AccessDeniedError):
             scoped.read_batch(["/memory/secret.txt"], partial=True)
@@ -101,7 +101,7 @@ class TestScopedReadBatchAdminBypass:
     """Admin context may read global namespace paths."""
 
     @pytest.mark.asyncio
-    async def test_admin_can_read_global_namespace(self, nx, user_root):
+    def test_admin_can_read_global_namespace(self, nx, user_root):
         """With is_admin=True on context, global paths are allowed."""
         from nexus.contracts.types import OperationContext
 

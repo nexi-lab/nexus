@@ -19,9 +19,8 @@ from nexus.contracts.types import OperationContext
 
 
 def _mock_gateway(*, permission_ok: bool = True) -> MagicMock:
-    """Create a mock NexusFSGateway with router, rebac, metadata, etc."""
+    """Create a mock NexusFSGateway with rebac, metadata, etc."""
     gw = MagicMock()
-    gw.router.has_mount.return_value = False
     gw.mkdir = AsyncMock(return_value=None)
     gw.rebac_create.return_value = "tuple-1"
     gw.rebac_check.return_value = permission_ok
@@ -46,7 +45,8 @@ def _build_service(
     # nexus_fs is required for sys_setattr(DT_MOUNT) — kernel-backed mount path
     # after F4 Rust-ification.
     mock_nexus_fs = MagicMock()
-    service = MountService(router=gateway.router, gateway=gateway, nexus_fs=mock_nexus_fs)
+    mock_dlc = MagicMock()
+    service = MountService(dlc=mock_dlc, gateway=gateway, nexus_fs=mock_nexus_fs)
     # DriverLifecycleCoordinator is kernel-owned; mock it for unit tests.
     service._driver_coordinator = MagicMock()
     return service, gateway

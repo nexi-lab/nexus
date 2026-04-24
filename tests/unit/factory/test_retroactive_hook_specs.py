@@ -65,7 +65,6 @@ class TestHookSpecConformance:
 
         hook = VirtualViewResolver(
             metadata=MagicMock(),
-            path_router=MagicMock(),
             permission_checker=MagicMock(),
         )
         assert hasattr(hook, "hook_spec")
@@ -171,7 +170,6 @@ class TestHookSpecDeclarations:
 
         hook = VirtualViewResolver(
             metadata=MagicMock(),
-            path_router=MagicMock(),
             permission_checker=MagicMock(),
         )
         spec = hook.hook_spec()

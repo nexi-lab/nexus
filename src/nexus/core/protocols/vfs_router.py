@@ -1,7 +1,8 @@
 """VFS router kernel protocol (Issue #1383).
 
 Defines the contract for virtual path routing to storage backends.
-Existing implementation: ``nexus.core.router.PathRouter`` (sync, metastore-backed).
+Routing is handled by the Rust kernel (``PyKernel.route``) + DLC
+for backend refs. PathRouter was deleted in §12 Phase F3.
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
@@ -60,11 +61,12 @@ class MountInfo:
 class VFSRouterProtocol(Protocol):
     """Kernel contract for virtual path routing.
 
-    PathRouter is a read-only query engine over MountTable.
-    Mount mutations go through DriverLifecycleCoordinator.
+    Routing is performed by the Rust kernel + DLC (kernel.route() for
+    LPM, DLC for Python-side backend refs). Mount mutations go through
+    DriverLifecycleCoordinator.
 
-    All methods are sync — metastore-backed PathRouter reads are ~5 μs
-    via redb's Rust in-memory cache. No async overhead needed.
+    All methods are sync — kernel reads are ~5 us via Rust in-memory
+    cache. No async overhead needed.
     """
 
     def route(self, virtual_path: str) -> ResolvedPath: ...

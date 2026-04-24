@@ -216,7 +216,7 @@ async def _run_chat(
     # ── Bootstrap NexusFS ──
     if with_addr:
         # Remote mode: connect to existing nexusd
-        nx = await nexus.connect(config={"profile": "remote", "url": f"http://{with_addr}"})
+        nx = nexus.connect(config={"profile": "remote", "url": f"http://{with_addr}"})
     else:
         # Embedded mode: in-process NexusFS (invocation-style, exclusive)
         profile = deployment_profile or os.environ.get("NEXUS_PROFILE", "slim")
@@ -228,7 +228,7 @@ async def _run_chat(
             import tempfile
 
             data_dir = tempfile.mkdtemp(prefix="nexus-acp-")
-        nx = await nexus.connect(config={"profile": profile, "data_dir": data_dir})
+        nx = nexus.connect(config={"profile": profile, "data_dir": data_dir})
 
     try:
         # ── Mount LLM backend (auto-detect driver from env) ──

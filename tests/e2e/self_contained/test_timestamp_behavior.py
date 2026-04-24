@@ -28,7 +28,7 @@ async def nexus_fs(isolated_db, tmp_path):
     """Create a NexusFS instance for testing via factory."""
     backend = CASLocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )
     yield nx

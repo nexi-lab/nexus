@@ -238,11 +238,11 @@ class TestGlobBenchmarks:
         """Benchmark listing directory with 1000 files."""
         nx = benchmark_nexus
 
-        async def _setup():
+        def _setup():
             for i in range(1000):
                 nx.write(f"/bench_1k/file_{i:04d}.txt", b"x")
 
-        benchmark_loop.run_until_complete(_setup())
+        _setup()
 
         def list_dir():
             return nx.sys_readdir("/bench_1k")
@@ -254,11 +254,11 @@ class TestGlobBenchmarks:
         """Benchmark listing directory with 10K files."""
         nx = benchmark_nexus
 
-        async def _setup():
+        def _setup():
             for i in range(10_000):
                 nx.write(f"/bench_10k/file_{i:05d}.txt", b"x")
 
-        benchmark_loop.run_until_complete(_setup())
+        _setup()
 
         def list_dir():
             return nx.sys_readdir("/bench_10k")

@@ -6,22 +6,22 @@ in the database for persistence across server restarts.
 Phase 2: Mount Mixin Refactoring
 Extracted from: nexus_fs_mounts.py (persistence methods)
 
-Mount activation methods (save_mount, load_mount, load_all_mounts) are async
-because MountCoreService.add_mount is async. Database-only methods remain sync.
+Mount activation methods (save_mount, load_mount, load_all_mounts) are sync
+because MountCoreService.add_mount_sync is sync. Database-only methods remain sync.
 
 Example:
     ```python
     persist_service = MountPersistService(mount_manager, mount_service)
 
     # Save mount config
-    mount_id = await persist_service.save_mount(
+    mount_id = persist_service.save_mount(
         mount_point="/mnt/gcs",
         backend_type="path_gcs",
         backend_config={"bucket": "my-bucket"},
     )
 
     # Load on startup
-    result = await persist_service.load_all_mounts()
+    result = persist_service.load_all_mounts()
     print(f"Loaded {result['loaded']} mounts")
     ```
 """
@@ -44,9 +44,8 @@ logger = logging.getLogger(__name__)
 class MountPersistService:
     """Handles mount configuration persistence.
 
-    Mount activation methods (save_mount, load_mount, load_all_mounts)
-    are async because MountCoreService.add_mount is async.
-    Database-only methods remain sync.
+    All methods are sync. Mount activation delegates to
+    MountCoreService.add_mount_sync.
     """
 
     def __init__(
@@ -81,7 +80,7 @@ class MountPersistService:
                 "Mount manager not available. Ensure NexusFS is initialized with a database."
             )
 
-    async def save_mount(
+    def save_mount(
         self,
         mount_point: str,
         backend_type: str,
@@ -143,7 +142,7 @@ class MountPersistService:
 
         return mount_id
 
-    async def load_mount(
+    def load_mount(
         self,
         mount_point: str,
         context: "OperationContext | None" = None,
@@ -187,7 +186,7 @@ class MountPersistService:
             context=context,
         )
 
-    async def load_all_mounts(self) -> dict[str, Any]:
+    def load_all_mounts(self) -> dict[str, Any]:
         """Load all saved mount configurations.
 
         Returns:

@@ -15,23 +15,23 @@ from tests.helpers.failing_backend import FailingBackend
 
 
 @pytest.fixture()
-async def nx(tmp_path):
+def nx(tmp_path):
     """Create a NexusFS instance with permissions disabled for unit tests."""
-    return await make_test_nexus(tmp_path)
+    return make_test_nexus(tmp_path)
 
 
 class TestWriteBatchHappyPath:
     """Basic batch write operations that should succeed."""
 
     @pytest.mark.asyncio
-    async def test_write_batch_single_file(self, nx):
+    def test_write_batch_single_file(self, nx):
         results = nx.write_batch([("/files/a.txt", b"hello")])
         assert len(results) == 1
         assert results[0]["size"] == 5
         assert nx.sys_read("/files/a.txt") == b"hello"
 
     @pytest.mark.asyncio
-    async def test_write_batch_multiple_files(self, nx):
+    def test_write_batch_multiple_files(self, nx):
         files = [
             ("/files/a.txt", b"aaa"),
             ("/files/b.txt", b"bbb"),
@@ -44,25 +44,25 @@ class TestWriteBatchHappyPath:
             assert results[i]["size"] == len(content)
 
     @pytest.mark.asyncio
-    async def test_write_batch_returns_etag(self, nx):
+    def test_write_batch_returns_etag(self, nx):
         results = nx.write_batch([("/files/a.txt", b"content")])
         assert "etag" in results[0]
         assert isinstance(results[0]["etag"], str)
         assert len(results[0]["etag"]) > 0
 
     @pytest.mark.asyncio
-    async def test_write_batch_returns_version(self, nx):
+    def test_write_batch_returns_version(self, nx):
         results = nx.write_batch([("/files/a.txt", b"v1")])
         assert results[0]["version"] == 1
 
     @pytest.mark.asyncio
-    async def test_write_batch_returns_modified_at(self, nx):
+    def test_write_batch_returns_modified_at(self, nx):
         results = nx.write_batch([("/files/a.txt", b"data")])
         assert "modified_at" in results[0]
         assert results[0]["modified_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_write_batch_deduplicates_content(self, nx):
+    def test_write_batch_deduplicates_content(self, nx):
         """Same content written to different paths should share the same hash."""
         content = b"identical content"
         results = nx.write_batch(
@@ -78,7 +78,7 @@ class TestWriteBatchEmptyInput:
     """Edge case: empty batch."""
 
     @pytest.mark.asyncio
-    async def test_empty_batch_returns_empty_list(self, nx):
+    def test_empty_batch_returns_empty_list(self, nx):
         results = nx.write_batch([])
         assert results == []
 
@@ -87,13 +87,13 @@ class TestWriteBatchVersioning:
     """Version incrementing when overwriting existing files."""
 
     @pytest.mark.asyncio
-    async def test_overwrite_increments_version(self, nx):
+    def test_overwrite_increments_version(self, nx):
         nx.write("/files/a.txt", b"v1")
         results = nx.write_batch([("/files/a.txt", b"v2")])
         assert results[0]["version"] == 2
 
     @pytest.mark.asyncio
-    async def test_batch_overwrite_mixed_new_and_existing(self, nx):
+    def test_batch_overwrite_mixed_new_and_existing(self, nx):
         nx.write("/files/existing.txt", b"old")
         results = nx.write_batch(
             [
@@ -109,7 +109,7 @@ class TestWriteBatchWithFailingBackend:
     """Backend failures during batch write."""
 
     @pytest.mark.asyncio
-    async def test_backend_failure_raises_error(self, tmp_path):
+    def test_backend_failure_raises_error(self, tmp_path):
         """When backend.write_content() fails, the error should propagate."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.exceptions import BackendError
@@ -119,7 +119,7 @@ class TestWriteBatchWithFailingBackend:
         real_backend = CASLocalBackend(root_path=data_dir)
         failing = FailingBackend(real_backend, fail_on_nth=2, fail_permanently=True)
 
-        nx = await make_test_nexus(tmp_path / "nx", backend=failing)
+        nx = make_test_nexus(tmp_path / "nx", backend=failing)
 
         # First file write succeeds (call #1 = write_content)
         # Second file write fails (call #2+ = write_content, permanently)
@@ -136,20 +136,20 @@ class TestWriteBatchContentEdgeCases:
     """Edge cases in content payloads."""
 
     @pytest.mark.asyncio
-    async def test_empty_content(self, nx):
+    def test_empty_content(self, nx):
         results = nx.write_batch([("/files/empty.txt", b"")])
         assert results[0]["size"] == 0
         assert nx.sys_read("/files/empty.txt") == b""
 
     @pytest.mark.asyncio
-    async def test_binary_content(self, nx):
+    def test_binary_content(self, nx):
         binary = bytes(range(256))
         results = nx.write_batch([("/files/binary.bin", binary)])
         assert results[0]["size"] == 256
         assert nx.sys_read("/files/binary.bin") == binary
 
     @pytest.mark.asyncio
-    async def test_large_batch(self, nx):
+    def test_large_batch(self, nx):
         """Write 50 files in a single batch."""
         files = [(f"/files/file_{i:03d}.txt", f"content_{i}".encode()) for i in range(50)]
         results = nx.write_batch(files)
@@ -163,7 +163,7 @@ class TestWriteBatchPathValidation:
     """Path validation for batch writes."""
 
     @pytest.mark.asyncio
-    async def test_invalid_path_in_batch(self, nx):
+    def test_invalid_path_in_batch(self, nx):
         """An invalid path should raise InvalidPathError."""
         from nexus.contracts.exceptions import InvalidPathError
 

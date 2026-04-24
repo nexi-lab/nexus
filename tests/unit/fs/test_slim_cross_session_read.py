@@ -106,15 +106,15 @@ def test_slim_read_propagates_non_notfound_backend_errors(
         raise BackendError("simulated disk corruption", backend="local")
 
     monkeypatch.setattr(backend, "read_content", _raise_backend_error)
-    # Force slim-mode on the reader so the read path exercises the facade's
-    # Python metastore fallback (which calls Python backend.read_content)
-    # instead of the Rust kernel's native CAS read (which bypasses the
-    # Python backend and wouldn't see the monkeypatch).  In slim packages
-    # _kernel is None from construction; in CI nexus_kernel is built so we
-    # null it here after mount setup.  router._kernel is also nulled so
-    # route() uses the Python DLC fallback.
-    reader._kernel._kernel = None
-    reader._kernel.router._kernel = None
+
+    # Force sys_read to fail with NexusFileNotFoundError so the facade
+    # enters the Python metastore fallback path (which calls
+    # backend.read_content via _slim_metastore_read).  The Rust kernel
+    # must stay alive for routing in the fallback path.
+    def _raise_not_found(*_a: object, **_kw: object) -> bytes:
+        raise NexusFileNotFoundError("/files/corrupt.txt")
+
+    monkeypatch.setattr(reader._kernel, "sys_read", _raise_not_found)
 
     try:
         with pytest.raises(BackendError, match="simulated disk corruption"):

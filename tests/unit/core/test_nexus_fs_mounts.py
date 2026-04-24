@@ -14,7 +14,6 @@ _mount_persist_service, and _sync_service (replacing old __getattr__ routing):
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import tempfile
 from collections.abc import Generator
@@ -40,14 +39,12 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx = asyncio.run(
-        create_nexus_fs(
-            backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
-            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=False),
-        )
+    nx = create_nexus_fs(
+        backend=CASLocalBackend(temp_dir),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()
@@ -56,14 +53,12 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 @pytest.fixture
 def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
-    nx = asyncio.run(
-        create_nexus_fs(
-            backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
-            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=True),
-        )
+    nx = create_nexus_fs(
+        backend=CASLocalBackend(temp_dir),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),
     )
     yield nx
     nx.close()
@@ -88,7 +83,7 @@ class TestListMounts:
         mount = mounts[0]
         assert "mount_point" in mount
 
-    async def test_list_mounts_after_add_mount(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_list_mounts_after_add_mount(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test list_mounts includes newly added mounts."""
         # Create a new directory for the mount
         mount_data_dir = temp_dir / "mount_data"
@@ -122,7 +117,7 @@ class TestGetMount:
         mount = nx.service("mount").get_mount_sync("/nonexistent")
         assert mount is None
 
-    async def test_get_mount_after_add(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_get_mount_after_add(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test getting a mount after adding it."""
         mount_data_dir = temp_dir / "mount_data"
         mount_data_dir.mkdir()
@@ -149,7 +144,7 @@ class TestHasMount:
         """Test has_mount returns False for nonexistent mount."""
         assert nx.service("mount").has_mount_sync("/nonexistent") is False
 
-    async def test_has_mount_after_add(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_has_mount_after_add(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test has_mount after adding a mount."""
         mount_data_dir = temp_dir / "mount_data"
         mount_data_dir.mkdir()
@@ -168,7 +163,7 @@ class TestHasMount:
 class TestAddMount:
     """Tests for add_mount method."""
 
-    async def test_add_mount_local_backend(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_add_mount_local_backend(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test adding a local backend mount."""
         mount_data_dir = temp_dir / "local_mount"
         mount_data_dir.mkdir()
@@ -182,7 +177,7 @@ class TestAddMount:
         assert mount_id == "/mnt/local"
         assert nx.service("mount").has_mount_sync("/mnt/local")
 
-    async def test_add_mount_unsupported_backend_raises_error(self, nx: NexusFS) -> None:
+    def test_add_mount_unsupported_backend_raises_error(self, nx: NexusFS) -> None:
         """Test adding an unsupported backend type raises RuntimeError."""
         with pytest.raises(RuntimeError, match="Unsupported backend type"):
             nx.service("mount").add_mount_sync(
@@ -191,7 +186,7 @@ class TestAddMount:
                 backend_config={},
             )
 
-    async def test_add_mount_with_context_grants_permission(
+    def test_add_mount_with_context_grants_permission(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that add_mount grants direct_owner permission to the user."""
@@ -223,7 +218,7 @@ class TestAddMount:
 class TestRemoveMount:
     """Tests for remove_mount method."""
 
-    async def test_remove_mount_success(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_remove_mount_success(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test removing a mount successfully."""
         mount_data_dir = temp_dir / "removable_mount"
         mount_data_dir.mkdir()
@@ -246,7 +241,7 @@ class TestRemoveMount:
         assert result["removed"] is False
         assert "Mount not found" in result["errors"][0]
 
-    async def test_remove_mount_returns_cleanup_info(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_remove_mount_returns_cleanup_info(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test that remove_mount returns cleanup information."""
         mount_data_dir = temp_dir / "cleanup_mount"
         mount_data_dir.mkdir()
@@ -270,10 +265,10 @@ class TestSaveMount:
     """Tests for save_mount method."""
 
     @pytest.mark.asyncio
-    async def test_save_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
+    def test_save_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that save_mount raises RuntimeError without mount manager."""
         # Create NexusFS without database (no mount manager)
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-save-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_save_mount.db"),
@@ -294,7 +289,7 @@ class TestSaveMount:
         finally:
             nx.close()
 
-    async def test_save_mount_with_mount_manager(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_save_mount_with_mount_manager(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test save_mount when mount manager is available."""
         mount_svc = nx.service("mount")
         if mount_svc is None or mount_svc.mount_manager is None:
@@ -303,7 +298,7 @@ class TestSaveMount:
         mount_data_dir = temp_dir / "saved_mount"
         mount_data_dir.mkdir()
 
-        mount_id = await nx.service("mount_persist").save_mount(
+        mount_id = nx.service("mount_persist").save_mount(
             mount_point="/mnt/saved",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -319,11 +314,9 @@ class TestListSavedMounts:
     """Tests for list_saved_mounts method."""
 
     @pytest.mark.asyncio
-    async def test_list_saved_mounts_without_mount_manager_raises_error(
-        self, temp_dir: Path
-    ) -> None:
+    def test_list_saved_mounts_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that list_saved_mounts raises RuntimeError without mount manager."""
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(
                 str(temp_dir / "raft-test-list-saved-mounts")
@@ -346,9 +339,9 @@ class TestLoadMount:
     """Tests for load_mount method."""
 
     @pytest.mark.asyncio
-    async def test_load_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
+    def test_load_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that load_mount raises RuntimeError without mount manager."""
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-load-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_load_mount.db"),
@@ -369,11 +362,9 @@ class TestDeleteSavedMount:
     """Tests for delete_saved_mount method."""
 
     @pytest.mark.asyncio
-    async def test_delete_saved_mount_without_mount_manager_raises_error(
-        self, temp_dir: Path
-    ) -> None:
+    def test_delete_saved_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that delete_saved_mount raises RuntimeError without mount manager."""
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(
                 str(temp_dir / "raft-test-delete-saved-mount")
@@ -395,22 +386,22 @@ class TestDeleteSavedMount:
 class TestLoadAllSavedMounts:
     """Tests for load_all_saved_mounts method."""
 
-    async def test_load_all_saved_mounts_without_mount_manager(self, nx: NexusFS) -> None:
+    def test_load_all_saved_mounts_without_mount_manager(self, nx: NexusFS) -> None:
         """Test load_all_saved_mounts when mount manager is not available."""
         mount_svc = nx.service("mount")
         if mount_svc is not None and mount_svc.mount_manager is not None:
             pytest.skip("Mount manager is available, test N/A")
 
-        result = await nx.service("mount_persist").load_all_mounts()
+        result = nx.service("mount_persist").load_all_mounts()
         assert result == {"loaded": 0, "failed": 0, "errors": []}
 
-    async def test_load_all_saved_mounts_empty(self, nx: NexusFS) -> None:
+    def test_load_all_saved_mounts_empty(self, nx: NexusFS) -> None:
         """Test load_all_saved_mounts when no mounts are saved."""
         mount_svc = nx.service("mount")
         if mount_svc is None or mount_svc.mount_manager is None:
             pytest.skip("Mount manager not available")
 
-        result = await nx.service("mount_persist").load_all_mounts()
+        result = nx.service("mount_persist").load_all_mounts()
         assert "loaded" in result
         assert "failed" in result
         assert "errors" in result
@@ -419,7 +410,7 @@ class TestLoadAllSavedMounts:
 class TestMountPermissionEnforcement:
     """Tests for mount operation permission enforcement."""
 
-    async def test_add_mount_requires_write_permission_on_parent(
+    def test_add_mount_requires_write_permission_on_parent(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that add_mount fails without write permission on parent path."""
@@ -446,7 +437,7 @@ class TestMountPermissionEnforcement:
                 context=context,
             )
 
-    async def test_remove_mount_requires_write_permission(
+    def test_remove_mount_requires_write_permission(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that remove_mount fails without write permission on mount."""
@@ -486,7 +477,7 @@ class TestMountPermissionEnforcement:
                 "/mnt/admin_mount", context=user_context
             )
 
-    async def test_get_mount_returns_none_without_read_permission(
+    def test_get_mount_returns_none_without_read_permission(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
         """Test that get_mount returns None without read permission."""
@@ -526,7 +517,7 @@ class TestMountPermissionEnforcement:
         )
         assert result is None
 
-    async def test_no_context_allows_operations_for_backward_compatibility(
+    def test_no_context_allows_operations_for_backward_compatibility(
         self, nx: NexusFS, temp_dir: Path
     ) -> None:
         """Test that operations without context succeed (backward compatibility)."""
@@ -555,7 +546,7 @@ class TestMountIntegration:
     """Integration tests for mount functionality."""
 
     @pytest.mark.asyncio
-    async def test_write_to_mount(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_write_to_mount(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test writing files to a mounted backend."""
         mount_data_dir = temp_dir / "write_mount"
         mount_data_dir.mkdir()
@@ -569,17 +560,18 @@ class TestMountIntegration:
         # Write to the mount
         nx.write("/mnt/write/test.txt", b"Hello from mount!")
 
-        # Read back via route.backend to avoid pool collision
+        # Read back via kernel route to avoid pool collision
         # (all CASLocalBackend instances have name="local", so the pool
         # can only hold one; resolve_backend may return a different instance)
         meta = nx.metadata.get("/mnt/write/test.txt")
         assert meta is not None
-        route = nx.router.route("/mnt/write/test.txt", zone_id=nx._zone_id)
-        content = route.backend.read_content(meta.etag)
+        rr = nx._kernel.route("/mnt/write/test.txt", nx._zone_id)
+        dlc_info = nx._driver_coordinator.get_mount_info_canonical(rr.mount_point)
+        content = dlc_info.backend.read_content(meta.etag)
         assert content == b"Hello from mount!"
 
     @pytest.mark.asyncio
-    async def test_list_mount_contents(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_list_mount_contents(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test listing files in a mounted backend."""
         mount_data_dir = temp_dir / "list_mount"
         mount_data_dir.mkdir()
@@ -601,7 +593,7 @@ class TestMountIntegration:
         assert "/mnt/list/file2.txt" in files
 
     @pytest.mark.asyncio
-    async def test_multiple_mounts(self, nx: NexusFS, temp_dir: Path) -> None:
+    def test_multiple_mounts(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test multiple mounts can coexist."""
         mount1_dir = temp_dir / "mount1"
         mount2_dir = temp_dir / "mount2"
@@ -628,26 +620,27 @@ class TestMountIntegration:
         nx.write("/mnt/one/file.txt", b"Mount 1")
         nx.write("/mnt/two/file.txt", b"Mount 2")
 
-        # Read back via route.backend to avoid pool collision.
+        # Read back via kernel route to avoid pool collision.
         # All CASLocalBackend instances share name="local", so the
         # coordinator's backend_pool can only hold one at a time;
         # resolve_backend("local") returns whichever was last registered.
-        # Verify content via route.backend (correctly resolved by LPM).
+        # Verify content via DLC mount info (correctly resolved by LPM).
         for mount_path, expected in [
             ("/mnt/one/file.txt", b"Mount 1"),
             ("/mnt/two/file.txt", b"Mount 2"),
         ]:
             meta = nx.metadata.get(mount_path)
             assert meta is not None, f"metadata missing for {mount_path}"
-            route = nx.router.route(mount_path, zone_id=nx._zone_id)
-            content = route.backend.read_content(meta.etag)
+            rr = nx._kernel.route(mount_path, nx._zone_id)
+            dlc_info = nx._driver_coordinator.get_mount_info_canonical(rr.mount_point)
+            content = dlc_info.backend.read_content(meta.etag)
             assert content == expected, f"content mismatch for {mount_path}"
 
 
 class TestMountContextUtilsIntegration:
     """Tests for mount operations using context_utils functions."""
 
-    async def test_add_mount_uses_context_utils_functions(
+    def test_add_mount_uses_context_utils_functions(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ):
         """Test that add_mount uses context_utils.get_zone_id and get_user_identity."""
@@ -685,9 +678,7 @@ class TestMountContextUtilsIntegration:
             mock_get_zone.assert_called()
             mock_get_user.assert_called()
 
-    async def test_remove_mount_with_context_works(
-        self, nx_with_permissions: NexusFS, temp_dir: Path
-    ):
+    def test_remove_mount_with_context_works(self, nx_with_permissions: NexusFS, temp_dir: Path):
         """Test that remove_mount works correctly with context (uses context_utils internally)."""
         from nexus.contracts.types import OperationContext
 
@@ -721,7 +712,7 @@ class TestMountContextUtilsIntegration:
         assert result["removed"] is True
         assert not nx_with_permissions.service("mount").has_mount_sync("/mnt/remove_test")
 
-    async def test_add_mount_oauth_backend_uses_context_utils_database_url(
+    def test_add_mount_oauth_backend_uses_context_utils_database_url(
         self, nx: NexusFS, temp_dir: Path
     ):
         """Test that add_mount for OAuth backends uses context_utils.get_database_url."""
@@ -774,7 +765,7 @@ class TestMountContextUtilsIntegration:
             # Other exceptions are acceptable (e.g., missing OAuth credentials)
             pass
 
-    async def test_add_mount_with_none_context_uses_defaults(
+    def test_add_mount_with_none_context_uses_defaults(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ):
         """Test that add_mount handles None context gracefully using context_utils defaults."""

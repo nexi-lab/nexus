@@ -34,7 +34,7 @@ async def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Nexus
     monkeypatch.delenv("POSTGRES_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

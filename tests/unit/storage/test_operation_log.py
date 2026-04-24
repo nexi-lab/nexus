@@ -41,11 +41,11 @@ def local_backend(temp_dir: Path) -> CASLocalBackend:
 
 
 @pytest.fixture
-async def nx(
+def nx(
     temp_dir: Path, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance for testing."""
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=local_backend,
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,
@@ -288,7 +288,7 @@ async def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordSto
 
 
 @pytest.mark.asyncio
-async def test_undo_write_new_file(nx: NexusFS) -> None:
+def test_undo_write_new_file(nx: NexusFS) -> None:
     """Test undoing a write operation for a new file (should delete it)."""
     path = "/test.txt"
     content = b"Test content"

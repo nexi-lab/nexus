@@ -64,27 +64,26 @@ class TestColdStartNexusFSConstruction:
     """Verify NexusFS can be constructed via factory (test mode)."""
 
     @pytest.mark.asyncio
-    async def test_nexus_fs_minimal_construction(self, tmp_path) -> None:
+    def test_nexus_fs_minimal_construction(self, tmp_path) -> None:
         """NexusFS should construct via make_test_nexus with defaults."""
         from tests.conftest import make_test_nexus
 
-        nx = await make_test_nexus(tmp_path)
+        nx = make_test_nexus(tmp_path)
 
         # ServiceRegistry should be empty (SLIM profile — no bricks)
         assert nx.service("rebac") is None
         assert nx.service("mount") is None
         assert nx.service("mcp") is None
 
-    @pytest.mark.asyncio
-    async def test_enlist_wired_services(self, tmp_path) -> None:
+    def test_enlist_wired_services(self, tmp_path) -> None:
         """enlist_wired_services should register services via registry (#1708)."""
         from unittest.mock import MagicMock
 
         from nexus.factory.service_routing import enlist_wired_services
         from tests.conftest import make_test_nexus
 
-        nx = await make_test_nexus(tmp_path)
+        nx = make_test_nexus(tmp_path)
 
         mock_svc = MagicMock()
-        await enlist_wired_services(nx, {"rebac_service": mock_svc})
+        enlist_wired_services(nx, {"rebac_service": mock_svc})
         assert nx.service("rebac") is mock_svc

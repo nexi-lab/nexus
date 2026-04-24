@@ -101,7 +101,7 @@ async def run_benchmark(enable_deferred: bool = False):
         backend = CASLocalBackend(str(storage_path))
 
         # Create NexusFS with permissions ENABLED via factory
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),

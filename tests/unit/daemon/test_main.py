@@ -13,7 +13,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -297,7 +297,7 @@ class TestMainCli:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
 
         mock_nx = MagicMock()
-        mock_connect = AsyncMock(return_value=mock_nx)
+        mock_connect = MagicMock(return_value=mock_nx)
 
         mock_app = MagicMock()
         mock_create_app = MagicMock(return_value=mock_app)
@@ -343,7 +343,7 @@ class TestMainCli:
 
         mock_nx = MagicMock()
         mock_nx._lifecycle_coordinator = mock_coordinator
-        mock_connect = AsyncMock(return_value=mock_nx)
+        mock_connect = MagicMock(return_value=mock_nx)
 
         mock_app = MagicMock()
         mock_create_app = MagicMock(return_value=mock_app)

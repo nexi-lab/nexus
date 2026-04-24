@@ -18,7 +18,7 @@ from tests.conftest import make_test_nexus
 
 
 @pytest.fixture()
-async def nx_with_db(tmp_path):
+def nx_with_db(tmp_path):
     """Create a NexusFS instance with a real SQLite database for provisioning tests."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -29,7 +29,7 @@ async def nx_with_db(tmp_path):
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
 
-    nx = await make_test_nexus(tmp_path)
+    nx = make_test_nexus(tmp_path)
     nx.SessionLocal = session_factory
 
     # Mock entity registry
@@ -57,7 +57,7 @@ async def nx_with_db(tmp_path):
             session_factory=session_factory,
             entity_registry=mock_registry,
             api_key_creator=mock_key_creator,
-            backend=nx.router.route("/").backend,
+            backend=nx._driver_coordinator.get_root_backend(),
             rebac_manager=mock_rebac_manager,
             rmdir_fn=nx.rmdir,
             rebac_create_fn=MagicMock(),
@@ -286,7 +286,7 @@ class TestProvisionUserPartialFailure:
         """Missing SessionLocal should raise TypeError (None is not callable)."""
         from nexus.services.lifecycle.user_provisioning import UserProvisioningService
 
-        nx = await make_test_nexus(tmp_path)
+        nx = make_test_nexus(tmp_path)
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = None
         # Issue #1801: _system_services deleted — pass mocks directly to service constructor
@@ -298,7 +298,7 @@ class TestProvisionUserPartialFailure:
                 session_factory=None,
                 entity_registry=mock_registry,
                 api_key_creator=None,
-                backend=nx.router.route("/").backend,
+                backend=nx._driver_coordinator.get_root_backend(),
                 rebac_manager=MagicMock(),
                 rmdir_fn=nx.rmdir,
                 rebac_create_fn=MagicMock(),

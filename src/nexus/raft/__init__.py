@@ -1,18 +1,33 @@
 """Raft consensus for Nexus.
 
-Since R20.18.6, federation is owned entirely by the Rust kernel (see
-`Kernel::init_federation_from_env` + `/__sys__/zones/` procfs). This
-module exposes only the embedded-mode Metastore PyO3 class + lock
-data types; `ZoneManager` / `ZoneHandle` pyclasses were deleted. Their
-names are kept here as `None` so legacy imports still resolve until
-every caller migrates off.
+This module provides Python bindings to Rust Raft nodes for metadata
+and lock operations.
+
+Two access modes:
+1. Metastore (PyO3 FFI) - Direct redb access for embedded mode (~5μs)
+2. ZoneManager + ZoneHandle (PyO3 FFI) - Multi-zone Raft consensus (~2-10ms)
 
 REMOTE profile uses RPCTransport → NexusVFSService (see nexus.remote).
+Federation uses NexusFederation (see nexus.raft.federation).
 
 Architecture:
     Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
-    Consensus:  NexusFS -> PyKernel.zone_* / federation_rpc -> Rust -> raft (~2-10ms)
+    Consensus:  NexusFS -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
     Remote:     NexusFS -> RPCTransport -> NexusVFSService (gRPC) -> server (~50-100ms)
+
+Example (Metastore - embedded mode):
+    from nexus.raft import Metastore
+
+    store = Metastore("/var/lib/nexus/metadata")
+    store.set_metadata("/path/to/file", metadata_bytes)
+    metadata = store.get_metadata("/path/to/file")
+
+Example (ZoneManager - consensus mode):
+    from nexus.raft import ZoneManager
+
+    mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
+    handle = mgr.create_zone("root", ["2@peer:2126"])
+    handle.set_metadata("/path/to/file", metadata_bytes)  # replicated via consensus
 """
 
 import logging
@@ -46,11 +61,19 @@ try:
 except ImportError:
     logger.debug("Metastore not available. Install with: maturin develop -m rust/kernel/Cargo.toml")
 
-# R20.18.6: PyZoneManager + PyZoneHandle pyclasses deleted. Names are
-# kept here as `None` so legacy imports keep resolving; any remaining
-# caller that tries to use them will blow up loudly at call time.
+# =========================================================================
+# ZoneHandle: Per-zone Raft node handle (requires --features full)
+# =========================================================================
 ZoneHandle: Any = None
-ZoneManager: Any = None
+try:
+    import nexus_kernel as _pyo3_mod2
+
+    ZoneHandle = getattr(_pyo3_mod2, "ZoneHandle", None)
+except (ImportError, AttributeError):
+    pass
+
+# Python wrappers for multi-zone federation
+from nexus.raft.zone_manager import ZoneManager
 
 
 def require_metastore() -> None:
@@ -64,7 +87,7 @@ def require_metastore() -> None:
     if not _HAS_METASTORE:
         raise RuntimeError(
             "Metastore is not available. Build with:\n"
-            "  maturin develop -m rust/raft/Cargo.toml --features python\n"
+            "  maturin develop -m rust/kernel/Cargo.toml\n"
             "Or install the pre-built wheel:\n"
             "  pip install nexus-ai-fs"
         )

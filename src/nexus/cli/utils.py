@@ -195,10 +195,10 @@ class _LocalWorkspaceFilesystemProxy:
         return _wrapped
 
 
-async def connect_local_workspace(data_dir: str) -> NexusFS:
+def connect_local_workspace(data_dir: str) -> NexusFS:
     """Connect to a self-contained local workspace without ambient env bleed."""
     with _isolated_local_workspace_env(data_dir):
-        filesystem = await nexus.connect(
+        filesystem = nexus.connect(
             config={
                 "profile": "slim",
                 "backend": "local",
@@ -266,7 +266,7 @@ async def get_filesystem(
             and not remote_profile_requested
             and remote_url_source is not ParameterSource.COMMANDLINE
         ):
-            return await connect_local_workspace(explicit_local_data_dir)
+            return connect_local_workspace(explicit_local_data_dir)
 
         resolved = resolve_connection(
             remote_url=remote_url,
@@ -280,7 +280,7 @@ async def get_filesystem(
                     "NEXUS_DATA_DIR",
                     str(Path(nexus.NEXUS_STATE_DIR) / "data"),
                 )
-                return await nexus.connect(config={"profile": "slim", "data_dir": data_dir})
+                return nexus.connect(config={"profile": "slim", "data_dir": data_dir})
 
             console.print("[nexus.error]Error:[/nexus.error] NEXUS_URL or --remote-url is required")
             console.print(
@@ -289,7 +289,7 @@ async def get_filesystem(
             )
             sys.exit(ExitCode.CONFIG_ERROR)
 
-        return await nexus.connect(
+        return nexus.connect(
             config={"profile": "remote", "url": resolved.url, "api_key": resolved.api_key}
         )
     except Exception as e:
@@ -324,7 +324,7 @@ async def get_default_filesystem() -> NexusFS:
             )
             sys.exit(ExitCode.CONFIG_ERROR)
 
-        return await nexus.connect(
+        return nexus.connect(
             config={
                 "profile": "remote",
                 "url": resolved.url,

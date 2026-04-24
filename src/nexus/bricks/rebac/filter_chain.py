@@ -37,7 +37,7 @@ class FilterContext:
     context: "OperationContext"
     cache: "PermissionCacheCoordinator"
     rebac_manager: "ReBACManager"
-    router: Any = None
+    dlc: Any = None
 
 
 @dataclass
@@ -277,12 +277,13 @@ class BulkReBACStrategy:
         checks = []
         for path in remaining:
             obj_type = "file"
-            if ctx.router and not path.startswith("/workspace"):
+            if ctx.dlc and not path.startswith("/workspace"):
                 try:
-                    route = ctx.router.route(path, zone_id=ctx.context.zone_id or ROOT_ZONE_ID)
-                    # RouteResult no longer has .namespace — use mount_point as obj_type hint
-                    if route.mount_point and route.mount_point != "/":
-                        obj_type = route.mount_point.strip("/").split("/")[0]
+                    resolved = ctx.dlc.resolve_path(path, ctx.context.zone_id or ROOT_ZONE_ID)
+                    if resolved is not None:
+                        _backend, _bp, user_mp = resolved
+                        if user_mp and user_mp != "/":
+                            obj_type = user_mp.strip("/").split("/")[0]
                 except Exception as e:
                     logger.debug("Route resolution failed for path %s: %s", path, e)
             checks.append((subject, "read", (obj_type, path)))

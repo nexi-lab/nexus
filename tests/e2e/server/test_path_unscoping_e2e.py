@@ -37,7 +37,7 @@ async def nexus_fs_local(tmp_path: Path):
     raft_dir = str(tmp_path / "raft-metadata")
     metadata_store = RaftMetadataStore.embedded(raft_dir)
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / 'records.db'}")
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

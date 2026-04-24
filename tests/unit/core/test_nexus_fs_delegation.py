@@ -76,7 +76,7 @@ class TestSysReaddir:
     """Tests for NexusFS.sys_readdir using kernel metadata directly."""
 
     @pytest.mark.asyncio
-    async def test_sys_readdir_uses_metadata(self, mock_fs, context):
+    def test_sys_readdir_uses_metadata(self, mock_fs, context):
         """sys_readdir calls self.metadata.list_iter() — no SearchService delegation."""
         entry1 = SimpleNamespace(path="/data/a.txt", size=10, etag="e1")
         entry2 = SimpleNamespace(path="/data/b.txt", size=20, etag="e2")
@@ -88,7 +88,7 @@ class TestSysReaddir:
         mock_fs.metadata.list_iter.assert_called_once_with(prefix="/data/", recursive=False)
 
     @pytest.mark.asyncio
-    async def test_sys_readdir_details(self, mock_fs, context):
+    def test_sys_readdir_details(self, mock_fs, context):
         """sys_readdir with details=True returns dicts from metadata."""
         entry = SimpleNamespace(
             path="/data/a.txt",
@@ -119,7 +119,7 @@ class TestSysReaddir:
         ]
 
     @pytest.mark.asyncio
-    async def test_sys_readdir_root_prefix(self, mock_fs, context):
+    def test_sys_readdir_root_prefix(self, mock_fs, context):
         """sys_readdir with path='/' uses empty prefix."""
         mock_fs.metadata.list_iter = MagicMock(return_value=iter([]))
 

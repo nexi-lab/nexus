@@ -42,7 +42,7 @@ async def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
 
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
 
-    nx = await create_nexus_fs(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=None,

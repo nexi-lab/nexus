@@ -33,7 +33,7 @@ def record_store(tmp_path):
 @pytest.fixture
 async def nx(tmp_path, record_store):
     """Create NexusFS instance for testing."""
-    nx_instance = await create_nexus_fs(
+    nx_instance = create_nexus_fs(
         backend=CASLocalBackend(tmp_path),
         metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
         record_store=record_store,

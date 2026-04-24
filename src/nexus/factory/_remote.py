@@ -5,9 +5,9 @@ forwarding all method calls to the server via the transport-agnostic
 ``call_rpc`` callback.
 
 The kernel runs its natural VFS pipeline (permission → route → backend →
-metadata) identically to standalone/federation modes. Rust RemoteBackend
-and RemoteMetastore (installed via ``sys_setattr(backend_type="remote")``)
-proxy every operation to the server — the kernel is never bypassed.
+metadata) identically to standalone/federation modes.  RemoteMetastore and
+RemoteBackend are complete ABC implementations that proxy every operation
+to the server — the kernel is never bypassed or hollowed out.
 
 Deployment-profile invariant: any distro ≥ kernel.
   REMOTE = kernel + remote services (RemoteServiceProxy for all slots).
@@ -21,15 +21,67 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
+    from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
 
 
-async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
+def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport") -> None:
+    """Route kernel ops that require server-side hooks through direct RPC.
+
+    The Rust kernel's internal Redb metastore is empty in the REMOTE profile
+    (no local data_dir), so kernel.sys_read / kernel.sys_write return hit=False
+    for all paths. Override these to call the authoritative server RPCs directly.
+
+    sys_rename is also overridden because the client-side kernel emulates it
+    as metadata put/delete, bypassing server-side post-rename hooks.
+    """
+    import types
+
+    def _remote_sys_read(
+        _self: Any,
+        path: str,
+        *,
+        count: int | None = None,
+        offset: int = 0,
+        context: Any = None,  # noqa: ARG001
+    ) -> bytes:
+        # NexusFS methods are sync (Phase 7). transport calls are blocking gRPC.
+        if offset or count is not None:
+            # Range read: use the JSON Call RPC so offset/count are forwarded to
+            # nexus_fs.sys_read() server-side. The typed read_file proto has no
+            # offset/count fields, so it can only do full-file reads.
+            params: dict[str, Any] = {"path": path, "offset": offset}
+            if count is not None:
+                params["count"] = count
+            result = transport.call_rpc("read", params)
+            # call_rpc + decode_rpc_message already unwraps {"__type__":"bytes","data":...}
+            return result if isinstance(result, bytes) else bytes(result)
+        # Full-file read: use the efficient typed ReadRequest proto (no JSON/base64 overhead).
+        return transport.read_file(path)
+
+    def _remote_sys_rename(
+        _self: Any,
+        old_path: str,
+        new_path: str,
+        *,
+        force: bool = False,
+        **_: Any,
+    ) -> dict[str, Any]:
+        transport.call_rpc(
+            "sys_rename", {"old_path": old_path, "new_path": new_path, "force": force}
+        )
+        return {}
+
+    cast(Any, nfs).sys_read = types.MethodType(_remote_sys_read, nfs)
+    cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
+
+
+def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
     """Wire RemoteServiceProxy instances via coordinator.enlist().
 
     Like ``mount -t nfs``: fills VFS service slots with RPC forwarders
@@ -55,7 +107,7 @@ async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) ->
     from nexus.factory.service_routing import _CANONICAL_NAMES, enlist_wired_services
 
     wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
-    await enlist_wired_services(nfs, wired_dict)
+    enlist_wired_services(nfs, wired_dict)
 
     # version_service — enlist into ServiceRegistry
     nfs.sys_setattr("/__sys__/services/version_service", service=proxy)

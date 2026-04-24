@@ -705,9 +705,9 @@ async def list_mounted_connectors(
         last_sync: str | None = None
         try:
             # Route to a dummy file path inside the mount to get the backend
-            route = nx.router.route(f"{mp.rstrip('/')}/_.yaml")
-            if route:
-                backend = route.backend
+            _resolved = nx._driver_coordinator.resolve_path(f"{mp.rstrip('/')}/_.yaml", "root")
+            if _resolved:
+                backend = _resolved[0]
                 skill_name = getattr(backend, "SKILL_NAME", None)
                 # Check multiple sources for operation names
                 schemas = getattr(backend, "SCHEMAS", {})
@@ -797,12 +797,12 @@ async def get_readme_doc(
     nx = _get_nx(request)
     mp = mount_path.rstrip("/")
 
-    # Get backend via router
+    # Get backend via DLC
     backend = None
     try:
-        route = nx.router.route(f"{mp}/_.yaml")
-        if route:
-            backend = route.backend
+        _resolved = nx._driver_coordinator.resolve_path(f"{mp}/_.yaml", "root")
+        if _resolved:
+            backend = _resolved[0]
     except Exception:
         pass
 
@@ -858,9 +858,9 @@ async def get_schema(
     # Get backend
     backend = None
     try:
-        route = nx.router.route(f"{mp}/_.yaml")
-        if route:
-            backend = route.backend
+        _resolved = nx._driver_coordinator.resolve_path(f"{mp}/_.yaml", "root")
+        if _resolved:
+            backend = _resolved[0]
     except Exception:
         pass
 
@@ -931,11 +931,13 @@ async def write_to_connector(
     # Preflight route resolution to discover backend type and backend_path.
     # Routing decision only — actual auth is enforced by backend.write_content()
     # (CLI connectors) or nx.write() (kernel path).
+    _route_backend = None
     _backend_path = None
-    _route = None
     try:
-        _route = nx.router.route(mount_path)
-        _backend_path = _route.backend_path if _route else None
+        _resolved = nx._driver_coordinator.resolve_path(mount_path, "root")
+        if _resolved:
+            _route_backend = _resolved[0]
+            _backend_path = _resolved[1]
     except Exception:
         pass
 
@@ -959,17 +961,14 @@ async def write_to_connector(
 
         from nexus.contracts.backend_features import BackendFeature
 
-        backend = _route.backend if _route else None
+        backend = _route_backend
         _caps: frozenset[str] = (
             getattr(backend, "backend_features", frozenset()) if backend else frozenset()
         )
         is_cli_connector = BackendFeature.CLI_BACKED in _caps
 
         if is_cli_connector and _backend_path:
-            # Route to the mount (pure routing); write permissions are enforced
-            # by the pre-write intercept hooks below.
-            _write_route = nx.router.route(mount_path)
-
+            # Write permissions are enforced by the pre-write intercept hooks below.
             from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 
             # Load existing metadata so permission hooks can distinguish

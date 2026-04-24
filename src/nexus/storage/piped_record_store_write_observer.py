@@ -93,6 +93,149 @@ class RecordStoreWriteObserver:
         self._post_flush_hooks.append(hook)
 
     # ------------------------------------------------------------------
+    # Event intake — called by SyncAuditWriteInterceptor post-hooks
+    # ------------------------------------------------------------------
+
+    def _enqueue(self, event: dict[str, Any]) -> None:
+        """Add event to pending deque and reset debounce timer."""
+        with self._lock:
+            self._pending.append(event)
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = threading.Timer(self._debounce, self._flush)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def on_write(
+        self,
+        metadata: Any,
+        *,
+        is_new: bool,
+        path: str,
+        old_metadata: Any | None = None,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Accept a write event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "write",
+                "path": path,
+                "is_new": is_new,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+                "snapshot_hash": old_metadata.etag if old_metadata else None,
+                "metadata_snapshot": old_metadata.to_dict() if old_metadata else None,
+                "metadata": metadata.to_dict() if hasattr(metadata, "to_dict") else metadata,
+            }
+        )
+
+    def on_write_batch(
+        self,
+        items: list[tuple[Any, bool]],
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        urgency: str | None = None,  # noqa: ARG002
+    ) -> None:
+        """Accept a batch write event from SyncAuditWriteInterceptor."""
+        for metadata, is_new in items:
+            self._enqueue(
+                {
+                    "op": "write",
+                    "path": metadata.path,
+                    "is_new": is_new,
+                    "zone_id": zone_id,
+                    "agent_id": agent_id,
+                    "snapshot_hash": None,
+                    "metadata_snapshot": None,
+                    "metadata": metadata.to_dict() if hasattr(metadata, "to_dict") else metadata,
+                }
+            )
+
+    def on_delete(
+        self,
+        *,
+        path: str,
+        metadata: Any | None = None,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Accept a delete event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "delete",
+                "path": path,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+                "snapshot_hash": metadata.etag if metadata else None,
+                "metadata_snapshot": metadata.to_dict()
+                if metadata and hasattr(metadata, "to_dict")
+                else None,
+            }
+        )
+
+    def on_rename(
+        self,
+        *,
+        old_path: str,
+        new_path: str,
+        metadata: Any | None = None,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Accept a rename event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "rename",
+                "path": old_path,
+                "new_path": new_path,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+                "snapshot_hash": metadata.etag if metadata else None,
+                "metadata_snapshot": metadata.to_dict()
+                if metadata and hasattr(metadata, "to_dict")
+                else None,
+            }
+        )
+
+    def on_mkdir(
+        self,
+        *,
+        path: str,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Accept a mkdir event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "mkdir",
+                "path": path,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+            }
+        )
+
+    def on_rmdir(
+        self,
+        *,
+        path: str,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        recursive: bool = False,
+    ) -> None:
+        """Accept an rmdir event from SyncAuditWriteInterceptor."""
+        self._enqueue(
+            {
+                "op": "rmdir",
+                "path": path,
+                "zone_id": zone_id,
+                "agent_id": agent_id,
+                "recursive": recursive,
+            }
+        )
+
+    # ------------------------------------------------------------------
     # Debounce flush
     # ------------------------------------------------------------------
 

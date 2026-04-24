@@ -24,7 +24,6 @@ from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.nexus_fs_internal import InternalMixin
 from nexus.core.nexus_fs_metadata import MetadataMixin
 from nexus.core.nexus_fs_watch import WatchMixin
-from nexus.core.router import PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.storage.record_store import RecordStoreABC
 
@@ -197,6 +196,13 @@ class NexusFS(  # type: ignore[misc]
 
         # Advisory locks handled by Rust kernel LockManager (sys_lock / sys_unlock).
 
+        # FileWatcher: kernel inotify primitive — local OBSERVE waiters + optional
+        # remote watcher (federation). Created here, enlisted by orchestrator at
+        # boot time via enlist("file_watcher", nx._file_watcher).
+        from nexus.core.file_watcher import FileWatcher
+
+        self._file_watcher: FileWatcher = FileWatcher()
+
         self._init_dispatch()
 
         import os as _os_ipc
@@ -210,9 +216,8 @@ class NexusFS(  # type: ignore[misc]
             self._transport_pool = _RPCTransportPool()
 
         # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
-        # Constructed BEFORE DriverLifecycleCoordinator and PathRouter so
-        # that both see the kernel from birth (F2 MountTable migration:
-        # kernel is the single source of truth for routing).
+        # Constructed BEFORE DriverLifecycleCoordinator so DLC sees the
+        # kernel from birth (VFSRouter is the Rust SSOT for routing).
         from nexus._rust_compat import RUST_AVAILABLE
 
         self._kernel = None
@@ -228,9 +233,36 @@ class NexusFS(  # type: ignore[misc]
 
                     self._kernel = _Kernel()
                     metadata_store._kernel = self._kernel
+                    # Wire redb metastore — ALL reads and writes go through Rust redb.
+                    # RustMetastoreProxy wraps the kernel's redb so all 35+ Python
+                    # self.metadata.* call sites automatically go through Rust.
                     _redb_path = getattr(metadata_store, "_redb_path", None)
-                    if _redb_path is not None:
-                        self._kernel.set_metastore_path(str(_redb_path))
+                    if _redb_path is None:
+                        import tempfile
+
+                        _redb_path = tempfile.mktemp(suffix=".redb")
+                    from nexus.core.metastore import RustMetastoreProxy
+
+                    _proxy = RustMetastoreProxy(self._kernel, str(_redb_path))
+                    # Delegate non-MetastoreABC methods (get_file_metadata,
+                    # get_searchable_text_bulk, set_file_metadata, etc.) to the
+                    # original store. These are Raft KV methods not part of the
+                    # metastore core contract — they store parsed text, custom KV.
+                    for _attr in (
+                        "get_file_metadata",
+                        "get_file_metadata_bulk",
+                        "set_file_metadata",
+                        "set_file_metadata_bulk",
+                        "get_searchable_text",
+                        "get_searchable_text_bulk",
+                        "set_searchable_text",
+                    ):
+                        if hasattr(metadata_store, _attr):
+                            setattr(_proxy, _attr, getattr(metadata_store, _attr))
+                    self.metadata = _proxy
+                    # All kernel wiring that depends on other NexusFS attributes
+                    # (_mount_table, _vfs_lock_manager) is deferred to after
+                    # __init__ completes — see "Deferred kernel wiring" block below.
             except Exception as exc:
                 import logging as _logging
 
@@ -248,12 +280,15 @@ class NexusFS(  # type: ignore[misc]
             transport_pool=self._transport_pool,
         )
 
-        # PathRouter reads from DLC + delegates LPM to the kernel.
-        self.router = PathRouter(
-            self._driver_coordinator,
-            metadata_store,
-            self._kernel,
-        )
+        # Deferred kernel wiring: bind mount table + VFS lock after all attributes exist.
+        if self._kernel is not None:
+            _mt = getattr(self._driver_coordinator, "_mount_table", None)
+            if _mt is not None:
+                _mt._default_metastore = self.metadata
+                _mt.bind_kernel(self._kernel)
+            _vfs_rust = getattr(getattr(self, "_vfs_lock_manager", None), "_rust", None)
+            if _vfs_rust is not None:
+                self._kernel.set_vfs_lock(_vfs_rust)
 
         logger.info(
             "IPC primitives initialized: DriverCoordinator (self_address=%s)",
@@ -907,14 +942,13 @@ class NexusFS(  # type: ignore[misc]
             self._record_store.close()
 
         # Close mounted backends that hold resources (e.g., OAuth connectors with SQLite)
-        if hasattr(self, "router"):
+        if hasattr(self, "_driver_coordinator"):
             from nexus.core.protocols.connector import OAuthCapableProtocol
 
-            for mp in self.router.get_mount_points():
+            for _canon_key, _mount_info in self._driver_coordinator.list_mounts():
                 try:
-                    route = self.router.route(mp, zone_id=self._zone_id)
-                    if isinstance(route.backend, OAuthCapableProtocol):
-                        route.backend.token_manager.close()
+                    if isinstance(_mount_info.backend, OAuthCapableProtocol):
+                        _mount_info.backend.token_manager.close()
                 except Exception as e:
                     logger.debug("Failed to close backend token manager: %s", e)
 

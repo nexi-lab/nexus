@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -32,6 +33,41 @@ from nexus.core.object_store import WriteResult
 from nexus.fs import _make_mount_entry
 from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
+
+
+class _FakeRouteResult:
+    """Minimal route result returned by the mock _py_kernel.route()."""
+
+    def __init__(self, mount_point: str, backend_path: str) -> None:
+        self.mount_point = mount_point
+        self.backend_path = backend_path
+
+
+def _make_mock_py_kernel(mount_point: str, zone_id: str = ROOT_ZONE_ID) -> MagicMock:
+    """Build a mock Rust kernel whose ``route()`` performs prefix-match routing.
+
+    The real Rust kernel is unavailable in the slim test environment, but after
+    the Python LPM fallback was deleted, ``_resolve_external_route`` requires
+    ``_py_kernel.route()`` to succeed.  This mock replicates just enough
+    behaviour to let the facade route paths under *mount_point*.
+    """
+    canonical = f"/{zone_id}{mount_point}"  # e.g. "/root/ext"
+    mk = MagicMock()
+
+    def _route(path: str, _zone_id: str = zone_id) -> _FakeRouteResult:
+        # Strip leading mount_point prefix to derive backend_path
+        if path.startswith(mount_point + "/"):
+            bp = path[len(mount_point) + 1 :]
+        elif path == mount_point:
+            bp = ""
+        else:
+            from nexus.contracts.exceptions import PathNotMountedError
+
+            raise PathNotMountedError(path)
+        return _FakeRouteResult(mount_point=canonical, backend_path=bp)
+
+    mk.route = _route
+    return mk
 
 
 class _FakeExternalBackend:
@@ -93,20 +129,17 @@ def _build_slim_with_external_mount(
         ),
     )
     mount_point = "/ext"
-    # Kernel syscall registers the mount in the Rust router; the
-    # metastore entry marks it DT_EXTERNAL_STORAGE so ``route()``
-    # returns an ExternalRouteResult.  Matches the production flow in
-    # ``nexus.fs.mount()``.
+    # DLC stores the mount info; the metastore entry marks it
+    # DT_EXTERNAL_STORAGE so the facade's route() returns an
+    # ExternalRouteResult.  Matches the production flow.
     kernel._driver_coordinator._store_mount_info(mount_point, backend, is_external=True)
     metastore.put(_make_mount_entry(mount_point, backend.name, entry_type=DT_EXTERNAL_STORAGE))
-    # Force slim-mode: facade's external-write fall-through is gated on
-    # `_is_slim_mode()` (NexusFS._kernel is None).  In CI nexus_kernel is
-    # built and _kernel is a real Rust handle — null it here so the
-    # facade exercises the slim-package code path these tests cover.
-    # Also null the router's kernel so route() takes the Python DLC
-    # fallback instead of asking the Rust router (which has no mount).
+    # Force slim-mode (_is_slim_mode checks NexusFS._kernel is None) while
+    # giving the DLC a mock Rust kernel for DLC.resolve_path() routing.
+    # The Python LPM fallback was deleted; DLC.resolve_path() is the only
+    # routing path now.
+    kernel._driver_coordinator._kernel = _make_mock_py_kernel(mount_point)
     kernel._kernel = None
-    kernel.router._kernel = None
     return SlimNexusFS(kernel), backend
 
 
@@ -176,8 +209,8 @@ def test_slim_rewrite_does_not_forward_stale_content_id(tmp_path: Path) -> None:
     )
     kernel._driver_coordinator._store_mount_info("/ext", backend, is_external=True)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
-    kernel._kernel = None  # force slim-mode (see helper for rationale)
-    kernel.router._kernel = None
+    kernel._driver_coordinator._kernel = _make_mock_py_kernel("/ext")
+    kernel._kernel = None
     slim = SlimNexusFS(kernel)
 
     try:
@@ -219,8 +252,8 @@ def test_slim_external_write_is_connector_agnostic(tmp_path: Path) -> None:
     )
     kernel._driver_coordinator._store_mount_info("/any", backend, is_external=True)
     metastore.put(_make_mount_entry("/any", backend.name, entry_type=DT_EXTERNAL_STORAGE))
-    kernel._kernel = None  # force slim-mode
-    kernel.router._kernel = None
+    kernel._driver_coordinator._kernel = _make_mock_py_kernel("/any")
+    kernel._kernel = None
     slim = SlimNexusFS(kernel)
     try:
         result = slim.write("/any/file.yaml", b"data")
@@ -277,8 +310,8 @@ def test_slim_write_lock_is_shared_across_facade_instances(tmp_path: Path) -> No
     )
     kernel._driver_coordinator._store_mount_info("/ext", backend, is_external=True)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
-    kernel._kernel = None  # force slim-mode
-    kernel.router._kernel = None
+    kernel._driver_coordinator._kernel = _make_mock_py_kernel("/ext")
+    kernel._kernel = None
 
     # Two wrappers around the same kernel — must share lock pool so
     # writes serialize across them.
@@ -325,12 +358,12 @@ def test_slim_external_write_not_triggered_for_non_external_routes(
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
     kernel._driver_coordinator._store_mount_info("/local", backend)
-    # Note: NOT DT_EXTERNAL_STORAGE → router returns RouteResult, not
-    # ExternalRouteResult.  The fall-through short-circuits and the
-    # kernel path runs.
+    # Note: NOT DT_EXTERNAL_STORAGE → _resolve_external_route returns None
+    # because the is_external check fails.  The fall-through short-circuits
+    # and the kernel write path runs (which raises AttributeError in slim mode).
     metastore.put(_make_mount_entry("/local", backend.name))
+    kernel._driver_coordinator._kernel = _make_mock_py_kernel("/local")
     kernel._kernel = None  # force slim-mode so kernel.write raises AttributeError
-    kernel.router._kernel = None
     slim = SlimNexusFS(kernel)
 
     external_called: list[Any] = []

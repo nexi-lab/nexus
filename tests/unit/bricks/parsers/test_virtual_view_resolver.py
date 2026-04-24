@@ -36,12 +36,11 @@ def metadata() -> MagicMock:
 
 
 @pytest.fixture
-def path_router() -> MagicMock:
-    route = MagicMock()
-    route.backend.read_content.return_value = b"raw xlsx bytes"
-    route.backend_path = "/file.xlsx"
+def dlc() -> MagicMock:
+    backend = MagicMock()
+    backend.read_content.return_value = b"raw xlsx bytes"
     mock = MagicMock()
-    mock.route.return_value = route
+    mock.resolve_path.return_value = (backend, "/file.xlsx", "/")
     return mock
 
 
@@ -53,12 +52,12 @@ def permission_checker() -> MagicMock:
 @pytest.fixture
 def resolver(
     metadata: MagicMock,
-    path_router: MagicMock,
+    dlc: MagicMock,
     permission_checker: MagicMock,
 ) -> VirtualViewResolver:
     return VirtualViewResolver(
         metadata=metadata,
-        path_router=path_router,
+        dlc=dlc,
         permission_checker=permission_checker,
         parse_fn=lambda content, path: b"# Parsed markdown",
     )

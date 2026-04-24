@@ -73,7 +73,7 @@ class TestSlimBootViaFactory:
     """Factory creates bare kernel when record_store is None (SLIM path)."""
 
     @pytest.mark.asyncio
-    async def test_create_nexus_fs_no_record_store(self, tmp_path: "Path") -> None:
+    def test_create_nexus_fs_no_record_store(self, tmp_path: "Path") -> None:
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -81,7 +81,7 @@ class TestSlimBootViaFactory:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -94,7 +94,7 @@ class TestSlimBootViaFactory:
         assert nx.service("permission_enforcer") is None
 
     @pytest.mark.asyncio
-    async def test_minimal_mode_nexus_has_router(self, tmp_path: "Path") -> None:
+    def test_minimal_mode_nexus_has_driver_coordinator(self, tmp_path: "Path") -> None:
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -102,13 +102,13 @@ class TestSlimBootViaFactory:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
         )
 
-        assert nx.router is not None
+        assert nx._driver_coordinator is not None
 
 
 # ---------------------------------------------------------------------------
@@ -120,34 +120,34 @@ class TestSlimFileOperations:
     """File operations work in kernel-only mode (no system services)."""
 
     @pytest.fixture()
-    async def minimal_nx(self, tmp_path: "Path") -> "NexusFS":
+    def minimal_nx(self, tmp_path: "Path") -> "NexusFS":
         from tests.conftest import make_test_nexus
 
-        return await make_test_nexus(tmp_path)
+        return make_test_nexus(tmp_path)
 
     @pytest.mark.asyncio
-    async def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
+    def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
         minimal_nx.write("/test.txt", b"hello kernel")
         data = minimal_nx.sys_read("/test.txt")
         assert data == b"hello kernel"
 
     @pytest.mark.asyncio
-    async def test_exists_true(self, minimal_nx: "NexusFS") -> None:
+    def test_exists_true(self, minimal_nx: "NexusFS") -> None:
         minimal_nx.write("/exists_check.txt", b"data")
         assert minimal_nx.access("/exists_check.txt") is True
 
     @pytest.mark.asyncio
-    async def test_exists_false(self, minimal_nx: "NexusFS") -> None:
+    def test_exists_false(self, minimal_nx: "NexusFS") -> None:
         assert minimal_nx.access("/nonexistent.txt") is False
 
     @pytest.mark.asyncio
-    async def test_delete(self, minimal_nx: "NexusFS") -> None:
+    def test_delete(self, minimal_nx: "NexusFS") -> None:
         minimal_nx.write("/to_delete.txt", b"bye")
         minimal_nx.sys_unlink("/to_delete.txt")
         assert minimal_nx.access("/to_delete.txt") is False
 
     @pytest.mark.asyncio
-    async def test_list_directory(self, minimal_nx: "NexusFS") -> None:
+    def test_list_directory(self, minimal_nx: "NexusFS") -> None:
         minimal_nx.write("/dir/a.txt", b"a")
         minimal_nx.write("/dir/b.txt", b"b")
         listing = minimal_nx.sys_readdir("/dir")
@@ -307,7 +307,7 @@ class TestSlimIntegrationViaConnect:
     """Integration: nexus.connect() with profile=slim boots bare kernel."""
 
     @pytest.mark.asyncio
-    async def test_connect_slim_profile_creates_nexusfs(
+    def test_connect_slim_profile_creates_nexusfs(
         self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """connect() with profile=slim gives a functional NexusFS."""
@@ -326,7 +326,7 @@ class TestSlimIntegrationViaConnect:
         enabled_bricks = resolve_enabled_bricks(profile)
         assert enabled_bricks == frozenset()
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -350,7 +350,7 @@ class TestSlimIntegrationViaConnect:
         assert nx.access("/hello.txt") is False
 
     @pytest.mark.asyncio
-    async def test_slim_factory_enabled_bricks_logged(
+    def test_slim_factory_enabled_bricks_logged(
         self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Factory logs exactly 1 enabled brick for SLIM profile."""
@@ -371,7 +371,7 @@ class TestSlimIntegrationViaConnect:
         with caplog.at_level(logging.INFO, logger="nexus.factory.orchestrator"):
             # Using record_store triggers create_nexus_services which logs bricks
             # With record_store=None, factory path skips services entirely
-            nx = await create_nexus_fs(
+            nx = create_nexus_fs(
                 backend=PathLocalBackend(root_path=data_dir),
                 metadata_store=DictMetastore(),
                 record_store=None,
@@ -381,7 +381,7 @@ class TestSlimIntegrationViaConnect:
         assert nx is not None
 
     @pytest.mark.asyncio
-    async def test_slim_profile_dispatch_has_no_observers(self, tmp_path: "Path") -> None:
+    def test_slim_profile_dispatch_has_no_observers(self, tmp_path: "Path") -> None:
         """SLIM mode has only the late-binding EventBusObserver (no record store to sync)."""
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
@@ -391,7 +391,7 @@ class TestSlimIntegrationViaConnect:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -404,7 +404,7 @@ class TestSlimIntegrationViaConnect:
         assert nx.observer_count == 0
 
     @pytest.mark.asyncio
-    async def test_slim_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
+    def test_slim_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
         """SLIM mode has no workflow engine."""
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
@@ -414,7 +414,7 @@ class TestSlimIntegrationViaConnect:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,

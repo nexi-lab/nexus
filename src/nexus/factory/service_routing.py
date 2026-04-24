@@ -106,7 +106,7 @@ _CANONICAL_NAMES: dict[str, str] = {
 }
 
 
-async def enlist_services(nx_or_coordinator: Any, services: dict[str, Any]) -> int:
+def enlist_services(nx_or_coordinator: Any, services: dict[str, Any]) -> int:
     """Enlist services via sys_setattr("/__sys__/services/X") (#1708).
 
     Factory is the first user — uses syscalls like everyone else.

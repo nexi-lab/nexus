@@ -28,7 +28,6 @@ from nexus.contracts.exceptions import (
 )
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
-from nexus.core.nexus_fs_internal import _WriteContentResult
 from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -37,20 +36,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _apply_slice(data: bytes, offset: int = 0, count: int | None = None) -> bytes:
-    """Apply POSIX pread-style offset/count slicing."""
-    if offset or count is not None:
-        return data[offset : offset + count] if count is not None else data[offset:]
-    return data
-
-
 class ContentMixin:
     """Content I/O: sys_read, sys_write, and Tier 2 convenience methods."""
 
     _kernel: Any  # Rust Kernel
     _zone_id: str
     metadata: Any
-    router: Any
     _driver_coordinator: Any
 
     # =================================================================
@@ -81,9 +72,9 @@ class ContentMixin:
     ) -> bytes:
         """Read file content as bytes (POSIX pread(2)).
 
-        Rust Kernel.sys_read handles DT_REG (CAS read), DT_PIPE (ring buffer
-        pop), DT_STREAM (cursor read), and external connector dispatch.
-        Python handles resolve (intercept), POST-hooks, and offset/count slicing.
+        Thin async wrapper around Rust Kernel.sys_read (pure Rust, zero GIL).
+        DT_PIPE/DT_STREAM, resolve, and hooks are [TRANSITIONAL] — migrates
+        to Rust dispatch middleware in PR 7.
         """
         # DT_PIPE/DT_STREAM: Rust IPC registry handles all backends
         # (memory, SHM, remote) via PipeManager/StreamManager.
@@ -92,7 +83,12 @@ class ContentMixin:
         context = self._parse_context(context)
         _handled, _resolve_hint = self.resolve_read(path, context=context)
         if _handled:
-            return _apply_slice(_resolve_hint or b"", offset, count)
+            content = _resolve_hint or b""
+            if offset or count is not None:
+                content = (
+                    content[offset : offset + count] if count is not None else content[offset:]
+                )
+            return content
 
         _is_admin = (
             getattr(context, "is_admin", False)
@@ -118,8 +114,20 @@ class ContentMixin:
         # DT_PIPE: result.data is the popped frame when available; None = empty.
         if result.entry_type == 3:  # DT_PIPE
             if result.data is not None:
-                return _apply_slice(result.data, offset, count)
-            return b""
+                data = result.data
+                if offset or count is not None:
+                    data = data[offset : offset + count] if count is not None else data[offset:]
+                return data
+            # Empty pipe — try nowait (hot path), then block in Rust (GIL-free)
+            _data = self._kernel.pipe_read_nowait(path)
+            if _data is not None:
+                if offset or count is not None:
+                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
+                return bytes(_data)
+            _data = self._kernel.pipe_read_blocking(path, 5000)
+            if offset or count is not None:
+                _data = _data[offset : offset + count] if count is not None else _data[offset:]
+            return bytes(_data)
 
         # DT_STREAM: blocking reads with offset tracking
         if result.entry_type == 4:  # DT_STREAM
@@ -131,7 +139,10 @@ class ContentMixin:
             return bytes(_data)
 
         # DT_REG: Rust guarantees data is set on success.
-        data = _apply_slice(result.data or b"", offset, count)
+        data = result.data or b""
+
+        if offset or count is not None:
+            data = data[offset : offset + count] if count is not None else data[offset:]
 
         # POST-INTERCEPT: hooks dispatched via Rust dispatch_post_hooks
         if result.post_hook_needed:
@@ -423,12 +434,11 @@ class ContentMixin:
             self._kernel.dispatch_pre_hooks("read", _RHC(path=path, context=context))
 
             zone_id, agent_id, is_admin = self._get_context_identity(context)
-            route = self.router.route(path, zone_id=self._zone_id)
+            _rust_route = self._kernel.route(path, self._zone_id)
 
             # Per-zone metastore lookup — go through the kernel so federation
-            # mode hits the ZoneMetastore registered in mount_table, not the
-            # root-zone ``RaftMetadataStore`` that ``route.metastore`` points
-            # at in PathRouter.
+            # mode hits the ZoneMetastore registered in VFSRouter, not the
+            # root-zone ``RaftMetadataStore``.
             meta = self._kernel.metastore_get(path)
 
             if meta is None or meta.etag is None:
@@ -438,11 +448,13 @@ class ContentMixin:
             if hasattr(_rb, "read_content_range"):
                 from dataclasses import replace as _replace
 
+                from nexus.core.path_utils import extract_zone_id as _ezi
+
                 read_context = (
                     _replace(
                         context,
-                        backend_path=route.backend_path,
-                        mount_path=route.mount_point,
+                        backend_path=_rust_route.backend_path,
+                        mount_path=_ezi(_rust_route.mount_point)[1],
                     )
                     if context
                     else None
@@ -490,28 +502,11 @@ class ContentMixin:
         """
         path = self._validate_path(path)
 
-        # PRE-INTERCEPT: pre-read hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        self._kernel.dispatch_pre_hooks("read", _RHC(path=path, context=context))
-
-        # Route to backend with access control
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(
-            path,
-            zone_id=self._zone_id,
-        )
-
-        # Check if file exists in metadata.  Kernel-routed lookup so
-        # federation mode hits the per-zone ``ZoneMetastore`` in
-        # mount_table — the PathRouter-side ``route.metastore`` only
-        # points at the root-zone ``RaftMetadataStore``.
-        meta = self._kernel.metastore_get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        # Stream from routed backend using content hash
-        yield from route.backend.stream_content(meta.etag, chunk_size=chunk_size, context=context)
+        # Route through sys_read — Rust handles pre-hooks, CAS, federation,
+        # external connector dispatch.  Chunked Rust reads are future work.
+        data = self.sys_read(path, context=context)
+        for pos in range(0, len(data), chunk_size):
+            yield data[pos : pos + chunk_size]
 
     @rpc_expose(description="Stream a byte range of file content")
     def stream_range(
@@ -539,26 +534,12 @@ class ContentMixin:
             bytes: Chunks of file content within the requested range
         """
         path = self._validate_path(path)
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
-        self._kernel.dispatch_pre_hooks("read", _RHC(path=path, context=context))
-
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(
-            path,
-            zone_id=self._zone_id,
-        )
-
-        # Kernel-routed lookup — see ``stream`` above for the federation
-        # rationale (per-zone ZoneMetastore vs. root-zone PathRouter
-        # metastore).
-        meta = self._kernel.metastore_get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
-
-        yield from route.backend.stream_range(
-            meta.etag, start, end, chunk_size=chunk_size, context=context
-        )
+        # Route through sys_read with offset/count — Rust handles hooks,
+        # CAS routing, federation, external connectors.
+        data = self.sys_read(path, count=end - start + 1, offset=start, context=context)
+        for pos in range(0, len(data), chunk_size):
+            yield data[pos : pos + chunk_size]
 
     @rpc_expose(description="Write file content from stream")
     def write_stream(
@@ -601,91 +582,10 @@ class ContentMixin:
         """
         path = self._validate_path(path)
 
-        # Route to backend with write access check
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(
-            path,
-            zone_id=self._zone_id,
-        )
-
-        # Virtual .readme/ paths are read-only (Issue #3728).
-        self._reject_if_virtual_readme(path, context, op="write_stream")
-
-        # PRE-INTERCEPT: pre-write hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
-
-        self._kernel.dispatch_pre_hooks("write", _WHC(path=path, content=b"", context=context))
-
-        # Get existing metadata for version tracking
-        now = datetime.now(UTC)
-        meta = route.metastore.get(path)
-
-        # Add backend_path to context for path-based connectors
-        if context:
-            context = _dc_replace(
-                context,
-                backend_path=route.backend_path,
-                virtual_path=path,
-                mount_path=route.mount_point,
-            )
-        else:
-            context = OperationContext(
-                user_id="anonymous",
-                groups=[],
-                backend_path=route.backend_path,
-                virtual_path=path,
-                mount_path=route.mount_point,
-            )
-
-        # Write content via streaming
-        write_result = route.backend.write_stream(chunks, context=context)
-        content_hash = write_result.content_id
-
-        # WriteResult carries the byte count to avoid a redundant
-        # get_content_size() round-trip after streaming writes.
-        size = write_result.size
-        if size <= 0:
-            try:
-                size = route.backend.get_content_size(content_hash, context=context)
-            except Exception as e:
-                logger.debug("Failed to get content size for %s: %s", content_hash, e)
-
-        # Update metadata
-        new_version = (meta.version + 1) if meta else 1
-        new_meta = FileMetadata(
-            path=path,
-            backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
-            physical_path=content_hash,  # CAS: hash is the "physical" location
-            etag=content_hash,
-            size=size,
-            version=new_version,
-            created_at=meta.created_at if meta else now,
-            modified_at=now,
-            zone_id=zone_id
-            or ROOT_ZONE_ID,  # Issue #904, #773: Store zone_id for PREWHERE filtering
-        )
-
-        route.metastore.put(new_meta)
-
-        # Issue #900: Unified INTERCEPT for write_stream
-        from nexus.contracts.vfs_hooks import WriteHookContext
-
-        _ws_ctx = WriteHookContext(
-            path=path,
-            content=b"",  # stream — content not available in single buffer
-            context=None,
-            zone_id=zone_id,
-            is_new_file=(meta is None),
-            metadata=new_meta,
-        )
-        self._kernel.dispatch_post_hooks("write", _ws_ctx)
-
-        return {
-            "etag": content_hash,
-            "version": new_version,
-            "modified_at": now.isoformat(),
-            "size": size,
-        }
+        # Collect chunks and delegate to write() — Rust sys_write handles
+        # CAS, metastore, OBSERVE, hooks atomically.
+        data = b"".join(chunks)
+        return self.write(path, data, context=context)
 
     @rpc_expose(description="Write file content")
     def sys_write(
@@ -699,9 +599,9 @@ class ContentMixin:
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
-        Rust Kernel.sys_write handles DT_PIPE/DT_STREAM (ring buffer push),
-        DT_REG (CAS write + metastore.put + dcache update + observer dispatch).
-        Python handles resolve (intercept), POST-hook dispatch, and event emission.
+        Thin async wrapper around Rust Kernel.sys_write (CAS I/O is pure Rust,
+        zero GIL). Metastore.put stays in Python [TRANSITIONAL] — migrates to
+        Rust metastore in PR 7.
         """
         # Normalize input
         if isinstance(buf, str):
@@ -709,6 +609,7 @@ class ContentMixin:
         if count is not None:
             buf = buf[:count]
 
+        # [TRANSITIONAL] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
 
         # Virtual .readme/ paths are read-only (Issue #3728).
@@ -721,10 +622,21 @@ class ContentMixin:
                 base.update(_result)
             return base
 
-        # Snapshot old metadata BEFORE Rust write (for POST-hook event payload).
+        # IPC write: Rust kernel handles DT_PIPE/DT_STREAM inline.
+        # Rust condvar wakes blocked readers automatically after write.
         _meta = self.metadata.get(path)
+        if _meta is not None and _meta.is_pipe:
+            n = self._kernel.pipe_write_nowait(path, buf)
+            return {"path": path, "bytes_written": n}
+        if _meta is not None and _meta.is_stream:
+            _off = self._kernel.stream_write_nowait(path, buf)
+            return {"path": path, "bytes_written": len(buf), "offset": _off}
+        if _meta is None:
+            raise NexusFileNotFoundError(
+                path, "sys_write requires existing file — use write() for create-on-write"
+            )
 
-        # ── KERNEL (pure Rust — DT_PIPE/DT_STREAM via dcache, DT_REG via CAS, zero GIL) ──
+        # ── KERNEL (pure Rust CAS write, zero GIL) ──
         _is_admin = (
             getattr(context, "is_admin", False)
             if context is not None and not isinstance(context, dict)
@@ -733,38 +645,35 @@ class ContentMixin:
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
-        # DT_PIPE / DT_STREAM: Rust handled inline (no content_id, no post-hooks)
-        if result.hit and not result.content_id:
-            return {"path": path, "bytes_written": len(buf)}
+        # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
+        zone_id, agent_id, _ = self._get_context_identity(context)
+        _ctx = context or OperationContext(user_id="anonymous", groups=[])
+        _meta_obj = FileMetadata(
+            path=path,
+            backend_name="",
+            physical_path=result.content_id or "",
+            size=result.size,
+            etag=result.content_id,
+            version=result.version,
+            zone_id=zone_id,
+        )
+        from nexus.contracts.vfs_hooks import WriteHookContext
 
-        if result.hit:
-            # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache
-            zone_id, agent_id, _ = self._get_context_identity(context)
-            self._dispatch_write_events(
-                path,
-                _WriteContentResult(
-                    content_hash=result.content_id or "",
-                    size=result.size,
-                    metadata=FileMetadata(
-                        path=path,
-                        backend_name="",
-                        physical_path=result.content_id or "",
-                        size=result.size,
-                        etag=result.content_id,
-                        version=result.version,
-                        zone_id=zone_id,
-                    ),
-                    new_version=result.version,
-                    is_new=(_meta is None),
-                    old_etag=_meta.etag if _meta else None,
-                    old_metadata=_meta,
-                    context=context or OperationContext(user_id="anonymous", groups=[]),
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    is_remote=False,
-                ),
-                buf,
-            )
+        self._kernel.dispatch_post_hooks(
+            "write",
+            WriteHookContext(
+                path=path,
+                content=buf,
+                context=_ctx,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_new_file=(_meta is None),
+                content_hash=result.content_id or "",
+                metadata=_meta_obj,
+                old_metadata=_meta,
+                new_version=result.version,
+            ),
+        )
 
         return {"path": path, "bytes_written": len(buf)}
 
@@ -857,6 +766,7 @@ class ContentMixin:
             Dict with metadata (etag, version, modified_at, size).
         """
         del consistency  # threaded via context.metadata_consistency; kernel owns it now.
+        del offset  # Rust sys_write handles offset natively.
 
         if isinstance(buf, str):
             buf = buf.encode("utf-8")
@@ -874,53 +784,57 @@ class ContentMixin:
         if ttl is not None and ttl > 0:
             context = self._ensure_context_ttl(context, ttl)
 
+        # Route through Rust sys_write — handles create-on-write, backend I/O,
+        # metadata build+put, dcache update, and OBSERVE dispatch.
         context = self._parse_context(context)
-        self._reject_if_virtual_readme(path, context, op="write")
+        _is_admin = getattr(context, "is_admin", False) if context else False
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        # Capture old metadata BEFORE write for audit snapshot_hash (old_etag)
+        _old_meta = self.metadata.get(path)
 
-        _meta = self.metadata.get(path)
+        result = self._kernel.sys_write(path, _rust_ctx, buf)
 
-        _rust_ctx = self._build_rust_ctx(context, is_admin)
-        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        # POST-INTERCEPT hooks
+        zone_id, agent_id, _ = self._get_context_identity(context)
+        _ctx = context or OperationContext(user_id="anonymous", groups=[])
+        _cid = result.content_id or ""
+        from nexus.contracts.vfs_hooks import WriteHookContext
 
-        now = datetime.now(UTC)
-        content_hash = result.content_id or ""
-        size = result.size if result.hit else len(buf)
-        new_version = result.version
-        # Bloom filter is now maintained by Rust CASEngine (Phase 7B PR 5).
-        # No Python-side bloom reach-through needed.
-        post_metadata = FileMetadata(
-            path=path,
-            backend_name=_meta.backend_name if _meta else "",
-            physical_path=content_hash,
-            size=size,
-            etag=content_hash or None,
-            created_at=(_meta.created_at if _meta else now),
-            modified_at=now,
-            version=new_version,
-            zone_id=zone_id or ROOT_ZONE_ID,
-            owner_id=(_meta.owner_id if _meta else (context.subject_id or context.user_id)),
-            ttl_seconds=getattr(context, "ttl_seconds", 0.0) or 0.0,
-        )
-
-        return self._dispatch_write_events(
-            path,
-            _WriteContentResult(
-                content_hash=content_hash,
-                size=size,
-                metadata=post_metadata,
-                new_version=new_version,
-                is_new=(_meta is None),
-                old_etag=_meta.etag if _meta else None,
-                old_metadata=_meta,
-                context=context,
+        self._kernel.dispatch_post_hooks(
+            "write",
+            WriteHookContext(
+                path=path,
+                content=buf,
+                context=_ctx,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                is_remote=False,
+                is_new_file=(_old_meta is None),
+                content_hash=_cid,
+                metadata=FileMetadata(
+                    path=path,
+                    backend_name="",
+                    physical_path=_cid,
+                    size=result.size,
+                    etag=result.content_id,
+                    version=result.version,
+                    zone_id=zone_id,
+                ),
+                old_metadata=_old_meta,
+                new_version=result.version,
             ),
-            buf,
         )
+
+        return {
+            "etag": _cid,
+            "version": result.version,
+            "modified_at": None,
+            "size": result.size,
+        }
+
+    # _write_internal + _write_content deleted — Rust sys_write handles:
+    # routing, VFS lock, backend write, metadata build+put, dcache update.
+    # write() and sys_write() call Rust kernel directly.
 
     def atomic_update(
         self,
@@ -1428,24 +1342,29 @@ class ContentMixin:
                 )
             else:
                 # Fallback: remote backend or route failure — use Python path
-                route = self.router.route(path, zone_id=self._zone_id)
+                from nexus.core.path_utils import extract_zone_id as _ezi
+
+                _rr = self._kernel.route(path, self._zone_id)
+                _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+                _be = _di.backend if _di else None
+                _user_mp = _ezi(_rr.mount_point)[1]
                 _write_ctx = (
                     _dc_replace(
                         context,
-                        backend_path=route.backend_path,
+                        backend_path=_rr.backend_path,
                         virtual_path=path,
-                        mount_path=route.mount_point,
+                        mount_path=_user_mp,
                     )
                     if context
                     else OperationContext(
                         user_id="anonymous",
                         groups=[],
-                        backend_path=route.backend_path,
+                        backend_path=_rr.backend_path,
                         virtual_path=path,
-                        mount_path=route.mount_point,
+                        mount_path=_user_mp,
                     )
                 )
-                content_hash = route.backend.write_content(content, context=_write_ctx).content_id
+                content_hash = _be.write_content(content, context=_write_ctx).content_id
                 meta = existing_metadata.get(path)
                 new_version = (meta.version + 1) if meta else 1
                 results.append(
@@ -1459,9 +1378,7 @@ class ContentMixin:
                 metadata_list.append(
                     FileMetadata(
                         path=path,
-                        backend_name=self._driver_coordinator.backend_key(
-                            route.backend, route.mount_point
-                        ),
+                        backend_name=self._driver_coordinator.backend_key(_be, _user_mp),
                         physical_path=content_hash,
                         size=len(content),
                         etag=content_hash,

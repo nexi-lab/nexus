@@ -200,8 +200,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     _done(StartupPhase.IPC)
 
     bg_tasks.extend(await startup_grpc(app, svc))
-    # StartupPhase.GRPC is marked by startup_grpc() itself — only after
-    # the listener is confirmed up (or gRPC is intentionally disabled).
+    _done(StartupPhase.GRPC)
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
     _wire_query_observer(app, svc)
@@ -231,7 +230,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         await _durable.stop()
         logger.debug("Durable invalidation stream stopped")
 
-    # Close NexusFS kernel (async shutdown for BackgroundService + hooks)
+    # Close NexusFS kernel (sync shutdown for PersistentService + hooks)
     if app.state.nexus_fs:
         if hasattr(app.state.nexus_fs, "aclose"):
             app.state.nexus_fs.aclose()

@@ -141,7 +141,7 @@ class TestVersionHistoryGC:
         rs.close()
 
     @pytest.fixture
-    async def nx(self, temp_dir, record_store):
+    def nx(self, temp_dir, record_store):
         """Create NexusFS instance for testing.
 
         Uses RaftMetadataStore. TODO: Version history depends on FilePathModel
@@ -151,7 +151,7 @@ class TestVersionHistoryGC:
         data_dir.mkdir(parents=True, exist_ok=True)
         backend = CASLocalBackend(root_path=data_dir)
         metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -336,7 +336,7 @@ class TestVersionHistoryGC:
         assert stats.deleted_by_count == 3  # 5 - 2 = 3
 
     @pytest.mark.asyncio
-    async def test_gc_empty_table(self, temp_dir):
+    def test_gc_empty_table(self, temp_dir):
         """Test GC handles empty version_history table."""
         data_dir = Path(temp_dir) / "nexus-data-empty"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -345,7 +345,7 @@ class TestVersionHistoryGC:
         rs_empty = SQLAlchemyRecordStore(db_path=str(data_dir / "nexus.db"))
         backend = CASLocalBackend(root_path=data_dir)
         metadata_store = RaftMetadataStore.embedded(str(data_dir / "metadata"))
-        nx_empty = await create_nexus_fs(
+        nx_empty = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=rs_empty,

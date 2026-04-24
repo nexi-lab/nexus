@@ -9,7 +9,6 @@ if TYPE_CHECKING:
     from nexus.contracts.types import AuditConfig
     from nexus.core.config import DistributedConfig, PermissionConfig
     from nexus.core.metastore import MetastoreABC
-    from nexus.core.router import PathRouter
     from nexus.lib.performance_tuning import ProfileTuning
     from nexus.storage.record_store import RecordStoreABC
 
@@ -27,7 +26,7 @@ class _BootContext:
     record_store: "RecordStoreABC"
     metadata_store: "MetastoreABC"
     backend: "Backend"
-    router: "PathRouter"
+    dlc: Any
     engine: Any
     read_engine: Any  # Read replica engine (Issue #725); same as engine when no replica
     perm: "PermissionConfig"

@@ -123,7 +123,7 @@ def _boot_pre_kernel_services(
                 allow_system_bypass=True,
                 audit_store=audit_store,
                 admin_bypass_paths=[],
-                router=ctx.router,
+                dlc=ctx.dlc,
                 entity_registry=entity_registry,
             )
 

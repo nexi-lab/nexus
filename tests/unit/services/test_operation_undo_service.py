@@ -12,17 +12,14 @@ from nexus.bricks.versioning.operation_undo_service import OperationUndoService,
 # ---------------------------------------------------------------------------
 
 
-def _make_route(content: bytes) -> MagicMock:
-    """Return a mock Route whose backend.read_content(hash) → content."""
-    route = MagicMock()
-    route.backend.read_content.return_value = content
-    return route
+def _make_dlc(content: bytes) -> MagicMock:
+    """Return a mock_dlc where resolve_path returns a backend with content."""
+    dlc = MagicMock()
+    backend = MagicMock()
+    backend.read_content.return_value = content
+    dlc.resolve_path.return_value = (backend, "/", "/root")
 
-
-def _make_router(content: bytes) -> MagicMock:
-    router = MagicMock()
-    router.route.return_value = _make_route(content)
-    return router
+    return dlc
 
 
 def _make_service(
@@ -33,13 +30,13 @@ def _make_service(
 
     Returns (service, write_fn, delete_fn, rename_fn, exists_fn).
     """
-    router = _make_router(content)
+    dlc = _make_dlc(content)
     write_fn = MagicMock()
     delete_fn = MagicMock()
     rename_fn = MagicMock()
     exists_fn = MagicMock(return_value=True)
     svc = OperationUndoService(
-        router=router,
+        dlc=dlc,
         write_fn=write_fn,
         delete_fn=delete_fn,
         rename_fn=rename_fn,
@@ -182,15 +179,15 @@ class TestUndoUnknown:
 
 
 class TestFallbackBackend:
-    def test_uses_fallback_when_router_fails(self) -> None:
+    def test_uses_fallback_when_dlc_resolve_fails(self) -> None:
         fallback = MagicMock()
         fallback.read_content.return_value = b"fallback-data"
 
-        router = MagicMock()
-        router.route.side_effect = RuntimeError("route failed")
+        dlc = MagicMock()
+        dlc.resolve_path.side_effect = RuntimeError("resolve failed")
 
         svc = OperationUndoService(
-            router=router,
+            dlc=dlc,
             write_fn=MagicMock(),
             delete_fn=MagicMock(),
             rename_fn=MagicMock(),
@@ -205,12 +202,12 @@ class TestFallbackBackend:
         fallback.read_content.assert_called_once_with("hash789")
         svc._write.assert_called_once_with("/workspace/test.txt", b"fallback-data")
 
-    def test_raises_when_no_fallback_and_router_fails(self) -> None:
-        router = MagicMock()
-        router.route.side_effect = RuntimeError("route failed")
+    def test_raises_when_no_fallback_and_dlc_resolve_fails(self) -> None:
+        dlc = MagicMock()
+        dlc.resolve_path.side_effect = RuntimeError("resolve failed")
 
         svc = OperationUndoService(
-            router=router,
+            dlc=dlc,
             write_fn=MagicMock(),
             delete_fn=MagicMock(),
             rename_fn=MagicMock(),
@@ -218,5 +215,5 @@ class TestFallbackBackend:
         )
         op = _op("write", snapshot_hash="hash789")
 
-        with pytest.raises(RuntimeError, match="route failed"):
+        with pytest.raises(RuntimeError, match="resolve failed"):
             svc.undo_operation(op)

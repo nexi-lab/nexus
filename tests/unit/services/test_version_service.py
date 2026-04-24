@@ -244,9 +244,9 @@ class TestVersionServiceRollback:
         )
 
     @pytest.mark.asyncio
-    async def test_rollback_requires_router(self, service, operation_context):
-        """Test that rollback requires router to be configured."""
-        with pytest.raises(RuntimeError, match="Router not configured"):
+    async def test_rollback_requires_dlc(self, service, operation_context):
+        """Test that rollback requires DLC to be configured."""
+        with pytest.raises(RuntimeError, match="DLC not configured"):
             await service.rollback(
                 path="/test.txt",
                 version=2,

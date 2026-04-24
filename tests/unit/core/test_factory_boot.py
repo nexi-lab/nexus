@@ -94,7 +94,7 @@ def _make_boot_context(**overrides: object) -> _BootContext:
         "record_store": record_store,
         "metadata_store": MagicMock(),
         "backend": backend,
-        "router": MagicMock(),
+        "dlc": MagicMock(),
         "engine": record_store.engine,
         "read_engine": record_store.read_engine,
         "perm": PermissionConfig(enforce=False, enable_deferred=False, enable_tiger_cache=False),
@@ -132,9 +132,9 @@ class TestBootKernelServices:
         assert set(result.keys()) == EXPECTED_KERNEL_KEYS
         assert len(result) == 0
 
-    def test_boot_error_raised_on_none_router(self) -> None:
-        """When router is None, BootError is raised with tier='kernel'."""
-        ctx = _make_boot_context(router=None)
+    def test_boot_error_raised_on_none_dlc(self) -> None:
+        """When dlc is None, BootError is raised with tier='kernel'."""
+        ctx = _make_boot_context(dlc=None)
 
         with pytest.raises(BootError) as exc_info:
             _boot_kernel_services(ctx)
@@ -311,13 +311,13 @@ class TestCreateNexusServices:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        router = MagicMock()
+        mock_dlc = MagicMock()
 
         result = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            router=router,
+            dlc=mock_dlc,
             permissions=PermissionConfig(
                 enforce=False,
                 enable_deferred=False,
@@ -352,13 +352,13 @@ class TestCreateNexusServices:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        router = MagicMock()
+        mock_dlc = MagicMock()
 
         services = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            router=router,
+            dlc=mock_dlc,
             permissions=PermissionConfig(
                 enforce=False,
                 enable_deferred=False,
@@ -385,7 +385,7 @@ class TestBrickServicesFieldCompleteness:
     """Issue #2134: Factory-created bricks are packed into BrickServices container."""
 
     @pytest.mark.asyncio
-    async def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
+    def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
         """create_nexus_fs() packs parse_fn, content_cache, registries, lock manager
         into BrickServices rather than passing as flat NexusFS params (Issue #2134).
         """
@@ -408,7 +408,7 @@ class TestBrickServicesFieldCompleteness:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -439,7 +439,7 @@ class TestBrickServicesFieldCompleteness:
         # The factory gracefully degrades — ContentCache is optional.
 
     @pytest.mark.asyncio
-    async def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
+    def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
         """workflow_engine param is packed into BrickServices (Issue #2134)."""
         record_store = MagicMock()
         record_store.engine = MagicMock()
@@ -462,7 +462,7 @@ class TestBrickServicesFieldCompleteness:
 
         sentinel_engine = MagicMock()
 
-        nx = await create_nexus_fs(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,

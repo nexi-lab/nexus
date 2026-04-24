@@ -159,7 +159,6 @@ if TYPE_CHECKING:
     from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
-    from nexus.core.router import PathRouter
     from nexus.services.gateway import NexusFSGateway
 
 
@@ -192,7 +191,7 @@ class SearchService:
         self,
         metadata_store: "MetastoreABC",
         permission_enforcer: "PermissionEnforcer | None" = None,
-        router: "PathRouter | None" = None,
+        dlc: Any = None,
         rebac_manager: "ReBACManager | None" = None,
         enforce_permissions: bool = True,
         default_context: "OperationContext | None" = None,
@@ -212,7 +211,7 @@ class SearchService:
         Args:
             metadata_store: Metadata store for file information
             permission_enforcer: Permission enforcer for access control
-            router: Mount router for backend operations
+            dlc: DriverLifecycleCoordinator for routing + backend refs
             rebac_manager: ReBAC manager for relationship-based permissions
             enforce_permissions: Whether to enforce permission checks
             default_context: Default operation context (embedded mode)
@@ -238,7 +237,7 @@ class SearchService:
         self._file_cache = file_cache
         self._zoekt_client = zoekt_client
         self._permission_enforcer = permission_enforcer
-        self.router = router
+        self._dlc = dlc
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._default_context = default_context
@@ -316,9 +315,9 @@ class SearchService:
         Uses ``get_mount_points()`` to derive top-level prefixes from active
         mounts.  Falls back to hardcoded defaults when no router is available.
         """
-        if self.router and hasattr(self.router, "get_mount_points"):
+        if self._dlc and hasattr(self._dlc, "mount_points"):
             try:
-                mount_points = self.router.get_mount_points()
+                mount_points = self._dlc.mount_points()
                 # Extract top-level segments from mount points (e.g. "/workspace" -> "workspace/")
                 prefixes: set[str] = set()
                 for mp in mount_points:
@@ -410,10 +409,8 @@ class SearchService:
             return self._gw.has_descendant_access(path, permission, context)
         return False
 
-    def _get_backend_directory_entries(self, path: str) -> set[str]:
-        """Get directory entries from backend storage."""
-        if self._gw:
-            return self._gw.get_backend_directory_entries(path)
+    def _get_backend_directory_entries(self, path: str) -> set[str]:  # noqa: ARG002
+        """Backend directory entries — removed, metastore is authoritative."""
         return set()
 
     def _record_read_if_tracking(
@@ -467,14 +464,27 @@ class SearchService:
                 context=context,
             )
         # Check if path routes to a dynamic API-backed connector
-        if path and path != "/" and self.router:
+        if path and path != "/" and self._dlc:
             try:
                 zone_id, _agent_id, _is_admin = self._get_routing_params(context)
-                route = self.router.route(path, zone_id=zone_id or ROOT_ZONE_ID)
-                from nexus.core.router import ExternalRouteResult
+                resolved = self._dlc.resolve_path(path, zone_id or ROOT_ZONE_ID)
+                if resolved is not None:
+                    backend, backend_path, user_mp = resolved
+                    _info = self._dlc.get_mount_info(user_mp, zone_id or ROOT_ZONE_ID)
+                    if _info is not None and getattr(_info, "is_external", False):
+                        # Build a simple route-like object for _list_dynamic_connector
+                        class _ExtRoute:
+                            def __init__(
+                                self, backend: Any, backend_path: str, mount_point: str
+                            ) -> None:
+                                self.backend = backend
+                                self.backend_path = backend_path
+                                self.mount_point = mount_point
 
-                if isinstance(route, ExternalRouteResult):
-                    return self._list_dynamic_connector(path, route, recursive, details, context)
+                        ext_route = _ExtRoute(backend, backend_path, user_mp)
+                        return self._list_dynamic_connector(
+                            path, ext_route, recursive, details, context
+                        )
             except PermissionDeniedError:
                 raise
             except Exception as e:
@@ -886,7 +896,7 @@ class SearchService:
             all_paths = filtered_dirs + filtered_files
 
         if details:
-            return self._list_connector_details(all_paths, route, path, list_context)
+            return self._list_connector_details(all_paths)
         return all_paths
 
     def _list_from_metastore_or_api(
@@ -1109,26 +1119,21 @@ class SearchService:
     def _list_connector_details(
         self,
         all_paths: builtins.list[str],
-        route: Any,
-        path: str,
-        list_context: Any,
     ) -> builtins.list[dict[str, Any]]:
         """Build detailed results for dynamic connector paths."""
         results_with_details = []
         for entry_path in all_paths:
             file_meta = self.metadata.get(entry_path)
-            is_dir = (
+            is_dir = bool(
                 file_meta
-                and hasattr(file_meta, "mime_type")
-                and file_meta.mime_type == "inode/directory"
+                and (
+                    getattr(file_meta, "is_dir", False)
+                    or getattr(file_meta, "is_mount", False)
+                    or (
+                        hasattr(file_meta, "mime_type") and file_meta.mime_type == "inode/directory"
+                    )
+                )
             )
-            if not is_dir:
-                try:
-                    backend_relative = entry_path[len(path) :].lstrip("/")
-                    is_dir = route.backend.is_directory(backend_relative, context=list_context)
-                except Exception as e:
-                    logger.debug("Failed to check if %s is a directory: %s", entry_path, e)
-                    is_dir = False
             name = entry_path.rstrip("/").split("/")[-1]
             results_with_details.append(
                 {

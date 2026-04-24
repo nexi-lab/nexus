@@ -3,7 +3,7 @@
 //!
 //! R20.18.7 co-locates the driver-to-driver `ReadBlob` RPC with
 //! `ZoneApiService` on the raft port. The kernel crate provides the
-//! implementation (wired over `MountTable`'s root backend); the raft
+//! implementation (wired over `VFSRouter`'s root backend); the raft
 //! crate only sees this trait.
 
 #![cfg(all(feature = "grpc", has_protos))]

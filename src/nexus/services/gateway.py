@@ -47,7 +47,6 @@ class NexusFSGateway:
     - Metadata: metadata_get/put/list/delete
     - Permissions: rebac_create/check/delete_object_tuples
     - Hierarchy: ensure_parent_tuples_batch, hierarchy_enabled
-    - Router: router property
     - Session: session_factory property
     """
 
@@ -430,19 +429,6 @@ class NexusFSGateway:
         return 0
 
     # =========================================================================
-    # Router Access
-    # =========================================================================
-
-    @property
-    def router(self) -> Any:
-        """Get the path router.
-
-        Returns:
-            PathRouter instance
-        """
-        return self._fs.router
-
-    # =========================================================================
     # Session Factory
     # =========================================================================
 
@@ -502,18 +488,22 @@ class NexusFSGateway:
         Returns:
             List of mount info dictionaries
         """
+        from nexus.core.path_utils import extract_zone_id
+
+        dlc = self._fs._driver_coordinator
         mounts = []
-        for mount_info in self.router.list_mounts():
+        for canonical_key, info in dlc.list_mounts():
+            user_mp = extract_zone_id(canonical_key)[1]
             mounts.append(
                 {
-                    "mount_point": mount_info.mount_point,
-                    "priority": mount_info.priority,
-                    "backend_type": type(mount_info.backend).__name__,
-                    "backend": mount_info.backend,
-                    "conflict_strategy": mount_info.conflict_strategy,
+                    "mount_point": user_mp,
+                    "priority": 0,
+                    "backend_type": type(info.backend).__name__,
+                    "backend": info.backend,
+                    "conflict_strategy": "latest",
                 }
             )
-        return mounts
+        return sorted(mounts, key=lambda m: m["mount_point"])
 
     def get_mount_for_path(self, path: str) -> dict[str, Any] | None:
         """Get mount info and backend-relative path for a virtual path.
@@ -529,19 +519,18 @@ class NexusFSGateway:
             Dict with mount_point, backend, backend_path keys,
             or None if no mount matches.
         """
-        # Sort by mount_point length descending so longest prefix matches first
-        mounts = sorted(self.router.list_mounts(), key=lambda m: len(m.mount_point), reverse=True)
-        for mount in mounts:
-            mp = mount.mount_point
+        from nexus.core.path_utils import extract_zone_id
+
+        dlc = self._fs._driver_coordinator
+        all_mounts = [(extract_zone_id(k)[1], info) for k, info in dlc.list_mounts()]
+        all_mounts.sort(key=lambda x: len(x[0]), reverse=True)
+        for mp, info in all_mounts:
             if path == mp or path.startswith(mp + "/") or mp == "/":
-                # Strip mount prefix to get backend-relative path
                 backend_path = path.lstrip("/") if mp == "/" else path[len(mp) :].lstrip("/")
                 return {
                     "mount_point": mp,
-                    "backend": mount.backend,
+                    "backend": info.backend,
                     "backend_path": backend_path,
-                    "backend_name": getattr(mount.backend, "name", type(mount.backend).__name__),
-                    "conflict_strategy": mount.conflict_strategy,
                 }
         return None
 
@@ -632,20 +621,6 @@ class NexusFSGateway:
         """
         assert context is not None, "context required for has_descendant_access"
         return self._fs._descendant_checker.has_access(path, permission, context)
-
-    def get_backend_directory_entries(self, path: str) -> set[str]:
-        """Get directory entries directly from backend storage.
-
-        Bypasses metadata store to get raw backend listing.
-        Used for merge-listing in search operations.
-
-        Args:
-            path: Virtual directory path
-
-        Returns:
-            Set of entry names in the directory
-        """
-        return self._fs._get_backend_directory_entries(path)
 
     def record_read_if_tracking(
         self,

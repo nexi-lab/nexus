@@ -1,34 +1,57 @@
 # Reference hub deployment for issue #3784.
 #
-# Usage:
+# Architecture (two-service design):
+#
+#   ┌──────────────────┐        ┌──────────────────┐        ┌──────────────┐
+#   │ MCP clients      │──────▶ │ mcp-frontend     │──────▶ │ nexus (RPC)  │
+#   │ (bearer token)   │  :8081 │ nexus mcp serve  │  :2026 │ nexusd       │
+#   └──────────────────┘        │   --url nexus    │        │   --database │
+#                               └──────────────────┘        └──────────────┘
+#                                                                   │
+#                                                          ┌────────┴────────┐
+#                                                          ▼                 ▼
+#                                                     postgres (auth)   redis (metrics)
+#
+# Auth flow:
+#   1. client sends `Authorization: Bearer sk-...` to mcp-frontend :8081
+#   2. mcp-frontend extracts the bearer, opens a per-request remote NexusFS
+#      connection to the RPC server with that bearer as api_key
+#   3. the RPC server validates the bearer via DatabaseAPIKeyAuth
+#      (postgres-backed api_keys table) and resolves zone/is_admin from
+#      APIKeyModel — identity/zone isolation is enforced at the RPC layer
+#   4. missing/invalid/expired/revoked tokens are rejected with 401 at the
+#      RPC layer before any filesystem mutation happens
+#
+# Bootstrap (first time):
 #   export POSTGRES_PASSWORD=<strong-random-value>
 #   docker compose -f docker-compose.hub.yml up -d
 #   docker compose -f docker-compose.hub.yml exec nexus \
 #     nexus hub token create --name root --admin --zone root
+#   # save the printed `sk-...` token — it is shown once and never again
 #
-# Auth model: the MCP HTTP port is fail-closed when NEXUS_DATABASE_URL is
-# set AND NEXUS_URL is unset (hub mode). `nexus mcp serve` installs a
-# bearer-validation middleware in front of every tool call that rejects
-# missing/invalid/expired/revoked tokens with 401 before the request
-# reaches any handler. See `_HubAuthGateMiddleware` in
-# `src/nexus/cli/commands/mcp.py`. Do NOT set NEXUS_URL here — doing so
-# switches MCP to remote-client mode and disables the gate.
-#
-# TLS: terminate at a reverse proxy (Caddy/nginx). Sample config in
-# docs/hub-deploy.md.
+# TLS: terminate at a reverse proxy (Caddy/nginx) in front of port 8081.
+# Sample proxy config in docs/hub-deploy.md.
 
 services:
   nexus:
     image: ghcr.io/nexi-lab/nexus:latest
+    entrypoint: ["nexusd"]
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "2026"
+      - "--deployment-profile"
+      - "full"
+      - "--auth-type"
+      - "database"
+      - "--database-url"
+      - "postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus"
     environment:
-      NEXUS_PROFILE: full
-      NEXUS_DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus
-      NEXUS_MCP_HOST: 0.0.0.0
-      NEXUS_MCP_PORT: 8081
+      NEXUS_DATA_DIR: /data
       NEXUS_REDIS_URL: redis://redis:6379
-      # Leave NEXUS_URL unset to activate hub-mode bearer validation.
-    ports:
-      - "8081:8081"
+      # Exposed to the hub CLI (`nexus hub …`) which talks direct-to-DB.
+      NEXUS_DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus
     volumes:
       - nexus-data:/data
     depends_on:
@@ -36,7 +59,36 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    command: ["nexus", "mcp", "serve", "--transport", "http"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  mcp-frontend:
+    image: ghcr.io/nexi-lab/nexus:latest
+    environment:
+      # Point MCP at the RPC server — bearer tokens flow through as the
+      # per-request api_key for the remote NexusFS connection, so the
+      # RPC server's DatabaseAPIKeyAuth enforces per-token identity/zone.
+      NEXUS_URL: http://nexus:2026
+      NEXUS_REDIS_URL: redis://redis:6379
+      # Intentionally DO NOT set NEXUS_API_KEY here — we want
+      # unauthenticated requests (no bearer) to fail at the RPC layer
+      # rather than fall through to an ambient "frontend" identity.
+    ports:
+      - "8081:8081"
+    depends_on:
+      nexus:
+        condition: service_healthy
+    command: ["nexus", "mcp", "serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8081"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   postgres:
     image: pgvector/pgvector:pg17

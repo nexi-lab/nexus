@@ -5,6 +5,23 @@ agents connect to with individual bearer tokens. Hub mode is the deployment
 pattern introduced by issue #3784; the underlying runtime is unchanged from
 the standard `NEXUS_PROFILE=full` stack.
 
+## 0. Architecture
+
+The reference compose ships **two** Nexus services:
+
+- `nexus` — `nexusd` RPC server on port 2026, backed by postgres (auth) +
+  redis (metrics). This is the source of truth for auth, zones, and files.
+- `mcp-frontend` — `nexus mcp serve --transport http --url http://nexus:2026`
+  on port 8081. It extracts the bearer from each request and opens a
+  per-request `NexusFS` remote connection to the RPC server with that
+  token as the api key, so the RPC server's `DatabaseAPIKeyAuth` enforces
+  per-token identity/zone on every tool call. Missing/invalid/expired/
+  revoked tokens are rejected with 401 at the RPC layer.
+
+`mcp-frontend` deliberately does *not* set `NEXUS_API_KEY`; unauthenticated
+requests therefore fail at the RPC layer rather than falling through to an
+ambient frontend identity.
+
 ## 1. Quickstart
 
 ```bash
@@ -19,6 +36,7 @@ export POSTGRES_PASSWORD="$(openssl rand -base64 32)"
 docker compose -f docker-compose.hub.yml up -d
 
 # 4. Create the first admin token (bootstrap).
+#    Run inside the `nexus` (RPC) container — it has direct Postgres access.
 docker compose -f docker-compose.hub.yml exec nexus \
   nexus hub token create --name root --admin --zone root
 # → prints the raw token once. Save it immediately; it cannot be retrieved.

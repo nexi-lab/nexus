@@ -64,7 +64,7 @@ class BrowserTool:
     ) -> str | list[dict[str, Any]]:
         args = args or {}
         try:
-            result = await asyncio.to_thread(_run_browser_command, command, args)
+            result = await _dispatch_browser_command(command, args)
         except Exception as exc:
             return json.dumps({"error": str(exc), "command": command})
 
@@ -87,11 +87,10 @@ class BrowserTool:
         return False
 
 
-def _run_browser_command(command: str, args: dict) -> Any:
-    """Blocking helper run inside asyncio.to_thread."""
+def _resolve_core_func(command: str) -> Any:
+    """Import ai_dev_browser.core and resolve the command function."""
     import importlib
 
-    # Resolve the core function
     try:
         core_mod = importlib.import_module("ai_dev_browser.core")
     except ImportError as exc:
@@ -109,32 +108,35 @@ def _run_browser_command(command: str, args: dict) -> Any:
     if not callable(func):
         raise ValueError(f"browser.{command} is not callable")
 
+    return func
+
+
+async def _dispatch_browser_command(command: str, args: dict) -> Any:
+    """Dispatch to ai_dev_browser.core async functions directly.
+
+    Runs in the caller's event loop — no thread hop needed because
+    browser core functions are async (WebSocket CDP calls).
+    Sync lifecycle functions (browser_start etc.) are offloaded via to_thread.
+    """
+    func = _resolve_core_func(command)
+
     # Detect whether the function needs a tab as first positional argument
     params = list(inspect.signature(func).parameters.keys())
     needs_tab = params and params[0] in ("tab", "browser_or_tab")
 
-    # Run in a fresh event loop (we're already in a thread)
-    loop = asyncio.new_event_loop()
-    try:
-        if needs_tab and command not in _NO_TAB_COMMANDS:
-            return loop.run_until_complete(_call_with_tab(func, args))
+    if needs_tab and command not in _NO_TAB_COMMANDS:
+        from ai_dev_browser.core import get_active_tab
+
+        tab = await get_active_tab()
+        if inspect.iscoroutinefunction(func):
+            return await func(tab, **args)
         else:
-            if inspect.iscoroutinefunction(func):
-                return loop.run_until_complete(func(**args))
-            else:
-                return func(**args)
-    finally:
-        loop.close()
-
-
-async def _call_with_tab(func: Any, args: dict) -> Any:
-    from ai_dev_browser.core import get_active_tab
-
-    tab = await get_active_tab()
-    if inspect.iscoroutinefunction(func):
-        return await func(tab, **args)
+            return await asyncio.to_thread(func, tab, **args)
     else:
-        return func(tab, **args)
+        if inspect.iscoroutinefunction(func):
+            return await func(**args)
+        else:
+            return await asyncio.to_thread(func, **args)
 
 
 def _build_screenshot_content_blocks(result: dict) -> list[dict[str, Any]]:
@@ -169,7 +171,8 @@ def _build_screenshot_content_blocks(result: dict) -> list[dict[str, Any]]:
                 {
                     "screenshot": screenshot_path,
                     **meta,
-                    "warning": "Could not read screenshot file for vision. Use bash to inspect the file.",
+                    "warning": "Could not read screenshot file for vision. "
+                    "Use bash to inspect the file.",
                 }
             ),
         }

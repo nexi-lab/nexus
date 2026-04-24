@@ -145,7 +145,7 @@ class MetadataMixin:
             }
         # CLI-based connectors (GitHubConnector, SheetsConnector, DocsConnector, etc.)
         cli_name = getattr(backend, "CLI_NAME", None)
-        if cli_name:
+        if isinstance(cli_name, str) and cli_name:
             import json as _json
 
             cli_service = getattr(backend, "CLI_SERVICE", "") or ""

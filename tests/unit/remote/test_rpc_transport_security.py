@@ -65,3 +65,45 @@ class TestInsecureChannelLoopbackValidation:
         assert "Insecure gRPC channel refused" in source, (
             "The insecure channel refusal check was removed from rpc_transport.py"
         )
+
+
+class TestInsecureChannelEscapeHatch:
+    """NEXUS_GRPC_ALLOW_INSECURE=true opts into insecure gRPC on trusted
+    private networks (docker-compose, k8s pod-local). Default is still refuse.
+    """
+
+    @staticmethod
+    def _should_refuse(server_address: str, allow_insecure: str | None) -> bool:
+        """Mirror rpc_transport.py's non-loopback + escape-hatch logic."""
+        import ipaddress
+
+        host = server_address.rsplit(":", 1)[0].strip("[]")
+        is_local = host == "localhost"
+        if not is_local:
+            try:
+                is_local = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                is_local = False
+        allow = (allow_insecure or "").lower() in ("1", "true", "yes")
+        return not is_local and not allow
+
+    def test_remote_refused_without_env(self) -> None:
+        assert self._should_refuse("nexus:2028", allow_insecure=None)
+
+    def test_remote_refused_with_false(self) -> None:
+        assert self._should_refuse("nexus:2028", allow_insecure="false")
+
+    def test_remote_allowed_with_true(self) -> None:
+        assert not self._should_refuse("nexus:2028", allow_insecure="true")
+
+    def test_remote_allowed_with_1(self) -> None:
+        assert not self._should_refuse("10.0.0.5:2028", allow_insecure="1")
+
+    def test_remote_allowed_with_yes(self) -> None:
+        assert not self._should_refuse("api.internal:2028", allow_insecure="yes")
+
+    def test_case_insensitive(self) -> None:
+        assert not self._should_refuse("nexus:2028", allow_insecure="TRUE")
+
+    def test_loopback_always_allowed(self) -> None:
+        assert not self._should_refuse("127.0.0.1:2028", allow_insecure=None)

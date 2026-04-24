@@ -146,6 +146,99 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
+class TestResolvedRemoteUrlPropagation:
+    """Regression (round 7): the URL resolved via ``resolve_connection``
+    (profile / env / flag) must be passed into ``create_mcp_server`` as
+    ``remote_url=…`` so per-request bearer tokens actually open per-request
+    remote connections instead of falling through to the ambient
+    ``_default_nx``.
+    """
+
+    def test_profile_only_url_reaches_create_mcp_server(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from click.testing import CliRunner
+
+        # Scrub env so profile resolution is the only source.
+        monkeypatch.delenv("NEXUS_URL", raising=False)
+        monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+
+        # Stub resolve_connection to simulate a profile that yields a
+        # remote URL.
+        from nexus.cli import config as _config
+
+        captured: dict[str, Any] = {}
+
+        class _Resolved:
+            is_remote = True
+            url = "http://nexus:2026"
+            api_key = "sk-from-profile"
+
+        monkeypatch.setattr(_config, "resolve_connection", lambda **_: _Resolved())
+
+        # Stub asyncio.run and create_mcp_server so we exercise the
+        # resolution path without actually starting a server.
+        from nexus.cli.commands import mcp as _mcp_mod
+
+        def _fake_asyncio_run(coro: Any) -> Any:
+            # Let the coroutine run to the point where it calls
+            # create_mcp_server — we've stubbed that to record the kwargs.
+            import asyncio as _asyncio
+
+            return _asyncio.new_event_loop().run_until_complete(coro)
+
+        async def _fake_get_filesystem(url: str | None, key: str | None, **_: Any) -> Any:
+            return None  # create_mcp_server will be stubbed before using nx
+
+        async def _fake_create_mcp_server(**kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return None  # return None so _async_serve short-circuits
+
+        monkeypatch.setattr(_mcp_mod, "get_filesystem", _fake_get_filesystem)
+        # create_mcp_server is imported inside _async_serve via
+        # `from nexus.bricks.mcp import create_mcp_server`, so patch at
+        # the source.
+        from nexus.bricks import mcp as _bricks_mcp
+
+        monkeypatch.setattr(_bricks_mcp, "create_mcp_server", _fake_create_mcp_server)
+
+        # Invoke the serve command with stdio transport (no http run,
+        # no port open) but still exercise the resolution path.
+        @click_command_wrapper()
+        def _driver() -> None:
+            from nexus.cli.commands.mcp import serve
+
+            serve.callback(
+                transport="stdio",
+                host="127.0.0.1",
+                port=8081,
+                api_key=None,
+                remote_url=None,
+                remote_api_key=None,
+            )
+
+        result = CliRunner().invoke(_driver, ["--profile", "hub"], standalone_mode=False)
+        assert result.exception is None, result.output
+        assert captured.get("remote_url") == "http://nexus:2026"
+
+
+def click_command_wrapper():  # helper for the profile-threading test
+    import click as _click
+
+    def _decorator(fn: Any) -> Any:
+        @_click.command()
+        @_click.option("--profile", default=None)
+        @_click.pass_context
+        def _cmd(ctx: _click.Context, profile: str | None) -> None:
+            ctx.ensure_object(dict)
+            ctx.obj["profile"] = profile
+            fn()
+
+        return _cmd
+
+    return _decorator
+
+
 class TestRequireBearerGate:
     """NEXUS_MCP_REQUIRE_BEARER=true gates requests at the APIKey middleware
     so the tool layer can't fall back to an ambient _default_nx connection

@@ -335,18 +335,60 @@ def serve(
         NEXUS_URL=http://localhost:2026 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
     """
     import asyncio
+    import os
+
+    # Resolve the effective remote URL/api_key once — same logic
+    # ``get_filesystem`` uses — and thread the resolved values into
+    # both the startup guard and the MCP server. For profile-only
+    # launches (e.g. `nexus --profile hub mcp serve`), this promotes
+    # the profile's URL into the `remote_url` passed to
+    # `create_mcp_server`, so per-request bearer tokens actually build
+    # per-request remote connections instead of falling through to an
+    # ambient `_default_nx` (#3784 round 7 fix).
+    resolved_remote_url = remote_url
+    resolved_remote_api_key = remote_api_key
+    try:
+        from nexus.cli.config import resolve_connection
+
+        profile_name = None
+        try:
+            ctx = click.get_current_context(silent=True)
+            if ctx is not None and ctx.obj:
+                profile_name = ctx.obj.get("profile")
+        except RuntimeError:
+            pass
+
+        resolved = resolve_connection(
+            remote_url=remote_url or os.environ.get("NEXUS_URL"),
+            remote_api_key=remote_api_key or os.environ.get("NEXUS_API_KEY"),
+            profile_name=profile_name,
+        )
+        if getattr(resolved, "is_remote", False):
+            resolved_remote_url = resolved.url or resolved_remote_url
+            resolved_remote_api_key = resolved.api_key or resolved_remote_api_key
+    except Exception:
+        # Fall through with the raw CLI-passed values — downstream
+        # paths handle None/empty safely (stdio single-user mode).
+        pass
 
     # Fail-closed: refuse unsupported embedded-hub configuration before
-    # we open a port (#3784). Pass the CLI `--remote-url` through so a
-    # two-service frontend launched via flag is not false-rejected.
-    _reject_embedded_hub_mode(transport, remote_url=remote_url)
+    # we open a port (#3784). Pass the resolved URL so a profile-only
+    # remote frontend is not false-rejected.
+    _reject_embedded_hub_mode(transport, remote_url=resolved_remote_url)
 
     # FastMCP's .run(transport="http") starts its own event loop via anyio.run
     # and cannot be called from inside an already-running asyncio loop. Split
     # async setup (connects, creates server, installs middleware) from the
     # synchronous transport run.
     mcp_server = asyncio.run(
-        _async_serve(transport, host, port, api_key, remote_url, remote_api_key)
+        _async_serve(
+            transport,
+            host,
+            port,
+            api_key,
+            resolved_remote_url,
+            resolved_remote_api_key,
+        )
     )
     if mcp_server is None:
         return

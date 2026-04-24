@@ -64,7 +64,8 @@ class MountService:
 
     def __init__(
         self,
-        router: Any,
+        kernel: Any = None,
+        dlc: Any = None,
         mount_manager: "MountManager | None" = None,
         nexus_fs: Any = None,
         *,
@@ -80,7 +81,8 @@ class MountService:
         """Initialize mount service.
 
         Args:
-            router: Path router for backend resolution
+            kernel: Rust kernel for VFS routing
+            dlc: DriverLifecycleCoordinator for backend refs
             mount_manager: Optional mount manager for persistence
             nexus_fs: Optional NexusFS instance (for kernel ops: mkdir, rmdir, rebac)
             gateway: NexusFSGateway for NexusFS access (preferred over nexus_fs)
@@ -92,7 +94,8 @@ class MountService:
             token_manager_fn: Callback to get token manager for OAuth revocation
             search_service: Optional SearchService for post-mount indexing (Issue #3148)
         """
-        self.router = router
+        self._kernel = kernel
+        self._dlc = dlc
         self._driver_coordinator: Any = None  # Injected post-init by factory
         self.mount_manager = mount_manager
         self.nexus_fs = nexus_fs
@@ -129,9 +132,12 @@ class MountService:
         downstream for error-message mount_path propagation.
         """
         try:
-            # Get backend from router to check capabilities
-            route = self.router.route(mount_point)
-            backend = route.backend if route else None
+            # Get backend from kernel+DLC to check capabilities
+            backend = None
+            if self._kernel and self._dlc:
+                rr = self._kernel.route(mount_point, "root")
+                info = self._dlc.get_mount_info_canonical(rr.mount_point)
+                backend = info.backend if info else None
             if backend is None:
                 return
 
@@ -201,12 +207,13 @@ class MountService:
             if nx is None:
                 return
 
-            # Get the connector backend via the router
+            # Get the connector backend via kernel+DLC
             backend = None
             try:
-                route = self.router.route(mount_point)
-                if route:
-                    backend = route.backend
+                if self._kernel and self._dlc:
+                    rr = self._kernel.route(mount_point, "root")
+                    info = self._dlc.get_mount_info_canonical(rr.mount_point)
+                    backend = info.backend if info else None
             except Exception:
                 pass
 
@@ -752,8 +759,18 @@ class MountService:
         """
         mounts = []
 
-        router_mounts = list(self.router.list_mounts())
-        logger.info(f"[LIST_MOUNTS] Total mounts in router: {len(router_mounts)}")
+        from nexus.core.path_utils import extract_zone_id
+        from nexus.core.protocols.vfs_router import MountInfo
+
+        dlc_mounts = self._dlc.list_mounts() if self._dlc else []
+        router_mounts = sorted(
+            [
+                MountInfo(mount_point=extract_zone_id(k)[1], backend=info.backend)
+                for k, info in dlc_mounts
+            ],
+            key=lambda m: m.mount_point,
+        )
+        logger.info(f"[LIST_MOUNTS] Total mounts in DLC: {len(router_mounts)}")
 
         for mount_info in router_mounts:
             mount_point = mount_info.mount_point
@@ -792,7 +809,12 @@ class MountService:
         if not self._check_permission(mount_point, "read", context):
             return None
 
-        mount_info = self.router.get_mount(mount_point)
+        from nexus.core.protocols.vfs_router import MountInfo
+
+        _dlc_info = self._dlc.get_mount_info(mount_point) if self._dlc else None
+        mount_info = (
+            MountInfo(mount_point=mount_point, backend=_dlc_info.backend) if _dlc_info else None
+        )
         if mount_info:
             return {
                 "mount_point": mount_info.mount_point,
@@ -808,7 +830,7 @@ class MountService:
         Returns:
             True if mount exists
         """
-        return bool(self.router.has_mount(mount_point))
+        return bool(self._dlc.get_mount_info(mount_point)) if self._dlc else False
 
     def list_connectors_sync(self, category: str | None = None) -> list[dict[str, Any]]:
         """List available connector types (synchronous).
@@ -1106,11 +1128,17 @@ class MountService:
         if not self._check_permission(mount_point, "write", context):
             raise PermissionError(f"Cannot update mount {mount_point}: no write permission")
 
-        route = self.router.route(mount_point)
-        if route is None:
+        if not self._kernel or not self._dlc:
+            raise ValueError(f"Mount not found: {mount_point}")
+        try:
+            rr = self._kernel.route(mount_point, "root")
+        except (ValueError, Exception) as exc:
+            raise ValueError(f"Mount not found: {mount_point}") from exc
+        info = self._dlc.get_mount_info_canonical(rr.mount_point)
+        if info is None:
             raise ValueError(f"Mount not found: {mount_point}")
 
-        backend = route.backend
+        backend = info.backend
         result: dict[str, Any] = {
             "updated": False,
             "mount_point": mount_point,
@@ -1172,11 +1200,17 @@ class MountService:
         if not self._check_permission(mount_point, "write", context):
             raise PermissionError(f"Cannot reauth mount {mount_point}: no write permission")
 
-        route = self.router.route(mount_point)
-        if route is None:
+        if not self._kernel or not self._dlc:
+            raise ValueError(f"Mount not found: {mount_point}")
+        try:
+            rr = self._kernel.route(mount_point, "root")
+        except (ValueError, Exception) as exc:
+            raise ValueError(f"Mount not found: {mount_point}") from exc
+        info = self._dlc.get_mount_info_canonical(rr.mount_point)
+        if info is None:
             raise ValueError(f"Mount not found: {mount_point}")
 
-        backend = route.backend
+        backend = info.backend
 
         # Auto-detect provider from backend
         if provider is None:

@@ -44,7 +44,7 @@ def slim_fs(tmp_path: Path):
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    # Kernel (constructs its own DriverLifecycleCoordinator + PathRouter)
+    # Kernel (constructs its own DriverLifecycleCoordinator + VFS routing)
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),

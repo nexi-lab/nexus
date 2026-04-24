@@ -3,19 +3,15 @@
 import logging
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-
-if TYPE_CHECKING:
-    from nexus.core.router import PathRouter
 
 logger = logging.getLogger(__name__)
 
 
 def _boot_post_kernel_services(
     nx: Any,
-    router: "PathRouter",
     services: dict[str, Any],
     svc_on: Callable[[str], bool] | None = None,
     *,
@@ -31,7 +27,6 @@ def _boot_post_kernel_services(
 
     Args:
         nx: The NexusFS instance (already constructed).
-        router: PathRouter (Tier 0 — router only).
         services: Unified services dict (all tiers merged).
         svc_on: Callable ``(name: str) -> bool`` for profile-based gating.
 
@@ -43,11 +38,11 @@ def _boot_post_kernel_services(
     t0 = time.perf_counter()
     _on = _make_gate(svc_on)
 
-    # Resolve the root backend from the router.
-    # NexusFS no longer has a .backend attribute — all backends live on the router.
+    # Resolve the root backend from the DLC.
+    # NexusFS no longer has a .backend attribute — all backends live on the DLC.
     _root_backend: Any = None
     try:
-        _root_backend = nx.router.route("/").backend
+        _root_backend = nx._driver_coordinator.get_root_backend()
     except Exception:
         logger.debug("[BOOT:WIRED] No root backend mounted — services needing backend will degrade")
 
@@ -107,10 +102,18 @@ def _boot_post_kernel_services(
         try:
             from nexus.bricks.mcp.mcp_service import MCPService
 
+            def _list_mount_labels() -> list[tuple[str, str]]:
+                from nexus.core.path_utils import extract_zone_id
+
+                return [
+                    (extract_zone_id(k)[1], "mounted")
+                    for k, _ in nx._driver_coordinator.list_mounts()
+                ]
+
             mcp_service = MCPService(
                 filesystem=nx,
                 credential_service=oauth_service,
-                mount_lister=lambda: [(m.mount_point, "mounted") for m in router.list_mounts()],
+                mount_lister=_list_mount_labels,
                 ssrf_config=(
                     getattr(security_config, "ssrf", None) if security_config is not None else None
                 ),
@@ -143,7 +146,8 @@ def _boot_post_kernel_services(
         from nexus.bricks.mount.mount_service import MountService
 
         mount_service = MountService(
-            router=router,
+            kernel=nx._kernel,
+            dlc=nx._driver_coordinator,
             mount_manager=services.get("mount_manager"),
             nexus_fs=nx,
             gateway=gateway,
@@ -264,7 +268,8 @@ def _boot_post_kernel_services(
         search_service = SearchService(
             metadata_store=nx.metadata,
             permission_enforcer=services.get("permission_enforcer"),
-            router=router,
+            kernel=nx._kernel,
+            dlc=nx._driver_coordinator,
             rebac_manager=services.get("rebac_manager"),
             enforce_permissions=nx._perm_config.enforce,
             default_context=nx._init_cred,
@@ -562,7 +567,8 @@ def _boot_post_kernel_services(
             from nexus.bricks.versioning.operations_service import OperationsService
 
             _undo_service = OperationUndoService(
-                router=router,
+                kernel=nx._kernel,
+                dlc=nx._driver_coordinator,
                 write_fn=nx.sys_write,
                 delete_fn=nx.sys_unlink,
                 rename_fn=nx.sys_rename,

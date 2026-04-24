@@ -93,20 +93,16 @@ def _build_slim_with_external_mount(
         ),
     )
     mount_point = "/ext"
-    # Kernel syscall registers the mount in the Rust router; the
-    # metastore entry marks it DT_EXTERNAL_STORAGE so ``route()``
-    # returns an ExternalRouteResult.  Matches the production flow in
-    # ``nexus.fs.mount()``.
+    # DLC stores the mount info; the metastore entry marks it
+    # DT_EXTERNAL_STORAGE so the facade's route() returns an
+    # ExternalRouteResult.  Matches the production flow.
     kernel._driver_coordinator._store_mount_info(mount_point, backend, is_external=True)
     metastore.put(_make_mount_entry(mount_point, backend.name, entry_type=DT_EXTERNAL_STORAGE))
     # Force slim-mode: facade's external-write fall-through is gated on
     # `_is_slim_mode()` (NexusFS._kernel is None).  In CI nexus_kernel is
     # built and _kernel is a real Rust handle — null it here so the
     # facade exercises the slim-package code path these tests cover.
-    # Also null the router's kernel so route() takes the Python DLC
-    # fallback instead of asking the Rust router (which has no mount).
     kernel._kernel = None
-    kernel.router._kernel = None
     return SlimNexusFS(kernel), backend
 
 
@@ -177,7 +173,6 @@ def test_slim_rewrite_does_not_forward_stale_content_id(tmp_path: Path) -> None:
     kernel._driver_coordinator._store_mount_info("/ext", backend, is_external=True)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
     kernel._kernel = None  # force slim-mode (see helper for rationale)
-    kernel.router._kernel = None
     slim = SlimNexusFS(kernel)
 
     try:
@@ -220,7 +215,6 @@ def test_slim_external_write_is_connector_agnostic(tmp_path: Path) -> None:
     kernel._driver_coordinator._store_mount_info("/any", backend, is_external=True)
     metastore.put(_make_mount_entry("/any", backend.name, entry_type=DT_EXTERNAL_STORAGE))
     kernel._kernel = None  # force slim-mode
-    kernel.router._kernel = None
     slim = SlimNexusFS(kernel)
     try:
         result = slim.write("/any/file.yaml", b"data")
@@ -278,7 +272,6 @@ def test_slim_write_lock_is_shared_across_facade_instances(tmp_path: Path) -> No
     kernel._driver_coordinator._store_mount_info("/ext", backend, is_external=True)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
     kernel._kernel = None  # force slim-mode
-    kernel.router._kernel = None
 
     # Two wrappers around the same kernel — must share lock pool so
     # writes serialize across them.
@@ -325,12 +318,11 @@ def test_slim_external_write_not_triggered_for_non_external_routes(
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
     kernel._driver_coordinator._store_mount_info("/local", backend)
-    # Note: NOT DT_EXTERNAL_STORAGE → router returns RouteResult, not
+    # Note: NOT DT_EXTERNAL_STORAGE → route() returns RouteResult, not
     # ExternalRouteResult.  The fall-through short-circuits and the
     # kernel path runs.
     metastore.put(_make_mount_entry("/local", backend.name))
     kernel._kernel = None  # force slim-mode so kernel.write raises AttributeError
-    kernel.router._kernel = None
     slim = SlimNexusFS(kernel)
 
     external_called: list[Any] = []

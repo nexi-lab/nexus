@@ -111,10 +111,8 @@ def test_slim_read_propagates_non_notfound_backend_errors(
     # instead of the Rust kernel's native CAS read (which bypasses the
     # Python backend and wouldn't see the monkeypatch).  In slim packages
     # _kernel is None from construction; in CI nexus_kernel is built so we
-    # null it here after mount setup.  router._kernel is also nulled so
-    # route() uses the Python DLC fallback.
+    # null it here after mount setup.
     reader._kernel._kernel = None
-    reader._kernel.router._kernel = None
 
     try:
         with pytest.raises(BackendError, match="simulated disk corruption"):

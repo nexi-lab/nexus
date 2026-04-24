@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     )
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.router import PathRouter
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -30,7 +29,8 @@ def create_nexus_services(
     record_store: "RecordStoreABC",
     metadata_store: "MetastoreABC",
     backend: "Backend",
-    router: "PathRouter",
+    kernel: Any = None,
+    dlc: Any = None,
     *,
     permissions: PermissionConfig | None = None,
     audit: AuditConfig | None = None,
@@ -61,7 +61,8 @@ def create_nexus_services(
         record_store: RecordStoreABC instance (provides engine + session_factory).
         metadata_store: MetastoreABC instance (for PermissionEnforcer).
         backend: Backend instance (for WorkspaceManager).
-        router: PathRouter instance (for PermissionEnforcer object type resolution).
+        kernel: Rust kernel for VFS routing.
+        dlc: DriverLifecycleCoordinator for backend refs.
         permissions: Permission config (defaults from PermissionConfig()).
         cache: Cache config (for TTL values, defaults from CacheConfig()).
         distributed: Distributed config (for event bus/locks).
@@ -125,7 +126,8 @@ def create_nexus_services(
         record_store=record_store,
         metadata_store=metadata_store,
         backend=backend,
-        router=router,
+        kernel=kernel,
+        dlc=dlc,
         engine=record_store.engine,
         read_engine=record_store.read_engine,
         perm=perm,
@@ -143,8 +145,8 @@ def create_nexus_services(
     # --- Tier 0: KERNEL (validate Storage Pillars — inlined from _kernel.py) ---
     from nexus.contracts.exceptions import BootError
 
-    if ctx.router is None:
-        raise BootError("VFS router is None", tier="kernel")
+    if ctx.kernel is None:
+        raise BootError("VFS kernel is None", tier="kernel")
     if ctx.metadata_store is None:
         raise BootError("Metadata store is None", tier="kernel")
     if ctx.record_store is None:
@@ -256,8 +258,7 @@ def create_nexus_fs(
         init_cred if init_cred is not None else _OC(user_id="system", groups=[], is_admin=is_admin)
     )
 
-    # F2: construct NexusFS first — services are built next using a PathRouter
-    # wired to nx._driver_coordinator + nx._kernel.
+    # F2: construct NexusFS first — services are built next using kernel + DLC.
     nx = NexusFS(
         metadata_store=metadata_store,
         record_store=record_store,
@@ -275,12 +276,8 @@ def create_nexus_fs(
 
     nx.sys_setattr("/", entry_type=DT_MOUNT, backend=backend)
 
-    # Service-tier PathRouter — delegates LPM to kernel, enriches with DLC.
-    # Owned by factory, NOT by NexusFS (kernel routing is 100% Rust).
-    from nexus.core.router import PathRouter
-
-    _service_router = PathRouter(nx._driver_coordinator, nx.metadata, nx._kernel)
-    nx.router = _service_router  # service-tier callers read nx.router
+    # Service-tier routing: kernel.route() + DLC for backend refs.
+    # PathRouter eliminated — callers use kernel + DLC directly.
 
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
@@ -290,7 +287,8 @@ def create_nexus_fs(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            router=_service_router,
+            kernel=nx._kernel,
+            dlc=nx._driver_coordinator,
             permissions=permissions,
             audit=audit,
             cache=cache,
@@ -516,7 +514,8 @@ def _register_vfs_hooks(
 
     _vview_resolver = VirtualViewResolver(
         metadata=nx.metadata,
-        path_router=nx.router,
+        kernel=nx._kernel,
+        dlc=nx._driver_coordinator,
         permission_checker=permission_checker,
         parse_fn=parse_fn,
         read_tracker_fn=None,

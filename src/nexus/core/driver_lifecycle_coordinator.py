@@ -184,7 +184,7 @@ class DriverLifecycleCoordinator:
         return True
 
     # ------------------------------------------------------------------
-    # DLC read helpers (used by PathRouter, zone_manager, etc.)
+    # DLC read helpers (used by kernel, zone_manager, etc.)
     # ------------------------------------------------------------------
 
     def get_mount_info(

@@ -363,6 +363,8 @@ class MetadataMixin:
             # may still ship a LocalMetastore redb path.
             _ms_path = getattr(metastore, "_redb_path", None) if metastore is not None else None
 
+            _is_external = bool(attrs.get("is_external", False))
+
             result = self._kernel.sys_setattr(
                 path,
                 entry_type,
@@ -372,6 +374,7 @@ class MetadataMixin:
                 py_backend=backend,
                 zone_id=zone_id,
                 metastore_path=str(_ms_path) if _ms_path else None,
+                is_external=_is_external,
             )
 
             # Python-side bookkeeping: store _PyMountInfo + dispatch event
@@ -379,6 +382,7 @@ class MetadataMixin:
                 path,
                 backend,
                 zone_id=zone_id,
+                is_external=_is_external,
             )
             return result
 

@@ -179,8 +179,7 @@ async def test_factory_boot_threads_ssrf_config_to_mcp_service() -> None:
 
     nx = MagicMock()
     nx._config = None  # simulate pre-attach state (real factory behavior)
-    router = MagicMock()
-    router.list_mounts = MagicMock(return_value=[])
+    nx._driver_coordinator.list_mounts.return_value = []
 
     security = SecurityConfig(ssrf=SSRFConfig(extra_deny_cidrs=["10.50.0.0/16"]))
 
@@ -202,7 +201,7 @@ async def test_factory_boot_threads_ssrf_config_to_mcp_service() -> None:
         # extensive stubbing; swallow any boot-time failures and only assert
         # that MCPService received the threaded config before the failure.
         try:
-            await _boot_post_kernel_services(nx, router, services, svc_on, security_config=security)
+            await _boot_post_kernel_services(nx, services, svc_on, security_config=security)
         except Exception:
             pass
 

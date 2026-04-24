@@ -63,7 +63,10 @@ def mock_fs():
     fs._rebac_manager.hierarchy_manager.enable_inheritance = True
     fs._rebac_manager.hierarchy_manager.ensure_parent_tuples_batch = MagicMock(return_value=2)
     fs._rebac_manager.hierarchy_manager.remove_parent_tuples = MagicMock(return_value=1)
-    fs.router = MagicMock()
+    # DriverLifecycleCoordinator for mount listing
+    mock_dlc = MagicMock()
+    mock_dlc.list_mounts.return_value = []
+    fs._driver_coordinator = mock_dlc
     fs.SessionLocal = MagicMock()
     fs.read = MagicMock(return_value={"content": b"data", "path": "/test/file.txt"})
     fs.read_bulk = MagicMock(return_value={"/a": b"data"})
@@ -329,10 +332,6 @@ class TestHierarchyOperations:
 class TestProperties:
     """Tests for property access."""
 
-    def test_router_property(self, gateway, mock_fs):
-        """router returns NexusFS router."""
-        assert gateway.router is mock_fs.router
-
     def test_session_factory_property(self, gateway, mock_fs):
         """session_factory returns SessionLocal."""
         assert gateway.session_factory is mock_fs.SessionLocal
@@ -393,12 +392,12 @@ class TestMountOperations:
 
     def test_list_mounts(self, gateway, mock_fs):
         """list_mounts returns formatted mount list."""
-        mount_info = MagicMock()
-        mount_info.mount_point = "/mnt/test"
-        mount_info.backend = MagicMock()
-        type(mount_info.backend).__name__ = "CASLocalBackend"
-        mount_info.conflict_strategy = "latest"
-        mock_fs.router.list_mounts.return_value = [mount_info]
+        dlc_info = MagicMock()
+        dlc_info.backend = MagicMock()
+        type(dlc_info.backend).__name__ = "CASLocalBackend"
+        mock_fs._driver_coordinator.list_mounts.return_value = [
+            ("/root/mnt/test", dlc_info),
+        ]
 
         result = gateway.list_mounts()
         assert len(result) == 1
@@ -407,12 +406,12 @@ class TestMountOperations:
 
     def test_get_mount_for_path_found(self, gateway, mock_fs):
         """get_mount_for_path returns mount info."""
-        mount_info = MagicMock()
-        mount_info.mount_point = "/mnt"
-        mount_info.backend = MagicMock()
-        mount_info.backend.name = "my_backend"
-        mount_info.conflict_strategy = "latest"
-        mock_fs.router.list_mounts.return_value = [mount_info]
+        dlc_info = MagicMock()
+        dlc_info.backend = MagicMock()
+        dlc_info.backend.name = "my_backend"
+        mock_fs._driver_coordinator.list_mounts.return_value = [
+            ("/root/mnt", dlc_info),
+        ]
 
         result = gateway.get_mount_for_path("/mnt/subdir/file.txt")
         assert result is not None
@@ -421,12 +420,12 @@ class TestMountOperations:
 
     def test_get_mount_for_path_root(self, gateway, mock_fs):
         """get_mount_for_path handles root mount."""
-        mount_info = MagicMock()
-        mount_info.mount_point = "/"
-        mount_info.backend = MagicMock()
-        mount_info.backend.name = "root_backend"
-        mount_info.conflict_strategy = "latest"
-        mock_fs.router.list_mounts.return_value = [mount_info]
+        dlc_info = MagicMock()
+        dlc_info.backend = MagicMock()
+        dlc_info.backend.name = "root_backend"
+        mock_fs._driver_coordinator.list_mounts.return_value = [
+            ("/root/", dlc_info),
+        ]
 
         result = gateway.get_mount_for_path("/any/path")
         assert result is not None
@@ -434,6 +433,6 @@ class TestMountOperations:
 
     def test_get_mount_for_path_not_found(self, gateway, mock_fs):
         """get_mount_for_path returns None when no mount matches."""
-        mock_fs.router.list_mounts.return_value = []
+        mock_fs._driver_coordinator.list_mounts.return_value = []
         result = gateway.get_mount_for_path("/orphan/path")
         assert result is None

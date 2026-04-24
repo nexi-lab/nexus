@@ -31,13 +31,21 @@ def mock_cas():
 
 
 @pytest.fixture
-def mock_router():
-    """Mock router."""
+def mock_kernel():
+    """Mock Rust kernel."""
     mock = MagicMock()
     backend = MagicMock()
     backend.read_content.return_value = b"test content"
     route = MagicMock(backend=backend, readonly=False)
     mock.route.return_value = route
+    return mock
+
+
+@pytest.fixture
+def mock_dlc():
+    """Mock DriverLifecycleCoordinator."""
+    mock = MagicMock()
+    mock.list_mounts.return_value = []
     return mock
 
 
@@ -61,30 +69,33 @@ def operation_context():
 class TestVersionServiceSmoke:
     """Smoke tests for VersionService."""
 
-    def test_version_service_init(self, mock_metadata, mock_cas, mock_router):
+    def test_version_service_init(self, mock_metadata, mock_cas, mock_kernel, mock_dlc):
         """Test VersionService can be instantiated."""
         from nexus.bricks.versioning.version_service import VersionService
 
         service = VersionService(
             metadata_store=mock_metadata,
             cas_store=mock_cas,
-            router=mock_router,
+            kernel=mock_kernel,
+            dlc=mock_dlc,
         )
 
         assert service.metadata == mock_metadata
         # CAS store is stored as self.cas
         assert service.cas == mock_cas
-        assert service.router == mock_router
+        assert service.kernel == mock_kernel
+        assert service.dlc == mock_dlc
 
     @pytest.mark.asyncio
-    async def test_list_versions_basic(self, mock_metadata, mock_cas, mock_router):
+    async def test_list_versions_basic(self, mock_metadata, mock_cas, mock_kernel, mock_dlc):
         """Test list_versions can be called."""
         from nexus.bricks.versioning.version_service import VersionService
 
         service = VersionService(
             metadata_store=mock_metadata,
             cas_store=mock_cas,
-            router=mock_router,
+            kernel=mock_kernel,
+            dlc=mock_dlc,
             enforce_permissions=False,
         )
 
@@ -220,19 +231,20 @@ class TestSearchServiceSmoke:
 class TestMountServiceSmoke:
     """Smoke tests for MountService."""
 
-    def test_mount_service_init(self, mock_router):
+    def test_mount_service_init(self, mock_kernel, mock_dlc):
         """Test MountService can be instantiated."""
         from nexus.bricks.mount.mount_service import MountService
 
-        service = MountService(router=mock_router)
-        assert service.router is mock_router
+        service = MountService(kernel=mock_kernel, dlc=mock_dlc)
+        assert service._kernel is mock_kernel
+        assert service._dlc is mock_dlc
 
     @pytest.mark.asyncio
-    async def test_list_mounts_basic(self, mock_router):
+    async def test_list_mounts_basic(self, mock_kernel, mock_dlc):
         """Test list_mounts can be called."""
         from nexus.bricks.mount.mount_service import MountService
 
-        service = MountService(router=mock_router)
+        service = MountService(kernel=mock_kernel, dlc=mock_dlc)
 
         # Should return list (may be empty)
         result = await service.list_mounts()
@@ -279,7 +291,7 @@ class TestReBACServiceSmoke:
 class TestServiceIntegrationSmoke:
     """Smoke test for service integration patterns."""
 
-    def test_all_services_can_coexist(self, mock_metadata, mock_cas, mock_router):
+    def test_all_services_can_coexist(self, mock_metadata, mock_cas, mock_kernel, mock_dlc):
         """Test that all services can be instantiated together."""
 
         from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
@@ -293,12 +305,13 @@ class TestServiceIntegrationSmoke:
         version_svc = VersionService(
             metadata_store=mock_metadata,
             cas_store=mock_cas,
-            router=mock_router,
+            kernel=mock_kernel,
+            dlc=mock_dlc,
         )
         mcp_svc = MCPService(filesystem=None)
         oauth_svc = OAuthCredentialService(oauth_factory=None, token_manager=None)
         search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)
-        mount_svc = MountService(router=mock_router)
+        mount_svc = MountService(kernel=mock_kernel, dlc=mock_dlc)
         rebac_svc = ReBACService(rebac_manager=None, enforce_permissions=False)
 
         # Verify all instantiated

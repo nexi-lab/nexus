@@ -19,13 +19,19 @@ from nexus.contracts.types import OperationContext
 
 
 @pytest.fixture
-def mock_router():
-    """Create a mock PathRouter."""
-    router = MagicMock()
-    router.has_mount.return_value = False
-    router.get_mount.return_value = None
-    router.list_mounts.return_value = []
-    return router
+def mock_kernel():
+    """Create a mock Rust kernel."""
+    kernel = MagicMock()
+    return kernel
+
+
+@pytest.fixture
+def mock_dlc():
+    """Create a mock DriverLifecycleCoordinator."""
+    dlc = MagicMock()
+    dlc.get_mount_info.return_value = None
+    dlc.list_mounts.return_value = []
+    return dlc
 
 
 @pytest.fixture
@@ -65,10 +71,13 @@ def mock_driver_coordinator():
 
 
 @pytest.fixture
-def mount_service(mock_router, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator):
+def mount_service(
+    mock_kernel, mock_dlc, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator
+):
     """Create a MountService with all mock dependencies."""
     svc = MountService(
-        router=mock_router,
+        kernel=mock_kernel,
+        dlc=mock_dlc,
         mount_manager=mock_mount_manager,
         nexus_fs=mock_nexus_fs,
     )
@@ -96,27 +105,32 @@ def operation_context():
 class TestMountServiceInit:
     """Tests for MountService construction."""
 
-    def test_init_stores_dependencies(self, mock_router, mock_mount_manager, mock_nexus_fs):
+    def test_init_stores_dependencies(
+        self, mock_kernel, mock_dlc, mock_mount_manager, mock_nexus_fs
+    ):
         """MountService stores all injected dependencies."""
         service = MountService(
-            router=mock_router,
+            kernel=mock_kernel,
+            dlc=mock_dlc,
             mount_manager=mock_mount_manager,
             nexus_fs=mock_nexus_fs,
         )
-        assert service.router is mock_router
+        assert service._kernel is mock_kernel
+        assert service._dlc is mock_dlc
         assert service.mount_manager is mock_mount_manager
         assert service.nexus_fs is mock_nexus_fs
 
-    def test_init_with_minimal_dependencies(self, mock_router):
-        """MountService can be created with only a router."""
-        service = MountService(router=mock_router)
-        assert service.router is mock_router
+    def test_init_with_minimal_dependencies(self, mock_kernel, mock_dlc):
+        """MountService can be created with only kernel and dlc."""
+        service = MountService(kernel=mock_kernel, dlc=mock_dlc)
+        assert service._kernel is mock_kernel
+        assert service._dlc is mock_dlc
         assert service.mount_manager is None
         assert service.nexus_fs is None
 
-    def test_init_stores_auth_service(self, mock_router) -> None:
+    def test_init_stores_auth_service(self, mock_kernel, mock_dlc) -> None:
         auth_service = MagicMock()
-        service = MountService(router=mock_router, auth_service=auth_service)
+        service = MountService(kernel=mock_kernel, dlc=mock_dlc, auth_service=auth_service)
         assert service._auth_service is auth_service
 
 
@@ -128,18 +142,18 @@ class TestMountServiceInit:
 class TestListMounts:
     """Tests for the list_mounts method."""
 
-    def test_list_mounts_returns_empty_list(self, mount_service, mock_router):
+    def test_list_mounts_returns_empty_list(self, mount_service, mock_dlc):
         """list_mounts returns empty list when no mounts exist."""
-        mock_router.list_mounts.return_value = []
+        mock_dlc.list_mounts.return_value = []
         result = asyncio.run(mount_service.list_mounts())
         assert result == []
 
-    def test_list_mounts_returns_all_without_context(self, mount_service, mock_router):
+    def test_list_mounts_returns_all_without_context(self, mount_service, mock_dlc):
         """Without context, all mounts are returned (backward compat)."""
-        mount_info = MagicMock()
-        mount_info.mount_point = "/mnt/test"
+        dlc_info = MagicMock()
+        dlc_info.backend = MagicMock()
 
-        mock_router.list_mounts.return_value = [mount_info]
+        mock_dlc.list_mounts.return_value = [("/root/mnt/test", dlc_info)]
 
         result = asyncio.run(mount_service.list_mounts())
 
@@ -147,16 +161,18 @@ class TestListMounts:
         assert result[0]["mount_point"] == "/mnt/test"
 
     def test_list_mounts_filters_by_permission(
-        self, mount_service, mock_router, mock_nexus_fs, operation_context
+        self, mount_service, mock_dlc, mock_nexus_fs, operation_context
     ):
         """Mounts without read permission are excluded."""
-        mount_a = MagicMock()
-        mount_a.mount_point = "/mnt/allowed"
+        dlc_info_a = MagicMock()
+        dlc_info_a.backend = MagicMock()
+        dlc_info_b = MagicMock()
+        dlc_info_b.backend = MagicMock()
 
-        mount_b = MagicMock()
-        mount_b.mount_point = "/mnt/denied"
-
-        mock_router.list_mounts.return_value = [mount_a, mount_b]
+        mock_dlc.list_mounts.return_value = [
+            ("/root/mnt/allowed", dlc_info_a),
+            ("/root/mnt/denied", dlc_info_b),
+        ]
 
         # Mock _check_mount_permission directly — without a gateway the
         # permissive fallback returns True for all mounts.
@@ -167,12 +183,12 @@ class TestListMounts:
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/allowed"
 
-    def test_list_mounts_admin_sees_all(self, mount_service, mock_router, mock_nexus_fs):
+    def test_list_mounts_admin_sees_all(self, mount_service, mock_dlc, mock_nexus_fs):
         """Admin users see all mounts regardless of permissions."""
-        mount_info = MagicMock()
-        mount_info.mount_point = "/mnt/restricted"
+        dlc_info = MagicMock()
+        dlc_info.backend = MagicMock()
 
-        mock_router.list_mounts.return_value = [mount_info]
+        mock_dlc.list_mounts.return_value = [("/root/mnt/restricted", dlc_info)]
         mock_nexus_fs.rebac_check.return_value = False
 
         admin_ctx = OperationContext(
@@ -196,7 +212,7 @@ class TestListMounts:
 class TestRemoveMount:
     """Tests for the remove_mount method."""
 
-    def test_remove_mount_success(self, mount_service, mock_router, mock_nexus_fs):
+    def test_remove_mount_success(self, mount_service, mock_nexus_fs):
         """Removing an existing mount returns removed=True."""
         mount_service._driver_coordinator.unmount.return_value = True
 
@@ -205,7 +221,7 @@ class TestRemoveMount:
         assert result["removed"] is True
         mount_service._driver_coordinator.unmount.assert_called_once_with("/mnt/test")
 
-    def test_remove_mount_not_found(self, mount_service, mock_router):
+    def test_remove_mount_not_found(self, mount_service):
         """Removing a non-existent mount returns errors."""
         mount_service._driver_coordinator.unmount.return_value = False
 
@@ -214,7 +230,7 @@ class TestRemoveMount:
         assert result["removed"] is False
         assert "Mount not found" in result["errors"][0]
 
-    def test_remove_mount_cleans_up_directory(self, mount_service, mock_router, mock_nexus_fs):
+    def test_remove_mount_cleans_up_directory(self, mount_service, mock_nexus_fs):
         """Removing a mount deletes the directory entry."""
         mount_service._driver_coordinator.unmount.return_value = True
 
@@ -224,7 +240,7 @@ class TestRemoveMount:
         mock_nexus_fs.metadata.delete.assert_called_once_with("/mnt/test")
         assert result["directory_deleted"] is True
 
-    def test_remove_mount_handles_cleanup_errors(self, mount_service, mock_router, mock_nexus_fs):
+    def test_remove_mount_handles_cleanup_errors(self, mount_service, mock_nexus_fs):
         """Errors during cleanup are reported but don't fail the removal."""
         mount_service._driver_coordinator.unmount.return_value = True
         mock_nexus_fs.metadata.delete.side_effect = RuntimeError("DB error")
@@ -240,7 +256,7 @@ class TestAddMountAuthResolution:
     """Tests auth resolution during mount creation."""
 
     def test_add_mount_uses_auth_service_resolution(
-        self, mock_router, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator
+        self, mock_kernel, mock_dlc, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator
     ) -> None:
         auth_service = MagicMock()
         auth_service.resolve_backend_config.return_value = MagicMock(
@@ -249,7 +265,8 @@ class TestAddMountAuthResolution:
             message=None,
         )
         service = MountService(
-            router=mock_router,
+            kernel=mock_kernel,
+            dlc=mock_dlc,
             mount_manager=mock_mount_manager,
             nexus_fs=mock_nexus_fs,
             auth_service=auth_service,
@@ -278,7 +295,7 @@ class TestAddMountAuthResolution:
             )
 
     def test_add_mount_raises_when_auth_missing(
-        self, mock_router, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator
+        self, mock_kernel, mock_dlc, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator
     ) -> None:
         auth_service = MagicMock()
         auth_service.resolve_backend_config.return_value = MagicMock(
@@ -287,7 +304,8 @@ class TestAddMountAuthResolution:
             message="Run `nexus auth connect s3 secret`.",
         )
         service = MountService(
-            router=mock_router,
+            kernel=mock_kernel,
+            dlc=mock_dlc,
             mount_manager=mock_mount_manager,
             nexus_fs=mock_nexus_fs,
             auth_service=auth_service,
@@ -307,21 +325,21 @@ class TestAddMountAuthResolution:
 class TestGetMount:
     """Tests for the get_mount method."""
 
-    def test_get_mount_found(self, mount_service, mock_router):
+    def test_get_mount_found(self, mount_service, mock_dlc):
         """Getting an existing mount returns its details."""
-        mount_info = MagicMock()
-        mount_info.mount_point = "/mnt/test"
+        dlc_info = MagicMock()
+        dlc_info.backend = MagicMock()
 
-        mock_router.get_mount.return_value = mount_info
+        mock_dlc.get_mount_info.return_value = dlc_info
 
         result = asyncio.run(mount_service.get_mount("/mnt/test"))
 
         assert result is not None
         assert result["mount_point"] == "/mnt/test"
 
-    def test_get_mount_not_found(self, mount_service, mock_router):
+    def test_get_mount_not_found(self, mount_service, mock_dlc):
         """Getting a non-existent mount returns None."""
-        mock_router.get_mount.return_value = None
+        mock_dlc.get_mount_info.return_value = None
 
         result = asyncio.run(mount_service.get_mount("/mnt/nonexistent"))
         assert result is None
@@ -335,14 +353,14 @@ class TestGetMount:
 class TestHasMount:
     """Tests for the has_mount method."""
 
-    def test_has_mount_true(self, mount_service, mock_router):
+    def test_has_mount_true(self, mount_service, mock_dlc):
         """has_mount returns True for existing mount."""
-        mock_router.has_mount.return_value = True
+        mock_dlc.get_mount_info.return_value = MagicMock()
         assert asyncio.run(mount_service.has_mount("/mnt/test")) is True
 
-    def test_has_mount_false(self, mount_service, mock_router):
+    def test_has_mount_false(self, mount_service, mock_dlc):
         """has_mount returns False for non-existent mount."""
-        mock_router.has_mount.return_value = False
+        mock_dlc.get_mount_info.return_value = None
         assert asyncio.run(mount_service.has_mount("/mnt/nonexistent")) is False
 
 
@@ -367,9 +385,9 @@ class TestSavedMounts:
         assert result == "mount-uuid-1234"
         mock_mount_manager.save_mount.assert_called_once()
 
-    def test_save_mount_requires_mount_manager(self, mock_router):
+    def test_save_mount_requires_mount_manager(self, mock_kernel, mock_dlc):
         """save_mount raises RuntimeError without mount_manager."""
-        service = MountService(router=mock_router, mount_manager=None)
+        service = MountService(kernel=mock_kernel, dlc=mock_dlc, mount_manager=None)
 
         with pytest.raises(RuntimeError, match="Mount manager not available"):
             asyncio.run(
@@ -394,9 +412,9 @@ class TestSavedMounts:
         result = asyncio.run(mount_service.delete_saved_mount("/mnt/nonexistent"))
         assert result is False
 
-    def test_delete_saved_mount_requires_mount_manager(self, mock_router):
+    def test_delete_saved_mount_requires_mount_manager(self, mock_kernel, mock_dlc):
         """delete_saved_mount raises RuntimeError without mount_manager."""
-        service = MountService(router=mock_router, mount_manager=None)
+        service = MountService(kernel=mock_kernel, dlc=mock_dlc, mount_manager=None)
 
         with pytest.raises(RuntimeError, match="Mount manager not available"):
             asyncio.run(service.delete_saved_mount("/mnt/test"))

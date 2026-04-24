@@ -560,13 +560,14 @@ class TestMountIntegration:
         # Write to the mount
         nx.write("/mnt/write/test.txt", b"Hello from mount!")
 
-        # Read back via route.backend to avoid pool collision
+        # Read back via kernel route to avoid pool collision
         # (all CASLocalBackend instances have name="local", so the pool
         # can only hold one; resolve_backend may return a different instance)
         meta = nx.metadata.get("/mnt/write/test.txt")
         assert meta is not None
-        route = nx.router.route("/mnt/write/test.txt", zone_id=nx._zone_id)
-        content = route.backend.read_content(meta.etag)
+        rr = nx._kernel.route("/mnt/write/test.txt", nx._zone_id)
+        dlc_info = nx._driver_coordinator.get_mount_info_canonical(rr.mount_point)
+        content = dlc_info.backend.read_content(meta.etag)
         assert content == b"Hello from mount!"
 
     @pytest.mark.asyncio
@@ -619,19 +620,20 @@ class TestMountIntegration:
         nx.write("/mnt/one/file.txt", b"Mount 1")
         nx.write("/mnt/two/file.txt", b"Mount 2")
 
-        # Read back via route.backend to avoid pool collision.
+        # Read back via kernel route to avoid pool collision.
         # All CASLocalBackend instances share name="local", so the
         # coordinator's backend_pool can only hold one at a time;
         # resolve_backend("local") returns whichever was last registered.
-        # Verify content via route.backend (correctly resolved by LPM).
+        # Verify content via DLC mount info (correctly resolved by LPM).
         for mount_path, expected in [
             ("/mnt/one/file.txt", b"Mount 1"),
             ("/mnt/two/file.txt", b"Mount 2"),
         ]:
             meta = nx.metadata.get(mount_path)
             assert meta is not None, f"metadata missing for {mount_path}"
-            route = nx.router.route(mount_path, zone_id=nx._zone_id)
-            content = route.backend.read_content(meta.etag)
+            rr = nx._kernel.route(mount_path, nx._zone_id)
+            dlc_info = nx._driver_coordinator.get_mount_info_canonical(rr.mount_point)
+            content = dlc_info.backend.read_content(meta.etag)
             assert content == expected, f"content mismatch for {mount_path}"
 
 

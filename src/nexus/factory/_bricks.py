@@ -427,7 +427,8 @@ def _boot_independent_bricks(
         version_service = VersionService(
             metadata_store=ctx.metadata_store,
             cas_store=ctx.backend,
-            router=ctx.router,
+            kernel=ctx.kernel,
+            dlc=ctx.dlc,
             enforce_permissions=False,
             record_store=ctx.record_store,
         )

@@ -14,7 +14,6 @@ Tests cover ReBAC operations:
 """
 
 # Check if pandas is available (required for dynamic viewer tests)
-import asyncio
 import importlib.util
 import tempfile
 from collections.abc import Generator
@@ -46,14 +45,12 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with ReBAC enabled."""
-    nx = asyncio.run(
-        create_nexus_fs(
-            backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
-            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=True),  # Enable permissions for ReBAC tests
-        )
+    nx = create_nexus_fs(
+        backend=CASLocalBackend(temp_dir),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=True),  # Enable permissions for ReBAC tests
     )
     yield nx
     nx.close()
@@ -62,14 +59,12 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 @pytest.fixture
 def nx_no_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance without permissions enforcement."""
-    nx = asyncio.run(
-        create_nexus_fs(
-            backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-noperm")),
-            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=False),
-        )
+    nx = create_nexus_fs(
+        backend=CASLocalBackend(temp_dir),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-noperm")),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()
@@ -983,8 +978,7 @@ class TestRebacWithoutManager:
 class TestRebacIntegration:
     """Integration tests for ReBAC with file operations."""
 
-    @pytest.mark.asyncio
-    async def test_file_access_with_rebac(self, nx_no_permissions: NexusFS) -> None:
+    def test_file_access_with_rebac(self, nx_no_permissions: NexusFS) -> None:
         """Test that file access respects ReBAC permissions."""
         # Use non-permission version for writing
         nx_no_permissions.write("/protected.txt", b"Secret content")

@@ -94,7 +94,7 @@ class TestSlimBootViaFactory:
         assert nx.service("permission_enforcer") is None
 
     @pytest.mark.asyncio
-    def test_minimal_mode_nexus_has_router(self, tmp_path: "Path") -> None:
+    def test_minimal_mode_nexus_has_driver_coordinator(self, tmp_path: "Path") -> None:
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -108,7 +108,7 @@ class TestSlimBootViaFactory:
             record_store=None,
         )
 
-        assert nx.router is not None
+        assert nx._driver_coordinator is not None
 
 
 # ---------------------------------------------------------------------------

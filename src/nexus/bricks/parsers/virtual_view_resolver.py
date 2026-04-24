@@ -35,7 +35,8 @@ class VirtualViewResolver(VFSPathResolver):
 
     Dependencies injected via constructor:
     - metadata: MetastoreABC (file existence + metadata lookup)
-    - path_router: PathRouter (CAS content routing)
+    - kernel: Rust kernel (VFS routing)
+    - dlc: DriverLifecycleCoordinator (backend refs)
     - permission_checker: PermissionChecker (read permission verification)
     - parse_fn: Optional callable for content parsing
     - read_tracker_fn: Optional callable for dependency tracking (#1166)
@@ -43,7 +44,8 @@ class VirtualViewResolver(VFSPathResolver):
 
     __slots__ = (
         "_metadata",
-        "_path_router",
+        "_kernel",
+        "_dlc",
         "_permission_checker",
         "_parse_fn",
         "_read_tracker_fn",
@@ -59,13 +61,15 @@ class VirtualViewResolver(VFSPathResolver):
     def __init__(
         self,
         metadata: Any,
-        path_router: Any,
-        permission_checker: Any,
+        kernel: Any,
+        dlc: Any = None,
+        permission_checker: Any = None,
         parse_fn: Any = None,
         read_tracker_fn: Any = None,
     ) -> None:
         self._metadata = metadata
-        self._path_router = path_router
+        self._kernel = kernel
+        self._dlc = dlc
         self._permission_checker = permission_checker
         self._parse_fn = parse_fn
         self._read_tracker_fn = read_tracker_fn
@@ -90,8 +94,11 @@ class VirtualViewResolver(VFSPathResolver):
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
 
         # Route and read original file content
-        route = self._path_router.route(original_path)
+        rr = self._kernel.route(original_path, "root")
+        info = self._dlc.get_mount_info_canonical(rr.mount_point) if self._dlc else None
         if meta is None or meta.etag is None:
+            raise NexusFileNotFoundError(original_path)
+        if info is None:
             raise NexusFileNotFoundError(original_path)
 
         # Add backend_path to context for path-based connectors
@@ -99,9 +106,9 @@ class VirtualViewResolver(VFSPathResolver):
         if context:
             from dataclasses import replace
 
-            read_context = replace(context, backend_path=route.backend_path)
+            read_context = replace(context, backend_path=rr.backend_path)
 
-        content: bytes = route.backend.read_content(meta.etag, context=read_context)
+        content: bytes = info.backend.read_content(meta.etag, context=read_context)
 
         # Parse content to markdown
         content = get_parsed_content(

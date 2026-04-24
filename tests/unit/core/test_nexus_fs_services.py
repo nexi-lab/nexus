@@ -75,14 +75,13 @@ class TestNexusFSServiceComposition:
 
         # VersionService dependencies (may be proxy-wrapped after Rust kernel init)
         assert fs.service("version_service").metadata is not None
-        assert fs.service("version_service").cas == fs.router.route("/").backend
 
         # ReBACService should have a rebac_manager (may be proxy-wrapped)
         assert fs.service("rebac")._rebac_manager is not None
         assert fs.service("rebac_manager") is not None
 
-        # MountService should have router and mount_manager
-        assert fs.service("mount").router == fs.router
+        # MountService should have kernel and dlc
+        assert fs.service("mount")._dlc is not None
         assert fs.service("mount").mount_manager == fs.service("mount_manager")
 
         # Services that take filesystem should have it

@@ -2,7 +2,7 @@
 
 Per NEXUS-LEGO-ARCHITECTURE §2 and Liedtke's microkernel test, only VFS
 routing and Metastore belong in the kernel.  Both are injected as
-constructor arguments (router, metadata_store) and validated here.
+constructor arguments (kernel, metadata_store) and validated here.
 
 All service creation has been moved to ``_boot_system_services()``
 (Issue #2193) where services are classified as *critical* (BootError)
@@ -34,8 +34,8 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
 
     t0 = time.perf_counter()
     try:
-        if ctx.router is None:
-            raise BootError("VFS router is None", tier="kernel")
+        if ctx.kernel is None:
+            raise BootError("VFS kernel is None", tier="kernel")
 
         if ctx.metadata_store is None:
             raise BootError("Metadata store is None", tier="kernel")

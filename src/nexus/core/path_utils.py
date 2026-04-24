@@ -272,7 +272,7 @@ def strip_zone_prefix(canonical_path: str, zone_id: str) -> str:
 def normalize_path(path: str) -> str:
     """Normalize virtual path: absolute, collapse ``//``, resolve ``.`` / ``..``.
 
-    Used by VFSRouter and PathRouter for canonical path comparison.
+    Used by VFSRouter and kernel for canonical path comparison.
 
     Args:
         path: Absolute virtual path.

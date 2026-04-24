@@ -60,9 +60,14 @@ def _make_mock_backend() -> MagicMock:
     return backend
 
 
-def _make_mock_router() -> MagicMock:
-    """Build a PathRouter mock."""
-    return MagicMock(name="router")
+def _make_mock_kernel() -> MagicMock:
+    """Build a Rust kernel mock."""
+    return MagicMock(name="kernel")
+
+
+def _make_mock_dlc() -> MagicMock:
+    """Build a DriverLifecycleCoordinator mock."""
+    return MagicMock(name="dlc")
 
 
 def _make_boot_context() -> Any:
@@ -72,6 +77,7 @@ def _make_boot_context() -> Any:
     ImportError at call time, not at module-level collection.
     """
     from nexus.contracts.deployment_profile import DeploymentProfile
+    from nexus.contracts.types import AuditConfig
     from nexus.core.config import (
         CacheConfig,
         DistributedConfig,
@@ -81,6 +87,7 @@ def _make_boot_context() -> Any:
     from nexus.lib.performance_tuning import resolve_profile_tuning
 
     perm = PermissionConfig()
+    audit = AuditConfig()
     cache_cfg = CacheConfig()
     dist = DistributedConfig()
     profile_tuning = resolve_profile_tuning(DeploymentProfile.FULL)
@@ -91,10 +98,12 @@ def _make_boot_context() -> Any:
         record_store=record_store,
         metadata_store=_make_mock_metadata_store(),
         backend=_make_mock_backend(),
-        router=_make_mock_router(),
+        kernel=_make_mock_kernel(),
+        dlc=_make_mock_dlc(),
         engine=record_store.engine,
         read_engine=record_store.read_engine,
         perm=perm,
+        audit=audit,
         cache_ttl_seconds=cache_cfg.ttl_seconds,
         dist=dist,
         zone_id="bench_zone",
@@ -180,14 +189,16 @@ class TestFullFactoryBoot:
         record_store = _make_mock_record_store()
         metadata_store = _make_mock_metadata_store()
         backend = _make_mock_backend()
-        router = _make_mock_router()
+        kernel = _make_mock_kernel()
+        dlc = _make_mock_dlc()
 
         def boot() -> Any:
             return create_nexus_services(
                 record_store=record_store,
                 metadata_store=metadata_store,
                 backend=backend,
-                router=router,
+                kernel=kernel,
+                dlc=dlc,
                 enable_write_buffer=False,
             )
 
@@ -216,7 +227,8 @@ class TestFullFactoryBoot:
         record_store = _make_mock_record_store()
         metadata_store = _make_mock_metadata_store()
         backend = _make_mock_backend()
-        router = _make_mock_router()
+        kernel = _make_mock_kernel()
+        dlc = _make_mock_dlc()
 
         # Warmup
         for _ in range(_WARMUP_ROUNDS):
@@ -224,7 +236,8 @@ class TestFullFactoryBoot:
                 record_store=record_store,
                 metadata_store=metadata_store,
                 backend=backend,
-                router=router,
+                kernel=kernel,
+                dlc=dlc,
                 enable_write_buffer=False,
             )
 
@@ -236,7 +249,8 @@ class TestFullFactoryBoot:
                 record_store=record_store,
                 metadata_store=metadata_store,
                 backend=backend,
-                router=router,
+                kernel=kernel,
+                dlc=dlc,
                 enable_write_buffer=False,
             )
             times_ms.append((time.perf_counter() - t0) * 1_000)

@@ -159,7 +159,6 @@ if TYPE_CHECKING:
     from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
-    from nexus.core.router import PathRouter
     from nexus.services.gateway import NexusFSGateway
 
 
@@ -192,7 +191,8 @@ class SearchService:
         self,
         metadata_store: "MetastoreABC",
         permission_enforcer: "PermissionEnforcer | None" = None,
-        router: "PathRouter | None" = None,
+        kernel: Any = None,
+        dlc: Any = None,
         rebac_manager: "ReBACManager | None" = None,
         enforce_permissions: bool = True,
         default_context: "OperationContext | None" = None,
@@ -212,7 +212,8 @@ class SearchService:
         Args:
             metadata_store: Metadata store for file information
             permission_enforcer: Permission enforcer for access control
-            router: Mount router for backend operations
+            kernel: Rust kernel for VFS routing
+            dlc: DriverLifecycleCoordinator for backend refs
             rebac_manager: ReBAC manager for relationship-based permissions
             enforce_permissions: Whether to enforce permission checks
             default_context: Default operation context (embedded mode)
@@ -238,7 +239,8 @@ class SearchService:
         self._file_cache = file_cache
         self._zoekt_client = zoekt_client
         self._permission_enforcer = permission_enforcer
-        self.router = router
+        self._kernel = kernel
+        self._dlc = dlc
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._default_context = default_context
@@ -316,9 +318,9 @@ class SearchService:
         Uses ``get_mount_points()`` to derive top-level prefixes from active
         mounts.  Falls back to hardcoded defaults when no router is available.
         """
-        if self.router and hasattr(self.router, "get_mount_points"):
+        if self._dlc and hasattr(self._dlc, "mount_points"):
             try:
-                mount_points = self.router.get_mount_points()
+                mount_points = self._dlc.mount_points()
                 # Extract top-level segments from mount points (e.g. "/workspace" -> "workspace/")
                 prefixes: set[str] = set()
                 for mp in mount_points:
@@ -465,14 +467,29 @@ class SearchService:
                 context=context,
             )
         # Check if path routes to a dynamic API-backed connector
-        if path and path != "/" and self.router:
+        if path and path != "/" and self._kernel:
             try:
-                zone_id, _agent_id, _is_admin = self._get_routing_params(context)
-                route = self.router.route(path, zone_id=zone_id or ROOT_ZONE_ID)
-                from nexus.core.router import ExternalRouteResult
+                from nexus.core.path_utils import extract_zone_id
 
-                if isinstance(route, ExternalRouteResult):
-                    return self._list_dynamic_connector(path, route, recursive, details, context)
+                zone_id, _agent_id, _is_admin = self._get_routing_params(context)
+                rr = self._kernel.route(path, zone_id or ROOT_ZONE_ID)
+                info = self._dlc.get_mount_info_canonical(rr.mount_point) if self._dlc else None
+                if info is not None and getattr(info, "is_external", False):
+                    # Build a simple route-like object for _list_dynamic_connector
+                    class _ExtRoute:
+                        def __init__(
+                            self, backend: Any, backend_path: str, mount_point: str
+                        ) -> None:
+                            self.backend = backend
+                            self.backend_path = backend_path
+                            self.mount_point = mount_point
+
+                    ext_route = _ExtRoute(
+                        info.backend, rr.backend_path, extract_zone_id(rr.mount_point)[1]
+                    )
+                    return self._list_dynamic_connector(
+                        path, ext_route, recursive, details, context
+                    )
             except PermissionDeniedError:
                 raise
             except Exception as e:

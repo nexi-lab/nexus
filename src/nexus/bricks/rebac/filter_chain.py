@@ -37,7 +37,7 @@ class FilterContext:
     context: "OperationContext"
     cache: "PermissionCacheCoordinator"
     rebac_manager: "ReBACManager"
-    router: Any = None
+    kernel: Any = None
 
 
 @dataclass
@@ -277,12 +277,14 @@ class BulkReBACStrategy:
         checks = []
         for path in remaining:
             obj_type = "file"
-            if ctx.router and not path.startswith("/workspace"):
+            if ctx.kernel and not path.startswith("/workspace"):
                 try:
-                    route = ctx.router.route(path, zone_id=ctx.context.zone_id or ROOT_ZONE_ID)
-                    # RouteResult no longer has .namespace — use mount_point as obj_type hint
-                    if route.mount_point and route.mount_point != "/":
-                        obj_type = route.mount_point.strip("/").split("/")[0]
+                    from nexus.core.path_utils import extract_zone_id
+
+                    rr = ctx.kernel.route(path, ctx.context.zone_id or ROOT_ZONE_ID)
+                    user_mp = extract_zone_id(rr.mount_point)[1]
+                    if user_mp and user_mp != "/":
+                        obj_type = user_mp.strip("/").split("/")[0]
                 except Exception as e:
                     logger.debug("Route resolution failed for path %s: %s", path, e)
             checks.append((subject, "read", (obj_type, path)))

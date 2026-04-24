@@ -28,12 +28,10 @@ class FederationRPCService:
 
     def _register_mount_in_python_dlc(self, mount_path: str, parent_zone: str) -> None:
         """Mirror Rust-side federation mount into the Python DriverLifecycle-
-        Coordinator so ``PathRouter.route`` (which checks both Rust
-        ``kernel.route()`` and ``_dlc.get_mount_info_canonical()``) finds
+        Coordinator so service-tier callers (which use
+        ``kernel.route()`` + ``dlc.get_mount_info_canonical()``) find
         the mount. Pre-R20.18.5 this happened via
         ``ZoneManager._on_mount_event -> coordinator._store_mount_info``.
-        Kept here (tech debt) until the router consults the kernel
-        directly for federation mounts.
         """
         nx = self._nexus_fs
         if nx is None:
@@ -43,11 +41,11 @@ class FederationRPCService:
             return
         try:
             # Federation mounts inherit the root backend on this node;
-            # look it up via the router and pass it through so the
+            # look it up via the DLC and pass it through so the
             # _PyMountInfo has a non-None backend.
             root_backend = None
             with contextlib.suppress(Exception):
-                root_backend = nx.router.route("/", zone_id=parent_zone).backend
+                root_backend = nx._driver_coordinator.get_root_backend(parent_zone)
             if root_backend is None:
                 return
             coord._store_mount_info(mount_path, root_backend, zone_id=parent_zone)
@@ -270,7 +268,7 @@ class FederationRPCService:
         zone_relative = self._to_zone_relative(parent_zone, path)
         self._kernel.zone_mount(parent_zone, zone_relative, target_zone)
         # Mirror into Python DLC at the VFS-global path so
-        # PathRouter.route (which receives global paths from callers)
+        # dlc.get_mount_info_canonical() (used by service-tier callers)
         # can return non-None.
         self._register_mount_in_python_dlc(path, parent_zone)
         return {

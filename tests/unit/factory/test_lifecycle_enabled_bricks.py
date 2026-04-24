@@ -39,7 +39,6 @@ def test_wire_services_passes_enabled_bricks_to_wired_boot(
 
     def _fake_boot_post_kernel_services(
         nx: Any,
-        router: Any,
         services: dict[str, Any],
         svc_on: Any,
         *,

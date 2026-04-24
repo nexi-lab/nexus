@@ -110,7 +110,6 @@ def _wire_services(
     # --- Boot wired services → register into ServiceRegistry ---
     _wired = _boot_post_kernel_services(
         nx,
-        nx.router,
         _svc,
         svc_on,
         security_config=security,

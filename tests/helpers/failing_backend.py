@@ -215,6 +215,10 @@ class FailingBackend(Backend):
         return self._inner.has_root_path
 
     @property
+    def root_path(self) -> Any:
+        return getattr(self._inner, "root_path", None)
+
+    @property
     def has_token_manager(self) -> bool:
         return getattr(self._inner, "has_token_manager", False)
 

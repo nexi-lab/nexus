@@ -498,13 +498,31 @@ class MetadataMixin:
             _root = getattr(backend, "root_path", None)
             if _root is None:
                 _root = getattr(backend, "local_path", None)
-            if _root is not None:
-                _local_root = str(_root)
-            else:
-                raise ValueError(
-                    f"No Rust-native backend for {_cls_name}. "
-                    "All connectors must be covered by _extract_rust_backend_params()."
+            if _root is None:
+                # No local root and not matched by _extract_rust_backend_params.
+                # Mount a kernel-only entry (no Rust backend); Python DLC holds
+                # the backend ref for RouteResult.  This path handles test mocks
+                # and any future connectors not yet ported to Rust.
+                logger.debug(
+                    "No Rust-native backend for %s — kernel-only mount",
+                    _cls_name,
                 )
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    zone_id=zone_id,
+                    metastore_path=_ms_path_str,
+                    is_external=_is_external,
+                )
+                self._driver_coordinator._store_mount_info(
+                    path,
+                    backend,
+                    zone_id=zone_id,
+                    is_external=_is_external,
+                )
+                return result
+            _local_root = str(_root)
 
             # Determine local backend type for Rust dispatch
             if "LocalConnector" in _cls_name:

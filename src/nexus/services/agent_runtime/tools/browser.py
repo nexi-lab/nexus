@@ -154,12 +154,14 @@ def _build_screenshot_content_blocks(result: dict) -> list[dict[str, Any]]:
     try:
         image_bytes = Path(screenshot_path).read_bytes()
         b64_data = base64.b64encode(image_bytes).decode("ascii")
+        # Detect media type from magic bytes
+        media_type = _detect_image_media_type(image_bytes)
         blocks.append(
             {
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": "image/png",
+                    "media_type": media_type,
                     "data": b64_data,
                 },
             }
@@ -178,3 +180,17 @@ def _build_screenshot_content_blocks(result: dict) -> list[dict[str, Any]]:
         }
 
     return blocks
+
+
+def _detect_image_media_type(data: bytes) -> str:
+    """Detect image media type from magic bytes."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:3] == b"GIF":
+        return "image/gif"
+    # Default to PNG (most common for screenshots)
+    return "image/png"

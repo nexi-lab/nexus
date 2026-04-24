@@ -307,14 +307,17 @@ async def _run_chat(
             # sys_write() requires the file to already exist.
             return nx.write(path, buf)
 
-        # StreamManager stream_read for DT_STREAM token delivery
-        _nx_stream_read = getattr(nx, "_stream_read", None)
-
+        # StreamManager stream_read for DT_STREAM token delivery.
+        # Use kernel directly to get the correct next_offset (stream frames
+        # have headers — offset + len(data) is wrong).
         def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
-            if _nx_stream_read is None:
-                raise NotImplementedError("Streaming not available in REMOTE mode")
-            data = _nx_stream_read(path, offset=offset)
-            return data, offset + len(data)
+            # Hot path: try nowait first
+            result = nx._kernel.stream_read_at(path, offset)
+            if result is not None:
+                return bytes(result[0]), result[1]
+            # Slow path: block in Rust, release GIL
+            data, next_offset = nx._kernel.stream_read_at_blocking(path, offset, 30000)
+            return bytes(data), next_offset
 
         # Bridge to Rust kernel: llm_start_streaming runs the full SSE →
         # DT_STREAM → CAS-persist pipeline in a worker thread so asyncio
@@ -389,14 +392,13 @@ async def _run_acp_mode(
         # Use write() (Tier 2) for create-on-write support — same fix as REPL mode.
         return nx.write(path, buf)
 
-    # Stream read adapter
-    _nx_stream_read = getattr(nx, "_stream_read", None)
-
+    # Stream read adapter — use kernel directly for correct next_offset.
     def _stream_read_adapter(path: str, offset: int) -> tuple[bytes, int]:
-        if _nx_stream_read is None:
-            raise NotImplementedError("Streaming not available")
-        data = _nx_stream_read(path, offset=offset)
-        return data, offset + len(data)
+        result = nx._kernel.stream_read_at(path, offset)
+        if result is not None:
+            return bytes(result[0]), result[1]
+        data, next_offset = nx._kernel.stream_read_at_blocking(path, offset, 30000)
+        return bytes(data), next_offset
 
     # Bridge to Rust kernel LLM streaming
     async def _llm_start_streaming(request_bytes: bytes, stream_path: str) -> None:

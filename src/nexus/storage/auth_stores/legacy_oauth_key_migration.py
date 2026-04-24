@@ -121,6 +121,11 @@ def _read_oauth_key_from_redb(
     operator looking into a data-loss incident has something to grep.
     """
     # Fast path: reuse the main Kernel's metastore connection.
+    # Only valid when the candidate *path* matches the file backing
+    # existing_metastore (typically metastore.redb).  When it doesn't
+    # match (e.g. the pre-R20.18.5 "metastore" no-ext candidate), the
+    # fast path reads the wrong file and returns None — we must fall
+    # through to the slow path which opens *path* directly.
     if existing_metastore is not None:
         try:
             from nexus.storage.auth_stores.metastore_settings_store import (
@@ -129,9 +134,10 @@ def _read_oauth_key_from_redb(
 
             store = MetastoreSettingsStore(existing_metastore)
             dto = store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
-            if dto is None:
-                return None
-            return dto.value
+            if dto is not None:
+                return dto.value
+            # Key not found via existing connection — fall through to
+            # slow path which opens the specific candidate file.
         except Exception as exc:
             logger.warning(
                 "Legacy OAuth key migration could not read via existing metastore for %s: %s",

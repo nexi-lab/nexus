@@ -165,19 +165,12 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
     backends_health: dict[str, Any] = {}
     if state.nexus_fs and hasattr(state.nexus_fs, "_driver_coordinator"):
         from nexus.core.path_utils import extract_zone_id
-        from nexus.core.protocols.vfs_router import MountInfo
 
         dlc = state.nexus_fs._driver_coordinator
-        mounts = sorted(
-            [
-                MountInfo(mount_point=extract_zone_id(k)[1], backend=info.backend)
-                for k, info in dlc.list_mounts()
-            ],
-            key=lambda m: m.mount_point,
-        )
-        for mount in mounts:
-            backend = mount.backend
-            mount_point = mount.mount_point
+        raw_mounts = sorted(dlc.list_mounts(), key=lambda t: t[0])
+        for canonical_key, info in raw_mounts:
+            backend = info.backend
+            mount_point = extract_zone_id(canonical_key)[1]
 
             try:
                 status = backend.check_connection()

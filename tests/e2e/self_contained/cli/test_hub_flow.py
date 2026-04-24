@@ -1,0 +1,187 @@
+"""End-to-end test for the ``nexus hub`` CLI flow (#3784).
+
+Drives the whole admin story against a real running nexus stack:
+
+1. ``nexus hub token create --admin --zone root --name e2e`` prints an sk- token.
+2. ``nexus hub token list --json`` includes the new row.
+3. HTTP request to the MCP endpoint with the token succeeds (not 401).
+4. ``nexus hub token revoke e2e`` marks the row revoked.
+5. After the auth-cache TTL expires, the same token is rejected with 401.
+6. ``nexus hub status --json`` reports ``postgres: ok`` and
+   ``tokens.revoked >= 1``.
+
+The test discovers the stack via the same env vars the MCP HTTP tests use
+(``NEXUS_ADMIN_URL`` / ``NEXUS_ADMIN_KEY`` / ``MCP_HTTP_URL``) plus a
+``NEXUS_DATABASE_URL`` that points at the hub DB (the CLI is direct-to-DB;
+see spec §Token/admin model — bootstrap). Skips cleanly if any of those
+are missing so local dev-loops don't fail without a stack running.
+
+Notes:
+- The AuthIdentityCache TTL is 60s (in-process on the MCP server), so
+  step 5 sleeps 61s. Run with ``-m slow`` when you want the full check.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+import uuid
+from pathlib import Path
+
+import httpx
+import pytest
+
+pytestmark = [pytest.mark.e2e, pytest.mark.slow]
+
+
+def _nexus_bin() -> str:
+    """Resolve the ``nexus`` console script in the active venv."""
+    return str(Path(sys.executable).parent / "nexus")
+
+
+def _run(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Invoke ``nexus <args>`` with the given env, capturing text output."""
+    return subprocess.run(
+        [_nexus_bin(), *args],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _require(var: str) -> str:
+    value = os.environ.get(var)
+    if not value:
+        pytest.skip(
+            f"{var} must be set to run the hub e2e flow "
+            "(requires a running nexus stack; see `nexus-stack` skill)"
+        )
+    return value
+
+
+@pytest.fixture()
+def hub_cli_env() -> dict[str, str]:
+    """Env dict for CLI subprocesses — DB URL + clean copy of current env."""
+    db_url = _require("NEXUS_DATABASE_URL")
+    env = dict(os.environ)
+    env["NEXUS_DATABASE_URL"] = db_url
+    # Optional: pass through Redis URL so `hub status` can read metrics.
+    if "NEXUS_REDIS_URL" in os.environ:
+        env["NEXUS_REDIS_URL"] = os.environ["NEXUS_REDIS_URL"]
+    elif "DRAGONFLY_URL" in os.environ:
+        env["DRAGONFLY_URL"] = os.environ["DRAGONFLY_URL"]
+    return env
+
+
+def _mcp_url() -> str:
+    # `mcp_http_base_url` fixture defaults to http://localhost:8081. Use
+    # the same default here so the test plugs into an existing stack.
+    return os.environ.get("MCP_HTTP_URL", "http://localhost:8081")
+
+
+def _extract_token(stdout: str) -> str:
+    for line in stdout.splitlines():
+        if line.startswith("token:"):
+            return line.split("token:", 1)[1].strip()
+    raise AssertionError(f"no 'token:' line in create output:\n{stdout}")
+
+
+def test_hub_end_to_end_token_lifecycle(hub_cli_env: dict[str, str]) -> None:
+    """Create → use → revoke → status, end-to-end against a live stack."""
+    _require("NEXUS_ADMIN_URL")  # ensures the stack is up (MCP tests need it too)
+    mcp_base_url = _mcp_url()
+    # Unique token name so re-runs don't collide with stale rows.
+    token_name = f"e2e-{uuid.uuid4().hex[:8]}"
+
+    # 1. Create admin token.
+    create = _run(
+        ["hub", "token", "create", "--name", token_name, "--zone", "root", "--admin"],
+        env=hub_cli_env,
+    )
+    assert create.returncode == 0, (
+        f"hub token create failed (stderr): {create.stderr}\nstdout: {create.stdout}"
+    )
+    token = _extract_token(create.stdout)
+    assert token.startswith("sk-"), f"expected sk- token, got {token!r}"
+
+    try:
+        # 2. `hub token list --json` includes the new row.
+        listed = _run(["hub", "token", "list", "--json"], env=hub_cli_env)
+        assert listed.returncode == 0, listed.stderr
+        payload = json.loads(listed.stdout)
+        names = [t["name"] for t in payload["tokens"]]
+        assert token_name in names, f"{token_name!r} not in listed tokens: {names}"
+
+        # 3. MCP HTTP request with the token — not 401.
+        #    We use a plain POST (not a full MCP session) because we only
+        #    care about the auth outcome. Even a malformed JSON-RPC body
+        #    with valid auth returns 2xx/4xx on the body — never 401.
+        resp = httpx.post(
+            f"{mcp_base_url}/mcp",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "hub-e2e", "version": "1"},
+                },
+            },
+            timeout=10.0,
+        )
+        assert resp.status_code != 401, (
+            f"valid admin token rejected (status {resp.status_code}): {resp.text[:300]}"
+        )
+
+        # 4. Revoke.
+        revoke = _run(["hub", "token", "revoke", token_name], env=hub_cli_env)
+        assert revoke.returncode == 0, revoke.stderr
+        assert "revoked" in revoke.stdout.lower()
+
+        # 5. Wait for the 60s auth-identity cache TTL to drop the entry,
+        #    then the same token must be rejected. Time budget: 62s.
+        time.sleep(62)
+        resp = httpx.post(
+            f"{mcp_base_url}/mcp",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "hub-e2e", "version": "1"},
+                },
+            },
+            timeout=10.0,
+        )
+        assert resp.status_code == 401, (
+            f"revoked token still accepted (status {resp.status_code}): {resp.text[:300]}"
+        )
+
+        # 6. Hub status reports postgres ok and revoked >= 1.
+        status = _run(["hub", "status", "--json"], env=hub_cli_env)
+        assert status.returncode == 0, status.stderr
+        status_payload = json.loads(status.stdout)
+        assert status_payload["postgres"] == "ok", status_payload
+        assert status_payload["tokens"]["revoked"] >= 1, status_payload
+    finally:
+        # Best-effort cleanup so stale revoked rows don't pile up across
+        # reruns against the same dev stack. Already-revoked is fine.
+        _run(["hub", "token", "revoke", token_name], env=hub_cli_env)

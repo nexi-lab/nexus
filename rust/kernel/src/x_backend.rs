@@ -168,9 +168,7 @@ impl ObjectStore for XBackend {
             .get("text")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                StorageError::IOError(io::Error::other(
-                    "Tweet payload must contain 'text' field",
-                ))
+                StorageError::IOError(io::Error::other("Tweet payload must contain 'text' field"))
             })?;
 
         let url = format!("{X_API_BASE}/tweets");
@@ -208,13 +206,19 @@ impl ObjectStore for XBackend {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
-                .map_err(|e| StorageError::IOError(io::Error::other(format!("HTTP client: {e}"))))?;
+                .map_err(|e| {
+                    StorageError::IOError(io::Error::other(format!("HTTP client: {e}")))
+                })?;
 
             let result = match endpoint {
                 "root" => {
                     let dirs = vec![
-                        "timeline/", "mentions/", "posts/", "bookmarks/",
-                        "search/", "users/",
+                        "timeline/",
+                        "mentions/",
+                        "posts/",
+                        "bookmarks/",
+                        "search/",
+                        "users/",
                     ];
                     serde_json::to_value(dirs).unwrap()
                 }
@@ -327,8 +331,9 @@ impl ObjectStore for XBackend {
                 }
             };
 
-            serde_json::to_vec_pretty(&result)
-                .map_err(|e| StorageError::IOError(io::Error::other(format!("JSON serialize: {e}"))))
+            serde_json::to_vec_pretty(&result).map_err(|e| {
+                StorageError::IOError(io::Error::other(format!("JSON serialize: {e}")))
+            })
         })
     }
 
@@ -344,9 +349,7 @@ impl ObjectStore for XBackend {
                 .header("Authorization", format!("Bearer {token}"))
                 .send()
                 .await
-                .map_err(|e| {
-                    StorageError::IOError(io::Error::other(format!("X delete: {e}")))
-                })?;
+                .map_err(|e| StorageError::IOError(io::Error::other(format!("X delete: {e}"))))?;
 
             if !resp.status().is_success() {
                 let body = resp.text().await.unwrap_or_default();

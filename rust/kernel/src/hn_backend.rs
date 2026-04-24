@@ -81,16 +81,14 @@ impl HNBackend {
         match file_part {
             None => Ok((feed_part, None)),
             Some(filename) => {
-                let rank_str = filename.strip_suffix(".json").ok_or_else(|| {
-                    StorageError::NotFound(format!("Invalid file: {filename}"))
-                })?;
-                let rank: usize = rank_str.parse().map_err(|_| {
-                    StorageError::NotFound(format!("Invalid rank in: {filename}"))
-                })?;
+                let rank_str = filename
+                    .strip_suffix(".json")
+                    .ok_or_else(|| StorageError::NotFound(format!("Invalid file: {filename}")))?;
+                let rank: usize = rank_str
+                    .parse()
+                    .map_err(|_| StorageError::NotFound(format!("Invalid rank in: {filename}")))?;
                 if rank < 1 {
-                    return Err(StorageError::NotFound(format!(
-                        "Rank {rank} out of range"
-                    )));
+                    return Err(StorageError::NotFound(format!("Rank {rank} out of range")));
                 }
                 Ok((feed_part, Some(rank)))
             }
@@ -98,10 +96,7 @@ impl HNBackend {
     }
 
     /// Fetch a single HN item by ID.
-    async fn fetch_item(
-        client: &reqwest::Client,
-        item_id: u64,
-    ) -> Option<serde_json::Value> {
+    async fn fetch_item(client: &reqwest::Client, item_id: u64) -> Option<serde_json::Value> {
         let url = format!("{HN_API_BASE}/item/{item_id}.json");
         let resp = client.get(&url).send().await.ok()?;
         resp.json::<serde_json::Value>().await.ok()
@@ -132,8 +127,7 @@ impl HNBackend {
                     *total += 1;
                     // Recurse into replies
                     if let Some(kids) = comment.get("kids").and_then(|k| k.as_array()) {
-                        let kid_ids: Vec<u64> =
-                            kids.iter().filter_map(|v| v.as_u64()).collect();
+                        let kid_ids: Vec<u64> = kids.iter().filter_map(|v| v.as_u64()).collect();
                         let replies =
                             Self::fetch_comments(client, &kid_ids, depth + 1, total).await;
                         if !replies.is_empty() {
@@ -160,18 +154,12 @@ impl HNBackend {
             "ask" => "askstories",
             "show" => "showstories",
             "jobs" => "jobstories",
-            _ => {
-                return Err(StorageError::NotFound(format!(
-                    "Unknown feed: {feed}"
-                )))
-            }
+            _ => return Err(StorageError::NotFound(format!("Unknown feed: {feed}"))),
         };
         let url = format!("{HN_API_BASE}/{endpoint}.json");
-        let resp = client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| StorageError::IOError(io::Error::other(format!("HN fetch {feed}: {e}"))))?;
+        let resp = client.get(&url).send().await.map_err(|e| {
+            StorageError::IOError(io::Error::other(format!("HN fetch {feed}: {e}")))
+        })?;
         let ids: Vec<u64> = resp
             .json()
             .await
@@ -185,7 +173,9 @@ impl HNBackend {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
-                .map_err(|e| StorageError::IOError(io::Error::other(format!("HTTP client: {e}"))))?;
+                .map_err(|e| {
+                    StorageError::IOError(io::Error::other(format!("HTTP client: {e}")))
+                })?;
 
             let story_ids = Self::fetch_story_ids(&client, feed).await?;
             if rank < 1 || rank > story_ids.len() {
@@ -209,8 +199,7 @@ impl HNBackend {
                 if let Some(kids) = story.get("kids").and_then(|k| k.as_array()) {
                     let kid_ids: Vec<u64> = kids.iter().filter_map(|v| v.as_u64()).collect();
                     let mut total = 0usize;
-                    let comments =
-                        Self::fetch_comments(&client, &kid_ids, 0, &mut total).await;
+                    let comments = Self::fetch_comments(&client, &kid_ids, 0, &mut total).await;
                     story["comments"] = serde_json::Value::Array(comments);
                 } else {
                     story["comments"] = serde_json::Value::Array(Vec::new());
@@ -219,8 +208,9 @@ impl HNBackend {
                 story["comments"] = serde_json::Value::Array(Vec::new());
             }
 
-            serde_json::to_vec_pretty(&story)
-                .map_err(|e| StorageError::IOError(io::Error::other(format!("JSON serialize: {e}"))))
+            serde_json::to_vec_pretty(&story).map_err(|e| {
+                StorageError::IOError(io::Error::other(format!("JSON serialize: {e}")))
+            })
         })
     }
 }
@@ -277,9 +267,7 @@ impl ObjectStore for HNBackend {
     }
 
     fn delete_file(&self, _path: &str) -> Result<(), StorageError> {
-        Err(StorageError::NotSupported(
-            "HN backend is read-only",
-        ))
+        Err(StorageError::NotSupported("HN backend is read-only"))
     }
 
     fn mkdir(&self, _path: &str, _parents: bool, _exist_ok: bool) -> Result<(), StorageError> {

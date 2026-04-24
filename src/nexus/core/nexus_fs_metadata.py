@@ -111,6 +111,48 @@ class MetadataMixin:
                     "bot_token": token,
                     "default_channel": getattr(backend, "default_channel", None) or "",
                 }
+        # HN connector (PathHNBackend)
+        if "HN" in cls_name and "Backend" in cls_name:
+            return {
+                "backend_type": "hn",
+                "hn_stories_per_feed": getattr(backend, "stories_per_feed", 10),
+                "hn_include_comments": getattr(backend, "include_comments", True),
+            }
+        # X/Twitter connector (PathXBackend)
+        if cls_name == "PathXBackend":
+            # X uses OAuth — extract token from transport if available
+            transport = getattr(backend, "_transport", None) or getattr(
+                backend, "_hn_transport", None
+            )
+            token = getattr(transport, "_bearer_token", None) if transport else None
+            return {
+                "backend_type": "x",
+                "x_bearer_token": token or "",
+            }
+        # CLI-based connectors (GitHubConnector, SheetsConnector, DocsConnector, etc.)
+        cli_name = getattr(backend, "CLI_NAME", None)
+        if cli_name:
+            import json as _json
+
+            cli_service = getattr(backend, "CLI_SERVICE", "") or ""
+            # Build auth env from token if available
+            auth_env: dict[str, str] = {}
+            env_key = f"{cli_name.upper().replace('-', '_')}_ACCESS_TOKEN"
+            # Try to get token from backend's token manager
+            _tm = getattr(backend, "_token_manager", None)
+            if _tm:
+                try:
+                    _tok = _tm.get_cached_token(provider=cli_name)
+                    if _tok:
+                        auth_env[env_key] = _tok
+                except Exception:
+                    pass
+            return {
+                "backend_type": "cli",
+                "cli_command": cli_name,
+                "cli_service": cli_service,
+                "cli_auth_env_json": _json.dumps(auth_env) if auth_env else "",
+            }
         return None
 
     def _get_parent_path(self, path: str) -> str | None:

@@ -38,9 +38,8 @@ impl CLIBackend {
         let auth_env: HashMap<String, String> = if auth_env_json.is_empty() {
             HashMap::new()
         } else {
-            serde_json::from_str(auth_env_json).map_err(|e| {
-                io::Error::other(format!("Invalid auth_env JSON: {e}"))
-            })?
+            serde_json::from_str(auth_env_json)
+                .map_err(|e| io::Error::other(format!("Invalid auth_env JSON: {e}")))?
         };
         Ok(Self {
             backend_name: name.to_string(),
@@ -51,11 +50,7 @@ impl CLIBackend {
     }
 
     /// Execute a CLI command and return (stdout, stderr).
-    fn exec(
-        &self,
-        args: &[&str],
-        stdin_data: Option<&[u8]>,
-    ) -> Result<Vec<u8>, StorageError> {
+    fn exec(&self, args: &[&str], stdin_data: Option<&[u8]>) -> Result<Vec<u8>, StorageError> {
         let mut cmd = Command::new(&self.cli_command);
 
         // Add service sub-command if present
@@ -144,10 +139,7 @@ impl ObjectStore for CLIBackend {
             vec!["create", content_id]
         };
 
-        let stdout = self.exec(
-            &args,
-            Some(content),
-        )?;
+        let stdout = self.exec(&args, Some(content))?;
 
         // Try to parse content_id from stdout (CLI may return JSON with id field)
         let content_id = if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&stdout) {

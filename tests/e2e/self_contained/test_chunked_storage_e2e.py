@@ -57,7 +57,7 @@ class TestChunkedStorageE2E:
         nexus_fs.write("/chunks_test.bin", large_content)
 
         etag = nexus_fs.get_etag("/chunks_test.bin")
-        backend = nexus_fs.router.route("/").backend
+        backend, _, _ = nexus_fs._driver_coordinator.resolve_path("/")
 
         # Read manifest
         manifest_path = backend._transport._resolve(backend._blob_key(etag))
@@ -86,7 +86,7 @@ class TestChunkedStorageE2E:
         nexus_fs.write("/delete_test.bin", large_content)
         content_hash = nexus_fs.get_etag("/delete_test.bin")
 
-        backend = nexus_fs.router.route("/").backend
+        backend, _, _ = nexus_fs._driver_coordinator.resolve_path("/")
 
         # Get chunk hashes before delete
         manifest = ChunkedReference.from_json(
@@ -246,7 +246,7 @@ class TestChunkedStorageCDCBehavior:
         etag_a = nexus_fs.get_etag("/similar_a.bin")
         etag_b = nexus_fs.get_etag("/similar_b.bin")
 
-        backend = nexus_fs.router.route("/").backend
+        backend, _, _ = nexus_fs._driver_coordinator.resolve_path("/")
 
         # Read manifests
         manifest_a = ChunkedReference.from_json(

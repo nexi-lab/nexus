@@ -99,17 +99,17 @@ def _make_search_service(
     enforcer: PermissionEnforcer,
     rebac_manager: MagicMock | None = None,
 ) -> SearchService:
-    """Create a SearchService with mocked metadata_store and router."""
+    """Create a SearchService with mocked metadata_store and dlc."""
     mock_metadata = MagicMock()
     # metadata.list should return empty (we are testing the dynamic connector path)
     mock_metadata.list = MagicMock(return_value=[])
 
-    mock_router = MagicMock()
+    mock_dlc = MagicMock()
 
     svc = SearchService(
         metadata_store=mock_metadata,
         permission_enforcer=enforcer,
-        router=mock_router,
+        dlc=mock_dlc,
         rebac_manager=rebac_manager or enforcer.rebac_manager,
         enforce_permissions=True,
     )

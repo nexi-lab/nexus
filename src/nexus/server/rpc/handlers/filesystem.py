@@ -51,13 +51,12 @@ def generate_download_url(
         Dict with download_url, expires_in, method, backend if supported, None otherwise
     """
     try:
-        from nexus.core.router import RouteResult
-
-        route = nexus_fs.router.route(path)
-        if not isinstance(route, RouteResult):
-            return None  # Pipe/Stream/External don't support signed URLs
-        backend = route.backend
-        backend_path = route.backend_path
+        _rr = nexus_fs._kernel.route(path, nexus_fs._zone_id)
+        _di = nexus_fs._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+        if _di is None:
+            return None
+        backend = _di.backend
+        backend_path = _rr.backend_path
 
         # S3 or GCS connector with signed URL support
         if hasattr(backend, "has_feature") and backend.has_feature(BackendFeature.SIGNED_URL):
@@ -497,15 +496,18 @@ def _augment_paths_with_virtual_readme(
         return paths_to_index
 
     try:
-        route = nexus_fs.router.route(target_path, zone_id=nexus_fs._zone_id)
+        _rr = nexus_fs._kernel.route(target_path, nexus_fs._zone_id)
+        _di = nexus_fs._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
     except Exception:
         return paths_to_index
 
-    backend = getattr(route, "backend", None)
+    backend = _di.backend if _di else None
     if backend is None or not _has_skill_name(backend):
         return paths_to_index
 
-    mount_point = getattr(route, "mount_point", "") or ""
+    from nexus.core.path_utils import extract_zone_id as _ezi
+
+    mount_point = _ezi(_rr.mount_point)[1] or ""
     readme_dir_name = _readme_dir_for(backend).strip("/")
     try:
         if not overlay_owns_path(backend, mount_point, readme_dir_name, context=context):

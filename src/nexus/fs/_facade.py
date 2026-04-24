@@ -389,7 +389,6 @@ class SlimNexusFS:
             PathNotMountedError,
         )
         from nexus.core.path_utils import validate_path
-        from nexus.core.router import ExternalRouteResult, RouteResult
 
         try:
             normalized = validate_path(path)
@@ -399,12 +398,15 @@ class SlimNexusFS:
         if meta is None or not meta.etag:
             return None
         try:
-            route = self._kernel.router.route(normalized)
-        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+            _rr = self._kernel._kernel.route(normalized, self._kernel._zone_id)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError, ValueError):
             return None
-        if not isinstance(route, RouteResult) or isinstance(route, ExternalRouteResult):
+        if _rr.is_external:
             return None
-        backend = route.backend
+        _dlc_info = self._kernel._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+        if _dlc_info is None:
+            return None
+        backend = _dlc_info.backend
         expected_name = (meta.backend_name or "").split(":", 1)[0].split("@", 1)[0]
         actual_name = getattr(backend, "name", None)
         if expected_name and actual_name and expected_name != actual_name:
@@ -1395,7 +1397,7 @@ class SlimNexusFS:
         Returns:
             Sorted list of mount point paths.
         """
-        return sorted(m.mount_point for m in self._kernel.router.list_mounts())
+        return self._kernel._driver_coordinator.mount_points()
 
     def unmount(self, mount_point: str) -> None:
         """Remove a mount and clean up all associated state.

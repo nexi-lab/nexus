@@ -114,10 +114,7 @@ class ContextualNexusFS:
         return result
 
     def list_mounts(self) -> list[str]:
-        mounts = []
-        for item in self._kernel.router.list_mounts():
-            mount_point = getattr(item, "mount_point", item)
-            mounts.append(str(mount_point))
+        mounts = self._kernel._driver_coordinator.mount_points()
         filtered = [mount for mount in mounts if mount != "/"]
         return filtered or mounts
 
@@ -135,19 +132,22 @@ class ContextualNexusFS:
         from datetime import UTC, datetime
 
         try:
-            route = self._kernel.router.route(path)
+            _rr = self._kernel._kernel.route(path, self._kernel._zone_id)
+            _di = self._kernel._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
         except Exception:
             return None
 
-        backend = route.backend
-        if not hasattr(backend, "list_dir") and not hasattr(backend, "list_dir_details"):
+        backend = _di.backend if _di else None
+        if backend is None or (
+            not hasattr(backend, "list_dir") and not hasattr(backend, "list_dir_details")
+        ):
             return None
 
         detailed_entries: list[dict[str, Any]] | None = None
         if hasattr(backend, "list_dir_details"):
             try:
                 candidate = await asyncio.to_thread(
-                    backend.list_dir_details, route.backend_path, self._ctx
+                    backend.list_dir_details, _rr.backend_path, self._ctx
                 )
                 if isinstance(candidate, list):
                     detailed_entries = [item for item in candidate if isinstance(item, dict)]
@@ -195,7 +195,7 @@ class ContextualNexusFS:
             return listed_paths
 
         try:
-            raw_entries = await asyncio.to_thread(backend.list_dir, route.backend_path, self._ctx)
+            raw_entries = await asyncio.to_thread(backend.list_dir, _rr.backend_path, self._ctx)
         except NotImplementedError:
             return None
 

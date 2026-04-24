@@ -1,4 +1,5 @@
-"""Regression tests for the embedded-hub-mode startup rejection (#3784).
+"""Regression tests for the embedded-hub-mode startup rejection (#3784)
+and the fail-closed ``NEXUS_MCP_REQUIRE_BEARER`` request-time check.
 
 The hub deployment must run as a two-service stack (``nexusd`` RPC +
 ``nexus mcp serve --url …`` frontend) so that per-request bearer tokens
@@ -16,10 +17,16 @@ silently unsafe deployment.
 
 from __future__ import annotations
 
+from typing import Any
+
 import click
 import pytest
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from starlette.testclient import TestClient
 
-from nexus.cli.commands.mcp import _reject_embedded_hub_mode
+from nexus.cli.commands.mcp import _APIKeyMiddleware, _reject_embedded_hub_mode
 
 
 class TestRejectEmbeddedHubMode:
@@ -84,3 +91,59 @@ class TestRejectEmbeddedHubMode:
         monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://x/y")
         monkeypatch.delenv("NEXUS_URL", raising=False)
         _reject_embedded_hub_mode("sse")  # must not raise
+
+
+async def _ok(_request: Any) -> Any:
+    return PlainTextResponse("ok")
+
+
+async def _health(_request: Any) -> Any:
+    return PlainTextResponse("healthy")
+
+
+def _client() -> TestClient:
+    app = Starlette(
+        routes=[Route("/mcp", _ok, methods=["POST"]), Route("/health", _health)],
+    )
+    app.add_middleware(_APIKeyMiddleware)
+    return TestClient(app)
+
+
+class TestRequireBearerGate:
+    """NEXUS_MCP_REQUIRE_BEARER=true gates requests at the APIKey middleware
+    so the tool layer can't fall back to an ambient _default_nx connection
+    seeded with NEXUS_API_KEY / profile credentials (#3784 round 5)."""
+
+    def test_missing_bearer_allowed_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NEXUS_MCP_REQUIRE_BEARER", raising=False)
+        resp = _client().post("/mcp")
+        assert resp.status_code == 200
+
+    def test_missing_bearer_rejected_when_required(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEXUS_MCP_REQUIRE_BEARER", "true")
+        resp = _client().post("/mcp")
+        assert resp.status_code == 401
+        assert "missing_bearer_token" in resp.text
+        assert resp.headers["WWW-Authenticate"].startswith("Bearer")
+
+    def test_valid_bearer_passes_when_required(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEXUS_MCP_REQUIRE_BEARER", "true")
+        resp = _client().post("/mcp", headers={"Authorization": "Bearer sk-good"})
+        assert resp.status_code == 200
+
+    def test_x_nexus_api_key_passes_when_required(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEXUS_MCP_REQUIRE_BEARER", "true")
+        resp = _client().post("/mcp", headers={"X-Nexus-API-Key": "sk-good"})
+        assert resp.status_code == 200
+
+    def test_health_always_passes_without_bearer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Container healthchecks must succeed even in fail-closed mode."""
+        monkeypatch.setenv("NEXUS_MCP_REQUIRE_BEARER", "true")
+        resp = _client().get("/health")
+        assert resp.status_code == 200
+
+    def test_false_values_disable_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for val in ("false", "0", "no", "", "off"):
+            monkeypatch.setenv("NEXUS_MCP_REQUIRE_BEARER", val)
+            resp = _client().post("/mcp")
+            assert resp.status_code == 200, f"val={val!r} should not gate"

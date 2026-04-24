@@ -22,6 +22,16 @@ The reference compose ships **two** Nexus services:
 requests therefore fail at the RPC layer rather than falling through to an
 ambient frontend identity.
 
+As a belt-and-braces safeguard, the reference compose also sets
+`NEXUS_MCP_REQUIRE_BEARER=true` on `mcp-frontend`. That flag makes the
+MCP HTTP middleware reject every request that arrives without a bearer
+(`Authorization: Bearer sk-…` or `X-Nexus-API-Key: sk-…`) with 401
+*before* the tool layer runs — so even a later operator misconfiguration
+that sets `NEXUS_API_KEY` on this container cannot silently promote
+unauthenticated traffic to the frontend's ambient identity. Keep
+`NEXUS_MCP_REQUIRE_BEARER=true` whenever this container is reachable
+from untrusted clients.
+
 ## 1. Quickstart
 
 ```bash

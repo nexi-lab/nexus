@@ -65,12 +65,41 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
     ``mcp.run(middleware=[Middleware(_APIKeyMiddleware)])``.
     FastMCP's ``http_app()`` returns a fresh Starlette app on each
     call, so middleware added after the fact is lost.
+
+    Hub opt-in (#3784): when ``NEXUS_MCP_REQUIRE_BEARER=true``, missing
+    bearer is rejected with 401 BEFORE the tool layer can fall back to
+    an ambient ``_default_nx`` connection seeded with ``NEXUS_API_KEY``
+    / profile credentials. This prevents unauthenticated requests from
+    executing as the frontend's ambient identity on two-service hub
+    deployments. ``/health`` is always allowed through so container
+    healthchecks keep working.
     """
 
     async def dispatch(self, request: "Request", call_next: Any) -> "Response":
+        import os
+
         from nexus.bricks.mcp import reset_request_api_key, set_request_api_key
 
         api_key = _extract_bearer_token(request)
+
+        # Fail-closed when the deployment opts into hub-frontend mode.
+        require_bearer = os.environ.get("NEXUS_MCP_REQUIRE_BEARER", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if require_bearer and not api_key and request.url.path != "/health":
+            from starlette.responses import JSONResponse
+
+            return cast(
+                "Response",
+                JSONResponse(
+                    {"error": "missing_bearer_token"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Bearer realm="nexus-hub"'},
+                ),
+            )
+
         token = set_request_api_key(api_key) if api_key else None
         try:
             response = await call_next(request)

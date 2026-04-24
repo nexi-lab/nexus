@@ -41,7 +41,7 @@ services:
       - "0.0.0.0"
       - "--port"
       - "2026"
-      - "--deployment-profile"
+      - "--profile"
       - "full"
       - "--auth-type"
       - "database"
@@ -95,6 +95,13 @@ services:
       # target. Never enable this in a deployment that crosses an
       # untrusted network.
       NEXUS_GRPC_ALLOW_INSECURE: "true"
+      # Fail-closed bearer policy for hub deployments: any request that
+      # reaches :8081 without `Authorization: Bearer sk-…` or
+      # `X-Nexus-API-Key: sk-…` is rejected with 401 BEFORE the tool
+      # layer, so a misconfigured `NEXUS_API_KEY`/profile on this
+      # container can never silently promote unauthenticated traffic
+      # to the frontend's ambient identity.
+      NEXUS_MCP_REQUIRE_BEARER: "true"
       # Intentionally DO NOT set NEXUS_API_KEY here — we want
       # unauthenticated requests (no bearer) to fail at the RPC layer
       # rather than fall through to an ambient "frontend" identity.

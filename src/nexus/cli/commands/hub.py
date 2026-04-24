@@ -74,24 +74,41 @@ def token_create(
                 "Revoke it first or use a different --name."
             )
 
-        # Validate zone existence against the authoritative registry so
-        # a typo ("proud" instead of "prod") can't silently mint a
-        # credential bound to a nonexistent string that later becomes
-        # valid if someone creates that zone (#3784 round 6).
-        zone_exists = (
-            session.execute(select(ZoneModel).where(ZoneModel.zone_id == zone_id)).scalars().first()
-            is not None
+        # Validate zone lifecycle state against the authoritative registry
+        # so a typo ("proud" instead of "prod") or a deleted/terminating
+        # zone can't silently mint a credential bound to a zone the
+        # operator intended to isolate or remove (#3784 rounds 6/9).
+        active_zone = (
+            session.execute(
+                select(ZoneModel)
+                .where(ZoneModel.zone_id == zone_id)
+                .where(ZoneModel.phase == "Active")
+                .where(ZoneModel.deleted_at.is_(None))
+            )
+            .scalars()
+            .first()
         )
-        if not zone_exists:
+        if active_zone is None:
             # Bootstrap escape: if the zones table is completely empty,
             # allow the first admin token to be minted for any zone so
             # a fresh hub can be bootstrapped before any zone is
-            # created. After that, every --zone must refer to a real row.
+            # created. After that, every --zone must refer to an active,
+            # non-deleted row.
             any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
             if any_zone is not None:
-                known = [z.zone_id for z in session.execute(select(ZoneModel)).scalars().all()]
+                known = [
+                    z.zone_id
+                    for z in session.execute(
+                        select(ZoneModel)
+                        .where(ZoneModel.phase == "Active")
+                        .where(ZoneModel.deleted_at.is_(None))
+                    )
+                    .scalars()
+                    .all()
+                ]
                 raise click.ClickException(
-                    f"zone {zone_id!r} does not exist. Known zones: "
+                    f"zone {zone_id!r} is not active (not found, deleted, or "
+                    f"terminating). Active zones: "
                     f"{', '.join(sorted(known)) or '(none)'}. "
                     "Create it first with `nexus zone create` or use --zone <existing>."
                 )
@@ -326,16 +343,26 @@ def hub_status(as_json: bool) -> None:
 
     if as_json:
         click.echo(_json.dumps(payload, indent=2))
-        return
+    else:
+        click.echo(f"endpoint:    {payload['endpoint']}")
+        click.echo(f"profile:     {payload['profile']}")
+        click.echo(f"postgres:    {payload['postgres']}")
+        click.echo(f"redis:       {payload['redis']}")
+        click.echo(
+            f"tokens:      {payload['tokens']['active']} active, "
+            f"{payload['tokens']['revoked']} revoked"
+        )
+        click.echo(
+            "connections: "
+            f"{payload['connections'] if payload['connections'] is not None else 'n/a'}"
+        )
+        click.echo(f"qps (5m):    {payload['qps_5m'] if payload['qps_5m'] is not None else 'n/a'}")
 
-    click.echo(f"endpoint:    {payload['endpoint']}")
-    click.echo(f"profile:     {payload['profile']}")
-    click.echo(f"postgres:    {payload['postgres']}")
-    click.echo(f"redis:       {payload['redis']}")
-    click.echo(
-        f"tokens:      {payload['tokens']['active']} active, {payload['tokens']['revoked']} revoked"
-    )
-    click.echo(
-        f"connections: {payload['connections'] if payload['connections'] is not None else 'n/a'}"
-    )
-    click.echo(f"qps (5m):    {payload['qps_5m'] if payload['qps_5m'] is not None else 'n/a'}")
+    # Postgres is the source of truth for tokens and zones. A broken
+    # auth DB must block rollout / trip paging — exit non-zero so
+    # shell-style health guards (`nexus hub status && …`) fail closed
+    # instead of reading "ok" off a silently-green exit code (#3784
+    # round 9). Redis is best-effort (metrics only) so we don't fail
+    # on `redis: n/a`.
+    if pg_state != "ok":
+        raise SystemExit(2)

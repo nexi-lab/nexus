@@ -137,7 +137,7 @@ def test_token_create_rejects_unknown_zone_when_zones_exist(monkeypatch):
         ["token", "create", "--name", "t", "--zone", "proud"],
     )
     assert result.exit_code == 1
-    assert "does not exist" in result.output
+    assert "not active" in result.output
     assert "prod" in result.output  # known zones listed for the operator
 
 
@@ -462,6 +462,9 @@ def test_hub_status_json_includes_expected_fields(monkeypatch):
 
 
 def test_hub_status_postgres_unreachable_marks_err(monkeypatch):
+    """Broken auth DB must exit non-zero so shell-style health guards fail
+    closed. JSON payload still emits `postgres: err` for parseable consumers."""
+
     def boom():
         raise RuntimeError("db down")
 
@@ -472,6 +475,93 @@ def test_hub_status_postgres_unreachable_marks_err(monkeypatch):
     )
     runner = CliRunner()
     result = runner.invoke(hub, ["status", "--json"])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
     payload = json.loads(result.output)
     assert payload["postgres"] == "err"
+
+
+def test_hub_status_exits_zero_when_postgres_ok(monkeypatch):
+    """Sanity check: the new non-zero-on-err behavior doesn't regress the
+    success path — a healthy Postgres still exits 0."""
+    session = MagicMock()
+    session.execute.return_value.scalar.side_effect = [3, 1]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": 0.0, "connections": 0, "redis": "ok"},
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status", "--json"])
+    assert result.exit_code == 0, result.output
+
+
+def test_token_create_rejects_terminating_zone(monkeypatch):
+    """A zone in phase != 'Active' (e.g. 'Terminating') must not accept new tokens."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import Base, ZoneModel
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+
+    with Session() as s, s.begin():
+        s.add(ZoneModel(zone_id="prod", name="prod", phase="Terminating"))
+        s.add(ZoneModel(zone_id="staging", name="staging", phase="Active"))
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: Session,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "t", "--zone", "prod"],
+    )
+    assert result.exit_code == 1
+    assert "not active" in result.output
+    # Only the active zone is listed as a replacement suggestion.
+    assert "staging" in result.output
+    assert "prod" not in result.output.split("Active zones:")[1]
+
+
+def test_token_create_rejects_soft_deleted_zone(monkeypatch):
+    """A zone with deleted_at set (soft-delete) must not accept new tokens."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import Base, ZoneModel
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+
+    with Session() as s, s.begin():
+        s.add(
+            ZoneModel(
+                zone_id="prod",
+                name="prod",
+                phase="Active",
+                deleted_at=datetime.now(UTC),
+            )
+        )
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: Session,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "t", "--zone", "prod"],
+    )
+    assert result.exit_code == 1
+    assert "not active" in result.output

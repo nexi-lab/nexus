@@ -43,7 +43,7 @@ def _patch_candidates(monkeypatch: pytest.MonkeyPatch, paths: list[Path]) -> Non
 
 
 def _patch_reader(monkeypatch: pytest.MonkeyPatch, result_by_path: dict[Path, Any]) -> None:
-    def _fake_read(path: Path) -> str | None:
+    def _fake_read(path: Path, **kwargs: Any) -> str | None:
         return result_by_path.get(path)
 
     monkeypatch.setattr(legacy_oauth_key_migration, "_read_oauth_key_from_redb", _fake_read)
@@ -170,3 +170,80 @@ class TestFreshInstall:
 
         assert migrated is False
         assert store.get_setting(OAUTH_ENCRYPTION_KEY_NAME) is None
+
+
+class _FakeMetastore:
+    """Lightweight MetastoreABC stand-in that returns preloaded FileMetadata."""
+
+    def __init__(self, entries: dict[str, str]) -> None:
+        self._entries = entries
+
+    def get(self, path: str) -> Any:
+        from nexus.contracts.metadata import FileMetadata
+
+        value = self._entries.get(path)
+        if value is None:
+            return None
+        import json
+
+        return FileMetadata(
+            path=path,
+            backend_name="_config",
+            physical_path=json.dumps({"v": value}),
+            size=0,
+        )
+
+
+class TestExistingMetastore:
+    def test_uses_existing_metastore_when_provided(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When existing_metastore is passed, _read_oauth_key_from_redb
+        must read through it instead of creating a new Kernel()."""
+        store = _FakeSettingsStore()
+        candidate = tmp_path / "metastore.redb"
+        candidate.touch()
+
+        fake_ms = _FakeMetastore({f"cfg:{OAUTH_ENCRYPTION_KEY_NAME}": "existing-ms-key"})
+        _patch_candidates(monkeypatch, [candidate])
+        # Do NOT patch _read_oauth_key_from_redb — exercise the real fast path.
+
+        migrated = migrate_legacy_oauth_key(store, existing_metastore=fake_ms)
+
+        assert migrated is True
+        dto = store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
+        assert dto is not None and dto.value == "existing-ms-key"
+
+    def test_existing_metastore_returns_none_when_no_key(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When the existing metastore has no OAuth key, migration should
+        fall through and return False (no migration happened)."""
+        store = _FakeSettingsStore()
+        candidate = tmp_path / "metastore.redb"
+        candidate.touch()
+
+        fake_ms = _FakeMetastore({})
+        _patch_candidates(monkeypatch, [candidate])
+
+        migrated = migrate_legacy_oauth_key(store, existing_metastore=fake_ms)
+
+        assert migrated is False
+        assert store.get_setting(OAUTH_ENCRYPTION_KEY_NAME) is None
+
+    def test_existing_metastore_none_falls_back_to_slow_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When existing_metastore is None, the original slow path is used."""
+        store = _FakeSettingsStore()
+        candidate = tmp_path / "metastore.redb"
+        candidate.touch()
+
+        _patch_candidates(monkeypatch, [candidate])
+        _patch_reader(monkeypatch, {candidate: "slow-path-key"})
+
+        migrated = migrate_legacy_oauth_key(store, existing_metastore=None)
+
+        assert migrated is True
+        dto = store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
+        assert dto is not None and dto.value == "slow-path-key"

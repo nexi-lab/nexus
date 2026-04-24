@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from nexus.contracts.auth_store_protocols import SystemSettingsStoreProtocol
 from nexus.lib.oauth.crypto import OAUTH_ENCRYPTION_KEY_NAME
@@ -44,8 +45,19 @@ def _legacy_redb_candidates() -> list[Path]:
     ]
 
 
-def migrate_legacy_oauth_key(sql_settings_store: SystemSettingsStoreProtocol) -> bool:
+def migrate_legacy_oauth_key(
+    sql_settings_store: SystemSettingsStoreProtocol,
+    *,
+    existing_metastore: Any | None = None,
+) -> bool:
     """Copy the OAuth key from a legacy redb file into the SQL settings store.
+
+    Args:
+        sql_settings_store: The SQL-backed settings store to write the key into.
+        existing_metastore: An already-open ``MetastoreABC`` (typically the main
+            Kernel's ``RustMetastoreProxy``).  When provided the key is read
+            through this connection, avoiding a second ``Kernel()`` that would
+            hit the redb exclusive-file-lock held by the main Kernel.
 
     Returns:
         True if a migration actually happened this call; False if the SQL
@@ -67,7 +79,7 @@ def migrate_legacy_oauth_key(sql_settings_store: SystemSettingsStoreProtocol) ->
     for path in _legacy_redb_candidates():
         if not path.exists():
             continue
-        key = _read_oauth_key_from_redb(path)
+        key = _read_oauth_key_from_redb(path, existing_metastore=existing_metastore)
         if key is None:
             continue
         sql_settings_store.set_setting(
@@ -87,17 +99,51 @@ def migrate_legacy_oauth_key(sql_settings_store: SystemSettingsStoreProtocol) ->
     return False
 
 
-def _read_oauth_key_from_redb(path: Path) -> str | None:
-    """Open a legacy redb file one-shot, read the OAuth key, close.
+def _read_oauth_key_from_redb(
+    path: Path,
+    *,
+    existing_metastore: Any | None = None,
+) -> str | None:
+    """Read the OAuth encryption key from a legacy metastore file.
+
+    When *existing_metastore* is provided (a ``RustMetastoreProxy`` backed
+    by the main Kernel), the key is read through that connection — avoiding
+    a second ``Kernel()`` that would hit the redb exclusive-file-lock.
+
+    For the pre-redb ``~/.nexus/metastore`` path (Python RaftMetadataStore
+    format) the main Kernel's ``LocalMetastore`` cannot read it, but neither
+    could the old standalone ``Kernel()`` approach (``Database::create``
+    fails on a non-redb file).  Returns ``None`` with a log line in that case.
 
     Returns ``None`` when the file can't be opened, when the Rust kernel
     isn't importable in this process, or when the key isn't present. A
     log line at WARNING level is emitted for unexpected failures so an
     operator looking into a data-loss incident has something to grep.
     """
-    # nexus.core.metastore + nexus_kernel are kernel-tier imports — allowed
-    # from nexus.storage (this module) by the five-tier architecture; they
-    # would be disallowed from nexus.lib. See import-linter config.
+    # Fast path: reuse the main Kernel's metastore connection.
+    if existing_metastore is not None:
+        try:
+            from nexus.storage.auth_stores.metastore_settings_store import (
+                MetastoreSettingsStore,
+            )
+
+            store = MetastoreSettingsStore(existing_metastore)
+            dto = store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
+            if dto is None:
+                return None
+            return dto.value
+        except Exception as exc:
+            logger.warning(
+                "Legacy OAuth key migration could not read via existing metastore for %s: %s",
+                path,
+                exc,
+            )
+            return None
+
+    # Slow path (original): open the redb file with a standalone Kernel().
+    # This will fail with "Database already open" if the main Kernel
+    # already holds the lock — acceptable for CLI / test callers that
+    # don't have a main Kernel.
     try:
         from nexus.core.metastore import RustMetastoreProxy
         from nexus.storage.auth_stores.metastore_settings_store import (

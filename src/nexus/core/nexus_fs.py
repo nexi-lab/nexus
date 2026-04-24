@@ -310,6 +310,25 @@ class NexusFS(  # type: ignore[misc]
             Callable[[], None]
         ] = []  # Issue #1793: factory-registered service close
         self._runtime_closeables: list[Any] = []
+        self._router: Any = None  # lazy; set by factory or auto-created on access
+
+    @property
+    def router(self) -> Any:
+        """Service-tier PathRouter — kernel routing is 100% Rust (VFSRouter).
+
+        Lazily created on first access for callers that bypass the factory
+        (e.g. SlimNexusFS, tests). The factory sets ``nx.router`` directly
+        via ``nx._router = PathRouter(...)`` after construction.
+        """
+        if self._router is None:
+            from nexus.core.router import PathRouter
+
+            self._router = PathRouter(self._driver_coordinator, self.metadata, self._kernel)
+        return self._router
+
+    @router.setter
+    def router(self, value: Any) -> None:
+        self._router = value
 
     # =====================================================================
     # Lifecycle methods: link() → initialize() → bootstrap()

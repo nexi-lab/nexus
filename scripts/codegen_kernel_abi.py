@@ -1024,38 +1024,19 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
 # These adapters wrap Python ABCs → Rust traits via PyO3 (transitional).
 
 PILLAR_ADAPTERS: dict[str, dict[str, str]] = {
-    "ObjectStore": {
-        "adapter": "PyObjectStoreAdapter",
-        "error": "StorageError",
-        "error_mod": "crate::backend",
-        "trait_mod": "crate::backend",
-        # name() → cached field at construction time
-        "cached_name": "backend_name",
-        # as_cas() returns &CASEngine which only CasLocalBackend can provide.
-        # Python-wrapped backends are external/non-CAS by definition, so the
-        # trait default (None) is always correct — don't generate an override.
-        # as_llm_streaming() same story — only OpenAIBackend overrides, and it
-        # holds a `dyn LlmStreamingBackend` trait object that can't be FromPyObject-extracted.
-        "skip_methods": {"as_cas", "as_llm_streaming"},
-    },
+    # PyObjectStoreAdapter removed — all connectors now have Rust-native backends
+    # (Crossing 1 elimination, Phase 5D). No Python fallback needed.
+    # "ObjectStore": { ... },
     # PyMetastoreAdapter removed (Phase 9) — Rust kernel uses LocalMetastore directly.
-    # set_metastore_path() opens redb; no Python metastore fallback needed.
     # "Metastore": { ... },
 }
 
 # Methods that need special handling beyond simple call_method1 + extract.
 # Key: "TraitName.method_name", value: override tag.
 ADAPTER_METHOD_OVERRIDES: dict[str, str] = {
-    # ObjectStore.name() → cached field, skip GIL call
-    "ObjectStore.name": "CACHED_NAME",
-    # write_content returns WriteResult in Python; extract .content_id
-    "ObjectStore.write_content": "WRITE_RESULT",
+    # ObjectStore overrides removed — PyObjectStoreAdapter deleted (Phase 5D).
     # Metastore.get() → check None + extract_metadata
     "Metastore.get": "OPTION_FILE_METADATA",
-    # ObjectStore.read_content(content_id, backend_path) → construct OperationContext
-    "ObjectStore.read_content": "READ_WITH_CONTEXT",
-    # ObjectStore.copy_file(src, dst) → hasattr check + get_size/version from backend
-    "ObjectStore.copy_file": "COPY_FILE",
     # Metastore.put() → to_python_metadata for FileMetadata param
     "Metastore.put": "PUT_FILE_METADATA",
     # Metastore.list() → iterate + extract_metadata
@@ -2027,13 +2008,11 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use parking_lot::Mutex;",
             "use pyo3::prelude::*;",
             "use pyo3::types::{PyBytes, PyDict, PyList};",
-            "use std::io;",
             "use std::path::Path;",
             "use std::sync::Arc;",
             "",
             "use crate::backend::{",
-            "    CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend, StorageError,",
-            "    WriteResult,",
+            "    CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend,",
             "};",
             '#[cfg(feature = "py-hook-adapters")]',
             "use crate::dispatch::PathResolver;",
@@ -3256,7 +3235,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    // ── sys_setattr — unified mount/attr syscall ─────────────────────",
             "",
-            '    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, hn_stories_per_feed=None, hn_include_comments=None, cli_command=None, cli_service=None, cli_auth_env_json=None, x_bearer_token=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0))]',
+            '    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, hn_stories_per_feed=None, hn_include_comments=None, cli_command=None, cli_service=None, cli_auth_env_json=None, x_bearer_token=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0))]',
             "    #[allow(clippy::too_many_arguments)]",
             "    fn sys_setattr<'py>(",
             "        &self,",
@@ -3266,7 +3245,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        backend_name: &str,",
             "        local_root: Option<&str>,",
             "        fsync: bool,",
-            "        py_backend: Option<Py<PyAny>>,",
             "        backend_type: &str,",
             "        follow_symlinks: bool,",
             "        openai_base_url: Option<&str>,",
@@ -3510,9 +3488,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                Some(Arc::new(b))",
             "            }",
             "        } else {",
-            "            py_backend.map(|obj| -> Arc<dyn ObjectStore> {",
-            "                Python::attach(|py| Arc::new(PyObjectStoreAdapter::new(py, obj)) as Arc<dyn ObjectStore>)",
-            "            })",
+            "            None",
             "        };",
             "",
             "        // Metastore resolution: metastore_path -> LocalMetastore.",

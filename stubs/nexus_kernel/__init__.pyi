@@ -406,7 +406,6 @@ class Kernel:
         backend_name: str,
         local_root: str | None,
         fsync: bool,
-        py_backend: Any | None,
         backend_type: str,
         follow_symlinks: bool,
         openai_base_url: str | None,

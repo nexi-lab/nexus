@@ -2669,7 +2669,7 @@ impl Kernel {
             )));
         }
 
-        // 5. Backend read (CasLocal or PyObjectStoreAdapter)
+        // 5. Backend read (Rust-native ObjectStore)
         let content =
             self.vfs_router
                 .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
@@ -2894,7 +2894,7 @@ impl Kernel {
             return miss();
         }
 
-        // 5. Backend write (CasLocal or PyObjectStoreAdapter).
+        // 5. Backend write (Rust-native ObjectStore).
         //    Pass backend_path as content_id for PAS; for CAS at offset=0
         //    content_id is ignored, but for offset>0 we need the OLD
         //    content hash so CASEngine::write_partial can splice against

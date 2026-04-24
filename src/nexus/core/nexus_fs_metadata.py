@@ -129,6 +129,22 @@ class MetadataMixin:
                 "backend_type": "x",
                 "x_bearer_token": token or "",
             }
+        # Calendar OAuth connector (PathCalendarBackend) → route through CLI "gws calendar"
+        if "Calendar" in cls_name and "Backend" in cls_name:
+            import json as _json
+
+            token = getattr(backend, "_access_token", None) or getattr(
+                backend, "access_token", None
+            )
+            auth_env: dict[str, str] = {}
+            if token:
+                auth_env["GWS_ACCESS_TOKEN"] = token
+            return {
+                "backend_type": "cli",
+                "cli_command": "gws",
+                "cli_service": "calendar",
+                "cli_auth_env_json": _json.dumps(auth_env) if auth_env else "",
+            }
         # CLI-based connectors (GitHubConnector, SheetsConnector, DocsConnector, etc.)
         cli_name = getattr(backend, "CLI_NAME", None)
         if cli_name:
@@ -136,7 +152,7 @@ class MetadataMixin:
 
             cli_service = getattr(backend, "CLI_SERVICE", "") or ""
             # Build auth env from token if available
-            auth_env: dict[str, str] = {}
+            cli_auth: dict[str, str] = {}
             env_key = f"{cli_name.upper().replace('-', '_')}_ACCESS_TOKEN"
             # Try to get token from backend's token manager
             _tm = getattr(backend, "_token_manager", None)
@@ -144,14 +160,14 @@ class MetadataMixin:
                 try:
                     _tok = _tm.get_cached_token(provider=cli_name)
                     if _tok:
-                        auth_env[env_key] = _tok
+                        cli_auth[env_key] = _tok
                 except Exception:
                     pass
             return {
                 "backend_type": "cli",
                 "cli_command": cli_name,
                 "cli_service": cli_service,
-                "cli_auth_env_json": _json.dumps(auth_env) if auth_env else "",
+                "cli_auth_env_json": _json.dumps(cli_auth) if cli_auth else "",
             }
         return None
 
@@ -476,22 +492,24 @@ class MetadataMixin:
 
             # ── CAS-local detection — Rust takes ownership natively ──
             _is_cas_local = getattr(backend, "has_root_path", False) and _cls_name.startswith("CAS")
-            _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
+            if not _is_cas_local:
+                raise ValueError(
+                    f"No Rust-native backend for {_cls_name}. "
+                    "All connectors must be covered by _extract_rust_backend_params()."
+                )
+            _local_root = str(getattr(backend, "root_path", None))
 
-            # ── Fallback: Python connector → PyObjectStoreAdapter ────
             result = self._kernel.sys_setattr(
                 path,
                 entry_type,
                 _backend_name,
                 local_root=_local_root,
                 fsync=True,
-                py_backend=backend,
                 zone_id=zone_id,
                 metastore_path=_ms_path_str,
                 is_external=_is_external,
             )
-            # Python DLC bookkeeping: store backend ref for Python-only
-            # connectors so router.route() can find the backend instance.
+            # DLC bookkeeping: router needs backend ref for RouteResult
             self._driver_coordinator._store_mount_info(
                 path,
                 backend,

@@ -494,14 +494,12 @@ class MetadataMixin:
             # CASLocalBackend has root_path; PathLocalBackend has root_path;
             # LocalConnectorBackend has local_path. Rust constructs the matching
             # backend from local_root param.
-            _local_root = (
-                str(getattr(backend, "root_path", ""))
-                if getattr(backend, "has_root_path", False)
-                else str(getattr(backend, "local_path", ""))
-                if hasattr(backend, "local_path")
-                else None
-            )
-            if not _local_root:
+            _root = getattr(backend, "root_path", None)
+            if _root is None:
+                _root = getattr(backend, "local_path", None)
+            if _root is not None:
+                _local_root = str(_root)
+            else:
                 raise ValueError(
                     f"No Rust-native backend for {_cls_name}. "
                     "All connectors must be covered by _extract_rust_backend_params()."

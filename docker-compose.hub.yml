@@ -6,6 +6,14 @@
 #   docker compose -f docker-compose.hub.yml exec nexus \
 #     nexus hub token create --name root --admin --zone root
 #
+# Auth model: the MCP HTTP port is fail-closed when NEXUS_DATABASE_URL is
+# set AND NEXUS_URL is unset (hub mode). `nexus mcp serve` installs a
+# bearer-validation middleware in front of every tool call that rejects
+# missing/invalid/expired/revoked tokens with 401 before the request
+# reaches any handler. See `_HubAuthGateMiddleware` in
+# `src/nexus/cli/commands/mcp.py`. Do NOT set NEXUS_URL here — doing so
+# switches MCP to remote-client mode and disables the gate.
+#
 # TLS: terminate at a reverse proxy (Caddy/nginx). Sample config in
 # docs/hub-deploy.md.
 
@@ -18,6 +26,7 @@ services:
       NEXUS_MCP_HOST: 0.0.0.0
       NEXUS_MCP_PORT: 8081
       NEXUS_REDIS_URL: redis://redis:6379
+      # Leave NEXUS_URL unset to activate hub-mode bearer validation.
     ports:
       - "8081:8081"
     volumes:

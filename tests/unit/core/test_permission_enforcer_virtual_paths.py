@@ -27,11 +27,31 @@ from nexus.contracts.types import OperationContext, Permission
 
 
 class MockRoute:
-    """Mock route object returned by router."""
+    """Mock route object returned by kernel.route()."""
 
-    def __init__(self, backend_path: str, backend=None):
+    def __init__(self, backend_path: str, backend=None, mount_point: str = "/"):
         self.backend_path = backend_path
         self.backend = backend or MockBackend()
+        self.mount_point = mount_point
+
+
+class _MountInfo:
+    """Minimal mount info for tests."""
+
+    def __init__(self, backend: "MockBackend") -> None:
+        self.backend = backend
+
+
+class MockDLC:
+    """Mock DLC that maps mount_point → backend."""
+
+    def __init__(self, backend: "MockBackend | None" = None):
+        self._backend = backend
+
+    def get_mount_info_canonical(self, mount_point: str) -> "_MountInfo | None":
+        if self._backend is None:
+            return None
+        return _MountInfo(self._backend)
 
 
 class MockBackend:
@@ -228,12 +248,13 @@ class TestNonFileBackendObjectId:
         # Mock backend for database tables
         db_backend = MockBackend(object_type="postgres:table", object_id="users")
 
-        class DatabaseRouter:
+        class DatabaseKernel:
             def route(self, path, zone_id=None):
-                return MockRoute(backend_path="public.users", backend=db_backend)
+                return MockRoute(backend_path="public.users", mount_point="/db")
 
-        router = DatabaseRouter()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
+        kernel = DatabaseKernel()
+        dlc = MockDLC(backend=db_backend)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=kernel, dlc=dlc)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -250,12 +271,13 @@ class TestNonFileBackendObjectId:
 
         redis_backend = MockBackend(object_type="redis:key", object_id="session:abc123")
 
-        class RedisRouter:
+        class RedisKernel:
             def route(self, path, zone_id=None):
-                return MockRoute(backend_path="session:abc123", backend=redis_backend)
+                return MockRoute(backend_path="session:abc123", mount_point="/cache")
 
-        router = RedisRouter()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
+        kernel = RedisKernel()
+        dlc = MockDLC(backend=redis_backend)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=kernel, dlc=dlc)
 
         ctx = OperationContext(user_id="alice", groups=[])
 

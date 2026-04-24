@@ -636,7 +636,7 @@ class ContentMixin:
                 path, "sys_write requires existing file — use write() for create-on-write"
             )
 
-        # ── KERNEL (pure Rust CAS write, zero GIL) ──
+        # ── KERNEL (pure Rust — DT_REG via CAS, zero GIL) ──
         _is_admin = (
             getattr(context, "is_admin", False)
             if context is not None and not isinstance(context, dict)
@@ -646,34 +646,52 @@ class ContentMixin:
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
-        zone_id, agent_id, _ = self._get_context_identity(context)
-        _ctx = context or OperationContext(user_id="anonymous", groups=[])
-        _meta_obj = FileMetadata(
-            path=path,
-            backend_name="",
-            physical_path=result.content_id or "",
-            size=result.size,
-            etag=result.content_id,
-            version=result.version,
-            zone_id=zone_id,
-        )
-        from nexus.contracts.vfs_hooks import WriteHookContext
-
-        self._kernel.dispatch_post_hooks(
-            "write",
-            WriteHookContext(
-                path=path,
-                content=buf,
-                context=_ctx,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                is_new_file=(_meta is None),
-                content_hash=result.content_id or "",
-                metadata=_meta_obj,
-                old_metadata=_meta,
-                new_version=result.version,
-            ),
-        )
+        if result.hit:
+            # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache.
+            # old_metadata fields come from Rust (dcache/metastore snapshot taken
+            # before the write) — no Python metadata.get() round-trip needed.
+            zone_id, agent_id, _ = self._get_context_identity(context)
+            _old_metadata: FileMetadata | None = None
+            if not result.is_new:
+                _mod_at = (
+                    datetime.fromtimestamp(result.old_modified_at_ms / 1000.0, UTC)
+                    if result.old_modified_at_ms is not None
+                    else None
+                )
+                _old_metadata = FileMetadata(
+                    path=path,
+                    backend_name="",
+                    physical_path=result.old_etag or "",
+                    size=result.old_size or 0,
+                    etag=result.old_etag,
+                    version=result.old_version or 1,
+                    modified_at=_mod_at,
+                )
+            self._dispatch_write_events(
+                path,
+                _WriteContentResult(
+                    content_hash=result.content_id or "",
+                    size=result.size,
+                    metadata=FileMetadata(
+                        path=path,
+                        backend_name="",
+                        physical_path=result.content_id or "",
+                        size=result.size,
+                        etag=result.content_id,
+                        version=result.version,
+                        zone_id=zone_id,
+                    ),
+                    new_version=result.version,
+                    is_new=result.is_new,
+                    old_etag=result.old_etag,
+                    old_metadata=_old_metadata,
+                    context=context or OperationContext(user_id="anonymous", groups=[]),
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    is_remote=False,
+                ),
+                buf,
+            )
 
         return {"path": path, "bytes_written": len(buf)}
 

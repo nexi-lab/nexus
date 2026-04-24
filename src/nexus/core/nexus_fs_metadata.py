@@ -692,26 +692,116 @@ class MetadataMixin:
         self._reject_if_virtual_readme(old_path, context, op="rename")
         self._reject_if_virtual_readme(new_path, context, op="rename")
 
-        # F3 C3: the Rust kernel performs the source-existence check and the
-        # authoritative under-lock rename; the previous Python fast-fail +
-        # second `metastore.get` was either double work (on a kernel hit) or
-        # a redundant TOCTOU duplicate of the fallback's own under-lock check.
-        # Pre-compute `is_directory` only from what's visible to the Python
-        # proxy so the POST-hook payload still reports the right flag when
-        # the fallback path runs below; the kernel already reports this on
-        # hit via ``_rename_result.is_directory``.
-        meta = self.metadata.get(old_path)
-        is_directory = (
-            meta and meta.mime_type == "inode/directory"
-        ) or self.metadata.is_implicit_directory(old_path)
-
-        # Rust sys_rename handles: sorted VFS locks + metastore put-then-delete
-        # + recursive children rename (incl. implicit dirs) + backend rename
-        # + dcache updates + OBSERVE.
+        # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
-        # POST-INTERCEPT hooks
+        # Rust hit=true: metastore.rename_path() handled the entry AND all
+        # children atomically (redb: single txn). Trust Rust SSOT.
+        if _rename_result.hit:
+            if _rename_result.post_hook_needed:
+                from nexus.contracts.metadata import FileMetadata as _FM
+                from nexus.contracts.vfs_hooks import RenameHookContext
+
+                # Reconstruct old metadata from Rust result fields for the
+                # audit trail (record_store_write_observer uses .etag + .to_dict()).
+                _old_meta: _FM | None = None
+                if _rename_result.old_etag is not None or _rename_result.old_size is not None:
+                    from datetime import UTC, datetime
+
+                    _mod_at = (
+                        datetime.fromtimestamp(_rename_result.old_modified_at_ms / 1000.0, UTC)
+                        if _rename_result.old_modified_at_ms is not None
+                        else None
+                    )
+                    _old_meta = _FM(
+                        path=old_path,
+                        backend_name="",
+                        physical_path=_rename_result.old_etag or "",
+                        size=_rename_result.old_size or 0,
+                        etag=_rename_result.old_etag,
+                        version=_rename_result.old_version or 1,
+                        modified_at=_mod_at,
+                    )
+
+                _rename_ctx = RenameHookContext(
+                    old_path=old_path,
+                    new_path=new_path,
+                    context=context,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    is_directory=bool(_rename_result.is_directory),
+                    metadata=_old_meta,
+                )
+                self._kernel.dispatch_post_hooks("rename", _rename_ctx)
+            return {}
+
+        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE (Rust returns
+        # hit=false for these). No child-walking needed — mounts are single
+        # entries; Rust's rename_path() handles children atomically.
+        is_implicit_dir = not old_route.metastore.exists(
+            old_path
+        ) and self.metadata.is_implicit_directory(old_path)
+        if not old_route.metastore.exists(old_path) and not is_implicit_dir:
+            raise NexusFileNotFoundError(old_path)
+
+        meta = old_route.metastore.get(old_path)
+        is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
+
+        # Check destination — use backend.file_exists() for PAS backends
+        if new_route.metastore.exists(new_path):
+            if force:
+                self.sys_unlink(new_path, recursive=True, context=context)
+            elif hasattr(new_route.backend, "file_exists"):
+                if new_route.backend.file_exists(new_route.backend_path):
+                    raise FileExistsError(f"Destination path already exists: {new_path}")
+                logger.warning(
+                    "Cleaning up stale metadata for %s (file not in backend storage)",
+                    new_path,
+                )
+                new_route.metastore.delete(new_path)
+            else:
+                raise FileExistsError(f"Destination path already exists: {new_path}")
+
+        # Metadata rename (put-first for crash safety)
+        from dataclasses import replace as _replace
+
+        _old_meta = old_route.metastore.get(old_path)
+        if _old_meta is not None:
+            _new_meta = _replace(_old_meta, path=new_path)
+            new_route.metastore.put(_new_meta)
+            old_route.metastore.delete(old_path)
+        elif not is_directory:
+            raise NexusFileNotFoundError(old_path)
+
+        # Rename children for implicit directories (no explicit entry in
+        # metastore, but children exist). Rust's rename_path() only handles
+        # entries it finds via metastore.get() — implicit dirs have no entry.
+        if is_directory:
+            _prefix = old_path.rstrip("/") + "/"
+            for child in old_route.metastore.list(_prefix, recursive=True):
+                _child_new = new_path + child.path[len(old_path) :]
+                _child_new_meta = _replace(child, path=_child_new)
+                new_route.metastore.put(_child_new_meta)
+                old_route.metastore.delete(child.path)
+
+        # PAS backend propagation
+        if hasattr(old_route.backend, "rename"):
+            try:
+                old_route.backend.rename(
+                    old_route.backend_path,
+                    new_route.backend_path,
+                    context=context,
+                )
+            except Exception as _be:
+                logger.warning(
+                    "Backend rename %s → %s failed (metadata already updated): %s",
+                    old_route.backend_path,
+                    new_route.backend_path,
+                    _be,
+                )
+
+        # Python fallback POST hooks (for DT_MOUNT/DT_EXTERNAL_STORAGE)
         if _rename_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import RenameHookContext
 
@@ -721,8 +811,8 @@ class MetadataMixin:
                 context=context,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                is_directory=bool(_rename_result.is_directory or is_directory),
-                metadata=meta,
+                is_directory=bool(is_directory),
+                metadata=None,
             )
             self._kernel.dispatch_post_hooks("rename", _rename_ctx)
 
@@ -854,21 +944,12 @@ class MetadataMixin:
                 "modified_at": virtual_write_result.get("modified_at"),
             }
 
-        # Fast-fail
-        if not self.metadata.exists(src_path) and not self.metadata.is_implicit_directory(src_path):
-            raise NexusFileNotFoundError(src_path)
-
-        src_meta = self.metadata.get(src_path)
-        if src_meta is None:
-            raise NexusFileNotFoundError(src_path)
-        if src_meta.mime_type == "inode/directory":
-            raise IsADirectoryError(f"Cannot copy a directory: {src_path}")
-
-        # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy
+        # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy.
+        # Rust validates source existence + rejects directories internally.
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
 
-        # POST-INTERCEPT hooks
+        # POST-INTERCEPT hooks (zero consumers use metadata field)
         if _copy_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import CopyHookContext
 
@@ -878,7 +959,7 @@ class MetadataMixin:
                 context=context,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                metadata=src_meta,
+                metadata=None,
             )
             self._kernel.dispatch_post_hooks("copy", _copy_ctx)
 

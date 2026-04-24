@@ -951,6 +951,11 @@ pub struct PySysWriteResult {
     pub post_hook_needed: bool,
     pub version: u32,
     pub size: u64,
+    pub is_new: bool,
+    pub old_etag: Option<String>,
+    pub old_size: Option<u64>,
+    pub old_version: Option<u32>,
+    pub old_modified_at_ms: Option<i64>,
 }
 
 // ── PySysUnlinkResult ───────────────────────────────────────────
@@ -975,6 +980,10 @@ pub struct PySysRenameResult {
     pub success: bool,
     pub post_hook_needed: bool,
     pub is_directory: bool,
+    pub old_etag: Option<String>,
+    pub old_size: Option<u64>,
+    pub old_version: Option<u32>,
+    pub old_modified_at_ms: Option<i64>,
 }
 
 // ── PySysMkdirResult ────────────────────────────────────────────
@@ -2456,6 +2465,11 @@ impl PyKernel {
             post_hook_needed: result.post_hook_needed,
             version: result.version,
             size: result.size,
+            is_new: result.is_new,
+            old_etag: result.old_etag,
+            old_size: result.old_size,
+            old_version: result.old_version,
+            old_modified_at_ms: result.old_modified_at_ms,
         })
     }
 
@@ -2585,6 +2599,10 @@ impl PyKernel {
             success: result.success,
             post_hook_needed: result.post_hook_needed,
             is_directory: result.is_directory,
+            old_etag: result.old_etag,
+            old_size: result.old_size,
+            old_version: result.old_version,
+            old_modified_at_ms: result.old_modified_at_ms,
         })
     }
 
@@ -2728,6 +2746,11 @@ impl PyKernel {
                 post_hook_needed: r.post_hook_needed,
                 version: r.version,
                 size: r.size,
+                is_new: r.is_new,
+                old_etag: r.old_etag,
+                old_size: r.old_size,
+                old_version: r.old_version,
+                old_modified_at_ms: r.old_modified_at_ms,
             })
             .collect())
     }

@@ -39,3 +39,13 @@ READ_AUDIT_WRITES = Counter(
     "Auth-profile-read audit rows written",
     labelnames=("cache",),
 )
+
+CROSS_MACHINE_READS = Counter(
+    "nexus_cross_machine_reads_total",
+    (
+        "Reads where the caller daemon's machine_id differs from the daemon "
+        "that pushed the envelope. Implicit credential sharing — operators "
+        "should investigate whether intentional or a stale/compromised daemon."
+    ),
+    labelnames=("provider",),
+)

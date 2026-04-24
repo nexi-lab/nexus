@@ -122,6 +122,11 @@ class DecryptedProfile:
     kek_version: int
     last_synced_at: datetime
     sync_ttl_seconds: int
+    # Daemon machine that pushed this envelope (audit stamp from #3804).
+    # NULL for legacy rows pushed before the stamp existed. Consumer logs
+    # a warning when reader.machine_id != writer_machine_id so operators
+    # can detect implicit cross-machine credential sharing.
+    writer_machine_id: uuid.UUID | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1498,13 +1503,21 @@ class PostgresAuthProfileStore:
         from nexus.bricks.auth.consumer import MultipleProfilesForProvider
 
         with self._scoped() as conn:
+            # Filter out disabled (operator hard-stop) and cooled-down
+            # (auto-circuit-breaker) profiles in SQL so neither path leaks
+            # past the cache-miss boundary. Cache hits inside ResolvedCredCache
+            # may still serve a credential for up to its TTL after a state
+            # change — the deployment guide notes this lag and recommends
+            # NEXUS_AUTH_CRED_CACHE_TTL be tuned for the operator's tolerance.
             rows = conn.execute(
                 text(
                     "SELECT id, ciphertext, wrapped_dek, nonce, aad, kek_version, "
-                    "       last_synced_at, sync_ttl_seconds "
+                    "       last_synced_at, sync_ttl_seconds, machine_id "
                     "FROM auth_profiles "
                     "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
                     "  AND ciphertext IS NOT NULL "
+                    "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
+                    "  AND (cooldown_until IS NULL OR cooldown_until <= NOW()) "
                     "ORDER BY updated_at DESC LIMIT 2"
                 ),
                 {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
@@ -1524,7 +1537,7 @@ class PostgresAuthProfileStore:
                 cause=f"{len(rows)}+ active envelopes; collapse to one or upgrade wire contract",
             )
 
-        profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl = rows[0]
+        profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl, wmid = rows[0]
 
         # Defense-in-depth: cross-check the row's stored AAD against the
         # tenant|principal|profile_id format that writers use. AES-GCM tag
@@ -1562,6 +1575,7 @@ class PostgresAuthProfileStore:
             kek_version=kek_version,
             last_synced_at=lsa,
             sync_ttl_seconds=sttl,
+            writer_machine_id=wmid,
         )
 
     # ------------------------------------------------------------------

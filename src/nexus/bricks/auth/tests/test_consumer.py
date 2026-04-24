@@ -300,6 +300,151 @@ def test_resolve_rejects_revoked_machine_even_when_cached(engine):
     assert exc.value.cause == "machine_revoked"
 
 
+def test_audit_failure_evicts_cred_from_cache(engine):
+    """A failed cache-miss audit must NOT pollute cred_cache. If it did, the
+    next request would hit cache (no audit attempted) and silently return a
+    credential with no durable read record — exactly the gap F8 plugged.
+    Asserts the order: audit.write happens BEFORE cred_cache.put.
+    """
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.auth.consumer import AuditWriteFailed
+
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+
+    bound_principal = principal
+    store = PostgresAuthProfileStore(
+        "", tenant_id=tenant, principal_id=bound_principal, engine=engine
+    )
+    cache = ResolvedCredCache(ceiling_seconds=300)
+    audit = MagicMock()
+    audit.write.side_effect = AuditWriteFailed.from_row(
+        tenant_id=tenant,
+        principal_id=principal,
+        provider="github",
+        cause="forced",
+    )
+    consumer = CredentialConsumer(
+        store=store,
+        encryption=encryption,
+        dek_cache=DEKCache(),
+        cred_cache=cache,
+        adapters={"github": GithubProviderAdapter()},
+        audit=audit,
+    )
+
+    with pytest.raises(AuditWriteFailed):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+    # Cache must NOT contain the materialized cred — second call must
+    # re-attempt audit (and fail again), NOT silently return from cache.
+    audit.write.reset_mock()
+    audit.write.side_effect = AuditWriteFailed.from_row(
+        tenant_id=tenant,
+        principal_id=principal,
+        provider="github",
+        cause="still failing",
+    )
+    with pytest.raises(AuditWriteFailed):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    assert audit.write.call_count == 1, "second resolve must re-attempt audit, not hit cache"
+
+
+def test_resolve_skips_disabled_profile(engine):
+    """A profile with disabled_until in the future must not be returned."""
+
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "UPDATE auth_profiles SET disabled_until = NOW() + INTERVAL '1 hour' "
+                "WHERE tenant_id = :t"
+            ),
+            {"t": str(tenant)},
+        )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with pytest.raises(ProfileNotFoundForCaller):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+
+def test_resolve_skips_cooled_down_profile(engine):
+    """A profile with cooldown_until in the future must not be returned."""
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "UPDATE auth_profiles SET cooldown_until = NOW() + INTERVAL '5 minutes' "
+                "WHERE tenant_id = :t"
+            ),
+            {"t": str(tenant)},
+        )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with pytest.raises(ProfileNotFoundForCaller):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+
+def test_resolve_logs_warning_on_cross_machine_read(engine, caplog):
+    """Reader machine_id != writer machine_id → log warning + cross-machine metric."""
+    import logging
+
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    writer_machine = uuid.uuid4()
+    # Stamp the envelope with a writer machine_id different from the reader.
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        # Insert writer_machine row (FK constraint)
+        conn.execute(
+            text(
+                "INSERT INTO daemon_machines (id, tenant_id, principal_id, pubkey) "
+                "VALUES (:m, :t, :p, :pk) ON CONFLICT DO NOTHING"
+            ),
+            {
+                "m": str(writer_machine),
+                "t": str(tenant),
+                "p": str(principal),
+                "pk": b"writer-pk-" + writer_machine.bytes,
+            },
+        )
+        conn.execute(
+            text("UPDATE auth_profiles SET machine_id = :m WHERE tenant_id = :t"),
+            {"m": str(writer_machine), "t": str(tenant)},
+        )
+    reader_machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with caplog.at_level(logging.WARNING, logger="nexus.bricks.auth.consumer"):
+        consumer.resolve(
+            claims=_claims(tenant, principal, reader_machine), provider="github", purpose="x"
+        )
+    assert any("cross_machine_read" in rec.message for rec in caplog.records), (
+        f"expected cross_machine_read warning, got: {[r.message for r in caplog.records]}"
+    )
+
+
 def test_resolve_rejects_when_multiple_profiles_for_provider(engine):
     """Two envelope rows for same (tenant, principal, provider) → fail closed."""
     tenant = uuid.uuid4()

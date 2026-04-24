@@ -12,15 +12,19 @@ server-side agent that needs to act as a user.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from nexus.bricks.auth.consumer_metrics import (
+    CROSS_MACHINE_READS,
     TOKEN_EXCHANGE_LATENCY,
     TOKEN_EXCHANGE_REQUESTS,
 )
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -311,7 +315,32 @@ class CredentialConsumer:
                     cause=f"{type(exc).__name__}",
                 ) from exc
 
-            self._cred_cache.put(cache_key, materialized, now=now)
+            # Cross-machine read detection: this daemon reads a credential
+            # pushed by a different daemon (same principal, different machine).
+            # Allowed today (no explicit sharing model in the wire contract)
+            # but operationally suspicious — log + metric so operators can
+            # detect implicit sharing. A future enforcement flag can flip
+            # this from log-warning to fail-closed without API changes.
+            if (
+                decrypted.writer_machine_id is not None
+                and decrypted.writer_machine_id != claims.machine_id
+            ):
+                _logger.warning(
+                    "cross_machine_read tenant=%s principal=%s provider=%s "
+                    "reader=%s writer=%s — implicit credential sharing across daemons",
+                    claims.tenant_id,
+                    claims.principal_id,
+                    provider,
+                    claims.machine_id,
+                    decrypted.writer_machine_id,
+                )
+                CROSS_MACHINE_READS.labels(provider=provider).inc()
+
+            # IMPORTANT: write audit BEFORE caching so a failed mandatory
+            # cache-miss audit doesn't poison the cache. Without this order,
+            # an audit failure raises AuditWriteFailed → router 503, but the
+            # credential is already in cred_cache and the next request hits
+            # cache (no audit attempted) → silent forensics gap.
             self._audit.write(
                 tenant_id=claims.tenant_id,
                 principal_id=claims.principal_id,
@@ -323,6 +352,7 @@ class CredentialConsumer:
                 cache_hit=False,
                 kek_version=decrypted.kek_version,
             )
+            self._cred_cache.put(cache_key, materialized, now=now)
             return materialized
 
         except (ProfileNotFoundForCaller, ProviderNotConfigured, MachineUnknownOrRevoked):

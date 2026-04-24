@@ -714,6 +714,52 @@ def create_app(
     return app
 
 
+def _build_envelope_provider_from_env(choice: str) -> tuple[Any, str]:
+    """Construct an EncryptionProvider from env vars (#3818).
+
+    Returns ``(provider, kind)`` where kind is one of:
+      ``inmemory`` — fresh per-process key (dev only).
+      ``vault_transit`` — Vault Transit via NEXUS_VAULT_ADDR/TOKEN/KEY/MOUNT.
+      ``aws_kms`` — AWS KMS via NEXUS_AWS_KMS_KEY_ID/REGION.
+
+    Raises on missing required env vars or import failures so the caller
+    can disable the route with a clear log line instead of silently
+    falling through to a non-functional in-memory KEK.
+    """
+    if choice == "inmemory":
+        from nexus.bricks.auth.envelope_providers.in_memory import InMemoryEncryptionProvider
+
+        return InMemoryEncryptionProvider(), "inmemory"
+    if choice == "vault_transit":
+        import hvac  # raises ImportError → caller logs + disables
+
+        from nexus.bricks.auth.envelope_providers.vault_transit import VaultTransitProvider
+
+        addr = os.environ.get("NEXUS_VAULT_ADDR") or ""
+        token = os.environ.get("NEXUS_VAULT_TOKEN") or ""
+        key = os.environ.get("NEXUS_VAULT_TRANSIT_KEY") or ""
+        mount = os.environ.get("NEXUS_VAULT_TRANSIT_MOUNT", "transit")
+        if not (addr and token and key):
+            raise ValueError(
+                "vault_transit requires NEXUS_VAULT_ADDR, NEXUS_VAULT_TOKEN, "
+                "NEXUS_VAULT_TRANSIT_KEY"
+            )
+        client = hvac.Client(url=addr, token=token)
+        return VaultTransitProvider(client, key, mount_point=mount), "vault_transit"
+    if choice == "aws_kms":
+        import boto3
+
+        from nexus.bricks.auth.envelope_providers.aws_kms import AwsKmsProvider
+
+        key_id = os.environ.get("NEXUS_AWS_KMS_KEY_ID") or ""
+        region = os.environ.get("NEXUS_AWS_REGION") or os.environ.get("AWS_REGION", "")
+        if not (key_id and region):
+            raise ValueError("aws_kms requires NEXUS_AWS_KMS_KEY_ID and NEXUS_AWS_REGION")
+        kms = boto3.client("kms", region_name=region)
+        return AwsKmsProvider(kms, key_id), "aws_kms"
+    raise ValueError(f"unknown NEXUS_ENVELOPE_PROVIDER: {choice!r}")
+
+
 def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
 
@@ -1114,27 +1160,57 @@ def _register_routes(app: FastAPI) -> None:
                         _token_exchange_enabled = os.environ.get(
                             "NEXUS_TOKEN_EXCHANGE_ENABLED", ""
                         ).lower() in ("1", "true", "yes")
-                        # When the operator opts in via env var the production
-                        # provider (Vault transit / AWS KMS) MUST already be on
-                        # app.state. Falling back to InMemoryEncryptionProvider
-                        # would generate a per-process random KEK that cannot
-                        # unwrap any envelope a daemon pushed — every read would
-                        # 500 with envelope_error, silent and confusing. Fail
-                        # closed at startup so the misconfiguration is visible.
+
+                        # Provider resolution order:
+                        #   1. app.state.encryption_provider (pre-wired by host
+                        #      that imports create_app — wins for tests + custom
+                        #      embeddings).
+                        #   2. NEXUS_ENVELOPE_PROVIDER env var (vault_transit /
+                        #      aws_kms / inmemory).
+                        #   3. InMemoryEncryptionProvider (dev default).
                         _enc = getattr(app.state, "encryption_provider", None)
-                        if _token_exchange_enabled and _enc is None:
+                        _enc_kind = "preset"
+                        if _enc is None:
+                            _provider_choice = os.environ.get(
+                                "NEXUS_ENVELOPE_PROVIDER", "inmemory"
+                            ).lower()
+                            try:
+                                _enc, _enc_kind = _build_envelope_provider_from_env(
+                                    _provider_choice
+                                )
+                            except Exception as e:  # noqa: BLE001
+                                logger.error(
+                                    "v1 token-exchange refused: failed to construct "
+                                    "encryption provider %r from env (%s: %s)",
+                                    _provider_choice,
+                                    type(e).__name__,
+                                    e,
+                                )
+                                _token_exchange_enabled = False
+                                _enc = InMemoryEncryptionProvider()
+                                _enc_kind = "inmemory_fallback"
+
+                        # Production safety: in-memory KEK cannot unwrap
+                        # envelopes a daemon pushed (different per-process key).
+                        # Operators MUST opt-in explicitly to acknowledge
+                        # this is a dev-only configuration.
+                        _dev_ok = os.environ.get(
+                            "NEXUS_TOKEN_EXCHANGE_DEV_INMEMORY_OK", ""
+                        ).lower() in ("1", "true", "yes")
+                        if (
+                            _token_exchange_enabled
+                            and _enc_kind in ("inmemory", "inmemory_fallback")
+                            and not _dev_ok
+                        ):
                             logger.error(
-                                "v1 token-exchange refused: NEXUS_TOKEN_EXCHANGE_ENABLED=1 "
-                                "but app.state.encryption_provider is unset. Wire a durable "
-                                "EncryptionProvider (Vault/KMS) before enabling, or unset "
-                                "the env var to keep the route at 501."
+                                "v1 token-exchange refused: enabled=1 but envelope "
+                                "provider is in-memory (per-process random KEK can't "
+                                "unwrap daemon-pushed envelopes). Set "
+                                "NEXUS_ENVELOPE_PROVIDER=vault_transit|aws_kms or "
+                                "explicitly accept dev-only behaviour with "
+                                "NEXUS_TOKEN_EXCHANGE_DEV_INMEMORY_OK=1."
                             )
                             _token_exchange_enabled = False
-                        if _enc is None:
-                            # Disabled-route case: in-memory keeps tests +
-                            # disabled-flag wiring symmetric without affecting
-                            # real reads (handler returns 501 before touching it).
-                            _enc = InMemoryEncryptionProvider()
                         _consumer = CredentialConsumer(
                             engine=_v1_engine,
                             encryption=_enc,

@@ -1,7 +1,7 @@
 # Nexus AI Filesystem
 [project]
 name = "nexus-ai-fs"
-version = "0.9.38"
+version = "0.9.39"
 description = "Nexus = filesystem/context plane."
 readme = "README.md"
 requires-python = ">=3.14"

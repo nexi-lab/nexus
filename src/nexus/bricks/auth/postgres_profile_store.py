@@ -1441,6 +1441,47 @@ class PostgresAuthProfileStore:
         )
         return profile, self._deserialize_credential(plaintext)
 
+    def assert_profile_active(self, *, principal_id: uuid.UUID, provider: str) -> None:
+        """Cheap predicate-only check: a usable envelope exists right now.
+
+        Cache-hit paths call this BEFORE returning the cached credential so an
+        operator disable, an automatic cooldown, or a freshly-pushed ambiguous
+        second envelope all take effect within ~ms instead of waiting for the
+        cache TTL. Mirrors the SQL predicates in ``decrypt_profile`` (active
+        ciphertext, not disabled, not cooled-down) but reads no payload.
+
+        Raises ``ProfileNotFound`` (no usable row) or
+        ``MultipleProfilesForProvider`` (>1 active rows — same fail-closed
+        behavior as decrypt_profile).
+        """
+        from nexus.bricks.auth.consumer import MultipleProfilesForProvider
+
+        with self._scoped() as conn:
+            count_row = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM auth_profiles "
+                    "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
+                    "  AND ciphertext IS NOT NULL "
+                    "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
+                    "  AND (cooldown_until IS NULL OR cooldown_until <= NOW())"
+                ),
+                {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
+            ).fetchone()
+        active = int(count_row[0]) if count_row else 0
+        if active == 0:
+            raise ProfileNotFound(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+            )
+        if active > 1:
+            raise MultipleProfilesForProvider.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+                cause=f"{active}+ active envelopes; collapse to one or upgrade wire contract",
+            )
+
     def assert_machine_active(self, *, principal_id: uuid.UUID, machine_id: uuid.UUID) -> None:
         """Reject if the daemon's machine row is missing or revoked.
 

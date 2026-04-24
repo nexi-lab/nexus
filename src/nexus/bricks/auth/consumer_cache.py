@@ -91,3 +91,11 @@ class ResolvedCredCache:
             self._store.move_to_end(key)
             while len(self._store) > self._max:
                 self._store.popitem(last=False)
+
+    def evict(self, key: tuple[str, str, str]) -> None:
+        """Drop an entry. Called by the consumer when a cache-hit state check
+        finds the underlying profile is no longer usable (disabled, cooldown,
+        or ambiguous), so the next request goes through the full miss path
+        instead of returning the stale cached credential."""
+        with self._lock:
+            self._store.pop(key, None)

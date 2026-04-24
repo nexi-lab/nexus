@@ -177,6 +177,10 @@ def test_resolve_happy_path_returns_materialized_cred(engine):
 
 
 def test_resolve_warm_cache_skips_decrypt(engine):
+    """Cache hit returns the same materialized object without re-running
+    envelope decryption. (Cache hits still re-check profile state via
+    assert_profile_active — see test_cache_hit_evicts_when_disabled.)
+    """
     tenant = uuid.uuid4()
     principal = uuid.uuid4()
     encryption = InMemoryEncryptionProvider()
@@ -189,14 +193,11 @@ def test_resolve_warm_cache_skips_decrypt(engine):
     first = consumer.resolve(
         claims=_claims(tenant, principal, machine), provider="github", purpose="x"
     )
-    # Drop the row so a second decrypt would fail
-    with engine.begin() as conn:
-        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
-        conn.execute(text("DELETE FROM auth_profiles WHERE tenant_id = :t"), {"t": str(tenant)})
-
+    unwraps_after_first = encryption.unwrap_count
     second = consumer.resolve(
         claims=_claims(tenant, principal, machine), provider="github", purpose="x"
     )
+    assert encryption.unwrap_count == unwraps_after_first, "second call must not unwrap"
     assert second is first  # cached, same object
 
 
@@ -403,21 +404,16 @@ def test_resolve_skips_cooled_down_profile(engine):
         consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
 
 
-def test_resolve_logs_warning_on_cross_machine_read(engine, caplog):
-    """Reader machine_id != writer machine_id → log warning + cross-machine metric."""
-    import logging
-
+def _setup_cross_machine_envelope(engine, encryption):
+    """Helper: envelope pushed by daemon X, reader is daemon Y on same principal."""
     tenant = uuid.uuid4()
     principal = uuid.uuid4()
-    encryption = InMemoryEncryptionProvider()
     _seed_github_envelope(
         engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
     )
     writer_machine = uuid.uuid4()
-    # Stamp the envelope with a writer machine_id different from the reader.
     with engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
-        # Insert writer_machine row (FK constraint)
         conn.execute(
             text(
                 "INSERT INTO daemon_machines (id, tenant_id, principal_id, pubkey) "
@@ -435,14 +431,65 @@ def test_resolve_logs_warning_on_cross_machine_read(engine, caplog):
             {"m": str(writer_machine), "t": str(tenant)},
         )
     reader_machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    return tenant, principal, reader_machine, writer_machine
+
+
+def test_resolve_rejects_cross_machine_read_by_default(engine, monkeypatch):
+    """Default: reader.machine_id != writer.machine_id → MachineUnknownOrRevoked.
+    Prevents a compromised secondary daemon from exchanging another
+    machine's pushed credential."""
+    monkeypatch.delenv("NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ", raising=False)
+    encryption = InMemoryEncryptionProvider()
+    tenant, principal, reader_machine, _ = _setup_cross_machine_envelope(engine, encryption)
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
-    with caplog.at_level(logging.WARNING, logger="nexus.bricks.auth.consumer"):
+    with pytest.raises(MachineUnknownOrRevoked) as exc:
         consumer.resolve(
             claims=_claims(tenant, principal, reader_machine), provider="github", purpose="x"
         )
-    assert any("cross_machine_read" in rec.message for rec in caplog.records), (
-        f"expected cross_machine_read warning, got: {[r.message for r in caplog.records]}"
+    assert exc.value.cause == "cross_machine_read_disallowed"
+
+
+def test_resolve_allows_cross_machine_read_when_opted_in(engine, monkeypatch, caplog):
+    """Opt-in via env: cross-machine read succeeds; warning + metric still fire."""
+    import logging
+
+    monkeypatch.setenv("NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ", "1")
+    encryption = InMemoryEncryptionProvider()
+    tenant, principal, reader_machine, _ = _setup_cross_machine_envelope(engine, encryption)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with caplog.at_level(logging.WARNING, logger="nexus.bricks.auth.consumer"):
+        out = consumer.resolve(
+            claims=_claims(tenant, principal, reader_machine), provider="github", purpose="x"
+        )
+    assert out.access_token == "ghp_test"
+    assert any("cross_machine_read" in rec.message for rec in caplog.records)
+
+
+def test_cache_hit_evicts_when_profile_disabled_after_caching(engine):
+    """A profile disabled AFTER cache prime must take effect within ms, not
+    wait for the cache TTL."""
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
     )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    # Operator disables the profile while the cache is still warm.
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "UPDATE auth_profiles SET disabled_until = NOW() + INTERVAL '1 hour' "
+                "WHERE tenant_id = :t"
+            ),
+            {"t": str(tenant)},
+        )
+    with pytest.raises(ProfileNotFoundForCaller) as exc:
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    assert exc.value.cause == "profile_disabled_or_cooldown"
 
 
 def test_resolve_rejects_when_multiple_profiles_for_provider(engine):

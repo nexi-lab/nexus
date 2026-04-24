@@ -13,6 +13,7 @@ server-side agent that needs to act as a user.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -265,6 +266,29 @@ class CredentialConsumer:
             if not force_refresh:
                 cached = self._cred_cache.get(cache_key, now=now)
                 if cached is not None:
+                    # Cache hit must STILL re-check profile state — operator
+                    # disable, automatic cooldown, or a freshly-pushed second
+                    # ambiguous envelope must take effect within ms instead
+                    # of waiting for the cache TTL. The check is one indexed
+                    # COUNT(*), no decrypt, no payload read. Failure evicts
+                    # the cache entry and bubbles up.
+                    try:
+                        self._get_store(claims).assert_profile_active(
+                            principal_id=claims.principal_id,
+                            provider=provider,
+                        )
+                    except ProfileNotFound as exc:
+                        self._cred_cache.evict(cache_key)
+                        raise ProfileNotFoundForCaller.from_row(
+                            tenant_id=claims.tenant_id,
+                            principal_id=claims.principal_id,
+                            provider=provider,
+                            cause="profile_disabled_or_cooldown",
+                        ) from exc
+                    except MultipleProfilesForProvider:
+                        self._cred_cache.evict(cache_key)
+                        raise
+
                     # Cache hit — log sampled audit row, no decrypt
                     cache_label = "hit"
                     self._audit.write(
@@ -315,19 +339,20 @@ class CredentialConsumer:
                     cause=f"{type(exc).__name__}",
                 ) from exc
 
-            # Cross-machine read detection: this daemon reads a credential
-            # pushed by a different daemon (same principal, different machine).
-            # Allowed today (no explicit sharing model in the wire contract)
-            # but operationally suspicious — log + metric so operators can
-            # detect implicit sharing. A future enforcement flag can flip
-            # this from log-warning to fail-closed without API changes.
+            # Cross-machine read enforcement: by default the daemon that
+            # reads must be the same daemon that pushed the envelope. A
+            # compromised secondary daemon for the same principal could
+            # otherwise exchange another machine's GitHub PAT or AWS keys
+            # without an explicit sharing grant. Operators with legitimate
+            # fleet patterns (CI runners, multi-bot deployments) can opt
+            # out via NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ=1; we still log
+            # + metric so the implicit sharing is visible.
             if (
                 decrypted.writer_machine_id is not None
                 and decrypted.writer_machine_id != claims.machine_id
             ):
                 _logger.warning(
-                    "cross_machine_read tenant=%s principal=%s provider=%s "
-                    "reader=%s writer=%s — implicit credential sharing across daemons",
+                    "cross_machine_read tenant=%s principal=%s provider=%s reader=%s writer=%s",
                     claims.tenant_id,
                     claims.principal_id,
                     provider,
@@ -335,6 +360,17 @@ class CredentialConsumer:
                     decrypted.writer_machine_id,
                 )
                 CROSS_MACHINE_READS.labels(provider=provider).inc()
+                if os.environ.get("NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ", "").lower() not in (
+                    "1",
+                    "true",
+                    "yes",
+                ):
+                    raise MachineUnknownOrRevoked.from_row(
+                        tenant_id=claims.tenant_id,
+                        principal_id=claims.principal_id,
+                        provider=provider,
+                        cause="cross_machine_read_disallowed",
+                    )
 
             # IMPORTANT: write audit BEFORE caching so a failed mandatory
             # cache-miss audit doesn't poison the cache. Without this order,

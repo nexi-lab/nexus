@@ -20,7 +20,7 @@ from nexus.cli.commands._hub_common import (
     parse_duration,
 )
 from nexus.storage.api_key_ops import create_api_key
-from nexus.storage.models import APIKeyModel
+from nexus.storage.models import APIKeyModel, ZoneModel
 
 
 @click.group()
@@ -73,6 +73,28 @@ def token_create(
                 f"token named {name!r} already exists (key_id={existing.key_id}). "
                 "Revoke it first or use a different --name."
             )
+
+        # Validate zone existence against the authoritative registry so
+        # a typo ("proud" instead of "prod") can't silently mint a
+        # credential bound to a nonexistent string that later becomes
+        # valid if someone creates that zone (#3784 round 6).
+        zone_exists = (
+            session.execute(select(ZoneModel).where(ZoneModel.zone_id == zone_id)).scalars().first()
+            is not None
+        )
+        if not zone_exists:
+            # Bootstrap escape: if the zones table is completely empty,
+            # allow the first admin token to be minted for any zone so
+            # a fresh hub can be bootstrapped before any zone is
+            # created. After that, every --zone must refer to a real row.
+            any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
+            if any_zone is not None:
+                known = [z.zone_id for z in session.execute(select(ZoneModel)).scalars().all()]
+                raise click.ClickException(
+                    f"zone {zone_id!r} does not exist. Known zones: "
+                    f"{', '.join(sorted(known)) or '(none)'}. "
+                    "Create it first with `nexus zone create` or use --zone <existing>."
+                )
 
         key_id, raw_key = create_api_key(
             session,

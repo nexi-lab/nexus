@@ -111,6 +111,66 @@ def test_token_create_expires_sets_expires_at(monkeypatch):
     assert captured["expires_at"] is not None
 
 
+def test_token_create_rejects_unknown_zone_when_zones_exist(monkeypatch):
+    """If the zones table has rows, --zone must match an existing zone_id."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import Base, ZoneModel
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+
+    # Seed: a real "prod" zone — a "proud" typo must be rejected.
+    with Session() as s, s.begin():
+        s.add(ZoneModel(zone_id="prod", name="prod"))
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: Session,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "t", "--zone", "proud"],
+    )
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
+    assert "prod" in result.output  # known zones listed for the operator
+
+
+def test_token_create_bootstrap_allows_any_zone_when_empty(monkeypatch):
+    """Bootstrap escape: zones table empty → first admin token may use any --zone."""
+    from sqlalchemy import create_engine
+    from sqlalchemy import select as _select
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import APIKeyModel, Base
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: Session,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "root", "--zone", "root", "--admin"],
+    )
+    assert result.exit_code == 0, result.output
+    # Token actually got created in the DB.
+    with Session() as s:
+        rows = s.execute(_select(APIKeyModel)).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].zone_id == "root"
+
+
 def test_token_create_duplicate_filter_ignores_revoked(monkeypatch):
     """Integration: a revoked token with the same name should NOT block creation."""
     from sqlalchemy import create_engine

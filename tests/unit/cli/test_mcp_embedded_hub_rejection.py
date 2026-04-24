@@ -239,6 +239,115 @@ def click_command_wrapper():  # helper for the profile-threading test
     return _decorator
 
 
+class TestAutoPromoteRequireBearer:
+    """Regression (round 8): when transport=http resolves BOTH a remote URL
+    AND an ambient api_key (CLI flag / env / profile), the MCP server's
+    ``_default_nx`` is seeded with that key — so missing bearer tokens
+    silently execute as the profile identity. Auto-promote
+    ``NEXUS_MCP_REQUIRE_BEARER=true`` for that shape."""
+
+    def _stub_serve(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Stub _async_serve to short-circuit serve() before it opens a port."""
+        from nexus.cli.commands import mcp as _mcp_mod
+
+        async def _noop(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        monkeypatch.setattr(_mcp_mod, "_async_serve", _noop)
+
+    def test_auto_promote_when_profile_yields_remote_and_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NEXUS_MCP_REQUIRE_BEARER", raising=False)
+        monkeypatch.delenv("NEXUS_MCP_ALLOW_AMBIENT_KEY", raising=False)
+        monkeypatch.delenv("NEXUS_URL", raising=False)
+        monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+
+        from nexus.cli import config as _config
+
+        class _Resolved:
+            is_remote = True
+            url = "http://nexus:2026"
+            api_key = "sk-ambient"
+
+        monkeypatch.setattr(_config, "resolve_connection", lambda **_: _Resolved())
+        self._stub_serve(monkeypatch)
+
+        from nexus.cli.commands.mcp import serve
+
+        serve.callback(
+            transport="http",
+            host="127.0.0.1",
+            port=8081,
+            api_key=None,
+            remote_url=None,
+            remote_api_key=None,
+        )
+        import os as _os
+
+        assert _os.environ.get("NEXUS_MCP_REQUIRE_BEARER") == "true"
+
+    def test_opt_out_respected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """NEXUS_MCP_ALLOW_AMBIENT_KEY=true disables the auto-promote."""
+        monkeypatch.delenv("NEXUS_MCP_REQUIRE_BEARER", raising=False)
+        monkeypatch.setenv("NEXUS_MCP_ALLOW_AMBIENT_KEY", "true")
+        monkeypatch.delenv("NEXUS_URL", raising=False)
+        monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+
+        from nexus.cli import config as _config
+
+        class _Resolved:
+            is_remote = True
+            url = "http://nexus:2026"
+            api_key = "sk-ambient"
+
+        monkeypatch.setattr(_config, "resolve_connection", lambda **_: _Resolved())
+        self._stub_serve(monkeypatch)
+
+        from nexus.cli.commands.mcp import serve
+
+        serve.callback(
+            transport="http",
+            host="127.0.0.1",
+            port=8081,
+            api_key=None,
+            remote_url=None,
+            remote_api_key=None,
+        )
+        import os as _os
+
+        assert _os.environ.get("NEXUS_MCP_REQUIRE_BEARER") is None
+
+    def test_no_promote_for_stdio(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """stdio is single-user; auto-promote should not kick in."""
+        monkeypatch.delenv("NEXUS_MCP_REQUIRE_BEARER", raising=False)
+        monkeypatch.delenv("NEXUS_MCP_ALLOW_AMBIENT_KEY", raising=False)
+
+        from nexus.cli import config as _config
+
+        class _Resolved:
+            is_remote = True
+            url = "http://nexus:2026"
+            api_key = "sk-ambient"
+
+        monkeypatch.setattr(_config, "resolve_connection", lambda **_: _Resolved())
+        self._stub_serve(monkeypatch)
+
+        from nexus.cli.commands.mcp import serve
+
+        serve.callback(
+            transport="stdio",
+            host="127.0.0.1",
+            port=8081,
+            api_key=None,
+            remote_url=None,
+            remote_api_key=None,
+        )
+        import os as _os
+
+        assert _os.environ.get("NEXUS_MCP_REQUIRE_BEARER") is None
+
+
 class TestRequireBearerGate:
     """NEXUS_MCP_REQUIRE_BEARER=true gates requests at the APIKey middleware
     so the tool layer can't fall back to an ambient _default_nx connection

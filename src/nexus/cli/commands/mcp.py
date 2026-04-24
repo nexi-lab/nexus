@@ -376,6 +376,29 @@ def serve(
     # remote frontend is not false-rejected.
     _reject_embedded_hub_mode(transport, remote_url=resolved_remote_url)
 
+    # When transport=http resolves a remote URL AND an ambient api_key
+    # (from --api-key, NEXUS_API_KEY, or a profile), the MCP server's
+    # `_default_nx` connection is seeded with that key — so missing
+    # bearer silently executes as the profile identity. Auto-promote
+    # NEXUS_MCP_REQUIRE_BEARER=true for that shape so unauthenticated
+    # requests hit a 401 at the middleware instead. Operators who
+    # intentionally want the ambient-identity fallback (e.g. a trusted
+    # single-tenant sidecar) can opt out with
+    # NEXUS_MCP_ALLOW_AMBIENT_KEY=true (#3784 round 8).
+    if (
+        transport == "http"
+        and resolved_remote_url
+        and resolved_remote_api_key
+        and os.environ.get("NEXUS_MCP_ALLOW_AMBIENT_KEY", "").lower() not in ("1", "true", "yes")
+        and os.environ.get("NEXUS_MCP_REQUIRE_BEARER", "").lower() not in ("1", "true", "yes")
+    ):
+        os.environ["NEXUS_MCP_REQUIRE_BEARER"] = "true"
+        console.print(
+            "[nexus.warning]⚠ Auto-enabled NEXUS_MCP_REQUIRE_BEARER=true — remote "
+            "URL + ambient API key detected. Set NEXUS_MCP_ALLOW_AMBIENT_KEY=true to "
+            "opt out.[/nexus.warning]"
+        )
+
     # FastMCP's .run(transport="http") starts its own event loop via anyio.run
     # and cannot be called from inside an already-running asyncio loop. Split
     # async setup (connects, creates server, installs middleware) from the

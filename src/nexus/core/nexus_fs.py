@@ -24,7 +24,6 @@ from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.nexus_fs_internal import InternalMixin
 from nexus.core.nexus_fs_metadata import MetadataMixin
 from nexus.core.nexus_fs_watch import WatchMixin
-from nexus.core.router import PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.storage.record_store import RecordStoreABC
 
@@ -217,9 +216,8 @@ class NexusFS(  # type: ignore[misc]
             self._transport_pool = _RPCTransportPool()
 
         # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
-        # Constructed BEFORE DriverLifecycleCoordinator and PathRouter so
-        # that both see the kernel from birth (F2 MountTable migration:
-        # kernel is the single source of truth for routing).
+        # Constructed BEFORE DriverLifecycleCoordinator so DLC sees the
+        # kernel from birth (VFSRouter is the Rust SSOT for routing).
         from nexus._rust_compat import RUST_AVAILABLE
 
         self._kernel = None
@@ -280,15 +278,6 @@ class NexusFS(  # type: ignore[misc]
             kernel=self._kernel,
             self_address=_ipc_self_addr,
             transport_pool=self._transport_pool,
-        )
-
-        # PathRouter reads from DLC + delegates LPM to the kernel.
-        # Use self.metadata (RustMetastoreProxy if available) so route.metastore
-        # reads go through the same store as kernel sys_write writes.
-        self.router = PathRouter(
-            self._driver_coordinator,
-            self.metadata,
-            self._kernel,
         )
 
         # Deferred kernel wiring: bind mount table + VFS lock after all attributes exist.
@@ -953,14 +942,13 @@ class NexusFS(  # type: ignore[misc]
             self._record_store.close()
 
         # Close mounted backends that hold resources (e.g., OAuth connectors with SQLite)
-        if hasattr(self, "router"):
+        if hasattr(self, "_driver_coordinator"):
             from nexus.core.protocols.connector import OAuthCapableProtocol
 
-            for mp in self.router.get_mount_points():
+            for _canon_key, _mount_info in self._driver_coordinator.list_mounts():
                 try:
-                    route = self.router.route(mp, zone_id=self._zone_id)
-                    if isinstance(route.backend, OAuthCapableProtocol):
-                        route.backend.token_manager.close()
+                    if isinstance(_mount_info.backend, OAuthCapableProtocol):
+                        _mount_info.backend.token_manager.close()
                 except Exception as e:
                     logger.debug("Failed to close backend token manager: %s", e)
 

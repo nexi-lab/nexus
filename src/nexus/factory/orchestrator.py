@@ -256,9 +256,8 @@ def create_nexus_fs(
         init_cred if init_cred is not None else _OC(user_id="system", groups=[], is_admin=is_admin)
     )
 
-    # F2: construct NexusFS first so it owns the PathRouter. Services are
-    # built next using nx.router (the router needs nx._driver_coordinator,
-    # which only exists after NexusFS.__init__).
+    # F2: construct NexusFS first — services are built next using a PathRouter
+    # wired to nx._driver_coordinator + nx._kernel.
     nx = NexusFS(
         metadata_store=metadata_store,
         record_store=record_store,
@@ -276,6 +275,13 @@ def create_nexus_fs(
 
     nx.sys_setattr("/", entry_type=DT_MOUNT, backend=backend)
 
+    # Service-tier PathRouter — delegates LPM to kernel, enriches with DLC.
+    # Owned by factory, NOT by NexusFS (kernel routing is 100% Rust).
+    from nexus.core.router import PathRouter
+
+    _service_router = PathRouter(nx._driver_coordinator, nx.metadata, nx._kernel)
+    nx.router = _service_router  # service-tier callers read nx.router
+
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
     # this branch is skipped — bare kernel with no services.
@@ -284,7 +290,7 @@ def create_nexus_fs(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            router=nx.router,
+            router=_service_router,
             permissions=permissions,
             audit=audit,
             cache=cache,

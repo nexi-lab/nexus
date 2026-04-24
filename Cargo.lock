@@ -1319,7 +1319,7 @@ dependencies = [
 
 [[package]]
 name = "kernel"
-version = "0.9.41"
+version = "0.9.42"
 dependencies = [
  "ahash",
  "blake3",

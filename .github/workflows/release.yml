@@ -444,51 +444,47 @@ jobs:
             npm publish --access public
           fi
 
-  # Docker build, smoke test, and GHCR push — inline in release.yml so
-  # create-release can depend on it directly (Issue #2946 atomic release).
-  # docker-publish.yml handles branch pushes (develop/main) separately.
-  build-docker:
-    name: Build & push Docker (${{ matrix.variant }})
+  # Docker build, smoke test, and GHCR push.
+  #
+  # Why this shape (fan-out per platform, then merge manifests):
+  #   Earlier versions did a single multi-arch build per variant on
+  #   one ubuntu-latest runner using QEMU to emulate arm64. CUDA
+  #   repeatedly tripped the 2-hour job timeout because emulated
+  #   arm64 on x86_64 is 5-10x slower than native. GitHub now ships
+  #   free `ubuntu-24.04-arm` hosted runners (GA for public repos
+  #   since early 2025; private repos since 2026-01-29), so the
+  #   correct pattern is matrix-per-platform on native hardware +
+  #   a merge job that stitches the per-platform digests into one
+  #   multi-arch manifest with `docker buildx imagetools create`.
+  #   See docs: https://docs.docker.com/build/ci/github-actions/multi-platform/
+  #
+  # docker-publish.yml handles branch pushes (develop/main) via the
+  # same pattern (kept in sync).
+  build-docker-platform:
+    name: Build ${{ matrix.variant }} / ${{ matrix.platform }}
     needs: [verify-version]
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
         include:
           - variant: cpu
-            suffix: ""
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - variant: cpu
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
           - variant: cuda
-            suffix: "-cuda"
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - variant: cuda
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      # Reclaim ~30 GB from the hosted runner before the build. CUDA
-      # variant pulls torch-cuda (~2 GB), txtai + sentence-transformers,
-      # and builds a multi-arch image (amd64 + arm64 via QEMU) — that
-      # combined layer store repeatedly blew past ubuntu-latest's
-      # ~14 GB post-checkout budget and got the runner killed. Removes
-      # tooling (Android SDK, .NET, Haskell, CodeQL, etc.) we don't
-      # use in this job.
-      - name: Free disk space (CUDA variant)
-        if: matrix.variant == 'cuda'
-        # Pinned to the v1.3.1 release commit. `@main` would let an
-        # upstream push execute inside this release job (contents:write,
-        # packages:write, id-token:write, attestations:write). Bump the
-        # SHA via PR after reviewing upstream commits.
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be  # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: false
-          swap-storage: true
-
-      - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -500,43 +496,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # NOTE: The March 13, 2026 v0.9.2 "denied: write_package" failure was caused
-      # by the GHCR package not being linked to the repo. Fixed by deleting the
-      # orphaned package — next push auto-creates it with correct repo linkage.
-      # If this recurs: GitHub Settings → Packages → nexus → Manage Actions access.
-
-      - name: Extract version metadata
-        id: meta
+      - name: Normalize platform pair (for artifact name)
+        id: pair
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          SUFFIX="${{ matrix.suffix }}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:stable${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
+          pair="${{ matrix.platform }}"
+          echo "value=${pair//\//-}" >> "$GITHUB_OUTPUT"
 
-      # Local-load build is ONLY needed to run the CPU-gated smoke tests
-      # below. The CUDA variant skips all of those tests (PyTorch CUDA
-      # wheels ship AVX-512 binaries that SIGILL on hosted runners), so
-      # materializing a ~8-10 GB CUDA image into the local Docker store
-      # is wasted work AND blows past the standard ubuntu-latest runner's
-      # ~14 GB disk budget (it competes with the later multi-arch layer
-      # store in "Build and push to GHCR"). Scope this step to CPU only;
-      # CUDA goes straight to the registry-cached multi-arch push.
-      - name: Build image (local load for smoke tests)
-        if: matrix.variant == 'cpu'
+      # Local-load build + smoke tests, amd64 CPU only. Exists to catch
+      # build-time regressions and runtime ImportErrors BEFORE we publish
+      # the final manifest. Other matrix cells go straight to push-by-
+      # digest: CUDA images ship AVX-512 binaries that SIGILL on hosted
+      # runners, and arm64 cells on ubuntu-24.04-arm don't need their own
+      # copy of the smoke tests (same image content, different arch).
+      - name: Build image for smoke tests (amd64 CPU only)
+        if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
           tags: ghcr.io/nexi-lab/nexus:smoke-test
           build-args: TORCH_VARIANT=${{ matrix.variant }}
-          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}
-          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }},mode=max,ignore-error=true
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }}
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }},mode=max,ignore-error=true
 
-      # Smoke tests run on CPU only — CUDA PyTorch ships binaries with
-      # instructions (e.g. AVX-512) not available on GitHub Actions runners,
-      # causing SIGILL.  CUDA images are validated on GPU machines post-release.
       - name: Smoke test — critical imports
-        if: matrix.variant == 'cpu'
+        if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
         run: |
           docker run --rm --entrypoint "" \
             -e GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384 \
@@ -553,14 +537,14 @@ jobs:
           "
 
       - name: Smoke test — CLI entrypoints
-        if: matrix.variant == 'cpu'
+        if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
         run: |
           docker run --rm --entrypoint "" \
             ghcr.io/nexi-lab/nexus:smoke-test \
             sh -c "nexus --version && nexusd --help > /dev/null 2>&1 && echo 'CLI OK'"
 
       - name: Smoke test — env-var config (no config file)
-        if: matrix.variant == 'cpu'
+        if: matrix.variant == 'cpu' && matrix.platform == 'linux/amd64'
         run: |
           docker run --rm --entrypoint "" \
             ghcr.io/nexi-lab/nexus:smoke-test \
@@ -571,25 +555,97 @@ jobs:
           print(f'Config OK: profile={cfg.profile}')
           "
 
-      - name: Build and push to GHCR
+      # Push-by-digest: produces a single-platform image in the registry
+      # and emits its digest so the merge job can assemble the multi-arch
+      # manifest. name-canonical=true keeps the reference stable.
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ matrix.platform }}
           provenance: false
           sbom: false
-          tags: ${{ steps.meta.outputs.tags }}
           build-args: TORCH_VARIANT=${{ matrix.variant }}
-          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}
-          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }},mode=max,ignore-error=true
+          outputs: type=image,name=ghcr.io/nexi-lab/nexus,push-by-digest=true,name-canonical=true,push=true,oci-mediatypes=true
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }}
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }},mode=max,ignore-error=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-release-${{ matrix.variant }}-${{ steps.pair.outputs.value }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Merge the per-platform digests (amd64 + arm64) into one multi-arch
+  # manifest per variant and push the user-facing tags (:<version>,
+  # :stable, :latest, plus -cuda suffixes).
+  merge-docker-manifests:
+    name: Merge manifests (${{ matrix.variant }})
+    needs: [build-docker-platform]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            suffix: ""
+          - variant: cuda
+            suffix: "-cuda"
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-release-${{ matrix.variant }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build tag list
+        id: tags
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          SUFFIX="${{ matrix.suffix }}"
+          {
+            echo "args=-t ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX} -t ghcr.io/nexi-lab/nexus:stable${SUFFIX} -t ghcr.io/nexi-lab/nexus:latest${SUFFIX}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create ${{ steps.tags.outputs.args }} \
+            $(printf 'ghcr.io/nexi-lab/nexus@sha256:%s ' *)
+
+      - name: Inspect
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          SUFFIX="${{ matrix.suffix }}"
+          docker buildx imagetools inspect "ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX}"
 
   # GitHub Release is created ONLY after both PyPI and Docker succeed.
   # This is the user-visible "released" signal — without it, the version
   # doesn't appear on the releases page or trigger notifications.
   create-release:
     name: Create GitHub Release
-    needs: [publish-pypi, publish-rust, publish-nexus-fs, publish-ts-packages, build-docker]
+    needs: [publish-pypi, publish-rust, publish-nexus-fs, publish-ts-packages, merge-docker-manifests]
     runs-on: ubuntu-latest
 
     steps:

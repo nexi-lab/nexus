@@ -49,6 +49,70 @@ class MetadataMixin:
 
     # ── Internal helpers ──────────────────────────────────────────────
 
+    @staticmethod
+    def _extract_rust_backend_params(backend: Any, cls_name: str) -> dict[str, Any] | None:
+        """Extract typed params for Rust native backend construction.
+
+        Returns a dict of kwargs for kernel.sys_setattr if the backend has
+        a Rust-native equivalent, or None to fall back to PyObjectStoreAdapter.
+        """
+        # S3 backends (PathS3Backend, CASS3Backend)
+        if "S3" in cls_name:
+            bucket = getattr(backend, "bucket_name", None)
+            if bucket:
+                return {
+                    "backend_type": "s3",
+                    "s3_bucket": bucket,
+                    "s3_prefix": getattr(backend, "prefix", None) or "",
+                    "aws_region": getattr(backend, "region_name", None),
+                    "aws_access_key": getattr(backend, "_access_key_id", None)
+                    or getattr(backend, "access_key_id", None),
+                    "aws_secret_key": getattr(backend, "_secret_access_key", None)
+                    or getattr(backend, "secret_access_key", None),
+                    "s3_endpoint": getattr(backend, "endpoint_url", None),
+                }
+        # GCS backends (PathGCSBackend, CASGCSBackend)
+        if "GCS" in cls_name:
+            bucket = getattr(backend, "bucket_name", None)
+            if bucket:
+                return {
+                    "backend_type": "gcs",
+                    "gcs_bucket": bucket,
+                    "gcs_prefix": getattr(backend, "prefix", None) or "",
+                    "access_token": getattr(backend, "access_token", None),
+                }
+        # GDrive connector
+        if "GDrive" in cls_name or "Gdrive" in cls_name:
+            token = getattr(backend, "_access_token", None) or getattr(
+                backend, "access_token", None
+            )
+            if token:
+                return {
+                    "backend_type": "gdrive",
+                    "access_token": token,
+                    "root_folder_id": getattr(backend, "root_folder_id", None) or "root",
+                }
+        # Gmail connector
+        if "Gmail" in cls_name:
+            token = getattr(backend, "_access_token", None) or getattr(
+                backend, "access_token", None
+            )
+            if token:
+                return {
+                    "backend_type": "gmail",
+                    "access_token": token,
+                }
+        # Slack connector
+        if "Slack" in cls_name:
+            token = getattr(backend, "bot_token", None) or getattr(backend, "_bot_token", None)
+            if token:
+                return {
+                    "backend_type": "slack",
+                    "bot_token": token,
+                    "default_channel": getattr(backend, "default_channel", None) or "",
+                }
+        return None
+
     def _get_parent_path(self, path: str) -> str | None:
         """Get parent directory path, or None if root."""
         if path == "/":
@@ -310,6 +374,7 @@ class MetadataMixin:
                 )
                 return result
 
+            # LLM backends — Rust owns the ObjectStore; no Python shim.
             if backend_type in ("openai", "anthropic") and backend is None:
                 _backend_name = attrs.get("backend_name", backend_type)
                 result = self._kernel.sys_setattr(
@@ -336,20 +401,42 @@ class MetadataMixin:
                 )
             _backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
 
-            # CAS-local detection — Rust takes ownership of the backend natively.
-            _is_cas_local = getattr(backend, "has_root_path", False) and type(
-                backend
-            ).__name__.startswith("CAS")
-            _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
-
             # R20.18.6: federation DT_MOUNT auto-resolves its raft backing via
             # kernel-internal `resolve_federation_mount_backing`; no Python
             # ZoneHandle crosses the PyO3 boundary here. Non-federation mounts
             # may still ship a LocalMetastore redb path.
             _ms_path = getattr(metastore, "_redb_path", None) if metastore is not None else None
+            _ms_path_str = str(_ms_path) if _ms_path else None
 
             _is_external = bool(attrs.get("is_external", False))
 
+            # ── Rust native backend detection ────────────────────────
+            # For connectors with Rust-native backends, extract typed params
+            # from the Python instance so Rust constructs the backend without
+            # PyObjectStoreAdapter (Crossing 5 elimination).
+            _cls_name = type(backend).__name__
+            _rust_typed = self._extract_rust_backend_params(backend, _cls_name)
+            if _rust_typed is not None:
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    zone_id=zone_id,
+                    metastore_path=_ms_path_str,
+                    is_external=_is_external,
+                    **_rust_typed,
+                )
+                # DLC bookkeeping: router needs backend ref for RouteResult
+                self._driver_coordinator._store_mount_info(
+                    path, backend, zone_id=zone_id, is_external=_is_external,
+                )
+                return result
+
+            # ── CAS-local detection — Rust takes ownership natively ──
+            _is_cas_local = getattr(backend, "has_root_path", False) and _cls_name.startswith("CAS")
+            _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
+
+            # ── Fallback: Python connector → PyObjectStoreAdapter ────
             result = self._kernel.sys_setattr(
                 path,
                 entry_type,
@@ -358,11 +445,11 @@ class MetadataMixin:
                 fsync=True,
                 py_backend=backend,
                 zone_id=zone_id,
-                metastore_path=str(_ms_path) if _ms_path else None,
+                metastore_path=_ms_path_str,
                 is_external=_is_external,
             )
-
-            # Python-side bookkeeping: store _PyMountInfo + dispatch event
+            # Python DLC bookkeeping: store backend ref for Python-only
+            # connectors so router.route() can find the backend instance.
             self._driver_coordinator._store_mount_info(
                 path,
                 backend,

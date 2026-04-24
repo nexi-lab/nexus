@@ -80,102 +80,52 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
                 reset_request_api_key(token)
 
 
-class _HubAuthGateMiddleware(BaseHTTPMiddleware):
-    """Fail-closed auth gate for hub-mode MCP HTTP (#3784).
+def _reject_embedded_hub_mode(transport: str) -> None:
+    """Refuse ``nexus mcp serve --transport http`` in embedded hub mode (#3784).
 
-    In hub mode — ``nexus mcp serve --transport http`` with
-    ``NEXUS_DATABASE_URL`` set and no ``NEXUS_URL`` (local embedded
-    NexusFS) — bearer tokens would otherwise be extracted into a
-    contextvar but never validated. Local mode's ``_get_nexus_instance``
-    always returns the default (unauthenticated) NexusFS because no
-    remote URL is configured, so any request on port 8081 would get
-    full filesystem access regardless of the token.
+    "Embedded hub" = ``NEXUS_DATABASE_URL`` set AND ``NEXUS_URL`` unset on
+    an HTTP transport. This configuration would accept bearer tokens but
+    run every tool call against the ambient local ``NexusFS`` — no
+    per-token identity, no zone isolation, no connection to the hub's
+    Postgres auth layer in the tool path.
 
-    This middleware validates the bearer against
-    ``DatabaseAPIKeyAuth`` (with ``AuthIdentityCache`` 60s TTL) BEFORE
-    the request reaches any tool handler, and returns 401 for missing,
-    malformed, expired, or revoked tokens. ``/health`` is always
-    allowed through so container healthchecks succeed.
-    """
+    The supported hub deployment is the two-service design in
+    ``docker-compose.hub.yml``: an ``nexusd`` RPC server plus a thin
+    ``nexus mcp serve --url http://nexus:2026`` frontend. The frontend
+    opens a per-request remote ``NexusFS`` with the client's bearer
+    and the RPC server's ``DatabaseAPIKeyAuth`` enforces identity/zone
+    on every call.
 
-    def __init__(self, app: Any, auth_provider: Any) -> None:
-        super().__init__(app)
-        self._auth_provider = auth_provider
-
-    async def dispatch(self, request: "Request", call_next: Any) -> "Response":
-        from starlette.responses import JSONResponse
-
-        if request.url.path == "/health":
-            return cast("Response", await call_next(request))
-
-        token = _extract_bearer_token(request)
-        if not token:
-            return cast(
-                "Response",
-                JSONResponse(
-                    {"error": "missing_bearer_token"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": 'Bearer realm="nexus-hub"'},
-                ),
-            )
-
-        try:
-            result = await self._auth_provider.authenticate(token)
-        except Exception:
-            return cast(
-                "Response",
-                JSONResponse({"error": "auth_unavailable"}, status_code=503),
-            )
-
-        if not getattr(result, "authenticated", False):
-            return cast(
-                "Response",
-                JSONResponse(
-                    {"error": "invalid_or_revoked_token"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": 'Bearer realm="nexus-hub"'},
-                ),
-            )
-
-        return cast("Response", await call_next(request))
-
-
-def _build_hub_auth_provider() -> Any | None:
-    """Construct ``DatabaseAPIKeyAuth`` when hub-mode env is set.
-
-    Hub mode is detected as: ``NEXUS_DATABASE_URL`` is set AND ``NEXUS_URL``
-    is empty (i.e. this process runs MCP against an embedded NexusFS, not
-    a remote server). Returns None if hub mode is not active or the
-    provider can't be constructed.
+    We fail closed at startup so operators see a clear error instead of
+    silently getting an unsafe deployment.
     """
     import os
 
+    if transport != "http":
+        return
     if not os.environ.get("NEXUS_DATABASE_URL"):
-        return None
+        return
     if os.environ.get("NEXUS_URL"):
-        return None
+        return
 
-    try:
-        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
-        from nexus.storage.record_store import SQLAlchemyRecordStore
-
-        record_store = SQLAlchemyRecordStore(db_url=os.environ["NEXUS_DATABASE_URL"])
-        return DatabaseAPIKeyAuth(record_store)
-    except Exception as exc:
-        console.print(
-            f"[nexus.warning]Warning: could not build hub auth provider: {exc}[/nexus.warning]"
-        )
-        return None
+    raise click.ClickException(
+        "Embedded hub mode (NEXUS_DATABASE_URL set + NEXUS_URL unset + "
+        "--transport http) is not supported: tool calls would run under "
+        "ambient local identity without per-token zone isolation. "
+        "Use the two-service hub deployment instead: run `nexusd` as the "
+        "RPC server and point this MCP frontend at it with "
+        "NEXUS_URL=http://<nexus-host>:2026. "
+        "See docker-compose.hub.yml and docs/hub-deploy.md."
+    )
 
 
 def _build_http_middleware() -> list[Any]:
-    """Build the Starlette middleware list for MCP HTTP transport (#3779, #3784).
+    """Build the Starlette middleware list for MCP HTTP transport (#3779).
 
     Order (outermost → innermost):
-      1. RateLimit   — short-circuit with 429 before any work
-      2. HubAuthGate — reject missing/invalid/revoked tokens with 401 (hub mode only)
-      3. AuditLog    — emit structured record per request
-      4. APIKey      — set ``_request_api_key`` contextvar for tool handlers
+      1. RateLimit — short-circuit with 429 before any work
+      2. AuditLog  — emit structured record per request
+      3. APIKey    — set ``_request_api_key`` contextvar for tool handlers
     """
     from starlette.middleware import Middleware
 
@@ -189,22 +139,11 @@ def _build_http_middleware() -> list[Any]:
         console.print(
             f"[nexus.warning]Warning: Failed to build rate-limit middleware: {e}[/nexus.warning]"
         )
-
-    hub_auth = _build_hub_auth_provider()
-    if hub_auth is not None:
-        items.append(Middleware(_HubAuthGateMiddleware, auth_provider=hub_auth))
-        console.print(
-            "[nexus.success]✓ Hub auth gate enabled (NEXUS_DATABASE_URL set, fail-closed)"
-            "[/nexus.success]"
-        )
-
     items.append(Middleware(MCPAuditLogMiddleware))
     items.append(Middleware(_APIKeyMiddleware))
-    chain = "APIKey → AuditLog"
-    if hub_auth is not None:
-        chain += " → HubAuthGate"
-    chain += " → RateLimit"
-    console.print(f"[nexus.success]✓ MCP HTTP middleware chain: {chain}[/nexus.success]")
+    console.print(
+        "[nexus.success]✓ MCP HTTP middleware chain: APIKey → AuditLog → RateLimit[/nexus.success]"
+    )
     return items
 
 
@@ -330,6 +269,10 @@ def serve(
         NEXUS_URL=http://localhost:2026 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
     """
     import asyncio
+
+    # Fail-closed: refuse unsupported embedded-hub configuration before
+    # we open a port (#3784).
+    _reject_embedded_hub_mode(transport)
 
     # FastMCP's .run(transport="http") starts its own event loop via anyio.run
     # and cannot be called from inside an already-running asyncio loop. Split

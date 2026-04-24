@@ -261,7 +261,7 @@ services:
   # MCP Server (optional add-on)
   # ============================================================================
   mcp-server:
-    image: nexus-server:latest
+    image: ${NEXUS_IMAGE_REF:-nexus-server:latest}
     restart: unless-stopped
     profiles:
       - mcp
@@ -272,6 +272,7 @@ services:
     environment:
       NEXUS_URL: http://nexus:2026
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      NEXUS_GRPC_ALLOW_INSECURE: "true"
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "8081"
     ports:

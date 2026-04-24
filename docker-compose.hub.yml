@@ -52,6 +52,16 @@ services:
       NEXUS_REDIS_URL: redis://redis:6379
       # Exposed to the hub CLI (`nexus hub …`) which talks direct-to-DB.
       NEXUS_DATABASE_URL: postgresql://nexus:${POSTGRES_PASSWORD}@postgres:5432/nexus
+      # Bind the gRPC listener on all interfaces inside the container so
+      # the mcp-frontend service on the same compose network can reach
+      # it. Without this, nexusd binds gRPC to loopback only and the
+      # frontend cannot open a remote NexusFS connection.
+      NEXUS_GRPC_BIND_ALL: "true"
+      NEXUS_GRPC_PORT: "2028"
+      # Advertise the in-network hostname so connect callbacks resolve
+      # back to this container rather than 0.0.0.0 (which fails the
+      # rpc_transport loopback check on the frontend).
+      NEXUS_ADVERTISE_ADDR: "nexus:2028"
     volumes:
       - nexus-data:/data
     depends_on:
@@ -74,6 +84,13 @@ services:
       # RPC server's DatabaseAPIKeyAuth enforces per-token identity/zone.
       NEXUS_URL: http://nexus:2026
       NEXUS_REDIS_URL: redis://redis:6379
+      # The compose network is private. gRPC between frontend and nexus
+      # is plaintext by design (TLS terminates at the public reverse
+      # proxy, see §6 of docs/hub-deploy.md). Opt into the escape hatch
+      # so rpc_transport.py accepts the non-loopback `nexus:2028`
+      # target. Never enable this in a deployment that crosses an
+      # untrusted network.
+      NEXUS_GRPC_ALLOW_INSECURE: "true"
       # Intentionally DO NOT set NEXUS_API_KEY here — we want
       # unauthenticated requests (no bearer) to fail at the RPC layer
       # rather than fall through to an ambient "frontend" identity.

@@ -43,7 +43,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
     async def authenticate(self, token: str) -> AuthResult:
         """Authenticate using database API key."""
-        from nexus.storage.models import APIKeyModel
+        from nexus.storage.models import APIKeyModel, ZoneModel
 
         if not token:
             return AuthResult(authenticated=False)
@@ -97,6 +97,32 @@ class DatabaseAPIKeyAuth(AuthProvider):
                     api_key.key_id,
                 )
                 return AuthResult(authenticated=False)
+
+            # #3784 round 10: zone lifecycle gate at runtime. A token
+            # scoped to a zone that has since been soft-deleted or
+            # marked Terminating must fail closed — otherwise existing
+            # tokens keep working against data operators intended to
+            # isolate/remove.
+            #
+            # Tokens with zone_id=None (pre-hub, admin-only) are
+            # unaffected. Tokens whose zone is absent from the registry
+            # (legacy deployments that scoped by string without ever
+            # populating the zones table) also fall through — we only
+            # fail closed when the zone *exists* and has been actively
+            # retired. `hub token create` enforces zone-must-exist for
+            # new tokens, so the missing-row path is backward-compat
+            # only and cannot introduce *new* unscoped tokens.
+            if api_key.zone_id is not None:
+                zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == api_key.zone_id))
+                if zone is not None and (zone.phase != "Active" or zone.deleted_at is not None):
+                    logger.warning(
+                        "UNAUTHORIZED: API key %s zone %r is not active (phase=%s, deleted_at=%s)",
+                        api_key.key_id,
+                        api_key.zone_id,
+                        zone.phase,
+                        zone.deleted_at,
+                    )
+                    return AuthResult(authenticated=False)
 
             # Cache all ORM attributes eagerly before session close
             subject_type = (

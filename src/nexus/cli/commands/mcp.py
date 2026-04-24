@@ -134,7 +134,12 @@ def _reject_embedded_hub_mode(transport: str, remote_url: str | None = None) -> 
     """
     import os
 
-    if transport != "http":
+    # stdio is single-user (no network) and safe. Every other transport
+    # (http, sse, and any future network transport) accepts bearer
+    # tokens from multiple clients, so the same guard applies (#3784
+    # round 10: SSE was previously skipped here and silently fell back
+    # to the ambient NexusFS).
+    if transport == "stdio":
         return
     if not os.environ.get("NEXUS_DATABASE_URL"):
         return
@@ -386,7 +391,7 @@ def serve(
     # single-tenant sidecar) can opt out with
     # NEXUS_MCP_ALLOW_AMBIENT_KEY=true (#3784 round 8).
     if (
-        transport == "http"
+        transport in ("http", "sse")
         and resolved_remote_url
         and resolved_remote_api_key
         and os.environ.get("NEXUS_MCP_ALLOW_AMBIENT_KEY", "").lower() not in ("1", "true", "yes")

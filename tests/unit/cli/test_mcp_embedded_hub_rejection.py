@@ -123,11 +123,21 @@ class TestRejectEmbeddedHubMode:
         assert result.exception is None, result.output
         assert seen_kwargs.get("profile_name") == "hub"
 
-    def test_sse_transport_not_affected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Only 'http' is the concerning path — sse has different defaults."""
+    def test_sse_transport_rejected_same_as_http(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression (round 10): SSE is also a network transport and must
+        be refused in embedded hub mode for the same reason as HTTP —
+        bearer tokens would be accepted but tool calls would fall back to
+        ambient ``_default_nx``."""
         monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://x/y")
         monkeypatch.delenv("NEXUS_URL", raising=False)
-        _reject_embedded_hub_mode("sse")  # must not raise
+        from nexus.cli import config as _config
+
+        class _NotRemote:
+            is_remote = False
+
+        monkeypatch.setattr(_config, "resolve_connection", lambda **_: _NotRemote())
+        with pytest.raises(click.ClickException):
+            _reject_embedded_hub_mode("sse")
 
 
 async def _ok(_request: Any) -> Any:
@@ -317,6 +327,39 @@ class TestAutoPromoteRequireBearer:
         import os as _os
 
         assert _os.environ.get("NEXUS_MCP_REQUIRE_BEARER") is None
+
+    def test_auto_promote_covers_sse_transport(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression (round 10): SSE is also a network transport with the
+        same ambient-key fallback shape — the auto-promote must cover it
+        (not only http)."""
+        monkeypatch.delenv("NEXUS_MCP_REQUIRE_BEARER", raising=False)
+        monkeypatch.delenv("NEXUS_MCP_ALLOW_AMBIENT_KEY", raising=False)
+        monkeypatch.delenv("NEXUS_URL", raising=False)
+        monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+
+        from nexus.cli import config as _config
+
+        class _Resolved:
+            is_remote = True
+            url = "http://nexus:2026"
+            api_key = "sk-ambient"
+
+        monkeypatch.setattr(_config, "resolve_connection", lambda **_: _Resolved())
+        self._stub_serve(monkeypatch)
+
+        from nexus.cli.commands.mcp import serve
+
+        serve.callback(
+            transport="sse",
+            host="127.0.0.1",
+            port=8081,
+            api_key=None,
+            remote_url=None,
+            remote_api_key=None,
+        )
+        import os as _os
+
+        assert _os.environ.get("NEXUS_MCP_REQUIRE_BEARER") == "true"
 
     def test_no_promote_for_stdio(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """stdio is single-user; auto-promote should not kick in."""

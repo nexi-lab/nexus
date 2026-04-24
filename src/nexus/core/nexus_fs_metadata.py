@@ -28,7 +28,7 @@ from nexus.contracts.exceptions import (
     InvalidPathError,
     NexusFileNotFoundError,
 )
-from nexus.contracts.metadata import DT_MOUNT, FileMetadata
+from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -36,6 +36,8 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+_SENTINEL = object()  # default for _meta param in _check_is_directory
 
 
 class MetadataMixin:
@@ -486,7 +488,10 @@ class MetadataMixin:
                 )
                 # DLC bookkeeping: router needs backend ref for RouteResult
                 self._driver_coordinator._store_mount_info(
-                    path, backend, zone_id=zone_id, is_external=_is_external,
+                    path,
+                    backend,
+                    zone_id=zone_id,
+                    is_external=_is_external,
                 )
                 return result
 

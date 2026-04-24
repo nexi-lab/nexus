@@ -667,30 +667,32 @@ class ContentMixin:
                     version=result.old_version or 1,
                     modified_at=_mod_at,
                 )
-            self._dispatch_write_events(
-                path,
-                _WriteContentResult(
-                    content_hash=result.content_id or "",
-                    size=result.size,
-                    metadata=FileMetadata(
-                        path=path,
-                        backend_name="",
-                        physical_path=result.content_id or "",
-                        size=result.size,
-                        etag=result.content_id,
-                        version=result.version,
-                        zone_id=zone_id,
-                    ),
-                    new_version=result.version,
-                    is_new=result.is_new,
-                    old_etag=result.old_etag,
-                    old_metadata=_old_metadata,
-                    context=context or OperationContext(user_id="anonymous", groups=[]),
+            from nexus.contracts.vfs_hooks import WriteHookContext
+
+            _ctx = context or OperationContext(user_id="anonymous", groups=[])
+            _meta_obj = FileMetadata(
+                path=path,
+                backend_name="",
+                physical_path=result.content_id or "",
+                size=result.size,
+                etag=result.content_id,
+                version=result.version,
+                zone_id=zone_id,
+            )
+            self._kernel.dispatch_post_hooks(
+                "write",
+                WriteHookContext(
+                    path=path,
+                    content=buf,
+                    context=_ctx,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    is_remote=False,
+                    is_new_file=result.is_new,
+                    content_hash=result.content_id or "",
+                    metadata=_meta_obj,
+                    old_metadata=_old_metadata,
+                    new_version=result.version,
                 ),
-                buf,
             )
 
         return {"path": path, "bytes_written": len(buf)}

@@ -59,12 +59,19 @@ class BrowserTool:
         "required": ["command"],
     }
 
-    async def call(self, *, command: str, args: dict | None = None, **_: Any) -> str:
+    async def call(
+        self, *, command: str, args: dict | None = None, **_: Any
+    ) -> str | list[dict[str, Any]]:
         args = args or {}
         try:
             result = await asyncio.to_thread(_run_browser_command, command, args)
         except Exception as exc:
             return json.dumps({"error": str(exc), "command": command})
+
+        # For page_screenshot, return multimodal content blocks (text + image)
+        # so the LLM can see the screenshot via vision.
+        if command == "page_screenshot" and isinstance(result, dict) and result.get("path"):
+            return _build_screenshot_content_blocks(result)
 
         if isinstance(result, str):
             return result[:_RESULT_LIMIT]
@@ -128,3 +135,43 @@ async def _call_with_tab(func: Any, args: dict) -> Any:
         return await func(tab, **args)
     else:
         return func(tab, **args)
+
+
+def _build_screenshot_content_blocks(result: dict) -> list[dict[str, Any]]:
+    """Build Anthropic-format content blocks: text summary + base64 image."""
+    import base64
+    from pathlib import Path
+
+    screenshot_path = result["path"]
+    meta = {k: v for k, v in result.items() if k != "path"}
+
+    blocks: list[dict[str, Any]] = [
+        {"type": "text", "text": json.dumps({"screenshot": screenshot_path, **meta})},
+    ]
+
+    try:
+        image_bytes = Path(screenshot_path).read_bytes()
+        b64_data = base64.b64encode(image_bytes).decode("ascii")
+        blocks.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": b64_data,
+                },
+            }
+        )
+    except Exception:
+        blocks[0] = {
+            "type": "text",
+            "text": json.dumps(
+                {
+                    "screenshot": screenshot_path,
+                    **meta,
+                    "warning": "Could not read screenshot file for vision. Use bash to inspect the file.",
+                }
+            ),
+        }
+
+    return blocks

@@ -205,10 +205,20 @@ services:
 
   # ==========================================================================
   # E2E Test Runner — dynamic federation tests
+  #
+  # profiles=["run"] opts the service out of default `docker compose up`.
+  # Without this, `up -d` spawns a background pytest container that races
+  # with any manual `docker compose run --rm test` against the same cluster
+  # (both call container.stop(nexus-dyn-node-1) during the failover tests —
+  # 4 stops instead of 2, witness redb lock conflicts, cascade of gRPC
+  # UNAVAILABLE failures). Explicit profile → `up -d` only brings up the
+  # cluster; tests are opt-in via `run --rm test` or `--profile run up`.
   # ==========================================================================
   test:
     image: nexus-fullnode:latest
     container_name: nexus-dyn-test
+    profiles:
+      - run
     dns:
       - 8.8.8.8
       - 1.1.1.1

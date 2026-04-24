@@ -473,7 +473,11 @@ jobs:
       # use in this job.
       - name: Free disk space (CUDA variant)
         if: matrix.variant == 'cuda'
-        uses: jlumbroso/free-disk-space@main
+        # Pinned to the v1.3.1 release commit. `@main` would let an
+        # upstream push execute inside this release job (contents:write,
+        # packages:write, id-token:write, attestations:write). Bump the
+        # SHA via PR after reviewing upstream commits.
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be  # v1.3.1
         with:
           tool-cache: false
           android: true

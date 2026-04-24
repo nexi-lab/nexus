@@ -945,7 +945,15 @@ def _register_routes(app: FastAPI) -> None:
                 # One-shot upgrade path: copy OAuth key from a legacy
                 # ~/.nexus/metastore[.redb] file into SQL if present. Idempotent;
                 # no-ops once SQL already has the key.
-                migrate_legacy_oauth_key(_settings_store)
+                # Pass the main NexusFS metastore so migration reuses the
+                # Kernel's existing redb connection instead of creating a
+                # second Kernel() that would hit the exclusive file lock.
+                _nx_fs = getattr(app.state, "nexus_fs", None)
+                _existing_metastore = getattr(_nx_fs, "metadata", None) if _nx_fs else None
+                migrate_legacy_oauth_key(
+                    _settings_store,
+                    existing_metastore=_existing_metastore,
+                )
                 _oauth_crypto = OAuthCrypto(settings_store=_settings_store)
                 _audit_logger = SecretsAuditLogger(record_store=_sa_rs)
                 _secrets_service_instance = SecretsService(

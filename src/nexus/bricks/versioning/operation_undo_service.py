@@ -38,7 +38,6 @@ class OperationUndoService:
     def __init__(
         self,
         *,
-        kernel: Any,
         dlc: Any = None,
         write_fn: Any = None,
         delete_fn: Any = None,
@@ -49,15 +48,13 @@ class OperationUndoService:
         """Initialise the undo service.
 
         Args:
-            kernel: Rust kernel for VFS routing.
-            dlc: DriverLifecycleCoordinator for backend refs.
+            dlc: DriverLifecycleCoordinator for routing + backend refs.
             write_fn: ``(path, content) -> None`` kernel write primitive.
             delete_fn: ``(path) -> None`` kernel delete primitive.
             rename_fn: ``(old, new) -> None`` kernel rename primitive.
             exists_fn: ``(path) -> bool`` kernel existence check.
             fallback_backend: Optional legacy backend for CAS reads.
         """
-        self._kernel = kernel
         self._dlc = dlc
         self._write = write_fn
         self._delete = delete_fn
@@ -176,13 +173,13 @@ class OperationUndoService:
     # ------------------------------------------------------------------
 
     def _read_content_from_cas(self, path: str, content_hash: str) -> bytes:
-        """Read content from CAS via kernel + DLC, with optional fallback."""
+        """Read content from CAS via DLC, with optional fallback."""
         try:
-            rr = self._kernel.route(path, "root")
-            info = self._dlc.get_mount_info_canonical(rr.mount_point) if self._dlc else None
-            if info is None:
+            resolved = self._dlc.resolve_path(path, "root") if self._dlc else None
+            if resolved is None:
                 raise RuntimeError(f"No backend found for path: {path}")
-            result: bytes = info.backend.read_content(content_hash)
+            backend, _backend_path, _mount_point = resolved
+            result: bytes = backend.read_content(content_hash)
             return result
         except Exception:
             if self._fallback_backend is not None:

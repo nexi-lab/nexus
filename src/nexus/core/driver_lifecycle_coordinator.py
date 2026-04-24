@@ -211,6 +211,29 @@ class DriverLifecycleCoordinator:
         info = self.get_mount_info("/", zone_id)
         return info.backend if info is not None else None
 
+    def resolve_path(
+        self, path: str, zone_id: str = ROOT_ZONE_ID
+    ) -> "tuple[ObjectStoreABC, str, str] | None":
+        """Resolve virtual path → (backend, backend_path, mount_point).
+
+        Delegates LPM to Rust VFSRouter (kernel-internal), then looks up
+        the Python backend ref from the mount map.
+
+        Returns None when the path is not covered by any mount (e.g.
+        IPC pipe/stream paths) or when no Rust kernel is available.
+        """
+        if self._kernel is None:
+            return None
+        try:
+            rr = self._kernel.route(path, zone_id)
+        except (ValueError, Exception):
+            return None
+        info = self.get_mount_info_canonical(rr.mount_point)
+        if info is None:
+            return None
+        user_mp = extract_zone_id(rr.mount_point)[1]
+        return (info.backend, rr.backend_path, user_mp)
+
     def mount_points(self, zone_id: str | None = None) -> list[str]:
         """Return user-facing mount points (no zone prefix).
 

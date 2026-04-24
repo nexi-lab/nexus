@@ -61,14 +61,12 @@ class VirtualViewResolver(VFSPathResolver):
     def __init__(
         self,
         metadata: Any,
-        kernel: Any,
         dlc: Any = None,
         permission_checker: Any = None,
         parse_fn: Any = None,
         read_tracker_fn: Any = None,
     ) -> None:
         self._metadata = metadata
-        self._kernel = kernel
         self._dlc = dlc
         self._permission_checker = permission_checker
         self._parse_fn = parse_fn
@@ -94,21 +92,21 @@ class VirtualViewResolver(VFSPathResolver):
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
 
         # Route and read original file content
-        rr = self._kernel.route(original_path, "root")
-        info = self._dlc.get_mount_info_canonical(rr.mount_point) if self._dlc else None
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(original_path)
-        if info is None:
+        resolved = self._dlc.resolve_path(original_path, "root") if self._dlc else None
+        if resolved is None:
             raise NexusFileNotFoundError(original_path)
+        backend, backend_path, _mount_point = resolved
 
         # Add backend_path to context for path-based connectors
         read_context = context
         if context:
             from dataclasses import replace
 
-            read_context = replace(context, backend_path=rr.backend_path)
+            read_context = replace(context, backend_path=backend_path)
 
-        content: bytes = info.backend.read_content(meta.etag, context=read_context)
+        content: bytes = backend.read_content(meta.etag, context=read_context)
 
         # Parse content to markdown
         content = get_parsed_content(

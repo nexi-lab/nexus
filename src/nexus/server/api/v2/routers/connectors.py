@@ -705,10 +705,9 @@ async def list_mounted_connectors(
         last_sync: str | None = None
         try:
             # Route to a dummy file path inside the mount to get the backend
-            _rr = nx._kernel.route(f"{mp.rstrip('/')}/_.yaml", "root")
-            _info = nx._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
-            if _info:
-                backend = _info.backend
+            _resolved = nx._driver_coordinator.resolve_path(f"{mp.rstrip('/')}/_.yaml", "root")
+            if _resolved:
+                backend = _resolved[0]
                 skill_name = getattr(backend, "SKILL_NAME", None)
                 # Check multiple sources for operation names
                 schemas = getattr(backend, "SCHEMAS", {})
@@ -798,13 +797,12 @@ async def get_readme_doc(
     nx = _get_nx(request)
     mp = mount_path.rstrip("/")
 
-    # Get backend via kernel + DLC
+    # Get backend via DLC
     backend = None
     try:
-        _rr = nx._kernel.route(f"{mp}/_.yaml", "root")
-        _info = nx._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
-        if _info:
-            backend = _info.backend
+        _resolved = nx._driver_coordinator.resolve_path(f"{mp}/_.yaml", "root")
+        if _resolved:
+            backend = _resolved[0]
     except Exception:
         pass
 
@@ -860,10 +858,9 @@ async def get_schema(
     # Get backend
     backend = None
     try:
-        _rr = nx._kernel.route(f"{mp}/_.yaml", "root")
-        _info = nx._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
-        if _info:
-            backend = _info.backend
+        _resolved = nx._driver_coordinator.resolve_path(f"{mp}/_.yaml", "root")
+        if _resolved:
+            backend = _resolved[0]
     except Exception:
         pass
 
@@ -937,11 +934,10 @@ async def write_to_connector(
     _route_backend = None
     _backend_path = None
     try:
-        _rr = nx._kernel.route(mount_path, "root")
-        _route_info = nx._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
-        if _route_info:
-            _route_backend = _route_info.backend
-            _backend_path = _rr.backend_path
+        _resolved = nx._driver_coordinator.resolve_path(mount_path, "root")
+        if _resolved:
+            _route_backend = _resolved[0]
+            _backend_path = _resolved[1]
     except Exception:
         pass
 

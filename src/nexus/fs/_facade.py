@@ -230,10 +230,7 @@ class SlimNexusFS:
             backend_path = getattr(rr, "backend_path", "") or ""
             user_mp = extract_zone_id(rr.mount_point)[1]
         else:
-            lpm = self._dlc_lpm_route(normalized, zone_id)
-            if lpm is None:
-                return None
-            info, user_mp, backend_path = lpm
+            return None
 
         if not getattr(info, "is_external", False):
             return None
@@ -333,10 +330,7 @@ class SlimNexusFS:
             backend_path = rr.backend_path or ""
             user_mp = extract_zone_id(rr.mount_point)[1]
         else:
-            lpm = self._dlc_lpm_route(normalized, zone_id)
-            if lpm is None:
-                return None
-            info, user_mp, backend_path = lpm
+            return None
 
         if getattr(info, "is_external", False):
             return None
@@ -618,40 +612,6 @@ class SlimNexusFS:
         # within a process, which is exactly the property we need here.
         return self._slim_lock_pool[hash(path) % self._SLIM_LOCK_STRIPES]
 
-    def _dlc_lpm_route(
-        self, normalized: str, zone_id: str = ROOT_ZONE_ID
-    ) -> tuple[Any, str, str] | None:
-        """DLC-based longest-prefix-match route for slim mode.
-
-        When the Rust kernel is absent (slim package), the DLC mount table
-        is the only routing source.  Walk DLC mount points and pick the
-        longest prefix match.
-
-        Returns ``(mount_info, mount_point, backend_path)`` or ``None``.
-        """
-        from nexus.core.path_utils import extract_zone_id
-
-        _dlc = getattr(self._kernel, "_driver_coordinator", None)
-        if _dlc is None:
-            return None
-        best_mp: str | None = None
-        best_info: Any = None
-        for canonical, info in _dlc.list_mounts():
-            _z, user_mp = extract_zone_id(canonical)
-            if _z != zone_id:
-                continue
-            if (normalized == user_mp or normalized.startswith(user_mp.rstrip("/") + "/")) and (
-                best_mp is None or len(user_mp) > len(best_mp)
-            ):
-                best_mp = user_mp
-                best_info = info
-        if best_mp is None or best_info is None:
-            return None
-        # Strip mount point prefix to get backend-relative path
-        rel = normalized[len(best_mp) :]
-        backend_path = rel.lstrip("/")
-        return best_info, best_mp, backend_path
-
     def _resolve_external_route(self, path: str) -> tuple[Any, Any, str] | None:
         """Route ``path`` and return ``(mount_info, augmented_ctx, normalized_path)``.
 
@@ -694,11 +654,7 @@ class SlimNexusFS:
             backend_path = getattr(rr, "backend_path", "") or ""
             user_mp = extract_zone_id(rr.mount_point)[1]
         else:
-            # Slim mode — no Rust kernel, resolve via DLC mount table
-            lpm = self._dlc_lpm_route(normalized, zone_id)
-            if lpm is None:
-                return None
-            info, user_mp, backend_path = lpm
+            return None
 
         if not getattr(info, "is_external", False):
             # Non-external route is only eligible when the mount
@@ -885,11 +841,7 @@ class SlimNexusFS:
                 return kernel_entries
             _backend_path = rr.backend_path or ""
         else:
-            lpm = self._dlc_lpm_route(normalized, zone_id)
-            if lpm is None:
-                return kernel_entries
-            info = lpm[0]
-            _backend_path = lpm[2]
+            return kernel_entries
 
         if getattr(info, "is_external", False):
             return kernel_entries

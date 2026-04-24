@@ -60,11 +60,6 @@ def _make_mock_backend() -> MagicMock:
     return backend
 
 
-def _make_mock_kernel() -> MagicMock:
-    """Build a Rust kernel mock."""
-    return MagicMock(name="kernel")
-
-
 def _make_mock_dlc() -> MagicMock:
     """Build a DriverLifecycleCoordinator mock."""
     return MagicMock(name="dlc")
@@ -98,7 +93,6 @@ def _make_boot_context() -> Any:
         record_store=record_store,
         metadata_store=_make_mock_metadata_store(),
         backend=_make_mock_backend(),
-        kernel=_make_mock_kernel(),
         dlc=_make_mock_dlc(),
         engine=record_store.engine,
         read_engine=record_store.read_engine,
@@ -189,7 +183,6 @@ class TestFullFactoryBoot:
         record_store = _make_mock_record_store()
         metadata_store = _make_mock_metadata_store()
         backend = _make_mock_backend()
-        kernel = _make_mock_kernel()
         dlc = _make_mock_dlc()
 
         def boot() -> Any:
@@ -197,7 +190,6 @@ class TestFullFactoryBoot:
                 record_store=record_store,
                 metadata_store=metadata_store,
                 backend=backend,
-                kernel=kernel,
                 dlc=dlc,
                 enable_write_buffer=False,
             )
@@ -227,7 +219,6 @@ class TestFullFactoryBoot:
         record_store = _make_mock_record_store()
         metadata_store = _make_mock_metadata_store()
         backend = _make_mock_backend()
-        kernel = _make_mock_kernel()
         dlc = _make_mock_dlc()
 
         # Warmup
@@ -236,7 +227,6 @@ class TestFullFactoryBoot:
                 record_store=record_store,
                 metadata_store=metadata_store,
                 backend=backend,
-                kernel=kernel,
                 dlc=dlc,
                 enable_write_buffer=False,
             )
@@ -249,7 +239,6 @@ class TestFullFactoryBoot:
                 record_store=record_store,
                 metadata_store=metadata_store,
                 backend=backend,
-                kernel=kernel,
                 dlc=dlc,
                 enable_write_buffer=False,
             )

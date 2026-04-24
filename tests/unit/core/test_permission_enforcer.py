@@ -293,27 +293,23 @@ class TestPermissionEnforcer:
         but ReBAC tuples are created with leading slashes, causing permission checks to fail.
         """
 
-        class MockRouter:
-            """Mock router that returns backend_path without leading slash (as the real router does)."""
+        class MockBackend:
+            """Mock backend that returns file type."""
 
-            def route(self, path, zone_id: str = ROOT_ZONE_ID):
-                del zone_id  # production enforcer passes zone_id; Mock ignores
+            name = "mock_backend"
 
-                class MockBackend:
-                    def get_object_type(self, backend_path):
-                        return "file"
+            def get_object_type(self, backend_path):
+                return "file"
 
-                    def get_object_id(self, backend_path):
-                        # Router returns path without leading slash (relative to backend root)
-                        return backend_path.lstrip("/")
+            def get_object_id(self, backend_path):
+                # Backend returns path without leading slash (relative to backend root)
+                return backend_path.lstrip("/")
 
-                class MockRoute:
-                    def __init__(self):
-                        self.backend = MockBackend()
-                        # Simulate router stripping leading slash
-                        self.backend_path = path.lstrip("/")
+        class MockDLC:
+            """Mock DLC with resolve_path returning (backend, backend_path, mount_point)."""
 
-                return MockRoute()
+            def resolve_path(self, path, zone_id=ROOT_ZONE_ID):
+                return (MockBackend(), path.lstrip("/"), "/")
 
         class MockReBACManager:
             def __init__(self):
@@ -326,7 +322,7 @@ class TestPermissionEnforcer:
                 return object_id.startswith("/")
 
         rebac = MockReBACManager()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=MockRouter())
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=MockDLC())
         ctx = OperationContext(user_id="alice", groups=["developers"])
 
         # Test that permission check normalizes path to have leading slash

@@ -76,10 +76,10 @@ async def _read_connector_by_physical_path(
             return None
         mount_point = "/".join(parts[:3])  # /mnt/gmail or /mnt/calendar
 
-        rr = fs._kernel.route(mount_point, "root")
-        info = fs._driver_coordinator.get_mount_info_canonical(rr.mount_point)
-        if info is None:
+        resolved = fs._driver_coordinator.resolve_path(mount_point, "root")
+        if resolved is None:
             return None
+        backend = resolved[0]
 
         from nexus.contracts.types import OperationContext
 
@@ -90,7 +90,7 @@ async def _read_connector_by_physical_path(
             virtual_path=display_path,
         )
 
-        content = info.backend.read_content("", context=read_context)
+        content = backend.read_content("", context=read_context)
         if isinstance(content, bytes):
             return content
         return bytes(content) if content else None
@@ -729,12 +729,12 @@ def create_async_files_router(
                         detail=f"version is not recorded for this path in transaction {transaction_id!r}",
                     )
                 try:
-                    _rr = fs._kernel.route(path, "root")
-                    _route_info = fs._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+                    _resolved = fs._driver_coordinator.resolve_path(path, "root")
                 except Exception as exc:
                     raise NexusFileNotFoundError(f"{path} (version {version})") from exc
-                if _route_info is None:
+                if _resolved is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")
+                _route_backend, _route_backend_path, _route_mp = _resolved
                 # --- Enforce standard read authorization via the VFS path ---
                 try:
                     _accessible = fs.access(path, context=context)
@@ -745,7 +745,7 @@ def create_async_files_router(
                 # --- Gate on CAS-capable backend ---
                 from nexus.contracts.backend_features import BackendFeature as _BF
 
-                if not _route_info.backend.has_feature(_BF.CAS):
+                if not _route_backend.has_feature(_BF.CAS):
                     raise HTTPException(
                         status_code=422,
                         detail=(
@@ -757,11 +757,11 @@ def create_async_files_router(
 
                 _read_ctx = _dc.replace(
                     context,
-                    backend_path=_rr.backend_path,
+                    backend_path=_route_backend_path,
                     virtual_path=path,
                 )
                 raw: bytes = await asyncio.to_thread(
-                    _route_info.backend.read_content, version, _read_ctx
+                    _route_backend.read_content, version, _read_ctx
                 )
                 text_v = raw.decode("utf-8", errors="replace")
                 resp_v = ReadResponse(content=text_v, etag=version)

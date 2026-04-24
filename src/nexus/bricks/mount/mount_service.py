@@ -64,7 +64,6 @@ class MountService:
 
     def __init__(
         self,
-        kernel: Any = None,
         dlc: Any = None,
         mount_manager: "MountManager | None" = None,
         nexus_fs: Any = None,
@@ -81,8 +80,7 @@ class MountService:
         """Initialize mount service.
 
         Args:
-            kernel: Rust kernel for VFS routing
-            dlc: DriverLifecycleCoordinator for backend refs
+            dlc: DriverLifecycleCoordinator for routing + backend refs
             mount_manager: Optional mount manager for persistence
             nexus_fs: Optional NexusFS instance (for kernel ops: mkdir, rmdir, rebac)
             gateway: NexusFSGateway for NexusFS access (preferred over nexus_fs)
@@ -94,7 +92,6 @@ class MountService:
             token_manager_fn: Callback to get token manager for OAuth revocation
             search_service: Optional SearchService for post-mount indexing (Issue #3148)
         """
-        self._kernel = kernel
         self._dlc = dlc
         self._driver_coordinator: Any = None  # Injected post-init by factory
         self.mount_manager = mount_manager
@@ -132,12 +129,11 @@ class MountService:
         downstream for error-message mount_path propagation.
         """
         try:
-            # Get backend from kernel+DLC to check capabilities
+            # Get backend from DLC to check capabilities
             backend = None
-            if self._kernel and self._dlc:
-                rr = self._kernel.route(mount_point, "root")
-                info = self._dlc.get_mount_info_canonical(rr.mount_point)
-                backend = info.backend if info else None
+            if self._dlc:
+                resolved = self._dlc.resolve_path(mount_point, "root")
+                backend = resolved[0] if resolved else None
             if backend is None:
                 return
 
@@ -207,13 +203,12 @@ class MountService:
             if nx is None:
                 return
 
-            # Get the connector backend via kernel+DLC
+            # Get the connector backend via DLC
             backend = None
             try:
-                if self._kernel and self._dlc:
-                    rr = self._kernel.route(mount_point, "root")
-                    info = self._dlc.get_mount_info_canonical(rr.mount_point)
-                    backend = info.backend if info else None
+                if self._dlc:
+                    resolved = self._dlc.resolve_path(mount_point, "root")
+                    backend = resolved[0] if resolved else None
             except Exception:
                 pass
 
@@ -1128,17 +1123,13 @@ class MountService:
         if not self._check_permission(mount_point, "write", context):
             raise PermissionError(f"Cannot update mount {mount_point}: no write permission")
 
-        if not self._kernel or not self._dlc:
+        if not self._dlc:
             raise ValueError(f"Mount not found: {mount_point}")
-        try:
-            rr = self._kernel.route(mount_point, "root")
-        except (ValueError, Exception) as exc:
-            raise ValueError(f"Mount not found: {mount_point}") from exc
-        info = self._dlc.get_mount_info_canonical(rr.mount_point)
-        if info is None:
+        resolved = self._dlc.resolve_path(mount_point, "root")
+        if resolved is None:
             raise ValueError(f"Mount not found: {mount_point}")
 
-        backend = info.backend
+        backend = resolved[0]
         result: dict[str, Any] = {
             "updated": False,
             "mount_point": mount_point,
@@ -1200,17 +1191,13 @@ class MountService:
         if not self._check_permission(mount_point, "write", context):
             raise PermissionError(f"Cannot reauth mount {mount_point}: no write permission")
 
-        if not self._kernel or not self._dlc:
+        if not self._dlc:
             raise ValueError(f"Mount not found: {mount_point}")
-        try:
-            rr = self._kernel.route(mount_point, "root")
-        except (ValueError, Exception) as exc:
-            raise ValueError(f"Mount not found: {mount_point}") from exc
-        info = self._dlc.get_mount_info_canonical(rr.mount_point)
-        if info is None:
+        resolved = self._dlc.resolve_path(mount_point, "root")
+        if resolved is None:
             raise ValueError(f"Mount not found: {mount_point}")
 
-        backend = info.backend
+        backend = resolved[0]
 
         # Auto-detect provider from backend
         if provider is None:

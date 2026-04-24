@@ -29,7 +29,6 @@ def create_nexus_services(
     record_store: "RecordStoreABC",
     metadata_store: "MetastoreABC",
     backend: "Backend",
-    kernel: Any = None,
     dlc: Any = None,
     *,
     permissions: PermissionConfig | None = None,
@@ -61,8 +60,7 @@ def create_nexus_services(
         record_store: RecordStoreABC instance (provides engine + session_factory).
         metadata_store: MetastoreABC instance (for PermissionEnforcer).
         backend: Backend instance (for WorkspaceManager).
-        kernel: Rust kernel for VFS routing.
-        dlc: DriverLifecycleCoordinator for backend refs.
+        dlc: DriverLifecycleCoordinator for routing + backend refs.
         permissions: Permission config (defaults from PermissionConfig()).
         cache: Cache config (for TTL values, defaults from CacheConfig()).
         distributed: Distributed config (for event bus/locks).
@@ -126,7 +124,6 @@ def create_nexus_services(
         record_store=record_store,
         metadata_store=metadata_store,
         backend=backend,
-        kernel=kernel,
         dlc=dlc,
         engine=record_store.engine,
         read_engine=record_store.read_engine,
@@ -145,8 +142,8 @@ def create_nexus_services(
     # --- Tier 0: KERNEL (validate Storage Pillars — inlined from _kernel.py) ---
     from nexus.contracts.exceptions import BootError
 
-    if ctx.kernel is None:
-        raise BootError("VFS kernel is None", tier="kernel")
+    if ctx.dlc is None:
+        raise BootError("DLC is None", tier="kernel")
     if ctx.metadata_store is None:
         raise BootError("Metadata store is None", tier="kernel")
     if ctx.record_store is None:
@@ -287,7 +284,6 @@ def create_nexus_fs(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            kernel=nx._kernel,
             dlc=nx._driver_coordinator,
             permissions=permissions,
             audit=audit,
@@ -514,7 +510,6 @@ def _register_vfs_hooks(
 
     _vview_resolver = VirtualViewResolver(
         metadata=nx.metadata,
-        kernel=nx._kernel,
         dlc=nx._driver_coordinator,
         permission_checker=permission_checker,
         parse_fn=parse_fn,

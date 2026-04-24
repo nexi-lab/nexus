@@ -112,8 +112,7 @@ class PermissionEnforcer:
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
         rebac_manager: "ReBACManager | None" = None,
         entity_registry: Any = None,  # Entity registry (reserved for future use)
-        kernel: Any = None,  # Rust kernel for VFS routing
-        dlc: Any = None,  # DriverLifecycleCoordinator for backend refs
+        dlc: Any = None,  # DriverLifecycleCoordinator for backend refs + routing
         # P0-4: Enhanced features
         allow_admin_bypass: bool = False,  # P0-4: Kill-switch DEFAULT OFF for production security
         allow_system_bypass: bool = True,  # P0-4: System bypass still enabled (for service operations)
@@ -137,8 +136,7 @@ class PermissionEnforcer:
             acl_store: Deprecated, ignored (kept for backward compatibility)
             rebac_manager: ReBAC manager for relationship-based permissions
             entity_registry: Entity registry (reserved for future use)
-            kernel: Rust kernel for VFS routing (v0.5.0+)
-            dlc: DriverLifecycleCoordinator for backend refs
+            dlc: DriverLifecycleCoordinator for routing + backend refs
             allow_admin_bypass: Enable admin bypass (DEFAULT: False for security)
             allow_system_bypass: Enable system bypass (for internal operations)
             audit_store: Audit store for bypass logging
@@ -153,8 +151,7 @@ class PermissionEnforcer:
         self.metadata_store = metadata_store
         self.rebac_manager: ReBACManager | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
-        self.kernel = kernel  # Rust kernel for VFS routing
-        self.dlc = dlc  # DLC for backend refs
+        self.dlc = dlc  # DLC for routing + backend refs
 
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         self.namespace_manager: NamespaceManager | None = namespace_manager
@@ -556,28 +553,23 @@ class PermissionEnforcer:
 
         object_id = unscope_internal_path(path)  # Strip /zone/{id}/ prefix
 
-        if self.kernel:
+        if self.dlc:
             try:
-                rr = self.kernel.route(path, context.zone_id or ROOT_ZONE_ID)
-                info = self.dlc.get_mount_info_canonical(rr.mount_point) if self.dlc else None
-                if info is not None:
+                resolved = self.dlc.resolve_path(path, context.zone_id or ROOT_ZONE_ID)
+                if resolved is not None:
+                    backend, backend_path, mount_point = resolved
                     from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
 
                     mapper = ObjectTypeMapper()
-                    object_type = mapper.get_object_type(info.backend, rr.backend_path)
+                    object_type = mapper.get_object_type(backend, backend_path)
                     object_id = unscope_internal_path(
                         mapper.get_object_id(
-                            info.backend,
-                            rr.backend_path,
+                            backend,
+                            backend_path,
                             virtual_path=path,
                             object_type=object_type,
                         )
                     )
-            except ValueError:
-                # IPC paths (DT_PIPE / DT_STREAM) are not routable via mount
-                # LPM — kernel.route() raises ValueError. Graceful fallback
-                # to default "file" type without noisy warnings.
-                pass
             except (KeyError, AttributeError, LookupError, RuntimeError) as e:
                 # If routing fails, fall back to default "file" type with virtual path
                 logger.warning(
@@ -1069,7 +1061,7 @@ class PermissionEnforcer:
                 context=context,
                 cache=self._cache,
                 rebac_manager=self.rebac_manager,
-                kernel=self.kernel,
+                dlc=self.dlc,
             )
 
             filtered = run_filter_chain(filter_ctx)

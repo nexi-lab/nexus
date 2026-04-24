@@ -88,7 +88,6 @@ class VersionService:
         metadata_store: Any,
         cas_store: Any,  # Backend with read_content method
         permission_enforcer: Any = None,
-        kernel: Any = None,
         dlc: Any = None,
         rebac_manager: "ReBACBrickProtocol | None" = None,
         enforce_permissions: bool = True,
@@ -100,8 +99,7 @@ class VersionService:
             metadata_store: Metadata store for version tracking
             cas_store: Backend with read_content method (typically CAS-enabled backend)
             permission_enforcer: Async permission enforcer for access control
-            kernel: Rust kernel for VFS routing
-            dlc: DriverLifecycleCoordinator for backend refs
+            dlc: DriverLifecycleCoordinator for routing + backend refs
             rebac_manager: ReBAC manager for permission checks
             enforce_permissions: Whether to enforce permission checks
             record_store: RecordStoreABC instance providing session_factory for version history queries
@@ -109,8 +107,7 @@ class VersionService:
         self.metadata = metadata_store
         self.cas = cas_store
         self._permission_enforcer = permission_enforcer
-        self.kernel = kernel
-        self.dlc = dlc
+        self._dlc = dlc
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._session_factory = record_store.session_factory if record_store else None
@@ -191,17 +188,17 @@ class VersionService:
         if version_meta.etag is None:
             raise NexusFileNotFoundError(f"{path} (version {version}) has no content")
 
-        # Read content from backend using kernel + DLC
-        if self.kernel is None:
-            raise RuntimeError("Kernel not configured for VersionService")
+        # Read content from backend using DLC
+        if self._dlc is None:
+            raise RuntimeError("DLC not configured for VersionService")
 
         zone_id = (context.zone_id if context else None) or ROOT_ZONE_ID
-        rr = self.kernel.route(path, zone_id)
-        info = self.dlc.get_mount_info_canonical(rr.mount_point) if self.dlc else None
-        if info is None:
+        resolved = self._dlc.resolve_path(path, zone_id)
+        if resolved is None:
             raise RuntimeError(f"No backend found for path: {path}")
+        backend, _backend_path, _mount_point = resolved
 
-        return await asyncio.to_thread(info.backend.read_content, version_meta.etag)
+        return await asyncio.to_thread(backend.read_content, version_meta.etag)
 
     @rpc_expose(description="List file versions")
     async def list_versions(
@@ -308,10 +305,14 @@ class VersionService:
         # Check WRITE permission
         await self._check_write_permission(path, context)
 
-        # Router presence is a precondition for rollback (derives from mount context).
-        if self.kernel is None:
-            raise RuntimeError("Kernel not configured for VersionService")
-        self.kernel.route(path, (context.zone_id if context else None) or ROOT_ZONE_ID)
+        # DLC presence is a precondition for rollback (derives from mount context).
+        if self._dlc is None:
+            raise RuntimeError("DLC not configured for VersionService")
+        if (
+            self._dlc.resolve_path(path, (context.zone_id if context else None) or ROOT_ZONE_ID)
+            is None
+        ):
+            raise RuntimeError(f"No backend found for path: {path}")
 
         # Perform rollback via VersionManager + session_factory
         # (RaftMetadataStore lacks rollback(); use SQL version history instead)

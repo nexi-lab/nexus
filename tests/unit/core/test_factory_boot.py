@@ -94,7 +94,6 @@ def _make_boot_context(**overrides: object) -> _BootContext:
         "record_store": record_store,
         "metadata_store": MagicMock(),
         "backend": backend,
-        "kernel": MagicMock(),
         "dlc": MagicMock(),
         "engine": record_store.engine,
         "read_engine": record_store.read_engine,
@@ -133,9 +132,9 @@ class TestBootKernelServices:
         assert set(result.keys()) == EXPECTED_KERNEL_KEYS
         assert len(result) == 0
 
-    def test_boot_error_raised_on_none_kernel(self) -> None:
-        """When kernel is None, BootError is raised with tier='kernel'."""
-        ctx = _make_boot_context(kernel=None)
+    def test_boot_error_raised_on_none_dlc(self) -> None:
+        """When dlc is None, BootError is raised with tier='kernel'."""
+        ctx = _make_boot_context(dlc=None)
 
         with pytest.raises(BootError) as exc_info:
             _boot_kernel_services(ctx)
@@ -312,14 +311,12 @@ class TestCreateNexusServices:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        mock_kernel = MagicMock()
         mock_dlc = MagicMock()
 
         result = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            kernel=mock_kernel,
             dlc=mock_dlc,
             permissions=PermissionConfig(
                 enforce=False,
@@ -355,14 +352,12 @@ class TestCreateNexusServices:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        mock_kernel = MagicMock()
         mock_dlc = MagicMock()
 
         services = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            kernel=mock_kernel,
             dlc=mock_dlc,
             permissions=PermissionConfig(
                 enforce=False,

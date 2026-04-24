@@ -26,34 +26,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 
-class MockRoute:
-    """Mock route object returned by kernel.route()."""
-
-    def __init__(self, backend_path: str, backend=None, mount_point: str = "/"):
-        self.backend_path = backend_path
-        self.backend = backend or MockBackend()
-        self.mount_point = mount_point
-
-
-class _MountInfo:
-    """Minimal mount info for tests."""
-
-    def __init__(self, backend: "MockBackend") -> None:
-        self.backend = backend
-
-
-class MockDLC:
-    """Mock DLC that maps mount_point → backend."""
-
-    def __init__(self, backend: "MockBackend | None" = None):
-        self._backend = backend
-
-    def get_mount_info_canonical(self, mount_point: str) -> "_MountInfo | None":
-        if self._backend is None:
-            return None
-        return _MountInfo(self._backend)
-
-
 class MockBackend:
     """Mock backend for testing."""
 
@@ -69,15 +41,25 @@ class MockBackend:
         return self._object_id or backend_path
 
 
-class MockRouter:
-    """Mock router that simulates mount point stripping."""
+class _MountInfo:
+    """Minimal mount info for tests."""
 
-    def __init__(self, mount_point: str = "/mnt/gcs"):
+    def __init__(self, backend: "MockBackend") -> None:
+        self.backend = backend
+
+
+class MockDLC:
+    """Mock DLC with resolve_path() simulating mount point stripping.
+
+    resolve_path(path, zone_id) returns (backend, backend_path, mount_point).
+    """
+
+    def __init__(self, mount_point: str = "/mnt/gcs", backend: MockBackend | None = None):
         self.mount_point = mount_point
+        self._backend = backend or MockBackend()
 
-    def route(self, path: str, zone_id: str = ROOT_ZONE_ID):
-        # Simulate mount point stripping
-        del zone_id  # production enforcer now passes zone_id; Mock ignores
+    def resolve_path(self, path: str, zone_id: str = ROOT_ZONE_ID):
+        # Simulate mount point stripping (same logic as old MockRouter.route())
         if path.startswith(self.mount_point):
             backend_path = path[len(self.mount_point) + 1 :]  # Strip /mnt/gcs/
             if not backend_path:
@@ -85,7 +67,10 @@ class MockRouter:
         else:
             backend_path = path.lstrip("/")
 
-        return MockRoute(backend_path)
+        return (self._backend, backend_path, self.mount_point)
+
+    def get_mount_info_canonical(self, mount_point: str) -> "_MountInfo | None":
+        return _MountInfo(self._backend)
 
 
 class MockReBACManager:
@@ -138,8 +123,8 @@ class TestVirtualPathPermissionChecks:
         - NOT on: /file.csv (backend path with / prefix)
         """
         rebac = MockReBACManager()
-        router = MockRouter(mount_point="/mnt/gcs")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
+        mock_dlc = MockDLC(mount_point="/mnt/gcs")
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=mock_dlc)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -172,8 +157,8 @@ class TestVirtualPathPermissionChecks:
         # Grant ownership of mount point
         rebac.grant_permission("/mnt/gcs")
 
-        router = MockRouter(mount_point="/mnt/gcs")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
+        mock_dlc = MockDLC(mount_point="/mnt/gcs")
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=mock_dlc)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -195,8 +180,8 @@ class TestVirtualPathPermissionChecks:
         rebac = MockReBACManager()
         rebac.grant_permission("/mnt/gcs/team-data")
 
-        router = MockRouter(mount_point="/mnt/gcs")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
+        mock_dlc = MockDLC(mount_point="/mnt/gcs")
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=mock_dlc)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -220,8 +205,8 @@ class TestVirtualPathPermissionChecks:
         # Bob's mount has no permissions
 
         # Alice's mount
-        router_alice = MockRouter(mount_point="/mnt/alice")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router_alice)
+        dlc_alice = MockDLC(mount_point="/mnt/alice")
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=dlc_alice)
 
         ctx_alice = OperationContext(user_id="alice", groups=[])
 
@@ -229,8 +214,8 @@ class TestVirtualPathPermissionChecks:
         assert enforcer.check("/mnt/alice/file.txt", Permission.READ, ctx_alice) is True
 
         # Bob's mount (using same enforcer but different path)
-        router_bob = MockRouter(mount_point="/mnt/bob")
-        enforcer_bob = PermissionEnforcer(rebac_manager=rebac, kernel=router_bob)
+        dlc_bob = MockDLC(mount_point="/mnt/bob")
+        enforcer_bob = PermissionEnforcer(rebac_manager=rebac, dlc=dlc_bob)
 
         ctx_bob = OperationContext(user_id="bob", groups=[])
 
@@ -248,13 +233,8 @@ class TestNonFileBackendObjectId:
         # Mock backend for database tables
         db_backend = MockBackend(object_type="postgres:table", object_id="users")
 
-        class DatabaseKernel:
-            def route(self, path, zone_id=None):
-                return MockRoute(backend_path="public.users", mount_point="/db")
-
-        kernel = DatabaseKernel()
-        dlc = MockDLC(backend=db_backend)
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=kernel, dlc=dlc)
+        dlc = MockDLC(mount_point="/db", backend=db_backend)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=dlc)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -271,13 +251,8 @@ class TestNonFileBackendObjectId:
 
         redis_backend = MockBackend(object_type="redis:key", object_id="session:abc123")
 
-        class RedisKernel:
-            def route(self, path, zone_id=None):
-                return MockRoute(backend_path="session:abc123", mount_point="/cache")
-
-        kernel = RedisKernel()
-        dlc = MockDLC(backend=redis_backend)
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=kernel, dlc=dlc)
+        dlc = MockDLC(mount_point="/cache", backend=redis_backend)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=dlc)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -288,19 +263,18 @@ class TestNonFileBackendObjectId:
         assert checked["object_id"] == "session:abc123"
 
 
-class TestRouterFailureFallback:
-    """Test graceful handling when router fails."""
+class TestDLCFailureFallback:
+    """Test graceful handling when DLC resolve_path fails."""
 
-    def test_kernel_failure_fallback_to_virtual_path(self):
-        """Test that kernel routing exceptions fall back to virtual path with object_type='file'."""
+    def test_dlc_failure_fallback_to_virtual_path(self):
+        """Test that DLC resolve_path exceptions fall back to virtual path with object_type='file'."""
 
-        class FailingKernel:
-            def route(self, path, zone_id=None):
-                raise RuntimeError("Kernel routing unavailable")
+        class FailingDLC:
+            def resolve_path(self, path, zone_id=None):
+                raise RuntimeError("DLC routing unavailable")
 
         rebac = MockReBACManager()
-        kernel = FailingKernel()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=kernel)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=FailingDLC())
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -312,10 +286,10 @@ class TestRouterFailureFallback:
         assert checked["object_type"] == "file"
         assert checked["object_id"] == "/some/file.txt"  # Virtual path preserved
 
-    def test_no_kernel_uses_virtual_path(self):
-        """Test that when kernel is None, virtual path is used."""
+    def test_no_dlc_uses_virtual_path(self):
+        """Test that when dlc is None, virtual path is used."""
         rebac = MockReBACManager()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=None)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=None)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -335,8 +309,8 @@ class TestRegressionPrevention:
         rebac = MockReBACManager()
         rebac.grant_permission("/")
 
-        router = MockRouter(mount_point="/")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
+        mock_dlc = MockDLC(mount_point="/")
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=mock_dlc)
 
         ctx = OperationContext(user_id="admin", groups=[])
 
@@ -350,8 +324,8 @@ class TestRegressionPrevention:
         # Grant permission only at intermediate directory
         rebac.grant_permission("/mnt/gcs/team-data")
 
-        router = MockRouter(mount_point="/mnt/gcs")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
+        mock_dlc = MockDLC(mount_point="/mnt/gcs")
+        enforcer = PermissionEnforcer(rebac_manager=rebac, dlc=mock_dlc)
 
         ctx = OperationContext(user_id="alice", groups=[])
 

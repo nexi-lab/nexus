@@ -191,7 +191,6 @@ class SearchService:
         self,
         metadata_store: "MetastoreABC",
         permission_enforcer: "PermissionEnforcer | None" = None,
-        kernel: Any = None,
         dlc: Any = None,
         rebac_manager: "ReBACManager | None" = None,
         enforce_permissions: bool = True,
@@ -212,8 +211,7 @@ class SearchService:
         Args:
             metadata_store: Metadata store for file information
             permission_enforcer: Permission enforcer for access control
-            kernel: Rust kernel for VFS routing
-            dlc: DriverLifecycleCoordinator for backend refs
+            dlc: DriverLifecycleCoordinator for routing + backend refs
             rebac_manager: ReBAC manager for relationship-based permissions
             enforce_permissions: Whether to enforce permission checks
             default_context: Default operation context (embedded mode)
@@ -239,7 +237,6 @@ class SearchService:
         self._file_cache = file_cache
         self._zoekt_client = zoekt_client
         self._permission_enforcer = permission_enforcer
-        self._kernel = kernel
         self._dlc = dlc
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
@@ -467,29 +464,27 @@ class SearchService:
                 context=context,
             )
         # Check if path routes to a dynamic API-backed connector
-        if path and path != "/" and self._kernel:
+        if path and path != "/" and self._dlc:
             try:
-                from nexus.core.path_utils import extract_zone_id
-
                 zone_id, _agent_id, _is_admin = self._get_routing_params(context)
-                rr = self._kernel.route(path, zone_id or ROOT_ZONE_ID)
-                info = self._dlc.get_mount_info_canonical(rr.mount_point) if self._dlc else None
-                if info is not None and getattr(info, "is_external", False):
-                    # Build a simple route-like object for _list_dynamic_connector
-                    class _ExtRoute:
-                        def __init__(
-                            self, backend: Any, backend_path: str, mount_point: str
-                        ) -> None:
-                            self.backend = backend
-                            self.backend_path = backend_path
-                            self.mount_point = mount_point
+                resolved = self._dlc.resolve_path(path, zone_id or ROOT_ZONE_ID)
+                if resolved is not None:
+                    backend, backend_path, user_mp = resolved
+                    _info = self._dlc.get_mount_info(user_mp, zone_id or ROOT_ZONE_ID)
+                    if _info is not None and getattr(_info, "is_external", False):
+                        # Build a simple route-like object for _list_dynamic_connector
+                        class _ExtRoute:
+                            def __init__(
+                                self, backend: Any, backend_path: str, mount_point: str
+                            ) -> None:
+                                self.backend = backend
+                                self.backend_path = backend_path
+                                self.mount_point = mount_point
 
-                    ext_route = _ExtRoute(
-                        info.backend, rr.backend_path, extract_zone_id(rr.mount_point)[1]
-                    )
-                    return self._list_dynamic_connector(
-                        path, ext_route, recursive, details, context
-                    )
+                        ext_route = _ExtRoute(backend, backend_path, user_mp)
+                        return self._list_dynamic_connector(
+                            path, ext_route, recursive, details, context
+                        )
             except PermissionDeniedError:
                 raise
             except Exception as e:

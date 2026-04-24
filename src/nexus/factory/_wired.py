@@ -146,7 +146,6 @@ def _boot_post_kernel_services(
         from nexus.bricks.mount.mount_service import MountService
 
         mount_service = MountService(
-            kernel=nx._kernel,
             dlc=nx._driver_coordinator,
             mount_manager=services.get("mount_manager"),
             nexus_fs=nx,
@@ -268,7 +267,6 @@ def _boot_post_kernel_services(
         search_service = SearchService(
             metadata_store=nx.metadata,
             permission_enforcer=services.get("permission_enforcer"),
-            kernel=nx._kernel,
             dlc=nx._driver_coordinator,
             rebac_manager=services.get("rebac_manager"),
             enforce_permissions=nx._perm_config.enforce,
@@ -567,7 +565,6 @@ def _boot_post_kernel_services(
             from nexus.bricks.versioning.operations_service import OperationsService
 
             _undo_service = OperationUndoService(
-                kernel=nx._kernel,
                 dlc=nx._driver_coordinator,
                 write_fn=nx.sys_write,
                 delete_fn=nx.sys_unlink,

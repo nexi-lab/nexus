@@ -244,9 +244,9 @@ class TestVersionServiceRollback:
         )
 
     @pytest.mark.asyncio
-    async def test_rollback_requires_kernel(self, service, operation_context):
-        """Test that rollback requires kernel to be configured."""
-        with pytest.raises(RuntimeError, match="Kernel not configured"):
+    async def test_rollback_requires_dlc(self, service, operation_context):
+        """Test that rollback requires DLC to be configured."""
+        with pytest.raises(RuntimeError, match="DLC not configured"):
             await service.rollback(
                 path="/test.txt",
                 version=2,

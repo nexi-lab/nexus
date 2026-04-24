@@ -65,7 +65,6 @@ def _make_mock_ctx(**overrides: Any) -> Any:
         "record_store": MagicMock(),
         "metadata_store": MagicMock(),
         "backend": MagicMock(),
-        "kernel": MagicMock(),
         "dlc": MagicMock(),
         "engine": mock_engine,
         "read_engine": mock_engine,
@@ -113,15 +112,14 @@ class TestBootKernelServices:
         assert isinstance(result, dict)
         assert len(result) == 0
 
-    def test_failure_on_none_kernel(self) -> None:
-        """BootError when kernel is None."""
+    def test_failure_on_none_dlc(self) -> None:
+        """BootError when dlc is None."""
         from nexus.factory import _boot_kernel_services
 
-        ctx = _make_mock_ctx(kernel=None)
+        ctx = _make_mock_ctx(dlc=None)
         with pytest.raises(BootError) as exc_info:
             _boot_kernel_services(ctx)
         assert exc_info.value.tier == "kernel"
-        assert "kernel" in str(exc_info.value).lower()
 
     def test_failure_on_none_metadata_store(self) -> None:
         """BootError when metadata_store is None."""
@@ -490,7 +488,6 @@ class TestCreateNexusServicesIntegration:
             record_store=record_store,
             metadata_store=MagicMock(),
             backend=MagicMock(),
-            kernel=MagicMock(),
             dlc=MagicMock(),
         )
         assert isinstance(result, dict)
@@ -518,7 +515,6 @@ class TestCreateNexusServicesIntegration:
                 record_store=record_store,
                 metadata_store=MagicMock(),
                 backend=MagicMock(),
-                kernel=MagicMock(),
                 dlc=MagicMock(),
             )
 
@@ -535,7 +531,6 @@ class TestCreateNexusServicesIntegration:
                 record_store=record_store,
                 metadata_store=MagicMock(),
                 backend=MagicMock(),
-                kernel=MagicMock(),
                 dlc=MagicMock(),
             )
 

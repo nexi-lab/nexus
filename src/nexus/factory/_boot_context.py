@@ -26,7 +26,6 @@ class _BootContext:
     record_store: "RecordStoreABC"
     metadata_store: "MetastoreABC"
     backend: "Backend"
-    kernel: Any
     dlc: Any
     engine: Any
     read_engine: Any  # Read replica engine (Issue #725); same as engine when no replica

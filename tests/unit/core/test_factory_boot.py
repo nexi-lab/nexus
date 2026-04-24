@@ -94,7 +94,8 @@ def _make_boot_context(**overrides: object) -> _BootContext:
         "record_store": record_store,
         "metadata_store": MagicMock(),
         "backend": backend,
-        "router": MagicMock(),
+        "kernel": MagicMock(),
+        "dlc": MagicMock(),
         "engine": record_store.engine,
         "read_engine": record_store.read_engine,
         "perm": PermissionConfig(enforce=False, enable_deferred=False, enable_tiger_cache=False),
@@ -132,9 +133,9 @@ class TestBootKernelServices:
         assert set(result.keys()) == EXPECTED_KERNEL_KEYS
         assert len(result) == 0
 
-    def test_boot_error_raised_on_none_router(self) -> None:
-        """When router is None, BootError is raised with tier='kernel'."""
-        ctx = _make_boot_context(router=None)
+    def test_boot_error_raised_on_none_kernel(self) -> None:
+        """When kernel is None, BootError is raised with tier='kernel'."""
+        ctx = _make_boot_context(kernel=None)
 
         with pytest.raises(BootError) as exc_info:
             _boot_kernel_services(ctx)
@@ -311,13 +312,15 @@ class TestCreateNexusServices:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        router = MagicMock()
+        mock_kernel = MagicMock()
+        mock_dlc = MagicMock()
 
         result = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            router=router,
+            kernel=mock_kernel,
+            dlc=mock_dlc,
             permissions=PermissionConfig(
                 enforce=False,
                 enable_deferred=False,
@@ -352,13 +355,15 @@ class TestCreateNexusServices:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        router = MagicMock()
+        mock_kernel = MagicMock()
+        mock_dlc = MagicMock()
 
         services = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
-            router=router,
+            kernel=mock_kernel,
+            dlc=mock_dlc,
             permissions=PermissionConfig(
                 enforce=False,
                 enable_deferred=False,

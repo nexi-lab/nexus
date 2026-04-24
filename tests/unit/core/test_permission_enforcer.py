@@ -326,7 +326,7 @@ class TestPermissionEnforcer:
                 return object_id.startswith("/")
 
         rebac = MockReBACManager()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=MockRouter())
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=MockRouter())
         ctx = OperationContext(user_id="alice", groups=["developers"])
 
         # Test that permission check normalizes path to have leading slash

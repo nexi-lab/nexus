@@ -502,18 +502,16 @@ def test_error_handler_uses_class_status_code() -> None:
         )
 
 
-def test_router_uses_canonical_exceptions() -> None:
-    """Router must raise exceptions from core.exceptions, not local definitions."""
-    from nexus.core import router as router_module
+def test_kernel_uses_canonical_exceptions() -> None:
+    """Kernel path_utils must use exceptions from contracts.exceptions, not local definitions."""
+    from nexus.core import path_utils as path_utils_module
 
-    # Router should NOT define its own exception classes
-    for name in ("PathNotMountedError", "InvalidPathError", "AccessDeniedError"):
-        # The class should exist in the module (imported), but should be
-        # the canonical version from core.exceptions
-        cls = getattr(router_module, name, None)
+    # path_utils should use the canonical exception classes
+    for name in ("InvalidPathError",):
+        cls = getattr(path_utils_module, name, None)
         if cls is not None:
             assert issubclass(cls, NexusError), (
-                f"router.{name} must be a NexusError subclass, got bases: {cls.__bases__}"
+                f"path_utils.{name} must be a NexusError subclass, got bases: {cls.__bases__}"
             )
 
 

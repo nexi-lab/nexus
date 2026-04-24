@@ -65,7 +65,7 @@ def _make_ctx(
     mock_cache: MagicMock,
     mock_rebac: MagicMock,
     zone_id: str = ROOT_ZONE_ID,
-    router: object | None = None,
+    kernel: object | None = None,
 ) -> FilterContext:
     """Helper to build a FilterContext with custom paths."""
     context = OperationContext(user_id="alice", groups=[], zone_id=zone_id)
@@ -76,7 +76,7 @@ def _make_ctx(
         context=context,
         cache=mock_cache,
         rebac_manager=mock_rebac,
-        router=router,
+        kernel=kernel,
     )
 
 

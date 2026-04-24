@@ -119,7 +119,7 @@ class TestVirtualPathPermissionChecks:
         """
         rebac = MockReBACManager()
         router = MockRouter(mount_point="/mnt/gcs")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -153,7 +153,7 @@ class TestVirtualPathPermissionChecks:
         rebac.grant_permission("/mnt/gcs")
 
         router = MockRouter(mount_point="/mnt/gcs")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -176,7 +176,7 @@ class TestVirtualPathPermissionChecks:
         rebac.grant_permission("/mnt/gcs/team-data")
 
         router = MockRouter(mount_point="/mnt/gcs")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -201,7 +201,7 @@ class TestVirtualPathPermissionChecks:
 
         # Alice's mount
         router_alice = MockRouter(mount_point="/mnt/alice")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router_alice)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router_alice)
 
         ctx_alice = OperationContext(user_id="alice", groups=[])
 
@@ -210,7 +210,7 @@ class TestVirtualPathPermissionChecks:
 
         # Bob's mount (using same enforcer but different path)
         router_bob = MockRouter(mount_point="/mnt/bob")
-        enforcer_bob = PermissionEnforcer(rebac_manager=rebac, router=router_bob)
+        enforcer_bob = PermissionEnforcer(rebac_manager=rebac, kernel=router_bob)
 
         ctx_bob = OperationContext(user_id="bob", groups=[])
 
@@ -233,7 +233,7 @@ class TestNonFileBackendObjectId:
                 return MockRoute(backend_path="public.users", backend=db_backend)
 
         router = DatabaseRouter()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -255,7 +255,7 @@ class TestNonFileBackendObjectId:
                 return MockRoute(backend_path="session:abc123", backend=redis_backend)
 
         router = RedisRouter()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -269,16 +269,16 @@ class TestNonFileBackendObjectId:
 class TestRouterFailureFallback:
     """Test graceful handling when router fails."""
 
-    def test_router_failure_fallback_to_virtual_path(self):
-        """Test that router exceptions fall back to virtual path with object_type='file'."""
+    def test_kernel_failure_fallback_to_virtual_path(self):
+        """Test that kernel routing exceptions fall back to virtual path with object_type='file'."""
 
-        class FailingRouter:
+        class FailingKernel:
             def route(self, path, **kwargs):
-                raise RuntimeError("Router unavailable")
+                raise RuntimeError("Kernel routing unavailable")
 
         rebac = MockReBACManager()
-        router = FailingRouter()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
+        kernel = FailingKernel()
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=kernel)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -290,10 +290,10 @@ class TestRouterFailureFallback:
         assert checked["object_type"] == "file"
         assert checked["object_id"] == "/some/file.txt"  # Virtual path preserved
 
-    def test_no_router_uses_virtual_path(self):
-        """Test that when router is None, virtual path is used."""
+    def test_no_kernel_uses_virtual_path(self):
+        """Test that when kernel is None, virtual path is used."""
         rebac = MockReBACManager()
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=None)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=None)
 
         ctx = OperationContext(user_id="alice", groups=[])
 
@@ -314,7 +314,7 @@ class TestRegressionPrevention:
         rebac.grant_permission("/")
 
         router = MockRouter(mount_point="/")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
 
         ctx = OperationContext(user_id="admin", groups=[])
 
@@ -329,7 +329,7 @@ class TestRegressionPrevention:
         rebac.grant_permission("/mnt/gcs/team-data")
 
         router = MockRouter(mount_point="/mnt/gcs")
-        enforcer = PermissionEnforcer(rebac_manager=rebac, router=router)
+        enforcer = PermissionEnforcer(rebac_manager=rebac, kernel=router)
 
         ctx = OperationContext(user_id="alice", groups=[])
 

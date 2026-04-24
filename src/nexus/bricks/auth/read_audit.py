@@ -24,9 +24,10 @@ _PURPOSE_MAX_LEN = 256
 class ReadAuditWriter:
     """Inserts ``auth_profile_reads`` rows. Caller passes RLS-set engine.
 
-    Failures are logged and swallowed. We never block a credential resolution
-    on audit-row insert — losing a single row is preferable to a blocked
-    caller, and the cache-miss path will retry naturally on the next resolve.
+    Cache-miss writes are fail-closed: a failure raises ``AuditWriteFailed``
+    so the caller never returns a credential that has no durable audit
+    trail. Cache-hit writes (1% sampled) are best-effort — we log + swallow
+    so operational telemetry blips don't block a credential resolution.
     """
 
     def __init__(
@@ -84,10 +85,21 @@ class ReadAuditWriter:
                     },
                 )
                 READ_AUDIT_WRITES.labels(cache="hit" if cache_hit else "miss").inc()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "auth_profile_reads insert failed tenant=%s principal=%s provider=%s",
                 tenant_id,
                 principal_id,
                 provider,
             )
+            if not cache_hit:
+                # Local import — read_audit is imported at module load by the
+                # consumer, so a top-level import would create a cycle.
+                from nexus.bricks.auth.consumer import AuditWriteFailed
+
+                raise AuditWriteFailed.from_row(
+                    tenant_id=tenant_id,
+                    principal_id=principal_id,
+                    provider=provider,
+                    cause=f"{type(exc).__name__}",
+                ) from exc

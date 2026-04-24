@@ -319,6 +319,107 @@ def test_token_exchange_no_profile_returns_403(engine: Engine) -> None:
     assert r.json()["error"] == "access_denied"
 
 
+def test_token_exchange_audit_write_failed_returns_503() -> None:
+    """Cache-miss audit insert failure must surface as 503, not silently
+    return the credential without an audit row."""
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.auth.consumer import AuditWriteFailed
+
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    machine = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    signer = _make_signer()
+    fake_consumer = MagicMock()
+    fake_consumer.resolve.side_effect = AuditWriteFailed.from_row(
+        tenant_id=tenant,
+        principal_id=principal,
+        provider="github",
+        cause="OperationalError",
+    )
+    app = FastAPI()
+    app.include_router(
+        make_token_exchange_router(
+            enabled=True,
+            signer=signer,
+            consumer=fake_consumer,
+            encryption=encryption,
+        )
+    )
+    jwt = signer.sign(
+        DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=machine),
+        ttl=timedelta(hours=1),
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": jwt,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "urn:nexus:provider:github",
+            "scope": "x",
+        },
+    )
+    assert r.status_code == 503
+    assert r.json()["error"] == "audit_unavailable"
+    assert r.headers.get("cache-control") == "no-store"
+
+
+def test_token_exchange_multiple_profiles_returns_409(engine: Engine) -> None:
+    """Two envelope rows for the same (tenant, principal, provider) → 409."""
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    app, signer, encryption = _build_app(engine, tenant, principal)
+    _seed_github(engine, tenant, principal, encryption)
+    # Insert second profile under a different id but same provider.
+    payload = json.dumps({"token": "ghp_other", "scopes": []}).encode()
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-other"
+    dek = b"\x05" * 32
+    nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
+    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "INSERT INTO auth_profiles "
+                "(tenant_id, principal_id, id, provider, account_identifier, "
+                " backend, backend_key, last_synced_at, sync_ttl_seconds, "
+                " ciphertext, wrapped_dek, nonce, aad, kek_version) "
+                "VALUES (:t, :p, 'github-other', 'github', 'other', 'envelope', 'k', "
+                " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
+            ),
+            {
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
+            },
+        )
+    machine = _seed_active_machine(engine, tenant, principal)
+    jwt = signer.sign(
+        DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=machine),
+        ttl=timedelta(hours=1),
+    )
+    client = TestClient(app)
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": jwt,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "urn:nexus:provider:github",
+            "scope": "x",
+        },
+    )
+    assert r.status_code == 409
+    assert r.json()["error"] == "ambiguous_profile"
+
+
 def test_token_exchange_disabled_returns_501(engine: Engine) -> None:
     tenant = uuid.uuid4()
     principal = uuid.uuid4()

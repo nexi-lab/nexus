@@ -147,6 +147,17 @@ class MultipleProfilesForProvider(ConsumerError):
     """
 
 
+class AuditWriteFailed(ConsumerError):
+    """The mandatory cache-miss audit row could not be written.
+
+    Resolving a credential without a durable record of the read would
+    create a forensics blind spot exactly when something went wrong in
+    the database. Fail closed: the caller gets a 503, no credential
+    leaves the server, the operator sees both the audit-table failure
+    AND the missing read in metrics.
+    """
+
+
 # ---------------------------------------------------------------------------
 # CredentialConsumer (orchestrator) — implementation in Task 8
 # ---------------------------------------------------------------------------
@@ -325,6 +336,9 @@ class CredentialConsumer:
             raise
         except AdapterMaterializeFailed:
             result_label = "envelope_error"
+            raise
+        except AuditWriteFailed:
+            result_label = "audit_write_failed"
             raise
         finally:
             TOKEN_EXCHANGE_LATENCY.labels(provider=provider, cache=cache_label).observe(

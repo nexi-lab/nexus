@@ -126,3 +126,51 @@ def test_truncates_purpose_to_256_chars(engine):
             {"t": str(tenant)},
         ).fetchone()
     assert len(row[0]) == 256
+
+
+def test_cache_miss_insert_failure_raises_audit_write_failed():
+    """Cache-miss audit MUST fail closed — drop a credential without a record
+    of who read it would create a forensics blind spot. The router maps the
+    raised exception to 503 so the caller never sees the credential."""
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.auth.consumer import AuditWriteFailed
+
+    bad_engine = MagicMock()
+    bad_engine.begin.side_effect = RuntimeError("partition exhausted")
+    writer = ReadAuditWriter(engine=bad_engine, hit_sample_rate=0.0)
+
+    with pytest.raises(AuditWriteFailed):
+        writer.write(
+            tenant_id=uuid.uuid4(),
+            principal_id=uuid.uuid4(),
+            auth_profile_id="x",
+            caller_machine_id=uuid.uuid4(),
+            caller_kind="daemon",
+            provider="github",
+            purpose="t",
+            cache_hit=False,
+            kek_version=1,
+        )
+
+
+def test_cache_hit_insert_failure_is_swallowed():
+    """Cache-hit audit is best-effort telemetry; failure must not block the
+    caller (cache-hit means the credential was already audited at miss-time)."""
+    from unittest.mock import MagicMock
+
+    bad_engine = MagicMock()
+    bad_engine.begin.side_effect = RuntimeError("transient db blip")
+    # rng forced to 0 → always sampled; attempt + swallow.
+    writer = ReadAuditWriter(engine=bad_engine, hit_sample_rate=1.0)
+    writer.write(  # no raise
+        tenant_id=uuid.uuid4(),
+        principal_id=uuid.uuid4(),
+        auth_profile_id="x",
+        caller_machine_id=uuid.uuid4(),
+        caller_kind="daemon",
+        provider="github",
+        purpose="t",
+        cache_hit=True,
+        kek_version=1,
+    )

@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 
 from nexus.bricks.auth.consumer import (
     AdapterMaterializeFailed,
+    AuditWriteFailed,
     CredentialConsumer,
     MachineUnknownOrRevoked,
     MultipleProfilesForProvider,
@@ -124,6 +125,13 @@ def make_token_exchange_router(
             return _err(409, "ambiguous_profile", exc.cause or "")
         except StaleSource as exc:
             return _err(409, "stale_source", exc.cause or "")
+        except AuditWriteFailed as exc:
+            # Cache-miss audit could not be written. Refusing the credential
+            # avoids a forensics blind spot — the operator must clear the
+            # audit-table failure (partition exhaustion, RLS misconfig, etc)
+            # before reads resume.
+            logger.error("audit_write_failed on cache miss: %r", exc)
+            return _err(503, "audit_unavailable", exc.cause or "")
         except (AdapterMaterializeFailed, EnvelopeError) as exc:
             logger.warning("envelope_error: %r", exc)  # __repr__ masks plaintext
             return _err(500, "envelope_error", "see server logs")

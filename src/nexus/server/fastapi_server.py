@@ -1114,12 +1114,27 @@ def _register_routes(app: FastAPI) -> None:
                         _token_exchange_enabled = os.environ.get(
                             "NEXUS_TOKEN_EXCHANGE_ENABLED", ""
                         ).lower() in ("1", "true", "yes")
-                        # MVP: InMemoryEncryptionProvider unless an operator wires
-                        # Vault/KMS via app.state.encryption_provider. Production
-                        # deployments override this in their startup hook.
-                        _enc = getattr(app.state, "encryption_provider", None) or (
-                            InMemoryEncryptionProvider()
-                        )
+                        # When the operator opts in via env var the production
+                        # provider (Vault transit / AWS KMS) MUST already be on
+                        # app.state. Falling back to InMemoryEncryptionProvider
+                        # would generate a per-process random KEK that cannot
+                        # unwrap any envelope a daemon pushed — every read would
+                        # 500 with envelope_error, silent and confusing. Fail
+                        # closed at startup so the misconfiguration is visible.
+                        _enc = getattr(app.state, "encryption_provider", None)
+                        if _token_exchange_enabled and _enc is None:
+                            logger.error(
+                                "v1 token-exchange refused: NEXUS_TOKEN_EXCHANGE_ENABLED=1 "
+                                "but app.state.encryption_provider is unset. Wire a durable "
+                                "EncryptionProvider (Vault/KMS) before enabling, or unset "
+                                "the env var to keep the route at 501."
+                            )
+                            _token_exchange_enabled = False
+                        if _enc is None:
+                            # Disabled-route case: in-memory keeps tests +
+                            # disabled-flag wiring symmetric without affecting
+                            # real reads (handler returns 501 before touching it).
+                            _enc = InMemoryEncryptionProvider()
                         _consumer = CredentialConsumer(
                             engine=_v1_engine,
                             encryption=_enc,

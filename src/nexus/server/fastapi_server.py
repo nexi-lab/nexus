@@ -1024,6 +1024,9 @@ def _register_routes(app: FastAPI) -> None:
             try:
                 from sqlalchemy import create_engine
 
+                from nexus.bricks.auth.postgres_profile_store import (
+                    ensure_schema as _ensure_v1_schema,
+                )
                 from nexus.server.api.v1.jwt_signer import JwtSigner
                 from nexus.server.api.v1.routers.auth_profiles import (
                     make_auth_profiles_router,
@@ -1040,6 +1043,11 @@ def _register_routes(app: FastAPI) -> None:
                 # the whole API server down during startup.
                 try:
                     _v1_engine = create_engine(_database_url, future=True)
+                    # Idempotent: creates tenants / principals / auth_profiles /
+                    # daemon_machines / auth_profile_reads / RLS policies if absent.
+                    # Without this a fresh stack returns 500 ProgrammingError on the
+                    # first /v1/admin/daemon-bootstrap call.
+                    _ensure_v1_schema(_v1_engine)
                     _v1_signer = JwtSigner.from_path(
                         _jwt_signing_key,
                         issuer=os.environ.get("NEXUS_JWT_ISSUER", "https://nexus.local"),

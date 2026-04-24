@@ -19,13 +19,34 @@ import logging
 from collections.abc import Iterator
 from typing import Any
 
-import boto3
-from botocore.config import Config
-from botocore.exceptions import ClientError
-
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 
+try:
+    import boto3 as _boto3
+    from botocore.config import Config as _BotoConfig
+    from botocore.exceptions import ClientError as _BotoClientError
+except ImportError:  # pragma: no cover - exercised in slim/cloud-extra installs
+    _boto3 = None
+    _BotoConfig = None
+    _BotoClientError = Exception
+
+boto3 = _boto3
+Config = _BotoConfig
+BotoClientError = _BotoClientError
+
 logger = logging.getLogger(__name__)
+
+
+def _client_error_code(exc: BaseException) -> str:
+    """Extract botocore error code safely when available."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return ""
+    error = response.get("Error", {})
+    if not isinstance(error, dict):
+        return ""
+    code = error.get("Code")
+    return str(code) if code is not None else ""
 
 
 class S3Transport:
@@ -50,6 +71,13 @@ class S3Transport:
         self.bucket_name = bucket_name
         self._operation_timeout = operation_timeout
         self._upload_timeout = upload_timeout
+
+        if boto3 is None or Config is None:
+            raise BackendError(
+                "boto3 is required for S3 transport. Install with: pip install 'nexus-ai-fs[s3]'",
+                backend="s3",
+                path=bucket_name,
+            )
 
         try:
             boto_config = Config(
@@ -102,8 +130,8 @@ class S3Transport:
         """Verify the bucket exists and is accessible."""
         try:
             self.s3_client.head_bucket(Bucket=self.bucket_name)
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
+        except BotoClientError as e:
+            error_code = _client_error_code(e)
             if error_code == "404":
                 raise BackendError(
                     f"Bucket '{self.bucket_name}' does not exist",
@@ -148,7 +176,7 @@ class S3Transport:
             version_id: str | None = response.get("VersionId")
             return version_id
 
-        except ClientError as e:
+        except BotoClientError as e:
             raise BackendError(
                 f"Failed to upload blob to {key}: {e}",
                 backend="s3",
@@ -170,8 +198,8 @@ class S3Transport:
 
             return bytes(content), resp_version_id
 
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
+        except BotoClientError as e:
+            error_code = _client_error_code(e)
             if error_code in ("NoSuchKey", "404"):
                 raise NexusFileNotFoundError(key) from e
             raise BackendError(
@@ -186,8 +214,8 @@ class S3Transport:
             self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
             self.s3_client.delete_object(Bucket=self.bucket_name, Key=key)
 
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
+        except BotoClientError as e:
+            error_code = _client_error_code(e)
             if error_code in ("NoSuchKey", "404"):
                 raise NexusFileNotFoundError(key) from e
             raise BackendError(
@@ -200,7 +228,7 @@ class S3Transport:
         try:
             self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
             return True
-        except ClientError:
+        except BotoClientError:
             return False
 
     def get_size(self, key: str) -> int:
@@ -208,8 +236,8 @@ class S3Transport:
             response = self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
             return int(response["ContentLength"])
 
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
+        except BotoClientError as e:
+            error_code = _client_error_code(e)
             if error_code in ("NoSuchKey", "404"):
                 raise NexusFileNotFoundError(key) from e
             raise BackendError(
@@ -240,7 +268,7 @@ class S3Transport:
 
             return blob_keys, common_prefixes
 
-        except ClientError as e:
+        except BotoClientError as e:
             raise BackendError(
                 f"Failed to list blobs with prefix {prefix}: {e}",
                 backend="s3",
@@ -257,8 +285,8 @@ class S3Transport:
             copy_source = {"Bucket": self.bucket_name, "Key": src_key}
             self.s3_client.copy(copy_source, self.bucket_name, dst_key)
 
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
+        except BotoClientError as e:
+            error_code = _client_error_code(e)
             if error_code in ("NoSuchKey", "404"):
                 raise NexusFileNotFoundError(src_key) from e
             raise BackendError(
@@ -275,7 +303,7 @@ class S3Transport:
                 Body=b"",
                 ContentType="application/x-directory",
             )
-        except ClientError as e:
+        except BotoClientError as e:
             raise BackendError(
                 f"Failed to create directory marker at {key}: {e}",
                 backend="s3",
@@ -305,8 +333,8 @@ class S3Transport:
                     break
                 yield chunk
 
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
+        except BotoClientError as e:
+            error_code = _client_error_code(e)
             if error_code in ("NoSuchKey", "404"):
                 raise NexusFileNotFoundError(key) from e
             raise BackendError(
@@ -340,8 +368,8 @@ class S3Transport:
             )
             return bytes(response["Body"].read())
 
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
+        except BotoClientError as e:
+            error_code = _client_error_code(e)
             if error_code in ("NoSuchKey", "404"):
                 raise NexusFileNotFoundError(key) from e
             if error_code == "InvalidRange":
@@ -499,7 +527,7 @@ class S3Transport:
             response = self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
             vid: str | None = response.get("VersionId")
             return vid
-        except ClientError:
+        except BotoClientError:
             return None
 
     def get_object_metadata(self, key: str) -> dict[str, Any]:
@@ -512,8 +540,8 @@ class S3Transport:
                 "version_id": response.get("VersionId"),
                 "etag": response.get("ETag", "").strip('"'),
             }
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
+        except BotoClientError as e:
+            error_code = _client_error_code(e)
             if error_code in ("NoSuchKey", "404"):
                 raise NexusFileNotFoundError(key) from e
             raise BackendError(

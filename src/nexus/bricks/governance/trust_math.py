@@ -12,10 +12,38 @@ Algorithm:
         Convergence when ||t(k+1) - t(k)||_1 < epsilon
 """
 
-import numpy as np
-from scipy import sparse
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.bricks.governance.models import GovernanceEdge
+
+if TYPE_CHECKING:
+    import numpy as np
+    from scipy import sparse
+
+_np: Any | None
+_sparse: Any | None
+
+try:
+    import numpy as _np_mod
+    from scipy import sparse as _sparse_mod
+except ImportError:  # pragma: no cover - exercised when governance extra is absent
+    _np = None
+    _sparse = None
+else:
+    _np = _np_mod
+    _sparse = _sparse_mod
+
+
+def _require_governance_math() -> tuple[Any, Any]:
+    """Return (numpy, scipy.sparse) or raise a clear install hint."""
+    if _np is None or _sparse is None:
+        raise RuntimeError(
+            "Governance math dependencies are not installed. "
+            "Install with: pip install 'nexus-ai-fs[governance]'"
+        )
+    return _np, _sparse
 
 
 def eigentrust(
@@ -38,37 +66,39 @@ def eigentrust(
     Returns:
         N-vector of global trust scores (sums to 1.0).
     """
+    np_mod, sparse_mod = _require_governance_math()
+
     n = local_trust.shape[0]
 
     if n == 0:
-        return np.array([], dtype=np.float64)
+        return cast("np.ndarray", np_mod.array([], dtype=np_mod.float64))
 
     # Normalize local trust: row-normalize C
     c = _row_normalize(local_trust)
 
     # Default seed: uniform
     if seed_trust is None:
-        p = np.ones(n, dtype=np.float64) / n
+        p = np_mod.ones(n, dtype=np_mod.float64) / n
     else:
         p = seed_trust.copy()
         p_sum = p.sum()
         if p_sum > 0:
             p /= p_sum
         else:
-            p = np.ones(n, dtype=np.float64) / n
+            p = np_mod.ones(n, dtype=np_mod.float64) / n
 
     # Initial trust = seed
     t = p.copy()
 
     # Power iteration — transpose once
-    ct = c.T.tocsr() if isinstance(c, sparse.spmatrix) else c.T
+    ct = c.T.tocsr() if isinstance(c, sparse_mod.spmatrix) else c.T
 
     for _ in range(max_iter):
         t_new = (1 - alpha) * (ct @ t) + alpha * p
 
         # Ensure dense for normalization
-        if sparse.issparse(t_new):
-            t_new = np.asarray(t_new).flatten()
+        if sparse_mod.issparse(t_new):
+            t_new = np_mod.asarray(t_new).flatten()
 
         # Normalize to prevent drift
         t_sum = t_new.sum()
@@ -76,13 +106,13 @@ def eigentrust(
             t_new /= t_sum
 
         # Convergence check
-        if np.abs(t_new - t).sum() < epsilon:
-            result: np.ndarray = t_new
+        if np_mod.abs(t_new - t).sum() < epsilon:
+            result = cast("np.ndarray", t_new)
             return result
 
         t = t_new
 
-    final: np.ndarray = t
+    final = cast("np.ndarray", t)
     return final
 
 
@@ -104,8 +134,10 @@ def build_local_trust_matrix(
     Returns:
         NxN sparse matrix where matrix[i][j] = trust from node_ids[i] to node_ids[j].
     """
+    _np_mod, sparse_mod = _require_governance_math()
+
     n = min(len(node_ids), max_nodes)
-    matrix = sparse.lil_matrix((n, n), dtype=np.float64)
+    matrix = sparse_mod.lil_matrix((n, n), dtype=float)
 
     id_to_idx = {nid: i for i, nid in enumerate(node_ids[:n])}
 
@@ -146,9 +178,11 @@ def detect_sybil_cluster(
 
 def _row_normalize(matrix: np.ndarray | sparse.spmatrix) -> np.ndarray | sparse.spmatrix:
     """Row-normalize a matrix (each row sums to 1, or 0 if all zeros)."""
-    if isinstance(matrix, sparse.spmatrix):
-        mat = matrix.tocsr().astype(np.float64, copy=True)
-        row_sums = np.asarray(mat.sum(axis=1)).flatten()
+    np_mod, sparse_mod = _require_governance_math()
+
+    if isinstance(matrix, sparse_mod.spmatrix):
+        mat = matrix.tocsr().astype(np_mod.float64, copy=True)
+        row_sums = np_mod.asarray(mat.sum(axis=1)).flatten()
         nonzero = row_sums > 0
         # Scale rows in-place
         for i in range(mat.shape[0]):
@@ -156,8 +190,8 @@ def _row_normalize(matrix: np.ndarray | sparse.spmatrix) -> np.ndarray | sparse.
                 mat[i] /= row_sums[i]
         return mat
 
-    result = matrix.copy().astype(np.float64)
+    result = matrix.copy().astype(np_mod.float64)
     row_sums = result.sum(axis=1)
     nonzero = row_sums > 0
-    result[nonzero] = result[nonzero] / row_sums[nonzero, np.newaxis]
+    result[nonzero] = result[nonzero] / row_sums[nonzero, np_mod.newaxis]
     return result

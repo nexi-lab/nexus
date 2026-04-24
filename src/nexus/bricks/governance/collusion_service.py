@@ -10,7 +10,7 @@ Runs as background job (not in request path).
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.governance.converters import edge_model_to_domain
 from nexus.bricks.governance.json_utils import parse_json_metadata
@@ -34,6 +34,18 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+def _require_networkx() -> Any:
+    """Import networkx or raise a clear governance-extra install hint."""
+    try:
+        import networkx as nx
+    except ImportError:
+        raise RuntimeError(
+            "Governance graph dependency 'networkx' is not installed. "
+            "Install with: pip install 'nexus-ai-fs[governance]'"
+        ) from None
+    return nx
 
 
 class CollusionService:
@@ -97,7 +109,7 @@ class CollusionService:
             since: Optional time filter for edges
             _edges: Pre-loaded edges (avoids duplicate DB query)
         """
-        import networkx as nx
+        nx = _require_networkx()
 
         edges = _edges if _edges is not None else await self._load_edges(zone_id, since)
 
@@ -136,7 +148,7 @@ class CollusionService:
             zone_id: Zone to detect rings in
             _graph: Pre-built graph (avoids duplicate edge load)
         """
-        import networkx as nx
+        nx = _require_networkx()
 
         graph = _graph if _graph is not None else await self.build_interaction_graph(zone_id)
 

@@ -98,7 +98,7 @@ class SlackTransport:
             from slack_sdk import WebClient
         except ImportError:
             raise BackendError(
-                "slack-sdk not installed. Install with: pip install slack-sdk",
+                "slack-sdk not installed. Install with: pip install 'nexus-ai-fs[slack]'",
                 backend="slack",
             ) from None
 

@@ -231,6 +231,29 @@ class TestExistingMetastore:
         assert migrated is False
         assert store.get_setting(OAUTH_ENCRYPTION_KEY_NAME) is None
 
+    def test_falls_through_to_slow_path_when_key_in_noext_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When existing_metastore is provided but has no key, and the
+        legacy key lives in the no-extension ``metastore`` file, migration
+        must fall through the fast path and read via the slow path
+        (standalone Kernel) from that file."""
+        store = _FakeSettingsStore()
+        redb = tmp_path / "metastore.redb"
+        noext = tmp_path / "metastore"
+        redb.touch()
+        noext.touch()
+
+        fake_ms = _FakeMetastore({})  # existing metastore has no key
+        _patch_candidates(monkeypatch, [redb, noext])
+        _patch_reader(monkeypatch, {noext: "pre-redb-era-key"})
+
+        migrated = migrate_legacy_oauth_key(store, existing_metastore=fake_ms)
+
+        assert migrated is True
+        dto = store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
+        assert dto is not None and dto.value == "pre-redb-era-key"
+
     def test_existing_metastore_none_falls_back_to_slow_path(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

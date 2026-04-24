@@ -118,10 +118,10 @@ Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks
 (PermissionCheckHook). No hook registered = no check = zero overhead.
 
 **Zone identity:** `self._zone_id = ROOT_ZONE_ID` — kernel namespace partition
-(analogous to Linux `sb->s_dev`). PathRouter canonicalizes all paths to
-`/{zone_id}/{path}` for zone-aware LPM routing. Standalone: always `"root"`.
-Federation: set at link time. All primitives (LockManager, FileEvent) receive
-canonical paths — zone handling is PathRouter's responsibility, not theirs.
+(analogous to Linux `sb->s_dev`). VFSRouter (Rust kernel primitive) canonicalizes
+all paths to `/{zone_id}/{path}` for zone-aware LPM routing. Standalone: always
+`"root"`. Federation: set at link time. All primitives (LockManager, FileEvent)
+receive canonical paths — zone handling is VFSRouter's responsibility, not theirs.
 
 **Source of truth:** `contracts/protocols/service_lifecycle.py`
 

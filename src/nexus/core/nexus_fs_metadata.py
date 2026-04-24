@@ -28,7 +28,7 @@ from nexus.contracts.exceptions import (
     InvalidPathError,
     NexusFileNotFoundError,
 )
-from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
+from nexus.contracts.metadata import DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -36,8 +36,6 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-_SENTINEL = object()  # default for _meta param in _check_is_directory
 
 
 class MetadataMixin:
@@ -214,25 +212,12 @@ class MetadataMixin:
         # implicit directories (paths with children but no explicit
         # entry) and the Python-side ``.readme/`` virtual-doc overlay
         # (Issue #3728).
+        # Rust sys_stat handles: dcache → metastore → implicit directory.
+        # Python fallback only for .readme/ virtual overlay (Issue #3728).
         result = self._kernel.sys_stat(normalized, self._zone_id)
         if result is not None:
             result["owner"] = ctx.user_id
             result["group"] = ctx.user_id
-        elif self._check_is_directory(normalized, context=ctx, _meta=None):
-            result = {
-                "path": normalized,
-                "backend_name": "",
-                "physical_path": "",
-                "size": 4096,
-                "mime_type": "inode/directory",
-                "created_at": None,
-                "modified_at": None,
-                "is_directory": True,
-                "entry_type": 1,
-                "owner": ctx.user_id,
-                "group": ctx.user_id,
-                "mode": 0o755,  # drwxr-xr-x
-            }
         else:
             result = self._try_virtual_readme_stat(normalized, ctx)
             if result is None:
@@ -447,22 +432,9 @@ class MetadataMixin:
         # Virtual .readme/ paths are read-only (Issue #3728).
         self._reject_if_virtual_readme(path, context, op="mkdir")
 
-        # Check if directory already exists
-        existing = self.metadata.get(path)
-        is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
-
-        if existing is not None or is_implicit_dir:
-            if not exist_ok and not parents:
-                raise FileExistsError(f"Directory already exists: {path}")
-            # DT_MOUNT entries are created by MountTable.add() *before*
-            # mkdir is called, so parent dirs may still need metadata.
-            if existing is not None:
-                if parents:
-                    self._ensure_parent_directories(path, ctx)
-                return
-
-        # Rust sys_mkdir handles: backend.mkdir + parent directory walk
-        # + metastore.put(DT_DIR) + dcache.put + OBSERVE dispatch.
+        # Rust kernel handles existence check (explicit + implicit directory),
+        # exist_ok/parents semantics, backend.mkdir, ensure_parent_directories,
+        # DT_DIR metadata creation, and dcache update.
         _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
         _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
         if _mkdir_result.post_hook_needed:

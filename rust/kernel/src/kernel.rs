@@ -3065,15 +3065,51 @@ impl Kernel {
         // 4. DCache lookup. On miss, fall back to the per-mount metastore
         //    so federation zones see inodes that haven't been cached yet
         //    (F2 C5 — matches sys_read's cold path). Full path.
+        //    On double miss, check implicit directory (path has children
+        //    in metastore but no explicit entry — e.g. /docs/ when
+        //    /docs/readme.md exists). Returns synthetic DT_DIR.
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => {
-                let meta = self
+                match self
                     .with_metastore(&route.mount_point, |ms| ms.get(path).ok().flatten())
-                    .flatten()?;
-                let cached: CachedEntry = (&meta).into();
-                self.dcache.put(path, cached.clone());
-                cached
+                    .flatten()
+                {
+                    Some(meta) => {
+                        let cached: CachedEntry = (&meta).into();
+                        self.dcache.put(path, cached.clone());
+                        cached
+                    }
+                    None => {
+                        // Implicit directory: children exist under this prefix
+                        // but no explicit entry. Eliminates Python fallback to
+                        // _check_is_directory() (Crossing 3a).
+                        let is_implicit = self
+                            .with_metastore(&route.mount_point, |ms| {
+                                ms.is_implicit_directory(path).unwrap_or(false)
+                            })
+                            .unwrap_or(false);
+                        if is_implicit {
+                            return Some(StatResult {
+                                path: path.to_string(),
+                                backend_name: String::new(),
+                                physical_path: String::new(),
+                                size: 4096,
+                                etag: None,
+                                mime_type: "inode/directory".to_string(),
+                                is_directory: true,
+                                entry_type: DT_DIR,
+                                mode: 0o755,
+                                version: 0,
+                                zone_id: Some(route.zone_id.clone()),
+                                created_at_ms: None,
+                                modified_at_ms: None,
+                                lock: None,
+                            });
+                        }
+                        return None;
+                    }
+                }
             }
         };
 
@@ -3780,24 +3816,35 @@ impl Kernel {
         // 2. Route (check write access)
         let route = self.vfs_router.route(path, &ctx.zone_id)?;
 
-        // 3. Existence check via metastore (per-mount or global) — full path
-        let exists = self
+        // 3. Existence check: explicit entry OR implicit directory (children
+        //    exist under this prefix). Eliminates Python's router.route() +
+        //    metastore.get() + is_implicit_directory() pre-check (Crossing 3a).
+        let explicit_exists = self
             .with_metastore(&route.mount_point, |ms| ms.exists(path).unwrap_or(false))
             .unwrap_or(false);
-        if exists {
+        let implicit_exists = !explicit_exists
+            && self
+                .with_metastore(&route.mount_point, |ms| {
+                    ms.is_implicit_directory(path).unwrap_or(false)
+                })
+                .unwrap_or(false);
+        if explicit_exists || implicit_exists {
             if !exist_ok && !parents {
                 return Err(KernelError::IOError(format!(
                     "Directory already exists: {path}"
                 )));
             }
-            // Already exists — ensure parents and return
-            if parents {
-                self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+            // Explicit entry: ensure parents and return (already materialized).
+            // Implicit dir: fall through to create explicit DT_DIR entry.
+            if explicit_exists {
+                if parents {
+                    self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+                }
+                return Ok(SysMkdirResult {
+                    hit: true,
+                    post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+                });
             }
-            return Ok(SysMkdirResult {
-                hit: true,
-                post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
-            });
         }
 
         // 4. Backend mkdir (best-effort, PAS backends create physical dirs)

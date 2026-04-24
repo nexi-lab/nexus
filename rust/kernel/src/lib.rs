@@ -43,9 +43,9 @@ mod kernel;
 pub mod lock_manager;
 pub mod locks;
 pub mod metastore;
-// Mount table (kernel SSOT for mount entries — backend + per-mount
-// metastore + access flags). Mirrors Python `nexus.core.mount_table`.
-pub mod mount_table;
+// VFS router (kernel SSOT for mount entries — backend + per-mount
+// metastore + access flags + LPM routing). Kernel primitive.
+pub mod vfs_router;
 // `generated_pyo3` kept public so other crates (e.g. `rust/raft`) can
 // reference `PyKernel` via cross-crate PyO3 borrows — needed for
 // `PyZoneHandle::attach_to_kernel_mount()` which wires a Raft-backed

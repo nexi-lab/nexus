@@ -18,8 +18,8 @@ use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::{LockManager, LockMode};
 use crate::metastore::LocalMetastore;
-use crate::mount_table::{
-    canonicalize_mount_path as canonicalize, MountTable, RouteError, RustRouteResult,
+use crate::vfs_router::{
+    canonicalize_mount_path as canonicalize, RouteError, RustRouteResult, VFSRouter,
 };
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
@@ -492,11 +492,11 @@ pub struct Kernel {
     dcache: Arc<DCache>,
     // Mount table — owns backend + per-mount metastore + access flags.
     // Replaces the old `router: PathRouter` + `mount_metastores: DashMap`
-    // split; both lookups now go through `MountTable` (F2 C2). Wrapped
+    // split; both lookups now go through `VFSRouter` (F2 C2). Wrapped
     // in ``Arc`` so federation apply-event callbacks can look up the
     // current set of mounts-for-zone at invalidation time (a zone can
     // be mounted under multiple paths — direct + crosslink).
-    pub(crate) mount_table: Arc<MountTable>,
+    pub(crate) vfs_router: Arc<VFSRouter>,
     // PathTrie (owned)
     trie: Trie,
     // Unified lock manager: I/O lock + advisory lock + optional Raft.
@@ -560,10 +560,10 @@ pub struct Kernel {
     pub(crate) agent_registry: Arc<crate::agent_registry::AgentRegistry>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
-    // Per-mount metastores now live inside `MountTable::entries` as
+    // Per-mount metastores now live inside `VFSRouter::entries` as
     // `MountEntry::metastore: Option<Arc<dyn Metastore>>` (our v20
     // SSOT cleanup — kept against develop's legacy split map).
-    // Federation installs them via `MountTable::install_metastore`
+    // Federation installs them via `VFSRouter::install_metastore`
     // after the mount is registered; standalone mode sets them during
     // `add_mount` when `metastore_path` is provided.
     // IPC registry — PipeManager owns DashMap<String, Arc<dyn PipeBackend>>
@@ -586,7 +586,7 @@ pub struct Kernel {
     pub(crate) peer_client: Arc<crate::peer_blob_client::PeerBlobClient>,
     // Scatter-gather fetcher: drives bounded fan-out against
     // `backend_name.origins` whenever a local chunk miss occurs. Installed
-    // on every `CASEngine` via `MountTable` on mount registration.
+    // on every `CASEngine` via `VFSRouter` on mount registration.
     #[allow(dead_code)]
     pub(crate) chunk_fetcher: Arc<crate::cas_remote::GrpcChunkFetcher>,
     /// Pending remote metastore — set by ``sys_setattr(backend_type="remote")``
@@ -604,7 +604,7 @@ pub struct Kernel {
     //
     //   FullStateMachine::apply(DT_MOUNT) — mount_apply_cb
     //     → Kernel::wire_federation_mount(parent, path, target, backend)
-    //       → MountTable.add_mount + install_metastore(ZoneMetastore)
+    //       → VFSRouter.add_mount + install_metastore(ZoneMetastore)
     //       → DCache.put (seed DT_MOUNT entry so sys_stat sees it)
     //       → install_federation_dcache_coherence on target consensus
     //       → cross_zone_mounts.entry(target).push((parent, path, global))
@@ -652,7 +652,7 @@ impl Kernel {
         let k = Self {
             dlc: crate::dlc::DriverLifecycleCoordinator::new(),
             dcache: Arc::new(DCache::new()),
-            mount_table: Arc::new(MountTable::new()),
+            vfs_router: Arc::new(VFSRouter::new()),
             trie: Trie::new(),
             lock_manager: Arc::new(LockManager::new()),
             // Bare kernels boot with an in-memory metastore so tests,
@@ -762,7 +762,7 @@ impl Kernel {
         *self.metastore.write() = None;
         // Drop per-mount metastores by clearing their slot on each
         // MountEntry. We iterate via `iter_mut` to avoid a full rebuild.
-        for mut entry in self.mount_table.entries_iter_mut() {
+        for mut entry in self.vfs_router.entries_iter_mut() {
             entry.metastore = None;
         }
     }
@@ -771,7 +771,7 @@ impl Kernel {
     ///
     /// In federation mode each mount has its own state machine (Raft-backed
     /// zone store). Standalone mode uses a single global metastore.
-    /// `mount_point` must be the zone-canonical key from `mount_table.route()`.
+    /// `mount_point` must be the zone-canonical key from `vfs_router.route()`.
     pub(crate) fn with_metastore<F, R>(&self, mount_point: &str, f: F) -> Option<R>
     where
         F: FnOnce(&dyn crate::metastore::Metastore) -> R,
@@ -779,7 +779,7 @@ impl Kernel {
         // Hold the DashMap read guard only long enough to snapshot the
         // `Arc<dyn Metastore>`, then release it before running the closure
         // — avoids pinning the shard for the duration of a Raft propose.
-        if let Some(entry) = self.mount_table.get_canonical(mount_point) {
+        if let Some(entry) = self.vfs_router.get_canonical(mount_point) {
             if let Some(ms) = entry.metastore.as_ref() {
                 let ms_arc = Arc::clone(ms);
                 drop(entry);
@@ -803,7 +803,7 @@ impl Kernel {
     /// Returns ``""`` when no mount covers the path (caller decides
     /// whether to fall back to the global metastore).
     fn resolve_mount_point(&self, path: &str, zone_id: &str) -> String {
-        self.mount_table
+        self.vfs_router
             .route(path, zone_id)
             .map(|r| r.mount_point)
             .unwrap_or_default()
@@ -862,7 +862,7 @@ impl Kernel {
 
     // ── Metastore proxy methods (for Python RustMetastoreProxy) ────────
     //
-    // F2 C8: these route via ``mount_table.route(path, ROOT_ZONE_ID, ...)`` so a
+    // F2 C8: these route via ``vfs_router.route(path, ROOT_ZONE_ID, ...)`` so a
     // lookup under a federation mount (e.g. ``/corp/eng/foo.txt``) lands on
     // the corresponding per-mount ``ZoneMetastore`` installed by
     // ``attach_raft_zone_to_kernel``. Without this, every Python-side
@@ -952,11 +952,11 @@ impl Kernel {
         } else {
             user_prefix.trim_end_matches('/')
         };
-        for canonical in self.mount_table.canonical_keys() {
+        for canonical in self.vfs_router.canonical_keys() {
             if canonical == routed_mount {
                 continue;
             }
-            let (_zone, user_mp) = crate::mount_table::extract_zone_from_canonical(&canonical);
+            let (_zone, user_mp) = crate::vfs_router::extract_zone_from_canonical(&canonical);
             // Child mount must sit strictly under the list prefix. Root list
             // (`/`) sees every mount. Non-root prefix `/a` matches `/a/b` but
             // not `/a` itself (caller already has the DT_MOUNT entry from the
@@ -1319,13 +1319,13 @@ impl Kernel {
         Arc::clone(&self.dcache)
     }
 
-    /// Clone the shared MountTable ``Arc`` for federation apply-event
+    /// Clone the shared VFSRouter ``Arc`` for federation apply-event
     /// callbacks that need to look up mount-points-for-zone at
     /// invalidation time. See ``dcache_handle`` for the lifetime
     /// rationale — same contract.
     #[allow(dead_code)]
-    pub(crate) fn mount_table_handle(&self) -> Arc<MountTable> {
-        Arc::clone(&self.mount_table)
+    pub(crate) fn vfs_router_handle(&self) -> Arc<VFSRouter> {
+        Arc::clone(&self.vfs_router)
     }
 
     /// Evict all entries with given prefix.
@@ -1399,7 +1399,7 @@ impl Kernel {
         )>,
         is_external: bool,
     ) -> Result<(), KernelError> {
-        self.mount_table.add_mount(
+        self.vfs_router.add_mount(
             mount_point,
             zone_id,
             backend_name,
@@ -1410,7 +1410,7 @@ impl Kernel {
         // entry is inserted so `install_metastore` finds it.
         if let Some(ms) = metastore {
             let canonical = canonicalize(mount_point, zone_id);
-            self.mount_table.install_metastore(&canonical, ms);
+            self.vfs_router.install_metastore(&canonical, ms);
         }
         // Boot-order fix: on restart, `reconcile_mounts_from_zones` runs
         // before Python mounts root, so every federation mount it
@@ -1419,7 +1419,7 @@ impl Kernel {
         // mounts so sys_write stops silently missing.
         if mount_point == "/" && zone_id == contracts::ROOT_ZONE_ID {
             if let Some(ref root_backend) = backend {
-                let rebound = self.mount_table.rebind_missing_backends(root_backend);
+                let rebound = self.vfs_router.rebind_missing_backends(root_backend);
                 if rebound > 0 {
                     tracing::info!(
                         rebound_count = rebound,
@@ -1458,7 +1458,7 @@ impl Kernel {
     /// Called by DLC.unmount() — not directly exposed to Python.
     #[allow(dead_code)]
     pub fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        self.mount_table.remove(mount_point, zone_id)
+        self.vfs_router.remove(mount_point, zone_id)
     }
 
     /// Wire a per-mount `Metastore` impl into the kernel's mount table.
@@ -1480,7 +1480,7 @@ impl Kernel {
         canonical_key: String,
         ms: Arc<dyn crate::metastore::Metastore>,
     ) {
-        self.mount_table.install_metastore(&canonical_key, ms);
+        self.vfs_router.install_metastore(&canonical_key, ms);
     }
 
     /// Compute the zone-canonical key for a (mount_point, zone_id) pair.
@@ -1494,19 +1494,19 @@ impl Kernel {
 
     /// Zone-canonical LPM routing.
     pub fn route(&self, path: &str, zone_id: &str) -> Result<RustRouteResult, KernelError> {
-        self.mount_table
+        self.vfs_router
             .route(path, zone_id)
             .map_err(KernelError::from)
     }
 
     /// Check if a mount exists.
     pub fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        self.mount_table.has(mount_point, zone_id)
+        self.vfs_router.has(mount_point, zone_id)
     }
 
     /// List all mount points (zone-canonical keys, sorted).
     pub fn get_mount_points(&self) -> Vec<String> {
-        self.mount_table.canonical_keys()
+        self.vfs_router.canonical_keys()
     }
 
     /// Install the apply-side dcache invalidation callback for a
@@ -1539,7 +1539,7 @@ impl Kernel {
         &self,
         consensus: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
     ) {
-        install_federation_dcache_coherence_impl(&self.mount_table, &self.dcache, &consensus);
+        install_federation_dcache_coherence_impl(&self.vfs_router, &self.dcache, &consensus);
     }
 
     /// Syscall: set attributes on a path. Handles ALL filesystem entry types.
@@ -1587,7 +1587,7 @@ impl Kernel {
                 // wired. Install is keyed on the state machine's
                 // ``coherence_id``, not on the per-mount Metastore Arc,
                 // so crosslinks of the same zone share one callback
-                // that fans out across every surface via MountTable's
+                // that fans out across every surface via VFSRouter's
                 // reverse lookup.
                 //
                 // R20.18.3: zone-create-on-mount. If the caller didn't
@@ -1800,7 +1800,7 @@ impl Kernel {
             // Stream inode lives inside the zone whose raft group we use —
             // for now we wire against the root zone (the only zone Python
             // currently writes DT_STREAM into). When streams need to
-            // follow the mount tree, swap this for MountTable::route(path).
+            // follow the mount tree, swap this for VFSRouter::route(path).
             let root_zone = "root";
             let consensus = zm.registry().get_node(root_zone).ok_or_else(|| {
                 KernelError::IOError(format!("io_profile=wal: zone {root_zone} not loaded"))
@@ -2546,7 +2546,7 @@ impl Kernel {
         }))?;
 
         // 2. Route (pure Rust LPM)
-        let route = match self.mount_table.route(path, &ctx.zone_id) {
+        let route = match self.vfs_router.route(path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return Err(not_found()),
         };
@@ -2656,7 +2656,7 @@ impl Kernel {
 
         // 5. Backend read (CasLocal or PyObjectStoreAdapter)
         let content =
-            self.mount_table
+            self.vfs_router
                 .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
 
         // 6. Release VFS lock (always, even on miss)
@@ -2742,7 +2742,7 @@ impl Kernel {
         // origin goes down, re-fetch would fail but the blob must still
         // be readable. write_content is idempotent for CAS backends.
         let _ = self
-            .mount_table
+            .vfs_router
             .write_content(mount_point, &data, &content_hash, ctx, 0);
 
         Ok(SysReadResult {
@@ -2802,7 +2802,7 @@ impl Kernel {
         }))?;
 
         // 2. Route (check write access)
-        let route = match self.mount_table.route(path, &ctx.zone_id) {
+        let route = match self.vfs_router.route(path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
@@ -2893,7 +2893,7 @@ impl Kernel {
                 }
             }
         };
-        let write_result = match self.mount_table.write_content(
+        let write_result = match self.vfs_router.write_content(
             &route.mount_point,
             content,
             &effective_content_id,
@@ -2929,7 +2929,7 @@ impl Kernel {
                     .map(|d| d.as_millis() as i64)
                     .unwrap_or(0);
                 let raw_backend_name = self
-                    .mount_table
+                    .vfs_router
                     .get_canonical(&route.mount_point)
                     .map(|e| e.backend_name.clone())
                     .unwrap_or_else(|| "local".to_string());
@@ -3010,7 +3010,7 @@ impl Kernel {
         }
 
         // 3. Route
-        let route = self.mount_table.route(path, zone_id).ok()?;
+        let route = self.vfs_router.route(path, zone_id).ok()?;
 
         // 4. DCache lookup. On miss, fall back to the per-mount metastore
         //    so federation zones see inodes that haven't been cached yet
@@ -3107,7 +3107,7 @@ impl Kernel {
         }))?;
 
         // 2. Route (check write access)
-        let route = match self.mount_table.route(path, &ctx.zone_id) {
+        let route = match self.vfs_router.route(path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(0),
         };
@@ -3185,7 +3185,7 @@ impl Kernel {
 
         // 7. Backend delete (best-effort, PAS only)
         let _ = self
-            .mount_table
+            .vfs_router
             .delete_file(&route.mount_point, &route.backend_path);
 
         // 8. DCache evict
@@ -3254,11 +3254,11 @@ impl Kernel {
         }))?;
 
         // 2. Route both
-        let old_route = match self.mount_table.route(old_path, &ctx.zone_id) {
+        let old_route = match self.vfs_router.route(old_path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
-        let new_route = match self.mount_table.route(new_path, &ctx.zone_id) {
+        let new_route = match self.vfs_router.route(new_path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
@@ -3379,7 +3379,7 @@ impl Kernel {
         });
 
         // 8. Backend rename (best-effort, PAS only)
-        let _ = self.mount_table.rename_file(
+        let _ = self.vfs_router.rename_file(
             &old_route.mount_point,
             &old_route.backend_path,
             &new_route.backend_path,
@@ -3446,11 +3446,11 @@ impl Kernel {
         validate_path_fast(dst_path)?;
 
         // 2. Route both (read access for src, write access for dst)
-        let src_route = match self.mount_table.route(src_path, &ctx.zone_id) {
+        let src_route = match self.vfs_router.route(src_path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
-        let dst_route = match self.mount_table.route(dst_path, &ctx.zone_id) {
+        let dst_route = match self.vfs_router.route(dst_path, &ctx.zone_id) {
             Ok(r) => r,
             Err(_) => return miss(),
         };
@@ -3537,7 +3537,7 @@ impl Kernel {
 
         let copy_result: Result<(String, u64), KernelError> = if same_mount {
             // Try server-side copy first (PAS backends)
-            match self.mount_table.copy_file(
+            match self.vfs_router.copy_file(
                 &src_route.mount_point,
                 &src_route.backend_path,
                 &dst_route.backend_path,
@@ -3575,7 +3575,7 @@ impl Kernel {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let raw_backend_name = self
-            .mount_table
+            .vfs_router
             .get_canonical(&dst_route.mount_point)
             .map(|e| e.backend_name.clone())
             .unwrap_or_else(|| "local".to_string());
@@ -3618,8 +3618,8 @@ impl Kernel {
     /// Internal: copy content via read_content + write_content (cross-mount or fallback).
     fn copy_via_read_write(
         &self,
-        src_route: &crate::mount_table::RustRouteResult,
-        dst_route: &crate::mount_table::RustRouteResult,
+        src_route: &crate::vfs_router::RustRouteResult,
+        dst_route: &crate::vfs_router::RustRouteResult,
         src_meta: &CachedEntry,
         ctx: &OperationContext,
     ) -> Result<(String, u64), KernelError> {
@@ -3645,7 +3645,7 @@ impl Kernel {
         };
 
         let content = self
-            .mount_table
+            .vfs_router
             .read_content(
                 &src_route.mount_point,
                 content_id,
@@ -3660,7 +3660,7 @@ impl Kernel {
             })?;
 
         let wr = self
-            .mount_table
+            .vfs_router
             .write_content(
                 &dst_route.mount_point,
                 &content,
@@ -3697,7 +3697,7 @@ impl Kernel {
         validate_path_fast(path)?;
 
         // 2. Route (check write access)
-        let route = self.mount_table.route(path, &ctx.zone_id)?;
+        let route = self.vfs_router.route(path, &ctx.zone_id)?;
 
         // 3. Existence check via metastore (per-mount or global) — full path
         let exists = self
@@ -3721,7 +3721,7 @@ impl Kernel {
 
         // 4. Backend mkdir (best-effort, PAS backends create physical dirs)
         let _ = self
-            .mount_table
+            .vfs_router
             .mkdir(&route.mount_point, &route.backend_path, parents, true);
 
         // 5. Ensure parent directories
@@ -3731,7 +3731,7 @@ impl Kernel {
 
         // 6. Create directory metadata in metastore (per-mount or global) — full path
         let dir_backend_name = self
-            .mount_table
+            .vfs_router
             .get_canonical(&route.mount_point)
             .map(|e| e.backend_name.clone())
             .unwrap_or_else(|| "local".to_string());
@@ -3850,7 +3850,7 @@ impl Kernel {
         validate_path_fast(path)?;
 
         // 2. Route (check write access)
-        let route = self.mount_table.route(path, &ctx.zone_id)?;
+        let route = self.vfs_router.route(path, &ctx.zone_id)?;
 
         // 3. Get metadata (per-mount or global) — full path
         let entry_type = self
@@ -3891,7 +3891,7 @@ impl Kernel {
 
         // 6. Backend rmdir (best-effort)
         let _ = self
-            .mount_table
+            .vfs_router
             .rmdir(&route.mount_point, &route.backend_path, recursive);
 
         // 7. Delete directory metadata (per-mount or global) — full path
@@ -3929,7 +3929,7 @@ impl Kernel {
         if validate_path_fast(path).is_err() {
             return false;
         }
-        if self.mount_table.route(path, zone_id).is_err() {
+        if self.vfs_router.route(path, zone_id).is_err() {
             return false;
         }
         self.dcache.contains(path)
@@ -3958,7 +3958,7 @@ impl Kernel {
         // 2. Route all paths (single lock acquisition on mount table via read lock)
         let mut routes = Vec::with_capacity(items.len());
         for (path, _) in items {
-            let route = self.mount_table.route(path, &ctx.zone_id).ok();
+            let route = self.vfs_router.route(path, &ctx.zone_id).ok();
             routes.push(route);
         }
 
@@ -4021,7 +4021,7 @@ impl Kernel {
             // per-item result surfaces as hit=false (observer + post-hook
             // path skipped). Caller inspects ``SysWriteResult.hit`` + retries.
             let write_result = self
-                .mount_table
+                .vfs_router
                 .write_content(&route.mount_point, content, &route.backend_path, ctx, 0)
                 .unwrap_or_default();
 
@@ -4032,7 +4032,7 @@ impl Kernel {
 
                     // Collect metadata for batch put (instead of N individual puts)
                     let raw_batch_backend_name = self
-                        .mount_table
+                        .vfs_router
                         .get_canonical(&route.mount_point)
                         .map(|e| e.backend_name.clone())
                         .unwrap_or_else(|| "local".to_string());
@@ -4081,7 +4081,7 @@ impl Kernel {
             let mut global_items: Vec<(String, crate::metastore::FileMetadata)> = Vec::new();
             for (mp, path, meta) in batch_meta {
                 if self
-                    .mount_table
+                    .vfs_router
                     .get_canonical(&mp)
                     .map(|e| e.metastore.is_some())
                     .unwrap_or(false)
@@ -4185,7 +4185,7 @@ impl Kernel {
         } else {
             parent_path
         };
-        let route = match self.mount_table.route(normalized, zone_id) {
+        let route = match self.vfs_router.route(normalized, zone_id) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
@@ -4272,7 +4272,7 @@ impl Kernel {
         F: FnOnce(&crate::cas_engine::CASEngine) -> Result<R, crate::cas_engine::CASError>,
     {
         let canonical = canonicalize(mount_point, zone_id);
-        let entry = self.mount_table.get_canonical(&canonical).ok_or_else(|| {
+        let entry = self.vfs_router.get_canonical(&canonical).ok_or_else(|| {
             KernelError::InvalidPath(format!(
                 "{}: mount not found: {}@{}",
                 op, mount_point, zone_id
@@ -4442,11 +4442,11 @@ impl Kernel {
 
     /// R20.18.7: install the kernel-side `BlobFetcher` into the raft
     /// server's shared slot. Called from `init_federation_from_env`
-    /// once `MountTable` has any backends registered. Idempotent —
+    /// once `VFSRouter` has any backends registered. Idempotent —
     /// writing twice just replaces the previous fetcher Arc.
     fn wire_blob_fetcher(&self, slot: nexus_raft::blob_fetcher::BlobFetcherSlot) {
         let fetcher = Arc::new(crate::blob_fetcher::KernelBlobFetcher::new(Arc::clone(
-            &self.mount_table,
+            &self.vfs_router,
         )));
         *slot.write() = Some(fetcher as Arc<dyn nexus_raft::blob_fetcher::BlobFetcher>);
     }
@@ -4455,7 +4455,7 @@ impl Kernel {
     /// or from tests. Reads federation env vars, constructs
     /// `raft::ZoneManager` internally, bootstraps the root raft group,
     /// creates listed zones, installs per-zone apply-cb, and replays
-    /// persisted DT_MOUNT entries into the MountTable.
+    /// persisted DT_MOUNT entries into the VFSRouter.
     ///
     /// Env vars read (all optional — absence of `NEXUS_HOSTNAME` is
     /// the "no federation" signal and the method returns `Ok(())`
@@ -4663,7 +4663,7 @@ impl Kernel {
         // R20.18.7: install the kernel-side `BlobFetcher` into the slot
         // the ZoneManager handed back. The gRPC server is already
         // running — once this write lands, every peer `ReadBlob`
-        // resolves against the local MountTable's backends.
+        // resolves against the local VFSRouter's backends.
         self.wire_blob_fetcher(blob_slot);
 
         // Joiner detection — etcd `--initial-cluster-state=existing` equivalent.
@@ -4735,7 +4735,7 @@ impl Kernel {
             }
         }
 
-        // Replay persisted DT_MOUNT entries so MountTable is current
+        // Replay persisted DT_MOUNT entries so VFSRouter is current
         // before first syscall arrives.
         self.reconcile_mounts_from_zones()?;
 
@@ -4941,7 +4941,7 @@ impl Kernel {
             .unwrap_or_default()
     }
 
-    /// Wire a federation child-zone mount into the local MountTable
+    /// Wire a federation child-zone mount into the local VFSRouter
     /// (R20.16.3). Invoked by the apply-side ``mount_apply_cb`` on
     /// every replica — leader and followers alike — after a DT_MOUNT
     /// Set commits in the parent zone's state machine. Safe to call
@@ -4960,7 +4960,7 @@ impl Kernel {
             return Ok(());
         };
         wire_federation_mount_impl(
-            &self.mount_table,
+            &self.vfs_router,
             &self.dcache,
             &self.lock_manager,
             registry,
@@ -4995,7 +4995,7 @@ impl Kernel {
             tracing::warn!(parent_zone_id = %parent_zone_id, "install_federation_mount_coherence: zone_registry or zone_runtime not set");
             return;
         };
-        let mount_table = self.mount_table_handle();
+        let vfs_router = self.vfs_router_handle();
         let dcache = self.dcache_handle();
         let lock_manager = Arc::clone(&self.lock_manager);
         let registry = Arc::clone(registry);
@@ -5013,7 +5013,7 @@ impl Kernel {
                     backend_name,
                 } => {
                     let _ = wire_federation_mount_impl(
-                        &mount_table,
+                        &vfs_router,
                         &dcache,
                         &lock_manager,
                         &registry,
@@ -5027,7 +5027,7 @@ impl Kernel {
                 }
                 MountApplyEvent::Delete { key } => {
                     unwire_federation_mount_impl(
-                        &mount_table,
+                        &vfs_router,
                         &dcache,
                         &cross_zone_mounts,
                         &parent_zone_id_owned,
@@ -5111,7 +5111,7 @@ impl Kernel {
 // ─────────────────────────────────────────────────────────────────────
 
 fn install_federation_dcache_coherence_impl(
-    mount_table: &Arc<MountTable>,
+    vfs_router: &Arc<VFSRouter>,
     dcache: &Arc<DCache>,
     consensus: &nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
 ) {
@@ -5120,10 +5120,10 @@ fn install_federation_dcache_coherence_impl(
     };
     let coherence_key = consensus.coherence_id();
     let dcache = Arc::clone(dcache);
-    let mount_table = Arc::clone(mount_table);
+    let vfs_router = Arc::clone(vfs_router);
     let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
         let trimmed = zone_relative_key.trim_start_matches('/');
-        for mp in mount_table.mount_points_for_coherence_key(coherence_key) {
+        for mp in vfs_router.mount_points_for_coherence_key(coherence_key) {
             let global = if trimmed.is_empty() {
                 mp.clone()
             } else if mp.ends_with('/') {
@@ -5168,7 +5168,7 @@ fn parse_peer_list_to_raft_format(peers_csv: &str) -> Result<Vec<String>, String
 #[allow(clippy::too_many_arguments)]
 #[allow(dead_code)]
 fn wire_federation_mount_impl(
-    mount_table: &Arc<MountTable>,
+    vfs_router: &Arc<VFSRouter>,
     dcache: &Arc<DCache>,
     lock_manager: &Arc<LockManager>,
     registry: &Arc<nexus_raft::raft::ZoneRaftRegistry>,
@@ -5203,7 +5203,7 @@ fn wire_federation_mount_impl(
             return Ok(());
         }
     };
-    tracing::info!(global_path = %global_path, "wire_federation_mount: will add to MountTable");
+    tracing::info!(global_path = %global_path, "wire_federation_mount: will add to VFSRouter");
 
     // 3. Build a ZoneMetastore rooted at global_path targeting the
     //    target's state machine. Reuses the root mount's backend (Arc
@@ -5216,11 +5216,11 @@ fn wire_federation_mount_impl(
             global_path.clone(),
         );
     let root_canonical = canonicalize("/", contracts::ROOT_ZONE_ID);
-    let root_backend = mount_table
+    let root_backend = vfs_router
         .get_canonical(&root_canonical)
         .and_then(|e| e.backend.clone());
 
-    // 4. Install into MountTable (routing + backend + metastore) under
+    // 4. Install into VFSRouter (routing + backend + metastore) under
     //    the root zone — federation mounts live in the root zone's path
     //    space on every node. Tag the entry with `target_zone_id` so
     //    routing carries the destination zone (not the caller's ambient)
@@ -5228,7 +5228,7 @@ fn wire_federation_mount_impl(
     //    paths under `/corp/eng` (owning zone is `corp-eng`) and lets
     //    `federation_share` derive zone-relative prefix from a global
     //    path via the existing `RouteResult`.
-    mount_table.add_federation_mount(
+    vfs_router.add_federation_mount(
         &global_path,
         contracts::ROOT_ZONE_ID,
         backend_name,
@@ -5237,7 +5237,7 @@ fn wire_federation_mount_impl(
         false,
     );
     let canonical = canonicalize(&global_path, contracts::ROOT_ZONE_ID);
-    mount_table.install_metastore(&canonical, metastore);
+    vfs_router.install_metastore(&canonical, metastore);
 
     // 5. LockManager upgrade on first federated mount — idempotent.
     //    Bind distributed locks to the ROOT zone's consensus, not this
@@ -5293,7 +5293,7 @@ fn wire_federation_mount_impl(
 
     // 7. Install apply-side dcache coherence on the target consensus
     //    (idempotent — replays overwrite with an equivalent closure).
-    install_federation_dcache_coherence_impl(mount_table, dcache, &target_consensus);
+    install_federation_dcache_coherence_impl(vfs_router, dcache, &target_consensus);
 
     // 8. Update reverse index (target → [(parent, mount_path, global)]).
     //    Dedup so replayed apply events don't double-register.
@@ -5313,14 +5313,14 @@ fn wire_federation_mount_impl(
 
 #[allow(dead_code)]
 fn unwire_federation_mount_impl(
-    mount_table: &Arc<MountTable>,
+    vfs_router: &Arc<VFSRouter>,
     dcache: &Arc<DCache>,
     cross_zone_mounts: &DashMap<String, Vec<(String, String, String)>>,
     parent_zone_id: &str,
     mount_path: &str,
 ) {
     // Find the matching entry via the reverse index, then drop the
-    // MountTable slot + evict the DCache seed. Scans all targets
+    // VFSRouter slot + evict the DCache seed. Scans all targets
     // because the apply-cb only knows (parent, mount_path), not target.
     let mut remove_empty: Option<String> = None;
     let mut unwired_global: Option<String> = None;
@@ -5342,7 +5342,7 @@ fn unwire_federation_mount_impl(
         cross_zone_mounts.remove(&target);
     }
     if let Some(global) = unwired_global {
-        mount_table.remove(&global, contracts::ROOT_ZONE_ID);
+        vfs_router.remove(&global, contracts::ROOT_ZONE_ID);
         dcache.evict(&global);
         dcache.evict_prefix(&format!("{}/", global.trim_end_matches('/')));
     }

@@ -301,7 +301,7 @@ pub trait Metastore: Send + Sync {
     /// entanglement). Return ``None`` when the metastore is standalone
     /// (``LocalMetastore``) — the default.
     ///
-    /// Used by ``MountTable::mount_points_for_coherence_key`` to fan
+    /// Used by ``VFSRouter::mount_points_for_coherence_key`` to fan
     /// out apply-side dcache invalidation across crosslinks.
     fn coherence_key(&self) -> Option<usize> {
         None

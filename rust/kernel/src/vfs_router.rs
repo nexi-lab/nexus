@@ -1,9 +1,9 @@
 //! Kernel mount table — single SSOT for mount entries (Rust port).
 //!
-//! Mirrors Python `nexus.core.mount_table` (the canonical kernel-namespace
+//! Mirrors Python `nexus.core.vfs_router` (the canonical kernel-namespace
 //! placement for this data type). Each `MountEntry` is the in-memory record
 //! for one mount: storage backend and optional per-mount metastore.
-//! Together they form `MountTable`, an LPM-routable container keyed by
+//! Together they form `VFSRouter`, an LPM-routable container keyed by
 //! zone-canonical paths. Access control lives one layer up (rebac); the
 //! mount table is pure routing.
 //!
@@ -14,7 +14,7 @@
 //!     `DashMap<String, Arc<dyn Metastore>>` keyed by the same canonical paths
 //!
 //! Both halves now live in `MountEntry`, so callers no longer have to keep
-//! the two maps consistent. The Python side's `MountTable._entries` Python-
+//! the two maps consistent. The Python side's `VFSRouter._entries` Python-
 //! ref shadow cache disappears as `_write_content` and friends migrate to
 //! call `kernel.sys_*` directly (no need to hold Python backend/metastore
 //! refs anymore).
@@ -76,7 +76,7 @@ pub struct MountEntry {
 
 impl MountEntry {
     /// Construct a new entry. `metastore` is typically `None` at mount time
-    /// and installed later via `MountTable::install_metastore` (federation),
+    /// and installed later via `VFSRouter::install_metastore` (federation),
     /// or set up-front via `with_metastore` (standalone redb).
     pub fn new(backend: Option<Arc<dyn ObjectStore>>, backend_name: impl Into<String>) -> Self {
         Self {
@@ -119,14 +119,14 @@ pub enum RouteError {
 }
 
 // ---------------------------------------------------------------------------
-// RouteResult — returned by MountTable::route
+// RouteResult — returned by VFSRouter::route
 // ---------------------------------------------------------------------------
 
 /// Result of a successful LPM route lookup.
 ///
 /// `mount_point` carries the **zone-canonical key** (`/{zone_id}{user_path}`),
-/// which is the same form `MountTable` is keyed by. Pass it straight into
-/// `MountTable::{read_content, write_content, get_canonical, …}` without
+/// which is the same form `VFSRouter` is keyed by. Pass it straight into
+/// `VFSRouter::{read_content, write_content, get_canonical, …}` without
 /// re-canonicalizing. Historical name inherited from the pre-migration
 /// `router::RustRouteResult`.
 #[derive(Debug, Clone)]
@@ -149,20 +149,20 @@ pub struct RouteResult {
 pub type RustRouteResult = RouteResult;
 
 // ---------------------------------------------------------------------------
-// MountTable — kernel-owned mount registry
+// VFSRouter — kernel-owned mount registry
 // ---------------------------------------------------------------------------
 
-pub struct MountTable {
+pub struct VFSRouter {
     entries: DashMap<String, MountEntry>,
 }
 
-impl Default for MountTable {
+impl Default for VFSRouter {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MountTable {
+impl VFSRouter {
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
@@ -457,7 +457,7 @@ impl MountTable {
     // ── Backend-operation delegation ───────────────────────────────────
     //
     // Thin wrappers that look up a mount by canonical key and call the
-    // matching `ObjectStore` method. Kept on `MountTable` (not `Kernel`)
+    // matching `ObjectStore` method. Kept on `VFSRouter` (not `Kernel`)
     // so the lookup + call live in one place and the `dashmap::Ref` is
     // held for the shortest possible window. A mount without a backend
     // returns `None` — callers treat this as "no Rust-side backend, fall
@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_basic_route() {
-        let table = MountTable::new();
+        let table = VFSRouter::new();
         table.add("/", "root", entry());
         table.add("/workspace", "root", entry());
 
@@ -695,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_route_falls_back_to_root() {
-        let table = MountTable::new();
+        let table = VFSRouter::new();
         table.add("/", "root", entry());
 
         let r = table.route("/unknown/path", "root").unwrap();
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_cross_zone_isolation() {
-        let table = MountTable::new();
+        let table = VFSRouter::new();
         table.add("/", "root", entry());
         table.add("/shared", "zone-beta", entry());
 
@@ -742,7 +742,7 @@ mod tests {
             }
         }
 
-        let table = MountTable::new();
+        let table = VFSRouter::new();
         table.add("/data", "root", entry());
         let canonical = canonicalize_mount_path("/data", "root");
 
@@ -755,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_mount_management() {
-        let table = MountTable::new();
+        let table = VFSRouter::new();
         table.add("/data", "root", entry());
         assert!(table.has("/data", "root"));
         assert!(!table.has("/data", "other"));
@@ -809,7 +809,7 @@ mod tests {
     #[test]
     fn zone_to_global_round_trip() {
         // canonicalize → route → zone_key → zone_to_global should recover original
-        let table = MountTable::new();
+        let table = VFSRouter::new();
         table.add("/corp", "root", entry());
 
         let global = "/corp/eng/foo.txt";
@@ -883,7 +883,7 @@ mod tests {
             key: Some(FAMILY_KEY),
         });
 
-        let table = MountTable::new();
+        let table = VFSRouter::new();
         table.add(
             "/corp",
             "root",

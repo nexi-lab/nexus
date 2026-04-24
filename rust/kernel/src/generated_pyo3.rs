@@ -30,7 +30,7 @@ use crate::hook_registry::HookRegistry;
 use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::metastore::{FileMetadata, MetastoreError};
-use crate::mount_table::{RouteError, RustRouteResult};
+use crate::vfs_router::{RouteError, RustRouteResult};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Error conversion: KernelError -> PyErr (cached exception classes)
@@ -1631,10 +1631,10 @@ impl PyKernel {
         request_bytes: Vec<u8>,
         stream_path: &str,
     ) -> PyResult<()> {
-        let canonical = crate::mount_table::canonicalize_mount_path(mount_point, zone_id);
+        let canonical = crate::vfs_router::canonicalize_mount_path(mount_point, zone_id);
         let entry = self
             .inner
-            .mount_table
+            .vfs_router
             .get_canonical(&canonical)
             .ok_or_else(|| {
                 pyo3::exceptions::PyFileNotFoundError::new_err(format!(
@@ -1967,7 +1967,7 @@ impl PyKernel {
         if let Some(remote_ms) = self.inner.pending_remote_metastore.lock().take() {
             let canonical_key = format!("/{zone_id}{path}");
             self.inner
-                .mount_table
+                .vfs_router
                 .install_metastore(&canonical_key, remote_ms);
         }
 
@@ -3085,7 +3085,7 @@ impl PyKernel {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         // R20.18.5: newly-created zones need the apply-cb installed so
         // that DT_MOUNT events on this zone propagate to the kernel
-        // MountTable + Python DLC. Without this, nested federation
+        // VFSRouter + Python DLC. Without this, nested federation
         // mounts (e.g. family zone seeded by share_subtree) never wire
         // up on the leader.
         if let Some(consensus) = zm.registry().get_node(zone_id) {

@@ -607,7 +607,7 @@ pub struct FullStateMachine {
     ///
     /// Fires on every committed DT_MOUNT ``SetMetadata`` /
     /// ``DeleteMetadata`` so the kernel can wire / unwire a federation
-    /// child-zone mount into the local ``MountTable`` on every replica
+    /// child-zone mount into the local ``VFSRouter`` on every replica
     /// (including the leader — the leader also goes through apply).
     /// Set carries the decoded ``FileMetadata`` proto snapshot so the
     /// callback doesn't race a subsequent apply to the same key; Delete
@@ -799,7 +799,7 @@ impl FullStateMachine {
                     // non-mount entry (e.g. federation_unmount writes
                     // DT_DIR at the mount path). Fire Delete so
                     // wire_federation_mount_impl removes this mount
-                    // from the local MountTable.
+                    // from the local VFSRouter.
                     if k == *key {
                         MountApplyEvent::Delete { key: key.clone() }
                     } else {
@@ -1559,7 +1559,7 @@ impl StateMachine for FullStateMachine {
         // not a DeleteMetadata. We need to detect "previous entry
         // was DT_MOUNT but the new one isn't" and fire a Delete
         // event so wire_federation_mount_impl removes the mount from
-        // MountTable on every node.
+        // VFSRouter on every node.
         #[cfg(feature = "grpc")]
         let delete_mount_key: Option<String> = match command {
             Command::DeleteMetadata { key } if self.peek_is_dt_mount(key) => Some(key.clone()),

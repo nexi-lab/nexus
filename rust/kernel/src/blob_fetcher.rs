@@ -6,7 +6,7 @@
 //! backends + CAS). This module bridges the two.
 //!
 //! The fetcher walks every non-empty backend on the kernel's
-//! `MountTable` and returns the first one that successfully serves
+//! `VFSRouter` and returns the first one that successfully serves
 //! `content_hash`. CAS backends ignore `backend_path` and `ctx`, so we
 //! pass an empty path and a system `OperationContext`.
 //!
@@ -21,16 +21,16 @@ use std::sync::Arc;
 use nexus_raft::blob_fetcher::BlobFetcher;
 
 use crate::kernel::OperationContext;
-use crate::mount_table::MountTable;
+use crate::vfs_router::VFSRouter;
 
-/// Kernel-side `BlobFetcher` — backed by the kernel's `MountTable`.
+/// Kernel-side `BlobFetcher` — backed by the kernel's `VFSRouter`.
 pub(crate) struct KernelBlobFetcher {
-    mount_table: Arc<MountTable>,
+    vfs_router: Arc<VFSRouter>,
 }
 
 impl KernelBlobFetcher {
-    pub(crate) fn new(mount_table: Arc<MountTable>) -> Self {
-        Self { mount_table }
+    pub(crate) fn new(vfs_router: Arc<VFSRouter>) -> Self {
+        Self { vfs_router }
     }
 }
 
@@ -40,7 +40,7 @@ impl BlobFetcher for KernelBlobFetcher {
         if content_hash.is_empty() {
             return Err("empty content_hash".to_string());
         }
-        let backends = self.mount_table.backends();
+        let backends = self.vfs_router.backends();
         if backends.is_empty() {
             return Err("no local backends registered".to_string());
         }

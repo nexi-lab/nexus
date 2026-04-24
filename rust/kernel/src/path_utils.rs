@@ -1,5 +1,5 @@
 //! Pure path utility functions — Rust-accelerated replacements for
-//! `src/nexus/core/path_utils.py` and mount_table zone helpers.
+//! `src/nexus/core/path_utils.py` and vfs_router zone helpers.
 //!
 //! All functions are stateless and side-effect-free.  On the syscall hot
 //! path, Rust shaves ~1μs Python string ops down to ~50ns per call.
@@ -250,7 +250,7 @@ pub fn unscope_internal_path(path: &str) -> String {
 
 // ---------------------------------------------------------------------------
 // Zone-canonical helpers (also in router.rs, duplicated here as standalone
-// #[pyfunction]s for direct use by mount_table.py)
+// #[pyfunction]s for direct use by vfs_router.py)
 // ---------------------------------------------------------------------------
 
 /// Canonicalize a virtual path with zone prefix.

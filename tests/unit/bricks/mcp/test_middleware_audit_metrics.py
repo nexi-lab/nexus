@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
+import redis.asyncio as _redis_async
 
 from nexus.bricks.mcp import middleware_audit as mw
 
@@ -19,13 +20,9 @@ async def test_record_metrics_increments_qps_and_sadds_active(monkeypatch):
     fake_client.expire = AsyncMock(return_value=True)
     fake_client.close = AsyncMock()
 
-    class _FakeRedisMod:
-        @staticmethod
-        def from_url(_url):
-            return fake_client
+    monkeypatch.setattr(_redis_async, "from_url", lambda _url: fake_client)
 
-    with patch.dict("sys.modules", {"redis.asyncio": _FakeRedisMod}):
-        await mw._record_metrics({"subject_id": "kid_abc", "token_hash": "deadbeef"})
+    await mw._record_metrics({"subject_id": "kid_abc", "token_hash": "deadbeef"})
 
     fake_client.incr.assert_awaited_once()
     qps_key = fake_client.incr.await_args.args[0]
@@ -54,11 +51,7 @@ async def test_record_metrics_swallows_redis_errors(monkeypatch):
     fake_client.incr = AsyncMock(side_effect=RuntimeError("boom"))
     fake_client.close = AsyncMock()
 
-    class _FakeRedisMod:
-        @staticmethod
-        def from_url(_url):
-            return fake_client
+    monkeypatch.setattr(_redis_async, "from_url", lambda _url: fake_client)
 
-    with patch.dict("sys.modules", {"redis.asyncio": _FakeRedisMod}):
-        # Must not raise — audit is fire-and-forget.
-        await mw._record_metrics({"subject_id": "kid_abc"})
+    # Must not raise — audit is fire-and-forget.
+    await mw._record_metrics({"subject_id": "kid_abc"})

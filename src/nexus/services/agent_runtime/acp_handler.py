@@ -149,13 +149,16 @@ class AcpProtocolHandler:
 
         # Extract text from prompt content blocks
         prompt_parts = params.get("prompt", [])
-        text_parts = []
-        for part in prompt_parts:
-            if isinstance(part, dict) and part.get("type") == "text":
-                text_parts.append(part.get("text", ""))
-            elif isinstance(part, str):
-                text_parts.append(part)
-        prompt = "\n".join(text_parts) if text_parts else str(prompt_parts)
+        if isinstance(prompt_parts, str):
+            prompt = prompt_parts
+        else:
+            text_parts = []
+            for part in prompt_parts:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            prompt = "\n".join(text_parts) if text_parts else str(prompt_parts)
 
         # Run the agent loop — updates stream via observer callback
         result = await self._loop.run(prompt)

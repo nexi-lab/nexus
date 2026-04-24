@@ -95,7 +95,11 @@ class Tool(Protocol):
 
 
 class ToolResult:
-    """Structured tool result with truncation metadata."""
+    """Structured tool result with truncation metadata.
+
+    ``content`` is normally a plain string, but may be a list of Anthropic
+    content blocks (text + image) for multimodal results like screenshots.
+    """
 
     __slots__ = ("tool_call_id", "tool_name", "content", "truncated", "persisted_path")
 
@@ -103,7 +107,7 @@ class ToolResult:
         self,
         tool_call_id: str,
         tool_name: str,
-        content: str,
+        content: str | list[dict[str, Any]],
         *,
         truncated: bool = False,
         persisted_path: str | None = None,
@@ -113,6 +117,17 @@ class ToolResult:
         self.content = content
         self.truncated = truncated
         self.persisted_path = persisted_path
+
+    @property
+    def content_length(self) -> int:
+        """Byte-length estimate for budget enforcement."""
+        if isinstance(self.content, str):
+            return len(self.content)
+        # For content blocks, estimate from JSON serialization
+        return sum(
+            len(block.get("text", "")) if block.get("type") == "text" else 200
+            for block in self.content
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -205,16 +220,19 @@ class DefaultMessageBudget:
         self._storage = storage
 
     async def enforce(self, results: list[ToolResult], budget: int) -> list[ToolResult]:
-        total = sum(len(r.content) for r in results)
+        total = sum(r.content_length for r in results)
         if total <= budget:
             return results
 
         # Sort indices by content length (descending) — truncate largest first
-        indexed = sorted(enumerate(results), key=lambda x: len(x[1].content), reverse=True)
+        indexed = sorted(enumerate(results), key=lambda x: x[1].content_length, reverse=True)
 
         for idx, result in indexed:
             if total <= budget:
                 break
+            # Skip multimodal (list) content — cannot truncate images
+            if not isinstance(result.content, str):
+                continue
             if len(result.content) <= PREVIEW_SIZE_BYTES:
                 continue  # too small to truncate
 
@@ -383,6 +401,15 @@ class ExclusiveLockPolicy:
         # Empty result handling (CC: toolResultStorage.ts:272-296)
         if not raw_result:
             raw_result = f"({name} completed with no output)"
+
+        # Multimodal content blocks (list) bypass truncation — they contain
+        # binary image data that cannot be meaningfully truncated.
+        if isinstance(raw_result, list):
+            return ToolResult(
+                tool_call_id=tool_call_id,
+                tool_name=name,
+                content=raw_result,
+            )
 
         # Per-tool truncation (§2.4)
         max_chars = getattr(tool, "max_result_size_chars", DEFAULT_MAX_RESULT_SIZE_CHARS)

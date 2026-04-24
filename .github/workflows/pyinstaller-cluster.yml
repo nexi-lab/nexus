@@ -119,6 +119,30 @@ jobs:
       - name: Setup Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      # ── protoc for raft-proto transitive build script ────────────────────
+      # rust/kernel pulls in raft → raft-proto, whose build script uses
+      # protobuf-build 0.14.1 and only accepts classic 3.x protoc. brew's
+      # current `protobuf` formula ships 34.x which is rejected. Pin 3.20.2
+      # (the last classic 3.x release with an arm64 macOS asset — 3.20.3
+      # dropped arm64) and prepend to PATH.
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROTOC_VERSION=3.20.2
+          case "$(uname -m)" in
+            arm64) ARCH=aarch_64 ;;
+            x86_64) ARCH=x86_64 ;;
+            *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+          esac
+          mkdir -p "$HOME/protoc"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-${ARCH}.zip"
+          unzip -o /tmp/protoc.zip -d "$HOME/protoc"
+          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
+          "$HOME/protoc/bin/protoc" --version
+
       - name: Rust build cache
         uses: Swatinem/rust-cache@v2
         with:

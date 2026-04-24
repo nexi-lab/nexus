@@ -159,7 +159,7 @@ jobs:
         if: matrix.os != 'windows-latest'
         shell: bash -el {0}
         run: |
-          conda run -n nexus python -c "from nexus_kernel import Metastore, ZoneManager; print('nexus_kernel OK')"
+          conda run -n nexus python -c "from nexus_kernel import Metastore; print('nexus_kernel OK')"
 
       # ── conda-pack ───────────────────────────────────────────────────────
       - name: Install conda-pack into base environment

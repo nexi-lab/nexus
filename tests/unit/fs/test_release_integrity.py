@@ -136,8 +136,6 @@ def _make_metadata(path: str) -> FileMetadata:
     now = datetime.now(UTC)
     return FileMetadata(
         path=path,
-        backend_name="test",
-        physical_path="hash123",
         size=42,
         etag="etag123",
         mime_type="text/plain",

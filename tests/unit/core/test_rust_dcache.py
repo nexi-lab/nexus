@@ -230,8 +230,6 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
 
         meta = FileMetadata(
             path="/test/file.txt",
-            backend_name="local",
-            physical_path="/data/file.txt",
             size=512,
             entry_type=DT_REG,
             etag="abc",
@@ -254,8 +252,6 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
 
         meta = FileMetadata(
             path="/new/file.txt",
-            backend_name="s3",
-            physical_path="/bucket/file.txt",
             size=1024,
             entry_type=DT_REG,
             version=3,
@@ -275,8 +271,6 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
 
         meta = FileMetadata(
             path="/del/me.txt",
-            backend_name="local",
-            physical_path="/data/me.txt",
             size=0,
             entry_type=DT_REG,
         )
@@ -295,8 +289,6 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
             store.put(
                 FileMetadata(
                     path=f"/mount/file{i}",
-                    backend_name="local",
-                    physical_path=f"/data/file{i}",
                     size=0,
                     entry_type=DT_REG,
                 )
@@ -304,8 +296,6 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
         store.put(
             FileMetadata(
                 path="/other/keep",
-                backend_name="local",
-                physical_path="/data/keep",
                 size=0,
                 entry_type=DT_REG,
             )
@@ -324,8 +314,6 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
         for i in range(3):
             store._store[f"/list/file{i}"] = FileMetadata(
                 path=f"/list/file{i}",
-                backend_name="local",
-                physical_path=f"/data/file{i}",
                 size=i * 100,
                 entry_type=DT_REG,
             )
@@ -343,8 +331,6 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
         metas = [
             FileMetadata(
                 path=f"/batch/{i}",
-                backend_name="local",
-                physical_path=f"/data/{i}",
                 size=i,
                 entry_type=DT_REG,
             )

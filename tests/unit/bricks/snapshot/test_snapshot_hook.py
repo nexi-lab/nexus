@@ -27,8 +27,6 @@ def _make_meta(**overrides: object) -> MagicMock:
     meta.size = overrides.get("size", 1024)
     meta.version = overrides.get("version", 3)
     meta.modified_at = overrides.get("modified_at", datetime(2026, 1, 1, tzinfo=UTC))
-    meta.backend_name = overrides.get("backend_name", "default")
-    meta.physical_path = overrides.get("physical_path", "/data/abc")
     return meta
 
 
@@ -118,7 +116,7 @@ class TestOnPostDelete:
         self, hook: SnapshotWriteHook, mock_svc: MagicMock
     ) -> None:
         mock_svc.is_tracked.return_value = "txn-1"
-        meta = _make_meta(backend_name="s3", physical_path="/bucket/key")
+        meta = _make_meta()
         ctx = DeleteHookContext(path="/file.txt", context=None, metadata=meta)
         hook.on_post_delete(ctx)
 
@@ -130,8 +128,6 @@ class TestOnPostDelete:
                 "size": 1024,
                 "version": 3,
                 "modified_at": "2026-01-01T00:00:00+00:00",
-                "backend_name": "s3",
-                "physical_path": "/bucket/key",
             },
         )
 

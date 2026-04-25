@@ -275,8 +275,6 @@ class TestDTPipeMetadata:
     def test_is_pipe_property(self) -> None:
         meta = FileMetadata(
             path="/nexus/pipes/test",
-            backend_name="pipe",
-            physical_path="mem://",
             size=0,
             entry_type=DT_PIPE,
         )
@@ -289,8 +287,6 @@ class TestDTPipeMetadata:
         """DT_PIPE inodes don't need backend_name/physical_path validation."""
         meta = FileMetadata(
             path="/nexus/pipes/test",
-            backend_name="",
-            physical_path="",
             size=0,
             entry_type=DT_PIPE,
         )
@@ -301,8 +297,6 @@ class TestDTPipeMetadata:
         """DT_PIPE still needs a valid path."""
         meta = FileMetadata(
             path="",
-            backend_name="",
-            physical_path="",
             size=0,
             entry_type=DT_PIPE,
         )
@@ -313,8 +307,6 @@ class TestDTPipeMetadata:
         """Ensure DT_PIPE skip doesn't break regular file validation."""
         meta = FileMetadata(
             path="/regular/file",
-            backend_name="",
-            physical_path="",
             size=0,
             entry_type=DT_REG,
         )
@@ -334,8 +326,6 @@ class TestSysSetAttrUpsert:
         """sys_setattr on existing inode only updates mutable fields."""
         meta = FileMetadata(
             path="/existing/file",
-            backend_name="local",
-            physical_path="/data/file",
             size=100,
             entry_type=DT_REG,
             mime_type="text/plain",
@@ -350,8 +340,6 @@ class TestSysSetAttrUpsert:
         """entry_type should not change after creation."""
         meta = FileMetadata(
             path="/existing/file",
-            backend_name="local",
-            physical_path="/data/file",
             size=100,
             entry_type=DT_REG,
         )

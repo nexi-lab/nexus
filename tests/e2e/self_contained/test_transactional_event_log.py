@@ -55,8 +55,6 @@ def _make_metadata(
 ) -> FileMetadata:
     return FileMetadata(
         path=path,
-        backend_name="local",
-        physical_path=etag,
         size=size,
         etag=etag,
         mime_type="text/plain",

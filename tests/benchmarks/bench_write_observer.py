@@ -37,8 +37,6 @@ ITERATIONS = 1000
 def _make_metadata(path: str, *, etag: str = "abc123", size: int = 100) -> FileMetadata:
     return FileMetadata(
         path=path,
-        backend_name="local",
-        physical_path=etag,
         size=size,
         etag=etag,
         mime_type="text/plain",

@@ -128,8 +128,6 @@ class TestRoundtripConsistency:
         now = datetime(2026, 2, 10, 12, 0, 0)
         metadata = FileMetadata(
             path="/zone1/docs/readme.md",
-            backend_name="s3",
-            physical_path="/bucket/abc123",
             size=2048,
             etag="sha256-xyz789",
             mime_type="text/markdown",
@@ -155,8 +153,6 @@ class TestRoundtripConsistency:
         """None optional fields should map to sensible defaults."""
         metadata = FileMetadata(
             path="/test/file.txt",
-            backend_name="",
-            physical_path="",
             size=0,
             etag=None,
             mime_type=None,

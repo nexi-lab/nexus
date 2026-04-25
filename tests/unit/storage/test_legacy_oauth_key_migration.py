@@ -184,12 +184,9 @@ class _FakeMetastore:
         value = self._entries.get(path)
         if value is None:
             return None
-        import json
 
         return FileMetadata(
             path=path,
-            backend_name="_config",
-            physical_path=json.dumps({"v": value}),
             size=0,
         )
 

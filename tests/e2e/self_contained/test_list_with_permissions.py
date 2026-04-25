@@ -26,8 +26,6 @@ def _make_store(zone_id: str = ROOT_ZONE_ID) -> RaftMetadataStore:
 def _make_meta(path: str, size: int = 100) -> FileMetadata:
     return FileMetadata(
         path=path,
-        backend_name="local",
-        physical_path=f"/data{path}",
         size=size,
     )
 

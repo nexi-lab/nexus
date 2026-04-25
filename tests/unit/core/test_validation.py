@@ -22,8 +22,6 @@ class TestFileMetadataValidation:
         """Test that valid metadata passes validation."""
         metadata = FileMetadata(
             path="/data/file.txt",
-            backend_name="local",
-            physical_path="/storage/file.txt",
             size=1024,
         )
         # Should not raise
@@ -33,8 +31,6 @@ class TestFileMetadataValidation:
         """Test that path is required."""
         metadata = FileMetadata(
             path="",
-            backend_name="local",
-            physical_path="/storage/file.txt",
             size=1024,
         )
         with pytest.raises(ValidationError, match="path is required"):
@@ -44,8 +40,6 @@ class TestFileMetadataValidation:
         """Test that path must start with /."""
         metadata = FileMetadata(
             path="data/file.txt",
-            backend_name="local",
-            physical_path="/storage/file.txt",
             size=1024,
         )
         with pytest.raises(ValidationError, match="path must start with '/'"):
@@ -55,8 +49,6 @@ class TestFileMetadataValidation:
         """Test that path cannot contain null bytes."""
         metadata = FileMetadata(
             path="/data/file\x00.txt",
-            backend_name="local",
-            physical_path="/storage/file.txt",
             size=1024,
         )
         with pytest.raises(ValidationError, match="path contains null bytes"):
@@ -66,8 +58,6 @@ class TestFileMetadataValidation:
         """Test that backend_name is required."""
         metadata = FileMetadata(
             path="/data/file.txt",
-            backend_name="",
-            physical_path="/storage/file.txt",
             size=1024,
         )
         with pytest.raises(ValidationError, match="backend_name is required"):
@@ -77,8 +67,6 @@ class TestFileMetadataValidation:
         """Test that physical_path is required."""
         metadata = FileMetadata(
             path="/data/file.txt",
-            backend_name="local",
-            physical_path="",
             size=1024,
         )
         with pytest.raises(ValidationError, match="physical_path is required"):
@@ -88,8 +76,6 @@ class TestFileMetadataValidation:
         """Test that size cannot be negative."""
         metadata = FileMetadata(
             path="/data/file.txt",
-            backend_name="local",
-            physical_path="/storage/file.txt",
             size=-100,
         )
         with pytest.raises(ValidationError, match="size cannot be negative"):
@@ -99,8 +85,6 @@ class TestFileMetadataValidation:
         """Test that version must be >= 1."""
         metadata = FileMetadata(
             path="/data/file.txt",
-            backend_name="local",
-            physical_path="/storage/file.txt",
             size=1024,
             version=0,
         )
@@ -254,8 +238,6 @@ class TestTableDrivenValidation:
         """Table-driven test for FileMetadata validation."""
         metadata = FileMetadata(
             path=path,
-            backend_name="local",
-            physical_path="/storage/file.txt",
             size=size,
         )
 

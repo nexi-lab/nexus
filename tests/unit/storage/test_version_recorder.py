@@ -46,8 +46,6 @@ def session(engine):
 
 def _make_metadata(
     path: str = "/test/file.txt",
-    backend_name: str = "local",
-    physical_path: str = "/data/abc123",
     size: int = 1024,
     etag: str | None = "sha256-abc123",
     mime_type: str | None = "text/plain",
@@ -62,8 +60,6 @@ def _make_metadata(
     now = datetime(2026, 2, 10, 12, 0, 0)
     return FileMetadata(
         path=path,
-        backend_name=backend_name,
-        physical_path=physical_path,
         size=size,
         etag=etag,
         mime_type=mime_type,
@@ -103,8 +99,6 @@ class TestRecordCreate:
         now = datetime(2026, 2, 10, 14, 30, 0)
         metadata = _make_metadata(
             path="/zone1/docs/readme.md",
-            backend_name="s3",
-            physical_path="/bucket/abc123",
             size=2048,
             etag="sha256-xyz789",
             mime_type="text/markdown",
@@ -124,8 +118,6 @@ class TestRecordCreate:
 
         # Verify field name translations (proto name -> SQLAlchemy column)
         assert fp.virtual_path == metadata.path  # path -> virtual_path
-        assert fp.backend_id == metadata.backend_name  # backend_name -> backend_id
-        assert fp.physical_path == metadata.physical_path
         assert fp.size_bytes == metadata.size  # size -> size_bytes
         assert fp.content_hash == metadata.etag  # etag -> content_hash
         assert fp.file_type == metadata.mime_type  # mime_type -> file_type
@@ -212,19 +204,6 @@ class TestRecordCreate:
         )
         assert len(active) == 1
         assert active[0].content_hash == "new-hash"
-
-    def test_defaults_backend_to_local(self, session: Session) -> None:
-        """When backend_name is empty, should default to 'local'."""
-        metadata = _make_metadata(backend_name="")
-        recorder = VersionRecorder(session)
-        recorder.record_write(metadata, is_new=True)
-        session.commit()
-
-        fp = session.execute(
-            select(FilePathModel).where(FilePathModel.virtual_path == "/test/file.txt")
-        ).scalar_one()
-
-        assert fp.backend_id == "local"
 
     def test_defaults_zone_to_default(self, session: Session) -> None:
         """When zone_id is None, should default to ROOT_ZONE_ID ('root')."""

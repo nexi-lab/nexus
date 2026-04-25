@@ -164,13 +164,13 @@ class TestWildcardDirectDB:
 
     @pytest.fixture
     def namespace_store(self):
-        """Create a MetastoreNamespaceStore backed by in-memory DictMetastore."""
+        """Create a MetastoreNamespaceStore backed by an in-memory NexusFS stub."""
         from nexus.bricks.rebac.consistency.metastore_namespace_store import (
             MetastoreNamespaceStore,
         )
-        from tests.helpers.dict_metastore import DictMetastore
+        from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
-        return MetastoreNamespaceStore(DictMetastore())
+        return MetastoreNamespaceStore(InMemoryNexusFS())
 
     @pytest.fixture
     def db_engine(self, isolated_db, namespace_store):
@@ -316,13 +316,13 @@ class TestWildcardPerformance:
 
     @pytest.fixture
     def namespace_store(self):
-        """Create a MetastoreNamespaceStore backed by in-memory DictMetastore."""
+        """Create a MetastoreNamespaceStore backed by an in-memory NexusFS stub."""
         from nexus.bricks.rebac.consistency.metastore_namespace_store import (
             MetastoreNamespaceStore,
         )
-        from tests.helpers.dict_metastore import DictMetastore
+        from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
-        return MetastoreNamespaceStore(DictMetastore())
+        return MetastoreNamespaceStore(InMemoryNexusFS())
 
     @pytest.fixture
     def db_engine(self, isolated_db, namespace_store):

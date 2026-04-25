@@ -10,12 +10,14 @@ Usage:
         get_zone_revision_for_grant,
     )
 
-    store = MetastoreVersionStore(metastore)
+    store = MetastoreVersionStore(nexus_fs)
     token = increment_version_token(store, zone_id="org_acme")
     revision = get_zone_revision_for_grant(store, zone_id="org_acme")
 
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
-Issue #191: Migrated from SQLAlchemy ORM to MetastoreABC.
+Issue #191: Migrated from SQLAlchemy ORM to MetastoreABC. The store
+later moved off the metastore entirely — it now writes through public
+VFS syscalls (sys_write/sys_read) under ``/__sys__/rebac/versions/``.
 """
 
 import logging

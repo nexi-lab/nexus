@@ -21,13 +21,13 @@ from nexus.bricks.rebac.consistency.revision import (
     increment_version_token,
 )
 from nexus.contracts.constants import ROOT_ZONE_ID
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 
 @pytest.fixture
 def version_store():
     """Create an in-memory MetastoreVersionStore."""
-    return MetastoreVersionStore(DictMetastore())
+    return MetastoreVersionStore(InMemoryNexusFS())
 
 
 class TestIncrementVersionToken:

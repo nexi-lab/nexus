@@ -35,7 +35,7 @@ from nexus.contracts.rebac_types import (
     WriteResult,
 )
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ def engine():
 @pytest.fixture
 def manager(engine):
     """Create EnhancedReBACManager for testing."""
-    version_store = MetastoreVersionStore(DictMetastore())
+    version_store = MetastoreVersionStore(InMemoryNexusFS())
     mgr = EnhancedReBACManager(
         engine=engine,
         cache_ttl_seconds=300,
@@ -86,7 +86,7 @@ def manager(engine):
         enable_leopard=True,
         enable_tiger_cache=False,  # SQLite doesn't support Tiger
         version_store=version_store,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield mgr
     mgr.close()
@@ -742,7 +742,7 @@ class TestConsistencyModuleIntegration:
             enable_graph_limits=True,
             enable_leopard=False,
             enable_tiger_cache=False,
-            namespace_store=MetastoreNamespaceStore(DictMetastore()),
+            namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
         )
         try:
             # Same-zone write should succeed
@@ -781,7 +781,7 @@ class TestConsistencyModuleIntegration:
             enable_graph_limits=True,
             enable_leopard=False,
             enable_tiger_cache=False,
-            namespace_store=MetastoreNamespaceStore(DictMetastore()),
+            namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
         )
         try:
             result = mgr.rebac_write(

@@ -78,16 +78,13 @@ def _boot_pre_kernel_services(
             _is_pg = not ctx.db_url.startswith("sqlite")
 
             # --- ReBAC Manager ---
-            from nexus.bricks.rebac.consistency.metastore_namespace_store import (
-                MetastoreNamespaceStore,
-            )
-            from nexus.bricks.rebac.consistency.metastore_version_store import (
-                MetastoreVersionStore,
-            )
+            # Note: ``version_store`` and ``namespace_store`` are wired
+            # post-kernel in ``factory/_wired.py`` — both stores write
+            # through public VFS syscalls and need a live NexusFS handle,
+            # which doesn't exist yet at this tier. ReBACManager only
+            # touches them lazily (on first permission check or namespace
+            # operation), so deferring is safe.
             from nexus.bricks.rebac.manager import ReBACManager
-
-            _version_store = MetastoreVersionStore(ctx.metadata_store)
-            _namespace_store = MetastoreNamespaceStore(ctx.metadata_store)
 
             rebac_manager = ReBACManager(
                 engine=ctx.engine,
@@ -98,8 +95,8 @@ def _boot_pre_kernel_services(
                 enable_tiger_cache=ctx.perm.enable_tiger_cache,
                 read_engine=ctx.read_engine,
                 is_postgresql=_is_pg,
-                version_store=_version_store,
-                namespace_store=_namespace_store,
+                version_store=None,
+                namespace_store=None,
                 enable_inheritance=ctx.perm.inherit,
             )
 

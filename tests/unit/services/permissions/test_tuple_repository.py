@@ -27,7 +27,7 @@ from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVers
 from nexus.bricks.rebac.domain import Entity
 from nexus.bricks.rebac.tuples.repository import TupleRepository
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 # ============================================================================
 # Fixtures
@@ -56,7 +56,7 @@ def engine():
 @pytest.fixture
 def version_store():
     """Create an in-memory MetastoreVersionStore for zone revision tracking."""
-    return MetastoreVersionStore(DictMetastore())
+    return MetastoreVersionStore(InMemoryNexusFS())
 
 
 @pytest.fixture

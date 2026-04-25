@@ -130,6 +130,29 @@ def _boot_post_kernel_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] MountManager unavailable: %s", exc)
 
+    # --- ReBAC namespace + version stores: VFS-backed ---
+    # Same story as MountManager — the stores write through public VFS
+    # syscalls so they can only be constructed after NexusFS exists.
+    # ReBACManager (built in tier 1) had ``namespace_store=None`` /
+    # ``version_store=None``; we patch them in here. The manager only
+    # consumes these lazily on first permission/namespace operation,
+    # so this late binding is safe.
+    rebac_manager = services.get("rebac_manager")
+    if rebac_manager is not None:
+        try:
+            from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+                MetastoreNamespaceStore,
+            )
+            from nexus.bricks.rebac.consistency.metastore_version_store import (
+                MetastoreVersionStore,
+            )
+
+            rebac_manager._namespace_store = MetastoreNamespaceStore(nx)
+            rebac_manager._version_store = MetastoreVersionStore(nx)
+            logger.debug("[BOOT:WIRED] ReBAC namespace + version stores wired (VFS-backed)")
+        except Exception as exc:
+            logger.warning("[BOOT:WIRED] ReBAC namespace/version stores wiring failed: %s", exc)
+
     # --- MountPersistService: Mount persistence ---
     # Created with mount_service=None initially; wired after MountService creation below.
     mount_persist_service: Any = None

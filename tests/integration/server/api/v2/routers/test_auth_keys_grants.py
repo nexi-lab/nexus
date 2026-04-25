@@ -22,8 +22,8 @@ from nexus.server.api.v2.routers.auth_keys import (
     GrantRequest,
     router,
 )
-from tests.helpers.dict_metastore import DictMetastore
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -59,7 +59,7 @@ def rebac_manager(record_store):
         engine=record_store.engine,
         cache_ttl_seconds=1,  # Short TTL — tests don't need caching
         max_depth=10,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     # Disable all caching — this test checks revocation correctness, not
     # cache behavior. Without this, the coordinator's background recompute

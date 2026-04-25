@@ -37,7 +37,7 @@ from nexus.bricks.rebac.rebac_tracing import (
     reset_tracer,
 )
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Helpers — in-memory span exporter compatible with all OTel SDK versions
@@ -113,7 +113,7 @@ def manager(engine):
         enable_graph_limits=True,
         enable_leopard=True,
         enable_tiger_cache=False,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield mgr
     mgr.close()
@@ -217,7 +217,7 @@ class TestRealPermissionCheckSpans:
             enable_graph_limits=True,
             enable_leopard=True,
             enable_tiger_cache=False,
-            namespace_store=MetastoreNamespaceStore(DictMetastore()),
+            namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
         )
         try:
             # Check permission on non-existent relation (cache miss → graph traversal)

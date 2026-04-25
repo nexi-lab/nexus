@@ -24,7 +24,7 @@ from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNa
 from nexus.bricks.rebac.domain import Entity, NamespaceConfig
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,  # 5 minutes for normal tests
         max_depth=10,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()
@@ -55,7 +55,7 @@ def rebac_manager_fast_cache(engine):
         engine=engine,
         cache_ttl_seconds=1,  # 1 second for cache expiration tests
         max_depth=10,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()
@@ -831,7 +831,7 @@ def enhanced_rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()

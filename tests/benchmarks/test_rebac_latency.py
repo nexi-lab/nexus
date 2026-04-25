@@ -26,7 +26,7 @@ from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNa
 from nexus.bricks.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE, DEFAULT_GROUP_NAMESPACE
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 ZONE_ID = "bench_zone"
 
@@ -67,7 +67,7 @@ def manager(engine):
     """Create a ReBACManager with caches enabled (no Tiger — SQLite only)."""
     mgr = ReBACManager(
         engine=engine,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
         cache_ttl_seconds=300,
         max_depth=50,
         enforce_zone_isolation=False,

@@ -13,7 +13,7 @@ from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNa
 from nexus.storage.models import Base
 from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -278,8 +278,8 @@ class TestAgentReconnection:
             engine=engine,
             cache_ttl_seconds=300,
             max_depth=10,
-            version_store=MetastoreVersionStore(DictMetastore()),
-            namespace_store=MetastoreNamespaceStore(DictMetastore()),
+            version_store=MetastoreVersionStore(InMemoryNexusFS()),
+            namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
         )
         try:
             # Grant files

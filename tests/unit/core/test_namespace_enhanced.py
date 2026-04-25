@@ -22,7 +22,7 @@ from nexus.bricks.rebac.namespace_manager import (
     build_mount_entries,
 )
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -46,7 +46,7 @@ def enhanced_rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield manager
     manager.close()

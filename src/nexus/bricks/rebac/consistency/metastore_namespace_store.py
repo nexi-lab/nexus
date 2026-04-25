@@ -1,22 +1,22 @@
-"""Metastore-backed namespace configuration store for ReBAC.
+"""VFS-backed namespace configuration store for ReBAC.
 
-Replaces ReBACNamespaceModel (SQLAlchemy ORM) and raw SQL against the
-``rebac_namespaces`` table.  Stores per-object-type namespace configs
-in the Metastore (redb) under a reserved path prefix.
+Stores per-object-type namespace configs as JSON files under
+``/__sys__/rebac/namespaces/{object_type}`` — the kernel-reserved
+system path namespace.
 
-Issue #183: Migrate ReBACNamespaceModel from RecordStore to Metastore.
+Replaces the prior implementation that wrote directly to the kernel
+metastore using a reserved key prefix (``ns:rebac:``). Direct
+metastore access from a brick is an ABC leak — bricks must use public
+VFS syscalls. Issue #183 originally migrated this off SQLAlchemy onto
+MetastoreABC; this revision moves it again onto VFS so the kernel
+boundary is respected.
 
-Storage layout
---------------
-Namespace records reuse the file-metadata KV slot keyed by
-``ns:rebac:{object_type}``.  The ``ns:rebac:`` path prefix uniquely
-identifies them — no per-record discriminator field is required.  The
-namespace JSON envelope is stashed in ``etag`` (a Nullable string slot
-the metastore already round-trips); etag's normal file-content-hash
-semantics do not apply to these synthetic records, and nothing else in
-the system reads ``etag`` for ``ns:rebac:``-prefixed paths.
-
-Mirrors the pattern used by :mod:`nexus.bricks.mount.metastore_mount_store`.
+Layout
+------
+- One JSON file per namespace at
+  ``/__sys__/rebac/namespaces/{object_type}``
+- ``object_type`` is a single token without ``/`` (e.g. ``file``,
+  ``group``, ``skill``) so no encoding is needed
 """
 
 from __future__ import annotations
@@ -26,133 +26,152 @@ import logging
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import NamespaceConfig
 
 
-class _MetastoreProto(Protocol):
-    """Minimal protocol for metastore get/put/delete/list used by namespace store."""
-
-    def get(self, path: str) -> FileMetadata | None: ...
-    def put(self, metadata: FileMetadata) -> None: ...
-    def delete(self, path: str) -> dict[str, Any] | None: ...
-    def list(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> list[FileMetadata]: ...
-
-
 logger = logging.getLogger(__name__)
 
-_NS_PREFIX = "ns:rebac:"
+_NS_DIR = f"{SYSTEM_PATH_PREFIX}rebac/namespaces/"
 
 
-def _payload_of(fm: FileMetadata) -> dict[str, Any] | None:
-    """Decode the JSON envelope from ``etag``; return ``None`` if absent or malformed."""
-    if not fm.etag:
-        return None
-    try:
-        data = json.loads(fm.etag)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    return data if isinstance(data, dict) else None
+def _config_path(object_type: str) -> str:
+    """One JSON file per object_type under ``/__sys__/rebac/namespaces/``."""
+    return _NS_DIR + object_type
 
 
 def _json_default(o: Any) -> str:
+    """Funnel ``datetime``/``date`` through ``isoformat`` for JSON encoding."""
     if isinstance(o, (datetime, date)):
         return o.isoformat()
     raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
 
-def _record(key: str, payload: dict[str, Any]) -> FileMetadata:
-    return FileMetadata(path=key, size=0, etag=json.dumps(payload, default=_json_default))
+class _NexusFSProto(Protocol):
+    """Minimal NexusFS surface used by the namespace store."""
+
+    def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> Any: ...
+    def sys_read(self, path: str, **kwargs: Any) -> Any: ...
+    def sys_readdir(self, path: str = "/", recursive: bool = True, **kwargs: Any) -> Any: ...
+    def sys_unlink(self, path: str, **kwargs: Any) -> Any: ...
+
+
+def _decode_read(result: Any) -> bytes | None:
+    """Normalize ``sys_read`` output into raw bytes, or ``None`` if absent."""
+    if result is None:
+        return None
+    if isinstance(result, (bytes, bytearray)):
+        return bytes(result)
+    if isinstance(result, dict):
+        if not result.get("hit", True):
+            return None
+        content = result.get("content")
+        if isinstance(content, (bytes, bytearray)):
+            return bytes(content)
+    return None
 
 
 class MetastoreNamespaceStore:
-    """Namespace configuration store backed by MetastoreABC.
+    """Namespace configuration store backed by VFS files.
 
-    Key pattern: ``ns:rebac:{object_type}`` → JSON envelope stashed in
-    ``etag`` with fields: ``namespace_id``, ``object_type``, ``config``,
-    ``created_at``, ``updated_at``.
+    Public API unchanged from prior revisions — callers (``ReBACManager``,
+    ``SearchService``, factory wiring) see no behavior change.
     """
 
-    def __init__(self, metastore: _MetastoreProto) -> None:
-        self._metastore = metastore
+    def __init__(self, nexus_fs: _NexusFSProto) -> None:
+        self._nx = nexus_fs
 
     def create_or_update(self, namespace: NamespaceConfig) -> None:
         """Create or update a namespace configuration."""
-        key = f"{_NS_PREFIX}{namespace.object_type}"
         payload: dict[str, Any] = {
             "namespace_id": namespace.namespace_id,
             "object_type": namespace.object_type,
         }
-        # Best-effort capture of additional fields if present on the domain object.
         for attr in ("config", "created_at", "updated_at"):
             if hasattr(namespace, attr):
                 value = getattr(namespace, attr)
                 if value is not None and not callable(value):
                     payload[attr] = value
-        self._metastore.put(_record(key, payload))
+        path = _config_path(namespace.object_type)
+        self._nx.sys_write(path, json.dumps(payload, default=_json_default).encode("utf-8"))
 
     def create_if_absent(self, namespace: NamespaceConfig) -> None:
         """Create namespace only if it does not already exist."""
-        key = f"{_NS_PREFIX}{namespace.object_type}"
-        existing = self._metastore.get(key)
-        if existing is not None and _payload_of(existing) is not None:
+        if self._read(_config_path(namespace.object_type)) is not None:
             return
         self.create_or_update(namespace)
 
     def create_or_update_default(self, namespace: NamespaceConfig) -> None:
-        """Create or update a namespace, but only if it matches our default namespace_id.
-
-        This prevents overwriting custom namespaces created by tests or users.
-        """
-        key = f"{_NS_PREFIX}{namespace.object_type}"
-        existing = self._metastore.get(key)
-        if existing is not None:
-            data = _payload_of(existing)
-            if data is not None and data.get("namespace_id") != namespace.namespace_id:
-                return  # Custom namespace, don't overwrite
+        """Create or update a default namespace, but only if no
+        custom namespace with a different ``namespace_id`` is already
+        registered. Prevents overwriting user-defined namespaces."""
+        existing = self._read(_config_path(namespace.object_type))
+        if existing is not None and existing.get("namespace_id") != namespace.namespace_id:
+            return
         self.create_or_update(namespace)
 
     def get(self, object_type: str) -> dict[str, Any] | None:
-        """Get namespace configuration for an object type.
-
-        Returns:
-            Dict with keys: namespace_id, object_type, config, created_at, updated_at
-            or None if not found.
-        """
-        fm = self._metastore.get(f"{_NS_PREFIX}{object_type}")
-        if fm is None:
-            return None
-        return _payload_of(fm)
+        """Get namespace configuration for an object type."""
+        return self._read(_config_path(object_type))
 
     def list_all(self) -> list[dict[str, Any]]:
-        """List all namespace configurations.
+        """List all namespace configurations sorted by object_type."""
+        try:
+            entries = self._nx.sys_readdir(_NS_DIR, recursive=False, details=False)
+        except FileNotFoundError:
+            return []
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("list_all: sys_readdir(%s) failed: %s", _NS_DIR, exc)
+            return []
 
-        Returns:
-            List of namespace dicts sorted by object_type.
-        """
-        entries = self._metastore.list(_NS_PREFIX)
+        if entries is None:
+            return []
+
         results: list[dict[str, Any]] = []
-        for fm in entries:
-            data = _payload_of(fm)
+        for entry in entries:
+            name = entry["name"] if isinstance(entry, dict) else entry
+            if not isinstance(name, str):
+                continue
+            basename = name.rsplit("/", 1)[-1]
+            if not basename:
+                continue
+            data = self._read(_NS_DIR + basename)
             if data is None:
                 continue
             results.append(data)
+
         results.sort(key=lambda d: d.get("object_type", ""))
         return results
 
     def delete(self, object_type: str) -> bool:
-        """Delete a namespace configuration.
-
-        Returns:
-            True if namespace was deleted, False if not found.
-        """
-        key = f"{_NS_PREFIX}{object_type}"
-        existing = self._metastore.get(key)
-        if existing is None or _payload_of(existing) is None:
+        """Delete a namespace configuration. Returns False if not found."""
+        path = _config_path(object_type)
+        if self._read(path) is None:
             return False
-        self._metastore.delete(key)
+        try:
+            self._nx.sys_unlink(path)
+        except FileNotFoundError:
+            return False
         return True
+
+    # -- helpers --
+
+    def _read(self, path: str) -> dict[str, Any] | None:
+        """Read a JSON config file or return None if absent / malformed."""
+        try:
+            result = self._nx.sys_read(path)
+        except FileNotFoundError:
+            return None
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("_read(%s) failed: %s", path, exc)
+            return None
+        raw = _decode_read(result)
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None

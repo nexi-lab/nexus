@@ -3421,7 +3421,8 @@ impl Kernel {
         };
 
         // DT_PIPE/DT_STREAM: rename not supported (IPC endpoints are identity-bound)
-        // DT_MOUNT (2) / DT_EXTERNAL_STORAGE (5): Python handles unmount logic
+        // DT_MOUNT (2) / DT_EXTERNAL_STORAGE (5): single metastore entries —
+        // normal rename logic handles them (backend.rename() is a no-op for mounts).
         match entry_type {
             DT_PIPE | DT_STREAM => {
                 release_locks(&self.lock_manager, lock1, lock2);
@@ -3429,19 +3430,6 @@ impl Kernel {
                     "rename not supported for entry type {} at {}",
                     entry_type, old_path
                 )));
-            }
-            2 | 5 => {
-                release_locks(&self.lock_manager, lock1, lock2);
-                return Ok(SysRenameResult {
-                    hit: false,
-                    success: false,
-                    post_hook_needed: false,
-                    is_directory,
-                    old_etag: None,
-                    old_size: None,
-                    old_version: None,
-                    old_modified_at_ms: None,
-                });
             }
             _ => {}
         }
@@ -6270,10 +6258,8 @@ mod tests {
         let ms_a = Arc::new(MemoryMetastore::new());
         let ms_b = Arc::new(MemoryMetastore::new());
 
-        k.vfs_router
-            .add_mount("/mnt_a", zone, "local", None, false);
-        k.vfs_router
-            .add_mount("/mnt_b", zone, "local", None, false);
+        k.vfs_router.add_mount("/mnt_a", zone, "local", None, false);
+        k.vfs_router.add_mount("/mnt_b", zone, "local", None, false);
 
         let canon_a = crate::vfs_router::canonicalize_mount_path("/mnt_a", zone);
         let canon_b = crate::vfs_router::canonicalize_mount_path("/mnt_b", zone);
@@ -6332,10 +6318,8 @@ mod tests {
         let ms_a = Arc::new(MemoryMetastore::new());
         let ms_b = Arc::new(MemoryMetastore::new());
 
-        k.vfs_router
-            .add_mount("/mnt_a", zone, "local", None, false);
-        k.vfs_router
-            .add_mount("/mnt_b", zone, "local", None, false);
+        k.vfs_router.add_mount("/mnt_a", zone, "local", None, false);
+        k.vfs_router.add_mount("/mnt_b", zone, "local", None, false);
 
         let canon_a = crate::vfs_router::canonicalize_mount_path("/mnt_a", zone);
         let canon_b = crate::vfs_router::canonicalize_mount_path("/mnt_b", zone);

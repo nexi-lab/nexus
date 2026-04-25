@@ -67,7 +67,9 @@ async def _record_metrics(record: dict[str, Any]) -> None:
         await client.incr(qps_key)
         await client.expire(qps_key, 600)
         member = record.get("subject_id") or record.get("token_hash") or "anonymous"
-        await client.sadd(active_key, member)
+        _sadd_r = client.sadd(active_key, member)
+        if not isinstance(_sadd_r, int):
+            await _sadd_r
         await client.expire(active_key, 600)
     except Exception:  # noqa: BLE001 — fire-and-forget
         return

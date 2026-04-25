@@ -945,6 +945,50 @@ def test_warm_cache_unsampled_hit_still_runs_revocation_gate(engine):
         object.__setattr__(store, monkeypatched_attr, real_assert)
 
 
+def test_envelope_error_is_counted_as_failure_not_ok(engine):
+    """KMS outage / AAD mismatch / ciphertext corruption all surface as
+    EnvelopeError, which the router maps to 500. The token-exchange
+    metric MUST count these as failures (``envelope_error`` label), not
+    silently roll them up under ``ok``. Otherwise a KMS provider outage
+    looks like 100% success in
+    ``nexus_token_exchange_requests_total`` while every client is
+    getting 500s.
+
+    Regression for codex round-14 finding F30.
+    """
+    from nexus.bricks.auth.consumer_metrics import TOKEN_EXCHANGE_REQUESTS
+    from nexus.bricks.auth.envelope import EnvelopeError
+
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    store = consumer._store
+    assert store is not None
+
+    def _decrypt_raises_envelope_error(*args, **kwargs):  # noqa: ARG001
+        raise EnvelopeError("simulated KMS outage")
+
+    object.__setattr__(store, "decrypt_profile", _decrypt_raises_envelope_error)
+
+    before = TOKEN_EXCHANGE_REQUESTS.labels(provider="github", result="ok")._value.get()  # noqa: SLF001
+    err_before = TOKEN_EXCHANGE_REQUESTS.labels(
+        provider="github", result="envelope_error"
+    )._value.get()  # noqa: SLF001
+    with pytest.raises(EnvelopeError):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    after = TOKEN_EXCHANGE_REQUESTS.labels(provider="github", result="ok")._value.get()  # noqa: SLF001
+    err_after = TOKEN_EXCHANGE_REQUESTS.labels(
+        provider="github", result="envelope_error"
+    )._value.get()  # noqa: SLF001
+    assert after == before, "EnvelopeError must NOT increment result=ok"
+    assert err_after == err_before + 1, "EnvelopeError must increment result=envelope_error"
+
+
 def test_audit_write_atomically_rejects_revoked_machine(engine):
     """ReadAuditWriter.write itself enforces the revocation gate inside
     its own transaction (SELECT FOR SHARE on daemon_machines + audit

@@ -531,6 +531,16 @@ class CredentialConsumer:
         except AuditWriteFailed:
             result_label = "audit_write_failed"
             raise
+        except Exception:
+            # F30: catch-all so EnvelopeError (KMS unwrap failure, AAD
+            # mismatch, ciphertext corruption — all bubble to the router
+            # as 500 envelope_error) is counted as a failure in the
+            # primary token-exchange metric, not as ``ok``. Without this,
+            # a KMS outage would show 100% success in
+            # nexus_token_exchange_requests_total even while every
+            # client was getting 500s.
+            result_label = "envelope_error"
+            raise
         finally:
             TOKEN_EXCHANGE_LATENCY.labels(provider=provider, cache=cache_label).observe(
                 time.monotonic() - start

@@ -282,8 +282,10 @@ class DatabaseAPIKeyAuth(AuthProvider):
         Args:
             session: SQLAlchemy session.
             key_id: Key ID to revoke.
-            zone_id: Zone isolation filter. When provided, only keys
-                belonging to this zone can be revoked.
+            zone_id: Zone access filter. When provided, only keys that
+                grant access to this zone (via the api_key_zones junction)
+                can be revoked. Multi-zone keys match on every granted
+                zone, not only the primary (#3871).
 
         Returns:
             True if key was revoked, False if not found.

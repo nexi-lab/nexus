@@ -264,8 +264,17 @@ class CredentialConsumer:
         claims: "DaemonClaims",
         provider: str,
         purpose: str,
+        profile_id: str | None = None,
         force_refresh: bool = False,
     ) -> MaterializedCredential:
+        """Resolve a provider credential for ``claims``.
+
+        ``profile_id`` selects a specific envelope row when the principal has
+        more than one profile for ``provider`` (e.g. two GitHub accounts).
+        Without it, the call falls back to the legacy "single active row"
+        contract and raises ``MultipleProfilesForProvider`` if more than one
+        active row exists for the triple.
+        """
         import time
         from datetime import UTC, datetime
 
@@ -290,11 +299,17 @@ class CredentialConsumer:
             # passes assert_machine_active + assert_profile_active and gets
             # A's plaintext from cache without ever reaching the
             # writer_machine_id check on the decrypt path.
+            #
+            # profile_id is in the key so a multi-account principal's two
+            # profiles do not share a cache slot — also keeps the implicit
+            # "default" form (profile_id=None) separate from any explicit
+            # selection of the same row.
             cache_key = (
                 str(claims.tenant_id),
                 str(claims.principal_id),
                 provider,
                 str(claims.machine_id),
+                profile_id or "",
             )
             now = datetime.now(UTC)
 
@@ -318,6 +333,7 @@ class CredentialConsumer:
                 fp_pre = self._get_store(claims).assert_profile_active(
                     principal_id=claims.principal_id,
                     provider=provider,
+                    profile_id=profile_id,
                 )
             except ProfileNotFound as exc:
                 # Cache may have an entry pointing at the now-missing row.
@@ -377,6 +393,7 @@ class CredentialConsumer:
                 decrypted = self._get_store(claims).decrypt_profile(
                     principal_id=claims.principal_id,
                     provider=provider,
+                    profile_id=profile_id,
                     encryption=self._encryption,
                     dek_cache=self._dek_cache,
                 )

@@ -12,6 +12,7 @@ required so tests and dev wiring stay symmetric.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,10 +42,39 @@ _GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange"
 _SUBJECT_TYPE_JWT = "urn:ietf:params:oauth:token-type:jwt"
 _ISSUED_TYPE = "urn:ietf:params:oauth:token-type:access_token"
 
-_RESOURCE_TO_PROVIDER = {
-    "urn:nexus:provider:aws": "aws",
-    "urn:nexus:provider:github": "github",
-}
+_KNOWN_PROVIDERS = frozenset({"aws", "github"})
+
+# Profile_id slug — matches the slugs writers use ("github-default",
+# "aws-prod", etc.). Strict character set keeps URI parsing predictable
+# and prevents accidental injection into log lines / SQL parameters.
+_PROFILE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+
+def _parse_resource(resource: str) -> tuple[str | None, str | None, str | None]:
+    """Parse the RFC 8693 ``resource`` URI to (provider, profile_id, error).
+
+    Accepted forms:
+      ``urn:nexus:provider:<provider>`` — default profile (single-row)
+      ``urn:nexus:provider:<provider>/<profile_id>`` — explicit selection
+
+    Returns ``(provider, profile_id, None)`` on success or
+    ``(None, None, error_description)`` on parse failure. ``profile_id``
+    is ``None`` when the caller did not specify one.
+    """
+    prefix = "urn:nexus:provider:"
+    if not resource.startswith(prefix):
+        return None, None, f"unknown resource: {resource!r}"
+    suffix = resource[len(prefix) :]
+    if "/" in suffix:
+        provider, _, profile_id = suffix.partition("/")
+        if not provider or provider not in _KNOWN_PROVIDERS:
+            return None, None, f"unknown provider in resource: {resource!r}"
+        if not profile_id or not _PROFILE_ID_RE.match(profile_id):
+            return None, None, f"invalid profile_id in resource: {resource!r}"
+        return provider, profile_id, None
+    if suffix not in _KNOWN_PROVIDERS:
+        return None, None, f"unknown provider in resource: {resource!r}"
+    return suffix, None, None
 
 
 def _err(http_status: int, code: str, description: str) -> JSONResponse:
@@ -95,9 +125,10 @@ def make_token_exchange_router(
             return _err(
                 400, "invalid_request", f"unsupported subject_token_type: {subject_token_type!r}"
             )
-        provider = _RESOURCE_TO_PROVIDER.get(resource)
-        if provider is None:
-            return _err(400, "invalid_request", f"unknown resource: {resource!r}")
+        provider, profile_id, parse_err = _parse_resource(resource)
+        if parse_err is not None:
+            return _err(400, "invalid_request", parse_err)
+        assert provider is not None  # mypy — parse_err is None implies provider set
 
         try:
             claims = signer.verify(subject_token)
@@ -110,6 +141,7 @@ def make_token_exchange_router(
             cred = consumer.resolve(
                 claims=claims,
                 provider=provider,
+                profile_id=profile_id,
                 purpose=scope,
                 force_refresh=force_refresh,
             )

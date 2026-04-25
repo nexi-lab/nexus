@@ -1469,7 +1469,11 @@ class PostgresAuthProfileStore:
         return profile, self._deserialize_credential(plaintext)
 
     def assert_profile_active(
-        self, *, principal_id: uuid.UUID, provider: str
+        self,
+        *,
+        principal_id: uuid.UUID,
+        provider: str,
+        profile_id: str | None = None,
     ) -> "ProfileFingerprint":
         """Cheap predicate-only check + fingerprint of the single usable row.
 
@@ -1481,6 +1485,11 @@ class PostgresAuthProfileStore:
         ciphertext, not disabled, not cooled-down, not stale) but reads no
         payload.
 
+        ``profile_id`` selects a specific envelope row when the principal has
+        more than one profile for ``provider``. Without it, the legacy
+        single-row contract applies and ``MultipleProfilesForProvider`` fires
+        when more than one active row exists.
+
         Returns a ``ProfileFingerprint`` for the single usable row so the
         caller can detect a row REWRITE since the cache was primed (different
         ``profile_id``, different writer ``machine_id``, or bumped
@@ -1489,13 +1498,26 @@ class PostgresAuthProfileStore:
         another daemon overwrote the same provider/account.
 
         Mapping:
-          - ``usable > 1``  → MultipleProfilesForProvider (fail closed)
+          - ``usable > 1``  → MultipleProfilesForProvider (only possible when
+            ``profile_id`` is None; an explicit selector matches at most one)
           - ``usable == 1`` → return ProfileFingerprint
           - ``usable == 0`` and ``stale_only >= 1`` → StaleSource
           - ``usable == 0`` and ``stale_only == 0`` → ProfileNotFound
         """
         from nexus.bricks.auth.consumer import MultipleProfilesForProvider, StaleSource
 
+        # Optional profile_id filter — single literal appended to both the
+        # COUNT and the LIMIT 1 sub-queries when supplied. Empty string
+        # binding is fine because the param is unused unless the WHERE
+        # mentions :pid.
+        pid_filter = " AND id = :pid" if profile_id is not None else ""
+        params: dict[str, str] = {
+            "t": str(self._tenant_id),
+            "p": str(principal_id),
+            "prov": provider,
+        }
+        if profile_id is not None:
+            params["pid"] = profile_id
         with self._scoped() as conn:
             counts = conn.execute(
                 text(
@@ -1512,9 +1534,9 @@ class PostgresAuthProfileStore:
                     "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
                     "  AND ciphertext IS NOT NULL "
                     "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
-                    "  AND (cooldown_until IS NULL OR cooldown_until <= NOW())"
+                    "  AND (cooldown_until IS NULL OR cooldown_until <= NOW())" + pid_filter
                 ),
-                {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
+                params,
             ).fetchone()
             usable = int(counts.usable) if counts else 0
             stale_only = int(counts.stale_only) if counts else 0
@@ -1539,10 +1561,11 @@ class PostgresAuthProfileStore:
                         "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
                         "  AND (cooldown_until IS NULL OR cooldown_until <= NOW()) "
                         "  AND last_synced_at IS NOT NULL "
-                        "  AND last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL > NOW() "
-                        "LIMIT 1"
+                        "  AND last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL > NOW()"
+                        + pid_filter
+                        + " LIMIT 1"
                     ),
-                    {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
+                    params,
                 ).fetchone()
                 if fp is None:
                     # Row vanished between the COUNT and the LIMIT 1 (operator
@@ -1617,15 +1640,21 @@ class PostgresAuthProfileStore:
         provider: str,
         encryption: EncryptionProvider,
         dek_cache: DEKCache,
+        profile_id: str | None = None,
     ) -> DecryptedProfile:
         """Decrypt the envelope row matching (tenant, principal, provider).
 
         Fetches up to 2 rows for that triple. If 2 rows are returned the
-        request is ambiguous — the wire contract has no profile_id field
-        to disambiguate, so we fail closed with
-        ``MultipleProfilesForProvider`` rather than silently pick the
-        newest (which could hand back the wrong account's credentials).
+        request is ambiguous — caller must pass ``profile_id`` to select one
+        explicitly or collapse to a single active row. We fail closed with
+        ``MultipleProfilesForProvider`` rather than silently pick the newest
+        (which could hand back the wrong account's credentials).
         Raises ``ProfileNotFound`` if no row exists.
+
+        ``profile_id`` selects a specific envelope row (multi-account form
+        of the wire contract). When supplied the SQL filters on ``id`` too,
+        so the caller gets either the named row or ``ProfileNotFound`` —
+        never another account's credential.
 
         DEK is unwrapped via ``encryption.unwrap_dek`` with cache-through on
         ``dek_cache``. AES-GCM decrypt failures bubble as ``EnvelopeError``
@@ -1633,6 +1662,14 @@ class PostgresAuthProfileStore:
         """
         from nexus.bricks.auth.consumer import MultipleProfilesForProvider
 
+        pid_filter = " AND id = :pid" if profile_id is not None else ""
+        params: dict[str, str] = {
+            "t": str(self._tenant_id),
+            "p": str(principal_id),
+            "prov": provider,
+        }
+        if profile_id is not None:
+            params["pid"] = profile_id
         with self._scoped() as conn:
             # Filter out disabled (operator hard-stop) and cooled-down
             # (auto-circuit-breaker) profiles in SQL so neither path leaks
@@ -1648,10 +1685,11 @@ class PostgresAuthProfileStore:
                     "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
                     "  AND ciphertext IS NOT NULL "
                     "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
-                    "  AND (cooldown_until IS NULL OR cooldown_until <= NOW()) "
-                    "ORDER BY updated_at DESC LIMIT 2"
+                    "  AND (cooldown_until IS NULL OR cooldown_until <= NOW())"
+                    + pid_filter
+                    + " ORDER BY updated_at DESC LIMIT 2"
                 ),
-                {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
+                params,
             ).fetchall()
 
         if not rows:

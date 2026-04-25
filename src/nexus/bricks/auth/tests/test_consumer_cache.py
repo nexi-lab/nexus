@@ -47,7 +47,7 @@ def test_compute_ttl_clamps_to_zero_when_already_near_expiry():
 
 def test_get_returns_cached_then_evicts_after_ttl():
     cache = ResolvedCredCache(ceiling_seconds=300)
-    key = ("t1", "p1", "github", "m1")
+    key = ("t1", "p1", "github", "m1", "")
     now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
     cred = _cred(expires_at=now + timedelta(seconds=200))
 
@@ -64,7 +64,7 @@ def test_get_returns_cached_then_evicts_after_ttl():
 
 def test_put_with_no_expiry_uses_ceiling():
     cache = ResolvedCredCache(ceiling_seconds=300)
-    key = ("t1", "p1", "github", "m1")
+    key = ("t1", "p1", "github", "m1", "")
     now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
     cache.put(key, _cred(expires_at=None), now=now, fingerprint=_fp())
     assert cache.get(key, now=now + timedelta(seconds=299)) is not None
@@ -82,8 +82,8 @@ def test_cache_keys_are_scoped_per_machine():
     cache = ResolvedCredCache(ceiling_seconds=300)
     now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
     cred_a = _cred(expires_at=now + timedelta(seconds=600))
-    key_a = ("t1", "p1", "github", "m-a")
-    key_b = ("t1", "p1", "github", "m-b")
+    key_a = ("t1", "p1", "github", "m-a", "")
+    key_b = ("t1", "p1", "github", "m-b", "")
 
     cache.put(key_a, cred_a, now=now, fingerprint=_fp())
     a_hit = cache.get(key_a, now=now)
@@ -100,8 +100,8 @@ def test_thread_safe_concurrent_put_get():
 
     def worker(i: int):
         for _ in range(50):
-            cache.put((f"t{i}", "p", "github", "m"), cred, now=now, fingerprint=fp)
-            cache.get((f"t{i}", "p", "github", "m"), now=now)
+            cache.put((f"t{i}", "p", "github", "m", ""), cred, now=now, fingerprint=fp)
+            cache.get((f"t{i}", "p", "github", "m", ""), now=now)
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
     for t in threads:

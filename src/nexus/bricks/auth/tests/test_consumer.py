@@ -751,3 +751,99 @@ def test_resolve_rejects_when_multiple_profiles_for_provider(engine):
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
     with pytest.raises(MultipleProfilesForProvider):
         consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+
+def _seed_two_github_envelopes(engine, encryption):
+    """Helper for F21 multi-account tests: seed 'github-default' and 'github-other'
+    rows under the same (tenant, principal). Returns (tenant, principal, machine)."""
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    payload = json.dumps({"token": "ghp_other", "scopes": ["repo"]}).encode()
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-other"
+    dek = b"\x02" * 32
+    nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
+    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "INSERT INTO auth_profiles "
+                "(tenant_id, principal_id, id, provider, account_identifier, "
+                " backend, backend_key, last_synced_at, sync_ttl_seconds, "
+                " ciphertext, wrapped_dek, nonce, aad, kek_version) "
+                "VALUES (:t, :p, 'github-other', 'github', 'other', 'envelope', 'k', "
+                " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
+            ),
+            {
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
+            },
+        )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    return tenant, principal, machine
+
+
+def test_resolve_with_explicit_profile_id_picks_named_row(engine):
+    """Two profiles for one provider; explicit profile_id selects the right one.
+
+    Regression for codex round-7 finding F21 — proves the multi-account
+    contract upgrade actually disambiguates instead of always 409.
+    """
+    encryption = InMemoryEncryptionProvider()
+    tenant, principal, machine = _seed_two_github_envelopes(engine, encryption)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+
+    default_cred = consumer.resolve(
+        claims=_claims(tenant, principal, machine),
+        provider="github",
+        profile_id="github-default",
+        purpose="x",
+    )
+    other_cred = consumer.resolve(
+        claims=_claims(tenant, principal, machine),
+        provider="github",
+        profile_id="github-other",
+        purpose="x",
+    )
+    assert default_cred.access_token == "ghp_test"
+    assert other_cred.access_token == "ghp_other"
+
+
+def test_resolve_two_profiles_without_profile_id_still_ambiguous(engine):
+    """Without profile_id (legacy form), two rows still yield 409. The new
+    selector is opt-in — back-compat for single-profile callers is preserved
+    by failing closed when the contract is under-specified."""
+    encryption = InMemoryEncryptionProvider()
+    tenant, principal, machine = _seed_two_github_envelopes(engine, encryption)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with pytest.raises(MultipleProfilesForProvider):
+        consumer.resolve(
+            claims=_claims(tenant, principal, machine),
+            provider="github",
+            purpose="x",
+        )
+
+
+def test_resolve_with_unknown_profile_id_returns_not_found(engine):
+    """Explicit profile_id that matches no row → ProfileNotFoundForCaller.
+
+    Critical: must NOT silently fall back to another profile (which would
+    re-introduce the multi-account leak this fix exists to prevent)."""
+    encryption = InMemoryEncryptionProvider()
+    tenant, principal, machine = _seed_two_github_envelopes(engine, encryption)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with pytest.raises(ProfileNotFoundForCaller):
+        consumer.resolve(
+            claims=_claims(tenant, principal, machine),
+            provider="github",
+            profile_id="nonexistent",
+            purpose="x",
+        )

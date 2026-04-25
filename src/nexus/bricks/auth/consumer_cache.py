@@ -4,12 +4,16 @@ Holds plaintext access_tokens in memory bounded by both a ceiling (default
 300s, matching DEKCache) and the upstream credential's own ``expires_at``.
 This caps plaintext lifetime regardless of which bound triggers first.
 
-Keyed by ``(tenant_id_str, principal_id_str, provider, machine_id_str)``.
-Tenant in the key is belt-and-braces against any future bug that forgets
-to ``SET LOCAL app.current_tenant`` before calling the consumer. Machine
-id in the key keeps each daemon's view isolated so a warm cache cannot
-hand back another machine's plaintext, which would silently bypass the
-cross-machine read check that only fires on the decrypt path.
+Keyed by ``(tenant_id_str, principal_id_str, provider, machine_id_str,
+profile_id_str)`` where ``profile_id_str`` is the wire-contract selector
+or ``""`` for the default-profile form. Tenant in the key is belt-and-
+braces against any future bug that forgets to ``SET LOCAL
+app.current_tenant`` before calling the consumer. Machine id in the key
+keeps each daemon's view isolated so a warm cache cannot hand back
+another machine's plaintext, which would silently bypass the cross-
+machine read check that only fires on the decrypt path. Profile id in
+the key keeps a multi-account principal's two profiles (e.g. two GitHub
+accounts) from sharing a slot.
 """
 
 from __future__ import annotations
@@ -62,12 +66,12 @@ class ResolvedCredCache:
     def __init__(self, *, ceiling_seconds: int = 300, max_entries: int = 1024) -> None:
         self._ceiling = ceiling_seconds
         self._max = max_entries
-        self._store: OrderedDict[tuple[str, str, str, str], _Entry] = OrderedDict()
+        self._store: OrderedDict[tuple[str, str, str, str, str], _Entry] = OrderedDict()
         self._lock = threading.Lock()
 
     def get(
         self,
-        key: tuple[str, str, str, str],
+        key: tuple[str, str, str, str, str],
         *,
         now: datetime,
     ) -> _Entry | None:
@@ -89,7 +93,7 @@ class ResolvedCredCache:
 
     def put(
         self,
-        key: tuple[str, str, str, str],
+        key: tuple[str, str, str, str, str],
         cred: MaterializedCredential,
         *,
         now: datetime,
@@ -109,7 +113,7 @@ class ResolvedCredCache:
             while len(self._store) > self._max:
                 self._store.popitem(last=False)
 
-    def evict(self, key: tuple[str, str, str, str]) -> None:
+    def evict(self, key: tuple[str, str, str, str, str]) -> None:
         """Drop an entry. Called by the consumer when a cache-hit state check
         finds the underlying profile is no longer usable (disabled, cooldown,
         or ambiguous), so the next request goes through the full miss path

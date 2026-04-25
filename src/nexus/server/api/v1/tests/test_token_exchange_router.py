@@ -376,6 +376,135 @@ def test_token_exchange_unknown_resource_returns_400(engine: Engine) -> None:
     assert r.json()["error"] == "invalid_request"
 
 
+def test_parse_resource_accepts_known_provider() -> None:
+    """Bare provider URI parses to (provider, profile_id=None)."""
+    from nexus.server.api.v1.routers.token_exchange import _parse_resource
+
+    assert _parse_resource("urn:nexus:provider:github") == ("github", None, None)
+    assert _parse_resource("urn:nexus:provider:aws") == ("aws", None, None)
+
+
+def test_parse_resource_accepts_provider_with_profile_id() -> None:
+    """``urn:nexus:provider:<provider>/<profile_id>`` form parses both segments."""
+    from nexus.server.api.v1.routers.token_exchange import _parse_resource
+
+    assert _parse_resource("urn:nexus:provider:github/work") == ("github", "work", None)
+    assert _parse_resource("urn:nexus:provider:aws/aws-prod") == ("aws", "aws-prod", None)
+
+
+def test_parse_resource_rejects_unknown_provider() -> None:
+    from nexus.server.api.v1.routers.token_exchange import _parse_resource
+
+    p, pid, err = _parse_resource("urn:nexus:provider:slack")
+    assert p is None and pid is None and err is not None
+    p, pid, err = _parse_resource("urn:nexus:provider:slack/work")
+    assert p is None and pid is None and err is not None
+
+
+def test_parse_resource_rejects_invalid_profile_id() -> None:
+    """Profile_id must match ``[a-zA-Z0-9_-]{1,128}`` — keeps the URI parser
+    deterministic and prevents accidental injection into log lines."""
+    from nexus.server.api.v1.routers.token_exchange import _parse_resource
+
+    for bad in (
+        "urn:nexus:provider:github/",  # empty profile_id
+        "urn:nexus:provider:github/has space",
+        "urn:nexus:provider:github/has/slash",
+        "urn:nexus:provider:github/has;semi",
+        "urn:nexus:provider:github/" + "x" * 129,  # too long
+    ):
+        p, pid, err = _parse_resource(bad)
+        assert p is None and pid is None and err is not None, f"should reject {bad!r}"
+
+
+def test_token_exchange_with_profile_id_picks_named_envelope(engine: Engine) -> None:
+    """End-to-end: 2 GitHub envelopes for the same principal; the named one
+    via ``urn:nexus:provider:github/<id>`` returns its own access_token.
+
+    This is the wire-contract proof for codex round-7 finding F21.
+    """
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    app, signer, encryption = _build_app(engine, tenant, principal)
+    _seed_github(engine, tenant, principal, encryption)  # writes 'github-default' / 'ghp_real'
+
+    # Add a second profile 'github-other' under the same principal.
+    payload = json.dumps({"token": "ghp_alt", "scopes": ["repo"]}).encode()
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-other"
+    dek = b"\x05" * 32
+    nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
+    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "INSERT INTO auth_profiles "
+                "(tenant_id, principal_id, id, provider, account_identifier, "
+                " backend, backend_key, last_synced_at, sync_ttl_seconds, "
+                " ciphertext, wrapped_dek, nonce, aad, kek_version) "
+                "VALUES (:t, :p, 'github-other', 'github', 'other', 'envelope', 'k', "
+                " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
+            ),
+            {
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
+            },
+        )
+    machine = _seed_active_machine(engine, tenant, principal)
+    jwt = signer.sign(
+        DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=machine),
+        ttl=timedelta(hours=1),
+    )
+    client = TestClient(app)
+
+    # Bare resource → 409 ambiguous_profile (back-compat, fail closed).
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": jwt,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "urn:nexus:provider:github",
+            "scope": "x",
+        },
+    )
+    assert r.status_code == 409
+    assert r.json()["error"] == "ambiguous_profile"
+
+    # Explicit /github-default → returns the default credential.
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": jwt,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "urn:nexus:provider:github/github-default",
+            "scope": "x",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["access_token"] == "ghp_real"
+
+    # Explicit /github-other → returns the other credential.
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": jwt,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+            "resource": "urn:nexus:provider:github/github-other",
+            "scope": "x",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["access_token"] == "ghp_alt"
+
+
 def test_token_exchange_no_profile_returns_403(engine: Engine) -> None:
     tenant = uuid.uuid4()
     principal = uuid.uuid4()

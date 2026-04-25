@@ -53,6 +53,13 @@ def token() -> None:
     hidden=True,
     help="Deprecated alias for --zones (single zone).",
 )
+@click.option(
+    "--zones-glob",
+    "zones_glob",
+    default=None,
+    help="Glob pattern resolved against active zones at mint time (e.g. 'team-*'). "
+    "Mutually exclusive with --zones / --zone.",
+)
 @click.option("--admin", "is_admin", is_flag=True, help="Grant admin privileges.")
 @click.option(
     "--expires",
@@ -65,17 +72,20 @@ def token_create(
     name: str,
     zones_csv: str | None,
     zone_alias: str | None,
+    zones_glob: str | None,
     is_admin: bool,
     expires: str | None,
     user_id: str | None,
 ) -> None:
     """Create a new bearer token. Prints the raw key once; not retrievable after."""
-    if zones_csv is None and zone_alias is None:
-        raise click.ClickException("Either --zones or --zone is required.")
-    raw = zones_csv if zones_csv is not None else (zone_alias or "")
-    zones = [z.strip() for z in raw.split(",") if z.strip()]
-    if not zones:
-        raise click.ClickException("--zones must contain at least one non-empty zone.")
+    # Mutually-exclusive validation
+    sources = [s for s in (zones_csv, zone_alias, zones_glob) if s is not None]
+    if len(sources) == 0:
+        raise click.ClickException("One of --zones, --zone, or --zones-glob is required.")
+    if len(sources) > 1:
+        raise click.ClickException(
+            "--zones, --zone, and --zones-glob are mutually exclusive; pass only one."
+        )
 
     factory = get_session_factory()
     expires_at: datetime | None = None
@@ -99,46 +109,70 @@ def token_create(
                 "Revoke it first or use a different --name."
             )
 
-        # Validate zone lifecycle state against the authoritative registry
-        # so a typo ("proud" instead of "prod") or a deleted/terminating
-        # zone can't silently mint a credential bound to a zone the
-        # operator intended to isolate or remove (#3784 rounds 6/9).
-        #
         # Bootstrap escape: if the zones table is completely empty,
         # allow the first admin token to be minted for any zone so
         # a fresh hub can be bootstrapped before any zone is
         # created. After that, every zone must refer to an active,
         # non-deleted row.
         any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
-        if any_zone is not None:
-            for zone_id in zones:
-                active_zone = (
-                    session.execute(
-                        select(ZoneModel)
-                        .where(ZoneModel.zone_id == zone_id)
-                        .where(ZoneModel.phase == "Active")
-                        .where(ZoneModel.deleted_at.is_(None))
-                    )
-                    .scalars()
-                    .first()
+
+        if zones_glob is not None:
+            import fnmatch
+
+            active = (
+                session.execute(
+                    select(ZoneModel)
+                    .where(ZoneModel.phase == "Active")
+                    .where(ZoneModel.deleted_at.is_(None))
                 )
-                if active_zone is None:
-                    known = [
-                        z.zone_id
-                        for z in session.execute(
+                .scalars()
+                .all()
+            )
+            zones = sorted(z.zone_id for z in active if fnmatch.fnmatch(z.zone_id, zones_glob))
+            if not zones:
+                known = [z.zone_id for z in active]
+                raise click.ClickException(
+                    f"--zones-glob {zones_glob!r}: no active zones match this pattern. "
+                    f"Active zones: {', '.join(sorted(known)) or '(none)'}."
+                )
+        else:
+            raw = zones_csv if zones_csv is not None else (zone_alias or "")
+            zones = [z.strip() for z in raw.split(",") if z.strip()]
+            if not zones:
+                raise click.ClickException("--zones must contain at least one non-empty zone.")
+            # Validate zone lifecycle state against the authoritative registry
+            # so a typo ("proud" instead of "prod") or a deleted/terminating
+            # zone can't silently mint a credential bound to a zone the
+            # operator intended to isolate or remove (#3784 rounds 6/9).
+            if any_zone is not None:
+                for zone_id in zones:
+                    active_zone = (
+                        session.execute(
                             select(ZoneModel)
+                            .where(ZoneModel.zone_id == zone_id)
                             .where(ZoneModel.phase == "Active")
                             .where(ZoneModel.deleted_at.is_(None))
                         )
                         .scalars()
-                        .all()
-                    ]
-                    raise click.ClickException(
-                        f"zone {zone_id!r} is not active (not found, deleted, or "
-                        f"terminating). Active zones: "
-                        f"{', '.join(sorted(known)) or '(none)'}. "
-                        "Create it first with `nexus zone create` or use --zones <existing>."
+                        .first()
                     )
+                    if active_zone is None:
+                        known = [
+                            z.zone_id
+                            for z in session.execute(
+                                select(ZoneModel)
+                                .where(ZoneModel.phase == "Active")
+                                .where(ZoneModel.deleted_at.is_(None))
+                            )
+                            .scalars()
+                            .all()
+                        ]
+                        raise click.ClickException(
+                            f"zone {zone_id!r} is not active (not found, deleted, or "
+                            f"terminating). Active zones: "
+                            f"{', '.join(sorted(known)) or '(none)'}. "
+                            "Create it first with `nexus zone create` or use --zones <existing>."
+                        )
 
         key_id, raw_key = create_api_key(
             session,

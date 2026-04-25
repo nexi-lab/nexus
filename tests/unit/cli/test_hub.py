@@ -775,3 +775,75 @@ def test_token_zones_show_lists_zones(monkeypatch):
     assert result.exit_code == 0, result.output
     assert "eng" in result.output
     assert "ops" in result.output
+
+
+def test_token_create_zones_glob_expands_to_active_zones(monkeypatch):
+    """--zones-glob 'team-*' expands to all active zones matching pattern (#3785 follow-up)."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid", "sk-x")
+
+    team_eng = MagicMock()
+    team_eng.zone_id = "team-eng"
+    team_ops = MagicMock()
+    team_ops.zone_id = "team-ops"
+    other = MagicMock()
+    other.zone_id = "ops"
+
+    session = MagicMock()
+    # Sequence: no existing token, any_zone exists (skip bootstrap),
+    # then `.all()` for the active-zones list used by glob match.
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        team_eng,
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = [
+        team_eng,
+        team_ops,
+        other,
+    ]
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones-glob", "team-*"])
+    assert result.exit_code == 0, result.output
+    assert sorted(captured["zones"]) == ["team-eng", "team-ops"]
+
+
+def test_token_create_zones_glob_no_match_rejects(monkeypatch):
+    session = MagicMock()
+    any_zone = MagicMock()
+    any_zone.zone_id = "root"
+    session.execute.return_value.scalars.return_value.first.side_effect = [None, any_zone]
+    session.execute.return_value.scalars.return_value.all.return_value = [any_zone]
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones-glob", "team-*"])
+    assert result.exit_code != 0
+    assert "no active zones match" in result.output.lower()
+
+
+def test_token_create_zones_glob_mutually_exclusive_with_zones(monkeypatch):
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(MagicMock()),
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "x", "--zones", "eng", "--zones-glob", "team-*"],
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output.lower() or "only one" in result.output.lower()

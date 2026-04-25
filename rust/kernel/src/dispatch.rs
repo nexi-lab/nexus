@@ -39,7 +39,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
-pub(crate) enum FileEventType {
+pub enum FileEventType {
     FileWrite = 1 << 0,
     FileDelete = 1 << 1,
     FileRename = 1 << 2,
@@ -100,7 +100,7 @@ pub(crate) const ALL_FILE_EVENTS: u32 = (1 << 10) - 1;
 /// boundary adapter can clone cheaply.
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
-pub(crate) struct FileEvent {
+pub struct FileEvent {
     /// Event type — strongly typed; the boundary adapter converts to the
     /// Python `FileEventType` StrEnum.
     pub(crate) event_type: FileEventType,
@@ -263,7 +263,7 @@ pub(crate) trait PathResolver: Send + Sync {
 /// Observers needing causal ordering or sync blocking on the syscall
 /// return path belong in INTERCEPT POST, not OBSERVE.
 #[allow(dead_code)]
-pub(crate) trait MutationObserver: Send + Sync {
+pub trait MutationObserver: Send + Sync {
     fn on_mutation(&self, event: &FileEvent);
 }
 

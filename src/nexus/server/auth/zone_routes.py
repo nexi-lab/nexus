@@ -402,6 +402,20 @@ async def delete_zone_endpoint(
         403: User is not zone owner or global admin
         404: Zone not found or already terminated
     """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    # Issue #3897: the default ROOT_ZONE_ID row is required by the
+    # api_key_zones FK and by the startup bootstrap invariant
+    # (nexus.storage.zone_bootstrap.ensure_root_zone). Deprovisioning it
+    # would refuse server boot and break every root-scoped key creation.
+    # Reject early so admin/owner UI flows surface a clear 403 instead
+    # of a 500 from the lifecycle layer.
+    if zone_id == ROOT_ZONE_ID:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Zone {ROOT_ZONE_ID!r} is reserved and cannot be deleted",
+        )
+
     user_id = auth_result["subject_id"]
     is_admin = auth_result.get("is_admin", False)
 

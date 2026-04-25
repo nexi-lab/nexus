@@ -57,17 +57,19 @@ class TestChunkedStorageE2E:
         nexus_fs.write("/chunks_test.bin", large_content)
 
         etag = nexus_fs.get_etag("/chunks_test.bin")
-        backend, _, _ = nexus_fs._driver_coordinator.resolve_path("/")
 
-        # Read manifest
-        manifest_path = backend._transport._resolve(backend._blob_key(etag))
-        manifest = ChunkedReference.from_json(manifest_path.read_bytes())
+        # Read manifest via kernel CAS API (resolve_path returns strings, not backend objects)
+        manifest_bytes = nexus_fs._kernel.cas_read("/", "root", etag)
+        manifest = ChunkedReference.from_json(manifest_bytes)
 
-        # Verify each chunk exists
+        # Verify each chunk exists in CAS
         for chunk_info in manifest.chunks:
-            chunk_path = backend._transport._resolve(backend._blob_key(chunk_info.chunk_hash))
-            assert chunk_path.exists(), f"Chunk {chunk_info.chunk_hash[:16]}... should exist"
-            assert chunk_path.stat().st_size == chunk_info.length
+            assert nexus_fs._kernel.cas_exists("/", "root", chunk_info.chunk_hash), (
+                f"Chunk {chunk_info.chunk_hash[:16]}... should exist"
+            )
+            assert (
+                nexus_fs._kernel.cas_size("/", "root", chunk_info.chunk_hash) == chunk_info.length
+            )
 
     @pytest.mark.asyncio
     async def test_large_file_delete_cleans_chunks(self, nexus_fs) -> None:
@@ -75,8 +77,8 @@ class TestChunkedStorageE2E:
 
         Issue #1320: sys_unlink is now metadata-only — content cleanup is
         deferred to CAS GC via OBSERVE observer.  After sys_unlink removes
-        VFS metadata, we call backend.delete_content() directly to simulate
-        the GC cleanup and verify that chunks are properly removed.
+        VFS metadata, we call cas_delete() directly to simulate the GC
+        cleanup and verify that chunks are properly removed.
         """
         from nexus.backends.engines.cdc import ChunkedReference
 
@@ -86,17 +88,14 @@ class TestChunkedStorageE2E:
         nexus_fs.write("/delete_test.bin", large_content)
         content_hash = nexus_fs.get_etag("/delete_test.bin")
 
-        backend, _, _ = nexus_fs._driver_coordinator.resolve_path("/")
-
-        # Get chunk hashes before delete
-        manifest = ChunkedReference.from_json(
-            backend._transport._resolve(backend._blob_key(content_hash)).read_bytes()
-        )
+        # Read manifest via kernel CAS API
+        manifest_bytes = nexus_fs._kernel.cas_read("/", "root", content_hash)
+        manifest = ChunkedReference.from_json(manifest_bytes)
         chunk_hashes = [c.chunk_hash for c in manifest.chunks]
 
         # Verify chunks exist
         for ch in chunk_hashes:
-            assert backend._transport._resolve(backend._blob_key(ch)).exists()
+            assert nexus_fs._kernel.cas_exists("/", "root", ch)
 
         # Delete VFS metadata
         nexus_fs.sys_unlink("/delete_test.bin")
@@ -104,12 +103,12 @@ class TestChunkedStorageE2E:
         # Verify file is gone from VFS
         assert nexus_fs.sys_stat("/delete_test.bin") is None
 
-        # Simulate GC cleanup: delete_content handles chunk ref-counting
-        backend.delete_content(content_hash)
+        # Simulate GC cleanup: cas_delete handles chunk ref-counting
+        nexus_fs._kernel.cas_delete("/", "root", content_hash)
 
         # Verify chunks are deleted
         for ch in chunk_hashes:
-            assert not backend._transport._resolve(backend._blob_key(ch)).exists(), (
+            assert not nexus_fs._kernel.cas_exists("/", "root", ch), (
                 f"Chunk {ch[:16]}... should be deleted"
             )
 
@@ -246,15 +245,9 @@ class TestChunkedStorageCDCBehavior:
         etag_a = nexus_fs.get_etag("/similar_a.bin")
         etag_b = nexus_fs.get_etag("/similar_b.bin")
 
-        backend, _, _ = nexus_fs._driver_coordinator.resolve_path("/")
-
-        # Read manifests
-        manifest_a = ChunkedReference.from_json(
-            backend._transport._resolve(backend._blob_key(etag_a)).read_bytes()
-        )
-        manifest_b = ChunkedReference.from_json(
-            backend._transport._resolve(backend._blob_key(etag_b)).read_bytes()
-        )
+        # Read manifests via kernel CAS API
+        manifest_a = ChunkedReference.from_json(nexus_fs._kernel.cas_read("/", "root", etag_a))
+        manifest_b = ChunkedReference.from_json(nexus_fs._kernel.cas_read("/", "root", etag_b))
 
         # Get chunk sets
         chunks_a = {c.chunk_hash for c in manifest_a.chunks}

@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import logging
 import time
+import weakref
 from typing import Any, Protocol, cast, runtime_checkable
 
 from nexus.bricks.search.results import BaseSearchResult
@@ -143,18 +144,40 @@ class TxtaiBackend:
         self._reranker: Any = None
         self.last_rerank_ms: float = 0.0
         self._started = False
-        self._startup_lock = asyncio.Lock()
         self._startup_task: asyncio.Task[None] | None = None
         self._reranker_task: asyncio.Task[None] | None = None
         # Path for txtai config.json — needed for pgvector persistence.
         # txtai stores index metadata (dimensions, offset) in a local file
         # and reads it back on load() to reconnect to pgvector tables.
         self._config_path = data_path or "/app/data/.txtai-index"
-        # Serialise all access to _embeddings / _reranker across coroutines.
-        # faiss (used by txtai) is NOT thread-safe for concurrent search+write
-        # operations. Since asyncio.to_thread() dispatches to a thread pool,
-        # concurrent coroutines without this lock cause native segfaults.
-        self._lock = asyncio.Lock()
+        # Per-loop locks (Issue #3894). asyncio.Lock binds to the running loop
+        # on first acquire (Python 3.11+); a single instance reused across loops
+        # raises "bound to a different event loop" and never recovers. Keys are
+        # weak so locks GC with their loop.
+        self._locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+            weakref.WeakKeyDictionary()
+        )
+        self._startup_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def _get_lock(self) -> asyncio.Lock:
+        # Serialises access to _embeddings / _reranker on the current loop.
+        # faiss (used by txtai) is NOT thread-safe for concurrent search+write,
+        # and asyncio.to_thread() dispatches to a thread pool, so concurrent
+        # coroutines on the same loop must be serialised here.
+        loop = asyncio.get_running_loop()
+        lock = self._locks.get(loop)
+        if lock is None:
+            lock = self._locks.setdefault(loop, asyncio.Lock())
+        return lock
+
+    def _get_startup_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        lock = self._startup_locks.get(loop)
+        if lock is None:
+            lock = self._startup_locks.setdefault(loop, asyncio.Lock())
+        return lock
 
     async def startup(self) -> None:
         """Initialize txtai resources once."""
@@ -163,7 +186,7 @@ class TxtaiBackend:
                 self._started = True
             return
 
-        async with self._startup_lock:
+        async with self._get_startup_lock():
             if self._started:
                 return
             if self._startup_task is None or self._startup_task.done():
@@ -403,7 +426,7 @@ class TxtaiBackend:
             reranker = await asyncio.to_thread(
                 lambda: Similarity(path=self._reranker_model, crossencode=True)
             )
-            async with self._lock:
+            async with self._get_lock():
                 self._reranker = reranker
             logger.info("Reranker initialized: %s", self._reranker_model)
         except Exception:
@@ -412,7 +435,7 @@ class TxtaiBackend:
                 self._reranker_model,
                 exc_info=True,
             )
-            async with self._lock:
+            async with self._get_lock():
                 self._reranker = None
 
     async def shutdown(self) -> None:
@@ -422,7 +445,7 @@ class TxtaiBackend:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._reranker_task
         self._reranker_task = None
-        async with self._lock:
+        async with self._get_lock():
             self._reranker = None
             if self._embeddings is not None:
                 await asyncio.to_thread(self._save)
@@ -479,7 +502,7 @@ class TxtaiBackend:
 
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
-        async with self._lock:
+        async with self._get_lock():
             if not self._embeddings:
                 return 0
             try:
@@ -544,7 +567,7 @@ class TxtaiBackend:
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
 
-        async with self._lock:
+        async with self._get_lock():
             if not self._embeddings:
                 return 0
             for attempt in range(2):
@@ -662,7 +685,7 @@ class TxtaiBackend:
             return 0
         await self.startup()
 
-        async with self._lock:
+        async with self._get_lock():
             if not self._embeddings:
                 return 0
             try:
@@ -723,7 +746,7 @@ class TxtaiBackend:
         # Concurrent search() and upsert()/index() calls would touch the same
         # mutable DB session from different threads, causing PendingRollback
         # errors and inconsistent results.
-        async with self._lock:
+        async with self._get_lock():
             if not self._embeddings:
                 return []
             raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
@@ -791,7 +814,7 @@ class TxtaiBackend:
         # across search and write paths, so concurrent batchsearch + upsert
         # corrupts the session (InFailedSqlTransaction / PendingRollback).
         try:
-            async with self._lock:
+            async with self._get_lock():
                 if not self._embeddings:
                     return [[] for _ in queries]
                 raw_results = await asyncio.to_thread(self._embeddings.batchsearch, sqls)
@@ -835,7 +858,7 @@ class TxtaiBackend:
             return results[:limit]
 
         # txtai Similarity returns [(index, score), ...] sorted by score desc
-        async with self._lock:
+        async with self._get_lock():
             if not self._reranker:
                 return results[:limit]
             try:
@@ -882,7 +905,7 @@ class TxtaiBackend:
         # Build SQL with zone_id + optional path filter (same as regular search)
         sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=limit)
 
-        async with self._lock:
+        async with self._get_lock():
             if not self._embeddings or not getattr(self._embeddings, "graph", None):
                 return []
             # txtai's Embeddings.search() uses graph as boost when graph is configured

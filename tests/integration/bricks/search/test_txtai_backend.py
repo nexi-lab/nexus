@@ -494,8 +494,37 @@ class TestTxtaiBackendConcurrency:
     @pytest.mark.asyncio
     async def test_lock_exists_on_backend(self) -> None:
         backend = TxtaiBackend()
-        assert hasattr(backend, "_lock")
-        assert isinstance(backend._lock, asyncio.Lock)
+        assert isinstance(backend._get_lock(), asyncio.Lock)
+        assert backend._get_lock() is backend._get_lock()
+
+    def test_lock_is_distinct_per_event_loop(self) -> None:
+        # Issue #3894: a single TxtaiBackend instance reused across event loops
+        # must not raise "bound to a different event loop" on lock acquire.
+        import threading
+
+        backend = TxtaiBackend()
+        seen: list[asyncio.Lock] = []
+        errors: list[BaseException] = []
+
+        async def acquire_once() -> None:
+            async with backend._get_lock():
+                seen.append(backend._get_lock())
+
+        def runner() -> None:
+            try:
+                asyncio.run(acquire_once())
+            except BaseException as exc:
+                errors.append(exc)
+
+        t1 = threading.Thread(target=runner)
+        t2 = threading.Thread(target=runner)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert errors == [], f"acquire raised across loops: {errors!r}"
+        assert len(seen) == 2
+        assert seen[0] is not seen[1]
 
     @pytest.mark.asyncio
     async def test_search_during_shutdown_returns_empty(self) -> None:

@@ -18,7 +18,23 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Known FileMetadata field names (generated from proto).
 # Used by from_json() to strip unknown keys from external dicts.
-_KNOWN_FIELDS: frozenset[str] = frozenset({"path", "size", "etag", "mime_type", "created_at", "modified_at", "version", "zone_id", "owner_id", "entry_type", "target_zone_id", "ttl_seconds", "last_writer_address"})
+_KNOWN_FIELDS: frozenset[str] = frozenset(
+    {
+        "path",
+        "size",
+        "etag",
+        "mime_type",
+        "created_at",
+        "modified_at",
+        "version",
+        "zone_id",
+        "owner_id",
+        "entry_type",
+        "target_zone_id",
+        "ttl_seconds",
+        "last_writer_address",
+    }
+)
 
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata

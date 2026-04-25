@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from nexus.contracts.metadata import FileMetadata
@@ -58,8 +59,14 @@ def _payload_of(fm: FileMetadata) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _json_default(o: Any) -> str:
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
 def _record(key: str, payload: dict[str, Any]) -> FileMetadata:
-    return FileMetadata(path=key, size=0, etag=json.dumps(payload))
+    return FileMetadata(path=key, size=0, etag=json.dumps(payload, default=_json_default))
 
 
 class MetastoreNamespaceStore:

@@ -674,7 +674,10 @@ def generate_mapper_py(fields: list[dict[str, str]]) -> str:
     to_json_block = "\n".join(to_json_lines)
 
     # --- Build known field names set ---
-    known_fields = ", ".join(f'"{f["name"]}"' for f in fields)
+    # Multi-line layout matches ruff format output so the generated
+    # file passes `ruff format --check` without a post-codegen pass.
+    known_fields = "\n".join(f'        "{f["name"]}",' for f in fields)
+    known_fields = "\n" + known_fields + "\n    "
 
     return f'''\
 """Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
@@ -697,7 +700,9 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Known FileMetadata field names (generated from proto).
 # Used by from_json() to strip unknown keys from external dicts.
-_KNOWN_FIELDS: frozenset[str] = frozenset({{{known_fields}}})
+_KNOWN_FIELDS: frozenset[str] = frozenset(
+    {{{known_fields}}}
+)
 
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata

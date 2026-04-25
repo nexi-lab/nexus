@@ -25,8 +25,6 @@ DT_EXTERNAL_STORAGE: DirEntryType
 class FileMetadata(_message.Message):
     __slots__ = (
         "path",
-        "backend_name",
-        "physical_path",
         "size",
         "etag",
         "mime_type",
@@ -38,10 +36,9 @@ class FileMetadata(_message.Message):
         "entry_type",
         "target_zone_id",
         "ttl_seconds",
+        "last_writer_address",
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
-    BACKEND_NAME_FIELD_NUMBER: _ClassVar[int]
-    PHYSICAL_PATH_FIELD_NUMBER: _ClassVar[int]
     SIZE_FIELD_NUMBER: _ClassVar[int]
     ETAG_FIELD_NUMBER: _ClassVar[int]
     MIME_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -53,9 +50,8 @@ class FileMetadata(_message.Message):
     ENTRY_TYPE_FIELD_NUMBER: _ClassVar[int]
     TARGET_ZONE_ID_FIELD_NUMBER: _ClassVar[int]
     TTL_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    LAST_WRITER_ADDRESS_FIELD_NUMBER: _ClassVar[int]
     path: str
-    backend_name: str
-    physical_path: str
     size: int
     etag: str
     mime_type: str
@@ -67,11 +63,10 @@ class FileMetadata(_message.Message):
     entry_type: DirEntryType
     target_zone_id: str
     ttl_seconds: float
+    last_writer_address: str
     def __init__(
         self,
         path: str | None = ...,
-        backend_name: str | None = ...,
-        physical_path: str | None = ...,
         size: int | None = ...,
         etag: str | None = ...,
         mime_type: str | None = ...,
@@ -83,4 +78,5 @@ class FileMetadata(_message.Message):
         entry_type: DirEntryType | str | None = ...,
         target_zone_id: str | None = ...,
         ttl_seconds: float | None = ...,
+        last_writer_address: str | None = ...,
     ) -> None: ...

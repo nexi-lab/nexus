@@ -292,7 +292,11 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
         if zone_id is not None:
-            stmt = stmt.where(APIKeyModel.zone_id == zone_id)
+            from nexus.storage.models import APIKeyZoneModel
+
+            stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+                APIKeyZoneModel.zone_id == zone_id
+            )
         api_key = session.scalar(stmt)
 
         if not api_key:

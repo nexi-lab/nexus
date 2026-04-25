@@ -91,6 +91,11 @@ class OperationContext:
         zone_set: Allow-list of zones the subject may target (#3785). Defaults to
             (zone_id,) when zone_id is set; () otherwise. Tuple for hashability —
             OperationContext may be used as a cache key.
+        zone_perms: Per-zone permission allow-list as ``(zone_id, perms)`` pairs
+            (#3785 F3c). ``perms`` is one of ``"r" | "w" | "rw" | "rwx"``. Stays
+            in sync with ``zone_set`` via ``__post_init__``: when only one is
+            populated the other is derived; when both are populated ``zone_perms``
+            is the source of truth and ``zone_set`` is rebuilt from it.
         is_admin: Whether the subject has admin privileges.
         is_system: Whether this is a system operation (bypasses all checks).
         admin_capabilities: Set of granted admin capabilities.
@@ -113,6 +118,7 @@ class OperationContext:
     groups: list[str]
     zone_id: str | None = None
     zone_set: tuple[str, ...] = ()
+    zone_perms: tuple[tuple[str, str], ...] = ()
     agent_id: str | None = None  # Agent identity (optional)
     agent_generation: int | None = None  # Session generation counter (Issue #1240)
     is_admin: bool = False
@@ -137,12 +143,23 @@ class OperationContext:
     ttl_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        """Validate context and apply defaults."""
+        """Validate context and apply defaults.
+
+        zone_set/zone_perms coexist for back-compat (#3785 F3c): zone_perms is
+        canonical when both are passed; otherwise the missing one is derived.
+        """
         if self.subject_id is None:
             self.subject_id = self.user_id
 
-        if not self.zone_set and self.zone_id is not None:
+        if self.zone_perms:
+            # zone_perms is canonical — rebuild zone_set from it (ignore drift).
+            self.zone_set = tuple(z for z, _ in self.zone_perms)
+        elif self.zone_set:
+            # Legacy path: callers passed zone_set only; default perms to "rw".
+            self.zone_perms = tuple((z, "rw") for z in self.zone_set)
+        elif self.zone_id is not None:
             self.zone_set = (self.zone_id,)
+            self.zone_perms = ((self.zone_id, "rw"),)
 
         if not self.user_id:
             raise ValueError("user_id is required")
@@ -217,17 +234,30 @@ class OperationContext:
         self.track_reads = False
 
 
-def assert_zone_allowed(ctx: "OperationContext", requested: str) -> None:
-    """Raise PermissionError if `requested` is not in the token's zone allow-list.
+def assert_zone_allowed(
+    ctx: "OperationContext", requested: str, *, required_perm: str = "r"
+) -> None:
+    """Raise PermissionError if `requested` is not allowed under `required_perm`.
 
     Admins (ctx.is_admin) bypass the check — mirrors existing ReBAC admin shortcut.
     `is_system` is intentionally NOT a bypass here: system ops always come from
     in-process callers that construct OperationContext with an explicit zone_set
     matching their intent, so honoring the allow-list keeps that contract honest.
+
+    `required_perm` defaults to ``"r"`` so existing callers (read-only flows)
+    see no behavior change. ``"x"`` permission satisfies any required_perm
+    (admin-equivalent on a per-zone basis) — matches Unix-style "x covers all".
     """
-    if ctx.is_admin or requested in ctx.zone_set:
+    if ctx.is_admin:
         return
-    raise PermissionError(f"zone {requested!r} not in token's allow-list {ctx.zone_set}")
+    for zone, perms in ctx.zone_perms:
+        if zone == requested:
+            if required_perm in perms or "x" in perms:
+                return
+            raise PermissionError(f"zone {requested!r} requires {required_perm!r}, has {perms!r}")
+    raise PermissionError(
+        f"zone {requested!r} not in token's allow-list {tuple(z for z, _ in ctx.zone_perms)}"
+    )
 
 
 @dataclass(frozen=True)

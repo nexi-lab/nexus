@@ -57,32 +57,46 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-def _gate_zone(auth_result: dict[str, Any], target_zone: str) -> None:
-    """Reject the request if `target_zone` is not in the token's zone allow-list (#3785).
+def _gate_zone(
+    auth_result: dict[str, Any],
+    target_zone: str,
+    *,
+    required_perm: str = "r",
+) -> None:
+    """Reject the request if `target_zone` is not allowed under `required_perm` (#3785).
 
     Mirrors `nexus.contracts.types.assert_zone_allowed` but raises `HTTPException(403)`
     suitable for FastAPI handlers. Admins (`auth_result["is_admin"]`) bypass.
 
-    Currently no file-op handler exposes an explicit `?zone=` query parameter —
-    every handler operates on `context.zone_id`, which equals the token's primary
-    zone (always in `zone_set` by invariant). This helper exists for handlers
-    that may gain an explicit zone arg in a future change; using it from day one
-    means defence-in-depth ships with that change instead of after it.
+    `zone_perms` (#3785 F3c) is the canonical source. Falls back to deriving
+    "rw" perms from `zone_set` / `zone_id` when only the legacy fields are set
+    (back-compat for callers that haven't been updated). ``"x"`` covers any
+    required_perm — Unix-style "x is full access".
     """
     if auth_result.get("is_admin"):
         return
-    raw = auth_result.get("zone_set")
-    if raw:
-        zone_set: tuple[str, ...] = tuple(raw)
-    elif auth_result.get("zone_id"):
-        zone_set = (auth_result["zone_id"],)
+    perms_raw = auth_result.get("zone_perms")
+    if perms_raw:
+        zone_perms: tuple[tuple[str, str], ...] = tuple((z, p) for z, p in perms_raw)
     else:
-        zone_set = ()
-    if target_zone in zone_set:
-        return
+        raw = auth_result.get("zone_set")
+        if raw:
+            zone_perms = tuple((z, "rw") for z in raw)
+        elif auth_result.get("zone_id"):
+            zone_perms = ((auth_result["zone_id"], "rw"),)
+        else:
+            zone_perms = ()
+    for zone, perms in zone_perms:
+        if zone == target_zone:
+            if required_perm in perms or "x" in perms:
+                return
+            raise HTTPException(
+                status_code=403,
+                detail=(f"zone {target_zone!r} requires {required_perm!r}, has {perms!r}"),
+            )
     raise HTTPException(
         status_code=403,
-        detail=f"zone {target_zone!r} not in token's allow-list {list(zone_set)}",
+        detail=(f"zone {target_zone!r} not in token's allow-list {[z for z, _ in zone_perms]}"),
     )
 
 
@@ -90,12 +104,23 @@ def _apply_zone_override(
     context: Any,
     zone: str | None,
     auth_result: dict[str, Any],
+    *,
+    required_perm: str = "r",
 ) -> Any:
-    if zone is None:
-        return context
-    _gate_zone(auth_result, zone)
+    """Always gate zone access, regardless of whether `?zone=` was provided (#3785 F3c).
+
+    When ``zone is None`` the gate is applied to the implicit ``context.zone_id``
+    so an ``eng:r`` token can't write to its own primary zone simply by omitting
+    the query parameter. When ``zone is not None`` the gate runs against the
+    override and the context is rebuilt to reflect it.
+    """
     import dataclasses as _dc
 
+    target = zone if zone is not None else getattr(context, "zone_id", None)
+    if target is not None:
+        _gate_zone(auth_result, target, required_perm=required_perm)
+    if zone is None:
+        return context
     return _dc.replace(context, zone_id=zone)
 
 
@@ -592,7 +617,7 @@ def create_async_files_router(
         - Plain string (UTF-8 encoded automatically)
         - Base64 encoded binary (set encoding="base64")
         """
-        context = _apply_zone_override(context, zone, auth_result)
+        context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
             fs = await _get_fs()
 
@@ -734,11 +759,7 @@ def create_async_files_router(
         so the server can validate that the requested hash actually belongs to
         `path` in that transaction, preventing cross-path blob reads.
         """
-        if zone is not None:
-            _gate_zone(auth_result, zone)
-            import dataclasses as _dc
-
-            context = _dc.replace(context, zone_id=zone)
+        context = _apply_zone_override(context, zone, auth_result, required_perm="r")
         try:
             fs = await _get_fs()
 
@@ -1066,7 +1087,7 @@ def create_async_files_router(
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> DeleteResponse:
         """Delete a file."""
-        context = _apply_zone_override(context, zone, auth_result)
+        context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
             fs = await _get_fs()
 
@@ -1399,7 +1420,7 @@ def create_async_files_router(
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """Create a directory."""
-        context = _apply_zone_override(context, zone, auth_result)
+        context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
             fs = await _get_fs()
             # fs.mkdir is async — call directly

@@ -19,7 +19,11 @@ from cachetools import TTLCache
 
 @dataclass(frozen=True)
 class ResolvedIdentity:
-    """Minimal identity fields needed by MCP tool handlers."""
+    """Minimal identity fields needed by MCP tool handlers.
+
+    zone_set/zone_perms coexist for back-compat (#3785 F3c): zone_perms is
+    canonical when both are passed; otherwise the missing one is derived.
+    """
 
     subject_id: str
     zone_id: str
@@ -29,6 +33,14 @@ class ResolvedIdentity:
     agent_generation: int | None = None
     inherit_permissions: bool | None = None
     zone_set: tuple[str, ...] = ()  # #3785: full zone allow-list for this token
+    zone_perms: tuple[tuple[str, str], ...] = ()  # #3785 F3c: per-zone perms
+
+    def __post_init__(self) -> None:
+        # Frozen dataclass: must use object.__setattr__ to sync the two fields.
+        if self.zone_perms:
+            object.__setattr__(self, "zone_set", tuple(z for z, _ in self.zone_perms))
+        elif self.zone_set:
+            object.__setattr__(self, "zone_perms", tuple((z, "rw") for z in self.zone_set))
 
 
 class AuthIdentityCache:

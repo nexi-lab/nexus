@@ -17,6 +17,9 @@ class AuthResult:
     zone_set is the full zone allow-list for the token (#3785); empty tuple
     means unconstrained (e.g. admin/internal keys).
 
+    zone_set/zone_perms coexist for back-compat (#3785 F3c): zone_perms is
+    canonical when both are passed; otherwise the missing one is derived.
+
     Examples:
         AuthResult(True, "user", "alice", "org_acme", False)
         AuthResult(True, "agent", "agent_123", "org_acme", False)
@@ -32,6 +35,14 @@ class AuthResult:
     agent_generation: int | None = None
     inherit_permissions: bool = True
     zone_set: tuple[str, ...] = ()  # #3785: full zone allow-list for this token
+    zone_perms: tuple[tuple[str, str], ...] = ()  # #3785 F3c: per-zone perms
+
+    def __post_init__(self) -> None:
+        # Frozen dataclass: must use object.__setattr__ to sync the two fields.
+        if self.zone_perms:
+            object.__setattr__(self, "zone_set", tuple(z for z, _ in self.zone_perms))
+        elif self.zone_set:
+            object.__setattr__(self, "zone_perms", tuple((z, "rw") for z in self.zone_set))
 
 
 @dataclass(frozen=True)

@@ -26,6 +26,25 @@ def _auth(zone_set: list[str], zone_id: str = "eng") -> dict[str, Any]:
     }
 
 
+def _auth_perms(
+    zone_perms: list[tuple[str, str]],
+    zone_id: str = "eng",
+    is_admin: bool = False,
+) -> dict[str, Any]:
+    """Build an auth_result dict with explicit per-zone permissions (#3785 F3c)."""
+    return {
+        "authenticated": True,
+        "subject_type": "user",
+        "subject_id": "alice",
+        "user_id": "alice",
+        "zone_id": zone_id,
+        "zone_set": [z for z, _ in zone_perms],
+        "zone_perms": [list(t) for t in zone_perms],
+        "is_admin": is_admin,
+        "groups": [],
+    }
+
+
 @pytest.fixture()
 def mock_fs() -> MagicMock:
     fs = MagicMock()
@@ -262,3 +281,127 @@ def test_list_directory_no_zone_param_uses_context_default(mock_fs: MagicMock) -
     assert resp.status_code == 200, resp.text
     assert len(captured) >= 1
     assert captured[0].zone_id == "eng"
+
+
+# ── #3785 F3c: per-zone permission enforcement ──────────────────────
+
+
+def test_write_with_read_only_perm_returns_403(mock_fs: MagicMock) -> None:
+    """eng:r token writing to eng (no override) -> 403 from required_perm='w'."""
+    client, captured = _build_write_client(mock_fs, _auth_perms(zone_perms=[("eng", "r")]))
+
+    resp = client.post("/write", json={"path": "/x.txt", "content": "hello-world"})
+
+    assert resp.status_code == 403, resp.text
+    detail = resp.json()["detail"]
+    assert "eng" in detail
+    assert "'w'" in detail or "w" in detail
+    assert captured == []
+
+
+def test_write_with_rw_perm_succeeds(mock_fs: MagicMock) -> None:
+    """eng:rw token writing to eng -> 200 (write proceeds)."""
+    client, captured = _build_write_client(mock_fs, _auth_perms(zone_perms=[("eng", "rw")]))
+
+    resp = client.post("/write", json={"path": "/x.txt", "content": "hello-world"})
+
+    assert resp.status_code == 200, resp.text
+    assert len(captured) == 1
+    assert captured[0].zone_id == "eng"
+
+
+def test_write_with_rwx_perm_succeeds(mock_fs: MagicMock) -> None:
+    """eng:rwx token (admin-equivalent on the zone) writing to eng -> 200."""
+    client, captured = _build_write_client(mock_fs, _auth_perms(zone_perms=[("eng", "rwx")]))
+
+    resp = client.post("/write", json={"path": "/x.txt", "content": "hello-world"})
+
+    assert resp.status_code == 200, resp.text
+    assert len(captured) == 1
+    assert captured[0].zone_id == "eng"
+
+
+def test_write_zone_override_to_writable_zone_succeeds(mock_fs: MagicMock) -> None:
+    """eng:r,ops:rw token + ?zone=ops + write -> 200 (ops has w)."""
+    client, captured = _build_write_client(
+        mock_fs, _auth_perms(zone_perms=[("eng", "r"), ("ops", "rw")])
+    )
+
+    resp = client.post(
+        "/write",
+        params={"zone": "ops"},
+        json={"path": "/x.txt", "content": "hello-world"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert len(captured) == 1
+    assert captured[0].zone_id == "ops"
+
+
+def test_write_zone_override_to_read_only_zone_returns_403(mock_fs: MagicMock) -> None:
+    """eng:r,ops:rw token + ?zone=eng + write -> 403 (eng is read-only)."""
+    client, captured = _build_write_client(
+        mock_fs, _auth_perms(zone_perms=[("eng", "r"), ("ops", "rw")])
+    )
+
+    resp = client.post(
+        "/write",
+        params={"zone": "eng"},
+        json={"path": "/x.txt", "content": "hello-world"},
+    )
+
+    assert resp.status_code == 403, resp.text
+    detail = resp.json()["detail"]
+    assert "eng" in detail
+    assert captured == []
+
+
+def test_write_no_override_implicit_zone_gated(mock_fs: MagicMock) -> None:
+    """eng:r,ops:rw token, ctx.zone=eng, no override, write -> 403.
+
+    Implicit-zone gating (#3785 F3c): an `eng:r` token must NOT be able to
+    write to `eng` simply by omitting `?zone=`.
+    """
+    client, captured = _build_write_client(
+        mock_fs, _auth_perms(zone_perms=[("eng", "r"), ("ops", "rw")], zone_id="eng")
+    )
+
+    resp = client.post("/write", json={"path": "/x.txt", "content": "hello-world"})
+
+    assert resp.status_code == 403, resp.text
+    detail = resp.json()["detail"]
+    assert "eng" in detail
+    assert captured == []
+
+
+def test_delete_with_read_only_perm_returns_403(mock_fs: MagicMock) -> None:
+    """eng:r token deleting in eng (no override) -> 403 from required_perm='w'."""
+    client, captured = _build_delete_client(mock_fs, _auth_perms(zone_perms=[("eng", "r")]))
+
+    resp = client.delete("/delete", params={"path": "/x.txt"})
+
+    assert resp.status_code == 403, resp.text
+    assert captured == []
+
+
+def test_read_with_read_only_perm_succeeds(mock_fs: MagicMock) -> None:
+    """eng:r token reading in eng -> 200 (required_perm='r' default)."""
+    client, captured = _build_client(mock_fs, _auth_perms(zone_perms=[("eng", "r")]))
+
+    resp = client.get("/read", params={"path": "/x.txt"})
+
+    assert resp.status_code == 200, resp.text
+    assert len(captured) == 1
+    assert captured[0].zone_id == "eng"
+
+
+def test_admin_bypasses_perm_gate(mock_fs: MagicMock) -> None:
+    """is_admin=True bypasses per-zone perm checks even on r-only token."""
+    client, captured = _build_write_client(
+        mock_fs, _auth_perms(zone_perms=[("eng", "r")], is_admin=True)
+    )
+
+    resp = client.post("/write", json={"path": "/x.txt", "content": "hello-world"})
+
+    assert resp.status_code == 200, resp.text
+    assert len(captured) == 1

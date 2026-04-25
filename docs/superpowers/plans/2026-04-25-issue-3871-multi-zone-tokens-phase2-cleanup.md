@@ -203,7 +203,7 @@ def get_primary_zone(session: "Session", key_id: str) -> str | None:
 
     Replaces direct reads of the deprecated APIKeyModel.zone_id column (#3871).
     """
-    from nexus.storage.models.auth import APIKeyZoneModel
+    from nexus.storage.models import APIKeyZoneModel
     from sqlalchemy import select
 
     stmt = (
@@ -225,7 +225,7 @@ def get_primary_zones_for_keys(
     """
     if not key_ids:
         return {}
-    from nexus.storage.models.auth import APIKeyZoneModel
+    from nexus.storage.models import APIKeyZoneModel
     from sqlalchemy import func, select
 
     rn = (
@@ -346,7 +346,7 @@ Replace with:
 
 ```python
 if zone_id is not None:
-    from nexus.storage.models.auth import APIKeyZoneModel
+    from nexus.storage.models import APIKeyZoneModel
     stmt = (
         stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
             .where(APIKeyZoneModel.zone_id == zone_id)
@@ -478,7 +478,7 @@ Replace with:
 
 ```python
 if zone_id:
-    from nexus.storage.models.auth import APIKeyZoneModel
+    from nexus.storage.models import APIKeyZoneModel
     stmt = (
         stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
             .where(APIKeyZoneModel.zone_id == zone_id)
@@ -586,7 +586,7 @@ Edit `src/nexus/server/rpc/handlers/admin.py`. For **each** of the three `if par
 
 ```python
 if params.zone_id:
-    from nexus.storage.models.auth import APIKeyZoneModel
+    from nexus.storage.models import APIKeyZoneModel
     stmt = (
         stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
             .where(APIKeyZoneModel.zone_id == params.zone_id)
@@ -694,7 +694,7 @@ Replace with:
 
 ```python
 if zone_id is not None:
-    from nexus.storage.models.auth import APIKeyZoneModel
+    from nexus.storage.models import APIKeyZoneModel
     stmt = (
         stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
             .where(APIKeyZoneModel.zone_id == zone_id)

@@ -646,12 +646,16 @@ use pyo3::exceptions::PyRuntimeError;
 /// `shutdown()` to stop. Marked `unsendable` because the inner
 /// `tokio::runtime::Runtime` cannot be sent across threads while
 /// owned by a Python object (PyO3 enforces single-thread access).
-#[pyo3::pyclass(name = "VfsGrpcServerHandle", unsendable)]
+// `Send + Sync` because the inner `tokio::runtime::Runtime` is itself
+// `Send + Sync`. `unsendable` was overly conservative — Python tests
+// pass the handle around between threads (FastAPI lifespan + sync
+// shutdown helper) and that's safe.
+#[pyclass(name = "VfsGrpcServerHandle")]
 pub struct PyVfsGrpcServerHandle {
     inner: Option<VfsGrpcHandle>,
 }
 
-#[pyo3::pymethods]
+#[pymethods]
 impl PyVfsGrpcServerHandle {
     /// Stop the server gracefully. Idempotent — safe to call from
     /// FastAPI shutdown hook even if the server already stopped.
@@ -689,7 +693,7 @@ impl PyVfsGrpcServerHandle {
 ///                    Bridges the generic `Call` RPC to Python's
 ///                    `dispatch_method` until the 195 services migrate.
 #[allow(clippy::too_many_arguments)]
-#[pyo3::pyfunction]
+#[pyfunction]
 #[pyo3(signature = (
     kernel,
     bind_addr,

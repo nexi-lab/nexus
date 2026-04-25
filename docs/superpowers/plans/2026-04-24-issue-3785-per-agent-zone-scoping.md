@@ -12,6 +12,15 @@
 
 ---
 
+## Conventions for all tasks
+
+- **Test runner:** `uv run pytest …` (the project uses uv with an editable install of `nexus-ai-fs` from the worktree). Bare `pytest` resolves against a stale site-packages copy and will produce false positives/negatives.
+- **Base import:** `from nexus.storage.models._base import Base` (the module is `_base`, not `base`).
+- **`ZoneModel` requires `name=`** in test fixtures (`name` is `nullable=False`). Use `ZoneModel(zone_id="eng", name="eng", phase="Active")`.
+- **`pytest.raises`:** prefer specific exception classes (e.g. `pytest.raises(IntegrityError)`) over bare `Exception` to satisfy ruff B017.
+
+---
+
 ## File Structure
 
 **New files:**

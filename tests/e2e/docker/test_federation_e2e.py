@@ -2037,6 +2037,26 @@ class TestPartialReplicationFailure:
         except Exception as exc:
             pytest.skip(f"docker network get failed: {exc}")
 
+        # Warm up the witness for corp-eng BEFORE we partition node-2.
+        # Without this, the very first sys_write during the partition
+        # races a fresh raft propose against an unwitness'd quorum:
+        # node-1 + node-2 was 2/3 a moment ago, now node-2 is gone, and
+        # the witness's first AppendEntries-ack for corp-eng arrives
+        # only after we've already proposed the partition write. With
+        # atomic semantics in the kernel (commit_metadata fails fast on
+        # propose timeout), that race shows up as a deterministic skip
+        # on a slow CI runner — even though replication actually works
+        # fine once witness has voted once.
+        #
+        # Force a sentinel commit to corp-eng so the witness is in the
+        # voter set with a fresh ack for that zone, then proceed.
+        sentinel = f"/corp/eng/partition-warmup-{uid}.txt"
+        wr_warm = _grpc_call(
+            grpc1, "write", {"path": sentinel, "content": "warmup"}, api_key=api_key
+        )
+        assert "error" not in wr_warm, f"warmup write failed: {wr_warm}"
+        _wait_nodes_caught_up([grpc1, grpc2], ["corp-eng"], api_key, timeout=15)
+
         try:
             net_obj.disconnect("nexus-dyn-node-2", force=True)
         except Exception as exc:
@@ -2046,6 +2066,8 @@ class TestPartialReplicationFailure:
         written: list[str] = []
         try:
             # Write 5 files on node-1 while node-2 is partitioned.
+            # Witness was warmed up above, so node-1 + witness = 2/3
+            # quorum is real; sys_write commits via raft on each call.
             for i in range(5):
                 path = f"/corp/eng/partition-{uid}-{i}.txt"
                 wr = _grpc_call(
@@ -2054,9 +2076,10 @@ class TestPartialReplicationFailure:
                     {"path": path, "content": f"p-{uid}-{i}"},
                     api_key=api_key,
                 )
-                if "error" in wr:
-                    # Quorum may be lost (only 2 voters) — skip cleanly.
-                    pytest.skip(f"Write during partition failed (likely quorum loss): {wr}")
+                assert "error" not in wr, (
+                    f"Write during partition failed even after warmup "
+                    f"(witness should be in quorum): {wr}"
+                )
                 written.append(path)
         finally:
             try:

@@ -891,46 +891,53 @@ def test_resolve_rejects_revoke_committed_after_initial_machine_check(engine):
         store.decrypt_profile = real_decrypt
 
 
-def test_resolve_rejects_revoke_committed_during_audit_write(engine):
-    """A revoke that commits between audit.write start and the post-audit
-    check must still be observed and reject the call. The audit row is
-    expected to remain (revoked daemon DID try to read; audit log captures
-    every attempt).
+def test_audit_write_atomically_rejects_revoked_machine(engine):
+    """ReadAuditWriter.write itself enforces the revocation gate inside
+    its own transaction (SELECT FOR SHARE on daemon_machines + audit
+    INSERT, atomic). Direct test against the writer proves a revoke
+    committed BEFORE audit.write starts → MachineUnknownOrRevoked, and
+    no audit row gets written.
 
-    Wraps audit.write to commit a revoke from a separate connection while
-    audit's own transaction is still in flight; the third
-    assert_machine_active call (F26) must catch it.
+    The previous regression test wrapped audit.write to commit a revoke
+    AFTER it returned; that race-window scenario is now impossible by
+    construction (SHARE lock means concurrent revoke blocks until our tx
+    commits). This direct-against-writer test pins the new atomic
+    semantic. F26 closure.
     """
-    encryption = InMemoryEncryptionProvider()
+    from nexus.bricks.auth.read_audit import ReadAuditWriter
+
     tenant = uuid.uuid4()
     principal = uuid.uuid4()
-    _seed_github_envelope(
-        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
-    )
     machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
-    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    # Revoke before any audit attempt.
+    _revoke_machine(engine=engine, tenant_id=tenant, machine_id=machine)
 
-    real_audit_write = consumer._audit.write  # noqa: SLF001 — test introspection
+    writer = ReadAuditWriter(engine=engine, hit_sample_rate=1.0)
+    with pytest.raises(MachineUnknownOrRevoked) as exc:
+        writer.write(
+            tenant_id=tenant,
+            principal_id=principal,
+            auth_profile_id="github-default",
+            caller_machine_id=machine,
+            caller_kind="daemon",
+            provider="github",
+            purpose="x",
+            cache_hit=False,
+            kek_version=1,
+        )
+    assert exc.value.cause == "machine_revoked"
 
-    def _audit_then_revoke(*args, **kwargs):
-        result = real_audit_write(*args, **kwargs)
-        with engine.begin() as conn:
-            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
-            conn.execute(
-                text("UPDATE daemon_machines SET revoked_at = NOW() WHERE id = :m"),
-                {"m": str(machine)},
-            )
-        return result
-
-    consumer._audit.write = _audit_then_revoke
-    try:
-        with pytest.raises(MachineUnknownOrRevoked) as exc:
-            consumer.resolve(
-                claims=_claims(tenant, principal, machine), provider="github", purpose="x"
-            )
-        assert exc.value.cause == "machine_revoked"
-    finally:
-        consumer._audit.write = real_audit_write
+    # No audit row written for the revoked attempt.
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        count = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM auth_profile_reads "
+                "WHERE tenant_id = :t AND caller_machine_id = :m"
+            ),
+            {"t": str(tenant), "m": str(machine)},
+        ).scalar_one()
+    assert count == 0
 
 
 def test_resolve_succeeds_with_active_plus_stale_sibling_profile(engine):

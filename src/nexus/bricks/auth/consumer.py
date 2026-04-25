@@ -392,18 +392,14 @@ class CredentialConsumer:
                         # if the underlying envelope is also stale).
                         self._cred_cache.evict(cache_key)
                     else:
-                        # F25 + F26: bracket the audit.write with TWO
-                        # daemon-revocation checks. The first catches a
-                        # revoke committed before audit started; the
-                        # second (after audit) catches a revoke committed
-                        # WHILE audit was running. Together they shrink the
-                        # post-revoke read race down to the gap between the
-                        # second SELECT and the JSONResponse send.
-                        self._get_store(claims).assert_machine_active(
-                            principal_id=claims.principal_id,
-                            machine_id=claims.machine_id,
-                        )
-                        # Cache hit — log sampled audit row, no decrypt.
+                        # F25 + F26: revocation enforcement now lives
+                        # inside audit.write (SELECT FOR SHARE on
+                        # daemon_machines + audit INSERT in one tx).
+                        # Concurrent revoke either commits BEFORE the
+                        # audit's SHARE-lock SELECT (we get
+                        # MachineUnknownOrRevoked + nothing returned) or
+                        # AFTER our audit COMMIT (we returned this one
+                        # credential, next request denied). No race window.
                         cache_label = "hit"
                         self._audit.write(
                             tenant_id=claims.tenant_id,
@@ -415,10 +411,6 @@ class CredentialConsumer:
                             purpose=purpose,
                             cache_hit=True,
                             kek_version=cached_fp.kek_version,
-                        )
-                        self._get_store(claims).assert_machine_active(
-                            principal_id=claims.principal_id,
-                            machine_id=claims.machine_id,
                         )
                         return cached_cred
 
@@ -485,20 +477,15 @@ class CredentialConsumer:
                         cause="materialized_credential_expired_or_near_expiry",
                     )
 
-            # F25: Double-check machine_active immediately before audit/cache.
-            # The first assert_machine_active was at the top of resolve;
-            # between that and here we held no lock while running KMS
-            # unwrap_dek (potentially hundreds of ms for AWS KMS / Vault).
-            # A revoke that committed in that window would otherwise be
-            # missed and the daemon would receive one more upstream
-            # credential after revocation. This second check shrinks the
-            # race to the (microsecond) gap between the SELECT and the
-            # JSONResponse send.
-            self._get_store(claims).assert_machine_active(
-                principal_id=claims.principal_id,
-                machine_id=claims.machine_id,
-            )
-
+            # F25 + F26: revocation enforcement is atomic with the audit
+            # write — audit.write does SELECT FOR SHARE on daemon_machines
+            # before INSERTing the audit row, in one transaction. A
+            # concurrent revoke either commits BEFORE our SHARE-lock
+            # SELECT (we get MachineUnknownOrRevoked, no credential
+            # cached or returned) or AFTER our audit COMMIT (this one
+            # credential is returned + cached; next request denied). No
+            # race window between the gate and the cache.put / return.
+            #
             # IMPORTANT: write audit BEFORE caching so a failed mandatory
             # cache-miss audit doesn't poison the cache. Without this order,
             # an audit failure raises AuditWriteFailed → router 503, but the
@@ -514,20 +501,6 @@ class CredentialConsumer:
                 purpose=purpose,
                 cache_hit=False,
                 kek_version=decrypted.kek_version,
-            )
-
-            # F26: Third machine_active check after audit, before cache+return.
-            # audit.write opens its own short transaction (potentially tens of
-            # ms under load); a revoke that commits during that window would
-            # otherwise slip past F25's pre-audit check and the daemon would
-            # both end up with an audit row for a permitted read AND get the
-            # credential cached. This third check fails the request closed if
-            # the daemon was revoked while audit was running. The audit row
-            # itself stays — that's correct: a revoked daemon DID try to read,
-            # and the audit log is meant to capture every attempt.
-            self._get_store(claims).assert_machine_active(
-                principal_id=claims.principal_id,
-                machine_id=claims.machine_id,
             )
 
             self._cred_cache.put(

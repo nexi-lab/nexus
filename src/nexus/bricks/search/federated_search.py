@@ -444,6 +444,7 @@ class FederatedSearchDispatcher:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        zone_filter: frozenset[str] | None = None,  # NEW (#3785)
     ) -> FederatedSearchResponse:
         """Execute a federated search across all accessible zones.
 
@@ -455,6 +456,9 @@ class FederatedSearchDispatcher:
             path_filter: Optional path prefix filter.
             alpha: Semantic vs keyword weight.
             fusion_method: Fusion method for intra-zone hybrid search.
+            zone_filter: Optional upper-bound zone allow-list. When set,
+                intersects with accessible_zones to enforce per-token zone
+                scoping (#3785).
 
         Returns:
             FederatedSearchResponse with fused results and zone metadata.
@@ -469,6 +473,10 @@ class FederatedSearchDispatcher:
 
         # 1. Zone discovery (decision 2A: zone-level auth is sufficient)
         accessible_zones = await self._get_accessible_zones(subject)
+
+        # #3785: intersect with token's zone allow-list if provided.
+        if zone_filter is not None:
+            accessible_zones = [z for z in accessible_zones if z in zone_filter]
 
         if not accessible_zones:
             return FederatedSearchResponse(

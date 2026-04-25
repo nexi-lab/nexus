@@ -297,10 +297,34 @@ class TestGetAuthResultAuthProvider:
         result.subject_type = overrides.get("subject_type", "user")
         result.subject_id = overrides.get("subject_id", "alice")
         result.zone_id = overrides.get("zone_id", ROOT_ZONE_ID)
+        result.zone_set = overrides.get("zone_set", ())
+        result.zone_perms = overrides.get("zone_perms", ())
         result.inherit_permissions = overrides.get("inherit_permissions", True)
         result.metadata = overrides.get("metadata", {})
         result.agent_generation = overrides.get("agent_generation")
         return result
+
+    async def test_provider_propagates_zone_set_and_zone_perms(self):
+        """AuthResult.zone_set/zone_perms must reach the auth dict (#3785).
+
+        Regression: F3c gating in async_files relies on these keys; the
+        previous resolve_auth dict construction silently dropped them, so
+        multi-zone tokens were treated as single-zone at the router boundary.
+        """
+        cache = InMemoryCacheStore()
+        provider = AsyncMock()
+        provider.authenticate = AsyncMock(
+            return_value=self._make_auth_result_obj(
+                zone_set=("eng", "ops"),
+                zone_perms=(("eng", "rw"), ("ops", "r")),
+            )
+        )
+        request = _make_mock_request(auth_provider=provider, auth_cache_store=cache)
+        result = await _call_get_auth_result(request=request, authorization="Bearer multi-zone")
+
+        assert result is not None
+        assert result["zone_set"] == ["eng", "ops"]
+        assert result["zone_perms"] == [["eng", "rw"], ["ops", "r"]]
 
     async def test_provider_success_returns_result(self):
         """Successful provider auth should return structured result."""

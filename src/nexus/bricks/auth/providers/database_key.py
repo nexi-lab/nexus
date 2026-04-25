@@ -124,6 +124,16 @@ class DatabaseAPIKeyAuth(AuthProvider):
                     )
                     return AuthResult(authenticated=False)
 
+            # #3785: load token's zone allow-list (with per-zone perms, F3c)
+            # from api_key_zones junction.
+            from nexus.storage.models import APIKeyZoneModel
+
+            zone_perm_rows = session.execute(
+                select(APIKeyZoneModel.zone_id, APIKeyZoneModel.permissions).where(
+                    APIKeyZoneModel.key_id == api_key.key_id
+                )
+            ).all()
+
             # Cache all ORM attributes eagerly before session close
             subject_type = (
                 api_key.subject_type
@@ -141,6 +151,15 @@ class DatabaseAPIKeyAuth(AuthProvider):
             key_name = api_key.name
             expires_at_iso = api_key.expires_at.isoformat() if api_key.expires_at else None
 
+            # Derive zone_perms: junction rows → use them; otherwise fall back
+            # to legacy single-zone key (api_key.zone_id) defaulting to "rw",
+            # or () for zoneless keys. zone_set is rebuilt by AuthResult.__post_init__.
+            zone_perms: tuple[tuple[str, str], ...] = (
+                tuple((z, p) for z, p in zone_perm_rows)
+                if zone_perm_rows
+                else (((api_key.zone_id, "rw"),) if api_key.zone_id else ())
+            )
+
         # Decision #13: Fire-and-forget last_used_at update (outside session)
         self._update_last_used_background(token_hash)
 
@@ -150,6 +169,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             subject_id=subject_id,
             zone_id=zone_id,
             is_admin=is_admin,
+            zone_perms=zone_perms,
             metadata={
                 "key_id": key_id,
                 "key_name": key_name,

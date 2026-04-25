@@ -39,6 +39,7 @@ EXPECTED_MODELS = [
     "UserModel",
     "UserOAuthAccountModel",
     "APIKeyModel",
+    "APIKeyZoneModel",
     "OAuthAPIKeyModel",
     "OAuthCredentialModel",
     "ZoneModel",

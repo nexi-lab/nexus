@@ -23,9 +23,8 @@ def op_context_to_auth_dict(op_context: Any) -> dict[str, Any]:
     """Convert an ``OperationContext`` (or None) into an auth_result dict.
 
     ``_apply_rebac_filter`` expects a dict with ``subject_id``,
-    ``zone_id``, and ``is_admin`` keys — the same shape that the HTTP
-    ``require_auth`` dependency returns.  This helper bridges the MCP
-    ``OperationContext`` into that format.
+    ``zone_id``, ``zone_set`` (#3785), and ``is_admin`` keys — the same
+    shape that the HTTP ``require_auth`` dependency returns.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -33,12 +32,24 @@ def op_context_to_auth_dict(op_context: Any) -> dict[str, Any]:
         return {
             "subject_id": "anonymous",
             "zone_id": ROOT_ZONE_ID,
+            "zone_set": [],
+            "zone_perms": [],
             "is_admin": False,
         }
+    zone_id = getattr(op_context, "zone_id", None) or ROOT_ZONE_ID
+    raw_zone_set = getattr(op_context, "zone_set", None)
+    zone_set_attr: tuple = tuple(raw_zone_set) if isinstance(raw_zone_set, (tuple, list)) else ()
+    raw_zone_perms = getattr(op_context, "zone_perms", None)
+    zone_perms_attr: tuple = (
+        tuple(raw_zone_perms) if isinstance(raw_zone_perms, (tuple, list)) else ()
+    )
     return {
         "subject_id": getattr(op_context, "subject_id", None)
         or getattr(op_context, "user_id", "anonymous"),
-        "zone_id": getattr(op_context, "zone_id", None) or ROOT_ZONE_ID,
+        "zone_id": zone_id,
+        "zone_set": list(zone_set_attr) if zone_set_attr else [zone_id],
+        # JSON-friendly list-of-lists for zone_perms (#3785 F3c).
+        "zone_perms": [list(t) for t in zone_perms_attr] if zone_perms_attr else [[zone_id, "rw"]],
         "is_admin": bool(getattr(op_context, "is_admin", False)),
     }
 
@@ -112,6 +123,8 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
             subject_type=getattr(auth_result, "subject_type", None) or "user",
             agent_generation=getattr(auth_result, "agent_generation", None),
             inherit_permissions=getattr(auth_result, "inherit_permissions", None),
+            zone_set=tuple(getattr(auth_result, "zone_set", ()) or ()),
+            zone_perms=tuple((z, p) for z, p in (getattr(auth_result, "zone_perms", ()) or ())),
         )
 
     resolved = cache.get_or_resolve(key_hash, _resolve_and_cache)
@@ -123,6 +136,8 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
         subject_type=resolved.subject_type,
         subject_id=resolved.subject_id,
         zone_id=resolved.zone_id,
+        zone_set=resolved.zone_set,
+        zone_perms=resolved.zone_perms,
         is_admin=resolved.is_admin,
         agent_generation=resolved.agent_generation,
         inherit_permissions=resolved.inherit_permissions,
@@ -191,6 +206,8 @@ def resolve_mcp_operation_context(
                         "subject_type",
                         "subject_id",
                         "zone_id",
+                        "zone_set",
+                        "zone_perms",
                         "is_admin",
                         "agent_generation",
                         "inherit_permissions",
@@ -203,11 +220,17 @@ def resolve_mcp_operation_context(
                 zone_id = auth_dict.get("zone_id") or ROOT_ZONE_ID
                 is_admin = bool(auth_dict.get("is_admin", False))
                 agent_generation = auth_dict.get("agent_generation")
+                zone_set_raw = auth_dict.get("zone_set")
+                zone_set = tuple(zone_set_raw) if zone_set_raw else (zone_id,)
+                zone_perms_raw = auth_dict.get("zone_perms")
+                zone_perms = tuple((z, p) for z, p in zone_perms_raw) if zone_perms_raw else ()
                 return OperationContext(
                     user_id=subject_id,
                     subject_type=subject_type,
                     subject_id=subject_id,
                     zone_id=zone_id,
+                    zone_set=zone_set,
+                    zone_perms=zone_perms,
                     groups=[],
                     is_admin=is_admin,
                     is_system=False,

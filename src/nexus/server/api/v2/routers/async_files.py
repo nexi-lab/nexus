@@ -53,6 +53,78 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Zone gate helper (#3785)
+# =============================================================================
+
+
+def _gate_zone(
+    auth_result: dict[str, Any],
+    target_zone: str,
+    *,
+    required_perm: str = "r",
+) -> None:
+    """Reject the request if `target_zone` is not allowed under `required_perm` (#3785).
+
+    Mirrors `nexus.contracts.types.assert_zone_allowed` but raises `HTTPException(403)`
+    suitable for FastAPI handlers. Admins (`auth_result["is_admin"]`) bypass.
+
+    `zone_perms` (#3785 F3c) is the canonical source. Falls back to deriving
+    "rw" perms from `zone_set` / `zone_id` when only the legacy fields are set
+    (back-compat for callers that haven't been updated). ``"x"`` covers any
+    required_perm — Unix-style "x is full access".
+    """
+    if auth_result.get("is_admin"):
+        return
+    perms_raw = auth_result.get("zone_perms")
+    if perms_raw:
+        zone_perms: tuple[tuple[str, str], ...] = tuple((z, p) for z, p in perms_raw)
+    else:
+        raw = auth_result.get("zone_set")
+        if raw:
+            zone_perms = tuple((z, "rw") for z in raw)
+        elif auth_result.get("zone_id"):
+            zone_perms = ((auth_result["zone_id"], "rw"),)
+        else:
+            zone_perms = ()
+    for zone, perms in zone_perms:
+        if zone == target_zone:
+            if required_perm in perms or "x" in perms:
+                return
+            raise HTTPException(
+                status_code=403,
+                detail=(f"zone {target_zone!r} requires {required_perm!r}, has {perms!r}"),
+            )
+    raise HTTPException(
+        status_code=403,
+        detail=(f"zone {target_zone!r} not in token's allow-list {[z for z, _ in zone_perms]}"),
+    )
+
+
+def _apply_zone_override(
+    context: Any,
+    zone: str | None,
+    auth_result: dict[str, Any],
+    *,
+    required_perm: str = "r",
+) -> Any:
+    """Always gate zone access, regardless of whether `?zone=` was provided (#3785 F3c).
+
+    When ``zone is None`` the gate is applied to the implicit ``context.zone_id``
+    so an ``eng:r`` token can't write to its own primary zone simply by omitting
+    the query parameter. When ``zone is not None`` the gate runs against the
+    override and the context is rebuilt to reflect it.
+    """
+    import dataclasses as _dc
+
+    target = zone if zone is not None else getattr(context, "zone_id", None)
+    if target is not None:
+        _gate_zone(auth_result, target, required_perm=required_perm)
+    if zone is None:
+        return context
+    return _dc.replace(context, zone_id=zone)
+
+
+# =============================================================================
 # Helpers
 # =============================================================================
 
@@ -490,7 +562,11 @@ def create_async_files_router(
     router = APIRouter(tags=["files"])
 
     # Import auth dependencies from main server
-    from nexus.server.dependencies import get_auth_result, get_operation_context
+    from nexus.server.dependencies import (
+        get_auth_result,
+        get_operation_context,
+        require_auth,
+    )
 
     async def _get_fs() -> Any:
         """Get NexusFS, supporting both direct and lazy modes."""
@@ -524,7 +600,12 @@ def create_async_files_router(
             None,
             description="Active transaction ID to track this write in (from snapshots API)",
         ),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> Response:
         """
         Write content to a file.
@@ -536,6 +617,7 @@ def create_async_files_router(
         - Plain string (UTF-8 encoded automatically)
         - Base64 encoded binary (set encoding="base64")
         """
+        context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
             fs = await _get_fs()
 
@@ -658,7 +740,12 @@ def create_async_files_router(
             None,
             description="(Markdown only) Filter by block type within section: 'code' or 'table'",
         ),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> Response:
         """
         Read file content.
@@ -672,6 +759,7 @@ def create_async_files_router(
         so the server can validate that the requested hash actually belongs to
         `path` in that transaction, preventing cross-path blob reads.
         """
+        context = _apply_zone_override(context, zone, auth_result, required_perm="r")
         try:
             fs = await _get_fs()
 
@@ -991,9 +1079,15 @@ def create_async_files_router(
             None,
             description="Active transaction ID to track this delete in",
         ),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> DeleteResponse:
         """Delete a file."""
+        context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
             fs = await _get_fs()
 
@@ -1059,9 +1153,15 @@ def create_async_files_router(
     @router.get("/exists", response_model=ExistsResponse)
     async def file_exists(
         path: str = Query(..., description="Path to check"),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> ExistsResponse:
         """Check if a file or directory exists."""
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
             exists = fs.access(path, context=context)
@@ -1088,7 +1188,12 @@ def create_async_files_router(
         cursor: str | None = Query(
             None, description="Opaque cursor from previous response's next_cursor"
         ),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> ListResponse:
         """List directory contents with optional cursor pagination.
 
@@ -1099,6 +1204,7 @@ def create_async_files_router(
 
         @see Issue #3102, Decision 2A
         """
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
 
@@ -1306,9 +1412,15 @@ def create_async_files_router(
     @router.post("/mkdir", status_code=status.HTTP_200_OK)
     async def create_directory(
         request: MkdirRequest,
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """Create a directory."""
+        context = _apply_zone_override(context, zone, auth_result, required_perm="w")
         try:
             fs = await _get_fs()
             # fs.mkdir is async — call directly
@@ -1334,9 +1446,15 @@ def create_async_files_router(
     @router.get("/metadata", response_model=MetadataResponse)
     async def get_file_metadata(
         path: str = Query(..., description="Path to get metadata for"),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> MetadataResponse:
         """Get file or directory metadata."""
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
             meta = fs.sys_stat(path, context=context)
@@ -1373,7 +1491,12 @@ def create_async_files_router(
     @router.post("/batch-read")
     async def batch_read_files(
         request: BatchReadRequest,
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """
         Read multiple files in a single request.
@@ -1381,6 +1504,7 @@ def create_async_files_router(
         Returns a dict mapping path to content (or None if not found).
         More efficient than multiple individual reads.
         """
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
             results = await asyncio.to_thread(fs.read_bulk, request.paths, context=context)

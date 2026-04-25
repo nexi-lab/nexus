@@ -19,8 +19,43 @@ from nexus.cli.commands._hub_common import (
     get_session_factory,
     parse_duration,
 )
-from nexus.storage.api_key_ops import create_api_key
-from nexus.storage.models import APIKeyModel, ZoneModel
+from nexus.storage.api_key_ops import (
+    add_zone_to_key,
+    create_api_key,
+    get_zone_perms_for_key,
+    remove_zone_from_key,
+)
+from nexus.storage.models import APIKeyModel, APIKeyZoneModel, ZoneModel
+
+_VALID_PERMS = ("r", "w", "rw", "rwx")
+
+
+def _parse_zones_csv(raw: str) -> list[str | tuple[str, str]]:
+    """Parse ``"eng:rw,ops:r"`` into ``[("eng","rw"), ("ops","r")]``.
+
+    Bare entries (no colon) default to ``"rw"`` and are returned as plain
+    strings so ``create_api_key`` records the default uniformly.
+    """
+    out: list[str | tuple[str, str]] = []
+    for chunk in raw.split(","):
+        item = chunk.strip()
+        if not item:
+            continue
+        if ":" in item:
+            zid, perms = item.split(":", 1)
+            zid = zid.strip()
+            perms = perms.strip()
+            if not zid:
+                raise click.ClickException(f"empty zone id in {chunk!r}")
+            if perms not in _VALID_PERMS:
+                raise click.ClickException(
+                    f"invalid permissions {perms!r} for zone {zid!r}; "
+                    f"expected one of {', '.join(_VALID_PERMS)}"
+                )
+            out.append((zid, perms))
+        else:
+            out.append(item)
+    return out
 
 
 @click.group()
@@ -35,7 +70,28 @@ def token() -> None:
 
 @token.command("create")
 @click.option("--name", required=True, help="Human-readable token name (unique).")
-@click.option("--zone", "zone_id", required=True, help="Zone the token can access.")
+@click.option(
+    "--zones",
+    "zones_csv",
+    default=None,
+    help="Comma-separated zones the token can access (e.g. eng,ops or eng:rw,ops:r). "
+    "Per-zone permissions (r|w|rw|rwx) may be appended after a colon; "
+    "bare entries default to 'rw'.",
+)
+@click.option(
+    "--zone",
+    "zone_alias",
+    default=None,
+    hidden=True,
+    help="Deprecated alias for --zones (single zone).",
+)
+@click.option(
+    "--zones-glob",
+    "zones_glob",
+    default=None,
+    help="Glob pattern resolved against active zones at mint time (e.g. 'team-*'). "
+    "Mutually exclusive with --zones / --zone.",
+)
 @click.option("--admin", "is_admin", is_flag=True, help="Grant admin privileges.")
 @click.option(
     "--expires",
@@ -46,12 +102,23 @@ def token() -> None:
 @click.option("--user-id", default=None, help="Owner user_id. Defaults to --name.")
 def token_create(
     name: str,
-    zone_id: str,
+    zones_csv: str | None,
+    zone_alias: str | None,
+    zones_glob: str | None,
     is_admin: bool,
     expires: str | None,
     user_id: str | None,
 ) -> None:
     """Create a new bearer token. Prints the raw key once; not retrievable after."""
+    # Mutually-exclusive validation
+    sources = [s for s in (zones_csv, zone_alias, zones_glob) if s is not None]
+    if len(sources) == 0:
+        raise click.ClickException("One of --zones, --zone, or --zones-glob is required.")
+    if len(sources) > 1:
+        raise click.ClickException(
+            "--zones, --zone, and --zones-glob are mutually exclusive; pass only one."
+        )
+
     factory = get_session_factory()
     expires_at: datetime | None = None
     if expires:
@@ -74,50 +141,84 @@ def token_create(
                 "Revoke it first or use a different --name."
             )
 
-        # Validate zone lifecycle state against the authoritative registry
-        # so a typo ("proud" instead of "prod") or a deleted/terminating
-        # zone can't silently mint a credential bound to a zone the
-        # operator intended to isolate or remove (#3784 rounds 6/9).
-        active_zone = (
-            session.execute(
-                select(ZoneModel)
-                .where(ZoneModel.zone_id == zone_id)
-                .where(ZoneModel.phase == "Active")
-                .where(ZoneModel.deleted_at.is_(None))
-            )
-            .scalars()
-            .first()
-        )
-        if active_zone is None:
-            # Bootstrap escape: if the zones table is completely empty,
-            # allow the first admin token to be minted for any zone so
-            # a fresh hub can be bootstrapped before any zone is
-            # created. After that, every --zone must refer to an active,
-            # non-deleted row.
-            any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
-            if any_zone is not None:
-                known = [
-                    z.zone_id
-                    for z in session.execute(
-                        select(ZoneModel)
-                        .where(ZoneModel.phase == "Active")
-                        .where(ZoneModel.deleted_at.is_(None))
-                    )
-                    .scalars()
-                    .all()
-                ]
-                raise click.ClickException(
-                    f"zone {zone_id!r} is not active (not found, deleted, or "
-                    f"terminating). Active zones: "
-                    f"{', '.join(sorted(known)) or '(none)'}. "
-                    "Create it first with `nexus zone create` or use --zone <existing>."
+        # Bootstrap escape: if the zones table is completely empty,
+        # allow the first admin token to be minted for any zone so
+        # a fresh hub can be bootstrapped before any zone is
+        # created. After that, every zone must refer to an active,
+        # non-deleted row.
+        any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
+
+        zones: list[str | tuple[str, str]]
+        if zones_glob is not None:
+            import fnmatch
+
+            active = (
+                session.execute(
+                    select(ZoneModel)
+                    .where(ZoneModel.phase == "Active")
+                    .where(ZoneModel.deleted_at.is_(None))
                 )
+                .scalars()
+                .all()
+            )
+            matched = sorted(z.zone_id for z in active if fnmatch.fnmatch(z.zone_id, zones_glob))
+            if not matched:
+                known = [z.zone_id for z in active]
+                raise click.ClickException(
+                    f"--zones-glob {zones_glob!r}: no active zones match this pattern. "
+                    f"Active zones: {', '.join(sorted(known)) or '(none)'}."
+                )
+            # Glob can't carry per-zone perms; everything resolves to default rw.
+            zones = list(matched)
+        else:
+            if zones_csv is not None:
+                zones = _parse_zones_csv(zones_csv)
+            else:
+                zones = (
+                    [z.strip() for z in zone_alias.split(",") if z.strip()] if zone_alias else []
+                )
+            if not zones:
+                raise click.ClickException("--zones must contain at least one non-empty zone.")
+            # Validate zone lifecycle state against the authoritative registry
+            # so a typo ("proud" instead of "prod") or a deleted/terminating
+            # zone can't silently mint a credential bound to a zone the
+            # operator intended to isolate or remove (#3784 rounds 6/9).
+            if any_zone is not None:
+                for entry in zones:
+                    zid = entry[0] if isinstance(entry, tuple) else entry
+                    active_zone = (
+                        session.execute(
+                            select(ZoneModel)
+                            .where(ZoneModel.zone_id == zid)
+                            .where(ZoneModel.phase == "Active")
+                            .where(ZoneModel.deleted_at.is_(None))
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if active_zone is None:
+                        known = [
+                            z.zone_id
+                            for z in session.execute(
+                                select(ZoneModel)
+                                .where(ZoneModel.phase == "Active")
+                                .where(ZoneModel.deleted_at.is_(None))
+                            )
+                            .scalars()
+                            .all()
+                        ]
+                        raise click.ClickException(
+                            f"zone {zid!r} is not active (not found, deleted, or "
+                            f"terminating). Active zones: "
+                            f"{', '.join(sorted(known)) or '(none)'}. "
+                            "Create it first with `nexus zone create` or use --zones <existing>."
+                        )
 
         key_id, raw_key = create_api_key(
             session,
             user_id=user_id or name,
             name=name,
-            zone_id=zone_id,
+            zones=zones,
             is_admin=is_admin,
             expires_at=expires_at,
         )
@@ -152,6 +253,29 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
             stmt = stmt.where(APIKeyModel.revoked == 0)
         rows = session.execute(stmt).scalars().all()
 
+        # Single batched junction query — not N+1 (#3785).
+        key_ids = [r.key_id for r in rows]
+        junction_rows: list[APIKeyZoneModel] = []
+        if key_ids:
+            junction_rows = list(
+                session.execute(select(APIKeyZoneModel).where(APIKeyZoneModel.key_id.in_(key_ids)))
+                .scalars()
+                .all()
+            )
+
+    # Build zones_by_key: primary zone first, then sorted others.
+    zones_by_key: dict[str, list[str]] = {}
+    for jr in junction_rows:
+        zones_by_key.setdefault(jr.key_id, []).append(jr.zone_id)
+    for kid in zones_by_key:
+        primary = next((r.zone_id for r in rows if r.key_id == kid), None)
+        others = sorted(z for z in zones_by_key[kid] if z != primary)
+        zones_by_key[kid] = ([primary] if primary else []) + others
+
+    def _zones(r: APIKeyModel) -> list[str]:
+        """Return zones list for a token row, falling back to zone_id if no junction rows."""
+        return zones_by_key.get(r.key_id, [r.zone_id] if r.zone_id else [])
+
     def _iso(dt: datetime | None) -> str:
         return dt.isoformat() if dt else "-"
 
@@ -161,7 +285,8 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
                 {
                     "key_id": r.key_id,
                     "name": r.name,
-                    "zone": r.zone_id,
+                    "zone": r.zone_id,  # deprecated: use 'zones' (kept one release for compat)
+                    "zones": _zones(r),
                     "admin": bool(r.is_admin),
                     "created": _iso(r.created_at),
                     "last_used": _iso(r.last_used_at),
@@ -175,12 +300,13 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
         return
 
     body = format_table(
-        headers=["key_id", "name", "zone", "admin", "created", "last_used", "revoked_at"],
+        headers=["key_id", "name", "zone", "zones", "admin", "created", "last_used", "revoked_at"],
         rows=[
             [
                 r.key_id[:12] + "…" if len(r.key_id) > 12 else r.key_id,
                 r.name,
-                r.zone_id,
+                r.zone_id or "-",
+                ",".join(_zones(r)),
                 "yes" if r.is_admin else "no",
                 _iso(r.created_at),
                 _iso(r.last_used_at),
@@ -227,6 +353,96 @@ def token_revoke(identifier: str) -> None:
         row.revoked_at = datetime.now(UTC)
 
     click.echo(f"revoked {row.name} ({row.key_id}). Effective within 60s (auth cache TTL).")
+
+
+@token.group("zones")
+def token_zones() -> None:
+    """Manage a token's zone allow-list (#3785)."""
+
+
+def _resolve_token_by_name(session: Any, name: str) -> APIKeyModel:
+    row: APIKeyModel | None = (
+        session.execute(
+            select(APIKeyModel).where(APIKeyModel.name == name).where(APIKeyModel.revoked == 0)
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        raise click.ClickException(f"no active token named {name!r}")
+    return row
+
+
+@token_zones.command("add")
+@click.option("--name", required=True, help="Token name.")
+@click.option("--zone", "zone_id", required=True, help="Zone to add.")
+@click.option(
+    "--perms",
+    "permissions",
+    type=click.Choice(_VALID_PERMS),
+    default="rw",
+    show_default=True,
+    help="Per-zone permission (r|w|rw|rwx).",
+)
+def token_zones_add(name: str, zone_id: str, permissions: str) -> None:
+    """Add a zone to a token's allow-list. Idempotent."""
+    factory = get_session_factory()
+    with factory() as session, session.begin():
+        active = (
+            session.execute(
+                select(ZoneModel)
+                .where(ZoneModel.zone_id == zone_id)
+                .where(ZoneModel.phase == "Active")
+                .where(ZoneModel.deleted_at.is_(None))
+            )
+            .scalars()
+            .first()
+        )
+        if active is None:
+            raise click.ClickException(
+                f"zone {zone_id!r} is not active. Use `nexus zone create` first."
+            )
+        token_row = _resolve_token_by_name(session, name)
+        try:
+            added = add_zone_to_key(session, token_row.key_id, zone_id, permissions=permissions)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    click.echo(f"{'added' if added else 'no change'}: {name} → {zone_id} ({permissions})")
+
+
+@token_zones.command("remove")
+@click.option("--name", required=True, help="Token name.")
+@click.option("--zone", "zone_id", required=True, help="Zone to remove.")
+def token_zones_remove(name: str, zone_id: str) -> None:
+    """Remove a zone from a token's allow-list. Refuses to leave token zoneless."""
+    factory = get_session_factory()
+    with factory() as session, session.begin():
+        token_row = _resolve_token_by_name(session, name)
+        try:
+            removed = remove_zone_from_key(session, token_row.key_id, zone_id)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    click.echo(f"{'removed' if removed else 'no change'}: {name} → {zone_id}")
+
+
+@token_zones.command("show")
+@click.option("--name", required=True, help="Token name.")
+def token_zones_show(name: str) -> None:
+    """Print the token's zone allow-list with perms (primary first)."""
+    factory = get_session_factory()
+    with factory() as session:
+        token_row = _resolve_token_by_name(session, name)
+        pairs = get_zone_perms_for_key(session, token_row.key_id)
+    primary = token_row.zone_id
+    perms_by_zone = dict(pairs)
+    ordered_ids = ([primary] if primary in perms_by_zone else []) + sorted(
+        zid for zid in perms_by_zone if zid != primary
+    )
+    click.echo(
+        format_table(
+            headers=["zone", "perms"], rows=[[zid, perms_by_zone[zid]] for zid in ordered_ids]
+        )
+    )
 
 
 @hub.group("zone")

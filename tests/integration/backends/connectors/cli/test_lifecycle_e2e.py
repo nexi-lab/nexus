@@ -103,32 +103,6 @@ class TestConnectorLifecycleE2E:
         assert "# Github Connector" in readme_doc or "# GitHub Connector" in readme_doc.title()
         assert "create_issue" in readme_doc.lower() or "Create Issue" in readme_doc
 
-    def test_step2_virtual_readme_tree_exposes_docs(self) -> None:
-        """Step 2: Virtual ``.readme/`` tree exposes README.md + schemas/ (Issue #3728).
-
-        The previous materialization test (``write_readme``) was removed;
-        the overlay now serves docs on-demand from class metadata.
-        """
-        from nexus.backends.connectors.schema_generator import (
-            _invalidate_virtual_tree_cache,
-            get_virtual_readme_tree_for_backend,
-        )
-
-        _invalidate_virtual_tree_cache()
-        connector = FakeGHConnector()
-        tree = get_virtual_readme_tree_for_backend(connector, "/mnt/github")
-
-        # README.md present in the virtual tree
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        assert readme.is_file
-
-        # schemas/ directory contains a file per declared schema
-        schemas = tree.find(["schemas"])
-        assert schemas is not None
-        assert schemas.is_dir
-        assert any("create_issue" in name for name in schemas.children)
-
     def test_step3_schema_validation_success(self) -> None:
         """Step 3: Valid YAML passes schema validation."""
         connector = FakeGHConnector()

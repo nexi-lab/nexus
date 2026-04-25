@@ -88,7 +88,6 @@ __all__ = [
     "MCPUnmountParams",
     "MakePrivateParams",
     "MakePublicParams",
-    "MetadataBatchParams",
     "NamespaceDeleteParams",
     "NamespaceListParams",
     "OAuthListCredentialsParams",
@@ -129,7 +128,6 @@ __all__ = [
     "SnapshotListParams",
     "SnapshotRestoreParams",
     "SnapshotRollbackParams",
-    "StatBulkParams",
     "StatParams",
     "SysCopyParams",
     "SysLockParams",
@@ -811,13 +809,6 @@ class MCPUnmountParams:
 
 
 @dataclass
-class MetadataBatchParams:
-    """Parameters for metadata_batch(): Get metadata for multiple paths in a single call (Issue #859)."""
-
-    paths: list[str]
-
-
-@dataclass
 class NamespaceDeleteParams:
     """Parameters for namespace_delete(): Delete all tuples for a namespace's object type."""
 
@@ -1244,14 +1235,6 @@ class StatParams:
 
 
 @dataclass
-class StatBulkParams:
-    """Parameters for stat_bulk(): Get metadata for multiple files in a single RPC call."""
-
-    paths: list[str]
-    skip_errors: bool = True
-
-
-@dataclass
 class SysCopyParams:
     """Parameters for sys_copy(): Copy a file from src_path to dst_path."""
 
@@ -1495,7 +1478,6 @@ METHOD_PARAMS: dict[str, type] = {
     "mcp_mount": MCPMountParams,
     "mcp_sync": MCPSyncParams,
     "mcp_unmount": MCPUnmountParams,
-    "metadata_batch": MetadataBatchParams,
     "namespace_delete": NamespaceDeleteParams,
     "namespace_list": NamespaceListParams,
     "oauth_list_credentials": OAuthListCredentialsParams,
@@ -1537,7 +1519,6 @@ METHOD_PARAMS: dict[str, type] = {
     "snapshot_restore": SnapshotRestoreParams,
     "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
-    "stat_bulk": StatBulkParams,
     "sys_copy": SysCopyParams,
     "sys_lock": SysLockParams,
     "sys_readdir": SysReaddirParams,

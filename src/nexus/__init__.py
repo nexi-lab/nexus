@@ -638,13 +638,13 @@ def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: An
     """Wire federation transport — set TLS config on RPCTransportPool.
 
     Content locality (remote reads) and IPC (remote pipe/stream) are now
-    handled transparently by DriverLifecycleCoordinator.resolve_backend()
-    and RPCTransportPool. No PRE-DISPATCH resolvers needed.
+    handled transparently by the Rust kernel routing and RPCTransportPool.
+    No PRE-DISPATCH resolvers needed.
 
     The old FederationContentResolver, FederationIPCResolver, and
     FederatedMetadataProxy have been deleted — their functionality is
-    subsumed by PathRouter per-mount metastore (#3580), backend_key()
-    write enrichment, and resolve_backend() pool lookup.
+    subsumed by PathRouter per-mount metastore (#3580) and backend_key()
+    write enrichment.
     """
     _ = backend  # unused after resolver deletion
     _zone_mgr = federation.zone_manager

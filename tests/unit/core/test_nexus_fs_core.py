@@ -63,9 +63,7 @@ BULK_METHODS = {
     "write_batch": {"params": ["files", "context"], "async": False},
     "delete_batch": {"params": ["paths", "recursive", "context"], "async": False},
     "rename_batch": {"params": ["renames", "context"], "async": False},
-    "stat_bulk": {"params": ["paths", "context", "skip_errors"], "async": False},
     "exists_batch": {"params": ["paths", "context"], "async": False},
-    "metadata_batch": {"params": ["paths", "context"], "async": False},
 }
 
 
@@ -158,7 +156,7 @@ class TestCoreMethodGroups:
 
     def test_bulk_methods_count(self):
         """Verify total count of bulk methods on NexusFS."""
-        assert len(BULK_METHODS) == 7, "Expected 7 bulk methods on NexusFS"
+        assert len(BULK_METHODS) == 5, "Expected 5 bulk methods on NexusFS"
 
 
 class TestBulkMethodsOnNexusFS:

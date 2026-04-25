@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
+use crate::backend::{ExternalTransport, ObjectStore, StorageError, WriteResult};
 use crate::kernel::OperationContext;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -132,6 +132,78 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
         bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+impl ExternalTransport for S3Backend {
+    fn generate_download_url(
+        &self,
+        object_key: &str,
+        expires_seconds: u64,
+    ) -> Result<String, StorageError> {
+        let key = self.object_key(object_key);
+        let now = chrono::Utc::now();
+        let date_stamp = now.format("%Y%m%d").to_string();
+        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+        let credential_scope = format!("{}/{}/s3/aws4_request", date_stamp, self.region);
+
+        let host = self
+            .endpoint
+            .as_deref()
+            .map(|e| {
+                e.trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .to_string()
+            })
+            .unwrap_or_else(|| format!("{}.s3.{}.amazonaws.com", self.bucket, self.region));
+
+        let encoded_key = s3_uri_encode(&key);
+        let canonical_uri = format!("/{encoded_key}");
+
+        // Query parameters must be sorted by key for canonical request
+        let credential = format!("{}/{}", self.access_key, credential_scope);
+        let canonical_querystring = format!(
+            "X-Amz-Algorithm=AWS4-HMAC-SHA256\
+             &X-Amz-Credential={}\
+             &X-Amz-Date={}\
+             &X-Amz-Expires={}\
+             &X-Amz-SignedHeaders=host",
+            s3_uri_encode(&credential),
+            amz_date,
+            expires_seconds,
+        );
+
+        let canonical_headers = format!("host:{host}\n");
+        let canonical_request = format!(
+            "GET\n{}\n{}\n{}\nhost\nUNSIGNED-PAYLOAD",
+            canonical_uri, canonical_querystring, canonical_headers,
+        );
+
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+            amz_date,
+            credential_scope,
+            hex::encode(Sha256::digest(canonical_request.as_bytes())),
+        );
+
+        let k_date = hmac_sha256(
+            format!("AWS4{}", self.secret_key).as_bytes(),
+            date_stamp.as_bytes(),
+        );
+        let k_region = hmac_sha256(&k_date, self.region.as_bytes());
+        let k_service = hmac_sha256(&k_region, b"s3");
+        let k_signing = hmac_sha256(&k_service, b"aws4_request");
+        let signature = hex::encode(hmac_sha256(&k_signing, string_to_sign.as_bytes()));
+
+        let scheme = self
+            .endpoint
+            .as_deref()
+            .and_then(|e| e.split("://").next())
+            .unwrap_or("https");
+
+        Ok(format!(
+            "{scheme}://{host}{canonical_uri}?{canonical_querystring}&X-Amz-Signature={signature}"
+        ))
     }
 }
 
@@ -269,4 +341,20 @@ impl ObjectStore for S3Backend {
         // S3 has no real directories
         Ok(())
     }
+}
+
+/// S3-safe URI encoding (RFC 3986 unreserved chars only).
+fn s3_uri_encode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(b as char);
+            }
+            _ => {
+                result.push_str(&format!("%{b:02X}"));
+            }
+        }
+    }
+    result
 }

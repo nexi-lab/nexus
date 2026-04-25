@@ -56,6 +56,11 @@ pub mod vfs_router;
 // `Metastore` into `Kernel::mount_metastores` without surfacing a
 // separate `KernelMetastore` Python class.
 pub mod generated_pyo3;
+// Rust-native gRPC server for NexusVFSService — replaces the Python
+// `grpc.aio.server` so :2028 is owned by tonic. Read/Write/Delete/Ping
+// are zero-PyO3 fast-paths; Call still uses a PyO3 callback into the
+// Python `dispatch_method` pending the broader 195-service migration.
+pub mod grpc_server;
 #[cfg(feature = "connectors")]
 mod openai_backend;
 #[cfg(feature = "connectors")]
@@ -195,6 +200,11 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;
     // Route result (returned from Kernel.route()) — now PyRustRouteResult
+    m.add_class::<grpc_server::PyVfsGrpcServerHandle>()?;
+    m.add_function(pyo3::wrap_pyfunction!(
+        grpc_server::start_vfs_grpc_server,
+        m
+    )?)?;
     m.add_class::<generated_pyo3::PyRustRouteResult>()?;
     // Kernel (Issue #1868 — PyKernel wraps pure Rust Kernel)
     m.add_class::<generated_pyo3::PyOperationContext>()?;

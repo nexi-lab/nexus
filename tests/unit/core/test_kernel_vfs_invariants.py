@@ -2,7 +2,7 @@
 
 PathRouter was deleted in §12 Phase F3. These tests now exercise
 ``nexus.core.path_utils`` (normalize_path, validate_path) and
-DLC-based LPM directly.
+a pure-Python LPM algorithm (DLC no longer owns a Python-side mount map).
 
 Invariants proven:
   1. Path normalization is idempotent: normalize(normalize(p)) == normalize(p)
@@ -22,7 +22,6 @@ from hypothesis import strategies as st
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError
-from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 from nexus.core.path_utils import canonicalize_path, normalize_path
 from tests.strategies.kernel import (
     path_traversal_attempt,
@@ -32,39 +31,41 @@ from tests.strategies.kernel import (
 )
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — plain dict mount table
 # ---------------------------------------------------------------------------
 
+# Type alias for the mount table used in tests.
+MountTable = dict[str, object]
 
-def _new_dlc() -> DriverLifecycleCoordinator:
-    """Build a bare DriverLifecycleCoordinator (no kernel)."""
-    return DriverLifecycleCoordinator(dispatch=None, kernel=None)
+
+def _new_mount_table() -> MountTable:
+    """Create an empty mount table dict."""
+    return {}
 
 
 def _add_mount(
-    dlc: DriverLifecycleCoordinator,
+    table: MountTable,
     mount_point: str,
-    backend,
+    backend: object,
     *,
     zone_id: str = ROOT_ZONE_ID,
 ) -> None:
-    """Insert a skill backend into the DLC map directly (for test purposes)."""
+    """Insert a backend into the mount table keyed by canonical path."""
     canonical = canonicalize_path(mount_point, zone_id)
-    dlc._skill_backends[canonical] = backend
+    table[canonical] = backend
 
 
 def _lookup_lpm(
-    dlc: DriverLifecycleCoordinator,
+    table: MountTable,
     path: str,
     zone_id: str = ROOT_ZONE_ID,
 ) -> tuple[str, object] | None:
-    """Python-side longest-prefix match over the DLC skill_backends map."""
+    """Python-side longest-prefix match over a mount table dict."""
     import posixpath
 
     current = canonicalize_path(path, zone_id)
-    entries = dlc._skill_backends
     while True:
-        info = entries.get(current)
+        info = table.get(current)
         if info is not None:
             return current, info
         if current == "/":
@@ -72,17 +73,17 @@ def _lookup_lpm(
         current = posixpath.dirname(current)
 
 
-def _make_dlc_with_mounts() -> tuple[DriverLifecycleCoordinator, CASLocalBackend]:
-    """Create a DLC with standard mounts for testing."""
+def _make_mount_table_with_mounts() -> tuple[MountTable, CASLocalBackend]:
+    """Create a mount table with standard mounts for testing."""
     tmpdir = tempfile.mkdtemp()
     backend = CASLocalBackend(tmpdir)
-    dlc = _new_dlc()
-    _add_mount(dlc, "/workspace", backend)
-    _add_mount(dlc, "/shared", backend)
-    _add_mount(dlc, "/external", backend)
-    _add_mount(dlc, "/system", backend)
-    _add_mount(dlc, "/archives", backend)
-    return dlc, backend
+    table = _new_mount_table()
+    _add_mount(table, "/workspace", backend)
+    _add_mount(table, "/shared", backend)
+    _add_mount(table, "/external", backend)
+    _add_mount(table, "/system", backend)
+    _add_mount(table, "/archives", backend)
+    return table, backend
 
 
 # ---------------------------------------------------------------------------
@@ -182,10 +183,10 @@ class TestLongestPrefixMatchInvariants:
     @settings(deadline=None)
     def test_route_deterministic(self, path: str) -> None:
         """Routing the same path twice always gives the same result."""
-        dlc, _ = _make_dlc_with_mounts()
+        table, _ = _make_mount_table_with_mounts()
         try:
-            r1 = _lookup_lpm(dlc, path)
-            r2 = _lookup_lpm(dlc, path)
+            r1 = _lookup_lpm(table, path)
+            r2 = _lookup_lpm(table, path)
             if r1 is not None and r2 is not None:
                 assert r1[0] == r2[0]  # Same canonical mount key
         except (InvalidPathError, ValueError):
@@ -209,12 +210,12 @@ class TestLongestPrefixMatchInvariants:
         backend_shallow = CASLocalBackend(tmpdir)
         backend_deep = CASLocalBackend(tmpdir)
 
-        dlc = _new_dlc()
-        _add_mount(dlc, mount1, backend_shallow)
-        _add_mount(dlc, deeper_path, backend_deep)
+        table = _new_mount_table()
+        _add_mount(table, mount1, backend_shallow)
+        _add_mount(table, deeper_path, backend_deep)
 
         try:
-            result = _lookup_lpm(dlc, query_path)
+            result = _lookup_lpm(table, query_path)
             if result is not None:
                 # The deeper mount should match
                 assert result[1] is backend_deep

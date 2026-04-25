@@ -303,11 +303,7 @@ class ContentMixin:
                     result = self._kernel.sys_read(path, _rust_ctx)
                     bulk_content = result.data or b""
                 except NexusFileNotFoundError:
-                    # Rust fast path missed.  Virtual ``.readme/`` paths
-                    # (Issue #3728) are not in the metastore, so we
-                    # route through the same dispatch helper that the
-                    # async ``sys_read`` uses before declaring "not found".
-                    bulk_content = self._try_virtual_readme_bytes(path, context)
+                    bulk_content = None
                 if bulk_content is None:
                     if skip_errors:
                         results[path] = None
@@ -406,23 +402,6 @@ class ContentMixin:
         _handled, _resolve_hint = self.resolve_read(path, context=context)
         if _handled:
             return (_resolve_hint or b"")[start:end]
-
-        # Issue #3728 virtual ``.readme/`` overlay early-exit.
-        # Virtual skill docs have no metastore rows by design, so the
-        # meta-backed range path below would unconditionally raise
-        # ``NexusFileNotFoundError`` for them.  Serve from the overlay
-        # first and slice the returned bytes; fall through to the
-        # normal range path for real files.
-        #
-        # Defensive: unit tests use stub filesystems that may not
-        # subclass NexusFS and therefore lack ``_try_virtual_readme_bytes``.
-        # Fall through silently in that case — the stub isn't serving
-        # a skill backend anyway.
-        _virtual_probe = getattr(self, "_try_virtual_readme_bytes", None)
-        if callable(_virtual_probe):
-            _virtual_bytes = _virtual_probe(path, context)
-            if _virtual_bytes is not None:
-                return _virtual_bytes[start:end]
 
         # Use Rust sys_read with offset/count for range reads
         content = self.sys_read(path, count=end, offset=0, context=context)
@@ -574,9 +553,6 @@ class ContentMixin:
 
         # [TRANSITIONAL] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
-
-        # Virtual .readme/ paths are read-only (Issue #3728).
-        self._reject_if_virtual_readme(path, context, op="sys_write")
 
         _handled, _result = self.resolve_write(path, buf)
         if _handled:
@@ -1262,8 +1238,6 @@ class ContentMixin:
         validated_files: list[tuple[str, bytes]] = []
         for path, content in files:
             validated_path = self._validate_path(path)
-            # Virtual .readme/ paths are read-only (Issue #3728).
-            self._reject_if_virtual_readme(validated_path, context, op="write_batch")
             validated_files.append((validated_path, content))
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)

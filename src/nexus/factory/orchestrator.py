@@ -225,7 +225,7 @@ def create_nexus_fs(
     from nexus.core.nexus_fs import NexusFS
 
     # Mount table is owned by the Rust kernel (F2). Root mount is deferred
-    # to sys_setattr(DT_MOUNT) + _store_mount_info() after NexusFS construction.
+    # to sys_setattr(DT_MOUNT) after NexusFS construction.
 
     # KERNEL-ARCHITECTURE §2: No CacheStore AND no Redis/Dragonfly → EventBus disabled.
     # EventBus uses Redis/Dragonfly pub/sub independently of CacheStore, so only

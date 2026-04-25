@@ -26,7 +26,7 @@
 use dashmap::DashMap;
 use std::sync::Arc;
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
+use crate::backend::{ExternalTransport, ObjectStore, StorageError, WriteResult};
 use crate::kernel::OperationContext;
 use crate::metastore::Metastore;
 
@@ -72,6 +72,12 @@ pub struct MountEntry {
     /// `federation_share` can derive `(parent_zone, zone-relative prefix)`
     /// from a global path via the existing routing table.
     pub target_zone_id: Option<String>,
+
+    /// Transport-layer capability for generating direct-access URLs
+    /// (presigned/signed). Only cloud backends (S3, GCS) implement this.
+    /// Populated at mount time alongside `backend` — same Arc allocation,
+    /// separate vtable pointer.
+    pub external_transport: Option<Arc<dyn ExternalTransport>>,
 }
 
 impl MountEntry {
@@ -85,7 +91,14 @@ impl MountEntry {
             backend_name: backend_name.into(),
             is_external: false,
             target_zone_id: None,
+            external_transport: None,
         }
+    }
+
+    /// Builder-style external-transport setter (S3/GCS mounts).
+    pub fn with_external_transport(mut self, transport: Arc<dyn ExternalTransport>) -> Self {
+        self.external_transport = Some(transport);
+        self
     }
 
     /// Builder-style target-zone setter (federation mounts only).
@@ -282,6 +295,14 @@ impl VFSRouter {
         self.entries.get(&canonical)
     }
 
+    /// Borrow the entry mutably under an exact canonical key.
+    pub fn entries_get_mut(
+        &self,
+        canonical_key: &str,
+    ) -> Option<dashmap::mapref::one::RefMut<'_, String, MountEntry>> {
+        self.entries.get_mut(canonical_key)
+    }
+
     /// True if a mount exists under `(mount_point, zone_id)`.
     pub fn has(&self, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
@@ -384,6 +405,30 @@ impl VFSRouter {
             .collect();
         points.sort();
         points
+    }
+
+    /// Generate a direct-access download URL for the given path, if the
+    /// routed mount's backend supports ExternalTransport.
+    ///
+    /// Returns `Ok(Some(url))` when the backend can sign, `Ok(None)` when
+    /// the mount has no ExternalTransport capability, or `Err` on signing
+    /// failure.
+    pub fn generate_download_url(
+        &self,
+        canonical_key: &str,
+        backend_path: &str,
+        expires_seconds: u64,
+    ) -> Result<Option<String>, StorageError> {
+        let entry = self
+            .entries
+            .get(canonical_key)
+            .ok_or_else(|| StorageError::NotFound(format!("mount not found: {canonical_key}")))?;
+        match &entry.external_transport {
+            Some(transport) => transport
+                .generate_download_url(backend_path, expires_seconds)
+                .map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Number of mounted entries.

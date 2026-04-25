@@ -289,25 +289,6 @@ class TestReadmeDocGeneration:
         assert "```yaml" in doc
         assert "# agent_intent:" in doc
 
-    @pytest.mark.asyncio
-    async def test_virtual_readme_tree(self, calendar_backend):
-        """Verify the virtual ``.readme/`` tree for gcalendar (Issue #3728).
-
-        Replaces the old ``test_write_readme`` — materialization was
-        removed; the overlay now serves docs on-demand.
-        """
-        from nexus.backends.connectors.schema_generator import (
-            _invalidate_virtual_tree_cache,
-            get_virtual_readme_tree_for_backend,
-        )
-
-        _invalidate_virtual_tree_cache()
-        tree = get_virtual_readme_tree_for_backend(calendar_backend, "/mnt/calendar")
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        assert b"Gcalendar Connector" in readme.content
-        assert b"agent_intent" in readme.content
-
 
 # ============================================================================
 # YAML PARSING TESTS

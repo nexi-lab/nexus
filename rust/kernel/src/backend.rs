@@ -55,6 +55,29 @@ pub struct WriteResult {
     pub(crate) size: u64,
 }
 
+// ── ExternalTransport ──────────────────────────────────────────
+// Transport-layer capability for backends that can generate direct-access
+// URLs (presigned/signed). Separate from ObjectStore: not all storage
+// needs this, and it belongs at the transport abstraction level, not the
+// content-operations level. Only S3/GCS (and future cloud backends like
+// Azure, MinIO, R2) implement this.
+
+/// Transport-layer trait for generating direct-access URLs.
+///
+/// Enables clients to download/upload directly from cloud storage without
+/// routing bytes through Nexus (offloading I/O, reducing memory footprint).
+pub trait ExternalTransport: Send + Sync {
+    /// Generate a time-limited download URL for the given object key.
+    ///
+    /// Returns `Ok(url_string)` on success, or `Err` if the backend cannot
+    /// generate a signed URL (e.g. missing credentials).
+    fn generate_download_url(
+        &self,
+        object_key: &str,
+        expires_seconds: u64,
+    ) -> Result<String, StorageError>;
+}
+
 /// ObjectStore pillar — kernel `file_operations` contract.
 ///
 /// Rust equivalent of Python `ObjectStoreABC` (one of the Four Storage Pillars).

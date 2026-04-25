@@ -103,10 +103,13 @@ def create_api_key(
         zones: List of zone identifiers for this key (#3785). Each entry is
             either a bare zone_id string (defaulting to ``"rw"`` permissions)
             or a ``(zone_id, perms)`` tuple where perms is one of
-            ``"r" | "w" | "rw" | "rwx"``. The first zone becomes the primary
-            zone (stored on APIKeyModel.zone_id). One junction row is written
-            to ``api_key_zones`` per zone with its perms. Takes precedence
-            over ``zone_id`` when both are supplied.
+            ``"r" | "w" | "rw" | "rwx"``. The first zone is also written to
+            ``APIKeyModel.zone_id`` as a deprecated backfill alias so legacy
+            ``WHERE zone_id = ?`` filters keep matching the primary; new
+            readers should use the junction (``get_zones_for_key`` /
+            ``get_zone_perms_for_key``). One junction row is written per
+            zone with its perms. Takes precedence over ``zone_id`` when both
+            are supplied.
         zone_id: Legacy single-zone identifier. Kept for backward compat;
             prefer ``zones`` for new callers. Ignored when ``zones`` is set.
         is_admin: Whether this key has admin privileges.

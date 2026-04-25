@@ -43,6 +43,10 @@ def mock_fs():
     )
     # readdir fallback to metadata.list_iter for non-Rust paths
     fs._kernel.readdir = MagicMock(side_effect=ValueError("test fallback"))
+    # Ensure route() returns is_external=False so external intercept doesn't fire
+    mock_route = MagicMock()
+    mock_route.is_external = False
+    fs._kernel.route = MagicMock(return_value=mock_route)
     fs._hook_specs = {}
     fs._zone_id = ROOT_ZONE_ID
     return fs

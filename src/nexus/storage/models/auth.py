@@ -186,6 +186,7 @@ class APIKeyZoneModel(Base):
         primary_key=True,
     )
     granted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    permissions: Mapped[str] = mapped_column(String(8), nullable=False, default="rw")
 
     __table_args__ = (
         Index("idx_api_key_zones_key", "key_id"),

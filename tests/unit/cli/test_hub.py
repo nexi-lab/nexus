@@ -43,7 +43,7 @@ def test_token_create_prints_raw_key_and_row(monkeypatch):
     assert "sk-root_alice_abcd_1234" in result.output
     assert "kid_abc" in result.output
     assert created["name"] == "alice"
-    assert created["zone_id"] == "root"
+    assert created["zones"] == ["root"]
     assert created["is_admin"] is False
 
 
@@ -565,3 +565,101 @@ def test_token_create_rejects_soft_deleted_zone(monkeypatch):
     )
     assert result.exit_code == 1
     assert "not active" in result.output
+
+
+def test_token_create_zones_csv(monkeypatch):
+    """--zones eng,ops creates a token bound to both zones (#3785)."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_xyz", "sk-eng_alice_xx_yy")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,  # no existing token by name
+        active_zone,  # any_zone exists (skip bootstrap escape)
+        active_zone,  # zone "eng" Active
+        active_zone,  # zone "ops" Active
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "alice", "--zones", "eng,ops"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == ["eng", "ops"]
+
+
+def test_token_create_zone_alias_still_works(monkeypatch):
+    """Backward-compat: --zone single still mints a token (#3785)."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_x", "sk-x")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        active_zone,
+        active_zone,
+    ]
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "svc", "--zone", "eng"])
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == ["eng"]
+
+
+def test_token_create_rejects_empty_zones(monkeypatch):
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(MagicMock()),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", ""])
+    assert result.exit_code != 0
+    assert "zone" in result.output.lower()
+
+
+def test_token_create_rejects_inactive_zone_in_list(monkeypatch):
+    """If any zone in --zones is not Active, the whole mint fails."""
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    # Sequence: no existing, any_zone exists, eng Active, ops not found
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        active_zone,
+        active_zone,
+        None,
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = [active_zone]
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng,ops"])
+    assert result.exit_code != 0
+    assert "ops" in result.output

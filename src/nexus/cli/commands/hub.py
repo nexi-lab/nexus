@@ -35,7 +35,19 @@ def token() -> None:
 
 @token.command("create")
 @click.option("--name", required=True, help="Human-readable token name (unique).")
-@click.option("--zone", "zone_id", required=True, help="Zone the token can access.")
+@click.option(
+    "--zones",
+    "zones_csv",
+    default=None,
+    help="Comma-separated zones the token can access (e.g. eng,ops).",
+)
+@click.option(
+    "--zone",
+    "zone_alias",
+    default=None,
+    hidden=True,
+    help="Deprecated alias for --zones (single zone).",
+)
 @click.option("--admin", "is_admin", is_flag=True, help="Grant admin privileges.")
 @click.option(
     "--expires",
@@ -46,12 +58,20 @@ def token() -> None:
 @click.option("--user-id", default=None, help="Owner user_id. Defaults to --name.")
 def token_create(
     name: str,
-    zone_id: str,
+    zones_csv: str | None,
+    zone_alias: str | None,
     is_admin: bool,
     expires: str | None,
     user_id: str | None,
 ) -> None:
     """Create a new bearer token. Prints the raw key once; not retrievable after."""
+    if zones_csv is None and zone_alias is None:
+        raise click.ClickException("Either --zones or --zone is required.")
+    raw = zones_csv if zones_csv is not None else (zone_alias or "")
+    zones = [z.strip() for z in raw.split(",") if z.strip()]
+    if not zones:
+        raise click.ClickException("--zones must contain at least one non-empty zone.")
+
     factory = get_session_factory()
     expires_at: datetime | None = None
     if expires:
@@ -78,46 +98,48 @@ def token_create(
         # so a typo ("proud" instead of "prod") or a deleted/terminating
         # zone can't silently mint a credential bound to a zone the
         # operator intended to isolate or remove (#3784 rounds 6/9).
-        active_zone = (
-            session.execute(
-                select(ZoneModel)
-                .where(ZoneModel.zone_id == zone_id)
-                .where(ZoneModel.phase == "Active")
-                .where(ZoneModel.deleted_at.is_(None))
-            )
-            .scalars()
-            .first()
-        )
-        if active_zone is None:
-            # Bootstrap escape: if the zones table is completely empty,
-            # allow the first admin token to be minted for any zone so
-            # a fresh hub can be bootstrapped before any zone is
-            # created. After that, every --zone must refer to an active,
-            # non-deleted row.
-            any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
-            if any_zone is not None:
-                known = [
-                    z.zone_id
-                    for z in session.execute(
+        #
+        # Bootstrap escape: if the zones table is completely empty,
+        # allow the first admin token to be minted for any zone so
+        # a fresh hub can be bootstrapped before any zone is
+        # created. After that, every zone must refer to an active,
+        # non-deleted row.
+        any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
+        if any_zone is not None:
+            for zone_id in zones:
+                active_zone = (
+                    session.execute(
                         select(ZoneModel)
+                        .where(ZoneModel.zone_id == zone_id)
                         .where(ZoneModel.phase == "Active")
                         .where(ZoneModel.deleted_at.is_(None))
                     )
                     .scalars()
-                    .all()
-                ]
-                raise click.ClickException(
-                    f"zone {zone_id!r} is not active (not found, deleted, or "
-                    f"terminating). Active zones: "
-                    f"{', '.join(sorted(known)) or '(none)'}. "
-                    "Create it first with `nexus zone create` or use --zone <existing>."
+                    .first()
                 )
+                if active_zone is None:
+                    known = [
+                        z.zone_id
+                        for z in session.execute(
+                            select(ZoneModel)
+                            .where(ZoneModel.phase == "Active")
+                            .where(ZoneModel.deleted_at.is_(None))
+                        )
+                        .scalars()
+                        .all()
+                    ]
+                    raise click.ClickException(
+                        f"zone {zone_id!r} is not active (not found, deleted, or "
+                        f"terminating). Active zones: "
+                        f"{', '.join(sorted(known)) or '(none)'}. "
+                        "Create it first with `nexus zone create` or use --zones <existing>."
+                    )
 
         key_id, raw_key = create_api_key(
             session,
             user_id=user_id or name,
             name=name,
-            zone_id=zone_id,
+            zones=zones,
             is_admin=is_admin,
             expires_at=expires_at,
         )

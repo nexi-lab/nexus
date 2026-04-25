@@ -14,6 +14,7 @@ name: Federation E2E
 #   surface only — small, fast, deterministic.
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, develop]
     paths:

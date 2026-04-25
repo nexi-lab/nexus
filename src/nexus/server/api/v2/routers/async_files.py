@@ -53,6 +53,40 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Zone gate helper (#3785)
+# =============================================================================
+
+
+def _gate_zone(auth_result: dict[str, Any], target_zone: str) -> None:
+    """Reject the request if `target_zone` is not in the token's zone allow-list (#3785).
+
+    Mirrors `nexus.contracts.types.assert_zone_allowed` but raises `HTTPException(403)`
+    suitable for FastAPI handlers. Admins (`auth_result["is_admin"]`) bypass.
+
+    Currently no file-op handler exposes an explicit `?zone=` query parameter —
+    every handler operates on `context.zone_id`, which equals the token's primary
+    zone (always in `zone_set` by invariant). This helper exists for handlers
+    that may gain an explicit zone arg in a future change; using it from day one
+    means defence-in-depth ships with that change instead of after it.
+    """
+    if auth_result.get("is_admin"):
+        return
+    raw = auth_result.get("zone_set")
+    if raw:
+        zone_set: tuple[str, ...] = tuple(raw)
+    elif auth_result.get("zone_id"):
+        zone_set = (auth_result["zone_id"],)
+    else:
+        zone_set = ()
+    if target_zone in zone_set:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=f"zone {target_zone!r} not in token's allow-list {list(zone_set)}",
+    )
+
+
+# =============================================================================
 # Helpers
 # =============================================================================
 

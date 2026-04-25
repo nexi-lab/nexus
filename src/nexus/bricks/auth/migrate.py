@@ -24,9 +24,11 @@ from typing import Any
 
 from nexus.bricks.auth.credential_backend import NexusTokenManagerBackend
 from nexus.bricks.auth.profile import (
+    COOLDOWN_UNCHANGED,
     AuthProfile,
     AuthProfileFailureReason,
     AuthProfileStore,
+    CooldownUpdate,
     ProfileUsageStats,
 )
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -351,6 +353,13 @@ class DualReadAuthProfileStore:
         self._new = new_store
         self._old = old_adapter
 
+    def _materialize_new_profile(self, profile_id: str) -> None:
+        if self._new.get(profile_id) is not None:
+            return
+        old_profile = self._old.get(profile_id)
+        if old_profile is not None:
+            self._new.upsert(old_profile, preserve_runtime_state=True)
+
     def list(self, *, provider: str | None = None) -> list[AuthProfile]:
         # Merge both stores. On ID collision: old store provides identity/routing
         # (authoritative for writes during migration window), but new store's
@@ -395,13 +404,14 @@ class DualReadAuthProfileStore:
             return old_result
         return new_result
 
-    def upsert(self, profile: AuthProfile) -> None:
-        self._new.upsert(profile)
+    def upsert(self, profile: AuthProfile, *, preserve_runtime_state: bool = False) -> None:
+        self._new.upsert(profile, preserve_runtime_state=preserve_runtime_state)
 
     def delete(self, profile_id: str) -> None:
         self._new.delete(profile_id)
 
     def mark_success(self, profile_id: str) -> None:
+        self._materialize_new_profile(profile_id)
         self._new.mark_success(profile_id)
 
     def mark_failure(
@@ -410,8 +420,15 @@ class DualReadAuthProfileStore:
         reason: AuthProfileFailureReason,
         *,
         raw_error: str | None = None,
+        cooldown_until: CooldownUpdate = COOLDOWN_UNCHANGED,
     ) -> None:
-        self._new.mark_failure(profile_id, reason, raw_error=raw_error)
+        self._materialize_new_profile(profile_id)
+        self._new.mark_failure(
+            profile_id,
+            reason,
+            raw_error=raw_error,
+            cooldown_until=cooldown_until,
+        )
 
 
 # ---------------------------------------------------------------------------

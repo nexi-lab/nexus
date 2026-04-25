@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,6 +51,7 @@ _REFRESH_COOLDOWN_SECONDS = 30
 
 # Token cache TTL in seconds
 _TOKEN_CACHE_TTL_SECONDS = 60
+_TOKEN_CACHE_EXPIRY_SAFETY_SECONDS = 60
 
 # Timeout for OAuth provider refresh calls (prevents indefinite lock holding)
 _PROVIDER_REFRESH_TIMEOUT_SECONDS = 30
@@ -178,6 +180,139 @@ class TokenManager:
         """Zone-scoped cache key for OAuth token caching."""
         return f"oauth:token:{provider}:{user_email}:{zone_id}"
 
+    def _legacy_token_cache_key(self, provider: str, user_email: str, zone_id: str) -> str:
+        """Legacy cache key used before structured token metadata was added."""
+        return self._token_cache_key(provider, user_email, zone_id)
+
+    @staticmethod
+    def _normalize_utc(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    @classmethod
+    def _encode_cached_token(
+        cls,
+        credential: OAuthCredential,
+        *,
+        credential_id: str | None = None,
+        token_family_id: str | None = None,
+        updated_at: datetime | None = None,
+    ) -> bytes:
+        del credential_id, token_family_id, updated_at
+        return credential.access_token.encode("utf-8")
+
+    @classmethod
+    def _decode_cached_token(
+        cls, payload: bytes
+    ) -> tuple[str, datetime | None, tuple[str, ...] | None] | None:
+        try:
+            data = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            try:
+                return payload.decode("utf-8"), None, None
+            except UnicodeDecodeError:
+                return None
+        if not isinstance(data, dict):
+            return None
+        access_token = data.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            return None
+
+        expires_at_raw = data.get("expires_at")
+        if expires_at_raw is None:
+            expires_at = None
+        elif isinstance(expires_at_raw, str):
+            try:
+                expires_at = cls._normalize_utc(datetime.fromisoformat(expires_at_raw))
+            except ValueError:
+                return None
+        else:
+            return None
+
+        scopes_raw = data.get("scopes")
+        scopes = tuple(scopes_raw) if isinstance(scopes_raw, list) else None
+        return access_token, expires_at, scopes
+
+    @classmethod
+    def _decode_cached_generation(
+        cls, payload: bytes
+    ) -> tuple[str | None, str | None, datetime | None] | None:
+        try:
+            data = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        updated_at_raw = data.get("updated_at")
+        if updated_at_raw is None:
+            updated_at = None
+        elif isinstance(updated_at_raw, str):
+            try:
+                updated_at = cls._normalize_utc(datetime.fromisoformat(updated_at_raw))
+            except ValueError:
+                return None
+        else:
+            return None
+        credential_id = data.get("credential_id")
+        token_family_id = data.get("token_family_id")
+        if credential_id is not None and not isinstance(credential_id, str):
+            return None
+        if token_family_id is not None and not isinstance(token_family_id, str):
+            return None
+        return credential_id, token_family_id, updated_at
+
+    @classmethod
+    def _is_cached_token_usable(cls, expires_at: datetime | None) -> bool:
+        normalized_expiry = cls._normalize_utc(expires_at)
+        if normalized_expiry is None:
+            return True
+        safe_expiry = normalized_expiry - timedelta(seconds=_TOKEN_CACHE_EXPIRY_SAFETY_SECONDS)
+        return datetime.now(UTC) < safe_expiry
+
+    def _cache_ttl_for(self, credential: OAuthCredential) -> int | None:
+        normalized_expiry = self._normalize_utc(credential.expires_at)
+        if normalized_expiry is None:
+            return self._cache_ttl
+        safe_expiry = normalized_expiry - timedelta(seconds=_TOKEN_CACHE_EXPIRY_SAFETY_SECONDS)
+        remaining = int((safe_expiry - datetime.now(UTC)).total_seconds())
+        if remaining < 1:
+            return None
+        return min(self._cache_ttl, remaining)
+
+    async def _get_cached_token(
+        self,
+        cache_key: str,
+        *,
+        metadata_key: tuple[str, str, str] | None = None,
+    ) -> str | None:
+        if self._cache_store is None:
+            return None
+        cached_raw = await self._cache_store.get(cache_key)
+        if cached_raw is None:
+            return None
+        cached = self._decode_cached_token(cached_raw)
+        if cached is None:
+            await self._cache_store.delete(cache_key)
+            return None
+        access_token, expires_at, scopes = cached
+        if not self._is_cached_token_usable(expires_at):
+            await self._cache_store.delete(cache_key)
+            return None
+        if metadata_key is not None:
+            self._resolved_metadata[metadata_key] = (expires_at, scopes)
+        return access_token
+
+    async def _get_legacy_cached_entry(
+        self,
+        cache_key: str,
+    ) -> bytes | None:
+        if self._cache_store is None:
+            return None
+        return await self._cache_store.get(cache_key)
+
     def register_provider(self, provider_name: str, provider: Any) -> None:
         """Register an OAuth provider."""
         self.providers[provider_name] = provider
@@ -211,84 +346,95 @@ class TokenManager:
             refresh_token_hash = _hash_token(credential.refresh_token)
 
         scopes_json = json.dumps(credential.scopes) if credential.scopes else None
-
-        with self.SessionLocal() as session:
-            stmt = select(OAuthCredentialModel).where(
-                OAuthCredentialModel.provider == provider,
-                OAuthCredentialModel.user_email == user_email,
-                OAuthCredentialModel.zone_id == zone_id,
-            )
-            existing = session.execute(stmt).scalar_one_or_none()
-
-            if user_id is None and created_by and created_by != user_email:
-                user_id = created_by
-
-            if existing:
-                existing.encrypted_access_token = encrypted_access_token
-                existing.encrypted_refresh_token = encrypted_refresh_token
-                existing.token_type = credential.token_type
-                existing.expires_at = credential.expires_at
-                existing.scopes = scopes_json
-                existing.client_id = credential.client_id
-                existing.token_uri = credential.token_uri
-                existing.user_id = user_id
-                existing.updated_at = datetime.now(UTC)
-                existing.revoked = 0
-                # Reset rotation for updated credentials — new token family
-                existing.token_family_id = str(uuid.uuid4())
-                existing.rotation_counter = 0
-                existing.refresh_token_hash = refresh_token_hash
-                session.commit()
-
-                logger.info(
-                    f"Updated OAuth credential: {provider}:{user_email} (user_id={user_id})"
+        lock_key = (provider, user_email, zone_id)
+        lock = self._get_refresh_lock(lock_key)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=_LOCK_ACQUIRE_TIMEOUT_SECONDS)
+        except TimeoutError:
+            raise AuthenticationError(
+                f"Token refresh lock acquisition timed out for {provider}:{user_email}"
+            ) from None
+        try:
+            with self.SessionLocal() as session:
+                stmt = select(OAuthCredentialModel).where(
+                    OAuthCredentialModel.provider == provider,
+                    OAuthCredentialModel.user_email == user_email,
+                    OAuthCredentialModel.zone_id == zone_id,
                 )
-                self._log_audit(
-                    "credential_updated",
-                    provider,
-                    user_email,
-                    zone_id,
-                    credential_id=existing.credential_id,
-                    token_family_id=existing.token_family_id,
-                    ip_address=ip_address,
-                )
-                await self._invalidate_cache(provider, user_email, zone_id)
-                return str(existing.credential_id)
-            else:
-                token_family_id = str(uuid.uuid4())
-                model = OAuthCredentialModel(
-                    provider=provider,
-                    user_email=user_email,
-                    user_id=user_id,
-                    zone_id=zone_id,
-                    encrypted_access_token=encrypted_access_token,
-                    encrypted_refresh_token=encrypted_refresh_token,
-                    token_type=credential.token_type,
-                    expires_at=credential.expires_at,
-                    scopes=scopes_json,
-                    client_id=credential.client_id,
-                    token_uri=credential.token_uri,
-                    created_by=created_by,
-                    token_family_id=token_family_id,
-                    rotation_counter=0,
-                    refresh_token_hash=refresh_token_hash,
-                )
+                existing = session.execute(stmt).scalar_one_or_none()
 
-                session.add(model)
-                session.commit()
-                session.refresh(model)
+                if user_id is None and created_by and created_by != user_email:
+                    user_id = created_by
 
-                logger.info(f"Stored OAuth credential: {provider}:{user_email}")
-                self._log_audit(
-                    "credential_created",
-                    provider,
-                    user_email,
-                    zone_id,
-                    credential_id=model.credential_id,
-                    token_family_id=token_family_id,
-                    ip_address=ip_address,
-                )
-                return model.credential_id
+                if existing:
+                    existing.encrypted_access_token = encrypted_access_token
+                    existing.encrypted_refresh_token = encrypted_refresh_token
+                    existing.token_type = credential.token_type
+                    existing.expires_at = credential.expires_at
+                    existing.scopes = scopes_json
+                    existing.client_id = credential.client_id
+                    existing.token_uri = credential.token_uri
+                    existing.user_id = user_id
+                    existing.updated_at = datetime.now(UTC)
+                    existing.revoked = 0
+                    existing.revoked_at = None
+                    # Reset rotation for updated credentials — new token family
+                    existing.token_family_id = str(uuid.uuid4())
+                    existing.rotation_counter = 0
+                    existing.refresh_token_hash = refresh_token_hash
+                    session.commit()
+
+                    logger.info(
+                        f"Updated OAuth credential: {provider}:{user_email} (user_id={user_id})"
+                    )
+                    self._log_audit(
+                        "credential_updated",
+                        provider,
+                        user_email,
+                        zone_id,
+                        credential_id=existing.credential_id,
+                        token_family_id=existing.token_family_id,
+                        ip_address=ip_address,
+                    )
+                    await self._invalidate_cache(provider, user_email, zone_id)
+                    return str(existing.credential_id)
+                else:
+                    token_family_id = str(uuid.uuid4())
+                    model = OAuthCredentialModel(
+                        provider=provider,
+                        user_email=user_email,
+                        user_id=user_id,
+                        zone_id=zone_id,
+                        encrypted_access_token=encrypted_access_token,
+                        encrypted_refresh_token=encrypted_refresh_token,
+                        token_type=credential.token_type,
+                        expires_at=credential.expires_at,
+                        scopes=scopes_json,
+                        client_id=credential.client_id,
+                        token_uri=credential.token_uri,
+                        created_by=created_by,
+                        token_family_id=token_family_id,
+                        rotation_counter=0,
+                        refresh_token_hash=refresh_token_hash,
+                    )
+
+                    session.add(model)
+                    session.commit()
+                    session.refresh(model)
+
+                    logger.info(f"Stored OAuth credential: {provider}:{user_email}")
+                    self._log_audit(
+                        "credential_created",
+                        provider,
+                        user_email,
+                        zone_id,
+                        credential_id=model.credential_id,
+                        token_family_id=token_family_id,
+                        ip_address=ip_address,
+                    )
+                    return model.credential_id
+        finally:
+            lock.release()
 
     async def get_valid_token(
         self,
@@ -312,17 +458,13 @@ class TokenManager:
         if zone_id is None:
             zone_id = ROOT_ZONE_ID
 
-        # Check cache first (fast path — no lock needed)
+        metadata_key = (provider, user_email, zone_id)
         cache_key_str = self._token_cache_key(provider, user_email, zone_id)
-        if self._cache_store is not None:
-            cached_raw = await self._cache_store.get(cache_key_str)
-            if cached_raw is not None:
-                return cached_raw.decode()
 
         # Per-credential lock prevents concurrent refresh races (Issue #2281).
         # _last_resolved stash: resolve() reads metadata from the same locked
         # section that produced the access token, avoiding a second DB round-trip.
-        lock_key = (provider, user_email, zone_id)
+        lock_key = metadata_key
         lock = self._get_refresh_lock(lock_key)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_LOCK_ACQUIRE_TIMEOUT_SECONDS)
@@ -331,11 +473,15 @@ class TokenManager:
                 f"Token refresh lock acquisition timed out for {provider}:{user_email}"
             ) from None
         try:
-            # Double-check cache (another coroutine may have refreshed while we waited)
-            if self._cache_store is not None:
-                cached_raw = await self._cache_store.get(cache_key_str)
-                if cached_raw is not None:
-                    return cached_raw.decode()
+            cached_raw = await self._get_legacy_cached_entry(cache_key_str)
+            cached_token = None
+            if cached_raw is not None:
+                try:
+                    cached_token = cached_raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    if self._cache_store is not None:
+                        await self._cache_store.delete(cache_key_str)
+                    cached_raw = None
 
             with self.SessionLocal() as session:
                 stmt = (
@@ -351,11 +497,26 @@ class TokenManager:
                 model = session.execute(stmt).scalar_one_or_none()
 
                 if not model:
+                    if cached_raw is not None and self._cache_store is not None:
+                        await self._cache_store.delete(cache_key_str)
                     raise AuthenticationError(
                         f"No OAuth credential found for {provider}:{user_email}"
                     )
 
                 credential = self._model_to_credential(model)
+
+                if (
+                    cached_token is not None
+                    and cached_token == credential.access_token
+                    and not credential.is_expired()
+                ):
+                    self._resolved_metadata[metadata_key] = (
+                        credential.expires_at,
+                        credential.scopes,
+                    )
+                    return cached_token
+                if cached_raw is not None and self._cache_store is not None:
+                    await self._cache_store.delete(cache_key_str)
 
                 refreshed = False
                 rotated = False
@@ -394,6 +555,8 @@ class TokenManager:
                         model.expires_at = new_credential.expires_at
                         if new_credential.scopes is not None:
                             model.scopes = json.dumps(list(new_credential.scopes))
+                        elif credential.scopes is not None:
+                            new_credential = replace(new_credential, scopes=credential.scopes)
                         model.last_refreshed_at = datetime.now(UTC)
                         model.updated_at = datetime.now(UTC)
 
@@ -486,14 +649,6 @@ class TokenManager:
                 audit_family_id = model.token_family_id
                 audit_rotation_counter = model.rotation_counter
 
-                # Populate cache
-                if self._cache_store is not None:
-                    await self._cache_store.set(
-                        cache_key_str,
-                        credential.access_token.encode(),
-                        ttl=self._cache_ttl,
-                    )
-
             # Audit logging AFTER session close — best-effort, non-blocking
             if refreshed:
                 self._log_audit(
@@ -527,6 +682,14 @@ class TokenManager:
                 credential.expires_at,
                 credential.scopes,
             )
+            if self._cache_store is not None:
+                cache_ttl = self._cache_ttl_for(credential)
+                if cache_ttl is not None:
+                    await self._cache_store.set(
+                        cache_key_str,
+                        self._encode_cached_token(credential),
+                        ttl=cache_ttl,
+                    )
             return credential.access_token
         finally:
             lock.release()
@@ -636,55 +799,78 @@ class TokenManager:
         """Revoke an OAuth credential."""
         if zone_id is None:
             zone_id = ROOT_ZONE_ID
-        with self.SessionLocal() as session:
-            stmt = select(OAuthCredentialModel).where(
-                OAuthCredentialModel.provider == provider,
-                OAuthCredentialModel.user_email == user_email,
-                OAuthCredentialModel.zone_id == zone_id,
-            )
-            model = session.execute(stmt).scalar_one_or_none()
+        lock_key = (provider, user_email, zone_id)
+        lock = self._get_refresh_lock(lock_key)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=_LOCK_ACQUIRE_TIMEOUT_SECONDS)
+        except TimeoutError:
+            raise AuthenticationError(
+                f"Token refresh lock acquisition timed out for {provider}:{user_email}"
+            ) from None
+        try:
+            with self.SessionLocal() as session:
+                stmt = select(OAuthCredentialModel).where(
+                    OAuthCredentialModel.provider == provider,
+                    OAuthCredentialModel.user_email == user_email,
+                    OAuthCredentialModel.zone_id == zone_id,
+                )
+                model = session.execute(stmt).scalar_one_or_none()
 
-            if not model:
-                return False
+                if not model:
+                    return False
 
-            if provider in self.providers:
-                credential = self._model_to_credential(model)
-                oauth_provider = self.providers[provider]
-                try:
-                    await oauth_provider.revoke_token(credential)
-                except Exception as e:
-                    logger.warning(f"Failed to revoke via provider API: {e}")
+                if provider in self.providers:
+                    oauth_provider = self.providers[provider]
+                    try:
+                        await asyncio.wait_for(
+                            oauth_provider.revoke_token(self._model_to_credential(model)),
+                            timeout=_PROVIDER_REFRESH_TIMEOUT_SECONDS,
+                        )
+                    except TimeoutError:
+                        logger.warning(
+                            "Timed out revoking provider token for %s:%s",
+                            provider,
+                            user_email,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to revoke via provider API: {e}")
 
-            # Capture audit fields before commit (avoids DetachedInstanceError)
-            audit_credential_id = model.credential_id
-            audit_family_id = model.token_family_id
+                # Capture audit fields before commit (avoids DetachedInstanceError)
+                audit_credential_id = model.credential_id
+                audit_family_id = model.token_family_id
 
-            model.revoked = 1
-            model.revoked_at = datetime.now(UTC)
-            session.commit()
+                model.revoked = 1
+                model.revoked_at = datetime.now(UTC)
+                session.commit()
 
-            logger.info(f"Revoked OAuth credential: {provider}:{user_email}")
-            self._log_audit(
-                "credential_revoked",
-                provider,
-                user_email,
-                zone_id,
-                credential_id=audit_credential_id,
-                token_family_id=audit_family_id,
-                ip_address=ip_address,
-            )
-            await self._invalidate_cache(provider, user_email, zone_id)
-            return True
+                logger.info(f"Revoked OAuth credential: {provider}:{user_email}")
+                self._log_audit(
+                    "credential_revoked",
+                    provider,
+                    user_email,
+                    zone_id,
+                    credential_id=audit_credential_id,
+                    token_family_id=audit_family_id,
+                    ip_address=ip_address,
+                )
+                await self._invalidate_cache(provider, user_email, zone_id)
+                return True
+        finally:
+            lock.release()
 
     async def list_credentials(
         self,
         zone_id: str | None = None,
         user_email: str | None = None,
         user_id: str | None = None,
+        include_revoked: bool = False,
     ) -> list[dict[str, Any]]:
         """List all credentials (metadata only, no tokens)."""
         with self.SessionLocal() as session:
-            stmt = select(OAuthCredentialModel).where(OAuthCredentialModel.revoked == 0)
+            stmt = select(OAuthCredentialModel)
+
+            if not include_revoked:
+                stmt = stmt.where(OAuthCredentialModel.revoked == 0)
 
             if zone_id is not None:
                 stmt = stmt.where(OAuthCredentialModel.zone_id == zone_id)
@@ -713,6 +899,8 @@ class TokenManager:
                     "last_used_at": (
                         model.last_used_at.isoformat() if model.last_used_at else None
                     ),
+                    "revoked": bool(model.revoked),
+                    "revoked_at": model.revoked_at.isoformat() if model.revoked_at else None,
                     "token_family_id": model.token_family_id,
                     "rotation_counter": model.rotation_counter,
                 }
@@ -768,6 +956,9 @@ class TokenManager:
         """Remove a token from the cache."""
         if self._cache_store is not None:
             await self._cache_store.delete(self._token_cache_key(provider, user_email, zone_id))
+            await self._cache_store.delete(
+                self._legacy_token_cache_key(provider, user_email, zone_id)
+            )
 
     def _log_audit(
         self,

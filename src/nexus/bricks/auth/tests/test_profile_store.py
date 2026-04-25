@@ -3,7 +3,7 @@
 Coverage map:
   - CRUD: upsert, get, list, delete
   - LRU cache: hit, miss, eviction, eviction-on-upsert
-  - Dirty-bit flush: mark_success buffers, mark_failure writes immediately
+  - Immediate persistence: mark_success and mark_failure update SQLite directly
   - raw_error truncation at 500 chars
   - Provider filtering on list()
   - mark_success / mark_failure state transitions
@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
+from nexus.bricks.auth.credential_pool import CredentialPool
 from nexus.bricks.auth.profile import (
     RAW_ERROR_MAX_LEN,
     AuthProfileFailureReason,
@@ -158,26 +159,22 @@ class TestLRUCache:
 
 
 # ---------------------------------------------------------------------------
-# Dirty-bit flush behavior
+# Success/failure persistence behavior
 # ---------------------------------------------------------------------------
 
 
 class TestDirtyFlush:
-    def test_mark_success_buffers_in_cache(self) -> None:
-        """mark_success does NOT write to SQLite immediately."""
+    def test_mark_success_writes_immediately(self) -> None:
+        """mark_success persists immediately so multi-process cooldowns stay safe."""
         store = SqliteAuthProfileStore(":memory:", flush_interval=9999)
         try:
             store.upsert(make_profile("p1"))
             store.mark_success("p1")
 
-            # Read directly from SQLite (bypass cache)
             row = store._conn.execute(
                 "SELECT success_count FROM auth_profiles WHERE id = ?", ("p1",)
             ).fetchone()
-            # Still 0 in SQLite — buffered in cache
-            assert row["success_count"] == 0
-
-            # But cache has the updated value
+            assert row["success_count"] == 1
             cached = store.get("p1")
             assert cached is not None
             assert cached.usage_stats.success_count == 1
@@ -200,22 +197,20 @@ class TestDirtyFlush:
         finally:
             store.close()
 
-    def test_flush_writes_dirty_profiles(self) -> None:
+    def test_flush_is_noop_when_success_already_persisted(self) -> None:
         store = SqliteAuthProfileStore(":memory:", flush_interval=9999)
         try:
             store.upsert(make_profile("p1"))
             store.mark_success("p1")
             store.mark_success("p1")
 
-            # Before flush: SQLite has 0
             row = store._conn.execute(
                 "SELECT success_count FROM auth_profiles WHERE id = ?", ("p1",)
             ).fetchone()
-            assert row["success_count"] == 0
+            assert row["success_count"] == 2
 
             store.flush()
 
-            # After flush: SQLite has 2
             row = store._conn.execute(
                 "SELECT success_count FROM auth_profiles WHERE id = ?", ("p1",)
             ).fetchone()
@@ -223,14 +218,11 @@ class TestDirtyFlush:
         finally:
             store.close()
 
-    def test_close_flushes_dirty(self) -> None:
+    def test_close_preserves_immediately_persisted_success(self) -> None:
         store = SqliteAuthProfileStore(":memory:", flush_interval=9999)
         store.upsert(make_profile("p1"))
         store.mark_success("p1")
 
-        # Read before close via a second connection (not possible with :memory:,
-        # so we check via flush behavior by reading after explicit flush)
-        store.flush()
         row = store._conn.execute(
             "SELECT success_count FROM auth_profiles WHERE id = ?", ("p1",)
         ).fetchone()
@@ -284,7 +276,7 @@ class TestOutcomeRecording:
     def test_mark_success_clears_expired_cooldown(
         self, sqlite_store: SqliteAuthProfileStore
     ) -> None:
-        past = datetime.utcnow() - timedelta(hours=1)
+        past = datetime.now(UTC) - timedelta(hours=1)
         sqlite_store.upsert(
             make_profile(
                 "p1", cooldown_until=past, cooldown_reason=AuthProfileFailureReason.RATE_LIMIT
@@ -299,7 +291,7 @@ class TestOutcomeRecording:
     def test_mark_success_preserves_future_cooldown(
         self, sqlite_store: SqliteAuthProfileStore
     ) -> None:
-        future = datetime.utcnow() + timedelta(hours=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
         sqlite_store.upsert(
             make_profile(
                 "p1", cooldown_until=future, cooldown_reason=AuthProfileFailureReason.RATE_LIMIT
@@ -317,6 +309,60 @@ class TestOutcomeRecording:
         assert p is not None
         assert p.usage_stats.cooldown_reason == AuthProfileFailureReason.BILLING
         assert p.usage_stats.failure_count == 1
+
+    def test_mark_failure_can_set_cooldown_until(
+        self, sqlite_store: SqliteAuthProfileStore
+    ) -> None:
+        sqlite_store.upsert(make_profile("p1"))
+        future = datetime.now(UTC) + timedelta(hours=1)
+        sqlite_store.mark_failure(
+            "p1",
+            AuthProfileFailureReason.RATE_LIMIT,
+            cooldown_until=future,
+        )
+        p = sqlite_store.get("p1")
+        assert p is not None
+        assert p.usage_stats.cooldown_until is not None
+        assert p.usage_stats.cooldown_until == future
+
+    def test_credential_pool_non_cooldown_failure_preserves_active_cooldown(
+        self, sqlite_store: SqliteAuthProfileStore
+    ) -> None:
+        sqlite_store.upsert(make_profile("p1"))
+        pool = CredentialPool(provider="openai", store=sqlite_store)
+        stale_profile = make_profile("p1")
+
+        pool.mark_failure(stale_profile, AuthProfileFailureReason.RATE_LIMIT)
+        rate_limited = sqlite_store.get("p1")
+        assert rate_limited is not None
+        assert rate_limited.usage_stats.cooldown_until is not None
+
+        pool.mark_failure(stale_profile, AuthProfileFailureReason.AUTH)
+        after = sqlite_store.get("p1")
+        assert after is not None
+        assert after.usage_stats.cooldown_until == rate_limited.usage_stats.cooldown_until
+
+    def test_shorter_cooldown_does_not_replace_longer_active_cooldown(
+        self, sqlite_store: SqliteAuthProfileStore
+    ) -> None:
+        sqlite_store.upsert(
+            make_profile(
+                "p1",
+                cooldown_until=datetime.now(UTC) + timedelta(hours=1),
+                cooldown_reason=AuthProfileFailureReason.RATE_LIMIT,
+            )
+        )
+        shorter = datetime.now(UTC) + timedelta(seconds=30)
+        sqlite_store.mark_failure(
+            "p1",
+            AuthProfileFailureReason.TIMEOUT,
+            cooldown_until=shorter,
+        )
+        after = sqlite_store.get("p1")
+        assert after is not None
+        assert after.usage_stats.cooldown_until is not None
+        assert after.usage_stats.cooldown_until > datetime.now(UTC) + timedelta(minutes=50)
+        assert after.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
 
     def test_mark_on_nonexistent_profile(self, sqlite_store: SqliteAuthProfileStore) -> None:
         # Should not raise
@@ -380,10 +426,134 @@ class TestConcurrency:
         for t in threads:
             t.join(timeout=10)
 
-        sqlite_store.flush()
         p = sqlite_store.get("p1")
         assert p is not None
         assert p.usage_stats.success_count == num_threads * calls_per_thread
+
+    def test_stale_cached_success_does_not_clear_newer_cooldown_same_db(self, tmp_path) -> None:
+        db_path = tmp_path / "profiles.db"
+        store_a = SqliteAuthProfileStore(db_path)
+        store_b = SqliteAuthProfileStore(db_path)
+        try:
+            store_a.upsert(make_profile("p1"))
+            cached = store_a.get("p1")
+            assert cached is not None
+
+            future = datetime.now(UTC) + timedelta(hours=1)
+            store_b.mark_failure(
+                "p1",
+                AuthProfileFailureReason.RATE_LIMIT,
+                cooldown_until=future,
+            )
+
+            store_a.mark_success("p1")
+
+            after = store_b.get("p1")
+            assert after is not None
+            assert after.usage_stats.cooldown_until == future
+            assert after.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+        finally:
+            store_a.close()
+            store_b.close()
+
+    def test_stale_cached_failure_does_not_shorten_newer_cooldown_same_db(self, tmp_path) -> None:
+        db_path = tmp_path / "profiles.db"
+        store_a = SqliteAuthProfileStore(db_path)
+        store_b = SqliteAuthProfileStore(db_path)
+        try:
+            store_a.upsert(make_profile("p1"))
+            cached = store_a.get("p1")
+            assert cached is not None
+
+            future = datetime.now(UTC) + timedelta(hours=1)
+            store_b.mark_failure(
+                "p1",
+                AuthProfileFailureReason.RATE_LIMIT,
+                cooldown_until=future,
+            )
+
+            store_a.mark_failure(
+                "p1",
+                AuthProfileFailureReason.TIMEOUT,
+                cooldown_until=datetime.now(UTC) + timedelta(seconds=30),
+            )
+
+            after = store_b.get("p1")
+            assert after is not None
+            assert after.usage_stats.cooldown_until == future
+            assert after.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+        finally:
+            store_a.close()
+            store_b.close()
+
+    def test_stale_upsert_preserves_active_cooldown_same_db(self, tmp_path) -> None:
+        db_path = tmp_path / "profiles.db"
+        store_a = SqliteAuthProfileStore(db_path)
+        store_b = SqliteAuthProfileStore(db_path)
+        try:
+            store_a.upsert(make_profile("p1"))
+            stale = store_a.get("p1")
+            assert stale is not None
+
+            future = datetime.now(UTC) + timedelta(hours=1)
+            store_b.mark_failure(
+                "p1",
+                AuthProfileFailureReason.RATE_LIMIT,
+                cooldown_until=future,
+            )
+
+            store_a.upsert(stale, preserve_runtime_state=True)
+
+            after = store_b.get("p1")
+            assert after is not None
+            assert after.usage_stats.cooldown_until == future
+            assert after.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+        finally:
+            store_a.close()
+            store_b.close()
+
+    def test_stale_replace_owned_subset_preserves_active_cooldown_same_db(self, tmp_path) -> None:
+        db_path = tmp_path / "profiles.db"
+        store_a = SqliteAuthProfileStore(db_path)
+        store_b = SqliteAuthProfileStore(db_path)
+        try:
+            store_a.upsert(make_profile("p1"))
+            stale = store_a.get("p1")
+            assert stale is not None
+
+            future = datetime.now(UTC) + timedelta(hours=1)
+            store_b.mark_failure(
+                "p1",
+                AuthProfileFailureReason.RATE_LIMIT,
+                cooldown_until=future,
+            )
+
+            store_a.replace_owned_subset(upserts=[stale], deletes=[])
+
+            after = store_b.get("p1")
+            assert after is not None
+            assert after.usage_stats.cooldown_until == future
+            assert after.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+        finally:
+            store_a.close()
+            store_b.close()
+
+    def test_upsert_can_clear_active_cooldown_when_authoritative(
+        self, sqlite_store: SqliteAuthProfileStore
+    ) -> None:
+        sqlite_store.upsert(
+            make_profile(
+                "p1",
+                cooldown_until=datetime.now(UTC) + timedelta(hours=1),
+                cooldown_reason=AuthProfileFailureReason.RATE_LIMIT,
+            )
+        )
+        cleared = make_profile("p1")
+        sqlite_store.upsert(cleared)
+        after = sqlite_store.get("p1")
+        assert after is not None
+        assert after.usage_stats.cooldown_until is None
+        assert after.usage_stats.cooldown_reason is None
 
 
 # ---------------------------------------------------------------------------
@@ -404,7 +574,7 @@ class TestCooldownExpiryRace:
         store = SqliteAuthProfileStore(":memory:")
         try:
             # Set cooldown to expire in 0.1s
-            near_future = datetime.utcnow() + timedelta(milliseconds=100)
+            near_future = datetime.now(UTC) + timedelta(milliseconds=100)
             store.upsert(
                 make_profile(
                     "p1",
@@ -432,7 +602,7 @@ class TestCooldownExpiryRace:
             p = store.get("p1")
             assert p is not None
             p.usage_stats.failure_count += 1
-            p.usage_stats.cooldown_until = datetime.utcnow() + timedelta(hours=1)
+            p.usage_stats.cooldown_until = datetime.now(UTC) + timedelta(hours=1)
             p.usage_stats.cooldown_reason = AuthProfileFailureReason.OVERLOADED
             store.upsert(p)
 

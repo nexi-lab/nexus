@@ -262,8 +262,14 @@ class OAuthCredentialService:
             current_user_id = getattr(context, "user_id", None)
         is_admin = context and getattr(context, "is_admin", False)
 
+        if context is not None and not is_admin and not current_user_id:
+            logger.warning("Refusing to list OAuth credentials without authenticated subject")
+            return []
+
         credentials = await token_manager.list_credentials(
-            zone_id=zone_id, user_id=current_user_id if not is_admin else None
+            zone_id=zone_id,
+            user_id=current_user_id if not is_admin else None,
+            include_revoked=include_revoked,
         )
 
         result = []

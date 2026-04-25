@@ -377,77 +377,107 @@ def test_token_exchange_unknown_resource_returns_400(engine: Engine) -> None:
 
 
 def test_parse_resource_accepts_known_provider() -> None:
-    """Bare provider URI parses to (provider, profile_id=None)."""
+    """Bare provider URI parses to (provider, None)."""
     from nexus.server.api.v1.routers.token_exchange import _parse_resource
 
-    assert _parse_resource("urn:nexus:provider:github") == ("github", None, None)
-    assert _parse_resource("urn:nexus:provider:aws") == ("aws", None, None)
-
-
-def test_parse_resource_accepts_provider_with_profile_id() -> None:
-    """``urn:nexus:provider:<provider>/<profile_id>`` form parses both segments."""
-    from nexus.server.api.v1.routers.token_exchange import _parse_resource
-
-    assert _parse_resource("urn:nexus:provider:github/work") == ("github", "work", None)
-    assert _parse_resource("urn:nexus:provider:aws/aws-prod") == ("aws", "aws-prod", None)
+    assert _parse_resource("urn:nexus:provider:github") == ("github", None)
+    assert _parse_resource("urn:nexus:provider:aws") == ("aws", None)
 
 
 def test_parse_resource_rejects_unknown_provider() -> None:
     from nexus.server.api.v1.routers.token_exchange import _parse_resource
 
-    p, pid, err = _parse_resource("urn:nexus:provider:slack")
-    assert p is None and pid is None and err is not None
-    p, pid, err = _parse_resource("urn:nexus:provider:slack/work")
-    assert p is None and pid is None and err is not None
+    p, err = _parse_resource("urn:nexus:provider:slack")
+    assert p is None and err is not None
+    p, err = _parse_resource("urn:nexus:provider:")
+    assert p is None and err is not None
 
 
-def test_parse_resource_rejects_invalid_profile_id() -> None:
-    """Profile_id must match ``[a-zA-Z0-9_-]{1,128}`` — keeps the URI parser
-    deterministic and prevents accidental injection into log lines."""
+def test_parse_resource_rejects_non_nexus_uri() -> None:
+    """``resource`` URI scheme is fixed; non-Nexus URNs return parse_err."""
     from nexus.server.api.v1.routers.token_exchange import _parse_resource
 
-    for bad in (
-        "urn:nexus:provider:github/",  # empty profile_id
-        "urn:nexus:provider:github/has space",
-        "urn:nexus:provider:github/has/slash",
-        "urn:nexus:provider:github/has;semi",
-        "urn:nexus:provider:github/" + "x" * 129,  # too long
+    p, err = _parse_resource("https://example.com/api")
+    assert p is None and err is not None
+
+
+def test_validate_profile_id_accepts_real_daemon_ids() -> None:
+    """Real daemon-written profile IDs use ``<provider>/<account_identifier>``
+    where account_identifier may contain ``/``, ``.``, ``@``, etc. The
+    validator must accept these verbatim — that's the whole reason F23
+    moved profile_id off the resource URI and onto its own form field."""
+    from nexus.server.api.v1.routers.token_exchange import _validate_profile_id
+
+    for ok in (
+        "github-default",
+        "github/github.com/alice",
+        "codex/u@example.com",
+        "aws/123456789012",
+        "github/org-name/sub-org/account",  # deeply nested daemon path
     ):
-        p, pid, err = _parse_resource(bad)
-        assert p is None and pid is None and err is not None, f"should reject {bad!r}"
+        assert _validate_profile_id(ok) is None, f"should accept {ok!r}"
 
 
-def test_token_exchange_with_profile_id_picks_named_envelope(engine: Engine) -> None:
-    """End-to-end: 2 GitHub envelopes for the same principal; the named one
-    via ``urn:nexus:provider:github/<id>`` returns its own access_token.
+def test_validate_profile_id_rejects_empty_oversize_or_control_chars() -> None:
+    from nexus.server.api.v1.routers.token_exchange import (
+        _PROFILE_ID_MAX_LEN,
+        _validate_profile_id,
+    )
 
-    This is the wire-contract proof for codex round-7 finding F21.
+    assert _validate_profile_id("") is not None
+    assert _validate_profile_id("x" * (_PROFILE_ID_MAX_LEN + 1)) is not None
+    assert _validate_profile_id("has\x00null") is not None
+    assert _validate_profile_id("has\nnewline") is not None
+    assert _validate_profile_id("has\x7fdel") is not None
+
+
+def _seed_github_profile(
+    engine: Engine,
+    tenant: uuid.UUID,
+    principal: uuid.UUID,
+    encryption: InMemoryEncryptionProvider,
+    *,
+    profile_id: str,
+    account_identifier: str,
+    token: str,
+) -> None:
+    """Insert one github envelope row with a caller-chosen profile_id.
+
+    Mirrors the daemon's ``Pusher.push_source`` shape — profile_id is
+    ``<provider>/<account_identifier>`` and may contain ``/``, ``.``, ``@``.
     """
-    tenant = uuid.uuid4()
-    principal = uuid.uuid4()
-    app, signer, encryption = _build_app(engine, tenant, principal)
-    _seed_github(engine, tenant, principal, encryption)  # writes 'github-default' / 'ghp_real'
-
-    # Add a second profile 'github-other' under the same principal.
-    payload = json.dumps({"token": "ghp_alt", "scopes": ["repo"]}).encode()
-    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-other"
-    dek = b"\x05" * 32
+    payload = json.dumps({"token": token, "scopes": ["repo"]}).encode()
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + profile_id.encode()
+    dek = bytes([profile_id.__hash__() & 0xFF]) * 32  # arbitrary distinct key per row
     nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
     wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
     with engine.begin() as conn:
         conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
+            {"id": str(tenant), "n": f"tx-{tenant}"},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO principals (id, tenant_id, kind) VALUES (:id, :t, 'human') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": str(principal), "t": str(tenant)},
+        )
         conn.execute(
             text(
                 "INSERT INTO auth_profiles "
                 "(tenant_id, principal_id, id, provider, account_identifier, "
                 " backend, backend_key, last_synced_at, sync_ttl_seconds, "
                 " ciphertext, wrapped_dek, nonce, aad, kek_version) "
-                "VALUES (:t, :p, 'github-other', 'github', 'other', 'envelope', 'k', "
+                "VALUES (:t, :p, :pid, 'github', :acct, 'envelope', 'k', "
                 " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
             ),
             {
                 "t": str(tenant),
                 "p": str(principal),
+                "pid": profile_id,
+                "acct": account_identifier,
                 "ct": ct,
                 "wd": wrapped,
                 "no": nonce,
@@ -455,6 +485,38 @@ def test_token_exchange_with_profile_id_picks_named_envelope(engine: Engine) -> 
                 "kv": kv,
             },
         )
+
+
+def test_token_exchange_with_profile_id_picks_named_envelope(engine: Engine) -> None:
+    """End-to-end: 2 GitHub envelopes with REAL daemon-style profile IDs;
+    the named one via the ``nexus_profile_id`` form field returns its own
+    access_token.
+
+    Uses ``github/github.com/alice`` and ``codex/u@example.com`` shapes —
+    proves the F23 fix actually addresses production daemon writes (vs
+    the synthetic ``github-default`` slugs the original F21 test used).
+    """
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    app, signer, encryption = _build_app(engine, tenant, principal)
+    _seed_github_profile(
+        engine,
+        tenant,
+        principal,
+        encryption,
+        profile_id="github/github.com/alice",
+        account_identifier="github.com/alice",
+        token="ghp_alice",
+    )
+    _seed_github_profile(
+        engine,
+        tenant,
+        principal,
+        encryption,
+        profile_id="github/u@example.com",
+        account_identifier="u@example.com",
+        token="ghp_email",
+    )
     machine = _seed_active_machine(engine, tenant, principal)
     jwt = signer.sign(
         DaemonClaims(tenant_id=tenant, principal_id=principal, machine_id=machine),
@@ -462,47 +524,54 @@ def test_token_exchange_with_profile_id_picks_named_envelope(engine: Engine) -> 
     )
     client = TestClient(app)
 
-    # Bare resource → 409 ambiguous_profile (back-compat, fail closed).
-    r = client.post(
-        "/v1/auth/token-exchange",
-        data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "subject_token": jwt,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-            "resource": "urn:nexus:provider:github",
-            "scope": "x",
-        },
-    )
+    base = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token": jwt,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "resource": "urn:nexus:provider:github",
+        "scope": "x",
+    }
+
+    # Bare resource (no profile_id form field) → 409 ambiguous_profile.
+    r = client.post("/v1/auth/token-exchange", data=base)
     assert r.status_code == 409
     assert r.json()["error"] == "ambiguous_profile"
 
-    # Explicit /github-default → returns the default credential.
+    # nexus_profile_id selects the alice account.
     r = client.post(
         "/v1/auth/token-exchange",
-        data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "subject_token": jwt,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-            "resource": "urn:nexus:provider:github/github-default",
-            "scope": "x",
-        },
+        data={**base, "nexus_profile_id": "github/github.com/alice"},
     )
-    assert r.status_code == 200
-    assert r.json()["access_token"] == "ghp_real"
+    assert r.status_code == 200, r.text
+    assert r.json()["access_token"] == "ghp_alice"
 
-    # Explicit /github-other → returns the other credential.
+    # nexus_profile_id selects the email-shaped account.
     r = client.post(
         "/v1/auth/token-exchange",
-        data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "subject_token": jwt,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
-            "resource": "urn:nexus:provider:github/github-other",
-            "scope": "x",
-        },
+        data={**base, "nexus_profile_id": "github/u@example.com"},
     )
-    assert r.status_code == 200
-    assert r.json()["access_token"] == "ghp_alt"
+    assert r.status_code == 200, r.text
+    assert r.json()["access_token"] == "ghp_email"
+
+    # Unknown nexus_profile_id → 403 access_denied (no silent fallback).
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={**base, "nexus_profile_id": "github/no-such-account"},
+    )
+    assert r.status_code == 403
+    assert r.json()["error"] == "access_denied"
+
+    # Empty form field is treated as "not provided" — same path as bare.
+    r = client.post("/v1/auth/token-exchange", data={**base, "nexus_profile_id": ""})
+    assert r.status_code == 409  # back to ambiguous
+
+    # Control-char-bearing profile_id → 400 invalid_request before resolve runs.
+    r = client.post(
+        "/v1/auth/token-exchange",
+        data={**base, "nexus_profile_id": "has\nnewline"},
+    )
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_request"
 
 
 def test_token_exchange_no_profile_returns_403(engine: Engine) -> None:

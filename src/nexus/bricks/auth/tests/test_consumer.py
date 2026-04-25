@@ -753,33 +753,46 @@ def test_resolve_rejects_when_multiple_profiles_for_provider(engine):
         consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
 
 
-def _seed_two_github_envelopes(engine, encryption):
-    """Helper for F21 multi-account tests: seed 'github-default' and 'github-other'
-    rows under the same (tenant, principal). Returns (tenant, principal, machine)."""
-    tenant = uuid.uuid4()
-    principal = uuid.uuid4()
-    _seed_github_envelope(
-        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
-    )
-    payload = json.dumps({"token": "ghp_other", "scopes": ["repo"]}).encode()
-    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-other"
-    dek = b"\x02" * 32
+def _seed_named_github_profile(
+    *, engine, tenant_id, principal_id, encryption, profile_id, account_identifier, token
+):
+    """Insert a github envelope row with caller-chosen profile_id (F23).
+
+    Mirrors the daemon's ``Pusher.push_source`` shape — profile_id is
+    ``<provider>/<account_identifier>`` and may contain ``/``, ``.``, ``@``.
+    """
+    payload = json.dumps({"token": token, "scopes": ["repo"]}).encode()
+    aad = str(tenant_id).encode() + b"|" + str(principal_id).encode() + b"|" + profile_id.encode()
+    dek = bytes([profile_id.__hash__() & 0xFF]) * 32
     nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
-    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
+    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
     with engine.begin() as conn:
-        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+        conn.execute(
+            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
+            {"id": str(tenant_id), "n": f"tx-{tenant_id}"},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO principals (id, tenant_id, kind) VALUES (:id, :t, 'human') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": str(principal_id), "t": str(tenant_id)},
+        )
         conn.execute(
             text(
                 "INSERT INTO auth_profiles "
                 "(tenant_id, principal_id, id, provider, account_identifier, "
                 " backend, backend_key, last_synced_at, sync_ttl_seconds, "
                 " ciphertext, wrapped_dek, nonce, aad, kek_version) "
-                "VALUES (:t, :p, 'github-other', 'github', 'other', 'envelope', 'k', "
+                "VALUES (:t, :p, :pid, 'github', :acct, 'envelope', 'k', "
                 " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
             ),
             {
-                "t": str(tenant),
-                "p": str(principal),
+                "t": str(tenant_id),
+                "p": str(principal_id),
+                "pid": profile_id,
+                "acct": account_identifier,
                 "ct": ct,
                 "wd": wrapped,
                 "no": nonce,
@@ -787,34 +800,65 @@ def _seed_two_github_envelopes(engine, encryption):
                 "kv": kv,
             },
         )
+
+
+def _seed_two_real_daemon_envelopes(engine, encryption):
+    """Two github profiles with REAL daemon-style IDs containing /, ., @.
+    Returns (tenant, principal, machine, alice_pid, email_pid)."""
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    alice_pid = "github/github.com/alice"
+    email_pid = "github/u@example.com"
+    _seed_named_github_profile(
+        engine=engine,
+        tenant_id=tenant,
+        principal_id=principal,
+        encryption=encryption,
+        profile_id=alice_pid,
+        account_identifier="github.com/alice",
+        token="ghp_alice",
+    )
+    _seed_named_github_profile(
+        engine=engine,
+        tenant_id=tenant,
+        principal_id=principal,
+        encryption=encryption,
+        profile_id=email_pid,
+        account_identifier="u@example.com",
+        token="ghp_email",
+    )
     machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
-    return tenant, principal, machine
+    return tenant, principal, machine, alice_pid, email_pid
 
 
 def test_resolve_with_explicit_profile_id_picks_named_row(engine):
-    """Two profiles for one provider; explicit profile_id selects the right one.
+    """Two profiles for one provider with daemon-style IDs (containing
+    ``/``, ``.``, ``@``); explicit profile_id selects the right one.
 
-    Regression for codex round-7 finding F21 — proves the multi-account
-    contract upgrade actually disambiguates instead of always 409.
+    Regression for codex round-7 F21 + round-8 F23: proves multi-account
+    disambiguation works against profile IDs the real daemon writer
+    actually produces, not just synthetic single-segment slugs.
     """
     encryption = InMemoryEncryptionProvider()
-    tenant, principal, machine = _seed_two_github_envelopes(engine, encryption)
+    tenant, principal, machine, alice_pid, email_pid = _seed_two_real_daemon_envelopes(
+        engine, encryption
+    )
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
 
-    default_cred = consumer.resolve(
+    alice = consumer.resolve(
         claims=_claims(tenant, principal, machine),
         provider="github",
-        profile_id="github-default",
+        profile_id=alice_pid,
         purpose="x",
     )
-    other_cred = consumer.resolve(
+    email = consumer.resolve(
         claims=_claims(tenant, principal, machine),
         provider="github",
-        profile_id="github-other",
+        profile_id=email_pid,
         purpose="x",
     )
-    assert default_cred.access_token == "ghp_test"
-    assert other_cred.access_token == "ghp_other"
+    assert alice.access_token == "ghp_alice"
+    assert email.access_token == "ghp_email"
 
 
 def test_resolve_two_profiles_without_profile_id_still_ambiguous(engine):
@@ -822,7 +866,7 @@ def test_resolve_two_profiles_without_profile_id_still_ambiguous(engine):
     selector is opt-in — back-compat for single-profile callers is preserved
     by failing closed when the contract is under-specified."""
     encryption = InMemoryEncryptionProvider()
-    tenant, principal, machine = _seed_two_github_envelopes(engine, encryption)
+    tenant, principal, machine, _, _ = _seed_two_real_daemon_envelopes(engine, encryption)
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
     with pytest.raises(MultipleProfilesForProvider):
         consumer.resolve(
@@ -838,12 +882,12 @@ def test_resolve_with_unknown_profile_id_returns_not_found(engine):
     Critical: must NOT silently fall back to another profile (which would
     re-introduce the multi-account leak this fix exists to prevent)."""
     encryption = InMemoryEncryptionProvider()
-    tenant, principal, machine = _seed_two_github_envelopes(engine, encryption)
+    tenant, principal, machine, _, _ = _seed_two_real_daemon_envelopes(engine, encryption)
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
     with pytest.raises(ProfileNotFoundForCaller):
         consumer.resolve(
             claims=_claims(tenant, principal, machine),
             provider="github",
-            profile_id="nonexistent",
+            profile_id="github/nonexistent",
             purpose="x",
         )

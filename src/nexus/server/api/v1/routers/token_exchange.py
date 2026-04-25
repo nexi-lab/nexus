@@ -12,7 +12,6 @@ required so tests and dev wiring stay symmetric.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -44,37 +43,45 @@ _ISSUED_TYPE = "urn:ietf:params:oauth:token-type:access_token"
 
 _KNOWN_PROVIDERS = frozenset({"aws", "github"})
 
-# Profile_id slug — matches the slugs writers use ("github-default",
-# "aws-prod", etc.). Strict character set keeps URI parsing predictable
-# and prevents accidental injection into log lines / SQL parameters.
-_PROFILE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+# Outer bound on profile_id length. The daemon writes IDs as
+# ``<provider>/<account_identifier>`` and account_identifier is free-form
+# user input (email, github.com path, etc.). 256 is generous for any
+# realistic case without unbounding the input.
+_PROFILE_ID_MAX_LEN = 256
 
 
-def _parse_resource(resource: str) -> tuple[str | None, str | None, str | None]:
-    """Parse the RFC 8693 ``resource`` URI to (provider, profile_id, error).
+def _parse_resource(resource: str) -> tuple[str | None, str | None]:
+    """Parse the RFC 8693 ``resource`` URI to (provider, error).
 
-    Accepted forms:
-      ``urn:nexus:provider:<provider>`` — default profile (single-row)
-      ``urn:nexus:provider:<provider>/<profile_id>`` — explicit selection
-
-    Returns ``(provider, profile_id, None)`` on success or
-    ``(None, None, error_description)`` on parse failure. ``profile_id``
-    is ``None`` when the caller did not specify one.
+    Only accepts ``urn:nexus:provider:<provider>``. Multi-account selection
+    rides on the ``nexus_profile_id`` form field instead of being embedded
+    in the URI — daemon-written profile IDs contain ``/``, ``.``, ``@``
+    (e.g. ``github/github.com/alice``) which collide with any
+    URI-segment encoding we could pick.
     """
     prefix = "urn:nexus:provider:"
     if not resource.startswith(prefix):
-        return None, None, f"unknown resource: {resource!r}"
+        return None, f"unknown resource: {resource!r}"
     suffix = resource[len(prefix) :]
-    if "/" in suffix:
-        provider, _, profile_id = suffix.partition("/")
-        if not provider or provider not in _KNOWN_PROVIDERS:
-            return None, None, f"unknown provider in resource: {resource!r}"
-        if not profile_id or not _PROFILE_ID_RE.match(profile_id):
-            return None, None, f"invalid profile_id in resource: {resource!r}"
-        return provider, profile_id, None
     if suffix not in _KNOWN_PROVIDERS:
-        return None, None, f"unknown provider in resource: {resource!r}"
-    return suffix, None, None
+        return None, f"unknown provider in resource: {resource!r}"
+    return suffix, None
+
+
+def _validate_profile_id(profile_id: str) -> str | None:
+    """Reject empty, oversize, or control-char-bearing profile_ids.
+
+    SQL is parameterized so injection isn't a concern. The bounds exist
+    so log lines stay readable and a malicious caller can't ship a
+    multi-MB string through the form parser.
+    """
+    if not profile_id:
+        return "nexus_profile_id is empty"
+    if len(profile_id) > _PROFILE_ID_MAX_LEN:
+        return f"nexus_profile_id exceeds {_PROFILE_ID_MAX_LEN} chars"
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in profile_id):
+        return "nexus_profile_id contains control characters"
+    return None
 
 
 def _err(http_status: int, code: str, description: str) -> JSONResponse:
@@ -109,6 +116,7 @@ def make_token_exchange_router(
         scope: str = Form(...),
         audience: str | None = Form(None),
         nexus_force_refresh: str = Form("false"),
+        nexus_profile_id: str = Form(""),
     ) -> Any:
         if not enabled:
             return _err(
@@ -125,10 +133,17 @@ def make_token_exchange_router(
             return _err(
                 400, "invalid_request", f"unsupported subject_token_type: {subject_token_type!r}"
             )
-        provider, profile_id, parse_err = _parse_resource(resource)
+        provider, parse_err = _parse_resource(resource)
         if parse_err is not None:
             return _err(400, "invalid_request", parse_err)
         assert provider is not None  # mypy — parse_err is None implies provider set
+
+        profile_id: str | None = None
+        if nexus_profile_id:
+            profile_err = _validate_profile_id(nexus_profile_id)
+            if profile_err is not None:
+                return _err(400, "invalid_request", profile_err)
+            profile_id = nexus_profile_id
 
         try:
             claims = signer.verify(subject_token)

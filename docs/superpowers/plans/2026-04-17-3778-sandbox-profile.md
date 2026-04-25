@@ -43,7 +43,6 @@
 | `src/nexus/bricks/search/federated_search.py` | Define `FederationUnreachableError`; raise when all peers fail |
 | `src/nexus/bricks/search/search_service.py` | Sandbox semantic path: try federation, fall back to BM25S + degraded flag |
 | `src/nexus/server/fastapi_server.py` | After router includes, call `_filter_routes_for_sandbox(app)` when profile is sandbox |
-| `src/nexus/cli/commands/chat.py` | Add `"sandbox"` to profile validation / docstrings |
 | `tests/unit/core/test_deployment_profile.py` | Extend `test_valid_profiles` to include `"sandbox"` |
 | `pyproject.toml` | Add `sandbox` extra |
 | `Dockerfile` | Add `ARG NEXUS_PROFILE_EXTRAS=all,performance,...`; interpolate into `uv pip install` |
@@ -53,7 +52,7 @@
 
 ## Task Sequencing
 
-Tasks 1–10 are the functional changes, TDD-ordered so each task leaves the repo green. Tasks 11–16 are packaging + tests + docs. Each task commits independently.
+Tasks 1–9 are the functional changes, TDD-ordered so each task leaves the repo green. Tasks 10–15 are packaging + tests + docs. Each task commits independently.
 
 ```
 Task 1  Enum + brick set         ──┐
@@ -62,16 +61,15 @@ Task 3  Config validator           │
 Task 4  Config defaults            │
 Task 5  Cache "inmem" settings     ├─ Boot-zero-services possible
 Task 6  Cache factory inmem        │
-Task 7  CLI validation             │
-Task 8  Search result field        ├─ Degraded flag plumbed
-Task 9  Federation error + detect  │
-Task 10 Search service fallback    │
-Task 11 HTTP route allowlist       ├─ Sandbox HTTP surface
-Task 12 pyproject extra            ├─ Packaging
-Task 13 Dockerfile build-arg       │
-Task 14 Integration boot test      ├─ Verification
-Task 15 Memory benchmark (gated)   │
-Task 16 MCP e2e + CI + docs        ┘
+Task 7  Search result field        ├─ Degraded flag plumbed
+Task 8  Federation error + detect  │
+Task 9  Search service fallback    │
+Task 10 HTTP route allowlist       ├─ Sandbox HTTP surface
+Task 11 pyproject extra            ├─ Packaging
+Task 12 Dockerfile build-arg       │
+Task 13 Integration boot test      ├─ Verification
+Task 14 Memory benchmark (gated)   │
+Task 15 MCP e2e + CI + docs        ┘
 ```
 
 ---
@@ -146,8 +144,8 @@ class TestSandboxProfileEnum:
         assert sandbox.issubset(full)
 
     def test_sandbox_size(self) -> None:
-        """SANDBOX = LITE (7) + 3 adds (SEARCH, MCP, PARSERS) = 10 bricks."""
-        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 10
+        """SANDBOX = LITE (6) + 3 adds (SEARCH, MCP, PARSERS) = 9 bricks."""
+        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 9
 ```
 
 - [ ] **Step 2: Run test, verify fail**
@@ -770,53 +768,7 @@ git commit -m "feat(#3778): cache factory wires 'inmem' to InMemoryCacheStore"
 
 ---
 
-## Task 7: CLI profile validation accepts `sandbox`
-
-**Files:**
-- Modify: `src/nexus/cli/commands/chat.py` (docstrings/help text only — validator is now inherited from NexusConfig via Task 3)
-
-- [ ] **Step 1: Verify no explicit validator to change**
-
-```bash
-grep -rn '"lite", "full"' src/nexus/cli/ || echo "no literal allowed-list in CLI"
-```
-
-If the search returns hits with a closed profile list in CLI code, add `"sandbox"` there.
-
-Otherwise (validator is inherited from NexusConfig), update the `--deployment-profile` help text in `src/nexus/cli/commands/chat.py` around line 34-37. Current:
-
-```python
-    "--deployment-profile",
-    type=click.Choice(["slim", "cluster", "embedded", "lite", "full", "cloud"]),
-    ...
-```
-
-Change to:
-
-```python
-    "--deployment-profile",
-    type=click.Choice(["slim", "cluster", "embedded", "lite", "sandbox", "full", "cloud"]),
-    ...
-```
-
-(If the actual file uses a different click option shape, mirror it.)
-
-- [ ] **Step 2: Run CLI smoke**
-
-```bash
-python -m nexus.cli --help 2>&1 | grep -i sandbox || echo "need to check other commands"
-```
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/nexus/cli/commands/chat.py
-git commit -m "feat(#3778): CLI --deployment-profile accepts 'sandbox'"
-```
-
----
-
-## Task 8: Add `semantic_degraded` to `BaseSearchResult`
+## Task 7: Add `semantic_degraded` to `BaseSearchResult`
 
 **Files:**
 - Modify: `src/nexus/bricks/search/results.py:14-52`
@@ -849,7 +801,7 @@ git commit -m "feat(#3778): add semantic_degraded flag to BaseSearchResult"
 
 ---
 
-## Task 9: `FederationUnreachableError` + "all peers failed" detection
+## Task 8: `FederationUnreachableError` + "all peers failed" detection
 
 **Files:**
 - Modify: `src/nexus/bricks/search/federated_search.py`
@@ -961,7 +913,7 @@ git commit -m "feat(#3778): FederationUnreachableError + is_all_peers_failed hel
 
 ---
 
-## Task 10: Search service — sandbox semantic fallback with degraded flag
+## Task 9: Search service — sandbox semantic fallback with degraded flag
 
 **Files:**
 - Modify: `src/nexus/bricks/search/search_service.py` (semantic path + sandbox branch)
@@ -1166,7 +1118,7 @@ git commit -m "feat(#3778): SANDBOX semantic fallback to BM25S with degraded fla
 
 ---
 
-## Task 11: FastAPI route-level allowlist for sandbox
+## Task 10: FastAPI route-level allowlist for sandbox
 
 **Files:**
 - Modify: `src/nexus/server/fastapi_server.py` (add filter + invocation)
@@ -1320,7 +1272,7 @@ git commit -m "feat(#3778): route-level allowlist filter for SANDBOX profile"
 
 ---
 
-## Task 12: Add `sandbox` pip extra
+## Task 11: Add `sandbox` pip extra
 
 **Files:**
 - Modify: `pyproject.toml` (optional-dependencies section)
@@ -1364,7 +1316,7 @@ git commit -m "feat(#3778): add 'sandbox' pip extra (bm25s, cachetools, pdf-insp
 
 ---
 
-## Task 13: Dockerfile build-arg for profile extras
+## Task 12: Dockerfile build-arg for profile extras
 
 **Files:**
 - Modify: `Dockerfile` (around line 84-92)
@@ -1450,7 +1402,7 @@ git commit -m "feat(#3778): Dockerfile ARG NEXUS_PROFILE_EXTRAS for dual image t
 
 ---
 
-## Task 14: Integration test — boot with zero external services
+## Task 13: Integration test — boot with zero external services
 
 **Files:**
 - Test: `tests/integration/test_sandbox_boot.py` (create)
@@ -1568,7 +1520,7 @@ git commit -m "test(#3778): integration — SANDBOX boot, HTTP allowlist, featur
 
 ---
 
-## Task 15: Memory benchmark (marker-gated)
+## Task 14: Memory benchmark (marker-gated)
 
 **Files:**
 - Test: `tests/integration/test_sandbox_memory.py` (create)
@@ -1654,14 +1606,14 @@ git commit -m "test(#3778): SANDBOX memory benchmark (marker-gated)"
 
 ---
 
-## Task 16: MCP e2e + CI matrix + user docs
+## Task 15: MCP e2e + CI matrix + user docs
 
 **Files:**
 - Test: `tests/e2e/self_contained/test_sandbox_mcp.py` (create)
 - Modify: `.github/workflows/*.yml` — CI matrix for dual image build
 - Create: `docs/deployment/sandbox-profile.md`
 
-### 16a. MCP e2e test
+### 15a. MCP e2e test
 
 - [ ] **Step 1: Locate an existing MCP stdio e2e test for shape**
 
@@ -1734,7 +1686,7 @@ pytest tests/e2e/self_contained/test_sandbox_mcp.py -v -m e2e
 
 Expected: PASS (or xfail with a linked issue if the e2e infrastructure needs work).
 
-### 16b. CI matrix for dual image build
+### 15b. CI matrix for dual image build
 
 - [ ] **Step 4: Find the existing Docker workflow**
 
@@ -1784,7 +1736,7 @@ After the build step, add:
           test $size_mb -lt 300 || { echo "Image too large: ${size_mb}MB"; exit 1; }
 ```
 
-### 16c. User docs
+### 15c. User docs
 
 - [ ] **Step 7: Create `docs/deployment/sandbox-profile.md`**
 
@@ -1895,7 +1847,7 @@ warning about the override.
   reachable. Check `federation.peers` in your config + network access.
 ```
 
-- [ ] **Step 8: Commit 16a/b/c together**
+- [ ] **Step 8: Commit 15a/b/c together**
 
 ```bash
 git add tests/e2e/self_contained/test_sandbox_mcp.py \
@@ -1936,11 +1888,11 @@ docker stop nexus-sb
 
 - [ ] **Verify acceptance criteria from issue**
 
-- [ ] `NEXUS_PROFILE=sandbox nexus serve` boots with zero external services (Task 14)
-- [ ] Search works (BM25S + federated semantic) (Tasks 9, 10, 16a)
-- [ ] MCP server responds to standard tools (Task 16a)
-- [ ] Memory <300MB idle (Task 15, marker-gated)
-- [ ] Boot time <5s (Task 14 assertion)
+- [ ] `NEXUS_PROFILE=sandbox nexus serve` boots with zero external services (Task 13)
+- [ ] Search works (BM25S + federated semantic) (Tasks 8, 9, 15a)
+- [ ] MCP server responds to standard tools (Task 15a)
+- [ ] Memory <300MB idle (Task 14, marker-gated)
+- [ ] Boot time <5s (Task 13 assertion)
 
 - [ ] **Open PR**
 
@@ -1956,15 +1908,15 @@ Target `develop`. Reference #3778 in title and body. Include:
 
 The plan relies on a few assumptions that may need local adaptation:
 
-1. **`SearchService` constructor shape**: Task 10 binds `_federated_search`, `_bm25s_search`, `_default_semantic_search` onto the service. Read the current `__init__` in `bricks/search/search_service.py` and rebind against the actual attribute names.
+1. **`SearchService` constructor shape**: Task 9 binds `_federated_search`, `_bm25s_search`, `_default_semantic_search` onto the service. Read the current `__init__` in `bricks/search/search_service.py` and rebind against the actual attribute names.
 
-2. **FastAPI app-construction function**: Task 14 calls `build_app()`. If the actual function is `create_app()` or the app is created at module scope, adapt the import.
+2. **FastAPI app-construction function**: Task 13 calls `build_app()`. If the actual function is `create_app()` or the app is created at module scope, adapt the import.
 
-3. **MCP stdio entry point**: Task 16a uses `nexus.bricks.mcp.stdio_server` as the module path. If the actual entry point differs, update it after reading `bricks/mcp/brick_factory.py`.
+3. **MCP stdio entry point**: Task 15a uses `nexus.bricks.mcp.stdio_server` as the module path. If the actual entry point differs, update it after reading `bricks/mcp/brick_factory.py`.
 
-4. **Dockerfile conditional shell**: Task 13 assumes the existing Dockerfile has a platform-conditional pip install. Read lines 80-95 and preserve the conditional.
+4. **Dockerfile conditional shell**: Task 12 assumes the existing Dockerfile has a platform-conditional pip install. Read lines 80-95 and preserve the conditional.
 
-5. **CI workflow filename**: Task 16b refers to the Docker workflow generically. Find the actual file under `.github/workflows/`.
+5. **CI workflow filename**: Task 15b refers to the Docker workflow generically. Find the actual file under `.github/workflows/`.
 
 6. **`pdf-inspector` version**: Task 12 pins no version. After #3757 lands, update the pin in `pyproject.toml` to match.
 

@@ -524,7 +524,11 @@ def create_async_files_router(
     router = APIRouter(tags=["files"])
 
     # Import auth dependencies from main server
-    from nexus.server.dependencies import get_auth_result, get_operation_context
+    from nexus.server.dependencies import (
+        get_auth_result,
+        get_operation_context,
+        require_auth,
+    )
 
     async def _get_fs() -> Any:
         """Get NexusFS, supporting both direct and lazy modes."""
@@ -692,7 +696,12 @@ def create_async_files_router(
             None,
             description="(Markdown only) Filter by block type within section: 'code' or 'table'",
         ),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> Response:
         """
         Read file content.
@@ -706,6 +715,11 @@ def create_async_files_router(
         so the server can validate that the requested hash actually belongs to
         `path` in that transaction, preventing cross-path blob reads.
         """
+        if zone is not None:
+            _gate_zone(auth_result, zone)
+            import dataclasses as _dc
+
+            context = _dc.replace(context, zone_id=zone)
         try:
             fs = await _get_fs()
 

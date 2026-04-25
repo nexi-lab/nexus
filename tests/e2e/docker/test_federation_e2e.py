@@ -2066,19 +2066,38 @@ class TestPartialReplicationFailure:
         written: list[str] = []
         try:
             # Write 5 files on node-1 while node-2 is partitioned.
-            # Witness was warmed up above, so node-1 + witness = 2/3
-            # quorum is real; sys_write commits via raft on each call.
+            # The first write may transiently fail with "not leader,
+            # leader hint: None" while corp-eng re-converges on the
+            # (node-1, witness) majority — node-2 just dropped off
+            # the network so node-1 needs a fresh witness ack before
+            # it can commit. Tick interval is 10 ms and election
+            # timeout 100–200 ms, so a few-second retry window covers
+            # the race deterministically. After the first write
+            # commits via the new majority, subsequent writes go
+            # through immediately.
             for i in range(5):
                 path = f"/corp/eng/partition-{uid}-{i}.txt"
-                wr = _grpc_call(
-                    grpc1,
-                    "write",
-                    {"path": path, "content": f"p-{uid}-{i}"},
-                    api_key=api_key,
-                )
-                assert "error" not in wr, (
-                    f"Write during partition failed even after warmup "
-                    f"(witness should be in quorum): {wr}"
+                deadline = time.time() + 15
+                last_err: dict | None = None
+                while time.time() < deadline:
+                    wr = _grpc_call(
+                        grpc1,
+                        "write",
+                        {"path": path, "content": f"p-{uid}-{i}"},
+                        api_key=api_key,
+                    )
+                    if "error" not in wr:
+                        last_err = None
+                        break
+                    last_err = wr
+                    msg = str(wr.get("error", {}).get("message", ""))
+                    if "not leader" not in msg and "no leader" not in msg:
+                        # Anything other than transient leader-loss
+                        # is a real regression.
+                        pytest.fail(f"unexpected write error during partition: {wr}")
+                    time.sleep(0.5)
+                assert last_err is None, (
+                    f"Write during partition didn't converge within 15 s after warmup: {last_err}"
                 )
                 written.append(path)
         finally:

@@ -57,6 +57,17 @@ demo-data*/
 test-fix-data/
 *-examples-data/
 *-examples-workspace/
+
+# data/ is COPYed into the image (Dockerfile bakes default skills) but
+# its runtime artifacts (raft state, redb, CAS spool, dcache spill,
+# cross-zone metastore) MUST NOT ship — they pollute every fresh
+# container with stale state from a developer's local `nexus serve` run
+# and silently break federation bootstrap (root zone applied_index
+# stays pinned to a long-dead term, no leader ever elects). Allow only
+# `data/skills/` through; deny everything else.
+data/*
+!data/skills
+!data/skills/**
 *-server-data/
 my-data/
 

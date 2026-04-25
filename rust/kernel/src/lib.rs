@@ -63,6 +63,8 @@ pub mod generated_pyo3;
 // are zero-PyO3 fast-paths; Call still uses a PyO3 callback into the
 // Python `dispatch_method` pending the broader 195-service migration.
 pub mod grpc_server;
+#[cfg(feature = "nostr")]
+pub mod nostr_relay;
 #[cfg(feature = "connectors")]
 mod openai_backend;
 #[cfg(feature = "connectors")]

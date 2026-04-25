@@ -394,7 +394,7 @@ class NexusFS(  # type: ignore[misc]
         return self
 
     # Services accessed via self.service("name") → Rust kernel (Issue #1452).
-    # Registered by factory via enlist_wired_services() at link().
+    # Registered by factory via enlist_services() at link().
 
     @property
     def service_coordinator(self) -> Any:

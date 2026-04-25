@@ -610,7 +610,7 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         app.state.write_observer = wo
         logger.info("[OBSERVE] RecordStoreWriteObserver registered (OBSERVE-phase)")
 
-    # Issue #3193: EventDeliveryWorker is started by ServiceRegistry
+    # Issue #3193: EventDeliveryWorker is started by the Rust kernel
     # (BackgroundService auto-start). We only expose it + event_signal on
     # app.state so the API layer (EventReplayService) can access the signal.
     if svc.delivery_worker is not None:
@@ -682,7 +682,7 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     """Stop DT_PIPE consumers (Issue #809, #810).
 
     Note: EventDeliveryWorker (Issue #3193) is stopped by
-    ServiceRegistry.stop_background_services() — no
+    the Rust kernel's service_stop_all() — no
     explicit stop here to avoid double-stop.
     """
     # Issue #809: RecordStoreWriteObserver (OBSERVE-phase)

@@ -281,7 +281,7 @@ class BulkReBACStrategy:
                 try:
                     resolved = ctx.dlc.resolve_path(path, ctx.context.zone_id or ROOT_ZONE_ID)
                     if resolved is not None:
-                        _backend, _bp, user_mp = resolved
+                        _backend_name, _bp, user_mp = resolved
                         if user_mp and user_mp != "/":
                             obj_type = user_mp.strip("/").split("/")[0]
                 except Exception as e:

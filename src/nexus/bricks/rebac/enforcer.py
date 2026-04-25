@@ -557,14 +557,14 @@ class PermissionEnforcer:
             try:
                 resolved = self.dlc.resolve_path(path, context.zone_id or ROOT_ZONE_ID)
                 if resolved is not None:
-                    backend, backend_path, mount_point = resolved
+                    backend_name, backend_path, mount_point = resolved
                     from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
 
                     mapper = ObjectTypeMapper()
-                    object_type = mapper.get_object_type(backend, backend_path)
+                    object_type = mapper.get_object_type_by_name(backend_name, backend_path)
                     object_id = unscope_internal_path(
-                        mapper.get_object_id(
-                            backend,
+                        mapper.get_object_id_by_name(
+                            backend_name,
                             backend_path,
                             virtual_path=path,
                             object_type=object_type,

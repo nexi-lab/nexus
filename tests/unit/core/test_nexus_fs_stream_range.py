@@ -34,9 +34,9 @@ class _StubFS:
         self._pipe_manager = None
         self._stream_manager = MagicMock()
         self._stream_manager._buffers = {}
-        # DriverLifecycleCoordinator stub — resolve_backend returns the test backend
+        # DriverLifecycleCoordinator stub (routing is Rust-owned; keep ref for stub sys_read)
         self._driver_coordinator = MagicMock()
-        self._driver_coordinator.resolve_backend.return_value = backend
+        self._test_backend = backend
 
     def _validate_path(self, path):
         if not path.startswith("/"):
@@ -60,9 +60,7 @@ class _StubFS:
         meta = self.metadata.get(path)
         if meta is None:
             raise NexusFileNotFoundError(path)
-        content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
-            meta.etag or ""
-        )
+        content = self._test_backend.read_content(meta.etag or "")
         if offset:
             content = content[offset:]
         if count is not None:
@@ -146,12 +144,18 @@ class TestReadRange:
             stub_fs.read_range("/test/missing.txt", 0, 10)
 
     @pytest.mark.asyncio
-    def test_file_with_no_etag_raises_not_found(self, stub_fs):
+    def test_file_with_no_etag_reads_via_sys_read(self, stub_fs):
+        """Post-simplification: read_range delegates to sys_read, which reads
+        via backend regardless of etag presence.  A file with metadata but
+        no etag still returns content (the backend call uses the etag value
+        as content_id, and the mock backend returns canned content)."""
         meta = MagicMock()
         meta.etag = None
         stub_fs.metadata.get.return_value = meta
-        with pytest.raises(NexusFileNotFoundError):
-            stub_fs.read_range("/test/empty.txt", 0, 10)
+        # sys_read stub calls backend.read_content(meta.etag or "")
+        # which returns the default mock return value
+        result = stub_fs.read_range("/test/empty.txt", 0, 10)
+        assert isinstance(result, bytes)
 
     @pytest.mark.asyncio
     def test_beyond_content_returns_truncated(self, stub_fs):

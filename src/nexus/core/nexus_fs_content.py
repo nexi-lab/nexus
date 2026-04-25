@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -425,43 +424,7 @@ class ContentMixin:
             if _virtual_bytes is not None:
                 return _virtual_bytes[start:end]
 
-        # OPTIMISED PATH: no post-read hooks + backend has read_content_range
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        has_post_hooks = self.read_hook_count > 0
-
-        if not has_post_hooks:
-            self._kernel.dispatch_pre_hooks("read", _RHC(path=path, context=context))
-
-            zone_id, agent_id, is_admin = self._get_context_identity(context)
-            _rust_route = self._kernel.route(path, self._zone_id)
-
-            # Per-zone metastore lookup — go through the kernel so federation
-            # mode hits the ZoneMetastore registered in VFSRouter, not the
-            # root-zone ``RaftMetadataStore``.
-            meta = self._kernel.metastore_get(path)
-
-            if meta is None or meta.etag is None:
-                raise NexusFileNotFoundError(path)
-
-            _rb = self._driver_coordinator.resolve_backend(meta.backend_name)
-            if hasattr(_rb, "read_content_range"):
-                from dataclasses import replace as _replace
-
-                from nexus.core.path_utils import extract_zone_id as _ezi
-
-                read_context = (
-                    _replace(
-                        context,
-                        backend_path=_rust_route.backend_path,
-                        mount_path=_ezi(_rust_route.mount_point)[1],
-                    )
-                    if context
-                    else None
-                )
-                return _rb.read_content_range(meta.etag, start, end, context=read_context)
-
-        # FALLBACK: full read via sys_read + slice
+        # Use Rust sys_read with offset/count for range reads
         content = self.sys_read(path, count=end, offset=0, context=context)
         return content[start:end]
 
@@ -1355,36 +1318,12 @@ class ContentMixin:
                     )
                 )
             else:
-                # Fallback: remote backend or route failure — use Python path
-                from nexus.core.path_utils import extract_zone_id as _ezi
-
-                _rr = self._kernel.route(path, self._zone_id)
-                _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
-                _be = _di.backend if _di else None
-                _user_mp = _ezi(_rr.mount_point)[1]
-                _write_ctx = (
-                    _dc_replace(
-                        context,
-                        backend_path=_rr.backend_path,
-                        virtual_path=path,
-                        mount_path=_user_mp,
-                    )
-                    if context
-                    else OperationContext(
-                        user_id="anonymous",
-                        groups=[],
-                        backend_path=_rr.backend_path,
-                        virtual_path=path,
-                        mount_path=_user_mp,
-                    )
-                )
-                content_hash = _be.write_content(content, context=_write_ctx).content_id
-                meta = existing_metadata.get(path)
-                new_version = (meta.version + 1) if meta else 1
+                # Fallback: Rust batch missed — use sys_write for single file
+                wr = self.sys_write(path, content, context=context)
                 results.append(
                     {
-                        "etag": content_hash,
-                        "version": new_version,
+                        "etag": wr.get("etag", ""),
+                        "version": wr.get("version", 1),
                         "modified_at": now,
                         "size": len(content),
                     }
@@ -1392,13 +1331,11 @@ class ContentMixin:
                 metadata_list.append(
                     FileMetadata(
                         path=path,
-                        backend_name=self._driver_coordinator.backend_key(_be, _user_mp),
-                        physical_path=content_hash,
+                        backend_name="",
+                        physical_path=wr.get("etag", ""),
                         size=len(content),
-                        etag=content_hash,
-                        created_at=meta.created_at if meta else now,
-                        modified_at=now,
-                        version=new_version,
+                        etag=wr.get("etag", ""),
+                        version=wr.get("version", 1),
                         zone_id=zone_id or ROOT_ZONE_ID,
                     )
                 )

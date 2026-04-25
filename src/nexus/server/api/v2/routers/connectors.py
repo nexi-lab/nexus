@@ -707,22 +707,27 @@ async def list_mounted_connectors(
             # Route to a dummy file path inside the mount to get the backend
             _resolved = nx._driver_coordinator.resolve_path(f"{mp.rstrip('/')}/_.yaml", "root")
             if _resolved:
-                backend = _resolved[0]
-                skill_name = getattr(backend, "SKILL_NAME", None)
-                # Check multiple sources for operation names
-                schemas = getattr(backend, "SCHEMAS", {})
-                traits = getattr(backend, "OPERATION_TRAITS", {})
-                if schemas:
-                    operations = list(schemas.keys())
-                elif traits:
-                    operations = list(traits.keys())
+                # Get skill backend for metadata (SKILL_NAME, SCHEMAS, etc.)
+                from nexus.core.path_utils import canonicalize_path as _cp
+
+                _canonical = _cp(mp.rstrip("/"), "root")
+                backend = nx._driver_coordinator.get_skill_backend(_canonical)
+                if backend is not None:
+                    skill_name = getattr(backend, "SKILL_NAME", None)
+                    # Check multiple sources for operation names
+                    schemas = getattr(backend, "SCHEMAS", {})
+                    traits = getattr(backend, "OPERATION_TRAITS", {})
+                    if schemas:
+                        operations = list(schemas.keys())
+                    elif traits:
+                        operations = list(traits.keys())
 
                 # Extract sync status from backend state or cache metadata.
                 # Backends that implement sync track their last sync time and
                 # status via _last_sync_at / _sync_status attributes or via
                 # the cache mixin's session metadata.
-                sync_status = getattr(backend, "_sync_status", None)
-                raw_last_sync = getattr(backend, "_last_sync_at", None)
+                sync_status = getattr(backend, "_sync_status", None) if backend else None
+                raw_last_sync = getattr(backend, "_last_sync_at", None) if backend else None
                 if raw_last_sync is not None:
                     import datetime
 
@@ -797,12 +802,13 @@ async def get_readme_doc(
     nx = _get_nx(request)
     mp = mount_path.rstrip("/")
 
-    # Get backend via DLC
+    # Get skill backend via DLC for skill doc generation
     backend = None
     try:
-        _resolved = nx._driver_coordinator.resolve_path(f"{mp}/_.yaml", "root")
-        if _resolved:
-            backend = _resolved[0]
+        from nexus.core.path_utils import canonicalize_path as _cp
+
+        _canonical = _cp(mp, "root")
+        backend = nx._driver_coordinator.get_skill_backend(_canonical)
     except Exception:
         pass
 
@@ -855,12 +861,13 @@ async def get_schema(
     nx = _get_nx(request)
     mp = mount_path.rstrip("/")
 
-    # Get backend
+    # Get skill backend for schema generation
     backend = None
     try:
-        _resolved = nx._driver_coordinator.resolve_path(f"{mp}/_.yaml", "root")
-        if _resolved:
-            backend = _resolved[0]
+        from nexus.core.path_utils import canonicalize_path as _cp
+
+        _canonical = _cp(mp, "root")
+        backend = nx._driver_coordinator.get_skill_backend(_canonical)
     except Exception:
         pass
 
@@ -931,12 +938,12 @@ async def write_to_connector(
     # Preflight route resolution to discover backend type and backend_path.
     # Routing decision only — actual auth is enforced by backend.write_content()
     # (CLI connectors) or nx.write() (kernel path).
-    _route_backend = None
+    _route_backend_name = None
     _backend_path = None
     try:
         _resolved = nx._driver_coordinator.resolve_path(mount_path, "root")
         if _resolved:
-            _route_backend = _resolved[0]
+            _route_backend_name = _resolved[0]
             _backend_path = _resolved[1]
     except Exception:
         pass
@@ -957,15 +964,12 @@ async def write_to_connector(
         # etc.) via write_content() — they must NOT go through nx.write() which
         # stores to CAS. Gate on the "cli_backed" capability to avoid bypassing
         # the kernel write path for ordinary path-addressed backends.
-        import asyncio
 
-        from nexus.contracts.backend_features import BackendFeature
-
-        backend = _route_backend
-        _caps: frozenset[str] = (
-            getattr(backend, "backend_features", frozenset()) if backend else frozenset()
+        # All backends are Rust-native now — check if this is a CLI connector
+        # by examining the backend_name pattern.
+        is_cli_connector = _route_backend_name is not None and (
+            "cli" in _route_backend_name or "gws" in _route_backend_name
         )
-        is_cli_connector = BackendFeature.CLI_BACKED in _caps
 
         if is_cli_connector and _backend_path:
             # Write permissions are enforced by the pre-write intercept hooks below.
@@ -979,8 +983,8 @@ async def write_to_connector(
                 _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)
             )
 
-            assert backend is not None  # guaranteed by is_cli_connector check
-            result = await asyncio.to_thread(backend.write_content, data, write_context)
+            # Write via kernel — Rust backend handles CLI dispatch.
+            result = nx.write(mount_path, data, context=write_context)
         else:
             result = nx.write(mount_path, data, context=write_context)
 

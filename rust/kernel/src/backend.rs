@@ -195,6 +195,21 @@ pub trait ObjectStore: Send + Sync {
         let _ = (src_path, dst_path);
         Err(StorageError::NotSupported("copy_file"))
     }
+
+    /// List direct children of a directory path.
+    ///
+    /// Returns entry names (not full paths). Each entry is a plain filename;
+    /// directories are suffixed with `/` so callers can distinguish files
+    /// from directories without a follow-up stat.
+    ///
+    /// Default returns `NotSupported` for backends that don't have a
+    /// directory concept (CAS, remote). Filesystem backends (PathLocal,
+    /// LocalConnector) use `std::fs::read_dir`; API connectors (HN, CLI, X)
+    /// synthesize listings from their virtual namespace.
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, StorageError> {
+        let _ = path;
+        Err(StorageError::NotSupported("list_dir"))
+    }
 }
 
 /// CAS + Local transport backend (Rust equivalent of Python CASLocalBackend).
@@ -508,6 +523,34 @@ impl ObjectStore for PathLocalBackend {
             size,
         })
     }
+
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, StorageError> {
+        let dir_path = if path.is_empty() {
+            self.root_path.clone()
+        } else {
+            self.resolve_path(path)?
+        };
+        let rd = fs::read_dir(&dir_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })?;
+        let mut entries = Vec::new();
+        for entry in rd {
+            let entry = entry.map_err(StorageError::IOError)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let ft = entry.file_type().map_err(StorageError::IOError)?;
+            if ft.is_dir() {
+                entries.push(format!("{name}/"));
+            } else {
+                entries.push(name);
+            }
+        }
+        entries.sort();
+        Ok(entries)
+    }
 }
 
 // ── LocalConnectorBackend ──────────────────────────────────────────
@@ -732,6 +775,34 @@ impl ObjectStore for LocalConnectorBackend {
             version: hash,
             size,
         })
+    }
+
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, StorageError> {
+        let dir_path = if path.is_empty() {
+            self.root_path.clone()
+        } else {
+            self.resolve_path(path)?
+        };
+        let rd = fs::read_dir(&dir_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })?;
+        let mut entries = Vec::new();
+        for entry in rd {
+            let entry = entry.map_err(StorageError::IOError)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let ft = entry.file_type().map_err(StorageError::IOError)?;
+            if ft.is_dir() {
+                entries.push(format!("{name}/"));
+            } else {
+                entries.push(name);
+            }
+        }
+        entries.sort();
+        Ok(entries)
     }
 }
 

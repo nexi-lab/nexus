@@ -842,6 +842,8 @@ pub struct PyRustRouteResult {
     pub zone_id: String,
     #[pyo3(get)]
     pub is_external: bool,
+    #[pyo3(get)]
+    pub backend_name: String,
 }
 
 impl From<RustRouteResult> for PyRustRouteResult {
@@ -851,6 +853,7 @@ impl From<RustRouteResult> for PyRustRouteResult {
             backend_path: r.backend_path,
             zone_id: r.zone_id,
             is_external: r.is_external,
+            backend_name: r.backend_name,
         }
     }
 }
@@ -2579,6 +2582,28 @@ impl PyKernel {
     #[pyo3(signature = (parent_path, zone_id, is_admin=false))]
     fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
         self.inner.readdir(parent_path, zone_id, is_admin)
+    }
+
+    /// Backend-native directory listing for external connector mounts.
+    fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
+        self.inner.sys_readdir_backend(path, zone_id)
+    }
+
+    /// Simplified sys_read that takes (path, zone_id) — creates a minimal
+    /// OperationContext internally.  Used by service-tier callers that don't
+    /// have a full OperationContext handy.
+    fn sys_read_raw<'py>(&self, py: Python<'py>, path: &str, zone_id: &str) -> PyResult<Py<PyAny>> {
+        let ctx = OperationContext::new("system", zone_id, true, None, true);
+        let result = self.inner.sys_read(path, &ctx).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))
+        })?;
+        match result.data {
+            Some(bytes) => Ok(pyo3::types::PyBytes::new(py, &bytes).into()),
+            None => Err(pyo3::exceptions::PyFileNotFoundError::new_err(format!(
+                "File not found: {}",
+                path
+            ))),
+        }
     }
 
     // ── Internal batch functions ──────────────────────────────────────

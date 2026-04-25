@@ -97,16 +97,13 @@ class VirtualViewResolver(VFSPathResolver):
         resolved = self._dlc.resolve_path(original_path, "root") if self._dlc else None
         if resolved is None:
             raise NexusFileNotFoundError(original_path)
-        backend, backend_path, _mount_point = resolved
+        backend_name, backend_path, _mount_point = resolved
 
-        # Add backend_path to context for path-based connectors
-        read_context = context
-        if context:
-            from dataclasses import replace
-
-            read_context = replace(context, backend_path=backend_path)
-
-        content: bytes = backend.read_content(meta.etag, context=read_context)
+        # Read content via kernel syscall instead of Python backend object.
+        _kernel = getattr(self._dlc, "_kernel", None)
+        if _kernel is None:
+            raise NexusFileNotFoundError(original_path)
+        content: bytes = _kernel.sys_read_raw(original_path, "root")
 
         # Parse content to markdown
         content = get_parsed_content(

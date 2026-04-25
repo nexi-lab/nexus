@@ -22,8 +22,7 @@ from nexus.contracts.types import OperationContext
 def mock_dlc():
     """Create a mock DriverLifecycleCoordinator."""
     dlc = MagicMock()
-    dlc.get_mount_info.return_value = None
-    dlc.list_mounts.return_value = []
+    dlc.mount_points.return_value = []
     return dlc
 
 
@@ -129,16 +128,13 @@ class TestListMounts:
 
     def test_list_mounts_returns_empty_list(self, mount_service, mock_dlc):
         """list_mounts returns empty list when no mounts exist."""
-        mock_dlc.list_mounts.return_value = []
+        mock_dlc.mount_points.return_value = []
         result = asyncio.run(mount_service.list_mounts())
         assert result == []
 
     def test_list_mounts_returns_all_without_context(self, mount_service, mock_dlc):
         """Without context, all mounts are returned (backward compat)."""
-        dlc_info = MagicMock()
-        dlc_info.backend = MagicMock()
-
-        mock_dlc.list_mounts.return_value = [("/root/mnt/test", dlc_info)]
+        mock_dlc.mount_points.return_value = ["/mnt/test"]
 
         result = asyncio.run(mount_service.list_mounts())
 
@@ -149,15 +145,7 @@ class TestListMounts:
         self, mount_service, mock_dlc, mock_nexus_fs, operation_context
     ):
         """Mounts without read permission are excluded."""
-        dlc_info_a = MagicMock()
-        dlc_info_a.backend = MagicMock()
-        dlc_info_b = MagicMock()
-        dlc_info_b.backend = MagicMock()
-
-        mock_dlc.list_mounts.return_value = [
-            ("/root/mnt/allowed", dlc_info_a),
-            ("/root/mnt/denied", dlc_info_b),
-        ]
+        mock_dlc.mount_points.return_value = ["/mnt/allowed", "/mnt/denied"]
 
         # Mock _check_mount_permission directly — without a gateway the
         # permissive fallback returns True for all mounts.
@@ -170,10 +158,7 @@ class TestListMounts:
 
     def test_list_mounts_admin_sees_all(self, mount_service, mock_dlc, mock_nexus_fs):
         """Admin users see all mounts regardless of permissions."""
-        dlc_info = MagicMock()
-        dlc_info.backend = MagicMock()
-
-        mock_dlc.list_mounts.return_value = [("/root/mnt/restricted", dlc_info)]
+        mock_dlc.mount_points.return_value = ["/mnt/restricted"]
         mock_nexus_fs.rebac_check.return_value = False
 
         admin_ctx = OperationContext(
@@ -308,21 +293,21 @@ class TestAddMountAuthResolution:
 class TestGetMount:
     """Tests for the get_mount method."""
 
-    def test_get_mount_found(self, mount_service, mock_dlc):
+    def test_get_mount_found(self, mount_service, mock_nexus_fs):
         """Getting an existing mount returns its details."""
-        dlc_info = MagicMock()
-        dlc_info.backend = MagicMock()
-
-        mock_dlc.get_mount_info.return_value = dlc_info
+        mock_nexus_fs._kernel = MagicMock()
+        mock_nexus_fs._kernel.has_mount.return_value = True
 
         result = asyncio.run(mount_service.get_mount("/mnt/test"))
 
         assert result is not None
         assert result["mount_point"] == "/mnt/test"
+        mock_nexus_fs._kernel.has_mount.assert_called_once_with("/mnt/test", "root")
 
-    def test_get_mount_not_found(self, mount_service, mock_dlc):
+    def test_get_mount_not_found(self, mount_service, mock_nexus_fs):
         """Getting a non-existent mount returns None."""
-        mock_dlc.get_mount_info.return_value = None
+        mock_nexus_fs._kernel = MagicMock()
+        mock_nexus_fs._kernel.has_mount.return_value = False
 
         result = asyncio.run(mount_service.get_mount("/mnt/nonexistent"))
         assert result is None
@@ -336,14 +321,17 @@ class TestGetMount:
 class TestHasMount:
     """Tests for the has_mount method."""
 
-    def test_has_mount_true(self, mount_service, mock_dlc):
+    def test_has_mount_true(self, mount_service, mock_nexus_fs):
         """has_mount returns True for existing mount."""
-        mock_dlc.get_mount_info.return_value = MagicMock()
+        mock_nexus_fs._kernel = MagicMock()
+        mock_nexus_fs._kernel.has_mount.return_value = True
         assert asyncio.run(mount_service.has_mount("/mnt/test")) is True
+        mock_nexus_fs._kernel.has_mount.assert_called_once_with("/mnt/test", "root")
 
-    def test_has_mount_false(self, mount_service, mock_dlc):
+    def test_has_mount_false(self, mount_service, mock_nexus_fs):
         """has_mount returns False for non-existent mount."""
-        mock_dlc.get_mount_info.return_value = None
+        mock_nexus_fs._kernel = MagicMock()
+        mock_nexus_fs._kernel.has_mount.return_value = False
         assert asyncio.run(mount_service.has_mount("/mnt/nonexistent")) is False
 
 

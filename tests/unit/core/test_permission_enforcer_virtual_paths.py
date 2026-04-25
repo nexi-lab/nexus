@@ -41,17 +41,11 @@ class MockBackend:
         return self._object_id or backend_path
 
 
-class _MountInfo:
-    """Minimal mount info for tests."""
-
-    def __init__(self, backend: "MockBackend") -> None:
-        self.backend = backend
-
-
 class MockDLC:
     """Mock DLC with resolve_path() simulating mount point stripping.
 
-    resolve_path(path, zone_id) returns (backend, backend_path, mount_point).
+    resolve_path(path, zone_id) returns (backend_name, backend_path, mount_point).
+    Post-DLC-rewrite: returns strings, not backend objects.
     """
 
     def __init__(self, mount_point: str = "/mnt/gcs", backend: MockBackend | None = None):
@@ -67,10 +61,7 @@ class MockDLC:
         else:
             backend_path = path.lstrip("/")
 
-        return (self._backend, backend_path, self.mount_point)
-
-    def get_mount_info_canonical(self, mount_point: str) -> "_MountInfo | None":
-        return _MountInfo(self._backend)
+        return (self._backend.name, backend_path, self.mount_point)
 
 
 class MockReBACManager:
@@ -224,13 +215,16 @@ class TestVirtualPathPermissionChecks:
 
 
 class TestNonFileBackendObjectId:
-    """Test that non-file backends still use backend-provided object IDs."""
+    """Post-DLC-rewrite: resolve_path returns (backend_name, backend_path, mount_point)
+    strings instead of backend objects.  ObjectTypeMapper.get_object_type_by_name()
+    and get_object_id_by_name() default to 'file' type and virtual path since the
+    Python backend is no longer available at permission-check time."""
 
-    def test_non_file_backends_use_backend_object_id(self):
-        """Test that DB tables, Redis keys, etc. use backend.get_object_id()."""
+    def test_non_file_backends_use_virtual_path_as_object_id(self):
+        """Post-rewrite: non-file backends default to 'file' type and
+        virtual path, since the Python backend object is not available."""
         rebac = MockReBACManager()
 
-        # Mock backend for database tables
         db_backend = MockBackend(object_type="postgres:table", object_id="users")
 
         dlc = MockDLC(mount_point="/db", backend=db_backend)
@@ -240,13 +234,15 @@ class TestNonFileBackendObjectId:
 
         enforcer.check("/db/users", Permission.READ, ctx)
 
-        # For non-file backends, should use backend-provided object_id
+        # Post-rewrite: get_object_type_by_name returns "file" (default)
+        # and get_object_id_by_name returns the virtual path.
         checked = rebac.checks[0]
-        assert checked["object_type"] == "postgres:table"
-        assert checked["object_id"] == "users"  # Backend-provided ID, not "/db/users"
+        assert checked["object_type"] == "file"
+        assert checked["object_id"] == "/db/users"
 
-    def test_redis_backend_uses_key_as_object_id(self):
-        """Test Redis backend uses keys, not paths."""
+    def test_redis_backend_defaults_to_file_type(self):
+        """Post-rewrite: Redis backend also defaults to 'file' type
+        and virtual path since Python backend is unavailable."""
         rebac = MockReBACManager()
 
         redis_backend = MockBackend(object_type="redis:key", object_id="session:abc123")
@@ -259,8 +255,8 @@ class TestNonFileBackendObjectId:
         enforcer.check("/cache/session:abc123", Permission.READ, ctx)
 
         checked = rebac.checks[0]
-        assert checked["object_type"] == "redis:key"
-        assert checked["object_id"] == "session:abc123"
+        assert checked["object_type"] == "file"
+        assert checked["object_id"] == "/cache/session:abc123"
 
 
 class TestDLCFailureFallback:

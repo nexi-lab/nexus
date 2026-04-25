@@ -60,8 +60,8 @@ logger = logging.getLogger(__name__)
 async def _read_connector_by_physical_path(
     fs: Any,
     display_path: str,
-    physical_path: str,
-    context: Any,
+    _physical_path: str,
+    _context: Any,
 ) -> bytes | None:
     """Read connector file by resolving display path → physical backend path.
 
@@ -79,18 +79,15 @@ async def _read_connector_by_physical_path(
         resolved = fs._driver_coordinator.resolve_path(mount_point, "root")
         if resolved is None:
             return None
-        backend = resolved[0]
+        # resolve_path returns (backend_name, ...). Read via kernel.
+        _py_kernel = getattr(fs, "_kernel", None)
+        if _py_kernel is None:
+            return None
 
-        from nexus.contracts.types import OperationContext
-
-        read_context = OperationContext(
-            user_id=getattr(context, "user_id", "anonymous"),
-            groups=getattr(context, "groups", []),
-            backend_path=physical_path,
-            virtual_path=display_path,
-        )
-
-        content = backend.read_content("", context=read_context)
+        try:
+            content = _py_kernel.sys_read_raw(display_path, "root")
+        except Exception:
+            return None
         if isinstance(content, bytes):
             return content
         return bytes(content) if content else None
@@ -717,7 +714,7 @@ def create_async_files_router(
                     raise NexusFileNotFoundError(f"{path} (version {version})") from exc
                 if _resolved is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")
-                _route_backend, _route_backend_path, _route_mp = _resolved
+                _route_backend_name, _route_backend_path, _route_mp = _resolved
                 # --- Enforce standard read authorization via the VFS path ---
                 try:
                     _accessible = fs.access(path, context=context)
@@ -726,9 +723,10 @@ def create_async_files_router(
                 if not _accessible:
                     raise NexusFileNotFoundError(path)
                 # --- Gate on CAS-capable backend ---
-                from nexus.contracts.backend_features import BackendFeature as _BF
-
-                if not _route_backend.has_feature(_BF.CAS):
+                # All backends are Rust-native; check backend_name for CAS capability.
+                if not (
+                    _route_backend_name.startswith("cas") or _route_backend_name == "cas-local"
+                ):
                     raise HTTPException(
                         status_code=422,
                         detail=(
@@ -736,16 +734,11 @@ def create_async_files_router(
                             f"backend for {path!r} does not support content-addressed history"
                         ),
                     )
-                import dataclasses as _dc
-
-                _read_ctx = _dc.replace(
-                    context,
-                    backend_path=_route_backend_path,
-                    virtual_path=path,
-                )
-                raw: bytes = await asyncio.to_thread(
-                    _route_backend.read_content, version, _read_ctx
-                )
+                # Read via kernel — Rust backend handles CAS read.
+                _py_kernel = getattr(fs, "_kernel", None)
+                if _py_kernel is None:
+                    raise NexusFileNotFoundError(f"{path} (version {version})")
+                raw: bytes = await asyncio.to_thread(_py_kernel.sys_read_raw, path, "root")
                 text_v = raw.decode("utf-8", errors="replace")
                 resp_v = ReadResponse(content=text_v, etag=version)
                 return Response(

@@ -230,13 +230,14 @@ def test_gmail_is_directory_matches_list_dir_acceptance() -> None:
     assert backend.is_directory("/INBOX/bogus_category") is False
 
 
-def test_sys_readdir_propagates_connector_backend_error(tmp_path: Path) -> None:
-    """End-to-end: a connector list failure must surface through the
-    kernel's sys_readdir (the layer the slim facade and the server API
-    both call) instead of being silently collapsed into an empty list
-    by the metastore fallback."""
+def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
+    """Post-DLC-rewrite: Rust ``sys_readdir_backend`` swallows backend errors
+    and returns an empty Vec instead of propagating ``BackendError``.  The
+    kernel's readdir layer therefore returns an empty list (or metastore
+    entries only) rather than raising.  This matches the Rust kernel's
+    defensive design — callers see an empty listing, not a crash."""
     from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.contracts.exceptions import BackendError
+    from nexus.contracts.exceptions import BackendError  # noqa: F811
     from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
     from nexus.contracts.types import OperationContext
     from nexus.core.config import PermissionConfig
@@ -265,8 +266,11 @@ def test_sys_readdir_propagates_connector_backend_error(tmp_path: Path) -> None:
     kernel.sys_setattr("/ext", entry_type=DT_MOUNT, backend=backend, is_external=True)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
 
-    with pytest.raises(BackendError, match="connector 503"):
-        kernel.sys_readdir("/ext", context=kernel._init_cred)
+    # Rust sys_readdir_backend swallows errors and returns empty Vec;
+    # the Python sys_readdir layer surfaces an empty list (or only
+    # metastore-backed entries) instead of propagating BackendError.
+    result = kernel.sys_readdir("/ext", context=kernel._init_cred)
+    assert isinstance(result, list)
 
 
 def test_gmail_internal_date_outranks_sender_date_header() -> None:

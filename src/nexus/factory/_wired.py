@@ -38,13 +38,8 @@ def _boot_post_kernel_services(
     t0 = time.perf_counter()
     _on = _make_gate(svc_on)
 
-    # Resolve the root backend from the DLC.
-    # NexusFS no longer has a .backend attribute — all backends live on the DLC.
+    # All backends are Rust-native now — no Python root backend object available.
     _root_backend: Any = None
-    try:
-        _root_backend = nx._driver_coordinator.get_root_backend()
-    except Exception:
-        logger.debug("[BOOT:WIRED] No root backend mounted — services needing backend will degrade")
 
     # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
     gateway: Any = None
@@ -103,12 +98,7 @@ def _boot_post_kernel_services(
             from nexus.bricks.mcp.mcp_service import MCPService
 
             def _list_mount_labels() -> list[tuple[str, str]]:
-                from nexus.core.path_utils import extract_zone_id
-
-                return [
-                    (extract_zone_id(k)[1], "mounted")
-                    for k, _ in nx._driver_coordinator.list_mounts()
-                ]
+                return [(mp, "mounted") for mp in nx._driver_coordinator.mount_points()]
 
             mcp_service = MCPService(
                 filesystem=nx,

@@ -13,11 +13,11 @@ from nexus.bricks.versioning.operation_undo_service import OperationUndoService,
 
 
 def _make_dlc(content: bytes) -> MagicMock:
-    """Return a mock_dlc where resolve_path returns a backend with content."""
+    """Return a mock_dlc where resolve_path succeeds and _kernel reads content."""
     dlc = MagicMock()
-    backend = MagicMock()
-    backend.read_content.return_value = content
-    dlc.resolve_path.return_value = (backend, "/", "/root")
+    dlc.resolve_path.return_value = ("backend_name", "/", "/root")
+    dlc._kernel = MagicMock()
+    dlc._kernel.sys_read_raw.return_value = content
 
     return dlc
 

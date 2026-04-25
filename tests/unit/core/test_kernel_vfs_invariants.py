@@ -22,7 +22,7 @@ from hypothesis import strategies as st
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import InvalidPathError
-from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator, _PyMountInfo
+from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 from nexus.core.path_utils import canonicalize_path, normalize_path
 from tests.strategies.kernel import (
     path_traversal_attempt,
@@ -48,24 +48,21 @@ def _add_mount(
     *,
     zone_id: str = ROOT_ZONE_ID,
 ) -> None:
-    """Insert a mount into the DLC map directly."""
+    """Insert a skill backend into the DLC map directly (for test purposes)."""
     canonical = canonicalize_path(mount_point, zone_id)
-    dlc._mounts[canonical] = _PyMountInfo(
-        backend=backend,
-        zone_id=zone_id,
-    )
+    dlc._skill_backends[canonical] = backend
 
 
 def _lookup_lpm(
     dlc: DriverLifecycleCoordinator,
     path: str,
     zone_id: str = ROOT_ZONE_ID,
-) -> tuple[str, _PyMountInfo] | None:
-    """Python-side longest-prefix match over the DLC mount map."""
+) -> tuple[str, object] | None:
+    """Python-side longest-prefix match over the DLC skill_backends map."""
     import posixpath
 
     current = canonicalize_path(path, zone_id)
-    entries = dict(dlc.list_mounts())
+    entries = dlc._skill_backends
     while True:
         info = entries.get(current)
         if info is not None:
@@ -220,6 +217,6 @@ class TestLongestPrefixMatchInvariants:
             result = _lookup_lpm(dlc, query_path)
             if result is not None:
                 # The deeper mount should match
-                assert result[1].backend is backend_deep
+                assert result[1] is backend_deep
         except (InvalidPathError, ValueError):
             pass  # Path validation may reject generated paths

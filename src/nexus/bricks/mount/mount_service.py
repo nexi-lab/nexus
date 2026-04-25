@@ -130,21 +130,25 @@ class MountService:
         """
         try:
             # Get backend from DLC to check capabilities
+            # Get skill backend from DLC for post-mount hooks.
             backend = None
             if self._dlc:
-                resolved = self._dlc.resolve_path(mount_point, "root")
-                backend = resolved[0] if resolved else None
+                from nexus.core.path_utils import canonicalize_path
+
+                canonical = canonicalize_path(mount_point, "root")
+                backend = self._dlc.get_skill_backend(canonical)
             if backend is None:
-                return
+                # No skill backend — still run search indexing below.
+                pass
+            else:
+                # Propagate mount_path to the backend for error messages.  The
+                # virtual overlay itself takes mount_path from OperationContext,
+                # but error formatting in ValidatedMixin/TraitBasedMixin still
+                # reads the instance attribute as a fallback.
+                from nexus.backends.connectors.base import ReadmeDocMixin
 
-            # Propagate mount_path to the backend for error messages.  The
-            # virtual overlay itself takes mount_path from OperationContext,
-            # but error formatting in ValidatedMixin/TraitBasedMixin still
-            # reads the instance attribute as a fallback.
-            from nexus.backends.connectors.base import ReadmeDocMixin
-
-            if isinstance(backend, ReadmeDocMixin) and backend.SKILL_NAME:
-                backend.set_mount_path(mount_point)
+                if isinstance(backend, ReadmeDocMixin) and backend.SKILL_NAME:
+                    backend.set_mount_path(mount_point)
 
             # Search indexing — index the mount point so content is discoverable.
             # Uses search_service DI (Issue #3148 Phase 1).
@@ -203,12 +207,12 @@ class MountService:
             if nx is None:
                 return
 
-            # Get the connector backend via DLC
-            backend = None
+            # Get backend_name via DLC resolve_path (returns string now)
+            backend_name = None
             try:
                 if self._dlc:
                     resolved = self._dlc.resolve_path(mount_point, "root")
-                    backend = resolved[0] if resolved else None
+                    backend_name = resolved[0] if resolved else None
             except Exception:
                 pass
 
@@ -216,27 +220,29 @@ class MountService:
 
             admin_ctx = OperationContext(user_id="system", groups=[], is_admin=True, is_system=True)
 
-            # Enumerate files via backend's list_dir (BFS) — works for all
+            # Enumerate files via Rust kernel sys_readdir (BFS) — works for all
             # connector types including CLI-backed ones where the Raft metastore
             # doesn't store file entries.
             file_paths: list[str] = []
-            if backend and hasattr(backend, "list_dir"):
+            _rust_kernel = getattr(nx, "_kernel", None)
+            if _rust_kernel is not None and backend_name is not None:
                 from collections import deque
 
-                queue: deque[tuple[str, str]] = deque([("", mount_point)])
+                queue: deque[str] = deque([mount_point])
                 while queue and len(file_paths) < 200:
-                    backend_path, virtual_prefix = queue.popleft()
+                    virtual_prefix = queue.popleft()
                     try:
-                        entries = await asyncio.to_thread(backend.list_dir, backend_path, None)
+                        entries = list(
+                            _rust_kernel.sys_readdir_backend(virtual_prefix, zone_id or "root")
+                        )
                     except Exception:
                         continue
                     for entry in entries:
                         is_dir = entry.endswith("/")
                         name = entry.rstrip("/")
-                        bp = f"{backend_path}/{name}" if backend_path else name
-                        vp = f"{virtual_prefix}/{name}"
+                        vp = f"{virtual_prefix.rstrip('/')}/{name}"
                         if is_dir:
-                            queue.append((bp, vp))
+                            queue.append(vp)
                         else:
                             file_paths.append(vp)
                             if len(file_paths) >= 200:
@@ -572,7 +578,7 @@ class MountService:
         _entry_type = DT_EXTERNAL_STORAGE if (_info and _info.category != "storage") else DT_MOUNT
 
         # Mount via sys_setattr (Rust DLC handles routing + metastore + dcache,
-        # Python DLC stores _PyMountInfo + dispatches event), then setup --
+        # Python DLC stores skill backend + dispatches event), then setup --
         # rollback on failure (#2754).
         from nexus.contracts.metadata import DT_MOUNT
 
@@ -754,15 +760,11 @@ class MountService:
         """
         mounts = []
 
-        from nexus.core.path_utils import extract_zone_id
         from nexus.core.protocols.vfs_router import MountInfo
 
-        dlc_mounts = self._dlc.list_mounts() if self._dlc else []
+        mount_points = self._dlc.mount_points() if self._dlc else []
         router_mounts = sorted(
-            [
-                MountInfo(mount_point=extract_zone_id(k)[1], backend=info.backend)
-                for k, info in dlc_mounts
-            ],
+            [MountInfo(mount_point=mp, backend=None) for mp in mount_points],
             key=lambda m: m.mount_point,
         )
         logger.info(f"[LIST_MOUNTS] Total mounts in DLC: {len(router_mounts)}")
@@ -804,15 +806,12 @@ class MountService:
         if not self._check_permission(mount_point, "read", context):
             return None
 
-        from nexus.core.protocols.vfs_router import MountInfo
-
-        _dlc_info = self._dlc.get_mount_info(mount_point) if self._dlc else None
-        mount_info = (
-            MountInfo(mount_point=mount_point, backend=_dlc_info.backend) if _dlc_info else None
-        )
-        if mount_info:
+        _nx = self.nexus_fs or (self._gw._fs if self._gw else None)
+        _rust_kernel = getattr(_nx, "_kernel", None) if _nx else None
+        _has_mount = _rust_kernel.has_mount(mount_point, "root") if _rust_kernel else False
+        if _has_mount:
             return {
-                "mount_point": mount_info.mount_point,
+                "mount_point": mount_point,
             }
         return None
 
@@ -825,7 +824,9 @@ class MountService:
         Returns:
             True if mount exists
         """
-        return bool(self._dlc.get_mount_info(mount_point)) if self._dlc else False
+        _nx = self.nexus_fs or (self._gw._fs if self._gw else None)
+        _rust_kernel = getattr(_nx, "_kernel", None) if _nx else None
+        return _rust_kernel.has_mount(mount_point, "root") if _rust_kernel else False
 
     def list_connectors_sync(self, category: str | None = None) -> list[dict[str, Any]]:
         """List available connector types (synchronous).
@@ -1129,12 +1130,23 @@ class MountService:
         if resolved is None:
             raise ValueError(f"Mount not found: {mount_point}")
 
-        backend = resolved[0]
+        # resolve_path now returns (backend_name, backend_path, user_mp).
+        # Config updates require the Python backend object — get it from
+        # skill_backends if available, otherwise this mount doesn't support
+        # runtime config updates.
+        from nexus.core.path_utils import canonicalize_path
+
+        canonical = canonicalize_path(mount_point, "root")
+        backend = self._dlc.get_skill_backend(canonical)
         result: dict[str, Any] = {
             "updated": False,
             "mount_point": mount_point,
             "changed_keys": [],
         }
+
+        if backend is None:
+            # No Python backend available for runtime config updates.
+            return result
 
         # Apply config updates to backend
         for key, value in backend_config.items():
@@ -1197,7 +1209,13 @@ class MountService:
         if resolved is None:
             raise ValueError(f"Mount not found: {mount_point}")
 
-        backend = resolved[0]
+        # resolve_path returns (backend_name, ...) — get skill backend for reauth
+        from nexus.core.path_utils import canonicalize_path
+
+        canonical = canonicalize_path(mount_point, "root")
+        backend = self._dlc.get_skill_backend(canonical)
+        if backend is None:
+            raise ValueError(f"No Python backend available for reauth on {mount_point}")
 
         # Auto-detect provider from backend
         if provider is None:

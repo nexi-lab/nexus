@@ -428,6 +428,7 @@ class MetadataMixin:
                     remote_timeout=float(attrs.get("remote_timeout", 90.0)),
                     zone_id=zone_id,
                 )
+                self._driver_coordinator.dispatch_mount_event(path)
                 return result
 
             # LLM backends — Rust owns the ObjectStore; no Python shim.
@@ -448,6 +449,7 @@ class MetadataMixin:
                     anthropic_blob_root=attrs.get("anthropic_blob_root"),
                     zone_id=zone_id,
                 )
+                self._driver_coordinator.dispatch_mount_event(path)
                 return result
 
             if backend is None:
@@ -482,13 +484,8 @@ class MetadataMixin:
                     is_external=_is_external,
                     **_rust_typed,
                 )
-                # DLC bookkeeping: router needs backend ref for RouteResult
-                self._driver_coordinator._store_mount_info(
-                    path,
-                    backend,
-                    zone_id=zone_id,
-                    is_external=_is_external,
-                )
+                self._driver_coordinator.register_skill_backend(path, backend, zone_id=zone_id)
+                self._driver_coordinator.dispatch_mount_event(path)
                 return result
 
             # ── Local backend detection — Rust takes ownership natively ──
@@ -515,12 +512,8 @@ class MetadataMixin:
                     metastore_path=_ms_path_str,
                     is_external=_is_external,
                 )
-                self._driver_coordinator._store_mount_info(
-                    path,
-                    backend,
-                    zone_id=zone_id,
-                    is_external=_is_external,
-                )
+                self._driver_coordinator.register_skill_backend(path, backend, zone_id=zone_id)
+                self._driver_coordinator.dispatch_mount_event(path)
                 return result
             _local_root = str(_root)
 
@@ -543,13 +536,8 @@ class MetadataMixin:
                 metastore_path=_ms_path_str,
                 is_external=_is_external,
             )
-            # DLC bookkeeping: router needs backend ref for RouteResult
-            self._driver_coordinator._store_mount_info(
-                path,
-                backend,
-                zone_id=zone_id,
-                is_external=_is_external,
-            )
+            self._driver_coordinator.register_skill_backend(path, backend, zone_id=zone_id)
+            self._driver_coordinator.dispatch_mount_event(path)
             return result
 
         # ── All other FS types → Rust kernel sys_setattr ─────────────
@@ -934,41 +922,29 @@ class MetadataMixin:
                 """
                 if self.metadata.exists(dst_path):
                     raise FileExistsError(f"Destination path already exists: {dst_path}")
-                _dst_rust = self._kernel.route(dst_path, self._zone_id)
-                _dst_info = self._driver_coordinator.get_mount_info_canonical(_dst_rust.mount_point)
-                _dst_bp = _dst_rust.backend_path or ""
-                _dst_be = _dst_info.backend if _dst_info else None
-                _fn = getattr(_dst_be, "content_exists", None)
-                if _dst_be is not None and callable(_fn):
-                    from dataclasses import replace as _replace
-
-                    try:
-                        _pctx = (
-                            _replace(context, backend_path=_dst_bp) if context is not None else None
+                # Probe destination via kernel sys_stat
+                try:
+                    _dst_stat = self._kernel.sys_stat(dst_path, self._zone_id)
+                    if _dst_stat is not None:
+                        raise FileExistsError(
+                            f"Destination path already exists on backend: {dst_path}"
                         )
-                    except Exception:
-                        _pctx = None
-                    try:
-                        if _fn(_dst_bp, context=_pctx):
-                            raise FileExistsError(
-                                f"Destination path already exists on backend: {dst_path}"
-                            )
-                    except FileExistsError:
-                        raise
-                    except Exception as _probe_err:
-                        # Probe failed — downgrade to debug-log and
-                        # fall through.  The follow-up ``write()`` call
-                        # will surface any permanent create-semantics
-                        # error with its own richer context, so
-                        # raising a best-effort probe error here would
-                        # just add noise.  Logged (not swallowed) so
-                        # ``test_no_silent_swallowers_in_nexus_fs``
-                        # stays green.
-                        logger.debug(
-                            "[VIRTUAL-COPY] backend.content_exists probe failed for %s: %s",
-                            _dst_bp,
-                            _probe_err,
-                        )
+                except FileExistsError:
+                    raise
+                except Exception as _probe_err:
+                    # Probe failed — downgrade to debug-log and
+                    # fall through.  The follow-up ``write()`` call
+                    # will surface any permanent create-semantics
+                    # error with its own richer context, so
+                    # raising a best-effort probe error here would
+                    # just add noise.  Logged (not swallowed) so
+                    # ``test_no_silent_swallowers_in_nexus_fs``
+                    # stays green.
+                    logger.debug(
+                        "[VIRTUAL-COPY] backend.content_exists probe failed for %s: %s",
+                        dst_path,
+                        _probe_err,
+                    )
 
             # Destination-exists fast-fail (round 6 finding #15 — the
             # probe covers both metastore and backend).
@@ -1115,26 +1091,11 @@ class MetadataMixin:
         # Get size from backend if not in metadata
         size = meta.size
         if size is None and meta.etag and meta.is_external_storage:
-            # Only external connectors need a backend call — CAS backends
-            # always have size set in metastore by sys_write.
-            self._get_context_identity(context)
-            _rust_route = self._kernel.route(path, self._zone_id)
-            _dlc_info = self._driver_coordinator.get_mount_info_canonical(_rust_route.mount_point)
+            # External connectors: try Rust kernel sys_stat for size.
+            # CAS backends always have size set in metastore by sys_write.
             try:
-                # Add backend_path to context for path-based connectors
-                size_context = context
-                if context:
-                    from dataclasses import replace
-
-                    from nexus.core.path_utils import extract_zone_id
-
-                    size_context = replace(
-                        context,
-                        backend_path=_rust_route.backend_path,
-                        mount_path=extract_zone_id(_rust_route.mount_point)[1],
-                    )
-                _be = _dlc_info.backend if _dlc_info else None
-                size = _be.get_content_size(meta.etag, context=size_context) if _be else None
+                _stat = self._kernel.sys_stat(path, self._zone_id)
+                size = _stat.get("size") if isinstance(_stat, dict) else None
             except Exception as exc:
                 logger.debug("Failed to get content size for %s: %s", path, exc)
                 size = None
@@ -1667,11 +1628,8 @@ class MetadataMixin:
                     else (context.get("is_admin", False) if isinstance(context, dict) else False)
                 )
                 _rust_route = self._kernel.route(path, self._zone_id)
-                _dlc_info = self._driver_coordinator.get_mount_info_canonical(
-                    _rust_route.mount_point
-                )
-                backend = _dlc_info.backend if _dlc_info else None
-                if _rust_route.is_external and backend is not None:
+                backend = self._driver_coordinator.get_skill_backend(_rust_route.mount_point)
+                if _rust_route.is_external:
                     from nexus.core.path_utils import extract_zone_id as _ezi
 
                     backend_path = _rust_route.backend_path or ""
@@ -1711,7 +1669,9 @@ class MetadataMixin:
                     if _virtual_entries is not None:
                         external_entries = list(_virtual_entries)
                     else:
-                        external_entries = list(backend.list_dir(backend_path, context=_ctx))
+                        external_entries = list(
+                            self._kernel.sys_readdir_backend(path, self._zone_id)
+                        )
                         # Mount-root listing (backend_path is empty or just
                         # "/") — inject the virtual ``.readme/`` subtree
                         # (flattened for recursive=True) so the doc overlay

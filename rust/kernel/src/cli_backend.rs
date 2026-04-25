@@ -195,4 +195,23 @@ impl ObjectStore for CLIBackend {
         // Virtual directories — no-op
         Ok(())
     }
+
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, StorageError> {
+        let path = path.trim_matches('/');
+        let args = if path.is_empty() {
+            vec!["list"]
+        } else {
+            vec!["list", path]
+        };
+        let stdout = self.exec(&args, None)?;
+        // Parse JSON array of strings, or fall back to line-separated output
+        if let Ok(entries) = serde_json::from_slice::<Vec<String>>(&stdout) {
+            return Ok(entries);
+        }
+        Ok(String::from_utf8_lossy(&stdout)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect())
+    }
 }

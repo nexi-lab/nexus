@@ -4412,6 +4412,33 @@ impl Kernel {
         }
     }
 
+    /// Backend-native directory listing for external mounts.
+    ///
+    /// Unlike `readdir` (which merges dcache + metastore), this calls the
+    /// backend's `list_dir` directly — needed for external connectors
+    /// (HN, CLI, X, GDrive, etc.) whose entries are only known to the
+    /// live API, not persisted in dcache/metastore.
+    ///
+    /// Returns entry names (files plain, directories with trailing `/`).
+    /// Returns empty Vec on backend NotSupported or mount not found.
+    pub fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
+        if validate_path_fast(path).is_err() {
+            return Vec::new();
+        }
+        let normalized = if path != "/" && path.ends_with('/') {
+            path.trim_end_matches('/')
+        } else {
+            path
+        };
+        let route = match self.vfs_router.route(normalized, zone_id) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        self.vfs_router
+            .list_dir(&route.mount_point, &route.backend_path)
+            .unwrap_or_default()
+    }
+
     // ── R10c: direct CAS surface ─────────────────────────────────────────
     //
     // These methods replace Python `CASAddressingEngine`'s hot-path bodies

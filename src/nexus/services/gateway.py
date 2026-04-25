@@ -488,18 +488,16 @@ class NexusFSGateway:
         Returns:
             List of mount info dictionaries
         """
-        from nexus.core.path_utils import extract_zone_id
 
         dlc = self._fs._driver_coordinator
         mounts = []
-        for canonical_key, info in dlc.list_mounts():
-            user_mp = extract_zone_id(canonical_key)[1]
+        for user_mp in dlc.mount_points():
             mounts.append(
                 {
                     "mount_point": user_mp,
                     "priority": 0,
-                    "backend_type": type(info.backend).__name__,
-                    "backend": info.backend,
+                    "backend_type": "rust-native",
+                    "backend": None,
                     "conflict_strategy": "latest",
                 }
             )
@@ -519,17 +517,15 @@ class NexusFSGateway:
             Dict with mount_point, backend, backend_path keys,
             or None if no mount matches.
         """
-        from nexus.core.path_utils import extract_zone_id
 
         dlc = self._fs._driver_coordinator
-        all_mounts = [(extract_zone_id(k)[1], info) for k, info in dlc.list_mounts()]
-        all_mounts.sort(key=lambda x: len(x[0]), reverse=True)
-        for mp, info in all_mounts:
+        all_mounts = sorted(dlc.mount_points(), key=len, reverse=True)
+        for mp in all_mounts:
             if path == mp or path.startswith(mp + "/") or mp == "/":
                 backend_path = path.lstrip("/") if mp == "/" else path[len(mp) :].lstrip("/")
                 return {
                     "mount_point": mp,
-                    "backend": info.backend,
+                    "backend": None,
                     "backend_path": backend_path,
                 }
         return None

@@ -1,13 +1,11 @@
 """Unit tests for DriverLifecycleCoordinator.
 
-Tests mount/unmount lifecycle: routing table + VFS hook registration
-+ mount/unmount Rust dispatch_observers notification.
+Tests mount/unmount lifecycle: skill backend registry + mount/unmount
+event dispatch via Rust dispatch_observers notification.
 
-F2 MountTable migration (commit 91ebde62b): the standalone Python
-MountTable was deleted. ``DriverLifecycleCoordinator`` now takes
-``(dispatch, *, kernel=...)`` and owns ``_mounts: dict[str, _PyMountInfo]``
-directly. Tests that used to assert ``mount_table.add.called`` now
-inspect ``coord._mounts``.
+The DLC stores only ``_skill_backends`` (backends with a ``skill_name``
+attribute) for the virtual ``.readme/`` overlay.  All routing is owned
+by the Rust kernel.
 
 Issue #1811, #1320, #3584.
 """
@@ -27,10 +25,11 @@ from nexus.core.path_utils import canonicalize_path
 
 
 class _FakeBackend:
-    """Minimal backend with name, no hook_spec."""
+    """Minimal backend with name and skill_name (stored by register_skill_backend)."""
 
     def __init__(self, name: str = "fake") -> None:
         self.name = name
+        self.skill_name = "test"
 
 
 class _FakeObserver:
@@ -67,6 +66,7 @@ class _BackendWithHookSpec:
 
     def __init__(self, name: str = "cas-test") -> None:
         self.name = name
+        self.skill_name = "test"
         self._observer = _FakeObserver()
         self._mount_observer = _FakeMountObserver()
 
@@ -87,67 +87,77 @@ class _TestDispatch(DispatchMixin):
 def _make_coordinator() -> tuple[MagicMock, _TestDispatch, DriverLifecycleCoordinator]:
     """Create a coordinator with a mock kernel and real DispatchMixin.
 
-    F2 MountTable migration: the coordinator no longer takes a ``mount_table``
-    argument. The first return slot used to be the mock mount table; it is
-    now a mock kernel so callers can still assert on ``add_mount``/
-    ``remove_mount`` interactions.
+    The mock kernel provides ``has_mount`` (returns True) and
+    ``kernel_unmount`` so unmount tests can exercise the full path.
     """
     kernel = MagicMock()
+    kernel.has_mount.return_value = True
     dispatch = _TestDispatch()
     coord = DriverLifecycleCoordinator(dispatch, kernel=kernel)
     return kernel, dispatch, coord
 
 
 # ---------------------------------------------------------------------------
-# _store_mount_info() (formerly mount() — shim deleted in R7c)
+# register_skill_backend() + dispatch_mount_event()
 # ---------------------------------------------------------------------------
 
 
 class TestMount:
-    def test_mount_records_py_mount_info(self) -> None:
-        """_store_mount_info writes a ``_PyMountInfo`` into ``coord._mounts``."""
+    def test_register_skill_backend_stores_backend(self) -> None:
+        """register_skill_backend stores backends with skill_name into _skill_backends."""
         _, _, coord = _make_coordinator()
         backend = _FakeBackend()
 
-        coord._store_mount_info("/data", backend)
+        coord.register_skill_backend("/data", backend)
 
         canonical = canonicalize_path("/data", "root")
-        assert canonical in coord._mounts
-        info = coord._mounts[canonical]
-        assert info.backend is backend
+        assert canonical in coord._skill_backends
+        assert coord._skill_backends[canonical] is backend
 
-    def test_mount_registers_hook_spec_observers(self) -> None:
-        _, dispatch, coord = _make_coordinator()
-        backend = _BackendWithHookSpec()
+    def test_register_skill_backend_skips_without_skill_name(self) -> None:
+        """Backends without skill_name are NOT stored in _skill_backends."""
+        _, _, coord = _make_coordinator()
+        backend = MagicMock()
+        backend.skill_name = None
 
-        coord._store_mount_info("/data", backend)
+        coord.register_skill_backend("/data", backend)
 
-        # register_observe is now a no-op (Python observers deleted).
-        # Service-registered observer count is always 0.
-        assert dispatch.observer_count == 0
+        canonical = canonicalize_path("/data", "root")
+        assert canonical not in coord._skill_backends
 
-    def test_mount_fires_mount_event(self) -> None:
-        """Mount dispatches a MOUNT event through Rust dispatch_observers.
+    def test_get_skill_backend_returns_stored(self) -> None:
+        """get_skill_backend returns the backend stored by register_skill_backend."""
+        _, _, coord = _make_coordinator()
+        backend = _FakeBackend()
 
-        Python mock observers no longer receive events (register_observe is
-        a no-op). We verify dispatch_event is called instead.
-        """
+        coord.register_skill_backend("/data", backend)
+
+        canonical = canonicalize_path("/data", "root")
+        assert coord.get_skill_backend(canonical) is backend
+
+    def test_get_skill_backend_returns_none_for_missing(self) -> None:
+        """get_skill_backend returns None for unknown mount points."""
+        _, _, coord = _make_coordinator()
+        assert coord.get_skill_backend("/root/nonexistent") is None
+
+    def test_dispatch_mount_event_fires(self) -> None:
+        """dispatch_mount_event dispatches a MOUNT event through Rust dispatch_observers."""
         from unittest.mock import patch
 
         _, dispatch, coord = _make_coordinator()
-        backend = _BackendWithHookSpec()
 
         with patch.object(dispatch, "dispatch_event") as mock_dispatch:
-            coord._store_mount_info("/data", backend)
+            coord.dispatch_mount_event("/data")
             mock_dispatch.assert_called_once_with("mount", "/data")
 
-    def test_mount_no_hook_spec_still_routes(self) -> None:
+    def test_register_no_hook_spec_still_stores(self) -> None:
+        """Backends with skill_name but no hook_spec still get stored."""
         _, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
 
-        coord._store_mount_info("/plain", backend)
+        coord.register_skill_backend("/plain", backend)
 
-        assert canonicalize_path("/plain", "root") in coord._mounts
+        assert canonicalize_path("/plain", "root") in coord._skill_backends
         assert dispatch.observer_count == 0
 
 
@@ -157,40 +167,38 @@ class TestMount:
 
 
 class TestUnmount:
-    def test_unmount_unregisters_hooks(self) -> None:
+    def test_unmount_removes_skill_backend(self) -> None:
+        """unmount removes the skill backend entry and returns True."""
         _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
-        coord._store_mount_info("/data", backend)
-        # register_observe is now a no-op — observer_count always 0
+        coord.register_skill_backend("/data", backend)
         assert dispatch.observer_count == 0
 
         result = coord.unmount("/data")
         assert result is True
-        # After unmount the ``_PyMountInfo`` record is gone.
-        assert canonicalize_path("/data", "root") not in coord._mounts
+        # After unmount the skill backend record is gone.
+        assert canonicalize_path("/data", "root") not in coord._skill_backends
         assert dispatch.observer_count == 0
 
     def test_unmount_fires_unmount_event(self) -> None:
-        """Unmount dispatches an UNMOUNT event through Rust dispatch_observers.
-
-        Python mock observers no longer receive events (register_observe is
-        a no-op). We verify dispatch_event is called instead.
-        """
+        """Unmount dispatches an UNMOUNT event through Rust dispatch_observers."""
         from unittest.mock import patch
 
         _, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
-        coord._store_mount_info("/data", backend)
+        coord.register_skill_backend("/data", backend)
 
         with patch.object(dispatch, "dispatch_event") as mock_dispatch:
             coord.unmount("/data")
             mock_dispatch.assert_called_once_with("unmount", "/data")
 
     def test_unmount_not_found_returns_false(self) -> None:
-        _, _, coord = _make_coordinator()
-        # No mounts registered — unmount should return False.
+        """Unmount returns False when kernel reports no mount at that path."""
+        kernel, _, coord = _make_coordinator()
+        # Kernel says no mount exists at this path.
+        kernel.has_mount.return_value = False
         assert coord.unmount("/nonexistent") is False
 
     def test_unmount_catches_dispatch_exception(self) -> None:
@@ -198,7 +206,7 @@ class TestUnmount:
         _, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
 
-        coord._store_mount_info("/data", backend)
+        coord.register_skill_backend("/data", backend)
 
         # Force dispatch_event to raise
         dispatch.dispatch_event = MagicMock(side_effect=RuntimeError("boom"))
@@ -213,19 +221,20 @@ class TestUnmount:
 
 
 class TestCASWiringFix:
-    def test_cas_backend_registers_as_observer(self) -> None:
-        """CAS backends register as observers with MOUNT event_mask.
-
-        Mount hooks are now direct observers — no adapter wrapping.
-        """
+    def test_cas_backend_registers_as_skill_backend(self) -> None:
+        """CAS backends with skill_name are stored in _skill_backends."""
         _, dispatch, coord = _make_coordinator()
 
         mount_obs = _FakeMountObserver()
         backend = MagicMock()
         backend.name = "cas-local"
+        backend.skill_name = "test"
         backend.hook_spec.return_value = HookSpec(observers=(mount_obs,))
 
-        coord._store_mount_info("/", backend)
+        coord.register_skill_backend("/", backend)
 
-        # register_observe is now a no-op — observer_count always 0
+        # register_observe is now a no-op -- observer_count always 0
         assert dispatch.observer_count == 0
+        # But the backend is stored in _skill_backends
+        canonical = canonicalize_path("/", "root")
+        assert coord.get_skill_backend(canonical) is backend

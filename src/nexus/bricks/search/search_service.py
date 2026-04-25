@@ -315,9 +315,14 @@ class SearchService:
         Uses ``get_mount_points()`` to derive top-level prefixes from active
         mounts.  Falls back to hardcoded defaults when no router is available.
         """
-        if self._dlc and hasattr(self._dlc, "mount_points"):
+        _rust_kernel = (
+            getattr(getattr(self._gw, "_fs", None), "_kernel", None) if self._gw else None
+        )
+        if _rust_kernel and hasattr(_rust_kernel, "get_mount_points"):
             try:
-                mount_points = self._dlc.mount_points()
+                from nexus.core.path_utils import extract_zone_id
+
+                mount_points = [extract_zone_id(c)[1] for c in _rust_kernel.get_mount_points()]
                 # Extract top-level segments from mount points (e.g. "/workspace" -> "workspace/")
                 prefixes: set[str] = set()
                 for mp in mount_points:
@@ -469,10 +474,24 @@ class SearchService:
                 zone_id, _agent_id, _is_admin = self._get_routing_params(context)
                 resolved = self._dlc.resolve_path(path, zone_id or ROOT_ZONE_ID)
                 if resolved is not None:
-                    backend, backend_path, user_mp = resolved
-                    _info = self._dlc.get_mount_info(user_mp, zone_id or ROOT_ZONE_ID)
-                    if _info is not None and getattr(_info, "is_external", False):
-                        # Build a simple route-like object for _list_dynamic_connector
+                    backend_name, backend_path, user_mp = resolved
+                    # Use Rust kernel route() to check is_external
+                    _rk = (
+                        getattr(getattr(self._gw, "_fs", None), "_kernel", None)
+                        if self._gw
+                        else None
+                    )
+                    _is_ext = False
+                    if _rk:
+                        try:
+                            _rr = _rk.route(path, zone_id or ROOT_ZONE_ID)
+                            _is_ext = getattr(_rr, "is_external", False)
+                        except Exception:
+                            pass
+                    if _is_ext:
+                        # Build a simple route-like object for _list_dynamic_connector.
+                        # backend is None since all backends are Rust-native now;
+                        # _list_dynamic_connector uses kernel syscalls internally.
                         class _ExtRoute:
                             def __init__(
                                 self, backend: Any, backend_path: str, mount_point: str
@@ -481,7 +500,7 @@ class SearchService:
                                 self.backend_path = backend_path
                                 self.mount_point = mount_point
 
-                        ext_route = _ExtRoute(backend, backend_path, user_mp)
+                        ext_route = _ExtRoute(None, backend_path, user_mp)
                         return self._list_dynamic_connector(
                             path, ext_route, recursive, details, context
                         )

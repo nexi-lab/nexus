@@ -178,8 +178,11 @@ class OperationUndoService:
             resolved = self._dlc.resolve_path(path, "root") if self._dlc else None
             if resolved is None:
                 raise RuntimeError(f"No backend found for path: {path}")
-            backend, _backend_path, _mount_point = resolved
-            result: bytes = backend.read_content(content_hash)
+            # resolve_path returns (backend_name, ...). Read via kernel.
+            _kernel = getattr(self._dlc, "_kernel", None)
+            if _kernel is None:
+                raise RuntimeError(f"No kernel available for CAS read: {path}")
+            result: bytes = _kernel.sys_read_raw(path, "root")
             return result
         except Exception:
             if self._fallback_backend is not None:

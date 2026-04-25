@@ -124,6 +124,13 @@ class DatabaseAPIKeyAuth(AuthProvider):
                     )
                     return AuthResult(authenticated=False)
 
+            # #3785: load token's zone allow-list from api_key_zones junction.
+            from nexus.storage.models import APIKeyZoneModel
+
+            zone_set_rows = session.scalars(
+                select(APIKeyZoneModel.zone_id).where(APIKeyZoneModel.key_id == api_key.key_id)
+            ).all()
+
             # Cache all ORM attributes eagerly before session close
             subject_type = (
                 api_key.subject_type
@@ -141,6 +148,14 @@ class DatabaseAPIKeyAuth(AuthProvider):
             key_name = api_key.name
             expires_at_iso = api_key.expires_at.isoformat() if api_key.expires_at else None
 
+            # Derive zone_set: junction rows → use them; otherwise fall back to
+            # legacy single-zone key (api_key.zone_id), or () for zoneless keys.
+            zone_set: tuple[str, ...] = (
+                tuple(zone_set_rows)
+                if zone_set_rows
+                else ((api_key.zone_id,) if api_key.zone_id else ())
+            )
+
         # Decision #13: Fire-and-forget last_used_at update (outside session)
         self._update_last_used_background(token_hash)
 
@@ -150,6 +165,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             subject_id=subject_id,
             zone_id=zone_id,
             is_admin=is_admin,
+            zone_set=zone_set,
             metadata={
                 "key_id": key_id,
                 "key_name": key_name,

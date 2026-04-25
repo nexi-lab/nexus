@@ -28,6 +28,7 @@ class ResolvedIdentity:
     subject_type: str = "user"
     agent_generation: int | None = None
     inherit_permissions: bool | None = None
+    zone_set: tuple[str, ...] = ()  # #3785: full zone allow-list for this token
 
 
 class AuthIdentityCache:

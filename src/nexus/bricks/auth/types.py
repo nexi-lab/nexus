@@ -14,6 +14,8 @@ class AuthResult:
 
     The subject_type + subject_id tuple forms the ReBAC subject identity.
     zone_id is metadata only — it does not define identity.
+    zone_set is the full zone allow-list for the token (#3785); empty tuple
+    means unconstrained (e.g. admin/internal keys).
 
     Examples:
         AuthResult(True, "user", "alice", "org_acme", False)
@@ -29,6 +31,7 @@ class AuthResult:
     metadata: dict[str, Any] | None = None
     agent_generation: int | None = None
     inherit_permissions: bool = True
+    zone_set: tuple[str, ...] = ()  # #3785: full zone allow-list for this token
 
 
 @dataclass(frozen=True)

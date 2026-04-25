@@ -112,6 +112,7 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
             subject_type=getattr(auth_result, "subject_type", None) or "user",
             agent_generation=getattr(auth_result, "agent_generation", None),
             inherit_permissions=getattr(auth_result, "inherit_permissions", None),
+            zone_set=tuple(getattr(auth_result, "zone_set", ()) or ()),
         )
 
     resolved = cache.get_or_resolve(key_hash, _resolve_and_cache)
@@ -123,6 +124,7 @@ def authenticate_api_key(auth_provider: Any, api_key: str) -> Any:
         subject_type=resolved.subject_type,
         subject_id=resolved.subject_id,
         zone_id=resolved.zone_id,
+        zone_set=resolved.zone_set,
         is_admin=resolved.is_admin,
         agent_generation=resolved.agent_generation,
         inherit_permissions=resolved.inherit_permissions,

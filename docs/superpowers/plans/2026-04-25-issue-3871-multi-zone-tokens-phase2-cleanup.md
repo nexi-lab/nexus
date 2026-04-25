@@ -397,13 +397,15 @@ git commit -m "feat(#3871): DatabaseAPIKeyAuth.revoke_key zone filter via juncti
 
 ---
 
-## Task 3: Migrate REST list filter (`auth_keys.py`)
+## Task 3: Migrate REST `revoke_key` pre-fetch filter (`auth_keys.py`)
 
-**Purpose:** Second filter migration. The REST `GET /v2/auth/keys?zone_id=…` endpoint must match every key with access to the zone.
+**Purpose:** Second filter migration. **Plan correction (2026-04-25):** the F4a audit pointed at `auth_keys.py:380` and labelled it "REST list-keys filter". On develop, line 380 is actually inside the `DELETE /v2/auth/keys/{key_id}` handler (`async def revoke_key`, line 359), where the router pre-fetches the `APIKeyModel` row to read `grant_tuple_ids` for ReBAC cleanup. The REST `GET /v2/auth/keys` (`list_keys`, line 311) is just a thin wrapper that delegates to `handle_admin_list_keys` — that filter lives in `admin.py` and is migrated by Task 4.
+
+So Task 3 migrates the REST `revoke_key` pre-fetch filter at line ~380. Same pattern as Task 2; same multi-zone-key visibility semantic.
 
 **Files:**
 - Modify: `src/nexus/server/api/v2/routers/auth_keys.py`
-- Test: `tests/unit/server/api/v2/routers/test_auth_keys_junction_filter.py`
+- Test: `tests/unit/server/api/v2/routers/test_auth_keys_revoke_junction_filter.py`
 
 - [ ] **Step 1: Locate the current filter line**
 
@@ -411,29 +413,36 @@ Run:
 ```bash
 rg -n "APIKeyModel\.zone_id == zone_id" src/nexus/server/api/v2/routers/auth_keys.py
 ```
-Expected: one hit inside the list endpoint handler.
+Expected: one hit inside `revoke_key` (the DELETE handler at line ~359), around line 380.
 
 - [ ] **Step 2: Write the failing test**
 
-Create `tests/unit/server/api/v2/routers/test_auth_keys_junction_filter.py`:
+The router uses `_resolve_db_auth(request)` to get a `db_provider` (with `.session_factory()`), and then `handle_admin_revoke_key` from `admin.py` to do the actual revoke. So the unit test needs to (a) construct a fake `db_provider` with `.session_factory()` returning the in-memory session, (b) hit the FastAPI endpoint, (c) assert revoke succeeds for a multi-zone key when scoped to a non-primary zone.
+
+Create `tests/unit/server/api/v2/routers/test_auth_keys_revoke_junction_filter.py`:
 
 ```python
-"""REST list-keys filter routes through the junction (#3871)."""
+"""REST revoke_key zone filter routes through junction (#3871)."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+from types import SimpleNamespace
+
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.server.api.v2.routers.auth_keys import router
+from nexus.server.api.v2.routers.auth_keys import router, _resolve_db_auth
 from nexus.storage.api_key_ops import create_api_key
+from nexus.storage.models import APIKeyModel
 from nexus.storage.models._base import Base
 from nexus.storage.models.auth import ZoneModel
 
 
 @pytest.fixture
-def app_with_keys(monkeypatch):
+def app_and_keys():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
@@ -444,48 +453,54 @@ def app_with_keys(monkeypatch):
         multi_id, _ = create_api_key(s, user_id="u1", name="multi", zones=["eng", "ops"])
         eng_id, _ = create_api_key(s, user_id="u1", name="eng_only", zones=["eng"])
 
-    from fastapi import FastAPI
+    @contextmanager
+    def _factory():
+        s = SessionLocal()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    fake_db_provider = SimpleNamespace(session_factory=_factory)
+
     app = FastAPI()
     app.include_router(router)
+    app.dependency_overrides[_resolve_db_auth] = lambda: fake_db_provider
 
-    # Wire the session dependency to point at our in-memory engine.
-    # (Consult the actual router file for the exact dependency name; many
-    # routers use `Depends(get_session)`.)
-    from nexus.server.dependencies import get_session
-    def _override():
-        with SessionLocal() as s:
-            yield s
-    app.dependency_overrides[get_session] = _override
-
-    return app, multi_id, eng_id
+    return TestClient(app), SessionLocal, multi_id, eng_id
 
 
-def test_rest_list_keys_zone_filter_matches_every_granted_zone(app_with_keys, monkeypatch):
-    app, multi_id, eng_id = app_with_keys
-    # Bypass auth dependency for the test.
-    from nexus.server.dependencies import require_auth
-    app.dependency_overrides[require_auth] = lambda: {"is_admin": True}
+def test_rest_revoke_key_zone_filter_matches_multi_zone_key(app_and_keys):
+    client, SessionLocal, multi_id, _eng_id = app_and_keys
+    # Multi-zone key has primary "eng"; scoping revoke to "ops" must succeed via junction.
+    resp = client.request("DELETE", f"/{multi_id}", params={"zone_id": "ops"})
+    assert resp.status_code == 200, resp.text
 
-    client = TestClient(app)
-    resp_eng = client.get("/v2/auth/keys", params={"zone_id": "eng"})
-    resp_ops = client.get("/v2/auth/keys", params={"zone_id": "ops"})
+    with SessionLocal() as s:
+        refreshed = s.get(APIKeyModel, multi_id)
+        assert refreshed.revoked == 1
 
-    assert resp_eng.status_code == 200
-    assert resp_ops.status_code == 200
-    assert {k["key_id"] for k in resp_eng.json()["keys"]} == {multi_id, eng_id}
-    assert {k["key_id"] for k in resp_ops.json()["keys"]} == {multi_id}
+
+def test_rest_revoke_key_zone_filter_rejects_non_member(app_and_keys):
+    client, SessionLocal, _multi_id, eng_id = app_and_keys
+    # Single-zone "eng" key scoped to "ops" must NOT revoke (no junction match).
+    resp = client.request("DELETE", f"/{eng_id}", params={"zone_id": "ops"})
+    # The handler may return 200 with a no-op or 404; either way the key must not be revoked.
+    with SessionLocal() as s:
+        refreshed = s.get(APIKeyModel, eng_id)
+        assert refreshed.revoked == 0
 ```
 
-(If the router uses different dependency names, adjust the override imports — keep the assertions the same.)
+(If `_resolve_db_auth` is exported under a different name on develop, run `rg -n "def _resolve_db_auth" src/nexus/server/api/v2/routers/auth_keys.py` and use whatever symbol name appears.)
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `uv run pytest tests/unit/server/api/v2/routers/test_auth_keys_junction_filter.py -v`
-Expected: `test_rest_list_keys_zone_filter_matches_every_granted_zone` FAILs (multi key missing under `ops` filter).
+Run: `uv run pytest tests/unit/server/api/v2/routers/test_auth_keys_revoke_junction_filter.py -v`
+Expected: `test_rest_revoke_key_zone_filter_matches_multi_zone_key` FAILs (the pre-fetch filter on line 380 misses the multi key because its `APIKeyModel.zone_id` is `eng`).
 
 - [ ] **Step 4: Apply the junction join**
 
-Edit `src/nexus/server/api/v2/routers/auth_keys.py`. Locate the line:
+Edit `src/nexus/server/api/v2/routers/auth_keys.py`. Find inside `revoke_key`:
 
 ```python
 if zone_id:
@@ -503,26 +518,32 @@ if zone_id:
     )
 ```
 
+The downstream `handle_admin_revoke_key(db_provider, params, context)` call still receives the same `params.zone_id`. Task 4 separately migrates the filter inside `handle_admin_revoke_key`, so even after Task 3 lands the admin handler still does its own zone enforcement.
+
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `uv run pytest tests/unit/server/api/v2/routers/test_auth_keys_junction_filter.py -v`
-Expected: PASS.
+Run: `uv run pytest tests/unit/server/api/v2/routers/test_auth_keys_revoke_junction_filter.py -v`
+Expected: 2 PASS.
 
-- [ ] **Step 6: Run the router's existing test file to catch regressions**
+- [ ] **Step 6: Run the router's existing tests for regressions**
 
 Run: `uv run pytest tests/unit/server/api/v2/routers/ -v -k auth_keys`
-Expected: all green.
+Expected: all green (or only pre-existing flakes).
 
 - [ ] **Step 7: Lint**
 
-Run: `uv run ruff check src/nexus/server/api/v2/routers/auth_keys.py tests/unit/server/api/v2/routers/test_auth_keys_junction_filter.py`
+Run:
+```bash
+uv run ruff check src/nexus/server/api/v2/routers/auth_keys.py tests/unit/server/api/v2/routers/test_auth_keys_revoke_junction_filter.py
+uv run ruff format --check src/nexus/server/api/v2/routers/auth_keys.py tests/unit/server/api/v2/routers/test_auth_keys_revoke_junction_filter.py
+```
 Expected: clean.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/nexus/server/api/v2/routers/auth_keys.py tests/unit/server/api/v2/routers/test_auth_keys_junction_filter.py
-git commit -m "feat(#3871): REST list-keys zone filter via junction"
+git add src/nexus/server/api/v2/routers/auth_keys.py tests/unit/server/api/v2/routers/test_auth_keys_revoke_junction_filter.py
+git commit -m "feat(#3871): REST revoke_key pre-fetch zone filter via junction"
 ```
 
 ---

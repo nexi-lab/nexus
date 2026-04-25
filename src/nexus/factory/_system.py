@@ -258,16 +258,9 @@ def _boot_pre_kernel_services(
         logger.warning("[BOOT:SYSTEM] WorkspaceRegistry unavailable: %s", exc)
 
     # --- Mount Manager ---
+    # Deferred to post-kernel tier (factory/_wired.py) — the VFS-backed
+    # MountStore needs a live NexusFS handle, which isn't constructed yet.
     mount_manager: Any = None
-    try:
-        from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
-        from nexus.bricks.mount.mount_manager import MountManager
-
-        _mount_store = MetastoreMountStore(ctx.metadata_store)
-        mount_manager = MountManager(_mount_store)
-        logger.debug("[BOOT:SYSTEM] MountManager created (metastore-backed)")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] MountManager unavailable: %s", exc)
 
     # --- Workspace Manager ---
     workspace_manager: Any = None

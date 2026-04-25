@@ -1,22 +1,20 @@
-"""Metastore-backed mount configuration store.
+"""VFS-backed mount configuration store.
 
-Replaces MountConfigModel (SQLAlchemy ORM) for persisting mount configs.
-Stores mount configurations in the Metastore (redb) under a reserved path prefix.
+Stores mount configurations as JSON files under ``/__sys__/mounts/`` —
+the kernel-reserved system path namespace. Each mount config lives at
+``/__sys__/mounts/{percent-encoded-mount-point}``.
 
-Issue #192: Migrate MountConfigModel from RecordStore to Metastore.
+Replaces the prior implementation that wrote directly to the kernel
+metastore using a reserved key prefix (``mnt:``). Direct metastore
+access from a brick is an ABC leak — the kernel does not expose
+metastore as a public ABI. All persistence goes through public VFS
+syscalls now (``sys_write``/``sys_read``/``sys_readdir``/``sys_unlink``)
+which are implemented in the Rust kernel.
 
-Storage layout
---------------
-Mount records reuse the file-metadata KV slot keyed by ``mnt:{mount_point}``.
-The ``mnt:`` path prefix uniquely identifies them — record-level type tags
-are unnecessary. The full mount config JSON is stashed in ``etag`` (a
-Nullable string slot the metastore already round-trips). Etag's normal
-file-content-hash semantics do not apply to these synthetic records, and
-nothing else in the system reads ``etag`` for ``mnt:``-prefixed paths.
-
-Migration note: a follow-up PR should move mount config off FileMetadata
-into a dedicated KV abstraction (e.g. a small sqlite table or a raw redb
-sub-store), at which point this kludge disappears.
+Naming note: the class name still says ``Metastore`` for source-history
+continuity; the underlying storage is no longer the metastore itself
+but the kernel's VFS — the file the kernel writes to is, internally,
+still in the metastore, but reached through public APIs.
 """
 
 from __future__ import annotations
@@ -25,47 +23,71 @@ import json
 import logging
 from datetime import UTC, datetime
 from typing import Any, Protocol
+from urllib.parse import quote, unquote
 
-from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 
 logger = logging.getLogger(__name__)
 
-_MNT_PREFIX = "mnt:"
+_MOUNTS_DIR = f"{SYSTEM_PATH_PREFIX}mounts/"
 
 
-class _MetastoreProto(Protocol):
-    """Minimal protocol for metastore operations used by mount store."""
+def _config_path(mount_point: str) -> str:
+    """Encode mount_point into a unique VFS path under ``/__sys__/mounts/``.
 
-    def get(self, path: str) -> FileMetadata | None: ...
-    def put(self, metadata: FileMetadata) -> None: ...
-    def delete(self, path: str) -> dict[str, Any] | None: ...
-    def list(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> list[FileMetadata]: ...
+    Mount points contain ``/`` which would create directory hierarchy if
+    used verbatim — percent-encode them so each config is a leaf file.
+    """
+    return _MOUNTS_DIR + quote(mount_point, safe="")
 
 
-def _payload_of(fm: FileMetadata) -> dict[str, Any] | None:
-    if not fm.etag:
+def _decode_filename(name: str) -> str:
+    """Inverse of ``quote(mount_point, safe='')`` for ``list_all``."""
+    return unquote(name)
+
+
+class _NexusFSProto(Protocol):
+    """Minimal NexusFS surface used by the mount store.
+
+    We only need four syscalls — keeping the surface tight makes the
+    test fixture easier (no full NexusFS needed in unit tests).
+    """
+
+    def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> Any: ...
+    def sys_read(self, path: str, **kwargs: Any) -> Any: ...
+    def sys_readdir(self, path: str = "/", recursive: bool = True, **kwargs: Any) -> Any: ...
+    def sys_unlink(self, path: str, **kwargs: Any) -> Any: ...
+
+
+def _decode_read(result: Any) -> bytes | None:
+    """Normalize ``sys_read`` output into raw bytes, or ``None`` if absent.
+
+    ``sys_read`` returns a dict with ``content`` (bytes) and ``hit`` (bool)
+    in the common path, but some adapters return raw bytes directly.
+    """
+    if result is None:
         return None
-    try:
-        data = json.loads(fm.etag)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _record(key: str, payload: dict[str, Any]) -> FileMetadata:
-    return FileMetadata(path=key, size=0, etag=json.dumps(payload))
+    if isinstance(result, (bytes, bytearray)):
+        return bytes(result)
+    if isinstance(result, dict):
+        if not result.get("hit", True):
+            return None
+        content = result.get("content")
+        if isinstance(content, (bytes, bytearray)):
+            return bytes(content)
+    return None
 
 
 class MetastoreMountStore:
-    """Mount configuration store backed by MetastoreABC.
+    """Mount configuration store backed by VFS files.
 
-    Key pattern: ``mnt:{mount_point}`` → mount config JSON in ``etag``.
+    Each config is one JSON file at
+    ``/__sys__/mounts/{percent-encoded-mount-point}``. The schema
+    matches the prior dict layout so callers see no behavior change.
     """
 
-    def __init__(self, metastore: _MetastoreProto) -> None:
-        self._metastore = metastore
+    def __init__(self, nexus_fs: _NexusFSProto) -> None:
+        self._nx = nexus_fs
 
     def save(
         self,
@@ -81,8 +103,8 @@ class MetastoreMountStore:
         """Save a mount configuration. Raises ValueError if mount_point already exists."""
         self._validate(mount_point, backend_type, backend_config)
 
-        key = f"{_MNT_PREFIX}{mount_point}"
-        if self._metastore.get(key) is not None:
+        path = _config_path(mount_point)
+        if self._exists(path):
             raise ValueError(f"Mount already exists at {mount_point}")
 
         now = datetime.now(UTC).isoformat()
@@ -98,7 +120,7 @@ class MetastoreMountStore:
             "created_at": now,
             "updated_at": now,
         }
-        self._metastore.put(_record(key, payload))
+        self._nx.sys_write(path, json.dumps(payload).encode("utf-8"))
         return mount_id
 
     def update(
@@ -109,31 +131,25 @@ class MetastoreMountStore:
         replication: str | None = None,
     ) -> bool:
         """Update an existing mount configuration. Returns False if not found."""
-        key = f"{_MNT_PREFIX}{mount_point}"
-        existing = self._metastore.get(key)
+        path = _config_path(mount_point)
+        existing = self._read(path)
         if existing is None:
-            return False
-        data = _payload_of(existing)
-        if data is None:
             return False
 
         if backend_config is not None:
-            data["backend_config"] = backend_config
+            existing["backend_config"] = backend_config
         if description is not None:
-            data["description"] = description
+            existing["description"] = description
         if replication is not None:
-            data["replication"] = replication
-        data["updated_at"] = datetime.now(UTC).isoformat()
+            existing["replication"] = replication
+        existing["updated_at"] = datetime.now(UTC).isoformat()
 
-        self._metastore.put(_record(key, data))
+        self._nx.sys_write(path, json.dumps(existing).encode("utf-8"))
         return True
 
     def get(self, mount_point: str) -> dict[str, Any] | None:
         """Get a mount configuration by mount_point."""
-        fm = self._metastore.get(f"{_MNT_PREFIX}{mount_point}")
-        if fm is None:
-            return None
-        return _payload_of(fm)
+        return self._read(_config_path(mount_point))
 
     def list_all(
         self,
@@ -141,10 +157,29 @@ class MetastoreMountStore:
         zone_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """List all mount configurations with optional filters."""
-        entries = self._metastore.list(_MNT_PREFIX)
+        try:
+            entries = self._nx.sys_readdir(_MOUNTS_DIR, recursive=False, details=False)
+        except FileNotFoundError:
+            return []
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("list_all: sys_readdir(%s) failed: %s", _MOUNTS_DIR, exc)
+            return []
+
+        if entries is None:
+            return []
+
         results: list[dict[str, Any]] = []
-        for fm in entries:
-            data = _payload_of(fm)
+        for entry in entries:
+            # sys_readdir returns either list[str] or list[dict]; handle both.
+            name = entry["name"] if isinstance(entry, dict) else entry
+            if not isinstance(name, str):
+                continue
+            # readdir may return full paths or just basenames depending on layer.
+            basename = name.rsplit("/", 1)[-1]
+            if not basename:
+                continue
+            full_path = _MOUNTS_DIR + basename
+            data = self._read(full_path)
             if data is None:
                 continue
             if owner_user_id and data.get("owner_user_id") != owner_user_id:
@@ -152,16 +187,43 @@ class MetastoreMountStore:
             if zone_id and data.get("zone_id") != zone_id:
                 continue
             results.append(data)
+
         results.sort(key=lambda d: d.get("mount_point", ""))
         return results
 
     def remove(self, mount_point: str) -> bool:
         """Remove a mount configuration. Returns False if not found."""
-        key = f"{_MNT_PREFIX}{mount_point}"
-        if self._metastore.get(key) is None:
+        path = _config_path(mount_point)
+        if not self._exists(path):
             return False
-        self._metastore.delete(key)
+        try:
+            self._nx.sys_unlink(path)
+        except FileNotFoundError:
+            return False
         return True
+
+    # -- helpers --
+
+    def _read(self, path: str) -> dict[str, Any] | None:
+        """Read a JSON config file or return None if absent / malformed."""
+        try:
+            result = self._nx.sys_read(path)
+        except FileNotFoundError:
+            return None
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("_read(%s) failed: %s", path, exc)
+            return None
+        raw = _decode_read(result)
+        if raw is None:
+            return None
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _exists(self, path: str) -> bool:
+        return self._read(path) is not None
 
     @staticmethod
     def _validate(

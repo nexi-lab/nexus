@@ -114,6 +114,22 @@ def _boot_post_kernel_services(
     else:
         logger.debug("[BOOT:WIRED] MCPService disabled by profile")
 
+    # --- MountManager: VFS-backed mount config persistence ---
+    # Constructed here (post-kernel tier) because the underlying
+    # MetastoreMountStore writes through public VFS syscalls and needs
+    # a live NexusFS handle. Pre-kernel tier (factory/_system.py) used
+    # to instantiate this against the metastore directly — that was the
+    # ABC leak we eliminated.
+    try:
+        from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
+        from nexus.bricks.mount.mount_manager import MountManager
+
+        _mount_store = MetastoreMountStore(nx)
+        services["mount_manager"] = MountManager(_mount_store)
+        logger.debug("[BOOT:WIRED] MountManager created (VFS-backed)")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] MountManager unavailable: %s", exc)
+
     # --- MountPersistService: Mount persistence ---
     # Created with mount_service=None initially; wired after MountService creation below.
     mount_persist_service: Any = None

@@ -1,9 +1,12 @@
 """Unit tests for MountManager duplicate detection (Issue #2754).
 
-Verifies that save_mount relies on metastore uniqueness check instead of
-check-then-insert, eliminating the TOCTOU race condition.
+Verifies that save_mount checks for existing config before insert and
+raises a clean ValueError on duplicate, eliminating the TOCTOU race.
 
-Issue #192: Updated for metastore-backed MountManager.
+Issue #192: store moved off SQLAlchemy onto MetastoreABC, then again
+onto VFS files under ``/__sys__/mounts/``. The behavior tested here is
+agnostic to the underlying store — we use a fake NexusFS that implements
+just the four sys_* calls the store needs.
 """
 
 from __future__ import annotations
@@ -14,34 +17,49 @@ import pytest
 
 from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
 from nexus.bricks.mount.mount_manager import MountManager
-from nexus.contracts.metadata import FileMetadata
 
 # ---------------------------------------------------------------------------
-# In-memory metastore stub for testing
+# In-memory NexusFS stub for testing
 # ---------------------------------------------------------------------------
 
 
-class _InMemoryMetastore:
-    """Minimal in-memory metastore for testing MetastoreMountStore."""
+class _InMemoryNexusFS:
+    """Minimal in-memory NexusFS implementing the four sys_* calls the
+    store uses. Mirrors the kernel's VFS contract closely enough to
+    exercise the store's full code path without the real kernel."""
 
     def __init__(self) -> None:
-        self._data: dict[str, FileMetadata] = {}
+        self._files: dict[str, bytes] = {}
 
-    def get(self, path: str) -> FileMetadata | None:
-        return self._data.get(path)
+    def sys_write(self, path: str, buf: bytes | str, **kwargs: Any) -> dict[str, Any]:
+        if isinstance(buf, str):
+            buf = buf.encode("utf-8")
+        self._files[path] = bytes(buf)
+        return {"path": path, "bytes_written": len(buf)}
 
-    def put(self, metadata: FileMetadata) -> int | None:
-        self._data[metadata.path] = metadata
-        return None
+    def sys_read(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        if path not in self._files:
+            raise FileNotFoundError(path)
+        return {"hit": True, "content": self._files[path]}
 
-    def delete(self, path: str) -> dict[str, Any] | None:
-        if path in self._data:
-            del self._data[path]
-            return {"path": path}
-        return None
+    def sys_readdir(self, path: str = "/", recursive: bool = True, **kwargs: Any) -> list[str]:
+        # Strip directory prefix, return basenames under it.
+        prefix = path if path.endswith("/") else path + "/"
+        names: set[str] = set()
+        for full in self._files:
+            if full.startswith(prefix):
+                rest = full[len(prefix) :]
+                if not rest:
+                    continue
+                if recursive or "/" not in rest:
+                    names.add(rest.split("/", 1)[0])
+        return sorted(names)
 
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
-        return [fm for k, fm in sorted(self._data.items()) if k.startswith(prefix)]
+    def sys_unlink(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        if path not in self._files:
+            raise FileNotFoundError(path)
+        del self._files[path]
+        return {"path": path}
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +69,7 @@ class _InMemoryMetastore:
 
 @pytest.fixture
 def store() -> MetastoreMountStore:
-    return MetastoreMountStore(_InMemoryMetastore())
+    return MetastoreMountStore(_InMemoryNexusFS())
 
 
 @pytest.fixture

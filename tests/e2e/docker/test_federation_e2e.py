@@ -2119,39 +2119,17 @@ class TestPartialReplicationFailure:
                     diag[label]["sys_stat_target"] = _grpc_call(
                         t, "sys_stat", {"path": path}, api_key=api_key
                     )
-                # Pre-existing nexus bug: sys_write during a fresh
-                # partition can leak metadata to the leader's dcache
-                # WITHOUT actually committing it to the corp-eng raft
-                # log (the witness's vote arrives after sys_write's
-                # ack window closes). Symptom signature:
-                #   - leader's sys_stat → metadata present
-                #   - follower's sys_stat → null
-                #   - both nodes' applied_index match (no missing
-                #     entry, just a write that never made it to log)
-                # Skip this exact pattern; track as a separate fix.
-                # Anything else (e.g., follower lagging in apply) is
-                # a real regression and we still pytest.fail.
-                node1_meta = (
-                    diag["node-1"].get("sys_stat_target", {}).get("result", {}).get("metadata")
-                )
-                node2_meta = (
-                    diag["node-2"].get("sys_stat_target", {}).get("result", {}).get("metadata")
-                )
-                node1_applied = (diag["node-1"].get("corp-eng") or {}).get("applied_index", -1)
-                node2_applied = (diag["node-2"].get("corp-eng") or {}).get("applied_index", -1)
-                if (
-                    node1_meta is not None
-                    and node2_meta is None
-                    and node1_applied >= 0
-                    and node1_applied == node2_applied
-                ):
-                    pytest.skip(
-                        f"Pre-existing nexus bug — sys_write during a fresh partition "
-                        f"leaked metadata to leader's dcache without raft commit "
-                        f"(leader applied={node1_applied} == follower applied="
-                        f"{node2_applied}, follower sys_stat null). Path: {path}. "
-                        f"Diagnostic:\n{_json.dumps(diag, indent=2, default=str)}"
-                    )
+                # The previous "leader-has-it-but-follower-doesn't"
+                # signature was a real kernel bug — sys_write was
+                # updating dcache eagerly while raft propose was
+                # best-effort, so a fresh partition could leak
+                # metadata into the leader's cache without ever
+                # committing to the log. Fixed in the same PR by
+                # routing every write path through `commit_metadata`,
+                # which proposes to the metastore (raft) FIRST and
+                # only updates dcache on commit success. So if sys_stat
+                # on the follower is null after the gate clears, that's
+                # now a real regression — fail loud.
                 pytest.fail(
                     f"Post-partition catch-up missing on {grpc2}: sys_stat({path}) returned "
                     f"no metadata after 30 s.\nDiagnostic:\n"

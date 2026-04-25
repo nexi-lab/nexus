@@ -772,6 +772,76 @@ impl Kernel {
         }
     }
 
+    /// Atomic metadata commit — propose to metastore first, update
+    /// dcache only on success.
+    ///
+    /// Replaces the legacy "best-effort metastore put + eager dcache
+    /// update" pattern that scattered across 10+ sys_* paths. That
+    /// pattern silently lost data on raft propose failure: leader's
+    /// dcache held the entry but it was never committed to the
+    /// state machine, so followers caught up to leader's
+    /// applied_index without ever seeing the file
+    /// (TestPartialReplicationFailure::test_partition_then_heal CI
+    /// regression — see PR #3890 for the full diagnostic).
+    ///
+    /// Architecture:
+    ///   - Metastore is the SSOT. dcache is a downstream cache.
+    ///   - For federation mounts (`ZoneMetastore`), `put` blocks
+    ///     until raft commits the entry on quorum. If the propose
+    ///     times out (e.g., quorum unreachable), this returns Err
+    ///     and the dcache stays consistent with the state machine
+    ///     (i.e., file does NOT appear in subsequent reads).
+    ///   - For standalone mounts (`LocalMetastore`), `put` is a
+    ///     synchronous redb write — same atomicity story, smaller
+    ///     latency budget.
+    ///
+    /// Perf:
+    ///   - Federation: caller waits one raft RTT per write. Same as
+    ///     the implicit cost of "successful raft commit"; the old
+    ///     pattern only made it look free by lying.
+    ///   - Standalone: redb fsync, microseconds.
+    ///   - All other state mutations (dcache update, observer
+    ///     dispatch) wait for commit. No double-bookkeeping.
+    pub(crate) fn commit_metadata(
+        &self,
+        path: &str,
+        mount_point: &str,
+        meta: crate::metastore::FileMetadata,
+    ) -> Result<(), KernelError> {
+        let cache_entry: CachedEntry = (&meta).into();
+        let put_result = self
+            .with_metastore(mount_point, move |ms| ms.put(path, meta))
+            .ok_or_else(|| {
+                KernelError::IOError(format!(
+                    "commit_metadata({path}): no metastore wired for mount {mount_point}"
+                ))
+            })?;
+        put_result.map_err(|e| {
+            KernelError::IOError(format!("commit_metadata({path}): metastore.put: {e:?}"))
+        })?;
+        self.dcache.put(path, cache_entry);
+        Ok(())
+    }
+
+    /// Atomic metadata delete — same pattern as `commit_metadata`
+    /// but for the unlink path. Removes from metastore first; on
+    /// success evicts dcache. Failure leaves dcache untouched so a
+    /// retry sees the still-present entry instead of a phantom miss.
+    pub(crate) fn commit_delete(&self, path: &str, mount_point: &str) -> Result<bool, KernelError> {
+        let del_result = self
+            .with_metastore(mount_point, move |ms| ms.delete(path))
+            .ok_or_else(|| {
+                KernelError::IOError(format!(
+                    "commit_delete({path}): no metastore wired for mount {mount_point}"
+                ))
+            })?;
+        let removed = del_result.map_err(|e| {
+            KernelError::IOError(format!("commit_delete({path}): metastore.delete: {e:?}"))
+        })?;
+        self.dcache.evict(path);
+        Ok(removed)
+    }
+
     /// Resolve metastore for a syscall: per-mount first, then global fallback.
     ///
     /// In federation mode each mount has its own state machine (Raft-backed
@@ -1698,7 +1768,7 @@ impl Kernel {
                 self.pipe_manager
                     .register(path, Arc::new(backend))
                     .map_err(pipe_mgr_err)?;
-                self.write_pipe_inode(path, capacity);
+                self.write_pipe_inode(path, capacity)?;
                 (Some(shm), Some(dfd), Some(sfd))
             }
             #[cfg(not(unix))]
@@ -1716,7 +1786,7 @@ impl Kernel {
                 self.pipe_manager
                     .register(path, Arc::new(backend))
                     .map_err(pipe_mgr_err)?;
-                self.write_pipe_inode(path, capacity);
+                self.write_pipe_inode(path, capacity)?;
                 (None, None, None)
             }
             #[cfg(not(unix))]
@@ -1779,7 +1849,7 @@ impl Kernel {
                 self.stream_manager
                     .register(path, Arc::new(backend))
                     .map_err(stream_mgr_err)?;
-                self.write_stream_inode(path, capacity);
+                self.write_stream_inode(path, capacity)?;
                 (Some(shm), Some(dfd))
             }
             #[cfg(not(unix))]
@@ -1811,7 +1881,7 @@ impl Kernel {
             self.stream_manager
                 .register(path, Arc::new(backend))
                 .map_err(stream_mgr_err)?;
-            self.write_stream_inode(path, capacity);
+            self.write_stream_inode(path, capacity)?;
             (None, None)
         } else {
             self.create_stream(path, capacity)?;
@@ -1833,7 +1903,7 @@ impl Kernel {
 
     /// Write DT_PIPE inode to metastore + dcache (shared by create_pipe and SHM path).
     #[allow(dead_code)]
-    fn write_pipe_inode(&self, path: &str, capacity: usize) {
+    fn write_pipe_inode(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         let meta = self.build_metadata(
             path,
@@ -1846,15 +1916,12 @@ impl Kernel {
             None,
             None,
         );
-        self.dcache.put(path, (&meta).into());
-        self.with_metastore(&mount_point, |ms| {
-            let _ = ms.put(path, meta);
-        });
+        self.commit_metadata(path, &mount_point, meta)
     }
 
     /// Write DT_STREAM inode to metastore + dcache (shared by create_stream and SHM path).
     #[allow(dead_code)]
-    fn write_stream_inode(&self, path: &str, capacity: usize) {
+    fn write_stream_inode(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         let meta = self.build_metadata(
             path,
@@ -1867,10 +1934,7 @@ impl Kernel {
             None,
             None,
         );
-        self.dcache.put(path, (&meta).into());
-        self.with_metastore(&mount_point, |ms| {
-            let _ = ms.put(path, meta);
-        });
+        self.commit_metadata(path, &mount_point, meta)
     }
 
     /// DT_DIR: create directory inode via metastore + dcache.
@@ -1925,12 +1989,8 @@ impl Kernel {
             Some(now_ms),
             Some(now_ms),
         );
-        self.dcache.put(path, (&meta).into());
-        // Write to metastore (routed via mount_point) — full path; any
-        // per-mount ZoneMetastore translates internally.
-        self.with_metastore(&mount_point, |ms| {
-            let _ = ms.put(path, meta);
-        });
+        // Atomic commit — metastore (raft) first, dcache on success.
+        self.commit_metadata(path, &mount_point, meta)?;
 
         Ok(SysSetAttrResult {
             path: path.to_string(),
@@ -2363,10 +2423,7 @@ impl Kernel {
             None,
             None,
         );
-        self.dcache.put(path, (&meta).into());
-        self.with_metastore(&mount_point, |ms| {
-            let _ = ms.put(path, meta);
-        });
+        self.commit_metadata(path, &mount_point, meta)?;
 
         Ok(())
     }
@@ -2375,13 +2432,10 @@ impl Kernel {
     pub fn destroy_pipe(&self, path: &str) -> Result<(), KernelError> {
         self.pipe_manager.destroy(path).map_err(pipe_mgr_err)?;
 
-        // Remove DT_PIPE inode (best-effort) — full path, translated by
-        // any per-mount ZoneMetastore at its boundary.
+        // Atomic delete — metastore (raft) first, dcache eviction on
+        // success.
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
-        self.with_metastore(&mount_point, |ms| {
-            let _ = ms.delete(path);
-        });
-        self.dcache.evict(path);
+        self.commit_delete(path, &mount_point)?;
 
         Ok(())
     }
@@ -2447,10 +2501,7 @@ impl Kernel {
             None,
             None,
         );
-        self.dcache.put(path, (&meta).into());
-        self.with_metastore(&mount_point, |ms| {
-            let _ = ms.put(path, meta);
-        });
+        self.commit_metadata(path, &mount_point, meta)?;
 
         Ok(())
     }
@@ -2459,12 +2510,10 @@ impl Kernel {
     pub fn destroy_stream(&self, path: &str) -> Result<(), KernelError> {
         self.stream_manager.destroy(path).map_err(stream_mgr_err)?;
 
-        // Remove DT_STREAM inode (best-effort) — full path.
+        // Atomic delete — metastore (raft) first, dcache eviction on
+        // success.
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
-        self.with_metastore(&mount_point, |ms| {
-            let _ = ms.delete(path);
-        });
-        self.dcache.evict(path);
+        self.commit_delete(path, &mount_point)?;
 
         Ok(())
     }
@@ -3008,13 +3057,14 @@ impl Kernel {
                     created_at_ms,
                     Some(now_ms),
                 );
-                // Update dcache with new metadata (derive before moving meta
-                // into the closure below).
-                self.dcache.put(path, (&meta).into());
-                self.with_metastore(&route.mount_point, |ms| {
-                    // Best-effort metastore.put -- error logged but doesn't fail write
-                    let _ = ms.put(path, meta);
-                });
+                // Atomic commit — metastore (raft) first, dcache on
+                // success. Releases the VFS lock before propagating
+                // so the next caller doesn't block on stale state if
+                // raft propose fails.
+                if let Err(e) = self.commit_metadata(path, &route.mount_point, meta) {
+                    self.lock_manager.do_release(lock_handle);
+                    return Err(e);
+                }
 
                 // Snapshot old_entry fields for the result struct before
                 // dispatch_mutation moves old_etag into its closure.
@@ -3285,20 +3335,23 @@ impl Kernel {
             return miss(entry.entry_type);
         }
 
-        // 6. Metastore delete (per-mount or global) — full path
-        self.with_metastore(&route.mount_point, |ms| {
-            let _ = ms.delete(path);
-        });
+        // 6. Atomic delete — metastore (raft) first, dcache evict on
+        // success. If raft propose fails (quorum unreachable), the
+        // entry stays in BOTH the state machine and the dcache so a
+        // retry sees a consistent view rather than a phantom miss.
+        if let Err(e) = self.commit_delete(path, &route.mount_point) {
+            self.lock_manager.do_release(lock_handle);
+            return Err(e);
+        }
 
-        // 7. Backend delete (best-effort, PAS only)
+        // 7. Backend delete (best-effort, PAS only) — only after
+        // metastore commit succeeded; otherwise we'd orphan the file
+        // on the filesystem with no metadata pointing at it.
         let _ = self
             .vfs_router
             .delete_file(&route.mount_point, &route.backend_path);
 
-        // 8. DCache evict
-        self.dcache.evict(path);
-
-        // 9. Release VFS lock
+        // 8. Release VFS lock
         self.lock_manager.do_release(lock_handle);
 
         // 10. OBSERVE-phase dispatch (§11 Phase 5): queue FileDelete.
@@ -3482,19 +3535,19 @@ impl Kernel {
         let is_cross_mount = old_route.mount_point != new_route.mount_point;
 
         if is_cross_mount {
-            // Cross-mount: PUT→new metastore, DELETE→old metastore
-            // CAS content is hash-addressed — no backend move needed.
+            // Cross-mount: PUT→new metastore, DELETE→old metastore.
+            // Both must commit; if the PUT fails we don't even try
+            // the DELETE (entry stays at old path — caller can retry).
+            // If PUT succeeds but DELETE fails, the entry exists at
+            // BOTH paths until the next reconcile sweep — at-least-
+            // once semantics, no data loss.
             if let Some(old_m) = old_meta.as_ref() {
                 let mut new_m = old_m.clone();
                 new_m.path = new_zone_path.clone();
-                self.with_metastore(&new_route.mount_point, |ms| {
-                    let _ = ms.put(&new_zone_path, new_m);
-                });
-                self.with_metastore(&old_route.mount_point, |ms| {
-                    let _ = ms.delete(&old_zone_path);
-                });
+                self.commit_metadata(&new_zone_path, &new_route.mount_point, new_m)?;
+                self.commit_delete(&old_zone_path, &old_route.mount_point)?;
             }
-            // Directory children: list→put→delete
+            // Directory children: list→put→delete (each child atomic)
             let old_prefix = format!("{}/", old_zone_path.trim_end_matches('/'));
             if let Some(Ok(children)) =
                 self.with_metastore(&old_route.mount_point, |ms| ms.list(&old_prefix))
@@ -3504,23 +3557,27 @@ impl Kernel {
                     let child_new_path = format!("{}{}", new_zone_path, suffix);
                     let mut child_meta = child.clone();
                     child_meta.path = child_new_path.clone();
-                    self.with_metastore(&new_route.mount_point, |ms| {
-                        let _ = ms.put(&child_new_path, child_meta);
-                    });
-                    self.with_metastore(&old_route.mount_point, |ms| {
-                        let _ = ms.delete(&child.path);
-                    });
+                    self.commit_metadata(&child_new_path, &new_route.mount_point, child_meta)?;
+                    self.commit_delete(&child.path, &old_route.mount_point)?;
                 }
             }
-            // DCache eviction for moved paths
-            self.dcache.evict(&old_zone_path);
-            self.dcache
-                .evict_prefix(&format!("{}/", old_zone_path.trim_end_matches('/')));
         } else {
-            // Same-mount: atomic rename_path (redb single txn)
-            self.with_metastore(&old_route.mount_point, |ms| {
-                let _ = ms.rename_path(&old_zone_path, &new_zone_path);
-            });
+            // Same-mount: atomic rename_path (redb single txn). Errors
+            // surface to the caller so a quorum-loss raft propose
+            // doesn't silently corrupt the rename.
+            let rename_result = self
+                .with_metastore(&old_route.mount_point, |ms| {
+                    ms.rename_path(&old_zone_path, &new_zone_path)
+                })
+                .ok_or_else(|| {
+                    KernelError::IOError(format!(
+                        "sys_rename: no metastore for {}",
+                        old_route.mount_point
+                    ))
+                })?;
+            rename_result.map_err(|e| {
+                KernelError::IOError(format!("sys_rename: metastore.rename_path: {e:?}"))
+            })?;
             let _ = self.vfs_router.rename_file(
                 &old_route.mount_point,
                 &old_route.backend_path,
@@ -3754,12 +3811,34 @@ impl Kernel {
             Some(now_ms),
             Some(now_ms),
         );
-        // 9. Update dcache under the caller-visible dst_path (meta.path holds
-        // the zone-relative key for the metastore write).
-        self.dcache.put(dst_path, (&meta).into());
-        self.with_metastore(&dst_route.mount_point, |ms| {
-            let _ = ms.put(&dst_zone_path, meta);
-        });
+        // 9. Atomic commit — metastore (raft) first, dcache on success.
+        // dcache uses the caller-visible dst_path; metastore uses the
+        // zone-relative key from meta.path.
+        let cache_entry: CachedEntry = (&meta).into();
+        let put_result = self
+            .with_metastore(&dst_route.mount_point, move |ms| {
+                ms.put(&dst_zone_path, meta)
+            })
+            .ok_or_else(|| {
+                KernelError::IOError(format!(
+                    "sys_copy: no metastore for {}",
+                    dst_route.mount_point
+                ))
+            });
+        let put_result = match put_result {
+            Ok(r) => r,
+            Err(e) => {
+                release_locks(&self.lock_manager, lock1, lock2);
+                return Err(e);
+            }
+        };
+        if let Err(e) = put_result {
+            release_locks(&self.lock_manager, lock1, lock2);
+            return Err(KernelError::IOError(format!(
+                "sys_copy: metastore.put: {e:?}"
+            )));
+        }
+        self.dcache.put(dst_path, cache_entry);
 
         // 10. Release VFS locks
         release_locks(&self.lock_manager, lock1, lock2);
@@ -3899,11 +3978,8 @@ impl Kernel {
             None,
             None,
         );
-        // 7. DCache put (derive before moving meta into metastore closure)
-        self.dcache.put(path, (&meta).into());
-        self.with_metastore(&route.mount_point, |ms| {
-            let _ = ms.put(path, meta);
-        });
+        // 7. Atomic commit — metastore (raft) first, dcache on success.
+        self.commit_metadata(path, &route.mount_point, meta)?;
 
         // 8. OBSERVE-phase dispatch (§11 Phase 5): queue DirCreate.
         // Only fires on the newly-created path — the early return at
@@ -3967,10 +4043,7 @@ impl Kernel {
                 None,
                 None,
             );
-            self.dcache.put(dir_ref, (&meta).into());
-            self.with_metastore(mount_point, |ms| {
-                let _ = ms.put(dir_ref, meta);
-            });
+            self.commit_metadata(dir_ref, mount_point, meta)?;
         }
         Ok(())
     }
@@ -4043,13 +4116,11 @@ impl Kernel {
             .vfs_router
             .rmdir(&route.mount_point, &route.backend_path, recursive);
 
-        // 7. Delete directory metadata (per-mount or global) — full path
-        self.with_metastore(&route.mount_point, |ms| {
-            let _ = ms.delete(path);
-        });
-
-        // 8. DCache evict + prefix evict
-        self.dcache.evict(path);
+        // 7. Atomic delete — metastore (raft) first, dcache evict on
+        // success. The prefix evict for child entries follows the
+        // delete because the children share fate with the directory's
+        // metadata commit.
+        self.commit_delete(path, &route.mount_point)?;
         let prefix = format!("{}/", path.trim_end_matches('/'));
         self.dcache.evict_prefix(&prefix);
 
@@ -4202,8 +4273,10 @@ impl Kernel {
                         None,
                         None,
                     );
-                    // DCache update (derive before moving meta into batch_meta)
-                    self.dcache.put(path, (&meta).into());
+                    // Defer dcache + metastore commit to step 4b so
+                    // we can group raft proposes per mount and mark
+                    // each result hit/miss based on the actual
+                    // commit outcome rather than eagerly lying.
                     batch_meta.push((route.mount_point.clone(), path.to_string(), meta));
 
                     results.push(SysWriteResult {
@@ -4237,27 +4310,57 @@ impl Kernel {
             }
         }
 
-        // 4b. Metastore put_batch — per-mount metastore aware.
-        // Global items (no per-mount metastore) use batch put for efficiency.
+        // 4b. Atomic per-item commit. Per-mount items go through
+        // commit_metadata (raft propose, ms.put then dcache). Global
+        // items (no per-mount metastore) collect into a batch put
+        // since the global LocalMetastore can do that as one redb
+        // txn — but we still update dcache only after the txn lands.
+        // Failures flip the corresponding result entry from
+        // hit=true → hit=false so the caller learns which items
+        // actually committed.
         if !batch_meta.is_empty() {
             let mut global_items: Vec<(String, crate::metastore::FileMetadata)> = Vec::new();
-            for (mp, path, meta) in batch_meta {
-                if self
+            let mut global_idx: Vec<usize> = Vec::new();
+            for (idx, (mp, path, meta)) in batch_meta.into_iter().enumerate() {
+                let has_per_mount = self
                     .vfs_router
                     .get_canonical(&mp)
                     .map(|e| e.metastore.is_some())
-                    .unwrap_or(false)
-                {
-                    self.with_metastore(&mp, |ms| {
-                        let _ = ms.put(&path, meta);
-                    });
+                    .unwrap_or(false);
+                if has_per_mount {
+                    if let Err(_e) = self.commit_metadata(&path, &mp, meta) {
+                        // Mark this batch entry as not-hit so the
+                        // caller knows the propose didn't commit.
+                        if let Some(r) = results.get_mut(idx) {
+                            r.hit = false;
+                        }
+                    }
                 } else {
                     global_items.push((path, meta));
+                    global_idx.push(idx);
                 }
             }
             if !global_items.is_empty() {
-                if let Some(ms) = self.metastore.read().as_ref() {
-                    let _ = ms.put_batch(&global_items);
+                let dcache_updates: Vec<(String, CachedEntry)> = global_items
+                    .iter()
+                    .map(|(p, m)| (p.clone(), m.into()))
+                    .collect();
+                let put_ok = self
+                    .metastore
+                    .read()
+                    .as_ref()
+                    .map(|ms| ms.put_batch(&global_items).is_ok())
+                    .unwrap_or(false);
+                if put_ok {
+                    for (p, e) in dcache_updates {
+                        self.dcache.put(&p, e);
+                    }
+                } else {
+                    for idx in global_idx {
+                        if let Some(r) = results.get_mut(idx) {
+                            r.hit = false;
+                        }
+                    }
                 }
             }
         }

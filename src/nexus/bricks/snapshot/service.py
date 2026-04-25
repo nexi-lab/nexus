@@ -423,8 +423,6 @@ class TransactionalSnapshotService:
         meta_dict = json.loads(metadata_json)
         return self._metadata_factory(
             path=path,
-            backend_name=meta_dict.get("backend_name", "local"),
-            physical_path=original_hash,
             size=meta_dict.get("size", 0),
             etag=original_hash,
             created_at=datetime.fromisoformat(meta_dict["created_at"])
@@ -473,10 +471,6 @@ class TransactionalSnapshotService:
                         current_meta = self._metadata_store.get(entry.path)
                         restored = self._metadata_factory(
                             path=entry.path,
-                            backend_name=getattr(current_meta, "backend_name", "local")
-                            if current_meta
-                            else "local",
-                            physical_path=entry.original_hash,
                             size=getattr(current_meta, "size", 0) if current_meta else 0,
                             etag=entry.original_hash,
                             created_at=getattr(current_meta, "created_at", None)

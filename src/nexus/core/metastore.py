@@ -53,19 +53,23 @@ def _sync_to_rust(kernel: Any, meta: FileMetadata) -> None:
     """Push a FileMetadata into the Rust DashMap (hot-path projection).
 
     Phase H: added mime_type for sys_stat acceleration.
+
+    ``backend_name``/``physical_path`` were dropped from FileMetadata
+    (the kernel resolves the physical location at read time via the
+    mount/route layer); the Rust ``dcache_put`` signature was reshaped
+    to match.
     """
     if kernel is None:
         return
     kernel.dcache_put(
         meta.path,
-        meta.backend_name,
-        meta.physical_path,
         meta.size,
         meta.entry_type,
         meta.version,
         meta.etag,
         meta.zone_id,
         meta.mime_type,
+        meta.last_writer_address,
     )
 
 
@@ -81,9 +85,9 @@ class MetastoreABC(ABC):
     that eliminates repeated deserialization overhead.
 
     The Rust DashMap (accessed via ``_kernel.dcache_*``) mirrors the Python
-    dict for hot-path fields only (backend_name, physical_path, size, etag,
-    version, entry_type, zone_id).  It is dual-written on every mutation and
-    consumed by Kernel (#1817) for single-FFI sys_read/sys_write.
+    dict for hot-path fields only (size, etag, version, entry_type, zone_id,
+    mime_type, last_writer_address).  It is dual-written on every mutation
+    and consumed by Kernel (#1817) for single-FFI sys_read/sys_write.
 
     Abstract methods (must override):
         _get_raw, _put_raw, _delete_raw, _exists_raw, _list_raw, close

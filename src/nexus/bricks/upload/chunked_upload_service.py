@@ -640,11 +640,8 @@ class ChunkedUploadService:
             if self._metadata_store is not None:
                 from nexus.contracts.metadata import FileMetadata
 
-                backend_name = getattr(self._backend, "name", "default")
                 metadata = FileMetadata(
                     path=session.target_path,
-                    backend_name=backend_name,
-                    physical_path=content_hash,
                     size=len(content),
                     etag=content_hash,
                 )

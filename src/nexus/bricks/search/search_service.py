@@ -1028,8 +1028,6 @@ class SearchService:
                     all_files.append(
                         FileMetadata(
                             path=entry_path,
-                            backend_name="",
-                            physical_path="",
                             size=0,
                             created_at=entry.get("created_at"),
                             etag=None,
@@ -1040,8 +1038,6 @@ class SearchService:
                 all_files.append(
                     FileMetadata(
                         path=entry_path,
-                        backend_name="",
-                        physical_path="",
                         size=0,
                         created_at=entry.get("created_at"),
                         etag=None,

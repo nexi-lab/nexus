@@ -4,6 +4,15 @@ Replaces ReBACVersionSequenceModel (SQLAlchemy ORM). Stores per-zone
 revision counters in the Metastore (redb) under a reserved path prefix.
 
 Issue #191: Migrate ReBACVersionSequenceModel from RecordStore to Metastore.
+
+Storage layout
+--------------
+Each per-zone counter reuses the file-metadata KV slot keyed by
+``/_internal/ver/rebac/{zone_id}``.  The path prefix uniquely identifies
+these synthetic records — no per-record discriminator field is required.
+The JSON envelope ``{"v": int}`` is stashed in ``etag`` (a Nullable string
+slot the metastore already round-trips).  Mirrors the pattern used by
+:mod:`nexus.bricks.mount.metastore_mount_store`.
 """
 
 from __future__ import annotations
@@ -25,14 +34,13 @@ class _MetastoreProto(Protocol):
 logger = logging.getLogger(__name__)
 
 _VER_PREFIX = "/_internal/ver/rebac/"
-_VER_BACKEND = "_version"
 
 
 class MetastoreVersionStore:
     """Per-zone version sequence backed by MetastoreABC.
 
-    Key pattern: ``ver:rebac:{zone_id}`` → JSON ``{"v": int}``
-    Uses FileMetadata as the storage envelope (same pattern as MetastoreSettingsStore).
+    Key pattern: ``/_internal/ver/rebac/{zone_id}`` → JSON ``{"v": int}``
+    stashed in ``etag``.
     """
 
     def __init__(self, metastore: _MetastoreProto) -> None:
@@ -41,12 +49,12 @@ class MetastoreVersionStore:
     def get_version(self, zone_id: str) -> int:
         """Get current version for a zone. Returns 0 if not found."""
         fm = self._metastore.get(f"{_VER_PREFIX}{zone_id}")
-        if fm is None or fm.backend_name != _VER_BACKEND:
+        if fm is None or not fm.etag:
             return 0
         try:
-            val: int = json.loads(fm.physical_path)["v"]
+            val: int = json.loads(fm.etag)["v"]
             return val
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, TypeError):
             return 0
 
     def increment_version(self, zone_id: str) -> int:
@@ -59,9 +67,8 @@ class MetastoreVersionStore:
         new_version = current + 1
         fm = FileMetadata(
             path=f"{_VER_PREFIX}{zone_id}",
-            backend_name=_VER_BACKEND,
-            physical_path=json.dumps({"v": new_version}),
             size=0,
+            etag=json.dumps({"v": new_version}),
         )
         self._metastore.put(fm)
         return new_version

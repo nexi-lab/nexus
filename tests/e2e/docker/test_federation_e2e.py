@@ -2846,3 +2846,325 @@ class TestFederationCLISurface:
         rc, out, err = _cli_exec("nexus-dyn-node-1", ["locks", "list"], timeout=30)
         if rc != 0 and "Usage" not in err and "No such command" not in err:
             pytest.skip(f"locks list CLI failed: rc={rc} err={err[:200]}")
+
+
+# ===================================================================
+# R20.18.7+: Cross-node read pipeline + last_writer_address
+# ===================================================================
+#
+# WHY THIS CLASS EXISTS
+# ---------------------
+# `TestCrossNodeReplication` and `TestFederationCacheCoherence` only
+# wait for a path to APPEAR in the follower's `list` — they pass even
+# when the actual cross-node read pipeline is broken. That gap is
+# exactly the kind that lets a federation read regression (server-side
+# `BlobFetcher` mis-routing for path-addressed mounts; the missing
+# `last_writer_address` after the schema cleanup; `try_remote_fetch`
+# losing its origin) ship to users undetected.
+#
+# Each test below is a 3+-step real user journey:
+#   1. write (causal anchor) → 2. wait replication (raft signal) →
+#   3. read content + sys_stat on the OTHER node (read pipeline).
+# Every step asserts on a value the previous step produced — no
+# arbitrary sequences, no isinstance-only assertions.
+#
+# Conventions: federation zones (corp / corp-eng / family) — root zone
+# (/) is local-redb only and not Raft-replicated.
+# ===================================================================
+
+
+# Each docker-compose node ships its own NEXUS_ADVERTISE_ADDR; tests
+# only need to know what `last_writer_address` should look like, not
+# the literal string. SSOT for this constant: docker-compose env. Both
+# node-1 and node-2 set ADVERTISE to `<hostname>:2126`.
+_NODE1_ADVERTISE = "nexus-1:2126"
+_NODE2_ADVERTISE = "nexus-2:2126"
+
+
+def _stat_metadata(target: str, path: str, api_key: str, timeout: float = 5.0) -> dict | None:
+    """Run sys_stat via gRPC and return the metadata dict (or None)."""
+    info = _grpc_call(target, "sys_stat", {"path": path}, api_key=api_key, timeout=timeout)
+    if "error" in info:
+        return None
+    result = info.get("result", info)
+    return result.get("metadata") if isinstance(result, dict) else None
+
+
+def _wait_meta_field(
+    target: str,
+    path: str,
+    field: str,
+    api_key: str,
+    *,
+    timeout: float = 15.0,
+    expected_value: str | None = None,
+) -> dict:
+    """Poll sys_stat on `target` until metadata[field] is non-null (and
+    optionally equals `expected_value`). Returns the metadata dict."""
+    deadline = time.time() + timeout
+    last_meta: dict | None = None
+    while time.time() < deadline:
+        meta = _stat_metadata(target, path, api_key)
+        if meta is not None:
+            last_meta = meta
+            value = meta.get(field)
+            if value and (expected_value is None or value == expected_value):
+                return meta
+        time.sleep(0.25)
+    pytest.fail(
+        f"sys_stat({target}, {path})['{field}'] did not converge within {timeout}s "
+        f"(last_meta={last_meta}, want={expected_value!r})"
+    )
+
+
+class TestLastWriterAttribution:
+    """`last_writer_address` is the kernel-neutral routing hint that
+    lets a follower's `try_remote_fetch` find the writer when its local
+    mount can't serve the bytes. This class catches the two ways the
+    field can break:
+
+    1. Schema regression: the field is dropped/renamed and sys_stat
+       no longer surfaces it. (The schema cleanup that motivated this
+       PR replaced `backend_name@origin` with this field — anything
+       that drops it again breaks federation reads.)
+    2. Attribution regression: the field is set to the wrong value
+       (e.g. previous writer's address sticks across writes, or the
+       reader's own address gets stamped on a remote read).
+    """
+
+    def test_writer_address_set_to_advertise_addr(self, cluster, api_key, federation_zones):
+        """Step 1: node-1 writes a file in corp-eng.
+        Step 2: node-1's own sys_stat reports last_writer_address = node-1.
+        Step 3: node-2's sys_stat (after replication) reports the same.
+
+        Without `last_writer_address`, step 3's reader has no callback
+        target to fetch the blob from when its local mount misses.
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+        path = f"/corp/eng/lwa-{uid}.txt"
+        content = f"lwa-{uid}"
+
+        w = _grpc_call(grpc1, "write", {"path": path, "content": content}, api_key=api_key)
+        assert "error" not in w, f"node-1 write failed: {w}"
+
+        # Local sys_stat on the writer must surface the field
+        # immediately — no Raft round-trip needed for own writes.
+        local_meta = _wait_meta_field(
+            grpc1,
+            path,
+            "last_writer_address",
+            api_key,
+            expected_value=_NODE1_ADVERTISE,
+            timeout=5.0,
+        )
+        assert local_meta["last_writer_address"] == _NODE1_ADVERTISE, (
+            f"node-1 sys_stat last_writer_address mismatch: {local_meta}"
+        )
+
+        # Follower must see the same attribution after Raft applies.
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=30)
+        follower_meta = _wait_meta_field(
+            grpc2,
+            path,
+            "last_writer_address",
+            api_key,
+            expected_value=_NODE1_ADVERTISE,
+            timeout=15.0,
+        )
+        assert follower_meta["last_writer_address"] == _NODE1_ADVERTISE, (
+            f"node-2 sys_stat last_writer_address mismatch: {follower_meta}"
+        )
+
+    def test_subsequent_write_overwrites_attribution(self, cluster, api_key, federation_zones):
+        """Step 1: node-1 creates a file (writer = node-1).
+        Step 2: node-2 overwrites the same path (writer flips to node-2).
+        Step 3: sys_stat on EITHER node reports node-2 as last_writer.
+
+        Catches: stale `last_writer_address` sticking to the original
+        creator instead of the current writer. A follower trying
+        `try_remote_fetch` against a stale writer would route to a
+        node that no longer holds the latest blob.
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+        path = f"/corp/eng/owner-flip-{uid}.txt"
+
+        # Step 1 — node-1 creates.
+        w1 = _grpc_call(grpc1, "write", {"path": path, "content": f"v1-{uid}"}, api_key=api_key)
+        assert "error" not in w1, f"node-1 write failed: {w1}"
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=30)
+
+        # Step 2 — node-2 overwrites; the new attribution must replace
+        # node-1's, not append.
+        w2 = _grpc_call(grpc2, "write", {"path": path, "content": f"v2-{uid}"}, api_key=api_key)
+        assert "error" not in w2, f"node-2 overwrite failed: {w2}"
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=30)
+
+        # Step 3 — both nodes attribute to node-2.
+        for target, label in [(grpc1, "node-1"), (grpc2, "node-2")]:
+            meta = _wait_meta_field(
+                target,
+                path,
+                "last_writer_address",
+                api_key,
+                expected_value=_NODE2_ADVERTISE,
+                timeout=15.0,
+            )
+            assert meta["last_writer_address"] == _NODE2_ADVERTISE, (
+                f"{label} did not see writer flip to node-2: {meta}"
+            )
+
+
+class TestCrossNodeContentRead:
+    """Real user journey: write a file from machine A, read it from
+    machine B, get the bytes A wrote. Ditto in reverse, in every
+    federation zone.
+
+    The existing TestCrossNodeReplication / TestFederationCacheCoherence
+    only verify the path APPEARS on the follower — those passed during
+    the federation cross-node read failure (`PathLocalBackend requires
+    backend_path`) because LIST never goes through `try_remote_fetch`.
+    These tests assert byte-exact content AFTER metadata replication,
+    which exercises the full read pipeline:
+
+        sys_read(path) → vfs_router.read_content (local miss) →
+        try_remote_fetch (uses last_writer_address) →
+        peer_blob_client.fetch_blob/fetch_path → server-side
+        BlobFetcher.read_blob/read_path → bytes back to caller.
+    """
+
+    @pytest.mark.parametrize(
+        "zone,parent",
+        [
+            ("corp", "/corp/"),
+            ("corp-eng", "/corp/eng/"),
+            ("corp-sales", "/corp/sales/"),
+            ("family", "/family/"),
+        ],
+    )
+    def test_node1_write_node2_read_content(self, cluster, api_key, federation_zones, zone, parent):
+        """For every Raft-replicated mount: node-1 writes, node-2 reads
+        the actual bytes.
+
+        Strong causal chain:
+        - write (step 1) is the byte-level source of truth
+        - replication wait (step 2) gates on raft commit → applied
+        - read on follower (step 3) consumes step 1's content; passing
+          requires the cross-node read pipeline to actually deliver
+          bytes, not just hand back metadata.
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        path = f"{parent}content-{uid}.txt"
+        # Embed zone name in payload so a misrouted read (wrong zone)
+        # surfaces in the assertion message instead of bytes-equal.
+        content = f"x-zone-content::{zone}::{uid}"
+
+        w = _grpc_call(grpc1, "write", {"path": path, "content": content}, api_key=api_key)
+        assert "error" not in w, f"node-1 write to {zone} failed: {w}"
+
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, zone], api_key, timeout=30)
+        _wait_replicated(
+            grpc2,
+            parent,
+            path,
+            api_key,
+            msg=f"{zone} write not replicated to node-2",
+            timeout=15,
+        )
+
+        # Read content (NOT just list) — this is the assertion the
+        # existing TestCrossNodeReplication is missing.
+        r = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=30)
+        assert "error" not in r, f"node-2 read of {zone} file failed: {r}"
+        got = _decode_content(r)
+        assert got == content, (
+            f"Cross-node content mismatch in {zone}: got {got!r}, want {content!r}"
+        )
+
+    def test_bidirectional_writes_each_zone_serves_other_node(
+        self, cluster, api_key, federation_zones
+    ):
+        """Each node writes a different file in /corp/eng;
+        each node reads the OTHER node's file, by content.
+
+        Catches: any one-way bug in the cross-node read pipeline (the
+        federation cross-node read failure manifested as node-2
+        reading node-1 fine but the inverse path being broken — or
+        vice-versa).
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        path1 = f"/corp/eng/bidir-from-1-{uid}.txt"
+        path2 = f"/corp/eng/bidir-from-2-{uid}.txt"
+        content1 = f"from-node1::{uid}"
+        content2 = f"from-node2::{uid}"
+
+        w1 = _grpc_call(grpc1, "write", {"path": path1, "content": content1}, api_key=api_key)
+        assert "error" not in w1, f"node-1 write failed: {w1}"
+        w2 = _grpc_call(grpc2, "write", {"path": path2, "content": content2}, api_key=api_key)
+        assert "error" not in w2, f"node-2 write failed: {w2}"
+
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=30)
+        _wait_replicated(grpc2, "/corp/eng/", path1, api_key, timeout=15)
+        _wait_replicated(grpc1, "/corp/eng/", path2, api_key, timeout=15)
+
+        # node-2 reads node-1's file → exercises node-2's
+        # try_remote_fetch against node-1.
+        r_to_1 = _grpc_call(grpc2, "read", {"path": path1}, api_key=api_key, timeout=30)
+        assert "error" not in r_to_1, f"node-2 read of node-1's file failed: {r_to_1}"
+        assert _decode_content(r_to_1) == content1
+
+        # node-1 reads node-2's file → exercises node-1's
+        # try_remote_fetch against node-2.
+        r_to_2 = _grpc_call(grpc1, "read", {"path": path2}, api_key=api_key, timeout=30)
+        assert "error" not in r_to_2, f"node-1 read of node-2's file failed: {r_to_2}"
+        assert _decode_content(r_to_2) == content2
+
+    def test_versioned_writes_follower_sees_latest_content(
+        self, cluster, api_key, federation_zones
+    ):
+        """Multi-version write on node-1; node-2 must read the LATEST
+        bytes, not stale ones.
+
+        Catches: stale local CAS / dcache on the follower returning
+        the first version after subsequent writes commit. The chain
+        — write v1 → write v2 → write v3 → wait replication → read
+        on follower → assert v3 — fails if any layer of caching gets
+        stuck on an old version.
+        """
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+        path = f"/corp/eng/versioned-{uid}.txt"
+
+        versions = [f"v{i}::{uid}" for i in range(3)]
+        for v in versions:
+            w = _grpc_call(grpc1, "write", {"path": path, "content": v}, api_key=api_key)
+            assert "error" not in w, f"write {v} failed: {w}"
+
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=30)
+        _wait_replicated(grpc2, "/corp/eng/", path, api_key, timeout=15)
+
+        # Follower may briefly serve an in-flight version; poll until
+        # convergence on the FINAL version (bounded by raft round-trip).
+        deadline = time.time() + 15.0
+        latest = versions[-1]
+        last: str = ""
+        while time.time() < deadline:
+            r = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=10)
+            if "error" not in r:
+                last = _decode_content(r)
+                if last == latest:
+                    return
+            time.sleep(0.25)
+        pytest.fail(
+            f"node-2 did not converge to latest version within 15s: got {last!r}, want {latest!r}"
+        )

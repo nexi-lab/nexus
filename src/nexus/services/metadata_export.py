@@ -94,10 +94,12 @@ class MetadataExportService:
         count = 0
         with output_file.open("w", encoding="utf-8") as f:
             for file_meta in filtered_files:
+                # ``backend_name``/``physical_path`` were removed from
+                # FileMetadata — the kernel resolves the physical
+                # location at read time via the mount/route layer, so
+                # exported metadata no longer surfaces them.
                 metadata_dict: dict[str, Any] = {
                     "path": file_meta.path,
-                    "backend_name": file_meta.backend_name,
-                    "physical_path": file_meta.physical_path,
                     "size": file_meta.size,
                     "etag": file_meta.etag,
                     "mime_type": file_meta.mime_type,
@@ -235,8 +237,6 @@ class MetadataExportService:
 
             file_meta = FileMetadata(
                 path=path,
-                backend_name=metadata_dict["backend_name"],
-                physical_path=metadata_dict["physical_path"],
                 size=metadata_dict["size"],
                 etag=imported_etag,
                 mime_type=metadata_dict.get("mime_type"),
@@ -324,8 +324,6 @@ class MetadataExportService:
 
         file_meta = FileMetadata(
             path=path,
-            backend_name=metadata_dict["backend_name"],
-            physical_path=metadata_dict["physical_path"],
             size=metadata_dict["size"],
             etag=imported_etag,
             mime_type=metadata_dict.get("mime_type"),
@@ -377,8 +375,6 @@ class MetadataExportService:
 
         file_meta = FileMetadata(
             path=remapped_path,
-            backend_name=metadata_dict["backend_name"],
-            physical_path=metadata_dict["physical_path"],
             size=metadata_dict["size"],
             etag=imported_etag,
             mime_type=metadata_dict.get("mime_type"),
@@ -435,8 +431,6 @@ class MetadataExportService:
 
             file_meta = FileMetadata(
                 path=path,
-                backend_name=metadata_dict["backend_name"],
-                physical_path=metadata_dict["physical_path"],
                 size=metadata_dict["size"],
                 etag=imported_etag,
                 mime_type=metadata_dict.get("mime_type"),
@@ -485,8 +479,6 @@ class MetadataExportService:
 
         file_meta = FileMetadata(
             path=path,
-            backend_name=metadata_dict["backend_name"],
-            physical_path=metadata_dict["physical_path"],
             size=metadata_dict["size"],
             etag=imported_etag,
             mime_type=metadata_dict.get("mime_type"),

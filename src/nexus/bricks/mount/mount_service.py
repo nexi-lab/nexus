@@ -303,7 +303,6 @@ class MountService:
         mount_point: str,
         context: "OperationContext | None",
         entry_type: int | None = None,
-        backend_name: str = "__mount__",
     ) -> None:
         """Setup mount point with directory and permissions.
 
@@ -318,7 +317,6 @@ class MountService:
             mount_point: Virtual path
             context: Operation context
             entry_type: Entry type for the mount point (default DT_MOUNT)
-            backend_name: Backend name for the mount entry
         """
         logger.info(f"Setting up mount point: {mount_point}")
 
@@ -347,8 +345,6 @@ class MountService:
                     is_mount_point = i == len(parts)
                     meta = FileMetadata(
                         path=dir_path,
-                        backend_name=backend_name if is_mount_point else "__mount__",
-                        physical_path=dir_path,
                         size=0,
                         etag=None,
                         entry_type=entry_type if is_mount_point else DT_DIR,
@@ -579,7 +575,6 @@ class MountService:
                 mount_point,
                 context,
                 entry_type=_entry_type,
-                backend_name=backend.name,
             )
         except Exception:
             logger.error(

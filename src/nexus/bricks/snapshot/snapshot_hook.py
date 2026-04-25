@@ -69,11 +69,13 @@ class SnapshotWriteHook:
         if meta is None:
             return
         snapshot_hash = meta.etag
+        # backend_name/physical_path were dropped from FileMetadata; the
+        # kernel resolves a file's physical location at read time via the
+        # mount/route layer, so the snapshot only needs etag + path-level
+        # facts to restore a file from CAS.
         metadata_snapshot: dict[str, Any] = {
             "size": meta.size,
             "version": meta.version,
             "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            "backend_name": meta.backend_name,
-            "physical_path": meta.physical_path,
         }
         self._svc.track_delete(txn_id, ctx.path, snapshot_hash, metadata_snapshot)

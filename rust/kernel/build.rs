@@ -6,9 +6,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path()?);
     }
 
-    // Compile vfs.proto → client for inter-node ReadBlob (federation remote fetch).
+    // Compile vfs.proto for both client (inter-node ReadBlob, REMOTE profile)
+    // and server (Rust-native VfsGrpcServer that owns :2028 — replaces the
+    // Python `grpc.aio.server` for the typed Read/Write/Delete/Ping path).
     tonic_build::configure()
-        .build_server(false)
+        .build_server(true)
+        .build_client(true)
         .compile_protos(&["../../proto/nexus/grpc/vfs/vfs.proto"], &["../../proto"])?;
     Ok(())
 }

@@ -1671,16 +1671,19 @@ class PostgresAuthProfileStore:
         if profile_id is not None:
             params["pid"] = profile_id
         with self._scoped() as conn:
-            # Filter out disabled (operator hard-stop) and cooled-down
-            # (auto-circuit-breaker) profiles in SQL so neither path leaks
-            # past the cache-miss boundary. Cache hits inside ResolvedCredCache
-            # may still serve a credential for up to its TTL after a state
-            # change — the deployment guide notes this lag and recommends
-            # NEXUS_AUTH_CRED_CACHE_TTL be tuned for the operator's tolerance.
+            # SQL filters out disabled/cooled-down rows so cache-miss never
+            # leaks them; cache hits may still serve them up to TTL (see
+            # NEXUS_AUTH_CRED_CACHE_TTL). F31: ``is_fresh`` derived in the
+            # same SELECT so the freshness predicate uses the same NOW() as
+            # the row read — closes the gap between assert_profile_active
+            # at T0 and decrypt at T1 where the row could cross its TTL.
             rows = conn.execute(
                 text(
                     "SELECT id, ciphertext, wrapped_dek, nonce, aad, kek_version, "
-                    "       last_synced_at, sync_ttl_seconds, machine_id "
+                    "       last_synced_at, sync_ttl_seconds, machine_id, "
+                    "       (last_synced_at IS NOT NULL "
+                    "        AND last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL "
+                    "            > NOW()) AS is_fresh "
                     "FROM auth_profiles "
                     "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
                     "  AND ciphertext IS NOT NULL "
@@ -1706,7 +1709,30 @@ class PostgresAuthProfileStore:
                 cause=f"{len(rows)}+ active envelopes; collapse to one or upgrade wire contract",
             )
 
-        profile_id, ciphertext, wrapped_dek, nonce, aad, kek_version, lsa, sttl, wmid = rows[0]
+        (
+            profile_id,
+            ciphertext,
+            wrapped_dek,
+            nonce,
+            aad,
+            kek_version,
+            lsa,
+            sttl,
+            wmid,
+            is_fresh,
+        ) = rows[0]
+        if not is_fresh:
+            # F31: row crossed its TTL between assert_profile_active and now.
+            # Fail closed with StaleSource (retryable after the daemon pushes
+            # a fresh envelope), not ProfileNotFound (operator-deleted).
+            from nexus.bricks.auth.consumer import StaleSource
+
+            raise StaleSource.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+                cause="last_synced_at_past_sync_ttl_at_decrypt",
+            )
 
         # Defense-in-depth: cross-check the row's stored AAD against the
         # tenant|principal|profile_id format that writers use. AES-GCM tag

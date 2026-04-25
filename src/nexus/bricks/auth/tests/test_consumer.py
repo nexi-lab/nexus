@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -987,6 +987,53 @@ def test_envelope_error_is_counted_as_failure_not_ok(engine):
     )._value.get()  # noqa: SLF001
     assert after == before, "EnvelopeError must NOT increment result=ok"
     assert err_after == err_before + 1, "EnvelopeError must increment result=envelope_error"
+
+
+def test_decrypt_rejects_row_that_went_stale_after_precheck(engine):
+    """Race window between assert_profile_active (T0) and decrypt_profile
+    (T1): the row was fresh at T0 but crossed its sync_ttl boundary by T1.
+    decrypt_profile MUST evaluate freshness atomically with the row read
+    so we fail closed with StaleSource instead of decrypting and serving
+    a credential past its declared sync_ttl_seconds.
+
+    Simulated by seeding an already-stale row (lsa = NOW - 120s, ttl = 60s)
+    and monkey-patching assert_profile_active to return a fingerprint as
+    if the precheck succeeded — the fix has to live in decrypt_profile.
+
+    Regression for codex round-15 finding F31.
+    """
+    from datetime import datetime
+
+    from nexus.bricks.auth.postgres_profile_store import ProfileFingerprint
+
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine,
+        tenant_id=tenant,
+        principal_id=principal,
+        encryption=encryption,
+        sync_ttl=60,
+        lsa_offset_seconds=120,
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    store = consumer._store
+    assert store is not None
+
+    def _passthrough_precheck(*, principal_id, provider, profile_id=None):  # noqa: ARG001
+        return ProfileFingerprint(
+            profile_id="github-default",
+            writer_machine_id=None,
+            kek_version=1,
+            last_synced_at=datetime.now(UTC),
+        )
+
+    object.__setattr__(store, "assert_profile_active", _passthrough_precheck)
+
+    with pytest.raises(StaleSource):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
 
 
 def test_audit_write_atomically_rejects_revoked_machine(engine):

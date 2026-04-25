@@ -359,7 +359,6 @@ class MetadataMixin:
                 _backend_name,
                 local_root=_local_root,
                 fsync=True,
-                py_backend=backend,
                 zone_id=zone_id,
                 metastore_path=str(_ms_path) if _ms_path else None,
             )

@@ -304,6 +304,28 @@ rg -n "APIKeyModel\.zone_id|api_key\.zone_id|api_key_row\.zone_id|\.zone_id" --t
 
 Categorize each hit. Append findings to this plan as a new section.
 
+### F4a findings (audit run 2026-04-25)
+
+| File:line | Use | Disposition |
+| --- | --- | --- |
+| `bricks/auth/providers/database_key.py:115-121` | Look up zone phase (Active/Terminating) for the token's primary zone — UI/error context | **kept** — informational |
+| `bricks/auth/providers/database_key.py:148-160` | Legacy fallback: derive `zone_perms` from `api_key.zone_id` when junction empty | **kept-as-fallback** — required for legacy keys minted before junction landed |
+| `bricks/auth/providers/database_key.py:295` | Filter `list_keys()` by zone | **junction-only candidate** — replace with `INNER JOIN api_key_zones`. Deferred (not in F4b — would silently drop NULL-zone-id rows from list views) |
+| `server/api/v2/routers/auth_keys.py:380` | Same `list_keys` zone filter | **junction-only candidate** — same deferral |
+| `server/rpc/handlers/admin.py:173` | Echo `zone_id` in admin-list-keys RPC response | **kept** — deprecated alias (matches CLI's deprecated `zone` JSON field) |
+| `server/rpc/handlers/admin.py:309,348,389` | Filter admin queries by `zone_id` | **junction-only candidate** — same deferral |
+| `server/rpc/handlers/admin.py:403-404` | Scope a count query to the requesting key's zone | **kept-as-fallback** — admin telemetry tied to caller's primary zone |
+| `storage/auth_stores/sqlalchemy_api_key_store.py:96` | `list_keys` zone filter (storage layer) | **junction-only candidate** — same deferral |
+| `cli/commands/hub.py:271,436` | Compute primary zone for ordering in `token_zones_show` | **kept** — needs explicit "primary" concept until junction has a flag |
+| `cli/commands/hub.py:277` | Fallback zones list when junction has zero rows | **kept-as-fallback** |
+| `cli/commands/hub.py:288,308` | JSON `zone` field & table column (already labelled deprecated) | **kept** — deprecated alias, one release of compat |
+
+**F4b decision (informed by audit):** the plan's "Phase 1: stop writing `zone_id`" step would silently drop NULL-zone-id rows from the four `list_keys`-style filter queries above. Override that step — KEEP writing `primary_zone` to `APIKeyModel.zone_id` (as a backfill alias for the junction's first row) and only:
+1. Make the column `nullable=True` at the schema level (alembic migration).
+2. Update the docstring to mark it deprecated and direct callers to `get_zones_for_key`/`get_zone_perms_for_key`.
+
+A future PR can migrate the four filter sites to junction queries and then truly stop writing the column.
+
 ---
 
 ## Task F4b: drop `APIKeyModel.zone_id`

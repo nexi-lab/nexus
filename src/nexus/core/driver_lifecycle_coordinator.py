@@ -12,10 +12,8 @@ Responsibilities:
     3. Broadcast mount/unmount events via KernelDispatch hooks
 
 The Rust kernel is the single source of truth for routing, mount existence,
-backend ownership, and metadata.  This Python-side coordinator only keeps:
-    - ``_skill_backends``: Python connector instances that have a ``skill_name``
-      attribute, so the virtual ``.readme/`` overlay (Issue #3728) can generate
-      documentation from class metadata.  All I/O goes through Rust syscalls.
+backend ownership, and metadata.  This Python-side coordinator is a thin
+bookkeeping layer for lifecycle events (mount/unmount dispatch).
 
 Kernel-owned: created in ``NexusFS.__init__()`` (like ServiceRegistry).
 Always available after kernel construction.
@@ -30,7 +28,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.path_utils import canonicalize_path, extract_zone_id, normalize_path
+from nexus.core.path_utils import extract_zone_id, normalize_path
 
 if TYPE_CHECKING:
     from nexus.core.object_store import ObjectStoreABC
@@ -43,13 +41,12 @@ class DriverLifecycleCoordinator:
     """Kernel primitive: driver mount lifecycle (Python bookkeeping).
 
     Rust DLC (``dlc.rs``) owns routing table + metastore + dcache.
-    Python DLC stores skill-backend refs for .readme overlay + dispatches events.
+    Python DLC dispatches mount/unmount events.
 
     Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
     """
 
     __slots__ = (
-        "_skill_backends",
         "_dispatch",
         "_kernel",
         "_self_address",
@@ -64,7 +61,6 @@ class DriverLifecycleCoordinator:
         self_address: str | None = None,
         transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
-        self._skill_backends: dict[str, Any] = {}
         self._dispatch = dispatch
         self._kernel = kernel
         self._self_address: str | None = self_address
@@ -87,46 +83,8 @@ class DriverLifecycleCoordinator:
         return f"{base}@{self._self_address}" if self._self_address else base
 
     # ------------------------------------------------------------------
-    # Skill backend registry (virtual .readme overlay)
-    # ------------------------------------------------------------------
-
-    def register_skill_backend(
-        self,
-        mount_point: str,
-        backend: Any,
-        *,
-        zone_id: str = ROOT_ZONE_ID,
-    ) -> None:
-        """Register a Python connector backend for .readme overlay.
-
-        Only stores backends with a ``skill_name`` attribute — the virtual
-        .readme overlay needs Python class metadata to generate docs.
-        All I/O goes through Rust kernel syscalls.
-        """
-        if not getattr(backend, "skill_name", None):
-            return
-        normalized = normalize_path(mount_point)
-        canonical = canonicalize_path(normalized, zone_id)
-        self._skill_backends[canonical] = backend
-
-    def get_skill_backend(self, canonical: str) -> Any | None:
-        """Get the Python connector backend for a mount (for .readme overlay).
-
-        Returns None for mounts that don't have a skill backend.
-        """
-        return self._skill_backends.get(canonical)
-
-    # ------------------------------------------------------------------
     # Mount / unmount
     # ------------------------------------------------------------------
-
-    def dispatch_mount_event(self, mount_point: str) -> None:
-        """Dispatch a mount event. Called after Rust kernel mount completes."""
-        try:
-            normalized = normalize_path(mount_point)
-        except ValueError:
-            return
-        self._dispatch.dispatch_event("mount", normalized)
 
     def unmount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Unmount: notify + Rust DLC unmount + remove Python bookkeeping.
@@ -153,9 +111,6 @@ class DriverLifecycleCoordinator:
             with contextlib.suppress(Exception):
                 self._kernel.kernel_unmount(normalized, zone_id)
 
-        # Clean up skill backend ref if any
-        canonical = canonicalize_path(normalized, zone_id)
-        self._skill_backends.pop(canonical, None)
         return True
 
     # ------------------------------------------------------------------

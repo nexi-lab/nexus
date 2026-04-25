@@ -1,11 +1,11 @@
 """Unit tests for DriverLifecycleCoordinator.
 
-Tests mount/unmount lifecycle: skill backend registry + mount/unmount
-event dispatch via Rust dispatch_observers notification.
+Tests the thin Python bookkeeping layer: unmount lifecycle dispatch,
+kernel-delegated queries (resolve_path, mount_points), and backend_key
+formatting.
 
-The DLC stores only ``_skill_backends`` (backends with a ``skill_name``
-attribute) for the virtual ``.readme/`` overlay.  All routing is owned
-by the Rust kernel.
+The Rust kernel is the single source of truth for routing and mount
+existence.  Python DLC dispatches events and delegates queries.
 
 Issue #1811, #1320, #3584.
 """
@@ -14,151 +14,38 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
-from nexus.core.nexus_fs_dispatch import DispatchMixin
-from nexus.core.path_utils import canonicalize_path
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-class _FakeBackend:
-    """Minimal backend with name and skill_name (stored by register_skill_backend)."""
-
-    def __init__(self, name: str = "fake") -> None:
-        self.name = name
-        self.skill_name = "test"
-
-
-class _FakeObserver:
-    """Minimal VFSObserver."""
-
-    def on_mutation(self, event: object) -> None:
-        pass
-
-
-class _FakeMountObserver:
-    """Observer that records mount/unmount events."""
+class _MockDispatch:
+    """Lightweight mock for DispatchMixin (no real nexus_kernel needed)."""
 
     def __init__(self) -> None:
-        self.mount_paths: list[str] = []
-        self.unmount_paths: list[str] = []
+        self.calls: list[tuple[str, str]] = []
 
-    @property
-    def event_mask(self) -> int:
-        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
-
-        return FILE_EVENT_BIT[FileEventType.MOUNT] | FILE_EVENT_BIT[FileEventType.UNMOUNT]
-
-    def on_mutation(self, event: object) -> None:
-        from nexus.core.file_events import FileEventType
-
-        if event.type == FileEventType.MOUNT:
-            self.mount_paths.append(event.path)
-        elif event.type == FileEventType.UNMOUNT:
-            self.unmount_paths.append(event.path)
+    def dispatch_event(self, event_type: str, path: str) -> None:
+        self.calls.append((event_type, path))
 
 
-class _BackendWithHookSpec:
-    """Backend that declares hook_spec with an observer and a mount observer."""
-
-    def __init__(self, name: str = "cas-test") -> None:
-        self.name = name
-        self.skill_name = "test"
-        self._observer = _FakeObserver()
-        self._mount_observer = _FakeMountObserver()
-
-    def hook_spec(self) -> HookSpec:
-        return HookSpec(
-            observers=(self._observer, self._mount_observer),
-        )
-
-
-class _TestDispatch(DispatchMixin):
-    def __init__(self):
-        from nexus_kernel import Kernel
-
-        self._kernel = Kernel()
-        self._init_dispatch()
-
-
-def _make_coordinator() -> tuple[MagicMock, _TestDispatch, DriverLifecycleCoordinator]:
-    """Create a coordinator with a mock kernel and real DispatchMixin.
-
-    The mock kernel provides ``has_mount`` (returns True) and
-    ``kernel_unmount`` so unmount tests can exercise the full path.
-    """
+def _make_coordinator(
+    *,
+    has_mount: bool = True,
+    self_address: str | None = None,
+) -> tuple[MagicMock, _MockDispatch, DriverLifecycleCoordinator]:
+    """Create a coordinator with a mock kernel and _MockDispatch."""
     kernel = MagicMock()
-    kernel.has_mount.return_value = True
-    dispatch = _TestDispatch()
-    coord = DriverLifecycleCoordinator(dispatch, kernel=kernel)
+    kernel.has_mount.return_value = has_mount
+    dispatch = _MockDispatch()
+    coord = DriverLifecycleCoordinator(
+        dispatch,
+        kernel=kernel,
+        self_address=self_address,
+    )
     return kernel, dispatch, coord
-
-
-# ---------------------------------------------------------------------------
-# register_skill_backend() + dispatch_mount_event()
-# ---------------------------------------------------------------------------
-
-
-class TestMount:
-    def test_register_skill_backend_stores_backend(self) -> None:
-        """register_skill_backend stores backends with skill_name into _skill_backends."""
-        _, _, coord = _make_coordinator()
-        backend = _FakeBackend()
-
-        coord.register_skill_backend("/data", backend)
-
-        canonical = canonicalize_path("/data", "root")
-        assert canonical in coord._skill_backends
-        assert coord._skill_backends[canonical] is backend
-
-    def test_register_skill_backend_skips_without_skill_name(self) -> None:
-        """Backends without skill_name are NOT stored in _skill_backends."""
-        _, _, coord = _make_coordinator()
-        backend = MagicMock()
-        backend.skill_name = None
-
-        coord.register_skill_backend("/data", backend)
-
-        canonical = canonicalize_path("/data", "root")
-        assert canonical not in coord._skill_backends
-
-    def test_get_skill_backend_returns_stored(self) -> None:
-        """get_skill_backend returns the backend stored by register_skill_backend."""
-        _, _, coord = _make_coordinator()
-        backend = _FakeBackend()
-
-        coord.register_skill_backend("/data", backend)
-
-        canonical = canonicalize_path("/data", "root")
-        assert coord.get_skill_backend(canonical) is backend
-
-    def test_get_skill_backend_returns_none_for_missing(self) -> None:
-        """get_skill_backend returns None for unknown mount points."""
-        _, _, coord = _make_coordinator()
-        assert coord.get_skill_backend("/root/nonexistent") is None
-
-    def test_dispatch_mount_event_fires(self) -> None:
-        """dispatch_mount_event dispatches a MOUNT event through Rust dispatch_observers."""
-        from unittest.mock import patch
-
-        _, dispatch, coord = _make_coordinator()
-
-        with patch.object(dispatch, "dispatch_event") as mock_dispatch:
-            coord.dispatch_mount_event("/data")
-            mock_dispatch.assert_called_once_with("mount", "/data")
-
-    def test_register_no_hook_spec_still_stores(self) -> None:
-        """Backends with skill_name but no hook_spec still get stored."""
-        _, dispatch, coord = _make_coordinator()
-        backend = _FakeBackend()
-
-        coord.register_skill_backend("/plain", backend)
-
-        assert canonicalize_path("/plain", "root") in coord._skill_backends
-        assert dispatch.observer_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -167,74 +54,170 @@ class TestMount:
 
 
 class TestUnmount:
-    def test_unmount_removes_skill_backend(self) -> None:
-        """unmount removes the skill backend entry and returns True."""
-        _, dispatch, coord = _make_coordinator()
-        backend = _BackendWithHookSpec()
-
-        coord.register_skill_backend("/data", backend)
-        assert dispatch.observer_count == 0
+    def test_unmount_dispatches_event_and_calls_kernel(self) -> None:
+        """unmount fires UNMOUNT event and calls kernel_unmount."""
+        kernel, dispatch, coord = _make_coordinator()
 
         result = coord.unmount("/data")
+
         assert result is True
-        # After unmount the skill backend record is gone.
-        assert canonicalize_path("/data", "root") not in coord._skill_backends
-        assert dispatch.observer_count == 0
+        assert ("unmount", "/data") in dispatch.calls
+        kernel.kernel_unmount.assert_called_once()
 
-    def test_unmount_fires_unmount_event(self) -> None:
-        """Unmount dispatches an UNMOUNT event through Rust dispatch_observers."""
-        from unittest.mock import patch
+    def test_unmount_returns_false_when_no_mount(self) -> None:
+        """unmount returns False when kernel reports no mount at that path."""
+        kernel, dispatch, coord = _make_coordinator(has_mount=False)
 
-        _, dispatch, coord = _make_coordinator()
-        backend = _BackendWithHookSpec()
+        result = coord.unmount("/nonexistent")
 
-        coord.register_skill_backend("/data", backend)
-
-        with patch.object(dispatch, "dispatch_event") as mock_dispatch:
-            coord.unmount("/data")
-            mock_dispatch.assert_called_once_with("unmount", "/data")
-
-    def test_unmount_not_found_returns_false(self) -> None:
-        """Unmount returns False when kernel reports no mount at that path."""
-        kernel, _, coord = _make_coordinator()
-        # Kernel says no mount exists at this path.
-        kernel.has_mount.return_value = False
-        assert coord.unmount("/nonexistent") is False
+        assert result is False
+        assert len(dispatch.calls) == 0
+        kernel.kernel_unmount.assert_not_called()
 
     def test_unmount_catches_dispatch_exception(self) -> None:
-        """dispatch_event errors don't propagate (best-effort)."""
-        _, dispatch, coord = _make_coordinator()
-        backend = _FakeBackend()
-
-        coord.register_skill_backend("/data", backend)
-
-        # Force dispatch_event to raise
-        dispatch.dispatch_event = MagicMock(side_effect=RuntimeError("boom"))
+        """dispatch_event errors don't propagate (best-effort notification)."""
+        kernel, _, coord = _make_coordinator()
+        # Replace dispatch with one that raises
+        coord._dispatch = MagicMock()
+        coord._dispatch.dispatch_event.side_effect = RuntimeError("boom")
 
         # Should not raise
-        coord.unmount("/data")
+        result = coord.unmount("/data")
+        assert result is True
+        kernel.kernel_unmount.assert_called_once()
+
+    def test_unmount_invalid_path_returns_false(self) -> None:
+        """unmount returns False for paths that fail normalization."""
+        _, _, coord = _make_coordinator()
+
+        # Empty string fails normalize_path
+        result = coord.unmount("")
+        assert result is False
+
+    def test_unmount_with_zone_id(self) -> None:
+        """unmount passes zone_id through to kernel."""
+        kernel, dispatch, coord = _make_coordinator()
+
+        coord.unmount("/data", zone_id="zone-a")
+
+        kernel.has_mount.assert_called_once_with("/data", "zone-a")
+        kernel.kernel_unmount.assert_called_once_with("/data", "zone-a")
 
 
 # ---------------------------------------------------------------------------
-# CAS wiring fix (#1320)
+# resolve_path()
 # ---------------------------------------------------------------------------
 
 
-class TestCASWiringFix:
-    def test_cas_backend_registers_as_skill_backend(self) -> None:
-        """CAS backends with skill_name are stored in _skill_backends."""
-        _, dispatch, coord = _make_coordinator()
+class TestResolvePath:
+    def test_resolve_path_delegates_to_kernel_route(self) -> None:
+        """resolve_path delegates to kernel.route() and returns tuple."""
+        kernel, _, coord = _make_coordinator()
 
-        mount_obs = _FakeMountObserver()
+        route_result = MagicMock()
+        route_result.backend_name = "cas-local"
+        route_result.backend_path = "/file.txt"
+        route_result.mount_point = "/root/workspace"
+        kernel.route.return_value = route_result
+
+        result = coord.resolve_path("/workspace/file.txt")
+
+        assert result is not None
+        backend_name, backend_path, user_mp = result
+        assert backend_name == "cas-local"
+        assert backend_path == "/file.txt"
+        kernel.route.assert_called_once()
+
+    def test_resolve_path_returns_none_when_no_kernel(self) -> None:
+        """resolve_path returns None when kernel is None."""
+        dispatch = _MockDispatch()
+        coord = DriverLifecycleCoordinator(dispatch, kernel=None)
+
+        assert coord.resolve_path("/workspace/file.txt") is None
+
+    def test_resolve_path_returns_none_on_route_error(self) -> None:
+        """resolve_path returns None when kernel.route raises."""
+        kernel, _, coord = _make_coordinator()
+        kernel.route.side_effect = ValueError("no mount")
+
+        assert coord.resolve_path("/nowhere/file.txt") is None
+
+
+# ---------------------------------------------------------------------------
+# mount_points()
+# ---------------------------------------------------------------------------
+
+
+class TestMountPoints:
+    def test_mount_points_delegates_to_kernel(self) -> None:
+        """mount_points delegates to kernel.get_mount_points()."""
+        kernel, _, coord = _make_coordinator()
+        kernel.get_mount_points.return_value = ["/root/workspace", "/root/shared"]
+
+        result = coord.mount_points()
+
+        assert isinstance(result, list)
+        kernel.get_mount_points.assert_called_once()
+
+    def test_mount_points_returns_empty_when_no_kernel(self) -> None:
+        """mount_points returns [] when kernel is None."""
+        dispatch = _MockDispatch()
+        coord = DriverLifecycleCoordinator(dispatch, kernel=None)
+
+        assert coord.mount_points() == []
+
+    def test_mount_points_sorted(self) -> None:
+        """mount_points returns sorted user-facing paths."""
+        kernel, _, coord = _make_coordinator()
+        kernel.get_mount_points.return_value = ["/root/workspace", "/root/archives"]
+
+        result = coord.mount_points()
+
+        assert result == sorted(result)
+
+
+# ---------------------------------------------------------------------------
+# backend_key()
+# ---------------------------------------------------------------------------
+
+
+class TestBackendKey:
+    def test_backend_key_name_only(self) -> None:
+        """backend_key with no mount_point returns just the name."""
+        _, _, coord = _make_coordinator()
         backend = MagicMock()
         backend.name = "cas-local"
-        backend.skill_name = "test"
-        backend.hook_spec.return_value = HookSpec(observers=(mount_obs,))
 
-        coord.register_skill_backend("/", backend)
+        assert coord.backend_key(backend) == "cas-local"
 
-        # register_observe is now a no-op -- observer_count always 0
-        assert dispatch.observer_count == 0
-        # But the backend is stored in _skill_backends
-        canonical = canonicalize_path("/", "root")
-        assert coord.get_skill_backend(canonical) is backend
+    def test_backend_key_with_mount_point(self) -> None:
+        """backend_key with mount_point returns name:mount."""
+        _, _, coord = _make_coordinator()
+        backend = MagicMock()
+        backend.name = "cas-local"
+
+        assert coord.backend_key(backend, "/workspace") == "cas-local:/workspace"
+
+    def test_backend_key_root_mount_omitted(self) -> None:
+        """backend_key with mount_point='/' returns just the name."""
+        _, _, coord = _make_coordinator()
+        backend = MagicMock()
+        backend.name = "cas-local"
+
+        assert coord.backend_key(backend, "/") == "cas-local"
+
+    def test_backend_key_with_self_address(self) -> None:
+        """backend_key appends @address for federated nodes."""
+        _, _, coord = _make_coordinator(self_address="node-1:9090")
+        backend = MagicMock()
+        backend.name = "cas-local"
+
+        assert coord.backend_key(backend) == "cas-local@node-1:9090"
+
+    def test_backend_key_with_mount_and_address(self) -> None:
+        """backend_key with both mount_point and self_address."""
+        _, _, coord = _make_coordinator(self_address="node-1:9090")
+        backend = MagicMock()
+        backend.name = "cas-local"
+
+        assert coord.backend_key(backend, "/workspace") == "cas-local:/workspace@node-1:9090"

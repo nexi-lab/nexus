@@ -444,8 +444,7 @@ class NexusFS(  # type: ignore[misc]
         return self._config
 
     # _resolve_cred, _build_rust_ctx, _get_context_identity, _validate_path,
-    # _parse_context, _ensure_context_ttl, _reject_if_virtual_readme,
-    # _try_virtual_readme_stat, _try_virtual_readme_bytes,
+    # _parse_context, _ensure_context_ttl,
     # _dispatch_write_events — all moved to InternalMixin (nexus_fs_internal.py)
 
     @rpc_expose(description="Acquire or extend advisory lock on a path")
@@ -940,17 +939,6 @@ class NexusFS(  # type: ignore[misc]
         # Close record store (Services layer SQL connections)
         if self._record_store is not None:
             self._record_store.close()
-
-        # Close mounted skill backends that hold resources (e.g., OAuth connectors with SQLite)
-        if hasattr(self, "_driver_coordinator"):
-            from nexus.core.protocols.connector import OAuthCapableProtocol
-
-            for _backend in self._driver_coordinator._skill_backends.values():
-                try:
-                    if isinstance(_backend, OAuthCapableProtocol):
-                        _backend.token_manager.close()
-                except Exception as e:
-                    logger.debug("Failed to close backend token manager: %s", e)
 
         # Close process-local runtime resources owned by this NexusFS.
         while self._runtime_closeables:

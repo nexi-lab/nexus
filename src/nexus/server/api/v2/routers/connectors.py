@@ -707,11 +707,7 @@ async def list_mounted_connectors(
             # Route to a dummy file path inside the mount to get the backend
             _resolved = nx._driver_coordinator.resolve_path(f"{mp.rstrip('/')}/_.yaml", "root")
             if _resolved:
-                # Get skill backend for metadata (SKILL_NAME, SCHEMAS, etc.)
-                from nexus.core.path_utils import canonicalize_path as _cp
-
-                _canonical = _cp(mp.rstrip("/"), "root")
-                backend = nx._driver_coordinator.get_skill_backend(_canonical)
+                backend = None
                 if backend is not None:
                     skill_name = getattr(backend, "SKILL_NAME", None)
                     # Check multiple sources for operation names
@@ -802,15 +798,8 @@ async def get_readme_doc(
     nx = _get_nx(request)
     mp = mount_path.rstrip("/")
 
-    # Get skill backend via DLC for skill doc generation
+    # Skill backend no longer stored in DLC — always None
     backend = None
-    try:
-        from nexus.core.path_utils import canonicalize_path as _cp
-
-        _canonical = _cp(mp, "root")
-        backend = nx._driver_coordinator.get_skill_backend(_canonical)
-    except Exception:
-        pass
 
     # Generate skill doc from backend (preferred — always fresh)
     content = ""
@@ -861,15 +850,8 @@ async def get_schema(
     nx = _get_nx(request)
     mp = mount_path.rstrip("/")
 
-    # Get skill backend for schema generation
+    # Skill backend no longer stored in DLC — always None
     backend = None
-    try:
-        from nexus.core.path_utils import canonicalize_path as _cp
-
-        _canonical = _cp(mp, "root")
-        backend = nx._driver_coordinator.get_skill_backend(_canonical)
-    except Exception:
-        pass
 
     # Try generating from backend's schema generator
     if backend:

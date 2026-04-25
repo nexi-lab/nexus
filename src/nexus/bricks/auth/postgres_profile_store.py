@@ -129,6 +129,33 @@ class DecryptedProfile:
     writer_machine_id: uuid.UUID | None = None
 
 
+@dataclass(frozen=True)
+class ProfileFingerprint:
+    """Identity columns of the single usable envelope row at lookup time.
+
+    Returned by ``PostgresAuthProfileStore.assert_profile_active`` so the
+    cache-hit branch in ``CredentialConsumer.resolve`` can detect a row
+    REWRITE since the cache was primed: a different ``profile_id`` (the
+    old row was deleted and replaced), a different ``writer_machine_id``
+    (a second daemon overwrote the same provider/account), or a bumped
+    ``last_synced_at`` (the daemon pushed a fresh envelope, possibly
+    rotating the upstream credential).
+
+    A mismatch in any of these means the cached plaintext is stale —
+    the consumer evicts and re-runs the decrypt path, which also
+    re-applies the cross-machine read policy against the current writer.
+
+    Carries ``profile_id`` and ``kek_version`` so cache-hit audit rows
+    can name the credential that was served instead of falling back to
+    sentinel placeholders.
+    """
+
+    profile_id: str
+    writer_machine_id: uuid.UUID | None
+    kek_version: int
+    last_synced_at: datetime
+
+
 # ---------------------------------------------------------------------------
 # Schema (idempotent CREATE TABLE IF NOT EXISTS + RLS policies)
 # ---------------------------------------------------------------------------
@@ -1441,8 +1468,10 @@ class PostgresAuthProfileStore:
         )
         return profile, self._deserialize_credential(plaintext)
 
-    def assert_profile_active(self, *, principal_id: uuid.UUID, provider: str) -> None:
-        """Cheap predicate-only check: a usable envelope exists right now.
+    def assert_profile_active(
+        self, *, principal_id: uuid.UUID, provider: str
+    ) -> "ProfileFingerprint":
+        """Cheap predicate-only check + fingerprint of the single usable row.
 
         Cache-hit paths call this BEFORE returning the cached credential so an
         operator disable, an automatic cooldown, a freshly-pushed ambiguous
@@ -1452,20 +1481,23 @@ class PostgresAuthProfileStore:
         ciphertext, not disabled, not cooled-down, not stale) but reads no
         payload.
 
-        Single round trip returning two counts:
-          - ``usable``: rows that pass every gate including freshness
-          - ``stale_only``: rows that pass disable/cooldown but failed freshness
+        Returns a ``ProfileFingerprint`` for the single usable row so the
+        caller can detect a row REWRITE since the cache was primed (different
+        ``profile_id``, different writer ``machine_id``, or bumped
+        ``last_synced_at``). Without this, the cache-hit branch would keep
+        serving an old machine's plaintext for the rest of the cache TTL after
+        another daemon overwrote the same provider/account.
 
         Mapping:
           - ``usable > 1``  → MultipleProfilesForProvider (fail closed)
-          - ``usable == 1`` → ok
+          - ``usable == 1`` → return ProfileFingerprint
           - ``usable == 0`` and ``stale_only >= 1`` → StaleSource
           - ``usable == 0`` and ``stale_only == 0`` → ProfileNotFound
         """
         from nexus.bricks.auth.consumer import MultipleProfilesForProvider, StaleSource
 
         with self._scoped() as conn:
-            row = conn.execute(
+            counts = conn.execute(
                 text(
                     "SELECT "
                     "  COUNT(*) FILTER (WHERE "
@@ -1484,24 +1516,56 @@ class PostgresAuthProfileStore:
                 ),
                 {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
             ).fetchone()
-        usable = int(row.usable) if row else 0
-        stale_only = int(row.stale_only) if row else 0
-        if usable > 1:
-            raise MultipleProfilesForProvider.from_row(
-                tenant_id=self._tenant_id,
-                principal_id=principal_id,
-                provider=provider,
-                cause=f"{usable}+ active envelopes; collapse to one or upgrade wire contract",
-            )
-        if usable == 1:
-            return
-        if stale_only >= 1:
-            raise StaleSource.from_row(
-                tenant_id=self._tenant_id,
-                principal_id=principal_id,
-                provider=provider,
-                cause="last_synced_at_past_sync_ttl",
-            )
+            usable = int(counts.usable) if counts else 0
+            stale_only = int(counts.stale_only) if counts else 0
+            if usable > 1:
+                raise MultipleProfilesForProvider.from_row(
+                    tenant_id=self._tenant_id,
+                    principal_id=principal_id,
+                    provider=provider,
+                    cause=f"{usable}+ active envelopes; collapse to one or upgrade wire contract",
+                )
+            if usable == 1:
+                # Re-fetch the single usable row's identity columns so the
+                # consumer can detect a rewrite vs the cached entry. Same
+                # predicate as the count above; LIMIT 1 because we already
+                # know exactly one row matches.
+                fp = conn.execute(
+                    text(
+                        "SELECT id, machine_id, kek_version, last_synced_at "
+                        "FROM auth_profiles "
+                        "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
+                        "  AND ciphertext IS NOT NULL "
+                        "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
+                        "  AND (cooldown_until IS NULL OR cooldown_until <= NOW()) "
+                        "  AND last_synced_at IS NOT NULL "
+                        "  AND last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL > NOW() "
+                        "LIMIT 1"
+                    ),
+                    {"t": str(self._tenant_id), "p": str(principal_id), "prov": provider},
+                ).fetchone()
+                if fp is None:
+                    # Row vanished between the COUNT and the LIMIT 1 (operator
+                    # action mid-call, or concurrent rewrite). Treat as not
+                    # found rather than serving the now-cached plaintext.
+                    raise ProfileNotFound(
+                        tenant_id=self._tenant_id,
+                        principal_id=principal_id,
+                        provider=provider,
+                    )
+                return ProfileFingerprint(
+                    profile_id=str(fp.id),
+                    writer_machine_id=fp.machine_id,
+                    kek_version=int(fp.kek_version),
+                    last_synced_at=fp.last_synced_at,
+                )
+            if stale_only >= 1:
+                raise StaleSource.from_row(
+                    tenant_id=self._tenant_id,
+                    principal_id=principal_id,
+                    provider=provider,
+                    cause="last_synced_at_past_sync_ttl",
+                )
         raise ProfileNotFound(
             tenant_id=self._tenant_id,
             principal_id=principal_id,

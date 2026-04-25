@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from nexus.bricks.auth.consumer import MaterializedCredential
+from nexus.bricks.auth.postgres_profile_store import ProfileFingerprint
 
 _REFRESH_HEADROOM_SECONDS = 60
 
@@ -43,6 +44,12 @@ def _compute_ttl_seconds(*, now: datetime, expires_at: datetime | None) -> int:
 class _Entry:
     cred: MaterializedCredential
     expires_at_monotonic: float
+    # Identity of the source row at the time we cached. The cache-hit branch
+    # in CredentialConsumer compares this against the current row's fingerprint
+    # so a rewrite (different profile_id, different writer machine, or bumped
+    # last_synced_at) evicts and re-runs the decrypt path — which re-applies
+    # the cross-machine read policy against the NEW writer.
+    fingerprint: ProfileFingerprint
 
 
 class ResolvedCredCache:
@@ -63,7 +70,12 @@ class ResolvedCredCache:
         key: tuple[str, str, str, str],
         *,
         now: datetime,
-    ) -> MaterializedCredential | None:
+    ) -> _Entry | None:
+        """Return the full entry (credential + cached fingerprint) or None.
+
+        Returning the entry rather than just the credential lets the caller
+        compare cached vs current ``ProfileFingerprint`` and evict on rewrite.
+        """
         now_ts = now.timestamp()
         with self._lock:
             entry = self._store.get(key)
@@ -73,7 +85,7 @@ class ResolvedCredCache:
                 self._store.pop(key, None)
                 return None
             self._store.move_to_end(key)
-            return entry.cred
+            return entry
 
     def put(
         self,
@@ -81,6 +93,7 @@ class ResolvedCredCache:
         cred: MaterializedCredential,
         *,
         now: datetime,
+        fingerprint: ProfileFingerprint,
     ) -> None:
         ttl = min(
             self._ceiling,
@@ -90,6 +103,7 @@ class ResolvedCredCache:
             self._store[key] = _Entry(
                 cred=cred,
                 expires_at_monotonic=now.timestamp() + ttl,
+                fingerprint=fingerprint,
             )
             self._store.move_to_end(key)
             while len(self._store) > self._max:

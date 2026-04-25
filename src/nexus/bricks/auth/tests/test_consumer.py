@@ -496,6 +496,105 @@ def test_warm_cache_evicts_when_source_goes_stale(engine):
         consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
 
 
+def test_cache_hit_audit_row_names_real_profile_and_kek_version(engine):
+    """Sampled cache-hit audit rows must name the credential that was served
+    (profile_id + kek_version from the cached fingerprint), not a sentinel
+    ``'cached'`` / ``0`` that breaks incident review and rotation forensics.
+
+    Regression for codex round-6 finding F20.
+    """
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    encryption = InMemoryEncryptionProvider()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    # Force every cache-hit to be sampled so we can assert on the row.
+    consumer = CredentialConsumer(
+        store=PostgresAuthProfileStore("", tenant_id=tenant, principal_id=principal, engine=engine),
+        encryption=encryption,
+        dek_cache=DEKCache(),
+        cred_cache=ResolvedCredCache(ceiling_seconds=300),
+        adapters={"github": GithubProviderAdapter()},
+        audit=ReadAuditWriter(engine=engine, hit_sample_rate=1.0),
+    )
+    # Prime cache (records cache-miss audit) then re-read (records sampled hit).
+    consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        rows = list(
+            conn.execute(
+                text(
+                    "SELECT auth_profile_id, kek_version, cache_hit "
+                    "FROM auth_profile_reads WHERE tenant_id = :t "
+                    "ORDER BY read_at"
+                ),
+                {"t": str(tenant)},
+            )
+        )
+    miss = next(r for r in rows if r.cache_hit is False)
+    hit = next(r for r in rows if r.cache_hit is True)
+    # Both rows name the same real credential; the cache-hit row no longer
+    # uses sentinel placeholders.
+    assert hit.auth_profile_id == miss.auth_profile_id == "github-default"
+    assert hit.kek_version == miss.kek_version
+    assert hit.kek_version > 0
+
+
+def test_warm_cache_evicts_when_row_rewritten_by_other_machine(engine, monkeypatch):
+    """Daemon A primes the cache. Daemon B then overwrites the row's
+    machine_id (a fresh push from B for the same principal/provider). A's
+    next request must NOT return its cached plaintext: the cache entry's
+    fingerprint no longer matches the row, so the consumer evicts and
+    re-runs the decrypt path — which then re-applies the cross-machine
+    read policy against B as the new writer.
+
+    Without this, A keeps serving its cached plaintext for the rest of the
+    cache TTL even after the row was replaced. Regression for codex round-6
+    finding F19.
+    """
+    monkeypatch.delenv("NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ", raising=False)
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine_a = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    machine_b = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    # Stamp the existing row with A as the writer so A's first read is in-machine.
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text("UPDATE auth_profiles SET machine_id = :m WHERE tenant_id = :t"),
+            {"m": str(machine_a), "t": str(tenant)},
+        )
+
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    consumer.resolve(claims=_claims(tenant, principal, machine_a), provider="github", purpose="x")
+    # B overwrites the row's writer machine_id AND bumps last_synced_at to
+    # simulate "B re-pushed the same provider for the same principal".
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "UPDATE auth_profiles SET machine_id = :m, last_synced_at = NOW() "
+                "WHERE tenant_id = :t"
+            ),
+            {"m": str(machine_b), "t": str(tenant)},
+        )
+    # A's next request: cache key still matches, but fingerprint differs →
+    # evict + decrypt path → cross-machine check rejects (writer is now B).
+    with pytest.raises(MachineUnknownOrRevoked) as exc:
+        consumer.resolve(
+            claims=_claims(tenant, principal, machine_a), provider="github", purpose="x"
+        )
+    assert exc.value.cause == "cross_machine_read_disallowed"
+
+
 def test_warm_cache_does_not_bypass_cross_machine_check(engine, monkeypatch):
     """Daemon A primes the cache; Daemon B (different machine_id) must NOT
     inherit A's plaintext from the warm cache.

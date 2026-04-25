@@ -271,16 +271,17 @@ class CredentialConsumer:
             )
 
             if not force_refresh:
-                cached = self._cred_cache.get(cache_key, now=now)
-                if cached is not None:
+                entry = self._cred_cache.get(cache_key, now=now)
+                if entry is not None:
                     # Cache hit must STILL re-check profile state — operator
-                    # disable, automatic cooldown, or a freshly-pushed second
-                    # ambiguous envelope must take effect within ms instead
-                    # of waiting for the cache TTL. The check is one indexed
-                    # COUNT(*), no decrypt, no payload read. Failure evicts
-                    # the cache entry and bubbles up.
+                    # disable, automatic cooldown, freshly-pushed ambiguous
+                    # second envelope, stale source, OR a row rewrite by a
+                    # different daemon all need to take effect within ms
+                    # instead of waiting for the cache TTL. The check is one
+                    # indexed query (COUNT FILTER + LIMIT 1); no decrypt,
+                    # no payload read.
                     try:
-                        self._get_store(claims).assert_profile_active(
+                        current = self._get_store(claims).assert_profile_active(
                             principal_id=claims.principal_id,
                             provider=provider,
                         )
@@ -300,20 +301,37 @@ class CredentialConsumer:
                         self._cred_cache.evict(cache_key)
                         raise
 
-                    # Cache hit — log sampled audit row, no decrypt
-                    cache_label = "hit"
-                    self._audit.write(
-                        tenant_id=claims.tenant_id,
-                        principal_id=claims.principal_id,
-                        auth_profile_id="cached",
-                        caller_machine_id=claims.machine_id,
-                        caller_kind="daemon",
-                        provider=provider,
-                        purpose=purpose,
-                        cache_hit=True,
-                        kek_version=0,  # unknown on cache hit; sentinel value
-                    )
-                    return cached
+                    cached_fp = entry.fingerprint
+                    # Detect a row rewrite since the cache was primed: a
+                    # different profile_id (deleted + replaced), a different
+                    # writer machine (another daemon overwrote the same
+                    # provider/account), or a bumped last_synced_at (daemon
+                    # pushed a fresh envelope, possibly rotating the upstream
+                    # credential). Any difference → cached plaintext is stale
+                    # AND the cross-machine read policy must be re-evaluated
+                    # against the new writer. Evict + fall through to the
+                    # decrypt path which re-applies all policy gates.
+                    if (
+                        current.profile_id != cached_fp.profile_id
+                        or current.writer_machine_id != cached_fp.writer_machine_id
+                        or current.last_synced_at != cached_fp.last_synced_at
+                    ):
+                        self._cred_cache.evict(cache_key)
+                    else:
+                        # Cache hit — log sampled audit row, no decrypt.
+                        cache_label = "hit"
+                        self._audit.write(
+                            tenant_id=claims.tenant_id,
+                            principal_id=claims.principal_id,
+                            auth_profile_id=cached_fp.profile_id,
+                            caller_machine_id=claims.machine_id,
+                            caller_kind="daemon",
+                            provider=provider,
+                            purpose=purpose,
+                            cache_hit=True,
+                            kek_version=cached_fp.kek_version,
+                        )
+                        return entry.cred
 
             try:
                 decrypted = self._get_store(claims).decrypt_profile(
@@ -399,7 +417,19 @@ class CredentialConsumer:
                 cache_hit=False,
                 kek_version=decrypted.kek_version,
             )
-            self._cred_cache.put(cache_key, materialized, now=now)
+            from nexus.bricks.auth.postgres_profile_store import ProfileFingerprint
+
+            self._cred_cache.put(
+                cache_key,
+                materialized,
+                now=now,
+                fingerprint=ProfileFingerprint(
+                    profile_id=decrypted.profile_id,
+                    writer_machine_id=decrypted.writer_machine_id,
+                    kek_version=decrypted.kek_version,
+                    last_synced_at=decrypted.last_synced_at,
+                ),
+            )
             return materialized
 
         except (ProfileNotFoundForCaller, ProviderNotConfigured, MachineUnknownOrRevoked):

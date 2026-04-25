@@ -89,6 +89,11 @@ class ReadAuditWriter:
         # consumer, so top-level imports would create a cycle.
         from nexus.bricks.auth.consumer import AuditWriteFailed, MachineUnknownOrRevoked
 
+        # F28: Track whether the SHARE-lock gate proved an unrevoked row.
+        # Errors BEFORE the gate proves machine state must always fail
+        # closed — even for cache hits. Only errors AFTER the gate are
+        # candidates for the cache-hit best-effort swallow.
+        gate_passed = False
         try:
             with self._engine.begin() as conn:
                 conn.execute(
@@ -118,6 +123,7 @@ class ReadAuditWriter:
                         provider=provider,
                         cause="machine_revoked",
                     )
+                gate_passed = True
                 if sampled_out:
                     # Gate passed; skip the audit INSERT since this hit
                     # was sampled out. The SHARE lock is released on
@@ -149,12 +155,19 @@ class ReadAuditWriter:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception(
-                "auth_profile_reads insert failed tenant=%s principal=%s provider=%s",
+                "auth_profile_reads insert failed tenant=%s principal=%s provider=%s "
+                "gate_passed=%s",
                 tenant_id,
                 principal_id,
                 provider,
+                gate_passed,
             )
-            if not cache_hit:
+            # Cache-miss: always raise. Cache-hit before gate proven:
+            # raise too — we cannot return a credential we haven't
+            # confirmed the daemon is still allowed to read. Cache-hit
+            # AFTER gate proven: best-effort swallow (operational
+            # telemetry blip on the audit INSERT only).
+            if not cache_hit or not gate_passed:
                 raise AuditWriteFailed.from_row(
                     tenant_id=tenant_id,
                     principal_id=principal_id,

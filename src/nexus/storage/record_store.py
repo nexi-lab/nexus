@@ -336,8 +336,15 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         # Create tables (skip in production when Alembic is SSOT)
         if create_tables:
             from nexus.storage.models import Base
+            from nexus.storage.zone_bootstrap import ensure_root_zone
 
             Base.metadata.create_all(self._engine)
+            # Issue #3897: every install must contain zones.root before
+            # the first create_api_key call (writes api_key_zones with
+            # FK to zones). Alembic's migration handles persistent
+            # installs; this covers create_all paths used by CLI tooling,
+            # tests, and `nexus hub` flows.
+            ensure_root_zone(self.session_factory)
 
         logger.info(
             "SQLAlchemyRecordStore initialized: %s (read_replica=%s)",

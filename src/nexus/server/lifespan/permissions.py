@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from nexus.server.lifespan.services_container import LifespanServices
-    from nexus.storage.models import ZoneModel
 
 logger = logging.getLogger(__name__)
 
@@ -49,79 +48,20 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
 
 
 def _seed_root_zone(svc: "LifespanServices") -> None:
-    """Ensure ``zones.root`` exists so api_key_zones FK inserts succeed.
+    """Re-assert the default-zone invariant at FastAPI startup.
 
-    Defense in depth: the alembic migration for ``api_key_zones`` already
-    seeds the row. This re-asserts the invariant on installs that bypass
-    Alembic (``Base.metadata.create_all`` only) and on schemas that may
-    have lost the row through manual intervention.
-
-    Fails closed: any inability to confirm the row is present is fatal,
-    because every later ``create_api_key`` call will otherwise hit
-    FK ``api_key_zones_zone_id_fkey``. Concurrent-startup races (two
-    processes inserting the row at once) are tolerated — the conflicting
-    insert is treated as success once the row is observable on re-read.
+    Delegates to ``nexus.storage.zone_bootstrap.ensure_root_zone`` — the
+    single source of truth shared with ``SQLAlchemyRecordStore.__init__``
+    and the alembic migration. This call is defense in depth for schemas
+    that may have lost the row through manual intervention.
     """
     session_factory = svc.session_factory
     if session_factory is None:
         return
 
-    from datetime import UTC, datetime
+    from nexus.storage.zone_bootstrap import ensure_root_zone
 
-    from sqlalchemy.exc import IntegrityError
-
-    from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.storage.models import ZoneModel
-
-    with session_factory() as session:
-        existing = session.get(ZoneModel, ROOT_ZONE_ID)
-        if existing is not None:
-            _assert_root_zone_active(existing)
-            return
-        session.add(
-            ZoneModel(
-                zone_id=ROOT_ZONE_ID,
-                name="Root",
-                phase="Active",
-                finalizers="[]",
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-            )
-        )
-        try:
-            session.commit()
-            logger.info("Seeded default zone %r", ROOT_ZONE_ID)
-            return
-        except IntegrityError:
-            session.rollback()
-
-    # Concurrent insert raced us. Confirm the row is present and Active in
-    # a fresh session — if it isn't, the original error wasn't a benign
-    # race and we must fail closed.
-    with session_factory() as session:
-        racer = session.get(ZoneModel, ROOT_ZONE_ID)
-        if racer is None:
-            raise RuntimeError(
-                f"failed to seed default zone {ROOT_ZONE_ID!r}: "
-                "IntegrityError on insert and row not visible on re-read"
-            )
-        _assert_root_zone_active(racer)
-
-
-def _assert_root_zone_active(zone: "ZoneModel") -> None:
-    """Refuse to start when zones.root exists but isn't Active.
-
-    Auth rejects keys whose zone is not Active (or is soft-deleted), so
-    accepting a Terminating/Terminated/deleted root row would let startup
-    look healthy while every default agent registration / root-token call
-    still failed at request time. Fail closed with an actionable error.
-    """
-    if zone.phase != "Active" or zone.deleted_at is not None:
-        raise RuntimeError(
-            f"default zone {zone.zone_id!r} is not usable: "
-            f"phase={zone.phase!r} deleted_at={zone.deleted_at!r}. "
-            "Restore it to Active (and clear deleted_at) before starting."
-        )
+    ensure_root_zone(session_factory)
 
 
 async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:

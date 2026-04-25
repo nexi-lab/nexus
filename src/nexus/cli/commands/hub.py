@@ -305,7 +305,7 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
             [
                 r.key_id[:12] + "…" if len(r.key_id) > 12 else r.key_id,
                 r.name,
-                r.zone_id,
+                r.zone_id or "-",
                 ",".join(_zones(r)),
                 "yes" if r.is_admin else "no",
                 _iso(r.created_at),

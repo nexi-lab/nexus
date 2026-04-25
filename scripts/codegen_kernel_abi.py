@@ -751,6 +751,7 @@ def generate_stubs(
         "bitmap": "Tiger Cache Bitmap (bitmap.rs)",
         "simd": "SIMD vector similarity (simd.rs)",
         "trigram": "Trigram Index (trigram.rs)",
+        "grpc_server": "VFS gRPC server (grpc_server.rs)",
     }
 
     MODULE_ORDER = [
@@ -764,6 +765,7 @@ def generate_stubs(
         "bitmap",
         "simd",
         "trigram",
+        "grpc_server",
     ]
 
     for mod_name in MODULE_ORDER:
@@ -918,8 +920,20 @@ def generate_protocols(traits: list[TraitDef]) -> str:
 
 def generate_exports(all_names: list[str]) -> str:
     """Generate kernel_exports.py — Python re-export module."""
-    # Split into static (always available) — feature-gated are excluded
-    static_names = [n for n in sorted(all_names) if n not in FEATURE_GATED_EXPORTS]
+
+    # Match ruff-isort's default order for `from X import (...)` blocks:
+    # 1) PascalCase / SCREAMING_CASE identifiers (first char uppercase)
+    #    sorted before lowercase / snake_case identifiers,
+    # 2) within each group, case-insensitive alphabetical (with ASCII
+    #    tiebreaker for stability).
+    # Without exactly mirroring ruff's grouping, the codegen-sync hook
+    # ping-pongs against `ruff --fix` on every commit.
+    def _isort_key(name: str) -> tuple[int, str, str]:
+        first = name[:1]
+        case_group = 0 if first.isupper() else 1
+        return (case_group, name.lower(), name)
+
+    static_names = [n for n in sorted(all_names, key=_isort_key) if n not in FEATURE_GATED_EXPORTS]
 
     lines = [
         MARKER,
@@ -2613,7 +2627,11 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)",
             '#[pyclass(name = "Kernel")]',
             "pub struct PyKernel {",
-            "    inner: Arc<Kernel>,",
+            "    /// Crate-visible so `grpc_server.rs` (and any other",
+            "    /// kernel-internal task spawner) can clone the Arc",
+            "    /// without an extra accessor method that codegen would",
+            "    /// have to preserve. Not exposed to Python.",
+            "    pub(crate) inner: Arc<Kernel>,",
             "    hooks: Mutex<HookRegistry>,",
             "}",
             "",

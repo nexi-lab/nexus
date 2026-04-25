@@ -23,7 +23,7 @@ pub(crate) const DT_STREAM: u8 = 4;
 /// Hot-path projection of FileMetadata.
 #[derive(Clone, Debug, Default)]
 #[allow(dead_code)]
-pub(crate) struct CachedEntry {
+pub struct CachedEntry {
     pub(crate) backend_name: String,
     pub(crate) physical_path: String,
     pub(crate) size: u64,

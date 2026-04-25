@@ -167,12 +167,15 @@ class TxtaiBackend:
             weakref.WeakKeyDictionary()
         )
         self._native_lock = threading.Lock()
-        # Startup gate — only one loop runs _startup_impl; others wait on
-        # ``_startup_done`` (an Event so we wake on either success OR error).
+        # Startup gate. Each call to ``startup()`` that observes
+        # ``_startup_running == False`` claims the next *generation*; all
+        # state is keyed by that generation so a later retry cannot clobber
+        # the completion signal that earlier waiters are still parked on.
         self._startup_native_lock = threading.Lock()
         self._startup_running = False
-        self._startup_done = threading.Event()
-        self._startup_error: BaseException | None = None
+        self._startup_generation = 0
+        self._startup_events: dict[int, threading.Event] = {}
+        self._startup_errors: dict[int, BaseException | None] = {}
 
     def _get_lock(self) -> asyncio.Lock:
         # Same-loop coroutine fairness layer; cross-loop exclusion is provided
@@ -190,25 +193,34 @@ class TxtaiBackend:
 
     @contextlib.asynccontextmanager
     async def _exclusive(self) -> AsyncIterator[None]:
-        """Take the per-loop async lock + the cross-loop native lock.
+        """Per-loop coroutine fairness only.
 
-        Replaces the original ``async with self._lock:`` contract. The native
-        section serialises faiss/SQLAlchemy work across every event loop in
-        the process; the per-loop async lock keeps same-loop coroutines fair
-        without spawning a worker thread per attempt.
+        Cross-loop mutual exclusion lives inside ``_run_native``: the
+        threading.Lock there is taken *inside* the worker thread so a cancelled
+        asyncio caller cannot release it while the worker is still in the
+        native section (round 3 review feedback). Multi-step bodies that need
+        cross-loop atomicity must batch their work into a single ``_run_native``
+        callable; back-to-back ``_run_native`` calls within one ``_exclusive``
+        block are atomic on the same loop but can be interleaved across loops.
         """
         async with self._get_lock():
-            # Cancellation-safe acquire (round 2 review): poll without parking
-            # a default-executor worker thread. If this coroutine is cancelled
-            # mid-poll we never hold the lock, so there is nothing to leak,
-            # and we never starve native-section holders by saturating the
-            # threadpool with waiters.
-            while not self._native_lock.acquire(blocking=False):
-                await asyncio.sleep(0.005)
-            try:
-                yield
-            finally:
-                self._native_lock.release()
+            yield
+
+    async def _run_native(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+        """Execute ``fn`` in a worker thread under the cross-loop native lock.
+
+        The lock is acquired and released *inside* the worker thread, so a
+        cancelled asyncio caller cannot leave the lock held with no owner —
+        the worker simply finishes ``fn`` and releases on its way out.
+        Subsequent ``_run_native`` calls block on lock acquisition inside their
+        own worker thread until the previous ``fn`` completes.
+        """
+
+        def _inner() -> Any:
+            with self._native_lock:
+                return fn(*args, **kwargs)
+
+        return await asyncio.to_thread(_inner)
 
     async def startup(self) -> None:
         """Initialize txtai resources once across any number of event loops.
@@ -222,46 +234,57 @@ class TxtaiBackend:
         if self._started:
             return
 
-        # Decide which loop owns initialisation. The threading.Lock makes this
-        # decision atomic across loops; we never hand a Task created on one
-        # loop to a coroutine running on another (which would raise
-        # "Task ... attached to a different loop").
+        # Claim the next generation. Each generation owns its own Event +
+        # error slot so a retry that follows a failure cannot stomp on the
+        # signal that earlier waiters are blocked on.
         should_init = False
+        my_gen: int
+        my_event: threading.Event
         with self._startup_native_lock:
             if self._started:
                 return
             if not self._startup_running:
                 self._startup_running = True
-                self._startup_done.clear()
-                self._startup_error = None
+                self._startup_generation += 1
+                self._startup_events[self._startup_generation] = threading.Event()
+                self._startup_errors[self._startup_generation] = None
                 should_init = True
+            my_gen = self._startup_generation
+            my_event = self._startup_events[my_gen]
 
         if should_init:
             try:
                 await self._startup_impl()
             except BaseException as exc:
                 with self._startup_native_lock:
-                    self._startup_error = exc
+                    self._startup_errors[my_gen] = exc
                 raise
             finally:
-                # Always wake waiters, success or failure, so they can
-                # re-raise the stored error or retry. Without this, a crashed
-                # owner would leave every other loop polling forever.
+                # Set the per-generation event under the same mutex that
+                # controls ``_startup_running`` so a retry cannot enter and
+                # clear the slot before this set() runs.
                 with self._startup_native_lock:
                     self._startup_running = False
-                self._startup_done.set()
+                    my_event.set()
         else:
-            # Another loop owns init. Poll the Event so we wake on either
-            # success or failure rather than spinning on ``_started``.
-            while not self._startup_done.is_set():
+            while not my_event.is_set():
                 await asyncio.sleep(0.05)
-            if self._startup_error is not None:
-                raise self._startup_error
-            if not self._started:
-                # Owner finished without exception but did not flip _started
-                # (e.g. _startup_impl returned early for a missing dependency).
-                # The cleanest behaviour for the caller is to surface this so
-                # they can fall back to non-search paths.
+            with self._startup_native_lock:
+                error = self._startup_errors.get(my_gen)
+                started = self._started
+                # Trim the per-generation slots — the result has been observed
+                # by every waiter that holds ``my_event``. Use ``pop`` with a
+                # default so concurrent waiters are tolerated.
+                if my_event.is_set():
+                    self._startup_errors.pop(my_gen, None)
+                    self._startup_events.pop(my_gen, None)
+            if error is not None:
+                raise error
+            if not started:
+                # Owner returned without exception but did not flip _started
+                # (e.g. _startup_impl took the degraded path for a missing
+                # dependency). Surface as RuntimeError so callers can fall
+                # back to non-search paths.
                 raise RuntimeError("txtai backend startup did not complete")
 
     def kickoff_startup(self) -> None:
@@ -520,8 +543,8 @@ class TxtaiBackend:
         async with self._exclusive():
             self._reranker = None
             if self._embeddings is not None:
-                await asyncio.to_thread(self._save)
-                await asyncio.to_thread(self._embeddings.close)
+                await self._run_native(self._save)
+                await self._run_native(self._embeddings.close)
                 self._embeddings = None
             self._started = False
         logger.info("txtai backend shut down")
@@ -578,11 +601,11 @@ class TxtaiBackend:
             if not self._embeddings:
                 return 0
             try:
-                await asyncio.to_thread(self._embeddings.index, rows)
-                await asyncio.to_thread(self._save)
+                await self._run_native(self._embeddings.index, rows)
+                await self._run_native(self._save)
             except Exception:
                 logger.error("index failed, rolling back sessions", exc_info=True)
-                await asyncio.to_thread(self._rollback_db_sessions)
+                await self._run_native(self._rollback_db_sessions)
                 raise
         return len(rows)
 
@@ -669,13 +692,13 @@ class TxtaiBackend:
                                 "rebuilding (would drop table)"
                             )
                             self._embeddings.load(self._config_path)
-                            await asyncio.to_thread(self._embeddings.upsert, rows)
+                            await self._run_native(self._embeddings.upsert, rows)
                         else:
-                            await asyncio.to_thread(self._embeddings.index, rows)
+                            await self._run_native(self._embeddings.index, rows)
                     else:
                         # Incremental: append to existing index (no table drop)
-                        await asyncio.to_thread(self._embeddings.upsert, rows)
-                    await asyncio.to_thread(self._save)
+                        await self._run_native(self._embeddings.upsert, rows)
+                    await self._run_native(self._save)
                     return len(rows)
                 except Exception:
                     if attempt == 0:
@@ -683,8 +706,8 @@ class TxtaiBackend:
                             "upsert failed, rolling back and syncing offset",
                             exc_info=True,
                         )
-                        await asyncio.to_thread(self._rollback_ann_session)
-                        await asyncio.to_thread(self._sync_offset_from_db)
+                        await self._run_native(self._rollback_ann_session)
+                        await self._run_native(self._sync_offset_from_db)
                     else:
                         raise
         return 0
@@ -761,8 +784,8 @@ class TxtaiBackend:
             if not self._embeddings:
                 return 0
             try:
-                await asyncio.to_thread(self._embeddings.delete, ids)
-                await asyncio.to_thread(self._save)
+                await self._run_native(self._embeddings.delete, ids)
+                await self._run_native(self._save)
             except Exception:
                 logger.error(
                     "txtai delete failed for %d ids; rolling back, "
@@ -770,13 +793,13 @@ class TxtaiBackend:
                     len(ids),
                     exc_info=True,
                 )
-                await asyncio.to_thread(self._rollback_db_sessions)
+                await self._run_native(self._rollback_db_sessions)
                 # Restore the in-memory state from durable storage so
                 # subsequent searches don't see a phantom delete that
                 # never persisted, AND so the next successful _save()
                 # cannot accidentally durable-ize the failed delete.
                 try:
-                    await asyncio.to_thread(self._embeddings.load, self._config_path)
+                    await self._run_native(self._embeddings.load, self._config_path)
                 except Exception:
                     # If reload itself fails, the only safe move is to
                     # mark the embeddings unusable so the worker stops
@@ -821,7 +844,7 @@ class TxtaiBackend:
         async with self._exclusive():
             if not self._embeddings:
                 return []
-            raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
+            raw: list[dict[str, Any]] = await self._run_native(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
         for r in raw:
@@ -889,10 +912,10 @@ class TxtaiBackend:
             async with self._exclusive():
                 if not self._embeddings:
                     return [[] for _ in queries]
-                raw_results = await asyncio.to_thread(self._embeddings.batchsearch, sqls)
+                raw_results = await self._run_native(self._embeddings.batchsearch, sqls)
         except Exception:
             logger.warning("batch_search failed, rolling back session", exc_info=True)
-            await asyncio.to_thread(self._rollback_db_sessions)
+            await self._run_native(self._rollback_db_sessions)
             return [[] for _ in queries]
 
         # Convert each query's raw results into BaseSearchResult lists
@@ -934,7 +957,7 @@ class TxtaiBackend:
             if not self._reranker:
                 return results[:limit]
             try:
-                scored: list[tuple[int, float]] = await asyncio.to_thread(
+                scored: list[tuple[int, float]] = await self._run_native(
                     self._reranker,
                     query,
                     texts,
@@ -981,7 +1004,7 @@ class TxtaiBackend:
             if not self._embeddings or not getattr(self._embeddings, "graph", None):
                 return []
             # txtai's Embeddings.search() uses graph as boost when graph is configured
-            raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
+            raw: list[dict[str, Any]] = await self._run_native(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
         for r in raw:

@@ -527,8 +527,12 @@ class TestTxtaiBackendConcurrency:
         assert seen[0] is not seen[1]
 
     def test_native_section_serialises_across_loops(self) -> None:
-        """Issue #3894 review: cross-loop work must not overlap inside the
-        native section, otherwise faiss/SQLAlchemy state can race.
+        """Issue #3894 review: cross-loop native work must not overlap.
+
+        With the round-3 design the cross-loop lock lives inside the worker
+        thread that ``_run_native`` dispatches onto, so this test exercises
+        ``_run_native`` (the new public surface for native execution) rather
+        than ``_exclusive`` (which is now per-loop fairness only).
         """
         import threading
         import time as _time
@@ -539,17 +543,19 @@ class TestTxtaiBackendConcurrency:
         active_lock = threading.Lock()
         errors: list[BaseException] = []
 
-        async def critical() -> None:
+        def native_op() -> None:
             nonlocal active, max_active
-            async with backend._exclusive():
-                with active_lock:
-                    active += 1
-                    if active > max_active:
-                        max_active = active
-                # Force an interleaving window.
-                await asyncio.sleep(0.05)
-                with active_lock:
-                    active -= 1
+            with active_lock:
+                active += 1
+                if active > max_active:
+                    max_active = active
+            # Hold long enough that an overlapping caller would be observable.
+            _time.sleep(0.05)
+            with active_lock:
+                active -= 1
+
+        async def critical() -> None:
+            await backend._run_native(native_op)
 
         def runner() -> None:
             try:
@@ -567,8 +573,67 @@ class TestTxtaiBackendConcurrency:
 
         assert errors == [], f"native section raised: {errors!r}"
         assert max_active == 1, f"cross-loop critical sections overlapped: max={max_active}"
-        # Four sleeps of 0.05s, fully serialised, must take at least ~0.18s.
+        # Four 0.05s native ops, fully serialised, must take at least ~0.18s.
         assert elapsed >= 0.18, f"sections did not serialise: elapsed={elapsed:.3f}s"
+
+    def test_run_native_cancellation_holds_until_worker_returns(self) -> None:
+        """Issue #3894 round 3: cancelling the awaiting coroutine must NOT let
+        a second native op enter the section while the first worker thread is
+        still executing ``fn``. The lock is acquired/released inside the worker
+        so cancellation cannot strand it.
+        """
+        import threading
+        import time as _time
+
+        backend = TxtaiBackend()
+        running = threading.Event()
+        finish = threading.Event()
+        second_started_at: list[float] = []
+        second_observed_first_running: list[bool] = []
+
+        def slow_fn() -> None:
+            running.set()
+            finish.wait(timeout=5)
+
+        def fast_fn() -> None:
+            second_started_at.append(_time.perf_counter())
+            # If serialisation is intact, this only runs after slow_fn returns.
+            second_observed_first_running.append(running.is_set() and not finish.is_set())
+
+        async def cancelled_caller() -> None:
+            await backend._run_native(slow_fn)
+
+        async def driver() -> None:
+            t = asyncio.create_task(cancelled_caller())
+            # Give the worker a chance to acquire the lock and start slow_fn.
+            await asyncio.to_thread(running.wait, 5)
+            assert running.is_set()
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+
+        import contextlib
+
+        # Caller path: cancel the slow operation while it is mid-flight.
+        async def submit_second_after_cancel() -> None:
+            await driver()
+            # The slow worker is still holding the native lock; submit a second
+            # native call and verify it is serialised behind the first.
+            second = asyncio.create_task(backend._run_native(fast_fn))
+            # Sleep briefly to let the second op queue up. It should NOT run
+            # until ``finish`` is set, so the time delta will reveal overlap.
+            await asyncio.sleep(0.05)
+            assert not second.done(), "second native op ran while first still in flight"
+            # Release the slow op, then wait for the second to finish.
+            finish.set()
+            await second
+
+        asyncio.run(submit_second_after_cancel())
+        assert second_started_at, "fast_fn never ran"
+        # If the second op overlapped with the first, this would be True.
+        assert second_observed_first_running == [False], (
+            f"second op overlapped first: {second_observed_first_running!r}"
+        )
 
     def test_startup_owner_failure_propagates_to_waiters(self) -> None:
         """Issue #3894 round 2: if the owning loop's startup raises, every
@@ -623,50 +688,95 @@ class TestTxtaiBackendConcurrency:
         # to acquire ownership and re-attempt, but neither may hang).
         assert all(isinstance(e, RuntimeError) for e in waiter_errors)
 
-    def test_exclusive_cancellation_does_not_leak_native_lock(self) -> None:
-        """Issue #3894 round 2: cancelling a coroutine while it is waiting on
-        the native lock must not leave the lock held by an absent owner.
+    def test_startup_retry_after_failure_isolates_generations(self) -> None:
+        """Issue #3894 round 3: a retry that follows a startup failure must
+        not stomp on the completion signal that earlier waiters are blocked
+        on. Waiters from generation N see generation N's error; later
+        generations have their own per-generation Event.
         """
         import threading
 
         backend = TxtaiBackend()
+        first_boom = RuntimeError("gen 1 boom")
+        second_boom = RuntimeError("gen 2 boom")
+        gen2_can_start = threading.Event()
 
-        # Pre-acquire the native lock from a worker thread so the next coroutine
-        # is forced to poll. Release it after the coroutine is cancelled.
-        held = threading.Event()
-        release = threading.Event()
+        call_count = 0
+        call_count_lock = threading.Lock()
 
-        def holder() -> None:
-            backend._native_lock.acquire()
-            held.set()
-            release.wait(timeout=5)
-            backend._native_lock.release()
+        async def impl() -> None:
+            nonlocal call_count
+            with call_count_lock:
+                call_count += 1
+                attempt = call_count
+            if attempt == 1:
+                # Hold long enough that the generation-1 waiter is parked and
+                # the retry can start during this window.
+                await asyncio.sleep(0.1)
+                raise first_boom
+            # Generation 2: wait for the test to release us, then fail with a
+            # distinct error. If the implementation conflates generations,
+            # generation-1 waiters would observe second_boom.
+            await asyncio.to_thread(gen2_can_start.wait, 5)
+            raise second_boom
 
-        async def waiter() -> None:
-            async with backend._exclusive():
-                pass  # never reaches here while holder is active
+        backend._startup_impl = impl
 
-        async def driver() -> None:
-            t = asyncio.create_task(waiter())
-            await asyncio.sleep(0.02)
-            t.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await t
+        gen1_owner_err: list[BaseException] = []
+        gen1_waiter_err: list[BaseException] = []
+        gen2_owner_err: list[BaseException] = []
 
-        import contextlib
+        def gen1_owner() -> None:
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                gen1_owner_err.append(exc)
 
-        h = threading.Thread(target=holder)
-        h.start()
-        held.wait(timeout=5)
-        try:
-            asyncio.run(driver())
-        finally:
-            release.set()
-            h.join(timeout=5)
+        def gen1_waiter() -> None:
+            # Enter while gen1 owner is still inside _startup_impl.
+            import time as _t
 
-        # After cancellation + release, the native lock must be free.
-        assert backend._native_lock.acquire(blocking=False), "native lock leaked after cancellation"
-        backend._native_lock.release()
+            _t.sleep(0.005)
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                gen1_waiter_err.append(exc)
+
+        def gen2_owner() -> None:
+            # Enter AFTER gen1 owner has finished raising — i.e. after gen1
+            # waiter has unblocked. We deliberately race start of gen2 with
+            # the tail of gen1 to exercise the generation-isolation contract.
+            import time as _t
+
+            _t.sleep(0.15)
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                gen2_owner_err.append(exc)
+
+        threads = [
+            threading.Thread(target=gen1_owner),
+            threading.Thread(target=gen1_waiter),
+            threading.Thread(target=gen2_owner),
+        ]
+        for t in threads:
+            t.start()
+        # Let gen2 actually fail rather than block forever.
+        gen2_can_start.set()
+        for t in threads:
+            t.join(timeout=10)
+            assert not t.is_alive(), "thread deadlocked"
+
+        # Gen1 owner must see gen1's error.
+        assert gen1_owner_err and gen1_owner_err[0] is first_boom
+        # Gen1 waiter must see gen1's error too (NOT gen2's error). This is
+        # the contract the per-generation Event protects.
+        assert gen1_waiter_err
+        assert gen1_waiter_err[0] is first_boom, (
+            f"gen1 waiter saw wrong error: {gen1_waiter_err[0]!r}"
+        )
+        # Gen2 owner sees its own error.
+        assert gen2_owner_err and gen2_owner_err[0] is second_boom
 
     def test_startup_runs_once_across_loops(self) -> None:
         """Issue #3894 review: only one loop should run _startup_impl, even when

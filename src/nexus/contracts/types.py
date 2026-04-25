@@ -88,6 +88,9 @@ class OperationContext:
         subject_id: Unique identifier for the subject.
         groups: List of group IDs the subject belongs to.
         zone_id: Kernel namespace partition ID for multi-zone isolation (optional).
+        zone_set: Allow-list of zones the subject may target (#3785). Defaults to
+            (zone_id,) when zone_id is set; () otherwise. Tuple for hashability —
+            OperationContext may be used as a cache key.
         is_admin: Whether the subject has admin privileges.
         is_system: Whether this is a system operation (bypasses all checks).
         admin_capabilities: Set of granted admin capabilities.
@@ -218,6 +221,9 @@ def assert_zone_allowed(ctx: "OperationContext", requested: str) -> None:
     """Raise PermissionError if `requested` is not in the token's zone allow-list.
 
     Admins (ctx.is_admin) bypass the check — mirrors existing ReBAC admin shortcut.
+    `is_system` is intentionally NOT a bypass here: system ops always come from
+    in-process callers that construct OperationContext with an explicit zone_set
+    matching their intent, so honoring the allow-list keeps that contract honest.
     """
     if ctx.is_admin or requested in ctx.zone_set:
         return

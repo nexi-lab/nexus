@@ -55,7 +55,7 @@ class MetadataMixin:
         """Extract typed params for Rust native backend construction.
 
         Returns a dict of kwargs for kernel.sys_setattr if the backend has
-        a Rust-native equivalent, or None to fall back to PyObjectStoreAdapter.
+        a Rust-native equivalent, or None when the backend type is not recognized.
         """
         # S3 backends (PathS3Backend, CASS3Backend)
         if "S3" in cls_name:
@@ -465,7 +465,7 @@ class MetadataMixin:
             # ── Rust native backend detection ────────────────────────
             # For connectors with Rust-native backends, extract typed params
             # from the Python instance so Rust constructs the backend without
-            # PyObjectStoreAdapter (Crossing 5 elimination).
+            # All backends are Rust-native now.
             _cls_name = type(backend).__name__
             _rust_typed = self._extract_rust_backend_params(backend, _cls_name)
             if _rust_typed is not None:

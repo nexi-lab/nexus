@@ -109,6 +109,7 @@ class OperationContext:
     user_id: str
     groups: list[str]
     zone_id: str | None = None
+    zone_set: tuple[str, ...] = ()
     agent_id: str | None = None  # Agent identity (optional)
     agent_generation: int | None = None  # Session generation counter (Issue #1240)
     is_admin: bool = False
@@ -136,6 +137,9 @@ class OperationContext:
         """Validate context and apply defaults."""
         if self.subject_id is None:
             self.subject_id = self.user_id
+
+        if not self.zone_set and self.zone_id is not None:
+            self.zone_set = (self.zone_id,)
 
         if not self.user_id:
             raise ValueError("user_id is required")
@@ -208,6 +212,16 @@ class OperationContext:
         The read_set is preserved so it can still be registered/inspected.
         """
         self.track_reads = False
+
+
+def assert_zone_allowed(ctx: "OperationContext", requested: str) -> None:
+    """Raise PermissionError if `requested` is not in the token's zone allow-list.
+
+    Admins (ctx.is_admin) bypass the check — mirrors existing ReBAC admin shortcut.
+    """
+    if ctx.is_admin or requested in ctx.zone_set:
+        return
+    raise PermissionError(f"zone {requested!r} not in token's allow-list {ctx.zone_set}")
 
 
 @dataclass(frozen=True)

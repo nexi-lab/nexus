@@ -243,6 +243,8 @@ async def resolve_auth(
                     "subject_type": result.subject_type,
                     "subject_id": result.subject_id,
                     "zone_id": x_nexus_zone_id or result.zone_id,
+                    "zone_set": list(getattr(result, "zone_set", ()) or ()),
+                    "zone_perms": [list(t) for t in getattr(result, "zone_perms", ()) or ()],
                     "inherit_permissions": result.inherit_permissions
                     if hasattr(result, "inherit_permissions")
                     else True,

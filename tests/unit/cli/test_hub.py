@@ -663,3 +663,41 @@ def test_token_create_rejects_inactive_zone_in_list(monkeypatch):
     result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng,ops"])
     assert result.exit_code != 0
     assert "ops" in result.output
+
+
+def test_token_list_json_includes_zones(monkeypatch):
+    """`token list --json` emits 'zones': ['eng','ops'] per row (#3785)."""
+    from datetime import UTC, datetime
+
+    from nexus.storage.models import APIKeyModel, APIKeyZoneModel
+
+    row = APIKeyModel(
+        key_id="kid_a",
+        key_hash="h",
+        user_id="alice",
+        name="alice",
+        zone_id="eng",
+        is_admin=0,
+        revoked=0,
+        created_at=datetime.now(UTC),
+    )
+
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.side_effect = [
+        [row],  # APIKeyModel rows
+        [
+            APIKeyZoneModel(key_id="kid_a", zone_id="eng"),
+            APIKeyZoneModel(key_id="kid_a", zone_id="ops"),
+        ],  # junction rows
+    ]
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["tokens"][0]["zones"] == ["eng", "ops"]

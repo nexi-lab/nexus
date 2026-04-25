@@ -20,7 +20,7 @@ from nexus.cli.commands._hub_common import (
     parse_duration,
 )
 from nexus.storage.api_key_ops import create_api_key
-from nexus.storage.models import APIKeyModel, ZoneModel
+from nexus.storage.models import APIKeyModel, APIKeyZoneModel, ZoneModel
 
 
 @click.group()
@@ -174,6 +174,29 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
             stmt = stmt.where(APIKeyModel.revoked == 0)
         rows = session.execute(stmt).scalars().all()
 
+        # Single batched junction query — not N+1 (#3785).
+        key_ids = [r.key_id for r in rows]
+        junction_rows: list[APIKeyZoneModel] = []
+        if key_ids:
+            junction_rows = list(
+                session.execute(select(APIKeyZoneModel).where(APIKeyZoneModel.key_id.in_(key_ids)))
+                .scalars()
+                .all()
+            )
+
+    # Build zones_by_key: primary zone first, then sorted others.
+    zones_by_key: dict[str, list[str]] = {}
+    for jr in junction_rows:
+        zones_by_key.setdefault(jr.key_id, []).append(jr.zone_id)
+    for kid in zones_by_key:
+        primary = next((r.zone_id for r in rows if r.key_id == kid), None)
+        others = sorted(z for z in zones_by_key[kid] if z != primary)
+        zones_by_key[kid] = ([primary] if primary else []) + others
+
+    def _zones(r: APIKeyModel) -> list[str]:
+        """Return zones list for a token row, falling back to zone_id if no junction rows."""
+        return zones_by_key.get(r.key_id, [r.zone_id] if r.zone_id else [])
+
     def _iso(dt: datetime | None) -> str:
         return dt.isoformat() if dt else "-"
 
@@ -183,7 +206,8 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
                 {
                     "key_id": r.key_id,
                     "name": r.name,
-                    "zone": r.zone_id,
+                    "zone": r.zone_id,  # deprecated: use 'zones' (kept one release for compat)
+                    "zones": _zones(r),
                     "admin": bool(r.is_admin),
                     "created": _iso(r.created_at),
                     "last_used": _iso(r.last_used_at),
@@ -197,12 +221,13 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
         return
 
     body = format_table(
-        headers=["key_id", "name", "zone", "admin", "created", "last_used", "revoked_at"],
+        headers=["key_id", "name", "zone", "zones", "admin", "created", "last_used", "revoked_at"],
         rows=[
             [
                 r.key_id[:12] + "…" if len(r.key_id) > 12 else r.key_id,
                 r.name,
                 r.zone_id,
+                ",".join(_zones(r)),
                 "yes" if r.is_admin else "no",
                 _iso(r.created_at),
                 _iso(r.last_used_at),

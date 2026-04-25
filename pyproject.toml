@@ -55,6 +55,11 @@ dependencies = [
     # HTTP server (FastAPI + ASGI)
     "fastapi>=0.124.0",
     "uvicorn>=0.38.0", # ASGI server (base profile; use [server-standard] for full stack)
+    # Required by FastAPI's Form(...) — token-exchange (#3818) parses
+    # application/x-www-form-urlencoded per RFC 6749 §3.2 / RFC 8693 §2.1.
+    # FastAPI raises at route registration time without this; declared
+    # directly so we don't depend on `mcp` (current transitive owner).
+    "python-multipart>=0.0.20",
     # File watching (cross-platform, Rust-backed via notify crate)
     "watchdog>=4.0.0",  # fsnotify wrapper for daemon source watchers (#3804)
     "keyring>=25.0.0",  # OS keychain/secret service for daemon JWT cache (#3804)

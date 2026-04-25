@@ -129,6 +129,8 @@ services:
       # endpoint is NOT registered even if NEXUS_ALLOW_ADMIN_BYPASS=true.
       # `nexus up --with-daemon` injects a fresh random token.
       NEXUS_ADMIN_BOOTSTRAP_TOKEN: ${NEXUS_ADMIN_BOOTSTRAP_TOKEN:-}
+      # Token-exchange (#3818) read-path gate. Off by default until ops verifies KMS/Vault wiring.
+      NEXUS_TOKEN_EXCHANGE_ENABLED: ${NEXUS_TOKEN_EXCHANGE_ENABLED:-}
       # Config
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
       # Cache

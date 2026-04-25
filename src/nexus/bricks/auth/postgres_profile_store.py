@@ -40,7 +40,7 @@ import secrets
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -88,6 +88,72 @@ class CrossPrincipalConflict(Exception):
             f"profile_id={profile_id!r} already owned by "
             f"{', '.join(str(p) for p in foreign_principals)} in the same tenant"
         )
+
+
+class ProfileNotFound(Exception):
+    """No envelope-carrying auth_profile row for (tenant, principal, provider)."""
+
+    def __init__(self, *, tenant_id: uuid.UUID, principal_id: uuid.UUID, provider: str):
+        self.tenant_id = tenant_id
+        self.principal_id = principal_id
+        self.provider = provider
+        super().__init__(
+            f"no auth_profile row tenant={tenant_id} principal={principal_id} provider={provider}"
+        )
+
+
+@dataclass(frozen=True)
+class DecryptedProfile:
+    """Output of ``PostgresAuthProfileStore.decrypt_profile``.
+
+    ``plaintext`` is the daemon-pushed envelope payload (provider-specific JSON).
+    Caller (CredentialConsumer) hands this to the matching ProviderAdapter.
+
+    ``last_synced_at`` lets the consumer return 409 stale_source when the row
+    is older than ``sync_ttl_seconds``.
+
+    ``plaintext`` is marked ``repr=False`` so the credential bytes never appear
+    in default ``__repr__`` output (which is what ``log.info("decrypted %s", out)``
+    or an unhandled-exception locals frame would emit).
+    """
+
+    plaintext: bytes = field(repr=False)
+    profile_id: str
+    kek_version: int
+    last_synced_at: datetime
+    sync_ttl_seconds: int
+    # Daemon machine that pushed this envelope (audit stamp from #3804).
+    # NULL for legacy rows pushed before the stamp existed. Consumer logs
+    # a warning when reader.machine_id != writer_machine_id so operators
+    # can detect implicit cross-machine credential sharing.
+    writer_machine_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class ProfileFingerprint:
+    """Identity columns of the single usable envelope row at lookup time.
+
+    Returned by ``PostgresAuthProfileStore.assert_profile_active`` so the
+    cache-hit branch in ``CredentialConsumer.resolve`` can detect a row
+    REWRITE since the cache was primed: a different ``profile_id`` (the
+    old row was deleted and replaced), a different ``writer_machine_id``
+    (a second daemon overwrote the same provider/account), or a bumped
+    ``last_synced_at`` (the daemon pushed a fresh envelope, possibly
+    rotating the upstream credential).
+
+    A mismatch in any of these means the cached plaintext is stale —
+    the consumer evicts and re-runs the decrypt path, which also
+    re-applies the cross-machine read policy against the current writer.
+
+    Carries ``profile_id`` and ``kek_version`` so cache-hit audit rows
+    can name the credential that was served instead of falling back to
+    sentinel placeholders.
+    """
+
+    profile_id: str
+    writer_machine_id: uuid.UUID | None
+    kek_version: int
+    last_synced_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +324,34 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_auth_profile_writes_tenant_profile "
     "ON auth_profile_writes(tenant_id, principal_id, auth_profile_id, written_at DESC)",
+    # Read-path audit log (#3818). Same partitioning + RLS posture as
+    # auth_profile_writes — every server-side credential resolution via
+    # /v1/auth/token-exchange appends a row here (via Task 7's
+    # ReadAuditWriter, sampled at 1%). Range-partitioned by read_at so the
+    # partition key is part of the PK; default partition catches every row
+    # until per-month partitions are provisioned in production.
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_reads (
+        id                BIGSERIAL,
+        read_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        principal_id      UUID NOT NULL,
+        auth_profile_id   TEXT NOT NULL,
+        caller_machine_id UUID NOT NULL,
+        caller_kind       TEXT NOT NULL,
+        provider          TEXT NOT NULL,
+        purpose           TEXT NOT NULL,
+        cache_hit         BOOLEAN NOT NULL,
+        kek_version       INTEGER NOT NULL,
+        PRIMARY KEY (read_at, id)
+    ) PARTITION BY RANGE (read_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS auth_profile_reads_default
+        PARTITION OF auth_profile_reads DEFAULT
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_auth_profile_reads_tenant_principal_provider "
+    "ON auth_profile_reads(tenant_id, principal_id, provider, read_at DESC)",
 )
 
 # RLS statements. Run LAST so the backfill in _upgrade_shape_in_place is not
@@ -279,6 +373,8 @@ _RLS_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE daemon_refresh_nonces FORCE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profile_writes ENABLE ROW LEVEL SECURITY",
     "ALTER TABLE auth_profile_writes FORCE ROW LEVEL SECURITY",
+    "ALTER TABLE auth_profile_reads ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE auth_profile_reads FORCE ROW LEVEL SECURITY",
 )
 
 # Policies are separate because ``CREATE POLICY`` lacks IF NOT EXISTS in
@@ -322,6 +418,11 @@ _POLICY_STATEMENTS: tuple[str, ...] = (
     "DROP POLICY IF EXISTS tenant_isolation_auth_profile_writes ON auth_profile_writes",
     """
     CREATE POLICY tenant_isolation_auth_profile_writes ON auth_profile_writes
+        USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
+    """,
+    "DROP POLICY IF EXISTS auth_profile_reads_tenant_isolation ON auth_profile_reads",
+    """
+    CREATE POLICY auth_profile_reads_tenant_isolation ON auth_profile_reads
         USING (tenant_id = current_setting('app.current_tenant', true)::UUID)
     """,
 )
@@ -1366,6 +1467,311 @@ class PostgresAuthProfileStore:
             dek, bytes(row.nonce), bytes(row.ciphertext), aad=expected_aad
         )
         return profile, self._deserialize_credential(plaintext)
+
+    def assert_profile_active(
+        self,
+        *,
+        principal_id: uuid.UUID,
+        provider: str,
+        profile_id: str | None = None,
+    ) -> "ProfileFingerprint":
+        """Cheap predicate-only check + fingerprint of the single usable row.
+
+        Cache-hit paths call this BEFORE returning the cached credential so an
+        operator disable, an automatic cooldown, a freshly-pushed ambiguous
+        second envelope, OR a daemon that stopped pushing for longer than its
+        ``sync_ttl_seconds`` all take effect within ~ms instead of waiting for
+        the cache TTL. Mirrors the SQL predicates in ``decrypt_profile`` (active
+        ciphertext, not disabled, not cooled-down, not stale) but reads no
+        payload.
+
+        ``profile_id`` selects a specific envelope row when the principal has
+        more than one profile for ``provider``. Without it, the legacy
+        single-row contract applies and ``MultipleProfilesForProvider`` fires
+        when more than one active row exists.
+
+        Returns a ``ProfileFingerprint`` for the single usable row so the
+        caller can detect a row REWRITE since the cache was primed (different
+        ``profile_id``, different writer ``machine_id``, or bumped
+        ``last_synced_at``). Without this, the cache-hit branch would keep
+        serving an old machine's plaintext for the rest of the cache TTL after
+        another daemon overwrote the same provider/account.
+
+        Mapping:
+          - ``usable > 1``  → MultipleProfilesForProvider (only possible when
+            ``profile_id`` is None; an explicit selector matches at most one)
+          - ``usable == 1`` → return ProfileFingerprint
+          - ``usable == 0`` and ``stale_only >= 1`` → StaleSource
+          - ``usable == 0`` and ``stale_only == 0`` → ProfileNotFound
+        """
+        from nexus.bricks.auth.consumer import MultipleProfilesForProvider, StaleSource
+
+        # Optional profile_id filter — single literal appended to both the
+        # COUNT and the LIMIT 1 sub-queries when supplied. Empty string
+        # binding is fine because the param is unused unless the WHERE
+        # mentions :pid.
+        pid_filter = " AND id = :pid" if profile_id is not None else ""
+        params: dict[str, str] = {
+            "t": str(self._tenant_id),
+            "p": str(principal_id),
+            "prov": provider,
+        }
+        if profile_id is not None:
+            params["pid"] = profile_id
+        with self._scoped() as conn:
+            counts = conn.execute(
+                text(
+                    "SELECT "
+                    "  COUNT(*) FILTER (WHERE "
+                    "    last_synced_at IS NOT NULL "
+                    "    AND last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL > NOW()"
+                    "  ) AS usable, "
+                    "  COUNT(*) FILTER (WHERE "
+                    "    last_synced_at IS NULL "
+                    "    OR last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL <= NOW()"
+                    "  ) AS stale_only "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
+                    "  AND ciphertext IS NOT NULL "
+                    "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
+                    "  AND (cooldown_until IS NULL OR cooldown_until <= NOW())" + pid_filter
+                ),
+                params,
+            ).fetchone()
+            usable = int(counts.usable) if counts else 0
+            stale_only = int(counts.stale_only) if counts else 0
+            if usable > 1:
+                raise MultipleProfilesForProvider.from_row(
+                    tenant_id=self._tenant_id,
+                    principal_id=principal_id,
+                    provider=provider,
+                    cause=f"{usable}+ active envelopes; collapse to one or upgrade wire contract",
+                )
+            if usable == 1:
+                # Re-fetch the single usable row's identity columns so the
+                # consumer can detect a rewrite vs the cached entry. Same
+                # predicate as the count above; LIMIT 1 because we already
+                # know exactly one row matches.
+                fp = conn.execute(
+                    text(
+                        "SELECT id, machine_id, kek_version, last_synced_at "
+                        "FROM auth_profiles "
+                        "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
+                        "  AND ciphertext IS NOT NULL "
+                        "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
+                        "  AND (cooldown_until IS NULL OR cooldown_until <= NOW()) "
+                        "  AND last_synced_at IS NOT NULL "
+                        "  AND last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL > NOW()"
+                        + pid_filter
+                        + " LIMIT 1"
+                    ),
+                    params,
+                ).fetchone()
+                if fp is None:
+                    # Row vanished between the COUNT and the LIMIT 1 (operator
+                    # action mid-call, or concurrent rewrite). Treat as not
+                    # found rather than serving the now-cached plaintext.
+                    raise ProfileNotFound(
+                        tenant_id=self._tenant_id,
+                        principal_id=principal_id,
+                        provider=provider,
+                    )
+                return ProfileFingerprint(
+                    profile_id=str(fp.id),
+                    writer_machine_id=fp.machine_id,
+                    kek_version=int(fp.kek_version),
+                    last_synced_at=fp.last_synced_at,
+                )
+            if stale_only >= 1:
+                raise StaleSource.from_row(
+                    tenant_id=self._tenant_id,
+                    principal_id=principal_id,
+                    provider=provider,
+                    cause="last_synced_at_past_sync_ttl",
+                )
+        raise ProfileNotFound(
+            tenant_id=self._tenant_id,
+            principal_id=principal_id,
+            provider=provider,
+        )
+
+    def assert_machine_active(self, *, principal_id: uuid.UUID, machine_id: uuid.UUID) -> None:
+        """Reject if the daemon's machine row is missing or revoked.
+
+        Mirrors the check the auth-profiles push router performs: a JWT
+        cryptographically valid is not enough — the daemon's row must still
+        be present and unrevoked at the time of every credential read. Without
+        this, a JWT minted before revocation can keep returning provider
+        bearers until natural expiry. Raises ``MachineUnknownOrRevoked``.
+        """
+        from nexus.bricks.auth.consumer import MachineUnknownOrRevoked
+
+        with self._scoped() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT revoked_at FROM daemon_machines "
+                    "WHERE tenant_id = :t AND principal_id = :p AND id = :m"
+                ),
+                {
+                    "t": str(self._tenant_id),
+                    "p": str(principal_id),
+                    "m": str(machine_id),
+                },
+            ).fetchone()
+        if row is None:
+            raise MachineUnknownOrRevoked.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider="-",
+                cause="machine_unknown",
+            )
+        if row.revoked_at is not None:
+            raise MachineUnknownOrRevoked.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider="-",
+                cause="machine_revoked",
+            )
+
+    def decrypt_profile(
+        self,
+        *,
+        principal_id: uuid.UUID,
+        provider: str,
+        encryption: EncryptionProvider,
+        dek_cache: DEKCache,
+        profile_id: str | None = None,
+    ) -> DecryptedProfile:
+        """Decrypt the envelope row matching (tenant, principal, provider).
+
+        Fetches up to 2 rows for that triple. If 2 rows are returned the
+        request is ambiguous — caller must pass ``profile_id`` to select one
+        explicitly or collapse to a single active row. We fail closed with
+        ``MultipleProfilesForProvider`` rather than silently pick the newest
+        (which could hand back the wrong account's credentials).
+        Raises ``ProfileNotFound`` if no row exists.
+
+        ``profile_id`` selects a specific envelope row (multi-account form
+        of the wire contract). When supplied the SQL filters on ``id`` too,
+        so the caller gets either the named row or ``ProfileNotFound`` —
+        never another account's credential.
+
+        DEK is unwrapped via ``encryption.unwrap_dek`` with cache-through on
+        ``dek_cache``. AES-GCM decrypt failures bubble as ``EnvelopeError``
+        subclasses (no plaintext in repr).
+        """
+        from nexus.bricks.auth.consumer import MultipleProfilesForProvider
+
+        pid_filter = " AND id = :pid" if profile_id is not None else ""
+        params: dict[str, str] = {
+            "t": str(self._tenant_id),
+            "p": str(principal_id),
+            "prov": provider,
+        }
+        if profile_id is not None:
+            params["pid"] = profile_id
+        with self._scoped() as conn:
+            # SQL filters out disabled/cooled-down rows so cache-miss never
+            # leaks them; cache hits may still serve them up to TTL (see
+            # NEXUS_AUTH_CRED_CACHE_TTL). F31: ``is_fresh`` derived in the
+            # same SELECT so the freshness predicate uses the same NOW() as
+            # the row read — closes the gap between assert_profile_active
+            # at T0 and decrypt at T1 where the row could cross its TTL.
+            rows = conn.execute(
+                text(
+                    "SELECT id, ciphertext, wrapped_dek, nonce, aad, kek_version, "
+                    "       last_synced_at, sync_ttl_seconds, machine_id, "
+                    "       (last_synced_at IS NOT NULL "
+                    "        AND last_synced_at + (sync_ttl_seconds || ' seconds')::INTERVAL "
+                    "            > NOW()) AS is_fresh "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :t AND principal_id = :p AND provider = :prov "
+                    "  AND ciphertext IS NOT NULL "
+                    "  AND (disabled_until IS NULL OR disabled_until <= NOW()) "
+                    "  AND (cooldown_until IS NULL OR cooldown_until <= NOW())"
+                    + pid_filter
+                    + " ORDER BY updated_at DESC LIMIT 2"
+                ),
+                params,
+            ).fetchall()
+
+        if not rows:
+            raise ProfileNotFound(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+            )
+        if len(rows) > 1:
+            raise MultipleProfilesForProvider.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+                cause=f"{len(rows)}+ active envelopes; collapse to one or upgrade wire contract",
+            )
+
+        (
+            profile_id,
+            ciphertext,
+            wrapped_dek,
+            nonce,
+            aad,
+            kek_version,
+            lsa,
+            sttl,
+            wmid,
+            is_fresh,
+        ) = rows[0]
+        if not is_fresh:
+            # F31: row crossed its TTL between assert_profile_active and now.
+            # Fail closed with StaleSource (retryable after the daemon pushes
+            # a fresh envelope), not ProfileNotFound (operator-deleted).
+            from nexus.bricks.auth.consumer import StaleSource
+
+            raise StaleSource.from_row(
+                tenant_id=self._tenant_id,
+                principal_id=principal_id,
+                provider=provider,
+                cause="last_synced_at_past_sync_ttl_at_decrypt",
+            )
+
+        # Defense-in-depth: cross-check the row's stored AAD against the
+        # tenant|principal|profile_id format that writers use. AES-GCM tag
+        # verification alone won't catch a tampered ``aad`` column — the
+        # tag was bound to whatever AAD landed in the row. Mirror what
+        # ``get_with_credential`` already enforces (see lines ~1397-1404).
+        expected_aad = self._aad_for(profile_id)
+        if bytes(aad) != expected_aad:
+            raise AADMismatch.from_row(
+                tenant_id=self._tenant_id,
+                profile_id=profile_id,
+                kek_version=kek_version,
+                cause="stored AAD does not match tenant|principal|profile_id",
+            )
+
+        cache_key = DEKCache.make_key(
+            tenant_id=self._tenant_id,
+            kek_version=kek_version,
+            wrapped_dek=bytes(wrapped_dek),
+        )
+        dek = dek_cache.get(cache_key)
+        if dek is None:
+            dek = encryption.unwrap_dek(
+                bytes(wrapped_dek),
+                tenant_id=self._tenant_id,
+                aad=expected_aad,
+                kek_version=kek_version,
+            )
+            dek_cache.put(cache_key, dek)
+
+        plaintext = AESGCMEnvelope().decrypt(dek, bytes(nonce), bytes(ciphertext), aad=expected_aad)
+        return DecryptedProfile(
+            plaintext=plaintext,
+            profile_id=profile_id,
+            kek_version=kek_version,
+            last_synced_at=lsa,
+            sync_ttl_seconds=sttl,
+            writer_machine_id=wmid,
+        )
 
     # ------------------------------------------------------------------
     # Tenant-wide helpers (migration/admin only — outside normal Protocol)

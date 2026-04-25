@@ -1,0 +1,111 @@
+"""Tests for ResolvedCredCache — TTL = min(300, expires_at - 60) (#3818)."""
+
+from __future__ import annotations
+
+import threading
+import uuid
+from datetime import UTC, datetime, timedelta
+
+from nexus.bricks.auth.consumer import MaterializedCredential
+from nexus.bricks.auth.consumer_cache import ResolvedCredCache, _compute_ttl_seconds
+from nexus.bricks.auth.postgres_profile_store import ProfileFingerprint
+
+
+def _cred(*, expires_at: datetime | None = None) -> MaterializedCredential:
+    return MaterializedCredential(
+        provider="github",
+        access_token="t",
+        expires_at=expires_at,
+        metadata={},
+    )
+
+
+def _fp(*, last_synced_at: datetime | None = None) -> ProfileFingerprint:
+    return ProfileFingerprint(
+        profile_id="profile-1",
+        writer_machine_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        kek_version=1,
+        last_synced_at=last_synced_at or datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC),
+    )
+
+
+def test_compute_ttl_uses_ceiling_when_no_expiry():
+    assert _compute_ttl_seconds(now=datetime.now(UTC), expires_at=None) == 10**9
+
+
+def test_compute_ttl_caps_at_expiry_minus_60():
+    now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    exp = now + timedelta(seconds=200)
+    assert _compute_ttl_seconds(now=now, expires_at=exp) == 140
+
+
+def test_compute_ttl_clamps_to_zero_when_already_near_expiry():
+    now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    exp = now + timedelta(seconds=30)
+    assert _compute_ttl_seconds(now=now, expires_at=exp) == 0
+
+
+def test_get_returns_cached_then_evicts_after_ttl():
+    cache = ResolvedCredCache(ceiling_seconds=300)
+    key = ("t1", "p1", "github", "m1", "")
+    now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    cred = _cred(expires_at=now + timedelta(seconds=200))
+
+    cache.put(key, cred, now=now, fingerprint=_fp())
+    # Hit immediately
+    hit = cache.get(key, now=now)
+    assert hit is not None and hit.cred is cred
+    # 139s later: still warm (ttl is 200-60 = 140)
+    warm = cache.get(key, now=now + timedelta(seconds=139))
+    assert warm is not None and warm.cred is cred
+    # Just after TTL boundary: expired
+    assert cache.get(key, now=now + timedelta(seconds=141)) is None
+
+
+def test_put_with_no_expiry_uses_ceiling():
+    cache = ResolvedCredCache(ceiling_seconds=300)
+    key = ("t1", "p1", "github", "m1", "")
+    now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    cache.put(key, _cred(expires_at=None), now=now, fingerprint=_fp())
+    assert cache.get(key, now=now + timedelta(seconds=299)) is not None
+    assert cache.get(key, now=now + timedelta(seconds=301)) is None
+
+
+def test_cache_keys_are_scoped_per_machine():
+    """A second machine for the same tenant/principal/provider gets its own
+    slot — proves the key tuple's machine_id segment isolates daemons.
+
+    Without this, daemon B inherits daemon A's plaintext from cache and
+    bypasses the cross-machine read check (which only fires on the decrypt
+    path). Regression for codex round-5 finding F14.
+    """
+    cache = ResolvedCredCache(ceiling_seconds=300)
+    now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    cred_a = _cred(expires_at=now + timedelta(seconds=600))
+    key_a = ("t1", "p1", "github", "m-a", "")
+    key_b = ("t1", "p1", "github", "m-b", "")
+
+    cache.put(key_a, cred_a, now=now, fingerprint=_fp())
+    a_hit = cache.get(key_a, now=now)
+    assert a_hit is not None and a_hit.cred is cred_a
+    assert cache.get(key_b, now=now) is None
+
+
+def test_thread_safe_concurrent_put_get():
+    cache = ResolvedCredCache(ceiling_seconds=300)
+    now = datetime(2026, 4, 23, 12, 0, 0, tzinfo=UTC)
+    cred = _cred(expires_at=now + timedelta(seconds=600))
+
+    fp = _fp()
+
+    def worker(i: int):
+        for _ in range(50):
+            cache.put((f"t{i}", "p", "github", "m", ""), cred, now=now, fingerprint=fp)
+            cache.get((f"t{i}", "p", "github", "m", ""), now=now)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    # No exception = pass

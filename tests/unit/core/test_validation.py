@@ -54,24 +54,6 @@ class TestFileMetadataValidation:
         with pytest.raises(ValidationError, match="path contains null bytes"):
             metadata.validate()
 
-    def test_backend_name_required(self):
-        """Test that backend_name is required."""
-        metadata = FileMetadata(
-            path="/data/file.txt",
-            size=1024,
-        )
-        with pytest.raises(ValidationError, match="backend_name is required"):
-            metadata.validate()
-
-    def test_physical_path_required(self):
-        """Test that physical_path is required."""
-        metadata = FileMetadata(
-            path="/data/file.txt",
-            size=1024,
-        )
-        with pytest.raises(ValidationError, match="physical_path is required"):
-            metadata.validate()
-
     def test_size_cannot_be_negative(self):
         """Test that size cannot be negative."""
         metadata = FileMetadata(
@@ -99,8 +81,6 @@ class TestFilePathModelValidation:
         """Test that valid FilePathModel passes validation."""
         file_path = FilePathModel(
             virtual_path="/data/file.txt",
-            backend_id="local",
-            physical_path="/storage/file.txt",
             size_bytes=1024,
         )
         # Should not raise
@@ -108,61 +88,25 @@ class TestFilePathModelValidation:
 
     def test_virtual_path_required(self):
         """Test that virtual_path is required."""
-        file_path = FilePathModel(
-            virtual_path="", backend_id="local", physical_path="/storage/file.txt", size_bytes=1024
-        )
+        file_path = FilePathModel(virtual_path="", size_bytes=1024)
         with pytest.raises(ValidationError, match="virtual_path is required"):
             file_path.validate()
 
     def test_virtual_path_must_start_with_slash(self):
         """Test that virtual_path must start with /."""
-        file_path = FilePathModel(
-            virtual_path="data/file.txt",
-            backend_id="local",
-            physical_path="/storage/file.txt",
-            size_bytes=1024,
-        )
+        file_path = FilePathModel(virtual_path="data/file.txt", size_bytes=1024)
         with pytest.raises(ValidationError, match="virtual_path must start with '/'"):
             file_path.validate()
 
     def test_virtual_path_cannot_contain_null_bytes(self):
         """Test that virtual_path cannot contain null bytes."""
-        file_path = FilePathModel(
-            virtual_path="/data/file\x00.txt",
-            backend_id="local",
-            physical_path="/storage/file.txt",
-            size_bytes=1024,
-        )
+        file_path = FilePathModel(virtual_path="/data/file\x00.txt", size_bytes=1024)
         with pytest.raises(ValidationError, match="virtual_path contains null bytes"):
-            file_path.validate()
-
-    def test_backend_id_required(self):
-        """Test that backend_id is required."""
-        file_path = FilePathModel(
-            virtual_path="/data/file.txt",
-            backend_id="",
-            physical_path="/storage/file.txt",
-            size_bytes=1024,
-        )
-        with pytest.raises(ValidationError, match="backend_id is required"):
-            file_path.validate()
-
-    def test_physical_path_required(self):
-        """Test that physical_path is required."""
-        file_path = FilePathModel(
-            virtual_path="/data/file.txt", backend_id="local", physical_path="", size_bytes=1024
-        )
-        with pytest.raises(ValidationError, match="physical_path is required"):
             file_path.validate()
 
     def test_size_bytes_cannot_be_negative(self):
         """Test that size_bytes cannot be negative."""
-        file_path = FilePathModel(
-            virtual_path="/data/file.txt",
-            backend_id="local",
-            physical_path="/storage/file.txt",
-            size_bytes=-100,
-        )
+        file_path = FilePathModel(virtual_path="/data/file.txt", size_bytes=-100)
         with pytest.raises(ValidationError, match="size_bytes cannot be negative"):
             file_path.validate()
 

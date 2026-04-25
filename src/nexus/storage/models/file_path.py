@@ -37,8 +37,6 @@ class FilePathModel(Base):
 
     # Path information
     virtual_path: Mapped[str] = mapped_column(Text, nullable=False)
-    backend_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    physical_path: Mapped[str] = mapped_column(Text, nullable=False)
 
     # File properties
     file_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -85,7 +83,6 @@ class FilePathModel(Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        Index("idx_file_paths_backend_id", "backend_id"),
         Index("idx_file_paths_content_hash", "content_hash"),
         Index("idx_file_paths_virtual_path", "virtual_path"),
         Index("idx_file_paths_accessed_at", "accessed_at"),
@@ -116,12 +113,6 @@ class FilePathModel(Base):
 
         if "\x00" in self.virtual_path:
             raise ValidationError("virtual_path contains null bytes")
-
-        if not self.backend_id:
-            raise ValidationError("backend_id is required")
-
-        if not self.physical_path:
-            raise ValidationError("physical_path is required")
 
         if self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")

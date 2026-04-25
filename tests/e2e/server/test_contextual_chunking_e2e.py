@@ -56,8 +56,6 @@ async def _create_tables_and_path(
         fp = FilePathModel(
             path_id=path_id,
             virtual_path=virtual_path,
-            backend_id="local",
-            physical_path=virtual_path,
             size_bytes=size,
         )
         session.add(fp)

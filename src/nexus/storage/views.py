@@ -109,8 +109,6 @@ SELECT
     fp.path_id,
     fp.zone_id,
     fp.virtual_path,
-    fp.backend_id,
-    fp.physical_path,
     fp.file_type,
     fp.size_bytes,
     fp.content_hash,
@@ -167,8 +165,6 @@ SELECT
     fp.path_id,
     fp.zone_id,
     fp.virtual_path,
-    fp.backend_id,
-    fp.physical_path,
     fp.file_type,
     fp.size_bytes,
     fp.content_hash,
@@ -210,8 +206,6 @@ SELECT
     fp.path_id,
     fp.zone_id,
     fp.virtual_path,
-    fp.backend_id,
-    fp.physical_path,
     fp.file_type,
     fp.size_bytes,
     fp.content_hash,
@@ -271,7 +265,6 @@ SELECT
     fp.path_id,
     fp.zone_id,
     fp.virtual_path,
-    fp.backend_id,
     fp.file_type,
     fp.size_bytes,
     fp.created_at,
@@ -317,7 +310,6 @@ SELECT
     fp.path_id,
     fp.zone_id,
     fp.virtual_path,
-    fp.backend_id,
     fp.file_type,
     fp.size_bytes,
     fp.created_at,
@@ -360,8 +352,6 @@ SELECT
     fp.path_id,
     fp.zone_id,
     fp.virtual_path,
-    fp.backend_id,
-    fp.physical_path,
     fp.file_type,
     fp.size_bytes,
     fp.content_hash,
@@ -415,8 +405,6 @@ SELECT
     fp.path_id,
     fp.zone_id,
     fp.virtual_path,
-    fp.backend_id,
-    fp.physical_path,
     fp.file_type,
     fp.size_bytes,
     fp.content_hash,
@@ -428,7 +416,6 @@ SELECT
     {hours_since_access} as hours_since_access
 FROM file_paths fp
 WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
-  AND fp.backend_id = 'workspace'  -- Hot tier files
   AND fp.accessed_at IS NOT NULL
   AND fp.accessed_at < {time_threshold}  -- Not accessed in last hour
   AND fp.locked_by IS NULL  -- Not currently locked

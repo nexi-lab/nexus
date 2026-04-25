@@ -158,10 +158,6 @@ class VersionRecorder:
         from nexus.storage._metadata_mapper_generated import MetadataMapper
 
         update_values = MetadataMapper.to_file_path_update_values(metadata)
-        # Note: ``backend_id``/``physical_path`` were removed from
-        # FileMetadata. The mapper no longer emits those keys, so the
-        # SQL UPDATE leaves the existing FilePathModel columns untouched
-        # — no explicit "preserve" copy is needed.
 
         if metadata.etag is not None:
             # Get previous version for lineage

@@ -86,6 +86,19 @@ def _gate_zone(auth_result: dict[str, Any], target_zone: str) -> None:
     )
 
 
+def _apply_zone_override(
+    context: Any,
+    zone: str | None,
+    auth_result: dict[str, Any],
+) -> Any:
+    if zone is None:
+        return context
+    _gate_zone(auth_result, zone)
+    import dataclasses as _dc
+
+    return _dc.replace(context, zone_id=zone)
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -562,7 +575,12 @@ def create_async_files_router(
             None,
             description="Active transaction ID to track this write in (from snapshots API)",
         ),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> Response:
         """
         Write content to a file.
@@ -574,6 +592,7 @@ def create_async_files_router(
         - Plain string (UTF-8 encoded automatically)
         - Base64 encoded binary (set encoding="base64")
         """
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
 
@@ -1039,9 +1058,15 @@ def create_async_files_router(
             None,
             description="Active transaction ID to track this delete in",
         ),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> DeleteResponse:
         """Delete a file."""
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
 
@@ -1107,9 +1132,15 @@ def create_async_files_router(
     @router.get("/exists", response_model=ExistsResponse)
     async def file_exists(
         path: str = Query(..., description="Path to check"),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> ExistsResponse:
         """Check if a file or directory exists."""
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
             exists = fs.access(path, context=context)
@@ -1136,7 +1167,12 @@ def create_async_files_router(
         cursor: str | None = Query(
             None, description="Opaque cursor from previous response's next_cursor"
         ),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> ListResponse:
         """List directory contents with optional cursor pagination.
 
@@ -1147,6 +1183,7 @@ def create_async_files_router(
 
         @see Issue #3102, Decision 2A
         """
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
 
@@ -1354,9 +1391,15 @@ def create_async_files_router(
     @router.post("/mkdir", status_code=status.HTTP_200_OK)
     async def create_directory(
         request: MkdirRequest,
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """Create a directory."""
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
             # fs.mkdir is async — call directly
@@ -1382,9 +1425,15 @@ def create_async_files_router(
     @router.get("/metadata", response_model=MetadataResponse)
     async def get_file_metadata(
         path: str = Query(..., description="Path to get metadata for"),
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> MetadataResponse:
         """Get file or directory metadata."""
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
             meta = fs.sys_stat(path, context=context)
@@ -1421,7 +1470,12 @@ def create_async_files_router(
     @router.post("/batch-read")
     async def batch_read_files(
         request: BatchReadRequest,
+        zone: str | None = Query(
+            None,
+            description="Override zone (must be in token's zone_set).",
+        ),
         context: Any = Depends(get_context),
+        auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """
         Read multiple files in a single request.
@@ -1429,6 +1483,7 @@ def create_async_files_router(
         Returns a dict mapping path to content (or None if not found).
         More efficient than multiple individual reads.
         """
+        context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
             results = await asyncio.to_thread(fs.read_bulk, request.paths, context=context)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -751,6 +752,143 @@ def test_resolve_rejects_when_multiple_profiles_for_provider(engine):
     consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
     with pytest.raises(MultipleProfilesForProvider):
         consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+
+def _seed_github_envelope_with_expiry(*, engine, tenant_id, principal_id, encryption, expires_at):
+    """Seed a github profile whose materialized credential carries an
+    explicit expires_at — used to drive F24 (expired-cred rejection)."""
+    payload = json.dumps(
+        {"token": "ghp_expired", "scopes": ["repo"], "expires_at": expires_at.isoformat()}
+    ).encode()
+    aad = str(tenant_id).encode() + b"|" + str(principal_id).encode() + b"|" + b"github-default"
+    dek = b"\x07" * 32
+    nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
+    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant_id, aad=aad)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant_id)})
+        conn.execute(
+            text("INSERT INTO tenants (id, name) VALUES (:id, :n) ON CONFLICT DO NOTHING"),
+            {"id": str(tenant_id), "n": f"tx-{tenant_id}"},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO principals (id, tenant_id, kind) VALUES (:id, :t, 'human') "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"id": str(principal_id), "t": str(tenant_id)},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO auth_profiles "
+                "(tenant_id, principal_id, id, provider, account_identifier, "
+                " backend, backend_key, last_synced_at, sync_ttl_seconds, "
+                " ciphertext, wrapped_dek, nonce, aad, kek_version) "
+                "VALUES (:t, :p, 'github-default', 'github', 'me', 'envelope', 'k', "
+                " NOW(), 300, :ct, :wd, :no, :aad, :kv)"
+            ),
+            {
+                "t": str(tenant_id),
+                "p": str(principal_id),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
+            },
+        )
+
+
+def test_resolve_rejects_expired_materialized_credential(engine):
+    """A decrypted PAT/STS payload whose own expires_at is already past
+    must surface as StaleSource, not a 200 with ``expires_in: 0``.
+
+    Regression for codex round-9 finding F24.
+    """
+    from datetime import UTC, datetime
+
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope_with_expiry(
+        engine=engine,
+        tenant_id=tenant,
+        principal_id=principal,
+        encryption=encryption,
+        expires_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with pytest.raises(StaleSource) as exc:
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    assert "expired" in (exc.value.cause or "")
+
+
+def test_resolve_rejects_credential_inside_refresh_headroom(engine):
+    """Tokens whose expiry is within the 60s refresh-headroom window are
+    treated as already-expired — clients shouldn't get a token they have
+    less than a minute to use before the upstream provider rejects it."""
+    from datetime import UTC, datetime
+
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope_with_expiry(
+        engine=engine,
+        tenant_id=tenant,
+        principal_id=principal,
+        encryption=encryption,
+        expires_at=datetime.now(UTC) + timedelta(seconds=30),  # inside headroom
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    with pytest.raises(StaleSource):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+
+
+def test_resolve_rejects_revoke_committed_after_initial_machine_check(engine):
+    """A revoke that commits AFTER the top-of-resolve assert_machine_active
+    but BEFORE the response must still be observed and reject the call.
+
+    Approach: monkey-patch ``decrypt_profile`` so that the moment it runs
+    (between the two assert_machine_active calls) we revoke the daemon
+    out-of-band. The second assert (F25's double-check) must catch the
+    revocation and raise MachineUnknownOrRevoked.
+
+    Regression for codex round-9 finding F25.
+    """
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+
+    store = consumer._store  # noqa: SLF001 — test introspection
+    real_decrypt = store.decrypt_profile
+
+    def _decrypt_then_revoke(*args, **kwargs):
+        result = real_decrypt(*args, **kwargs)
+        # Out-of-band revocation in a SEPARATE engine connection so we
+        # commit while the resolve call is mid-flight.
+        with engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+            conn.execute(
+                text("UPDATE daemon_machines SET revoked_at = NOW() WHERE id = :m"),
+                {"m": str(machine)},
+            )
+        return result
+
+    store.decrypt_profile = _decrypt_then_revoke
+    try:
+        with pytest.raises(MachineUnknownOrRevoked) as exc:
+            consumer.resolve(
+                claims=_claims(tenant, principal, machine), provider="github", purpose="x"
+            )
+        assert exc.value.cause == "machine_revoked"
+    finally:
+        store.decrypt_profile = real_decrypt
 
 
 def _seed_named_github_profile(

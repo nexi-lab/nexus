@@ -27,6 +27,13 @@ from nexus.bricks.auth.consumer_metrics import (
 
 _logger = logging.getLogger(__name__)
 
+# Mirror ResolvedCredCache's _REFRESH_HEADROOM_SECONDS — a credential whose
+# expires_at is inside this window from now is treated as already-expired
+# for the purpose of returning to the caller. Avoids handing back tokens
+# that the upstream provider will start rejecting before the client can
+# meaningfully use them.
+_MATERIALIZED_REFRESH_HEADROOM_SECONDS = 60
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -276,7 +283,7 @@ class CredentialConsumer:
         active row exists for the triple.
         """
         import time
-        from datetime import UTC, datetime
+        from datetime import UTC, datetime, timedelta
 
         from nexus.bricks.auth.postgres_profile_store import ProfileFingerprint, ProfileNotFound
 
@@ -367,13 +374,34 @@ class CredentialConsumer:
                     # provider/account), or a bumped last_synced_at (daemon
                     # pushed a fresh envelope, possibly rotating the upstream
                     # credential). Any difference → cached plaintext is stale.
+                    cached_cred = entry.cred
+                    cached_expired = cached_cred.expires_at is not None and (
+                        cached_cred.expires_at
+                        <= now + timedelta(seconds=_MATERIALIZED_REFRESH_HEADROOM_SECONDS)
+                    )
                     if (
                         fp_pre.profile_id != cached_fp.profile_id
                         or fp_pre.writer_machine_id != cached_fp.writer_machine_id
                         or fp_pre.last_synced_at != cached_fp.last_synced_at
+                        or cached_expired
                     ):
+                        # Row rewrite OR the cached materialized credential's
+                        # own expiry has caught up to the refresh-headroom.
+                        # Evict and fall through to the decrypt path so we
+                        # serve a fresh credential (or surface StaleSource
+                        # if the underlying envelope is also stale).
                         self._cred_cache.evict(cache_key)
                     else:
+                        # F25: re-check daemon revocation right before the
+                        # response. The first assert_machine_active was at
+                        # the top of resolve; a revoke that committed in
+                        # the gap between that check and here would
+                        # otherwise be missed and this cache hit would hand
+                        # back a credential to a now-revoked daemon.
+                        self._get_store(claims).assert_machine_active(
+                            principal_id=claims.principal_id,
+                            machine_id=claims.machine_id,
+                        )
                         # Cache hit — log sampled audit row, no decrypt.
                         cache_label = "hit"
                         self._audit.write(
@@ -387,7 +415,7 @@ class CredentialConsumer:
                             cache_hit=True,
                             kek_version=cached_fp.kek_version,
                         )
-                        return entry.cred
+                        return cached_cred
 
             try:
                 decrypted = self._get_store(claims).decrypt_profile(
@@ -424,6 +452,38 @@ class CredentialConsumer:
                 writer_machine_id=decrypted.writer_machine_id,
                 claims=claims,
                 provider=provider,
+            )
+
+            # The materialized credential's own expires_at is independent of
+            # last_synced_at: AWS STS could mint a 15-min token that's
+            # already past mid-life by the time the daemon pushed it, and
+            # fine-grained PATs may carry an explicit expiry that's already
+            # in the refresh-headroom window. Returning ``expires_in: 0`` to
+            # the caller would cause downstream 401 loops instead of a
+            # deterministic refresh signal — fail closed with StaleSource so
+            # the daemon re-pushes a fresh credential before we serve it.
+            if materialized.expires_at is not None:
+                refresh_deadline = now + timedelta(seconds=_MATERIALIZED_REFRESH_HEADROOM_SECONDS)
+                if materialized.expires_at <= refresh_deadline:
+                    raise StaleSource.from_row(
+                        tenant_id=claims.tenant_id,
+                        principal_id=claims.principal_id,
+                        provider=provider,
+                        cause="materialized_credential_expired_or_near_expiry",
+                    )
+
+            # F25: Double-check machine_active immediately before audit/cache.
+            # The first assert_machine_active was at the top of resolve;
+            # between that and here we held no lock while running KMS
+            # unwrap_dek (potentially hundreds of ms for AWS KMS / Vault).
+            # A revoke that committed in that window would otherwise be
+            # missed and the daemon would receive one more upstream
+            # credential after revocation. This second check shrinks the
+            # race to the (microsecond) gap between the SELECT and the
+            # JSONResponse send.
+            self._get_store(claims).assert_machine_active(
+                principal_id=claims.principal_id,
+                machine_id=claims.machine_id,
             )
 
             # IMPORTANT: write audit BEFORE caching so a failed mandatory

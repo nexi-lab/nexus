@@ -20,43 +20,36 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "api_key_zones",
-        sa.Column("key_id", sa.String(length=36), nullable=False),
-        sa.Column("zone_id", sa.String(length=255), nullable=False),
-        sa.Column(
-            "granted_at",
-            sa.DateTime(),
-            nullable=False,
-            server_default=sa.func.current_timestamp(),
-        ),
-        sa.ForeignKeyConstraint(["key_id"], ["api_keys.key_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["zone_id"], ["zones.zone_id"], ondelete="RESTRICT"),
-        sa.PrimaryKeyConstraint("key_id", "zone_id"),
-    )
-    op.create_index("idx_api_key_zones_key", "api_key_zones", ["key_id"])
-    op.create_index("idx_api_key_zones_zone", "api_key_zones", ["zone_id"])
+    # Issue #3897: validate the zone-data invariant BEFORE any DDL. SQLite
+    # doesn't roll back CREATE TABLE on transaction abort, so raising after
+    # create_table would wedge the revision in a half-applied state where
+    # the table exists, alembic_version is unchanged, and the operator
+    # can't simply rerun (CREATE TABLE would fail "table exists"). Order
+    # of operations: seed → preflight → DDL → backfill.
 
-    # Issue #3897: ensure every zone_id referenced by a live api_keys row
-    # exists in `zones` BEFORE the backfill below — otherwise the junction
-    # FK to zones.zone_id rejects the insert. Always seed the documented
-    # default ROOT_ZONE_ID="root" so runtime create_api_key calls (e.g.
-    # POST /api/v2/agents/register) succeed on a fresh install.
-    op.execute(
-        """
-        INSERT INTO zones (zone_id, name, phase, finalizers, created_at, updated_at)
-        SELECT 'root', 'Root', 'Active', '[]',
-               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        WHERE NOT EXISTS (SELECT 1 FROM zones WHERE zone_id = 'root')
-        """
-    )
-    # Pre-flight: refuse to backfill when a live api_key references a zone
-    # that doesn't exist in zones (other than 'root', just seeded above).
-    # Auto-creating those rows would silently bless arbitrary historical or
-    # corrupt zone strings as Active tenants, bypassing zone validation and
-    # reserved-name rules. Fail loudly with an actionable list so the
-    # operator can create the zone or revoke the key before re-running.
     bind = op.get_bind()
+
+    # Seed the documented default ROOT_ZONE_ID="root" so runtime
+    # create_api_key calls (e.g. POST /api/v2/agents/register) succeed on
+    # a fresh install. Any other orphan zone_id on a live key is unknown
+    # tenant state and must be resolved by a human, not silently blessed
+    # as an Active zone (would bypass zone validation/reserved-name
+    # rules).
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO zones (zone_id, name, phase, finalizers, created_at, updated_at)
+            SELECT 'root', 'Root', 'Active', '[]',
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            WHERE NOT EXISTS (SELECT 1 FROM zones WHERE zone_id = 'root')
+            """
+        )
+    )
+
+    # Pre-flight: refuse the upgrade when a live api_key references a
+    # zone not present in zones (other than 'root', just seeded above).
+    # Failing loudly here — before DDL — keeps the schema un-touched so
+    # the operator can fix the data and rerun cleanly.
     orphans = (
         bind.execute(
             sa.text(
@@ -80,6 +73,23 @@ def upgrade() -> None:
             "zones row. Create the zones (or revoke the keys) before "
             f"re-running this migration. Offending zone_ids: {sorted(orphans)}"
         )
+
+    op.create_table(
+        "api_key_zones",
+        sa.Column("key_id", sa.String(length=36), nullable=False),
+        sa.Column("zone_id", sa.String(length=255), nullable=False),
+        sa.Column(
+            "granted_at",
+            sa.DateTime(),
+            nullable=False,
+            server_default=sa.func.current_timestamp(),
+        ),
+        sa.ForeignKeyConstraint(["key_id"], ["api_keys.key_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["zone_id"], ["zones.zone_id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("key_id", "zone_id"),
+    )
+    op.create_index("idx_api_key_zones_key", "api_key_zones", ["key_id"])
+    op.create_index("idx_api_key_zones_zone", "api_key_zones", ["zone_id"])
 
     # Backfill: every live token gets one junction row matching its current
     # primary zone_id. Idempotent set-based insert.

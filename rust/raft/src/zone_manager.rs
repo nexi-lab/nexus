@@ -897,12 +897,8 @@ impl ZoneManager {
         }
 
         // Replace DT_DIR with DT_MOUNT (shadows original contents).
-        let mount_bytes = encode_file_metadata(
-            mount_path,
-            DT_MOUNT,
-            parent_zone_id,
-            target_zone_id,
-        );
+        let mount_bytes =
+            encode_file_metadata(mount_path, DT_MOUNT, parent_zone_id, target_zone_id);
         propose_set_metadata(&handle, &parent_node, mount_path, mount_bytes)?;
 
         if increment_links {
@@ -1116,8 +1112,7 @@ impl ZoneManager {
         // Encode as a DT_REG FileMetadata; target_zone_id carries the
         // advertised zone. backend_name is a marker that tells readers
         // "this is a share registry row, not a user inode".
-        let value =
-            encode_file_metadata(&key, DT_REG, contracts::ROOT_ZONE_ID, zone_id);
+        let value = encode_file_metadata(&key, DT_REG, contracts::ROOT_ZONE_ID, zone_id);
         let handle = self.runtime.handle().clone();
         propose_set_metadata(&handle, &root, &key, value)
     }

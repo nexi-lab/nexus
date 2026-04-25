@@ -934,9 +934,14 @@ mod tests {
         );
         assert!(s.contains("Answer"), "missing text content: {s}");
 
-        // Parse the done frame (last JSON object)
-        let done_idx = s.rfind(r#"{"type":"done""#).expect("missing done frame");
-        let done: Value = serde_json::from_str(&s[done_idx..]).unwrap();
+        // Parse the done frame (last JSON object). serde_json sorts keys
+        // alphabetically, so the literal "type":"done" lands mid-object —
+        // walk back from it to the `{` that opens the done frame.
+        let done_marker = s.rfind(r#""type":"done""#).expect("missing done frame");
+        let done_start = s[..done_marker]
+            .rfind('{')
+            .expect("missing { before type:done");
+        let done: Value = serde_json::from_str(&s[done_start..]).unwrap();
         assert_eq!(done["type"], "done");
         assert_eq!(done["usage"]["cache_creation_input_tokens"], 5);
         assert_eq!(done["usage"]["cache_read_input_tokens"], 3);

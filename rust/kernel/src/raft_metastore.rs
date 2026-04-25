@@ -306,8 +306,6 @@ mod tests {
     fn proto_roundtrip_preserves_kernel_fields() {
         let meta = KernelFileMetadata {
             path: "/docs/readme.md".to_string(),
-            backend_name: "local".to_string(),
-            physical_path: "abc123".to_string(),
             size: 1024,
             etag: Some("hash".to_string()),
             version: 3,
@@ -316,11 +314,10 @@ mod tests {
             mime_type: Some("text/markdown".to_string()),
             created_at_ms: None,
             modified_at_ms: None,
+            last_writer_address: Some("nexus-1:2028".to_string()),
         };
         let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
         assert_eq!(restored.path, meta.path);
-        assert_eq!(restored.backend_name, meta.backend_name);
-        assert_eq!(restored.physical_path, meta.physical_path);
         assert_eq!(restored.size, meta.size);
         assert_eq!(restored.etag, meta.etag);
         assert_eq!(restored.version, meta.version);
@@ -329,6 +326,7 @@ mod tests {
         assert_eq!(restored.mime_type, meta.mime_type);
         assert_eq!(restored.created_at_ms, None);
         assert_eq!(restored.modified_at_ms, None);
+        assert_eq!(restored.last_writer_address, meta.last_writer_address);
     }
 
     /// R20.3: pure-function translation is unit-testable without a

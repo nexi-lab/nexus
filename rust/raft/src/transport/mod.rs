@@ -226,7 +226,7 @@ pub mod proto {
         pub mod core {
             include!(concat!(env!("OUT_DIR"), "/nexus.core.rs"));
         }
-        #[expect(
+        #[allow(
             clippy::large_enum_variant,
             reason = "generated proto code; will configure prost boxing when variants are stabilized"
         )]

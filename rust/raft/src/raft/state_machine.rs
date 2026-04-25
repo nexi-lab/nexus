@@ -342,10 +342,7 @@ pub enum MountApplyEvent {
     /// the kernel-side wire path passes a constant label down to the
     /// router (mount records' backend is supplied separately by the
     /// router's mount config).
-    Set {
-        key: String,
-        target_zone_id: String,
-    },
+    Set { key: String, target_zone_id: String },
     /// DT_MOUNT delete. No proto payload — the entry was removed inside
     /// the same apply txn, so callers look up the prior mount via their
     /// own reverse index (e.g. kernel ``cross_zone_mounts``) to drive
@@ -1889,7 +1886,7 @@ mod tests {
         use prost::Message as ProstMessage;
         use std::sync::Mutex as StdMutex;
 
-        fn encode(entry_type: i32, zone: &str, target: &str, backend: &str) -> Vec<u8> {
+        fn encode(entry_type: i32, zone: &str, target: &str) -> Vec<u8> {
             ProtoFileMetadata {
                 entry_type,
                 zone_id: zone.to_string(),
@@ -1917,7 +1914,7 @@ mod tests {
             1,
             &Command::SetMetadata {
                 key: "/mnt/peer".into(),
-                value: encode(2, "zone-a", "zone-b", "cas-local"), // DT_MOUNT
+                value: encode(2, "zone-a", "zone-b"), // DT_MOUNT
             },
         )
         .unwrap();
@@ -1941,7 +1938,7 @@ mod tests {
             2,
             &Command::SetMetadata {
                 key: "/docs".into(),
-                value: encode(1, "zone-a", "", ""), // DT_DIR
+                value: encode(1, "zone-a", ""), // DT_DIR
             },
         )
         .unwrap();
@@ -1973,7 +1970,7 @@ mod tests {
             4,
             &Command::SetMetadata {
                 key: "/file.txt".into(),
-                value: encode(0, "zone-a", "", ""), // DT_REG
+                value: encode(0, "zone-a", ""), // DT_REG
             },
         )
         .unwrap();
@@ -1998,7 +1995,7 @@ mod tests {
                 1,
                 &Command::SetMetadata {
                     key: "/mnt/peer".into(),
-                    value: encode(2, "zone-a", "zone-b", "cas-local"),
+                    value: encode(2, "zone-a", "zone-b"),
                 },
             )
             .unwrap();

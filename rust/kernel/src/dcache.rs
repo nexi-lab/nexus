@@ -320,7 +320,7 @@ mod tests {
                     mime_type: None,
                     created_at_ms: None,
                     modified_at_ms: None,
-                last_writer_address: None,
+                    last_writer_address: None,
                 },
             );
         }

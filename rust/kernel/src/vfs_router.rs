@@ -703,7 +703,7 @@ mod tests {
     use super::*;
 
     fn entry() -> MountEntry {
-        MountEntry::new(None, "test")
+        MountEntry::new(None)
     }
 
     #[test]
@@ -947,17 +947,17 @@ mod tests {
         table.add(
             "/corp",
             "root",
-            MountEntry::new(None, "backend-corp").with_metastore(corp_a),
+            MountEntry::new(None).with_metastore(corp_a),
         );
         table.add(
             "/family/work",
             "root",
-            MountEntry::new(None, "backend-corp-xlink").with_metastore(corp_b),
+            MountEntry::new(None).with_metastore(corp_b),
         );
         table.add(
             "/family",
             "root",
-            MountEntry::new(None, "backend-family").with_metastore(family),
+            MountEntry::new(None).with_metastore(family),
         );
 
         let mut corp_points = table.mount_points_for_coherence_key(CORP_KEY);

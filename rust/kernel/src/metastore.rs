@@ -1118,6 +1118,7 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: Some("nexus-1:2028".to_string()),
             },
             FileMetadata {
                 path: "/mnt/peer".to_string(),
@@ -1129,19 +1130,19 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         ];
         for meta in &cases {
             let restored = deserialize_metadata(&serialize_metadata(meta)).unwrap();
             assert_eq!(restored.path, meta.path);
-            assert_eq!(restored.backend_name, meta.backend_name);
-            assert_eq!(restored.physical_path, meta.physical_path);
             assert_eq!(restored.size, meta.size);
             assert_eq!(restored.etag, meta.etag);
             assert_eq!(restored.version, meta.version);
             assert_eq!(restored.entry_type, meta.entry_type);
             assert_eq!(restored.zone_id, meta.zone_id);
             assert_eq!(restored.mime_type, meta.mime_type);
+            assert_eq!(restored.last_writer_address, meta.last_writer_address);
         }
     }
 
@@ -1156,6 +1157,7 @@ mod tests {
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,
+            last_writer_address: None,
         }
     }
 
@@ -1263,6 +1265,7 @@ mod tests {
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,
+            last_writer_address: None,
         };
         let data = serialize_metadata(&meta);
         let restored = deserialize_metadata(&data).unwrap();

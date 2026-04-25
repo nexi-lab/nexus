@@ -167,10 +167,12 @@ class TxtaiBackend:
             weakref.WeakKeyDictionary()
         )
         self._native_lock = threading.Lock()
-        # Startup gate — only one loop runs _startup_impl; others poll
-        # ``_started``. Plain threading.Lock so it is loop-agnostic.
+        # Startup gate — only one loop runs _startup_impl; others wait on
+        # ``_startup_done`` (an Event so we wake on either success OR error).
         self._startup_native_lock = threading.Lock()
         self._startup_running = False
+        self._startup_done = threading.Event()
+        self._startup_error: BaseException | None = None
 
     def _get_lock(self) -> asyncio.Lock:
         # Same-loop coroutine fairness layer; cross-loop exclusion is provided
@@ -196,17 +198,28 @@ class TxtaiBackend:
         without spawning a worker thread per attempt.
         """
         async with self._get_lock():
-            await asyncio.to_thread(self._native_lock.acquire)
+            # Cancellation-safe acquire (round 2 review): poll without parking
+            # a default-executor worker thread. If this coroutine is cancelled
+            # mid-poll we never hold the lock, so there is nothing to leak,
+            # and we never starve native-section holders by saturating the
+            # threadpool with waiters.
+            while not self._native_lock.acquire(blocking=False):
+                await asyncio.sleep(0.005)
             try:
                 yield
             finally:
                 self._native_lock.release()
 
     async def startup(self) -> None:
-        """Initialize txtai resources once across any number of event loops."""
-        if self._started or self._embeddings is not None:
-            if self._embeddings is not None:
-                self._started = True
+        """Initialize txtai resources once across any number of event loops.
+
+        Readiness is signalled solely by ``_started`` — never by
+        ``_embeddings is not None``. ``_startup_impl`` assigns ``_embeddings``
+        before downstream steps such as ``_sync_offset_from_db``, so treating
+        the embeddings handle as readiness would let other loops issue
+        upserts/searches against a half-initialised backend.
+        """
+        if self._started:
             return
 
         # Decide which loop owns initialisation. The threading.Lock makes this
@@ -219,20 +232,37 @@ class TxtaiBackend:
                 return
             if not self._startup_running:
                 self._startup_running = True
+                self._startup_done.clear()
+                self._startup_error = None
                 should_init = True
 
         if should_init:
             try:
                 await self._startup_impl()
+            except BaseException as exc:
+                with self._startup_native_lock:
+                    self._startup_error = exc
+                raise
             finally:
+                # Always wake waiters, success or failure, so they can
+                # re-raise the stored error or retry. Without this, a crashed
+                # owner would leave every other loop polling forever.
                 with self._startup_native_lock:
                     self._startup_running = False
+                self._startup_done.set()
         else:
-            # Another loop owns init; poll until it flips ``_started``. Polling
-            # is intentionally simple — there is no cross-loop async primitive
-            # we can wait on safely.
-            while not self._started:
+            # Another loop owns init. Poll the Event so we wake on either
+            # success or failure rather than spinning on ``_started``.
+            while not self._startup_done.is_set():
                 await asyncio.sleep(0.05)
+            if self._startup_error is not None:
+                raise self._startup_error
+            if not self._started:
+                # Owner finished without exception but did not flip _started
+                # (e.g. _startup_impl returned early for a missing dependency).
+                # The cleanest behaviour for the caller is to surface this so
+                # they can fall back to non-search paths.
+                raise RuntimeError("txtai backend startup did not complete")
 
     def kickoff_startup(self) -> None:
         """Begin backend startup in the background without blocking app readiness.
@@ -240,11 +270,9 @@ class TxtaiBackend:
         Spawns a task on the current loop. The new ``startup`` flow uses a
         threading.Lock gate so concurrent kickoffs from different loops cannot
         run ``_startup_impl`` more than once — the duplicate callers will
-        observe ``_startup_running`` and poll for completion instead.
+        observe ``_startup_running`` and wait on ``_startup_done`` instead.
         """
-        if self._started or self._embeddings is not None:
-            if self._embeddings is not None:
-                self._started = True
+        if self._started:
             return
         asyncio.create_task(self.startup())
 

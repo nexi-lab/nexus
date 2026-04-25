@@ -570,6 +570,104 @@ class TestTxtaiBackendConcurrency:
         # Four sleeps of 0.05s, fully serialised, must take at least ~0.18s.
         assert elapsed >= 0.18, f"sections did not serialise: elapsed={elapsed:.3f}s"
 
+    def test_startup_owner_failure_propagates_to_waiters(self) -> None:
+        """Issue #3894 round 2: if the owning loop's startup raises, every
+        waiting loop must wake and re-raise the same error instead of polling
+        forever on ``_started``.
+        """
+        import threading
+
+        backend = TxtaiBackend()
+        boom = RuntimeError("startup boom")
+
+        async def failing_impl() -> None:
+            await asyncio.sleep(0.05)
+            raise boom
+
+        backend._startup_impl = failing_impl
+
+        owner_error: list[BaseException] = []
+        waiter_errors: list[BaseException] = []
+
+        def owner() -> None:
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                owner_error.append(exc)
+
+        def waiter() -> None:
+            try:
+                # Give the owner time to enter _startup_running.
+                import time as _t
+
+                _t.sleep(0.005)
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                waiter_errors.append(exc)
+
+        t_owner = threading.Thread(target=owner)
+        t_waiter1 = threading.Thread(target=waiter)
+        t_waiter2 = threading.Thread(target=waiter)
+        t_owner.start()
+        t_waiter1.start()
+        t_waiter2.start()
+        t_owner.join(timeout=5)
+        t_waiter1.join(timeout=5)
+        t_waiter2.join(timeout=5)
+
+        assert not t_owner.is_alive(), "owner deadlocked"
+        assert not t_waiter1.is_alive(), "waiter 1 deadlocked"
+        assert not t_waiter2.is_alive(), "waiter 2 deadlocked"
+        assert owner_error and owner_error[0] is boom
+        # At least one waiter saw the same error (race: both might also race
+        # to acquire ownership and re-attempt, but neither may hang).
+        assert all(isinstance(e, RuntimeError) for e in waiter_errors)
+
+    def test_exclusive_cancellation_does_not_leak_native_lock(self) -> None:
+        """Issue #3894 round 2: cancelling a coroutine while it is waiting on
+        the native lock must not leave the lock held by an absent owner.
+        """
+        import threading
+
+        backend = TxtaiBackend()
+
+        # Pre-acquire the native lock from a worker thread so the next coroutine
+        # is forced to poll. Release it after the coroutine is cancelled.
+        held = threading.Event()
+        release = threading.Event()
+
+        def holder() -> None:
+            backend._native_lock.acquire()
+            held.set()
+            release.wait(timeout=5)
+            backend._native_lock.release()
+
+        async def waiter() -> None:
+            async with backend._exclusive():
+                pass  # never reaches here while holder is active
+
+        async def driver() -> None:
+            t = asyncio.create_task(waiter())
+            await asyncio.sleep(0.02)
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+
+        import contextlib
+
+        h = threading.Thread(target=holder)
+        h.start()
+        held.wait(timeout=5)
+        try:
+            asyncio.run(driver())
+        finally:
+            release.set()
+            h.join(timeout=5)
+
+        # After cancellation + release, the native lock must be free.
+        assert backend._native_lock.acquire(blocking=False), "native lock leaked after cancellation"
+        backend._native_lock.release()
+
     def test_startup_runs_once_across_loops(self) -> None:
         """Issue #3894 review: only one loop should run _startup_impl, even when
         startup() is called concurrently from multiple loops.

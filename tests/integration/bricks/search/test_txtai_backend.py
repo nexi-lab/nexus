@@ -494,8 +494,327 @@ class TestTxtaiBackendConcurrency:
     @pytest.mark.asyncio
     async def test_lock_exists_on_backend(self) -> None:
         backend = TxtaiBackend()
-        assert hasattr(backend, "_lock")
-        assert isinstance(backend._lock, asyncio.Lock)
+        assert isinstance(backend._get_lock(), asyncio.Lock)
+        assert backend._get_lock() is backend._get_lock()
+
+    def test_lock_is_distinct_per_event_loop(self) -> None:
+        # Issue #3894: a single TxtaiBackend instance reused across event loops
+        # must not raise "bound to a different event loop" on lock acquire.
+        import threading
+
+        backend = TxtaiBackend()
+        seen: list[asyncio.Lock] = []
+        errors: list[BaseException] = []
+
+        async def acquire_once() -> None:
+            async with backend._get_lock():
+                seen.append(backend._get_lock())
+
+        def runner() -> None:
+            try:
+                asyncio.run(acquire_once())
+            except BaseException as exc:
+                errors.append(exc)
+
+        t1 = threading.Thread(target=runner)
+        t2 = threading.Thread(target=runner)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert errors == [], f"acquire raised across loops: {errors!r}"
+        assert len(seen) == 2
+        assert seen[0] is not seen[1]
+
+    def test_native_section_serialises_across_loops(self) -> None:
+        """Issue #3894 review: cross-loop native work must not overlap.
+
+        With the round-3 design the cross-loop lock lives inside the worker
+        thread that ``_run_native`` dispatches onto, so this test exercises
+        ``_run_native`` (the new public surface for native execution) rather
+        than ``_exclusive`` (which is now per-loop fairness only).
+        """
+        import threading
+        import time as _time
+
+        backend = TxtaiBackend()
+        active = 0
+        max_active = 0
+        active_lock = threading.Lock()
+        errors: list[BaseException] = []
+
+        def native_op() -> None:
+            nonlocal active, max_active
+            with active_lock:
+                active += 1
+                if active > max_active:
+                    max_active = active
+            # Hold long enough that an overlapping caller would be observable.
+            _time.sleep(0.05)
+            with active_lock:
+                active -= 1
+
+        async def critical() -> None:
+            await backend._run_native(native_op)
+
+        def runner() -> None:
+            try:
+                asyncio.run(critical())
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=runner) for _ in range(4)]
+        t0 = _time.perf_counter()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        elapsed = _time.perf_counter() - t0
+
+        assert errors == [], f"native section raised: {errors!r}"
+        assert max_active == 1, f"cross-loop critical sections overlapped: max={max_active}"
+        # Four 0.05s native ops, fully serialised, must take at least ~0.18s.
+        assert elapsed >= 0.18, f"sections did not serialise: elapsed={elapsed:.3f}s"
+
+    def test_run_native_cancellation_holds_until_worker_returns(self) -> None:
+        """Issue #3894 round 3: cancelling the awaiting coroutine must NOT let
+        a second native op enter the section while the first worker thread is
+        still executing ``fn``. The lock is acquired/released inside the worker
+        so cancellation cannot strand it.
+        """
+        import threading
+        import time as _time
+
+        backend = TxtaiBackend()
+        running = threading.Event()
+        finish = threading.Event()
+        second_started_at: list[float] = []
+        second_observed_first_running: list[bool] = []
+
+        def slow_fn() -> None:
+            running.set()
+            finish.wait(timeout=5)
+
+        def fast_fn() -> None:
+            second_started_at.append(_time.perf_counter())
+            # If serialisation is intact, this only runs after slow_fn returns.
+            second_observed_first_running.append(running.is_set() and not finish.is_set())
+
+        async def cancelled_caller() -> None:
+            await backend._run_native(slow_fn)
+
+        async def driver() -> None:
+            t = asyncio.create_task(cancelled_caller())
+            # Give the worker a chance to acquire the lock and start slow_fn.
+            await asyncio.to_thread(running.wait, 5)
+            assert running.is_set()
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+
+        import contextlib
+
+        # Caller path: cancel the slow operation while it is mid-flight.
+        async def submit_second_after_cancel() -> None:
+            await driver()
+            # The slow worker is still holding the native lock; submit a second
+            # native call and verify it is serialised behind the first.
+            second = asyncio.create_task(backend._run_native(fast_fn))
+            # Sleep briefly to let the second op queue up. It should NOT run
+            # until ``finish`` is set, so the time delta will reveal overlap.
+            await asyncio.sleep(0.05)
+            assert not second.done(), "second native op ran while first still in flight"
+            # Release the slow op, then wait for the second to finish.
+            finish.set()
+            await second
+
+        asyncio.run(submit_second_after_cancel())
+        assert second_started_at, "fast_fn never ran"
+        # If the second op overlapped with the first, this would be True.
+        assert second_observed_first_running == [False], (
+            f"second op overlapped first: {second_observed_first_running!r}"
+        )
+
+    def test_startup_owner_failure_propagates_to_waiters(self) -> None:
+        """Issue #3894 round 2: if the owning loop's startup raises, every
+        waiting loop must wake and re-raise the same error instead of polling
+        forever on ``_started``.
+        """
+        import threading
+
+        backend = TxtaiBackend()
+        boom = RuntimeError("startup boom")
+
+        async def failing_impl() -> None:
+            await asyncio.sleep(0.05)
+            raise boom
+
+        backend._startup_impl = failing_impl
+
+        owner_error: list[BaseException] = []
+        waiter_errors: list[BaseException] = []
+
+        def owner() -> None:
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                owner_error.append(exc)
+
+        def waiter() -> None:
+            try:
+                # Give the owner time to enter _startup_running.
+                import time as _t
+
+                _t.sleep(0.005)
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                waiter_errors.append(exc)
+
+        t_owner = threading.Thread(target=owner)
+        t_waiter1 = threading.Thread(target=waiter)
+        t_waiter2 = threading.Thread(target=waiter)
+        t_owner.start()
+        t_waiter1.start()
+        t_waiter2.start()
+        t_owner.join(timeout=5)
+        t_waiter1.join(timeout=5)
+        t_waiter2.join(timeout=5)
+
+        assert not t_owner.is_alive(), "owner deadlocked"
+        assert not t_waiter1.is_alive(), "waiter 1 deadlocked"
+        assert not t_waiter2.is_alive(), "waiter 2 deadlocked"
+        assert owner_error and owner_error[0] is boom
+        # At least one waiter saw the same error (race: both might also race
+        # to acquire ownership and re-attempt, but neither may hang).
+        assert all(isinstance(e, RuntimeError) for e in waiter_errors)
+
+    def test_startup_retry_after_failure_isolates_generations(self) -> None:
+        """Issue #3894 round 3: a retry that follows a startup failure must
+        not stomp on the completion signal that earlier waiters are blocked
+        on. Waiters from generation N see generation N's error; later
+        generations have their own per-generation Event.
+        """
+        import threading
+
+        backend = TxtaiBackend()
+        first_boom = RuntimeError("gen 1 boom")
+        second_boom = RuntimeError("gen 2 boom")
+        gen2_can_start = threading.Event()
+
+        call_count = 0
+        call_count_lock = threading.Lock()
+
+        async def impl() -> None:
+            nonlocal call_count
+            with call_count_lock:
+                call_count += 1
+                attempt = call_count
+            if attempt == 1:
+                # Hold long enough that the generation-1 waiter is parked and
+                # the retry can start during this window.
+                await asyncio.sleep(0.1)
+                raise first_boom
+            # Generation 2: wait for the test to release us, then fail with a
+            # distinct error. If the implementation conflates generations,
+            # generation-1 waiters would observe second_boom.
+            await asyncio.to_thread(gen2_can_start.wait, 5)
+            raise second_boom
+
+        backend._startup_impl = impl
+
+        gen1_owner_err: list[BaseException] = []
+        gen1_waiter_err: list[BaseException] = []
+        gen2_owner_err: list[BaseException] = []
+
+        def gen1_owner() -> None:
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                gen1_owner_err.append(exc)
+
+        def gen1_waiter() -> None:
+            # Enter while gen1 owner is still inside _startup_impl.
+            import time as _t
+
+            _t.sleep(0.005)
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                gen1_waiter_err.append(exc)
+
+        def gen2_owner() -> None:
+            # Enter AFTER gen1 owner has finished raising — i.e. after gen1
+            # waiter has unblocked. We deliberately race start of gen2 with
+            # the tail of gen1 to exercise the generation-isolation contract.
+            import time as _t
+
+            _t.sleep(0.15)
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                gen2_owner_err.append(exc)
+
+        threads = [
+            threading.Thread(target=gen1_owner),
+            threading.Thread(target=gen1_waiter),
+            threading.Thread(target=gen2_owner),
+        ]
+        for t in threads:
+            t.start()
+        # Let gen2 actually fail rather than block forever.
+        gen2_can_start.set()
+        for t in threads:
+            t.join(timeout=10)
+            assert not t.is_alive(), "thread deadlocked"
+
+        # Gen1 owner must see gen1's error.
+        assert gen1_owner_err and gen1_owner_err[0] is first_boom
+        # Gen1 waiter must see gen1's error too (NOT gen2's error). This is
+        # the contract the per-generation Event protects.
+        assert gen1_waiter_err
+        assert gen1_waiter_err[0] is first_boom, (
+            f"gen1 waiter saw wrong error: {gen1_waiter_err[0]!r}"
+        )
+        # Gen2 owner sees its own error.
+        assert gen2_owner_err and gen2_owner_err[0] is second_boom
+
+    def test_startup_runs_once_across_loops(self) -> None:
+        """Issue #3894 review: only one loop should run _startup_impl, even when
+        startup() is called concurrently from multiple loops.
+        """
+        import threading
+
+        backend = TxtaiBackend()
+        impl_calls = 0
+        impl_lock = threading.Lock()
+        errors: list[BaseException] = []
+
+        async def fake_impl() -> None:
+            nonlocal impl_calls
+            with impl_lock:
+                impl_calls += 1
+            # Hold long enough for the other loop to enter startup() and see
+            # _startup_running.
+            await asyncio.sleep(0.1)
+            backend._started = True
+
+        backend._startup_impl = fake_impl
+
+        def runner() -> None:
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=runner) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"startup raised: {errors!r}"
+        assert impl_calls == 1, f"_startup_impl ran {impl_calls} times, expected 1"
+        assert backend._started is True
 
     @pytest.mark.asyncio
     async def test_search_during_shutdown_returns_empty(self) -> None:

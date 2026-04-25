@@ -121,9 +121,6 @@ impl ServiceRegistry {
             }
         }
 
-        // Auto-capture hooks via duck-typed hook_spec()
-        self.auto_capture_hooks(py, name, instance)?;
-
         Ok(())
     }
 
@@ -174,7 +171,7 @@ impl ServiceRegistry {
     /// Hot-swap a service: drain → replace (hook management done by caller).
     pub(crate) fn swap(
         &self,
-        py: Python<'_>,
+        _py: Python<'_>,
         name: &str,
         new_instance: &Bound<'_, PyAny>,
         exports: Vec<String>,
@@ -219,10 +216,6 @@ impl ServiceRegistry {
             exports: final_exports,
         };
         self.services.insert(name.to_string(), entry);
-
-        // Step 4: Auto-capture hooks on new instance (caller handles
-        // unregistering old hooks + registering new ones via dispatch)
-        self.auto_capture_hooks(py, name, new_instance)?;
 
         Ok(())
     }
@@ -376,35 +369,6 @@ impl ServiceRegistry {
             }
         }
         result
-    }
-
-    // ── Hook auto-capture (duck-typed hook_spec) ─────────────────────
-
-    /// Check for hook_spec() and auto-capture. Returns the HookSpec if found.
-    fn auto_capture_hooks(
-        &self,
-        py: Python<'_>,
-        _name: &str,
-        instance: &Bound<'_, PyAny>,
-    ) -> PyResult<()> {
-        // Use inspect.getattr_static to avoid __getattr__ proxies
-        let inspect = py.import("inspect")?;
-        let getattr_static = inspect.getattr("getattr_static")?;
-
-        let has_spec = match getattr_static.call1((instance, "hook_spec")) {
-            Ok(attr) => attr.is_callable(),
-            Err(_) => false,
-        };
-
-        if !has_spec {
-            return Ok(());
-        }
-
-        // hook_spec exists and is callable — the dispatch-side hook
-        // registration is handled by the Python enlist() caller which
-        // calls _register_hooks_for_spec on the dispatch object.
-        // We just verified it exists here.
-        Ok(())
     }
 }
 

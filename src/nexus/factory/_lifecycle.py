@@ -189,7 +189,7 @@ def _wire_services(
     # write_observer directly from service registry via nx.service("write_observer").
 
     # rebac_manager.close() and audit_store.close() are now handled by
-    # ServiceRegistry.close_all_services() — no manual callbacks needed.
+    # Rust kernel service_close_all() — no manual callbacks needed.
 
     # Issue #1792: AgentRegistry, EvictionManager, AcpService are now
     # constructed in _boot_post_kernel_services (_wired.py) by the services

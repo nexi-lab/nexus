@@ -415,6 +415,7 @@ class TestStartBackgroundServices:
     """Tests for _start_background_services (Issue #2193: system dict only)."""
 
     def test_start_called_on_deferred_buffer(self) -> None:
+        """DPB start is handled by Rust kernel service_start_all() — not called here."""
         from nexus.factory import _start_background_services
 
         dpb = MagicMock()
@@ -424,7 +425,7 @@ class TestStartBackgroundServices:
             "delivery_worker": None,
         }
         _start_background_services(system)
-        dpb.start.assert_called_once()
+        dpb.start.assert_not_called()
 
     def test_delivery_worker_not_started_in_background(self) -> None:
         """Issue #3193: delivery worker is now async — started by coordinator, not here."""

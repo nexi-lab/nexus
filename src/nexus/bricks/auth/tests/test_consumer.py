@@ -891,6 +891,99 @@ def test_resolve_rejects_revoke_committed_after_initial_machine_check(engine):
         store.decrypt_profile = real_decrypt
 
 
+def test_resolve_rejects_revoke_committed_during_audit_write(engine):
+    """A revoke that commits between audit.write start and the post-audit
+    check must still be observed and reject the call. The audit row is
+    expected to remain (revoked daemon DID try to read; audit log captures
+    every attempt).
+
+    Wraps audit.write to commit a revoke from a separate connection while
+    audit's own transaction is still in flight; the third
+    assert_machine_active call (F26) must catch it.
+    """
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+
+    real_audit_write = consumer._audit.write  # noqa: SLF001 — test introspection
+
+    def _audit_then_revoke(*args, **kwargs):
+        result = real_audit_write(*args, **kwargs)
+        with engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+            conn.execute(
+                text("UPDATE daemon_machines SET revoked_at = NOW() WHERE id = :m"),
+                {"m": str(machine)},
+            )
+        return result
+
+    consumer._audit.write = _audit_then_revoke
+    try:
+        with pytest.raises(MachineUnknownOrRevoked) as exc:
+            consumer.resolve(
+                claims=_claims(tenant, principal, machine), provider="github", purpose="x"
+            )
+        assert exc.value.cause == "machine_revoked"
+    finally:
+        consumer._audit.write = real_audit_write
+
+
+def test_resolve_succeeds_with_active_plus_stale_sibling_profile(engine):
+    """A single active default profile + a stale sibling row must NOT
+    trigger 409 ambiguous_profile. assert_profile_active filters out the
+    stale one, but decrypt_profile used to re-query without that filter
+    and see both rows. F27: decrypt is now scoped to the precheck's
+    matched profile_id so stale siblings can't widen the query.
+    """
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    # Active row pushed fresh.
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    # Sibling row, same provider, last_synced_at past sync_ttl_seconds (300).
+    payload = json.dumps({"token": "ghp_stale", "scopes": ["repo"]}).encode()
+    aad = str(tenant).encode() + b"|" + str(principal).encode() + b"|" + b"github-stale"
+    dek = b"\x09" * 32
+    nonce, ct = AESGCMEnvelope().encrypt(dek, payload, aad=aad)
+    wrapped, kv = encryption.wrap_dek(dek, tenant_id=tenant, aad=aad)
+    with engine.begin() as conn:
+        conn.execute(text("SET LOCAL app.current_tenant = :t"), {"t": str(tenant)})
+        conn.execute(
+            text(
+                "INSERT INTO auth_profiles "
+                "(tenant_id, principal_id, id, provider, account_identifier, "
+                " backend, backend_key, last_synced_at, sync_ttl_seconds, "
+                " ciphertext, wrapped_dek, nonce, aad, kek_version) "
+                "VALUES (:t, :p, 'github-stale', 'github', 'stale', 'envelope', 'k', "
+                " NOW() - INTERVAL '1 hour', 300, :ct, :wd, :no, :aad, :kv)"
+            ),
+            {
+                "t": str(tenant),
+                "p": str(principal),
+                "ct": ct,
+                "wd": wrapped,
+                "no": nonce,
+                "aad": aad,
+                "kv": kv,
+            },
+        )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    # No profile_id → precheck filters to the one active row, decrypt scoped
+    # to that row's id, no ambiguity even though a stale sibling exists.
+    out = consumer.resolve(
+        claims=_claims(tenant, principal, machine), provider="github", purpose="x"
+    )
+    assert out.access_token == "ghp_test"
+
+
 def _seed_named_github_profile(
     *, engine, tenant_id, principal_id, encryption, profile_id, account_identifier, token
 ):

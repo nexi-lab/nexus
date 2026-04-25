@@ -392,12 +392,13 @@ class CredentialConsumer:
                         # if the underlying envelope is also stale).
                         self._cred_cache.evict(cache_key)
                     else:
-                        # F25: re-check daemon revocation right before the
-                        # response. The first assert_machine_active was at
-                        # the top of resolve; a revoke that committed in
-                        # the gap between that check and here would
-                        # otherwise be missed and this cache hit would hand
-                        # back a credential to a now-revoked daemon.
+                        # F25 + F26: bracket the audit.write with TWO
+                        # daemon-revocation checks. The first catches a
+                        # revoke committed before audit started; the
+                        # second (after audit) catches a revoke committed
+                        # WHILE audit was running. Together they shrink the
+                        # post-revoke read race down to the gap between the
+                        # second SELECT and the JSONResponse send.
                         self._get_store(claims).assert_machine_active(
                             principal_id=claims.principal_id,
                             machine_id=claims.machine_id,
@@ -415,13 +416,25 @@ class CredentialConsumer:
                             cache_hit=True,
                             kek_version=cached_fp.kek_version,
                         )
+                        self._get_store(claims).assert_machine_active(
+                            principal_id=claims.principal_id,
+                            machine_id=claims.machine_id,
+                        )
                         return cached_cred
 
             try:
+                # F27: scope decrypt by the precheck's matched profile_id,
+                # not the user-provided one. Without this, decrypt_profile
+                # re-queries with provider-only filtering and sees the
+                # active row + any stale siblings (which assert_profile_active
+                # already filtered out) — raising MultipleProfilesForProvider
+                # when the request is actually unambiguous. Using fp_pre's
+                # profile_id pins the decrypt query to the exact row we
+                # validated, even if the caller passed profile_id=None.
                 decrypted = self._get_store(claims).decrypt_profile(
                     principal_id=claims.principal_id,
                     provider=provider,
-                    profile_id=profile_id,
+                    profile_id=fp_pre.profile_id,
                     encryption=self._encryption,
                     dek_cache=self._dek_cache,
                 )
@@ -501,6 +514,20 @@ class CredentialConsumer:
                 purpose=purpose,
                 cache_hit=False,
                 kek_version=decrypted.kek_version,
+            )
+
+            # F26: Third machine_active check after audit, before cache+return.
+            # audit.write opens its own short transaction (potentially tens of
+            # ms under load); a revoke that commits during that window would
+            # otherwise slip past F25's pre-audit check and the daemon would
+            # both end up with an audit row for a permitted read AND get the
+            # credential cached. This third check fails the request closed if
+            # the daemon was revoked while audit was running. The audit row
+            # itself stays — that's correct: a revoked daemon DID try to read,
+            # and the audit log is meant to capture every attempt.
+            self._get_store(claims).assert_machine_active(
+                principal_id=claims.principal_id,
+                machine_id=claims.machine_id,
             )
 
             self._cred_cache.put(

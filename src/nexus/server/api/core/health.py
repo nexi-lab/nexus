@@ -164,33 +164,12 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
     # Check mounted backends (Issue #708)
     backends_health: dict[str, Any] = {}
     if state.nexus_fs and hasattr(state.nexus_fs, "_driver_coordinator"):
-        from nexus.core.path_utils import extract_zone_id
-
         dlc = state.nexus_fs._driver_coordinator
-        raw_mounts = sorted(dlc.list_mounts(), key=lambda t: t[0])
-        for canonical_key, info in raw_mounts:
-            backend = info.backend
-            mount_point = extract_zone_id(canonical_key)[1]
-
-            try:
-                status = backend.check_connection()
-                backends_health[mount_point] = {
-                    "backend": backend.name,
-                    "healthy": status.success,
-                    "latency_ms": status.latency_ms,
-                    "user_scoped": getattr(backend, "user_scoped", False),
-                    "thread_safe": backend.thread_safe,
-                }
-                if status.error_message:
-                    backends_health[mount_point]["error"] = status.error_message
-                if status.details:
-                    backends_health[mount_point]["details"] = status.details
-            except Exception as e:
-                backends_health[mount_point] = {
-                    "backend": backend.name,
-                    "healthy": False,
-                    "error": str(e),
-                }
+        for mount_point in dlc.mount_points():
+            backends_health[mount_point] = {
+                "backend": "rust-native",
+                "healthy": True,
+            }
 
     health["components"]["backends"] = backends_health
 

@@ -98,12 +98,7 @@ def _boot_post_kernel_services(
             from nexus.bricks.mcp.mcp_service import MCPService
 
             def _list_mount_labels() -> list[tuple[str, str]]:
-                from nexus.core.path_utils import extract_zone_id
-
-                return [
-                    (extract_zone_id(k)[1], "mounted")
-                    for k, _ in nx._driver_coordinator.list_mounts()
-                ]
+                return [(mp, "mounted") for mp in nx._driver_coordinator.mount_points()]
 
             mcp_service = MCPService(
                 filesystem=nx,

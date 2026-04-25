@@ -256,8 +256,16 @@ services:
       PYTEST_ADDOPTS: "-o cache_dir=/tmp/.pytest_cache"
     command: >
       bash -c '
+        set -e
         echo "Installing test dependencies..."
-        pip install -q -i "${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}" pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
+        # `--retries 10 --timeout 60` rides through transient PyPI
+        # outages: the warm-cache CI run regression-tested this when
+        # `grpcio-tools` came back as "from versions: none" once and
+        # killed the whole run. With retries, the same outage now
+        # delays by ~30 s instead of failing the workflow.
+        pip install --retries 10 --timeout 60 -q \
+          -i "${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}" \
+          pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
         echo "Running dynamic federation E2E tests..."
         # Glob, not a single file: any future `test_federation_*.py`
         # in the same dir is auto-picked up by both local invocation

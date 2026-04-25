@@ -53,6 +53,35 @@ def test_idempotent_when_root_already_exists(session_factory):
         assert zone.name == "preexisting"  # untouched
 
 
+def test_rejects_inactive_root_zone(session_factory):
+    """Terminating/Terminated root must fail startup, not silently pass."""
+    with session_factory() as s:
+        s.add(ZoneModel(zone_id=ROOT_ZONE_ID, name="root", phase="Terminating"))
+        s.commit()
+
+    with pytest.raises(RuntimeError, match="not usable.*Terminating"):
+        _seed_root_zone(_svc(session_factory))
+
+
+def test_rejects_soft_deleted_root_zone(session_factory):
+    """deleted_at set on the root row must fail startup."""
+    from datetime import UTC, datetime
+
+    with session_factory() as s:
+        s.add(
+            ZoneModel(
+                zone_id=ROOT_ZONE_ID,
+                name="root",
+                phase="Active",
+                deleted_at=datetime.now(UTC),
+            )
+        )
+        s.commit()
+
+    with pytest.raises(RuntimeError, match="not usable.*deleted_at"):
+        _seed_root_zone(_svc(session_factory))
+
+
 def test_noop_without_session_factory():
     _seed_root_zone(SimpleNamespace(session_factory=None))
 

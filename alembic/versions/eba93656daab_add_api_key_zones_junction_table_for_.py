@@ -50,17 +50,36 @@ def upgrade() -> None:
         WHERE NOT EXISTS (SELECT 1 FROM zones WHERE zone_id = 'root')
         """
     )
-    op.execute(
-        """
-        INSERT INTO zones (zone_id, name, phase, finalizers, created_at, updated_at)
-        SELECT DISTINCT k.zone_id, k.zone_id, 'Active', '[]',
-               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        FROM api_keys k
-        WHERE k.revoked = 0
-          AND k.zone_id IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM zones z WHERE z.zone_id = k.zone_id)
-        """
+    # Pre-flight: refuse to backfill when a live api_key references a zone
+    # that doesn't exist in zones (other than 'root', just seeded above).
+    # Auto-creating those rows would silently bless arbitrary historical or
+    # corrupt zone strings as Active tenants, bypassing zone validation and
+    # reserved-name rules. Fail loudly with an actionable list so the
+    # operator can create the zone or revoke the key before re-running.
+    bind = op.get_bind()
+    orphans = (
+        bind.execute(
+            sa.text(
+                """
+                SELECT DISTINCT k.zone_id
+                FROM api_keys k
+                WHERE k.revoked = 0
+                  AND k.zone_id IS NOT NULL
+                  AND k.zone_id <> 'root'
+                  AND NOT EXISTS (SELECT 1 FROM zones z WHERE z.zone_id = k.zone_id)
+                ORDER BY k.zone_id
+                """
+            )
+        )
+        .scalars()
+        .all()
     )
+    if orphans:
+        raise RuntimeError(
+            "eba93656daab: live api_keys reference zone_ids with no matching "
+            "zones row. Create the zones (or revoke the keys) before "
+            f"re-running this migration. Offending zone_ids: {sorted(orphans)}"
+        )
 
     # Backfill: every live token gets one junction row matching its current
     # primary zone_id. Idempotent set-based insert.

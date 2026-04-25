@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from nexus.server.lifespan.services_container import LifespanServices
+    from nexus.storage.models import ZoneModel
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,9 @@ def _seed_root_zone(svc: "LifespanServices") -> None:
     from nexus.storage.models import ZoneModel
 
     with session_factory() as session:
-        if session.get(ZoneModel, ROOT_ZONE_ID) is not None:
+        existing = session.get(ZoneModel, ROOT_ZONE_ID)
+        if existing is not None:
+            _assert_root_zone_active(existing)
             return
         session.add(
             ZoneModel(
@@ -92,15 +95,33 @@ def _seed_root_zone(svc: "LifespanServices") -> None:
         except IntegrityError:
             session.rollback()
 
-    # Concurrent insert raced us. Confirm the row is present in a fresh
-    # session — if it still isn't, the original error wasn't a race and
-    # we must fail closed.
+    # Concurrent insert raced us. Confirm the row is present and Active in
+    # a fresh session — if it isn't, the original error wasn't a benign
+    # race and we must fail closed.
     with session_factory() as session:
-        if session.get(ZoneModel, ROOT_ZONE_ID) is None:
+        racer = session.get(ZoneModel, ROOT_ZONE_ID)
+        if racer is None:
             raise RuntimeError(
                 f"failed to seed default zone {ROOT_ZONE_ID!r}: "
                 "IntegrityError on insert and row not visible on re-read"
             )
+        _assert_root_zone_active(racer)
+
+
+def _assert_root_zone_active(zone: "ZoneModel") -> None:
+    """Refuse to start when zones.root exists but isn't Active.
+
+    Auth rejects keys whose zone is not Active (or is soft-deleted), so
+    accepting a Terminating/Terminated/deleted root row would let startup
+    look healthy while every default agent registration / root-token call
+    still failed at request time. Fail closed with an actionable error.
+    """
+    if zone.phase != "Active" or zone.deleted_at is not None:
+        raise RuntimeError(
+            f"default zone {zone.zone_id!r} is not usable: "
+            f"phase={zone.phase!r} deleted_at={zone.deleted_at!r}. "
+            "Restore it to Active (and clear deleted_at) before starting."
+        )
 
 
 async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:

@@ -35,17 +35,29 @@ def _apply_upgrade(conn) -> None:
         WHERE NOT EXISTS (SELECT 1 FROM zones WHERE zone_id = 'root')
         """)
     )
-    conn.execute(
-        text("""
-        INSERT INTO zones (zone_id, name, phase, finalizers, created_at, updated_at)
-        SELECT DISTINCT k.zone_id, k.zone_id, 'Active', '[]',
-               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        FROM api_keys k
-        WHERE k.revoked = 0
-          AND k.zone_id IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM zones z WHERE z.zone_id = k.zone_id)
-        """)
+    orphans = (
+        conn.execute(
+            text(
+                """
+                SELECT DISTINCT k.zone_id
+                FROM api_keys k
+                WHERE k.revoked = 0
+                  AND k.zone_id IS NOT NULL
+                  AND k.zone_id <> 'root'
+                  AND NOT EXISTS (SELECT 1 FROM zones z WHERE z.zone_id = k.zone_id)
+                ORDER BY k.zone_id
+                """
+            )
+        )
+        .scalars()
+        .all()
     )
+    if orphans:
+        raise RuntimeError(
+            "eba93656daab: live api_keys reference zone_ids with no matching "
+            "zones row. Create the zones (or revoke the keys) before "
+            f"re-running this migration. Offending zone_ids: {sorted(orphans)}"
+        )
     conn.execute(
         text("""
         INSERT INTO api_key_zones (key_id, zone_id, granted_at)
@@ -99,8 +111,15 @@ def test_upgrade_seeds_root_zone_on_fresh_install(tmp_path):
     assert zones == ["root"]
 
 
-def test_upgrade_seeds_orphan_zone_ids_referenced_by_live_keys(tmp_path):
-    """Pre-existing api_keys reference zones that don't exist — upgrade backfills."""
+def test_upgrade_rejects_live_keys_with_orphan_zone_ids(tmp_path):
+    """Live api_key referencing a non-existent zone must fail the migration.
+
+    Auto-creating the zone would silently bless arbitrary historical or
+    corrupt strings as Active tenants. Failing loudly forces a human to
+    reconcile the state before continuing.
+    """
+    import pytest
+
     engine = create_engine(f"sqlite:///{tmp_path / 'orphans.db'}")
     with engine.begin() as conn:
         _build_pre_migration_schema(conn, with_root_zone=False)
@@ -109,23 +128,34 @@ def test_upgrade_seeds_orphan_zone_ids_referenced_by_live_keys(tmp_path):
             INSERT INTO api_keys
               (key_id, key_hash, user_id, name, zone_id, revoked, created_at)
             VALUES
-              ('kid_live', 'h1', 'alice', 'alice', 'orphan-zone', 0, '2026-04-01'),
-              ('kid_dead', 'h2', 'bob',   'bob',   'never-seeded', 1, '2026-04-01')
+              ('kid_live', 'h1', 'alice', 'alice', 'orphan-zone', 0, '2026-04-01')
             """)
         )
-        # Pre-flight: backfilling api_key_zones with FK enabled would fail
-        # because 'orphan-zone' has no zones row.  The upgrade must seed it.
+
+    with engine.begin() as conn, pytest.raises(RuntimeError, match="orphan-zone"):
+        _apply_upgrade(conn)
+
+
+def test_upgrade_ignores_orphan_zones_on_revoked_keys(tmp_path):
+    """Only LIVE keys block the migration — revoked keys are irrelevant."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'revoked-orphans.db'}")
+    with engine.begin() as conn:
+        _build_pre_migration_schema(conn, with_root_zone=False)
+        conn.execute(
+            text("""
+            INSERT INTO api_keys
+              (key_id, key_hash, user_id, name, zone_id, revoked, created_at)
+            VALUES
+              ('kid_dead', 'h2', 'bob', 'bob', 'never-seeded', 1, '2026-04-01')
+            """)
+        )
         _apply_upgrade(conn)
 
     with engine.begin() as conn:
         zones = sorted(r[0] for r in conn.execute(text("SELECT zone_id FROM zones")).all())
-        junction = sorted(
-            tuple(r) for r in conn.execute(text("SELECT key_id, zone_id FROM api_key_zones")).all()
-        )
-    # 'orphan-zone' seeded; 'never-seeded' is from a revoked key so we don't
-    # synthesize it. 'root' is always seeded.
-    assert zones == ["orphan-zone", "root"]
-    assert junction == [("kid_live", "orphan-zone")]
+        junction = conn.execute(text("SELECT key_id, zone_id FROM api_key_zones")).all()
+    assert zones == ["root"]
+    assert junction == []
 
 
 def test_upgrade_idempotent_when_root_already_seeded(tmp_path):

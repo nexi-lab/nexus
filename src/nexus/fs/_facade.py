@@ -200,8 +200,7 @@ class SlimNexusFS:
             InvalidPathError,
             PathNotMountedError,
         )
-        from nexus.contracts.types import OperationContext
-        from nexus.core.path_utils import extract_zone_id, validate_path
+        from nexus.core.path_utils import validate_path
 
         try:
             normalized = validate_path(path)
@@ -214,7 +213,6 @@ class SlimNexusFS:
             return None
 
         caller_ctx = getattr(self, "_ctx", None)
-        is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
         try:
@@ -226,43 +224,6 @@ class SlimNexusFS:
 
         if not rr.is_external:
             return None
-
-        backend_path = getattr(rr, "backend_path", "") or ""
-        user_mp = extract_zone_id(rr.mount_point)[1]
-
-        # Get skill backend for .readme overlay — external reads go through
-        # kernel sys_read_raw for actual content.
-        backend = _dlc.get_skill_backend(rr.mount_point) if _dlc else None
-        mount_point = user_mp or ""
-
-        # Carry the caller's identity so auth/audit stays accurate, but
-        # fill in the mount/backend-path slots the connector expects.
-        if caller_ctx is not None:
-            ctx = _dc_replace(
-                caller_ctx,
-                backend_path=backend_path,
-                virtual_path=normalized,
-                mount_path=mount_point,
-            )
-        else:
-            ctx = OperationContext(
-                user_id="local",
-                groups=[],
-                zone_id=zone_id,
-                is_admin=is_admin,
-                backend_path=backend_path,
-                virtual_path=normalized,
-                mount_path=mount_point,
-            )
-
-        # Virtual .readme/ overlay check (Issue #3728) — serve generated
-        # docs without touching the live backend.
-        if backend is not None:
-            from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
-
-            virtual = dispatch_virtual_readme_read(backend, mount_point, backend_path, context=ctx)
-            if virtual is not None:
-                return bytes(virtual) if isinstance(virtual, (bytes, bytearray)) else None
 
         # Read via Rust kernel — all backends are Rust-native now.
         try:
@@ -528,7 +489,6 @@ class SlimNexusFS:
             return None
 
         caller_ctx = getattr(self, "_ctx", None)
-        is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
         # Route via Rust kernel
@@ -564,7 +524,7 @@ class SlimNexusFS:
                 user_id="local",
                 groups=[],
                 zone_id=zone_id,
-                is_admin=is_admin,
+                is_admin=True,
                 backend_path=backend_path,
                 virtual_path=normalized,
                 mount_path=mount_point,
@@ -999,13 +959,6 @@ class SlimNexusFS:
                 zone_id=ROOT_ZONE_ID,
                 entry_type=1,
             )
-
-        # Virtual .readme/ overlay check (Issue #3728).  The slim facade
-        # has its own fast stat path that bypasses NexusFS.stat(), so we
-        # run the same fallback helper here before returning None.
-        _vstat = self._kernel._try_virtual_readme_stat(normalized, self._ctx)
-        if _vstat is not None:
-            return _vstat
 
         return None
 

@@ -345,36 +345,6 @@ class TestReadmeDocGeneration:
         assert "/mnt/gmail/" not in doc
         assert "/custom/mount/path/" in doc
 
-    @pytest.mark.asyncio
-    async def test_virtual_readme_tree(self, gmail_backend):
-        """Verify the virtual ``.readme/`` tree exposes the expected files.
-
-        Replaces the old ``test_write_readme`` (materialization test) —
-        Issue #3728 removed ``write_readme``. The virtual overlay now
-        serves docs on-demand from the generator's tree model.
-        """
-        from nexus.backends.connectors.schema_generator import (
-            _invalidate_virtual_tree_cache,
-            get_virtual_readme_tree_for_backend,
-        )
-
-        _invalidate_virtual_tree_cache()
-        tree = get_virtual_readme_tree_for_backend(gmail_backend, "/mnt/gmail")
-
-        # README.md is always present
-        readme = tree.find(["README.md"])
-        assert readme is not None
-        assert readme.is_file
-        assert b"Gmail Connector" in readme.content
-        assert b"agent_intent" in readme.content
-        assert b"Send Email" in readme.content
-
-        # schemas/ directory exists with one file per operation
-        schemas = tree.find(["schemas"])
-        assert schemas is not None
-        assert schemas.is_dir
-        assert "send_email.yaml" in schemas.children
-
 
 # ============================================================================
 # ERROR FORMATTING TESTS

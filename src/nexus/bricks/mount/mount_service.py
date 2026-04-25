@@ -132,11 +132,6 @@ class MountService:
             # Get backend from DLC to check capabilities
             # Get skill backend from DLC for post-mount hooks.
             backend = None
-            if self._dlc:
-                from nexus.core.path_utils import canonicalize_path
-
-                canonical = canonicalize_path(mount_point, "root")
-                backend = self._dlc.get_skill_backend(canonical)
             if backend is None:
                 # No skill backend — still run search indexing below.
                 pass
@@ -1130,14 +1125,9 @@ class MountService:
         if resolved is None:
             raise ValueError(f"Mount not found: {mount_point}")
 
-        # resolve_path now returns (backend_name, backend_path, user_mp).
-        # Config updates require the Python backend object — get it from
-        # skill_backends if available, otherwise this mount doesn't support
-        # runtime config updates.
-        from nexus.core.path_utils import canonicalize_path
-
-        canonical = canonicalize_path(mount_point, "root")
-        backend = self._dlc.get_skill_backend(canonical)
+        # DLC no longer stores skill backends — runtime config updates are
+        # not supported without a Python backend object.
+        backend = None
         result: dict[str, Any] = {
             "updated": False,
             "mount_point": mount_point,
@@ -1209,11 +1199,8 @@ class MountService:
         if resolved is None:
             raise ValueError(f"Mount not found: {mount_point}")
 
-        # resolve_path returns (backend_name, ...) — get skill backend for reauth
-        from nexus.core.path_utils import canonicalize_path
-
-        canonical = canonicalize_path(mount_point, "root")
-        backend = self._dlc.get_skill_backend(canonical)
+        # DLC no longer stores skill backends — reauth is not available.
+        backend = None
         if backend is None:
             raise ValueError(f"No Python backend available for reauth on {mount_point}")
 

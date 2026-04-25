@@ -52,7 +52,7 @@ def generate_download_url(
     """
     try:
         _rr = nexus_fs._kernel.route(path, nexus_fs._zone_id)
-        backend = nexus_fs._driver_coordinator.get_skill_backend(_rr.mount_point)
+        backend = None
         if backend is None:
             return None
         backend_path = _rr.backend_path
@@ -262,9 +262,6 @@ async def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     _list_start = _time.time()
     search = nexus_fs.service("search")
     if search is not None:
-        # SearchService.list injects virtual ``.readme/`` entries for
-        # connector mounts via ``_augment_with_virtual_readme_entries``
-        # (Issue #3728), so we don't need a handler-level augment.
         result = search.list(path=params.path, **kwargs)
     else:
         result = nexus_fs.sys_readdir(params.path, **kwargs)
@@ -460,99 +457,6 @@ def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
     return {"results": results}
 
 
-def _augment_paths_with_virtual_readme(
-    *,
-    nexus_fs: "NexusFS",
-    target_path: str,
-    paths_to_index: list[str],
-    context: Any,
-    logger: Any,
-) -> list[str]:
-    """Inject every virtual ``.readme/`` leaf under ``target_path``
-    into ``paths_to_index``.
-
-    Issue #3728: virtual skill-doc paths (README.md, schemas/*.yaml,
-    examples/*) have no metastore rows, so the metastore-backed
-    ``file_paths`` query above returns zero matches for them.  This
-    helper walks the router for ``target_path``, finds every skill
-    backend mount that intersects the request, and flattens each
-    mount's ``VirtualEntry`` tree into absolute paths appended to
-    the indexing list.
-
-    The walk is tolerant — anything that fails (non-routable path,
-    unknown backend, tree construction error) is logged and skipped,
-    leaving ``paths_to_index`` as the caller supplied it.
-    """
-    try:
-        from nexus.backends.connectors.schema_generator import (
-            VirtualEntry,
-            _has_skill_name,
-            _readme_dir_for,
-            get_virtual_readme_tree_for_backend,
-            overlay_owns_path,
-        )
-    except ImportError:
-        return paths_to_index
-
-    try:
-        _rr = nexus_fs._kernel.route(target_path, nexus_fs._zone_id)
-        backend = nexus_fs._driver_coordinator.get_skill_backend(_rr.mount_point)
-    except Exception:
-        return paths_to_index
-
-    if backend is None or not _has_skill_name(backend):
-        return paths_to_index
-
-    from nexus.core.path_utils import extract_zone_id as _ezi
-
-    mount_point = _ezi(_rr.mount_point)[1] or ""
-    readme_dir_name = _readme_dir_for(backend).strip("/")
-    try:
-        if not overlay_owns_path(backend, mount_point, readme_dir_name, context=context):
-            return paths_to_index
-    except Exception:
-        return paths_to_index
-
-    try:
-        tree = get_virtual_readme_tree_for_backend(backend, mount_point)
-    except Exception:
-        return paths_to_index
-
-    mount_prefix = mount_point.rstrip("/")
-
-    def _walk(node: VirtualEntry, prefix: str) -> list[str]:
-        out: list[str] = []
-        if node.is_dir:
-            for child_name, child in node.children.items():
-                child_prefix = f"{prefix}/{child_name}" if prefix else child_name
-                out.extend(_walk(child, child_prefix))
-        else:
-            out.append(f"{mount_prefix}/{prefix}")
-        return out
-
-    flattened = _walk(tree, readme_dir_name)
-
-    # Only keep virtual leaves that fall under the caller's request.
-    target_norm = target_path.rstrip("/")
-    kept: list[str] = []
-    for leaf in flattened:
-        if target_norm == mount_prefix or leaf.startswith(target_norm + "/") or leaf == target_norm:
-            kept.append(leaf)
-
-    existing = set(paths_to_index)
-    merged = list(paths_to_index)
-    for p in kept:
-        if p not in existing:
-            merged.append(p)
-            existing.add(p)
-    logger.info(
-        "semantic_search_index: after virtual .readme/ augment: %d files (+%d virtual)",
-        len(merged),
-        len(merged) - len(paths_to_index),
-    )
-    return merged
-
-
 async def handle_semantic_search_index(
     nexus_fs: "NexusFS", params: Any, _context: Any
 ) -> dict[str, Any]:
@@ -629,24 +533,6 @@ async def handle_semantic_search_index(
             _log.info(
                 "semantic_search_index: found %d files under %s", len(paths_to_index), db_path
             )
-
-        # Issue #3728: virtual ``.readme/`` overlay paths have no
-        # ``file_paths`` row by design — augment the indexing list by
-        # asking the VirtualEntry tree directly (via the router) for
-        # every leaf under every skill backend mount the request path
-        # intersects.  This picks up ``README.md``, ``schemas/*.yaml``,
-        # and ``examples/*`` regardless of whether ``path`` points at
-        # the mount root or a ``.readme/`` subdir.
-        try:
-            paths_to_index = _augment_paths_with_virtual_readme(
-                nexus_fs=nexus_fs,
-                target_path=path,
-                paths_to_index=paths_to_index,
-                context=context,
-                logger=_log,
-            )
-        except Exception as _walk_err:
-            _log.debug("semantic_search_index: virtual .readme/ walk skipped: %s", _walk_err)
 
         # Read with the caller's context (preserves ReBAC + zone scoping),
         # then apply the same parse-aware transform the daemon refresh path

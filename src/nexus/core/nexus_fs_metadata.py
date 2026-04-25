@@ -17,7 +17,6 @@ from __future__ import annotations
 import builtins
 import logging
 import time
-from dataclasses import replace as _dc_replace
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -56,7 +55,7 @@ class MetadataMixin:
         """Extract typed params for Rust native backend construction.
 
         Returns a dict of kwargs for kernel.sys_setattr if the backend has
-        a Rust-native equivalent, or None to fall back to PyObjectStoreAdapter.
+        a Rust-native equivalent, or None when the backend type is not recognized.
         """
         # S3 backends (PathS3Backend, CASS3Backend)
         if "S3" in cls_name:
@@ -333,15 +332,12 @@ class MetadataMixin:
         # entry) and the Python-side ``.readme/`` virtual-doc overlay
         # (Issue #3728).
         # Rust sys_stat handles: dcache → metastore → implicit directory.
-        # Python fallback only for .readme/ virtual overlay (Issue #3728).
         result = self._kernel.sys_stat(normalized, self._zone_id)
         if result is not None:
             result["owner"] = ctx.user_id
             result["group"] = ctx.user_id
         else:
-            result = self._try_virtual_readme_stat(normalized, ctx)
-            if result is None:
-                return None
+            return None
 
         return result
 
@@ -428,7 +424,6 @@ class MetadataMixin:
                     remote_timeout=float(attrs.get("remote_timeout", 90.0)),
                     zone_id=zone_id,
                 )
-                self._driver_coordinator.dispatch_mount_event(path)
                 return result
 
             # LLM backends — Rust owns the ObjectStore; no Python shim.
@@ -449,7 +444,6 @@ class MetadataMixin:
                     anthropic_blob_root=attrs.get("anthropic_blob_root"),
                     zone_id=zone_id,
                 )
-                self._driver_coordinator.dispatch_mount_event(path)
                 return result
 
             if backend is None:
@@ -471,7 +465,7 @@ class MetadataMixin:
             # ── Rust native backend detection ────────────────────────
             # For connectors with Rust-native backends, extract typed params
             # from the Python instance so Rust constructs the backend without
-            # PyObjectStoreAdapter (Crossing 5 elimination).
+            # All backends are Rust-native now.
             _cls_name = type(backend).__name__
             _rust_typed = self._extract_rust_backend_params(backend, _cls_name)
             if _rust_typed is not None:
@@ -484,8 +478,6 @@ class MetadataMixin:
                     is_external=_is_external,
                     **_rust_typed,
                 )
-                self._driver_coordinator.register_skill_backend(path, backend, zone_id=zone_id)
-                self._driver_coordinator.dispatch_mount_event(path)
                 return result
 
             # ── Local backend detection — Rust takes ownership natively ──
@@ -512,8 +504,6 @@ class MetadataMixin:
                     metastore_path=_ms_path_str,
                     is_external=_is_external,
                 )
-                self._driver_coordinator.register_skill_backend(path, backend, zone_id=zone_id)
-                self._driver_coordinator.dispatch_mount_event(path)
                 return result
             _local_root = str(_root)
 
@@ -536,8 +526,6 @@ class MetadataMixin:
                 metastore_path=_ms_path_str,
                 is_external=_is_external,
             )
-            self._driver_coordinator.register_skill_backend(path, backend, zone_id=zone_id)
-            self._driver_coordinator.dispatch_mount_event(path)
             return result
 
         # ── All other FS types → Rust kernel sys_setattr ─────────────
@@ -597,9 +585,6 @@ class MetadataMixin:
         """
         path = self._validate_path(path)
         ctx = self._resolve_cred(context)
-
-        # Virtual .readme/ paths are read-only (Issue #3728).
-        self._reject_if_virtual_readme(path, context, op="mkdir")
 
         # Rust kernel handles existence check (explicit + implicit directory),
         # exist_ok/parents semantics, backend.mkdir, ensure_parent_directories,
@@ -683,9 +668,6 @@ class MetadataMixin:
         _handled, _result = self.resolve_delete(path, context=context)
         if _handled:
             return _result
-
-        # Virtual .readme/ paths are read-only (Issue #3728).
-        self._reject_if_virtual_readme(path, context, op="delete")
 
         # ── Call Rust first — handles DT_REG, DT_PIPE, DT_STREAM ────
         zone_id, agent_id, is_admin = self._get_context_identity(context)
@@ -798,10 +780,6 @@ class MetadataMixin:
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
 
-        # Virtual .readme/ paths are read-only on both ends (Issue #3728).
-        self._reject_if_virtual_readme(old_path, context, op="rename")
-        self._reject_if_virtual_readme(new_path, context, op="rename")
-
         # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
@@ -883,82 +861,6 @@ class MetadataMixin:
         context = self._parse_context(context)
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
-
-        # Virtual .readme/ destination is read-only (Issue #3728).
-        self._reject_if_virtual_readme(dst_path, context, op="copy")
-
-        # Virtual .readme/ source: bypass metastore and copy the virtual
-        # bytes to the destination.  Virtual docs have no metastore row
-        # so the normal ``src_meta.get`` path below would fail before
-        # hooks run — do the safety checks the normal branch does
-        # (source READ permission via the copy hook, destination
-        # existence on BOTH metastore and backend, locked re-check to
-        # close the concurrent-write race in round 8 finding #19) here
-        # first.  Round 6 findings #14+#15, round 8 finding #19.
-        _virtual_src_bytes = self._try_virtual_readme_bytes(src_path, context)
-        if _virtual_src_bytes is not None:
-            # Enforce source READ permission + destination WRITE
-            # permission via the same copy-hook pipeline the normal
-            # copy path runs.  Permission hooks receive a synthesized
-            # metadata dict since virtual docs have no row.
-            from nexus.contracts.vfs_hooks import CopyHookContext as _CHC
-
-            _virtual_copy_ctx = _CHC(
-                src_path=src_path,
-                dst_path=dst_path,
-                context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                metadata=None,  # virtual docs have no FileMetadata row
-            )
-            self._kernel.dispatch_pre_hooks("copy", _virtual_copy_ctx)
-
-            def _check_dst_exists() -> None:
-                """Raise FileExistsError if dst_path is occupied.
-
-                Probes both the metastore and the backend so a real
-                backend file that hasn't been synced to the metastore
-                still blocks the copy.
-                """
-                if self.metadata.exists(dst_path):
-                    raise FileExistsError(f"Destination path already exists: {dst_path}")
-                # Probe destination via kernel sys_stat
-                try:
-                    _dst_stat = self._kernel.sys_stat(dst_path, self._zone_id)
-                    if _dst_stat is not None:
-                        raise FileExistsError(
-                            f"Destination path already exists on backend: {dst_path}"
-                        )
-                except FileExistsError:
-                    raise
-                except Exception as _probe_err:
-                    # Probe failed — downgrade to debug-log and
-                    # fall through.  The follow-up ``write()`` call
-                    # will surface any permanent create-semantics
-                    # error with its own richer context, so
-                    # raising a best-effort probe error here would
-                    # just add noise.  Logged (not swallowed) so
-                    # ``test_no_silent_swallowers_in_nexus_fs``
-                    # stays green.
-                    logger.debug(
-                        "[VIRTUAL-COPY] backend.content_exists probe failed for %s: %s",
-                        dst_path,
-                        _probe_err,
-                    )
-
-            # Destination-exists fast-fail (round 6 finding #15 — the
-            # probe covers both metastore and backend).
-            _check_dst_exists()
-            virtual_write_result = self.write(dst_path, _virtual_src_bytes, context=context)
-            self._kernel.dispatch_post_hooks("copy", _virtual_copy_ctx)
-            return {
-                "src_path": src_path,
-                "dst_path": dst_path,
-                "size": len(_virtual_src_bytes),
-                "etag": virtual_write_result.get("etag"),
-                "version": virtual_write_result.get("version"),
-                "modified_at": virtual_write_result.get("modified_at"),
-            }
 
         # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy.
         # Rust validates source existence + rejects directories internally.
@@ -1081,11 +983,6 @@ class MetadataMixin:
         # Get file metadata
         meta = self.metadata.get(path)
         if meta is None:
-            # Virtual .readme/ overlay check (Issue #3728) — before raising,
-            # see if the path routes to a skill backend's .readme/ tree.
-            _vstat = self._try_virtual_readme_stat(path, ctx)
-            if _vstat is not None:
-                return _vstat
             raise NexusFileNotFoundError(path)
 
         # Get size from backend if not in metadata
@@ -1277,11 +1174,7 @@ class MetadataMixin:
             except Exception:
                 pass
             # Check implicit directory (path has children but no explicit entry)
-            if is_implicit_dir:
-                return True
-            # Virtual .readme/ overlay check (Issue #3728) — before reporting
-            # not-found, see if the path resolves to a virtual skill doc.
-            return self._try_virtual_readme_stat(path, ctx) is not None
+            return bool(is_implicit_dir)
         except (InvalidPathError, NexusFileNotFoundError, BackendError):
             return False
 
@@ -1463,9 +1356,6 @@ class MetadataMixin:
 
         for path in validated:
             try:
-                # Virtual .readme/ paths are read-only (Issue #3728).
-                self._reject_if_virtual_readme(path, context, op="delete")
-
                 meta = batch_meta.get(path)
 
                 # Check for implicit directory (exists because it has files beneath it)
@@ -1622,130 +1512,11 @@ class MetadataMixin:
         # (LocalBackend, CASLocalBackend, etc.) use the normal metastore path.
         if path and path != "/" and getattr(self, "_kernel", None):
             try:
-                _is_admin = (
-                    context.is_admin
-                    if context is not None and not isinstance(context, dict)
-                    else (context.get("is_admin", False) if isinstance(context, dict) else False)
-                )
                 _rust_route = self._kernel.route(path, self._zone_id)
-                backend = self._driver_coordinator.get_skill_backend(_rust_route.mount_point)
                 if _rust_route.is_external:
-                    from nexus.core.path_utils import extract_zone_id as _ezi
-
-                    backend_path = _rust_route.backend_path or ""
-                    mount_point = _ezi(_rust_route.mount_point)[1] or ""
-                    _ctx = (
-                        _dc_replace(
-                            context,
-                            backend_path=backend_path,
-                            virtual_path=path,
-                            mount_path=mount_point,
-                        )
-                        if context
-                        else OperationContext(
-                            user_id="anonymous",
-                            groups=[],
-                            backend_path=backend_path,
-                            virtual_path=path,
-                            mount_path=mount_point,
-                        )
+                    external_entries: list[str] | None = list(
+                        self._kernel.sys_readdir_backend(path, self._zone_id)
                     )
-                    # Virtual .readme/ overlay check (Issue #3728).
-                    from nexus.backends.connectors.schema_generator import (
-                        _has_skill_name,
-                        _readme_dir_for,
-                        dispatch_virtual_readme_list,
-                        get_virtual_readme_tree_for_backend,
-                    )
-
-                    _virtual_entries = dispatch_virtual_readme_list(
-                        backend, mount_point, backend_path, context=_ctx
-                    )
-                    # Name this variable distinctly from the metastore
-                    # ``entries`` below so mypy doesn't try to unify a
-                    # ``list[str]`` narrowed here with the
-                    # ``list[FileMetadata]`` produced by ``metadata.list``.
-                    external_entries: list[str] | None
-                    if _virtual_entries is not None:
-                        external_entries = list(_virtual_entries)
-                    else:
-                        external_entries = list(
-                            self._kernel.sys_readdir_backend(path, self._zone_id)
-                        )
-                        # Mount-root listing (backend_path is empty or just
-                        # "/") — inject the virtual ``.readme/`` subtree
-                        # (flattened for recursive=True) so the doc overlay
-                        # is discoverable from ``ls`` and also indexable by
-                        # search/recursive walkers that only enumerate from
-                        # the mount root (Issue #3728 findings #5, #8, #18).
-                        #
-                        # Round 7 finding #18: gate the injection on
-                        # ownership — on a deferring backend whose real
-                        # ``.readme/`` already exists, the overlay has
-                        # handed the subtree over and we must not splice
-                        # virtual entries back in.
-                        readme_dir_name = _readme_dir_for(backend).strip("/")
-                        from nexus.backends.connectors.schema_generator import (
-                            overlay_owns_path as _overlay_owns_path,
-                        )
-
-                        try:
-                            _overlay_owns_root = _overlay_owns_path(
-                                backend,
-                                mount_point,
-                                readme_dir_name,
-                                context=_ctx,
-                            )
-                        except ValueError:
-                            _overlay_owns_root = False
-                        if (
-                            external_entries is not None
-                            and _has_skill_name(backend)
-                            and not backend_path.strip("/")
-                            and _overlay_owns_root
-                        ):
-                            if recursive:
-                                # Flatten the virtual tree to every leaf path
-                                # so callers that recurse from the mount root
-                                # (indexing, search, TUI tree) descend into
-                                # README.md + schemas/ + examples/ without a
-                                # second sys_readdir round-trip.
-                                try:
-                                    _vtree = get_virtual_readme_tree_for_backend(
-                                        backend, mount_point
-                                    )
-                                except Exception:
-                                    _vtree = None
-                                if _vtree is not None:
-
-                                    def _walk(node: Any, prefix: str) -> list[str]:
-                                        out: list[str] = []
-                                        if node.is_dir:
-                                            # Include the directory itself
-                                            if prefix:
-                                                out.append(f"{prefix}/")
-                                            for child_name, child in node.children.items():
-                                                child_prefix = (
-                                                    f"{prefix}/{child_name}"
-                                                    if prefix
-                                                    else child_name
-                                                )
-                                                out.extend(_walk(child, child_prefix))
-                                        else:
-                                            out.append(prefix)
-                                        return out
-
-                                    flattened = _walk(_vtree, readme_dir_name)
-                                    for rel in flattened:
-                                        if rel not in external_entries:
-                                            external_entries.append(rel)
-                            else:
-                                virtual_entry = f"{readme_dir_name}/"
-                                if (
-                                    virtual_entry not in external_entries
-                                    and readme_dir_name not in external_entries
-                                ):
-                                    external_entries.append(virtual_entry)
                     if external_entries is not None:
                         if details:
                             return [

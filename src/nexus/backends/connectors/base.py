@@ -211,17 +211,6 @@ class ReadmeDocMixin:
     NESTED_EXAMPLES: dict[str, list[str]] = {}  # Nested field examples for README.md
     FIELD_EXAMPLES: dict[str, str] = {}  # Field-specific examples for README.md
 
-    # If True, the virtual ``.readme/`` overlay (Issue #3728) defers to
-    # real backend content when the same path exists: a real
-    # ``.readme/README.md`` wins over the auto-generated one.  Set on
-    # path-addressed connectors where users can legitimately store
-    # files at arbitrary paths (e.g. native gdrive) so the overlay
-    # cannot silently shadow user data.  Default False — read-only
-    # CLI-backed connectors (gmail, calendar, slack, x, hn, github)
-    # cannot store files at ``.readme/`` paths, so the overlay is
-    # safe to make authoritative there.
-    VIRTUAL_README_DEFERS_TO_BACKEND: bool = False
-
     _skill_registry: "SkillRegistryProtocol | None" = None
     _mount_path: str | None = None  # Set during mount
     _cached_doc_generator: "ReadmeDocGenerator | None" = None
@@ -294,12 +283,6 @@ class ReadmeDocMixin:
     def get_readme_path(self, mount_path: str) -> str:
         """Get the full path to the .readme directory."""
         return self.get_doc_generator().get_readme_path(mount_path)
-
-    # NOTE (Issue #3728): ``write_readme`` was removed. The virtual
-    # ``.readme/`` overlay now serves docs on-demand from class metadata
-    # via ``nexus.backends.connectors.schema_generator.dispatch_virtual_readme_*``,
-    # so materializing files into the backend is no longer needed and
-    # would drift from the canonical (class-metadata-derived) content.
 
     def format_error_with_skill_ref(
         self,

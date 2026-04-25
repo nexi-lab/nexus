@@ -717,8 +717,8 @@ def test_token_zones_add_invokes_helper(monkeypatch):
 
     captured = {}
 
-    def fake_add(s, key_id, zone_id):
-        captured.update(key_id=key_id, zone_id=zone_id)
+    def fake_add(s, key_id, zone_id, permissions="rw"):
+        captured.update(key_id=key_id, zone_id=zone_id, permissions=permissions)
         return True
 
     monkeypatch.setattr("nexus.cli.commands.hub.add_zone_to_key", fake_add)
@@ -730,7 +730,7 @@ def test_token_zones_add_invokes_helper(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(hub, ["token", "zones", "add", "--name", "alice", "--zone", "ops"])
     assert result.exit_code == 0, result.output
-    assert captured == {"key_id": "kid_a", "zone_id": "ops"}
+    assert captured == {"key_id": "kid_a", "zone_id": "ops", "permissions": "rw"}
 
 
 def test_token_zones_remove_refuses_last_zone(monkeypatch):
@@ -762,8 +762,8 @@ def test_token_zones_show_lists_zones(monkeypatch):
     session.execute.return_value.scalars.return_value.first.return_value = row
 
     monkeypatch.setattr(
-        "nexus.cli.commands.hub.get_zones_for_key",
-        lambda s, kid: ["eng", "ops"],
+        "nexus.cli.commands.hub.get_zone_perms_for_key",
+        lambda s, kid: [("eng", "rw"), ("ops", "r")],
     )
     monkeypatch.setattr(
         "nexus.cli.commands.hub.get_session_factory",
@@ -847,3 +847,173 @@ def test_token_create_zones_glob_mutually_exclusive_with_zones(monkeypatch):
     )
     assert result.exit_code != 0
     assert "mutually exclusive" in result.output.lower() or "only one" in result.output.lower()
+
+
+def test_token_create_zones_with_perms_per_zone(monkeypatch):
+    """--zones eng:rw,ops:r threads (zone, perms) tuples into create_api_key."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_p", "sk-x")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,  # no existing token
+        active_zone,  # any_zone exists
+        active_zone,  # eng Active
+        active_zone,  # ops Active
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "alice", "--zones", "eng:rw,ops:r"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == [("eng", "rw"), ("ops", "r")]
+
+
+def test_token_create_zones_bare_defaults_to_rw(monkeypatch):
+    """--zones eng (no colon) is passed through as a bare string (default rw)."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_b", "sk-x")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        active_zone,
+        active_zone,
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng"])
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == ["eng"]
+
+
+def test_token_create_zones_admin_perm_round_trip(monkeypatch):
+    """--zones eng:rwx threads admin perm through to create_api_key."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_x", "sk-x")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        active_zone,
+        active_zone,
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng:rwx"])
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == [("eng", "rwx")]
+
+
+def test_token_create_zones_invalid_perm_rejected(monkeypatch):
+    """--zones eng:badperm raises a ClickException before any DB hit."""
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(MagicMock()),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng:badperm"])
+    assert result.exit_code != 0
+    assert "badperm" in result.output
+
+
+def test_token_zones_add_threads_perms(monkeypatch):
+    """`token zones add --perms r` threads "r" through add_zone_to_key."""
+    row = MagicMock()
+    row.key_id = "kid_a"
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "ops"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        active_zone,
+        row,
+    ]
+
+    captured = {}
+
+    def fake_add(s, key_id, zone_id, permissions="rw"):
+        captured.update(key_id=key_id, zone_id=zone_id, permissions=permissions)
+        return True
+
+    monkeypatch.setattr("nexus.cli.commands.hub.add_zone_to_key", fake_add)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "zones", "add", "--name", "alice", "--zone", "ops", "--perms", "r"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured == {"key_id": "kid_a", "zone_id": "ops", "permissions": "r"}
+
+
+def test_token_zones_show_two_column_format(monkeypatch):
+    """`token zones show` prints zone + perms columns with header."""
+    row = MagicMock()
+    row.key_id = "kid_a"
+    row.zone_id = "eng"
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = row
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_zone_perms_for_key",
+        lambda s, kid: [("eng", "rw"), ("ops", "r")],
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "zones", "show", "--name", "alice"])
+    assert result.exit_code == 0, result.output
+    # Header row plus a row per zone with its perms.
+    assert "zone" in result.output
+    assert "perms" in result.output
+    assert "eng" in result.output
+    assert "rw" in result.output
+    assert "ops" in result.output
+    # "r" appears as the perms column for ops.
+    assert " r " in result.output or "r\n" in result.output

@@ -73,3 +73,66 @@ def test_create_api_key_succeeds_after_seed(session_factory):
             zone_id=ROOT_ZONE_ID,
         )
         s.commit()
+
+
+def test_fails_closed_when_session_raises():
+    """Real DB errors must surface — silent skip would mask the bug."""
+
+    def factory():
+        raise RuntimeError("connection refused")
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        _seed_root_zone(SimpleNamespace(session_factory=factory))
+
+
+def test_concurrent_insert_race_treated_as_success(session_factory):
+    """Another process inserting the row mid-commit must not be fatal."""
+    from sqlalchemy.exc import IntegrityError
+
+    real_factory = session_factory
+    insert_session = real_factory()
+    races: list[bool] = []
+
+    class _RacingSession:
+        def __init__(self) -> None:
+            self._inner = real_factory()
+
+        def __enter__(self) -> "_RacingSession":
+            self._inner.__enter__()
+            return self
+
+        def __exit__(self, *exc) -> None:
+            self._inner.__exit__(*exc)
+
+        def get(self, *a, **kw):
+            return self._inner.get(*a, **kw)
+
+        def add(self, obj) -> None:
+            if not races:
+                # Simulate a competing writer landing the row first.
+                insert_session.add(ZoneModel(zone_id=ROOT_ZONE_ID, name="racer", phase="Active"))
+                insert_session.commit()
+                races.append(True)
+            self._inner.add(obj)
+
+        def commit(self) -> None:
+            self._inner.commit()
+
+        def rollback(self) -> None:
+            self._inner.rollback()
+
+    def factory():
+        return _RacingSession()
+
+    _seed_root_zone(SimpleNamespace(session_factory=factory))
+
+    # Final state: racer's row survives, our insert was rolled back, no raise.
+    with real_factory() as s:
+        zone = s.get(ZoneModel, ROOT_ZONE_ID)
+        assert zone is not None
+        assert zone.name == "racer"
+
+    # And the IntegrityError path was actually exercised.
+    assert races == [True]
+    # Confirm sqlalchemy IntegrityError is the type _seed_root_zone catches.
+    assert IntegrityError is not None

@@ -37,6 +37,31 @@ def upgrade() -> None:
     op.create_index("idx_api_key_zones_key", "api_key_zones", ["key_id"])
     op.create_index("idx_api_key_zones_zone", "api_key_zones", ["zone_id"])
 
+    # Issue #3897: ensure every zone_id referenced by a live api_keys row
+    # exists in `zones` BEFORE the backfill below — otherwise the junction
+    # FK to zones.zone_id rejects the insert. Always seed the documented
+    # default ROOT_ZONE_ID="root" so runtime create_api_key calls (e.g.
+    # POST /api/v2/agents/register) succeed on a fresh install.
+    op.execute(
+        """
+        INSERT INTO zones (zone_id, name, phase, finalizers, created_at, updated_at)
+        SELECT 'root', 'Root', 'Active', '[]',
+               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        WHERE NOT EXISTS (SELECT 1 FROM zones WHERE zone_id = 'root')
+        """
+    )
+    op.execute(
+        """
+        INSERT INTO zones (zone_id, name, phase, finalizers, created_at, updated_at)
+        SELECT DISTINCT k.zone_id, k.zone_id, 'Active', '[]',
+               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        FROM api_keys k
+        WHERE k.revoked = 0
+          AND k.zone_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM zones z WHERE z.zone_id = k.zone_id)
+        """
+    )
+
     # Backfill: every live token gets one junction row matching its current
     # primary zone_id. Idempotent set-based insert.
     op.execute(

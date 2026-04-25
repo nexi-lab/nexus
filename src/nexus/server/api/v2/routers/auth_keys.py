@@ -377,7 +377,11 @@ async def revoke_key(
     with db_provider.session_factory() as session:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
         if zone_id:
-            stmt = stmt.where(APIKeyModel.zone_id == zone_id)
+            from nexus.storage.models import APIKeyZoneModel
+
+            stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+                APIKeyZoneModel.zone_id == zone_id
+            )
         api_key = session.scalar(stmt)
         if api_key is not None and api_key.grant_tuple_ids:
             try:

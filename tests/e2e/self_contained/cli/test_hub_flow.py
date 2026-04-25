@@ -174,3 +174,79 @@ def test_hub_end_to_end_token_lifecycle(hub_cli_env: dict[str, str]) -> None:
         # Best-effort cleanup so stale revoked rows don't pile up across
         # reruns against the same dev stack. Already-revoked is fine.
         _run(["hub", "token", "revoke", token_name], env=hub_cli_env)
+
+
+def test_hub_multi_zone_token_lifecycle(hub_cli_env: dict[str, str]) -> None:
+    """e2e: create multi-zone token, list, mutate zones, refuse last-zone removal (#3785).
+
+    Drives the CLI end-to-end against a real running stack. Uses the `root` zone
+    (always present) plus best-effort creates of `eng` and `ops` (skipped if zone
+    creation isn't permitted in this stack).
+    """
+    token_name = f"e2e_multi_{uuid.uuid4().hex[:8]}"
+
+    # Best-effort: ensure two extra zones exist. If zone creation isn't supported
+    # by the CLI in this deployment, fall through and just rely on `root`.
+    for z in ("eng", "ops"):
+        _run(
+            ["zone", "create", z], env=hub_cli_env
+        )  # ignore failures (already exists / not allowed)
+
+    try:
+        # 1. Create with --zones CSV (root is always available; eng/ops if seeded).
+        # We pick the first zone that's actually Active per `nexus hub status`.
+        # For robustness, just use `root` as a known-good zone.
+        create = _run(
+            ["hub", "token", "create", "--name", token_name, "--zones", "root"],
+            env=hub_cli_env,
+        )
+        assert create.returncode == 0, create.stderr
+        # Token raw value printed; we don't parse it for this test.
+
+        # 2. list --json shows the token with zones=["root"].
+        listed = _run(["hub", "token", "list", "--json"], env=hub_cli_env)
+        assert listed.returncode == 0, listed.stderr
+        tokens = {t["name"]: t for t in json.loads(listed.stdout)["tokens"]}
+        assert token_name in tokens, f"{token_name!r} not in {list(tokens)}"
+        assert "zones" in tokens[token_name], tokens[token_name]
+        assert tokens[token_name]["zones"] == ["root"], tokens[token_name]
+
+        # 3. zones show — single zone for now.
+        show1 = _run(["hub", "token", "zones", "show", "--name", token_name], env=hub_cli_env)
+        assert show1.returncode == 0, show1.stderr
+        assert "root" in show1.stdout
+
+        # 4. zones add eng (best-effort — only assert on the case where eng exists).
+        add_eng = _run(
+            ["hub", "token", "zones", "add", "--name", token_name, "--zone", "eng"],
+            env=hub_cli_env,
+        )
+        if add_eng.returncode == 0:
+            # eng zone existed and add succeeded.
+            assert "added" in add_eng.stdout or "no change" in add_eng.stdout
+
+            # zones show now includes both.
+            show2 = _run(["hub", "token", "zones", "show", "--name", token_name], env=hub_cli_env)
+            assert show2.returncode == 0, show2.stderr
+            assert "root" in show2.stdout
+            assert "eng" in show2.stdout
+
+            # zones remove eng → succeeds (root remains).
+            rm_eng = _run(
+                ["hub", "token", "zones", "remove", "--name", token_name, "--zone", "eng"],
+                env=hub_cli_env,
+            )
+            assert rm_eng.returncode == 0, rm_eng.stderr
+            assert "removed" in rm_eng.stdout
+
+        # 5. Removing the last zone (root) MUST fail with "last zone".
+        rm_last = _run(
+            ["hub", "token", "zones", "remove", "--name", token_name, "--zone", "root"],
+            env=hub_cli_env,
+        )
+        assert rm_last.returncode != 0
+        combined = (rm_last.stdout + rm_last.stderr).lower()
+        assert "last zone" in combined, combined
+    finally:
+        # Best-effort cleanup.
+        _run(["hub", "token", "revoke", token_name], env=hub_cli_env)

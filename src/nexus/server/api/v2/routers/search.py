@@ -190,6 +190,14 @@ async def search_query(
     start_time = time.perf_counter()
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
 
+    zone_set_raw = auth_result.get("zone_set") or [zone_id]
+    zone_set = tuple(zone_set_raw)
+    # #3785: auto-promote to federated when token grants multiple zones,
+    # even if caller didn't pass federated=true. Single-zone tokens
+    # (zone_set == (zone_id,)) hit the unchanged single-zone path.
+    if len(zone_set) > 1:
+        federated = True
+
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
 
@@ -223,6 +231,7 @@ async def search_query(
             auth_result=auth_result,
             search_daemon=search_daemon,
             request=request,
+            zone_filter=frozenset(zone_set) if len(zone_set) > 1 else None,
         )
 
     # --- Standard single-zone search path ---
@@ -376,6 +385,7 @@ async def _handle_federated_search(
     auth_result: dict[str, Any],
     search_daemon: Any,
     request: Request,
+    zone_filter: frozenset[str] | None = None,  # NEW (#3785)
 ) -> dict[str, Any]:
     """Handle federated cross-zone search (Issue #3147).
 
@@ -425,6 +435,7 @@ async def _handle_federated_search(
         path_filter=path_filter,
         alpha=alpha,
         fusion_method=fusion_method,
+        zone_filter=zone_filter,
     )
 
     # Issue #3778: SANDBOX profile — degrade semantic federation to local

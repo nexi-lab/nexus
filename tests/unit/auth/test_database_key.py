@@ -386,3 +386,120 @@ class TestZoneLifecycleGate:
 
         result = await auth_provider.authenticate(raw_key)
         assert result.authenticated is True
+
+
+# ── #3785: zone_set from junction table ──────────────────────
+
+
+def test_authenticate_loads_zone_set_from_junction(tmp_path):
+    """DatabaseAPIKeyAuth populates AuthResult.zone_set from api_key_zones (#3785)."""
+    import asyncio
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.storage.api_key_ops import create_api_key
+    from nexus.storage.models import ZoneModel
+    from nexus.storage.models._base import Base
+
+    engine = create_engine(f"sqlite:///{tmp_path}/zs.db")
+    Base.metadata.create_all(engine)
+    SessionFactory = sessionmaker(bind=engine)
+    rs = _make_mock_record_store(SessionFactory)
+
+    with SessionFactory() as s:
+        s.add(ZoneModel(zone_id="eng", name="eng", phase="Active"))
+        s.add(ZoneModel(zone_id="ops", name="ops", phase="Active"))
+        s.commit()
+        _, raw_key = create_api_key(s, user_id="alice", name="alice", zones=["eng", "ops"])
+        s.commit()
+
+    auth = DatabaseAPIKeyAuth(record_store=rs)
+    result = asyncio.run(auth.authenticate(raw_key))
+
+    assert result.authenticated is True
+    assert result.zone_id == "eng"
+    assert sorted(result.zone_set) == ["eng", "ops"]
+
+
+def test_authenticate_legacy_token_falls_back_to_zone_id(tmp_path):
+    """Legacy single-zone token (no junction rows) → zone_set = (zone_id,)."""
+    import asyncio
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.storage.models import APIKeyModel, ZoneModel
+    from nexus.storage.models._base import Base
+
+    engine = create_engine(f"sqlite:///{tmp_path}/legacy.db")
+    Base.metadata.create_all(engine)
+    SessionFactory = sessionmaker(bind=engine)
+    rs = _make_mock_record_store(SessionFactory)
+
+    raw_key = "sk-legacy_test_123_abcdefghijklmn"  # 34 chars, satisfies API_KEY_MIN_LENGTH=32
+    auth = DatabaseAPIKeyAuth(record_store=rs)
+    key_hash = auth._hash_key(raw_key)
+
+    with SessionFactory() as s:
+        s.add(ZoneModel(zone_id="eng", name="eng", phase="Active"))
+        s.add(
+            APIKeyModel(
+                key_id="kid_legacy",
+                key_hash=key_hash,
+                user_id="legacy",
+                name="legacy",
+                zone_id="eng",
+            )
+        )
+        s.commit()
+
+    result = asyncio.run(auth.authenticate(raw_key))
+
+    assert result.authenticated is True
+    assert result.zone_set == ("eng",)
+
+
+# ── #3785 AC #5: expired token rejected before zone_set resolves ──
+
+
+def test_expired_token_rejected_even_with_multi_zone(tmp_path):
+    """AC #5: expired tokens fail closed before zone_set is resolved (#3785)."""
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.storage.api_key_ops import create_api_key
+    from nexus.storage.models import ZoneModel
+    from nexus.storage.models._base import Base
+
+    engine = create_engine(f"sqlite:///{tmp_path}/expiry.db")
+    Base.metadata.create_all(engine)
+    SessionFactory = sessionmaker(bind=engine)
+    rs = _make_mock_record_store(SessionFactory)
+
+    with SessionFactory() as s:
+        s.add(ZoneModel(zone_id="eng", name="eng", phase="Active"))
+        s.add(ZoneModel(zone_id="ops", name="ops", phase="Active"))
+        s.commit()
+        # Mint a token with multiple zones AND a past expiry.
+        _, raw_key = create_api_key(
+            s,
+            user_id="alice",
+            name="alice",
+            zones=["eng", "ops"],
+            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+        s.commit()
+
+    auth = DatabaseAPIKeyAuth(record_store=rs)
+    result = asyncio.run(auth.authenticate(raw_key))
+
+    assert result.authenticated is False
+    # And no zone_set leaks out on a rejected auth result.
+    assert result.zone_set == ()

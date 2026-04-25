@@ -152,9 +152,13 @@ class APIKeyModel(Base):
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
     subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, default=ROOT_ZONE_ID, index=True
-    )
+    zone_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    """Deprecated (#3785). Backfill alias for `api_key_zones.zone_id` first row.
+
+    New callers should use `get_zones_for_key`/`get_zone_perms_for_key` against
+    the junction table. Nullable so admin/zoneless keys store NULL instead of
+    being silently coerced to ROOT_ZONE_ID.
+    """
     is_admin: Mapped[int] = mapped_column(Integer, default=0)
 
     inherit_permissions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -168,6 +172,30 @@ class APIKeyModel(Base):
     revoked: Mapped[int] = mapped_column(Integer, default=0, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class APIKeyZoneModel(Base):
+    """Junction: token → zone allow-list (#3785). Composite PK (key_id, zone_id)."""
+
+    __tablename__ = "api_key_zones"
+
+    key_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("api_keys.key_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    zone_id: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("zones.zone_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    granted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    permissions: Mapped[str] = mapped_column(String(8), nullable=False, default="rw")
+
+    __table_args__ = (
+        Index("idx_api_key_zones_key", "key_id"),
+        Index("idx_api_key_zones_zone", "zone_id"),
+    )
 
 
 class OAuthAPIKeyModel(Base):

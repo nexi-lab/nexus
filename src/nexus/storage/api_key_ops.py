@@ -27,6 +27,15 @@ API_KEY_PREFIX = "sk-"
 API_KEY_MIN_LENGTH = 32
 _HMAC_SALT_DEFAULT = "nexus-api-key-v1"
 
+# Allowed per-zone permission strings (#3785).
+_VALID_PERMISSIONS = frozenset({"r", "w", "rw", "rwx"})
+
+
+def _validate_permissions(perms: str) -> str:
+    if perms not in _VALID_PERMISSIONS:
+        raise ValueError(f"invalid permissions {perms!r}; expected one of r, w, rw, rwx")
+    return perms
+
 
 def _get_hmac_secret() -> str:
     """Return the HMAC secret for API key hashing.
@@ -76,6 +85,8 @@ def create_api_key(
     name: str,
     subject_type: str = "user",
     subject_id: str | None = None,
+    *,
+    zones: list[str | tuple[str, str]] | None = None,
     zone_id: str | None = None,
     is_admin: bool = False,
     expires_at: datetime | None = None,
@@ -89,15 +100,50 @@ def create_api_key(
         name: Human-readable key name.
         subject_type: Type of subject ("user", "agent", or "service").
         subject_id: Custom subject ID (for agents). Defaults to user_id.
-        zone_id: Optional zone identifier.
+        zones: List of zone identifiers for this key (#3785). Each entry is
+            either a bare zone_id string (defaulting to ``"rw"`` permissions)
+            or a ``(zone_id, perms)`` tuple where perms is one of
+            ``"r" | "w" | "rw" | "rwx"``. The first zone is also written to
+            ``APIKeyModel.zone_id`` as a deprecated backfill alias so legacy
+            ``WHERE zone_id = ?`` filters keep matching the primary; new
+            readers should use the junction (``get_zones_for_key`` /
+            ``get_zone_perms_for_key``). One junction row is written per
+            zone with its perms. Takes precedence over ``zone_id`` when both
+            are supplied.
+        zone_id: Legacy single-zone identifier. Kept for backward compat;
+            prefer ``zones`` for new callers. Ignored when ``zones`` is set.
         is_admin: Whether this key has admin privileges.
         expires_at: Optional expiry datetime (UTC).
         inherit_permissions: Whether agent inherits owner's permissions.
 
     Returns:
         Tuple of (key_id, raw_key). Raw key is only returned once.
+
+    Raises:
+        ValueError: If ``zones`` is explicitly passed as an empty list, if
+            ``subject_type`` is invalid, or if any per-zone permission
+            string is not one of ``r | w | rw | rwx``. Passing neither
+            ``zones`` nor ``zone_id`` is still allowed (zone-less key,
+            backward compat).
     """
-    from nexus.storage.models import APIKeyModel
+    from nexus.storage.models import APIKeyModel, APIKeyZoneModel
+
+    # Resolve effective zone list; zones= wins over legacy zone_id=
+    zone_perms: list[tuple[str, str]]
+    if zones is None:
+        zone_perms = [(zone_id, "rw")] if zone_id else []
+    elif len(zones) == 0:
+        raise ValueError("create_api_key: zones list must not be empty")
+    else:
+        zone_perms = []
+        for entry in zones:
+            if isinstance(entry, tuple):
+                zid, perms = entry
+                _validate_permissions(perms)
+                zone_perms.append((zid, perms))
+            else:
+                zone_perms.append((entry, "rw"))
+    primary_zone = zone_perms[0][0] if zone_perms else None
 
     final_subject_id = subject_id or user_id
 
@@ -105,7 +151,7 @@ def create_api_key(
     if subject_type not in valid_subject_types:
         raise ValueError(f"subject_type must be one of {valid_subject_types}, got {subject_type}")
 
-    zone_prefix = f"{zone_id[:8]}_" if zone_id else ""
+    zone_prefix = f"{primary_zone[:8]}_" if primary_zone else ""
     subject_prefix = final_subject_id[:12] if subject_type == "agent" else user_id[:8]
     random_suffix = secrets.token_hex(16)
     key_id_part = secrets.token_hex(4)
@@ -117,7 +163,7 @@ def create_api_key(
         key_hash=key_hash,
         user_id=user_id,
         name=name,
-        zone_id=zone_id,
+        zone_id=primary_zone,
         is_admin=int(is_admin),
         expires_at=expires_at,
         subject_type=subject_type,
@@ -126,7 +172,10 @@ def create_api_key(
     )
 
     session.add(api_key)
-    session.flush()
+    session.flush()  # populate api_key.key_id before junction inserts
+
+    for zid, perms in zone_perms:
+        session.add(APIKeyZoneModel(key_id=api_key.key_id, zone_id=zid, permissions=perms))
 
     return (api_key.key_id, raw_key)
 
@@ -193,4 +242,62 @@ def revoke_api_key(session: "Session", key_id: str) -> bool:
     api_key.revoked_at = datetime.now(UTC)
     session.flush()
 
+    return True
+
+
+def get_zones_for_key(session: "Session", key_id: str) -> list[str]:
+    """Return the full zone allow-list for a token (#3785)."""
+    from sqlalchemy import select
+
+    from nexus.storage.models import APIKeyZoneModel
+
+    rows = (
+        session.execute(select(APIKeyZoneModel.zone_id).where(APIKeyZoneModel.key_id == key_id))
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+def get_zone_perms_for_key(session: "Session", key_id: str) -> list[tuple[str, str]]:
+    """Return ``(zone_id, perms)`` pairs for a token's allow-list (#3785)."""
+    from sqlalchemy import select
+
+    from nexus.storage.models import APIKeyZoneModel
+
+    rows = session.execute(
+        select(APIKeyZoneModel.zone_id, APIKeyZoneModel.permissions).where(
+            APIKeyZoneModel.key_id == key_id
+        )
+    ).all()
+    return [(zid, perms) for zid, perms in rows]
+
+
+def add_zone_to_key(session: "Session", key_id: str, zone_id: str, permissions: str = "rw") -> bool:
+    """Add a zone to a token's allow-list. Idempotent — returns False if already present."""
+    from nexus.storage.models import APIKeyZoneModel
+
+    _validate_permissions(permissions)
+    existing = session.get(APIKeyZoneModel, (key_id, zone_id))
+    if existing is not None:
+        return False
+    session.add(APIKeyZoneModel(key_id=key_id, zone_id=zone_id, permissions=permissions))
+    return True
+
+
+def remove_zone_from_key(session: "Session", key_id: str, zone_id: str) -> bool:
+    """Remove a zone. Refuses to leave a token with zero zones (raises ValueError)."""
+    from nexus.storage.models import APIKeyZoneModel
+
+    current = get_zone_perms_for_key(session, key_id)
+    current_ids = [zid for zid, _ in current]
+    if zone_id not in current_ids:
+        return False
+    if len(current) == 1:
+        raise ValueError(
+            f"refusing to remove last zone {zone_id!r} from key {key_id!r}; "
+            "revoke the token instead"
+        )
+    row = session.get(APIKeyZoneModel, (key_id, zone_id))
+    session.delete(row)
     return True

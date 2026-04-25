@@ -677,7 +677,7 @@ module = [
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = ["nexus.bricks.mcp.server", "nexus.bricks.mcp.mount"]
+module = ["nexus.bricks.mcp.server", "nexus.bricks.mcp.mount", "nexus.bricks.mcp.auth_cache"]
 # cachetools/yaml stubs may or may not be installed; suppress both directions
 disable_error_code = ["import-untyped", "no-any-return", "redundant-cast"]
 

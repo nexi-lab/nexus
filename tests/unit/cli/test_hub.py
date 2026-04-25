@@ -43,7 +43,7 @@ def test_token_create_prints_raw_key_and_row(monkeypatch):
     assert "sk-root_alice_abcd_1234" in result.output
     assert "kid_abc" in result.output
     assert created["name"] == "alice"
-    assert created["zone_id"] == "root"
+    assert created["zones"] == ["root"]
     assert created["is_admin"] is False
 
 
@@ -565,3 +565,455 @@ def test_token_create_rejects_soft_deleted_zone(monkeypatch):
     )
     assert result.exit_code == 1
     assert "not active" in result.output
+
+
+def test_token_create_zones_csv(monkeypatch):
+    """--zones eng,ops creates a token bound to both zones (#3785)."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_xyz", "sk-eng_alice_xx_yy")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,  # no existing token by name
+        active_zone,  # any_zone exists (skip bootstrap escape)
+        active_zone,  # zone "eng" Active
+        active_zone,  # zone "ops" Active
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "alice", "--zones", "eng,ops"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == ["eng", "ops"]
+
+
+def test_token_create_zone_alias_still_works(monkeypatch):
+    """Backward-compat: --zone single still mints a token (#3785)."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_x", "sk-x")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        active_zone,
+        active_zone,
+    ]
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "svc", "--zone", "eng"])
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == ["eng"]
+
+
+def test_token_create_rejects_empty_zones(monkeypatch):
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(MagicMock()),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", ""])
+    assert result.exit_code != 0
+    assert "zone" in result.output.lower()
+
+
+def test_token_create_rejects_inactive_zone_in_list(monkeypatch):
+    """If any zone in --zones is not Active, the whole mint fails."""
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    # Sequence: no existing, any_zone exists, eng Active, ops not found
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        active_zone,
+        active_zone,
+        None,
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = [active_zone]
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng,ops"])
+    assert result.exit_code != 0
+    assert "ops" in result.output
+
+
+def test_token_list_json_includes_zones(monkeypatch):
+    """`token list --json` emits 'zones': ['eng','ops'] per row (#3785)."""
+    from datetime import UTC, datetime
+
+    from nexus.storage.models import APIKeyModel, APIKeyZoneModel
+
+    row = APIKeyModel(
+        key_id="kid_a",
+        key_hash="h",
+        user_id="alice",
+        name="alice",
+        zone_id="eng",
+        is_admin=0,
+        revoked=0,
+        created_at=datetime.now(UTC),
+    )
+
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.all.side_effect = [
+        [row],  # APIKeyModel rows
+        [
+            APIKeyZoneModel(key_id="kid_a", zone_id="eng"),
+            APIKeyZoneModel(key_id="kid_a", zone_id="ops"),
+        ],  # junction rows
+    ]
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["tokens"][0]["zones"] == ["eng", "ops"]
+
+
+def test_token_zones_add_invokes_helper(monkeypatch):
+    row = MagicMock()
+    row.key_id = "kid_a"
+    session = MagicMock()
+    # Sequence: zone Active check (zone exists), then resolve token by name
+    active_zone = MagicMock()
+    active_zone.zone_id = "ops"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        active_zone,  # zone Active
+        row,  # token by name
+    ]
+
+    captured = {}
+
+    def fake_add(s, key_id, zone_id, permissions="rw"):
+        captured.update(key_id=key_id, zone_id=zone_id, permissions=permissions)
+        return True
+
+    monkeypatch.setattr("nexus.cli.commands.hub.add_zone_to_key", fake_add)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "zones", "add", "--name", "alice", "--zone", "ops"])
+    assert result.exit_code == 0, result.output
+    assert captured == {"key_id": "kid_a", "zone_id": "ops", "permissions": "rw"}
+
+
+def test_token_zones_remove_refuses_last_zone(monkeypatch):
+    row = MagicMock()
+    row.key_id = "kid_a"
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = row
+
+    def fake_remove(s, key_id, zone_id):
+        raise ValueError(f"refusing to remove last zone {zone_id!r} from key {key_id!r}")
+
+    monkeypatch.setattr("nexus.cli.commands.hub.remove_zone_from_key", fake_remove)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "zones", "remove", "--name", "alice", "--zone", "eng"])
+    assert result.exit_code != 0
+    assert "last zone" in result.output
+
+
+def test_token_zones_show_lists_zones(monkeypatch):
+    row = MagicMock()
+    row.key_id = "kid_a"
+    row.zone_id = "eng"
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = row
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_zone_perms_for_key",
+        lambda s, kid: [("eng", "rw"), ("ops", "r")],
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "zones", "show", "--name", "alice"])
+    assert result.exit_code == 0, result.output
+    assert "eng" in result.output
+    assert "ops" in result.output
+
+
+def test_token_create_zones_glob_expands_to_active_zones(monkeypatch):
+    """--zones-glob 'team-*' expands to all active zones matching pattern (#3785 follow-up)."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid", "sk-x")
+
+    team_eng = MagicMock()
+    team_eng.zone_id = "team-eng"
+    team_ops = MagicMock()
+    team_ops.zone_id = "team-ops"
+    other = MagicMock()
+    other.zone_id = "ops"
+
+    session = MagicMock()
+    # Sequence: no existing token, any_zone exists (skip bootstrap),
+    # then `.all()` for the active-zones list used by glob match.
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        team_eng,
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = [
+        team_eng,
+        team_ops,
+        other,
+    ]
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones-glob", "team-*"])
+    assert result.exit_code == 0, result.output
+    assert sorted(captured["zones"]) == ["team-eng", "team-ops"]
+
+
+def test_token_create_zones_glob_no_match_rejects(monkeypatch):
+    session = MagicMock()
+    any_zone = MagicMock()
+    any_zone.zone_id = "root"
+    session.execute.return_value.scalars.return_value.first.side_effect = [None, any_zone]
+    session.execute.return_value.scalars.return_value.all.return_value = [any_zone]
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones-glob", "team-*"])
+    assert result.exit_code != 0
+    assert "no active zones match" in result.output.lower()
+
+
+def test_token_create_zones_glob_mutually_exclusive_with_zones(monkeypatch):
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(MagicMock()),
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "x", "--zones", "eng", "--zones-glob", "team-*"],
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output.lower() or "only one" in result.output.lower()
+
+
+def test_token_create_zones_with_perms_per_zone(monkeypatch):
+    """--zones eng:rw,ops:r threads (zone, perms) tuples into create_api_key."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_p", "sk-x")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,  # no existing token
+        active_zone,  # any_zone exists
+        active_zone,  # eng Active
+        active_zone,  # ops Active
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "create", "--name", "alice", "--zones", "eng:rw,ops:r"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == [("eng", "rw"), ("ops", "r")]
+
+
+def test_token_create_zones_bare_defaults_to_rw(monkeypatch):
+    """--zones eng (no colon) is passed through as a bare string (default rw)."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_b", "sk-x")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        active_zone,
+        active_zone,
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng"])
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == ["eng"]
+
+
+def test_token_create_zones_admin_perm_round_trip(monkeypatch):
+    """--zones eng:rwx threads admin perm through to create_api_key."""
+    captured = {}
+
+    def fake_create_api_key(session, **kwargs):
+        captured.update(kwargs)
+        return ("kid_x", "sk-x")
+
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "eng"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        None,
+        active_zone,
+        active_zone,
+    ]
+    session.execute.return_value.scalars.return_value.all.return_value = []
+
+    monkeypatch.setattr("nexus.cli.commands.hub.create_api_key", fake_create_api_key)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng:rwx"])
+    assert result.exit_code == 0, result.output
+    assert captured["zones"] == [("eng", "rwx")]
+
+
+def test_token_create_zones_invalid_perm_rejected(monkeypatch):
+    """--zones eng:badperm raises a ClickException before any DB hit."""
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(MagicMock()),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "create", "--name", "alice", "--zones", "eng:badperm"])
+    assert result.exit_code != 0
+    assert "badperm" in result.output
+
+
+def test_token_zones_add_threads_perms(monkeypatch):
+    """`token zones add --perms r` threads "r" through add_zone_to_key."""
+    row = MagicMock()
+    row.key_id = "kid_a"
+    session = MagicMock()
+    active_zone = MagicMock()
+    active_zone.zone_id = "ops"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        active_zone,
+        row,
+    ]
+
+    captured = {}
+
+    def fake_add(s, key_id, zone_id, permissions="rw"):
+        captured.update(key_id=key_id, zone_id=zone_id, permissions=permissions)
+        return True
+
+    monkeypatch.setattr("nexus.cli.commands.hub.add_zone_to_key", fake_add)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        hub,
+        ["token", "zones", "add", "--name", "alice", "--zone", "ops", "--perms", "r"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured == {"key_id": "kid_a", "zone_id": "ops", "permissions": "r"}
+
+
+def test_token_zones_show_two_column_format(monkeypatch):
+    """`token zones show` prints zone + perms columns with header."""
+    row = MagicMock()
+    row.key_id = "kid_a"
+    row.zone_id = "eng"
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = row
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_zone_perms_for_key",
+        lambda s, kid: [("eng", "rw"), ("ops", "r")],
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "zones", "show", "--name", "alice"])
+    assert result.exit_code == 0, result.output
+    # Header row plus a row per zone with its perms.
+    assert "zone" in result.output
+    assert "perms" in result.output
+    assert "eng" in result.output
+    assert "rw" in result.output
+    assert "ops" in result.output
+    # "r" appears as the perms column for ops.
+    assert " r " in result.output or "r\n" in result.output

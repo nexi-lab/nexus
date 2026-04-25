@@ -47,127 +47,10 @@ class MetadataMixin:
     _zone_id: str
     _hook_specs: dict  # Hook specs stored on NexusFS
     metadata: Any
+    router: Any
     _driver_coordinator: Any
 
     # ── Internal helpers ──────────────────────────────────────────────
-
-    @staticmethod
-    def _extract_rust_backend_params(backend: Any, cls_name: str) -> dict[str, Any] | None:
-        """Extract typed params for Rust native backend construction.
-
-        Returns a dict of kwargs for kernel.sys_setattr if the backend has
-        a Rust-native equivalent, or None to fall back to PyObjectStoreAdapter.
-        """
-        # S3 backends (PathS3Backend, CASS3Backend)
-        if "S3" in cls_name:
-            return {
-                "backend_type": "s3",
-                "s3_bucket": getattr(backend, "bucket_name", None) or "",
-                "s3_prefix": getattr(backend, "prefix", None) or "",
-                "aws_region": getattr(backend, "region_name", None),
-                "aws_access_key": getattr(backend, "_access_key_id", None)
-                or getattr(backend, "access_key_id", None),
-                "aws_secret_key": getattr(backend, "_secret_access_key", None)
-                or getattr(backend, "secret_access_key", None),
-                "s3_endpoint": getattr(backend, "endpoint_url", None),
-            }
-        # GCS backends (PathGCSBackend, CASGCSBackend)
-        if "GCS" in cls_name:
-            return {
-                "backend_type": "gcs",
-                "gcs_bucket": getattr(backend, "bucket_name", None) or "",
-                "gcs_prefix": getattr(backend, "prefix", None) or "",
-                "access_token": getattr(backend, "access_token", None),
-            }
-        # GDrive connector
-        if "GDrive" in cls_name or "Gdrive" in cls_name:
-            token = getattr(backend, "_access_token", None) or getattr(
-                backend, "access_token", None
-            )
-            if token:
-                return {
-                    "backend_type": "gdrive",
-                    "access_token": token,
-                    "root_folder_id": getattr(backend, "root_folder_id", None) or "root",
-                }
-        # Gmail connector
-        if "Gmail" in cls_name:
-            token = getattr(backend, "_access_token", None) or getattr(
-                backend, "access_token", None
-            )
-            if token:
-                return {
-                    "backend_type": "gmail",
-                    "access_token": token,
-                }
-        # Slack connector
-        if "Slack" in cls_name:
-            token = getattr(backend, "bot_token", None) or getattr(backend, "_bot_token", None)
-            if token:
-                return {
-                    "backend_type": "slack",
-                    "bot_token": token,
-                    "default_channel": getattr(backend, "default_channel", None) or "",
-                }
-        # HN connector (PathHNBackend)
-        if "HN" in cls_name and "Backend" in cls_name:
-            return {
-                "backend_type": "hn",
-                "hn_stories_per_feed": getattr(backend, "stories_per_feed", 10),
-                "hn_include_comments": getattr(backend, "include_comments", True),
-            }
-        # X/Twitter connector (PathXBackend)
-        if cls_name == "PathXBackend":
-            # X uses OAuth — extract token from transport if available
-            transport = getattr(backend, "_transport", None) or getattr(
-                backend, "_hn_transport", None
-            )
-            token = getattr(transport, "_bearer_token", None) if transport else None
-            return {
-                "backend_type": "x",
-                "x_bearer_token": token or "",
-            }
-        # Calendar OAuth connector (PathCalendarBackend) → route through CLI "gws calendar"
-        if "Calendar" in cls_name and "Backend" in cls_name:
-            import json as _json
-
-            token = getattr(backend, "_access_token", None) or getattr(
-                backend, "access_token", None
-            )
-            auth_env: dict[str, str] = {}
-            if token:
-                auth_env["GWS_ACCESS_TOKEN"] = token
-            return {
-                "backend_type": "cli",
-                "cli_command": "gws",
-                "cli_service": "calendar",
-                "cli_auth_env_json": _json.dumps(auth_env) if auth_env else "",
-            }
-        # CLI-based connectors (GitHubConnector, SheetsConnector, DocsConnector, etc.)
-        cli_name = getattr(backend, "CLI_NAME", None)
-        if isinstance(cli_name, str) and cli_name:
-            import json as _json
-
-            cli_service = getattr(backend, "CLI_SERVICE", "") or ""
-            # Build auth env from token if available
-            cli_auth: dict[str, str] = {}
-            env_key = f"{cli_name.upper().replace('-', '_')}_ACCESS_TOKEN"
-            # Try to get token from backend's token manager
-            _tm = getattr(backend, "_token_manager", None)
-            if _tm:
-                try:
-                    _tok = _tm.get_cached_token(provider=cli_name)
-                    if _tok:
-                        cli_auth[env_key] = _tok
-                except Exception:
-                    pass
-            return {
-                "backend_type": "cli",
-                "cli_command": cli_name,
-                "cli_service": cli_service,
-                "cli_auth_env_json": _json.dumps(cli_auth) if cli_auth else "",
-            }
-        return None
 
     def _get_parent_path(self, path: str) -> str | None:
         """Get parent directory path, or None if root."""
@@ -226,7 +109,8 @@ class MetadataMixin:
     ) -> bool:
         """Internal: check if path is a directory (explicit or implicit).
 
-        Synchronous check used by sys_stat.
+        §11 Phase 6: converted from async def → def. Body was already
+        fully synchronous (no awaits). Used by sys_stat.
 
         Args:
             _meta: Pre-fetched FileMetadata from caller (avoids duplicate
@@ -262,8 +146,13 @@ class MetadataMixin:
             if meta is not None and (meta.is_dir or meta.is_mount or meta.is_external_storage):
                 return True
 
-            # Metadata check + implicit dir detection covers all cases.
-            # Rust sys_stat handles backend-level directory detection.
+            # Route with access control (read permission needed to check)
+            route = self.router.route(
+                path,
+                zone_id=self._zone_id,
+            )
+            if route.backend.is_directory(route.backend_path):
+                return True
             return is_implicit_dir
         except (InvalidPathError, NexusFileNotFoundError):
             return False
@@ -332,12 +221,25 @@ class MetadataMixin:
         # implicit directories (paths with children but no explicit
         # entry) and the Python-side ``.readme/`` virtual-doc overlay
         # (Issue #3728).
-        # Rust sys_stat handles: dcache → metastore → implicit directory.
-        # Python fallback only for .readme/ virtual overlay (Issue #3728).
         result = self._kernel.sys_stat(normalized, self._zone_id)
         if result is not None:
             result["owner"] = ctx.user_id
             result["group"] = ctx.user_id
+        elif self._check_is_directory(normalized, context=ctx, _meta=None):
+            result = {
+                "path": normalized,
+                "backend_name": "",
+                "physical_path": "",
+                "size": 4096,
+                "mime_type": "inode/directory",
+                "created_at": None,
+                "modified_at": None,
+                "is_directory": True,
+                "entry_type": 1,
+                "owner": ctx.user_id,
+                "group": ctx.user_id,
+                "mode": 0o755,  # drwxr-xr-x
+            }
         else:
             result = self._try_virtual_readme_stat(normalized, ctx)
             if result is None:
@@ -409,28 +311,10 @@ class MetadataMixin:
             zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
             metastore = attrs.get("metastore")
 
-            # Rust-native backends — Rust owns the ObjectStore; no Python shim.
-            # `backend_type="openai"` / `"anthropic"` / `"remote"` triggers
-            # the native construction path in `PyKernel::sys_setattr` via
-            # the typed kwarg passthrough below.
-            if backend_type == "remote" and backend is None:
-                _backend_name = attrs.get("backend_name", "remote")
-                result = self._kernel.sys_setattr(
-                    path,
-                    entry_type,
-                    _backend_name,
-                    backend_type="remote",
-                    server_address=attrs.get("server_address"),
-                    remote_auth_token=attrs.get("remote_auth_token"),
-                    remote_ca_pem=attrs.get("remote_ca_pem"),
-                    remote_cert_pem=attrs.get("remote_cert_pem"),
-                    remote_key_pem=attrs.get("remote_key_pem"),
-                    remote_timeout=float(attrs.get("remote_timeout", 90.0)),
-                    zone_id=zone_id,
-                )
-                return result
-
             # LLM backends — Rust owns the ObjectStore; no Python shim.
+            # `backend_type="openai"` / `"anthropic"` triggers the native
+            # construction path in `PyKernel::sys_setattr` via the typed
+            # kwarg passthrough below.
             if backend_type in ("openai", "anthropic") and backend is None:
                 _backend_name = attrs.get("backend_name", backend_type)
                 result = self._kernel.sys_setattr(
@@ -457,98 +341,34 @@ class MetadataMixin:
                 )
             _backend_name = backend.name if isinstance(backend.name, str) else str(backend.name)
 
+            # CAS-local detection — Rust takes ownership of the backend natively.
+            _is_cas_local = getattr(backend, "has_root_path", False) and type(
+                backend
+            ).__name__.startswith("CAS")
+            _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
+
             # R20.18.6: federation DT_MOUNT auto-resolves its raft backing via
             # kernel-internal `resolve_federation_mount_backing`; no Python
             # ZoneHandle crosses the PyO3 boundary here. Non-federation mounts
             # may still ship a LocalMetastore redb path.
             _ms_path = getattr(metastore, "_redb_path", None) if metastore is not None else None
-            _ms_path_str = str(_ms_path) if _ms_path else None
-
-            _is_external = bool(attrs.get("is_external", False))
-
-            # ── Rust native backend detection ────────────────────────
-            # For connectors with Rust-native backends, extract typed params
-            # from the Python instance so Rust constructs the backend without
-            # PyObjectStoreAdapter (Crossing 5 elimination).
-            _cls_name = type(backend).__name__
-            _rust_typed = self._extract_rust_backend_params(backend, _cls_name)
-            if _rust_typed is not None:
-                result = self._kernel.sys_setattr(
-                    path,
-                    entry_type,
-                    _backend_name,
-                    zone_id=zone_id,
-                    metastore_path=_ms_path_str,
-                    is_external=_is_external,
-                    **_rust_typed,
-                )
-                # DLC bookkeeping: router needs backend ref for RouteResult
-                self._driver_coordinator._store_mount_info(
-                    path,
-                    backend,
-                    zone_id=zone_id,
-                    is_external=_is_external,
-                )
-                return result
-
-            # ── Local backend detection — Rust takes ownership natively ──
-            # CASLocalBackend has root_path; PathLocalBackend has root_path;
-            # LocalConnectorBackend has local_path. Rust constructs the matching
-            # backend from local_root param.
-            _root = getattr(backend, "root_path", None)
-            if _root is None:
-                _root = getattr(backend, "local_path", None)
-            if _root is None:
-                # No local root and not matched by _extract_rust_backend_params.
-                # Mount a kernel-only entry (no Rust backend); Python DLC holds
-                # the backend ref for RouteResult.  This path handles test mocks
-                # and any future connectors not yet ported to Rust.
-                logger.debug(
-                    "No Rust-native backend for %s — kernel-only mount",
-                    _cls_name,
-                )
-                result = self._kernel.sys_setattr(
-                    path,
-                    entry_type,
-                    _backend_name,
-                    zone_id=zone_id,
-                    metastore_path=_ms_path_str,
-                    is_external=_is_external,
-                )
-                self._driver_coordinator._store_mount_info(
-                    path,
-                    backend,
-                    zone_id=zone_id,
-                    is_external=_is_external,
-                )
-                return result
-            _local_root = str(_root)
-
-            # Determine local backend type for Rust dispatch
-            if "LocalConnector" in _cls_name:
-                _local_type = "local_connector"
-            elif "PathLocal" in _cls_name:
-                _local_type = "path_local"
-            else:
-                _local_type = "cas"  # CASLocalBackend (default)
 
             result = self._kernel.sys_setattr(
                 path,
                 entry_type,
                 _backend_name,
                 local_root=_local_root,
-                backend_type=_local_type,
                 fsync=True,
+                py_backend=backend,
                 zone_id=zone_id,
-                metastore_path=_ms_path_str,
-                is_external=_is_external,
+                metastore_path=str(_ms_path) if _ms_path else None,
             )
-            # DLC bookkeeping: router needs backend ref for RouteResult
+
+            # Python-side bookkeeping: store _PyMountInfo + dispatch event
             self._driver_coordinator._store_mount_info(
                 path,
                 backend,
                 zone_id=zone_id,
-                is_external=_is_external,
             )
             return result
 
@@ -591,6 +411,56 @@ class MetadataMixin:
         # Return the etag (content_hash) from metadata
         return file_meta.etag
 
+    def _get_backend_directory_entries(
+        self, path: str, context: OperationContext | None = None
+    ) -> set[str]:
+        """Get directory entries from backend for empty directory detection."""
+        directories = set()
+
+        try:
+            # For root path, try routing "/" to find the root mount's backend
+            if not path or path == "/":
+                try:
+                    self._get_context_identity(context)
+                    root_route = self.router.route("/", zone_id=self._zone_id)
+                    entries = root_route.backend.list_dir(root_route.backend_path)
+                    for entry in entries:
+                        if entry.endswith("/"):  # Directory marker
+                            dir_name = entry.rstrip("/")
+                            dir_path = "/" + dir_name
+                            directories.add(dir_path)
+                except (NotImplementedError, Exception):
+                    # No root mount, backend doesn't support list_dir, or other error
+                    pass
+            else:
+                # Non-root path - use router with context
+                self._get_context_identity(context)
+                route = self.router.route(
+                    path.rstrip("/"),
+                    zone_id=self._zone_id,
+                )
+                backend_path = route.backend_path
+
+                try:
+                    entries = route.backend.list_dir(backend_path)
+                    for entry in entries:
+                        if entry.endswith("/"):  # Directory marker
+                            dir_name = entry.rstrip("/")
+                            dir_path = path + dir_name if path != "/" else "/" + dir_name
+                            directories.add(dir_path)
+                except NotImplementedError:
+                    # Backend doesn't support list_dir - skip
+                    pass
+                except (OSError, PermissionError, TypeError):
+                    # I/O, permission, or type errors - skip silently (best-effort directory listing)
+                    pass
+
+        except (ValueError, AttributeError, KeyError):
+            # Ignore routing errors - directory detection is best-effort
+            pass
+
+        return directories
+
     # ── Tier 2 directory ──────────────────────────────────────────────
 
     @rpc_expose(description="Create directory")
@@ -610,14 +480,32 @@ class MetadataMixin:
         path = self._validate_path(path)
         ctx = self._resolve_cred(context)
 
+        # Route to backend with write access check
+        route = self.router.route(path, zone_id=self._zone_id)
+
         # Virtual .readme/ paths are read-only (Issue #3728).
         self._reject_if_virtual_readme(path, context, op="mkdir")
 
-        # Rust kernel handles existence check (explicit + implicit directory),
-        # exist_ok/parents semantics, backend.mkdir, ensure_parent_directories,
-        # DT_DIR metadata creation, and dcache update.
+        # Check if directory already exists
+        existing = route.metastore.get(path)
+        is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
+
+        if existing is not None or is_implicit_dir:
+            if not exist_ok and not parents:
+                raise FileExistsError(f"Directory already exists: {path}")
+            # DT_MOUNT entries are created by MountTable.add() *before*
+            # mkdir is called, so parent dirs may still need metadata.
+            if existing is not None:
+                if parents:
+                    self._ensure_parent_directories(path, ctx)
+                return
+
+        # Rust kernel: backend.mkdir + ensure_parent_directories + DT_DIR metadata + dcache
         _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
         _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
+
+        # OBSERVE: Rust kernel fires DirCreate when hit=true (§11 Phase 5).
+        # Only Python fires for the fallback path.
         if _mkdir_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import MkdirHookContext
 
@@ -689,6 +577,13 @@ class MetadataMixin:
             self._kernel.service_unregister(name)
             return {"path": path, "unregistered": True, "service": name}
 
+        # DT_PIPE fast-path: check Rust IPC registry
+        if self._kernel.has_pipe(path):
+            return self._pipe_destroy(path)
+        # DT_STREAM fast-path: check Rust IPC registry
+        if self._kernel.has_stream(path):
+            return self._stream_destroy(path)
+
         path = self._validate_path(path)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
@@ -696,73 +591,129 @@ class MetadataMixin:
         if _handled:
             return _result
 
+        # DT_PIPE / DT_STREAM: kernel-native IPC destroy (§4.2)
+        _ipc_meta = self.metadata.get(path)
+        if _ipc_meta is not None and _ipc_meta.is_pipe:
+            return self._pipe_destroy(path)
+        if _ipc_meta is not None and _ipc_meta.is_stream:
+            return self._stream_destroy(path)
+
+        # Route to backend with write access check FIRST (to check zone/agent isolation)
+        # This must happen before permission check so AccessDeniedError is raised before PermissionError
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        route = self.router.route(
+            path,
+            zone_id=self._zone_id,
+        )
+
         # Virtual .readme/ paths are read-only (Issue #3728).
         self._reject_if_virtual_readme(path, context, op="delete")
 
-        # ── Call Rust first — handles DT_REG, DT_PIPE, DT_STREAM ────
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
+        # Check if file exists in metadata.
+        # Use prefetched hint from resolve_delete() if available (#1311)
+        meta = _result if _result is not None else route.metastore.get(path)
+
+        if meta is None:
+            raise NexusFileNotFoundError(path)
+
+        # ── Directory branch: rmdir logic ────────────────────────────
+        if meta.is_dir or meta.is_mount or meta.is_external_storage:
+            return self._unlink_directory(
+                path, meta=meta, route=route, recursive=recursive, context=context
+            )
+
+        # ── File branch: regular unlink ──────────────────────────────
+
+        # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx)
 
+        # POST-INTERCEPT hooks
+        from nexus.contracts.vfs_hooks import DeleteHookContext
+
+        _delete_ctx = DeleteHookContext(
+            path=path,
+            context=context,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            metadata=meta,
+        )
+        if _unlink_result.post_hook_needed:
+            self._kernel.dispatch_post_hooks("delete", _delete_ctx)
+
+        # F2 C5: Rust kernel already removed metastore entry + backend file
+        # + dcache entry + dispatched FileDelete. Skip Python re-execution
+        # which double-deletes through the same metastore (idempotent but
+        # masks downstream backend-error reporting).
         if _unlink_result.hit:
-            # Rust handled: DT_REG (file delete), DT_PIPE (pipe destroy),
-            # DT_STREAM (stream destroy). Fire POST-hooks and return.
-            if _unlink_result.post_hook_needed:
-                from nexus.contracts.vfs_hooks import DeleteHookContext
-
-                self._kernel.dispatch_post_hooks(
-                    "delete",
-                    DeleteHookContext(
-                        path=path,
-                        context=context,
-                        zone_id=zone_id,
-                        agent_id=agent_id,
-                    ),
-                )
             return {}
 
-        # ── Rust miss: branch on entry_type ──────────────────────────
-        et = _unlink_result.entry_type
-        if et == 0:
-            # Not found in metastore/dcache
-            raise NexusFileNotFoundError(path)
+        # Python fallback for misses (DT_MOUNT/DT_EXTERNAL_STORAGE, route fail)
+        # VFS lock handled by Rust kernel; fallback path is for edge cases only.
+        route.metastore.delete(path)
 
-        # DT_DIR: delegate to Rust sys_rmdir (recursive child delete,
-        # backend rmdir, dcache evict, observer dispatch).
-        from nexus.contracts.metadata import DT_DIR as _DT_DIR
-
-        if et == _DT_DIR:
-            _rmdir_result = self._kernel.sys_rmdir(path, _rust_ctx, recursive)
-            if _rmdir_result.post_hook_needed:
-                from nexus.contracts.vfs_hooks import RmdirHookContext
-
-                ctx = self._resolve_cred(context)
-                self._kernel.dispatch_post_hooks(
-                    "rmdir",
-                    RmdirHookContext(
-                        path=path,
-                        context=ctx,
-                        zone_id=zone_id,
-                        agent_id=agent_id,
-                        recursive=recursive,
-                    ),
+        # PAS backend propagation
+        if hasattr(route.backend, "delete"):
+            try:
+                route.backend.delete(route.backend_path, context=context)
+            except Exception as _be:
+                logger.warning(
+                    "Backend file delete %s failed (metadata already deleted): %s",
+                    route.backend_path,
+                    _be,
                 )
-            return {}
 
-        # DT_MOUNT (2) / DT_EXTERNAL_STORAGE (5): unmount via DLC (Python service-tier)
-        if et in (2, 5):
-            ctx = self._resolve_cred(context)
+        return {}
+
+    def _unlink_directory(
+        self,
+        path: str,
+        *,
+        meta: "FileMetadata",
+        route: Any,
+        recursive: bool,
+        context: OperationContext | None,
+    ) -> dict[str, Any]:
+        """Internal: directory delete logic.
+
+        DT_MOUNT/DT_EXTERNAL_STORAGE unmount stays in Python (DLC-owned).
+        DT_DIR delegates to Rust sys_rmdir which handles recursive child
+        delete, backend rmdir, dcache evict, and observer dispatch.
+        """
+        ctx = self._resolve_cred(context)
+
+        # DT_MOUNT / DT_EXTERNAL_STORAGE: unmount via DriverLifecycleCoordinator + delete metadata
+        if meta.is_mount or meta.is_external_storage:
             from nexus.contracts.vfs_hooks import RmdirHookContext
 
             self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
             removed = self._driver_coordinator.unmount(path)
             if removed:
-                self.metadata.delete(path)
+                route.metastore.delete(path)
                 logger.info("sys_unlink: unmounted %s", path)
             return {}
 
-        # Unknown entry type — should not happen
-        logger.warning("sys_unlink: unexpected entry_type=%d for %s", et, path)
+        # DT_DIR: delegate to Rust sys_rmdir (recursive delete, backend rmdir,
+        # dcache evict, observer dispatch — all handled in Rust).
+        _, _, is_admin = self._get_context_identity(context)
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _rmdir_result = self._kernel.sys_rmdir(path, _rust_ctx, recursive)
+
+        # POST-INTERCEPT hooks (Rust fires OBSERVE; Python owns hook contexts)
+        if _rmdir_result.post_hook_needed:
+            from nexus.contracts.vfs_hooks import RmdirHookContext
+
+            self._kernel.dispatch_post_hooks(
+                "rmdir",
+                RmdirHookContext(
+                    path=path,
+                    context=ctx,
+                    zone_id=ctx.zone_id,
+                    agent_id=ctx.agent_id,
+                    recursive=recursive,
+                ),
+            )
+
         return {}
 
     @rpc_expose(description="Rename/move file")
@@ -771,7 +722,7 @@ class MetadataMixin:
         old_path: str,
         new_path: str,
         *,
-        force: bool = False,  # noqa: ARG002 — forwarded to Rust when kernel supports it
+        force: bool = False,  # noqa: ARG002  (callers pass it; Rust handles overwrite)
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """
@@ -808,125 +759,26 @@ class MetadataMixin:
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
 
+        # Route both paths
         zone_id, agent_id, is_admin = self._get_context_identity(context)
+        old_route = self.router.route(
+            old_path,
+            zone_id=self._zone_id,
+        )
+        # new_route no longer needed — Rust handles cross-mount routing.
 
         # Virtual .readme/ paths are read-only on both ends (Issue #3728).
         self._reject_if_virtual_readme(old_path, context, op="rename")
         self._reject_if_virtual_readme(new_path, context, op="rename")
 
-        # PRE-INTERCEPT hooks dispatched by Rust kernel
+        # F3 C3: the Rust kernel performs the full rename (same-mount + cross-mount).
+        meta = old_route.metastore.get(old_path)
+
+        # Rust always handles rename (same-mount + cross-mount). Trust Rust SSOT.
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
-        # Rust hit=true: metastore.rename_path() handled the entry AND all
-        # children atomically (redb: single txn). Trust Rust SSOT.
-        if _rename_result.hit:
-            if _rename_result.post_hook_needed:
-                from nexus.contracts.metadata import FileMetadata as _FM
-                from nexus.contracts.vfs_hooks import RenameHookContext
-
-                # Reconstruct old metadata from Rust result fields for the
-                # audit trail (record_store_write_observer uses .etag + .to_dict()).
-                _old_meta: _FM | None = None
-                if _rename_result.old_etag is not None or _rename_result.old_size is not None:
-                    from datetime import UTC, datetime
-
-                    _mod_at = (
-                        datetime.fromtimestamp(_rename_result.old_modified_at_ms / 1000.0, UTC)
-                        if _rename_result.old_modified_at_ms is not None
-                        else None
-                    )
-                    _old_meta = _FM(
-                        path=old_path,
-                        backend_name="",
-                        physical_path=_rename_result.old_etag or "",
-                        size=_rename_result.old_size or 0,
-                        etag=_rename_result.old_etag,
-                        version=_rename_result.old_version or 1,
-                        modified_at=_mod_at,
-                    )
-
-                _rename_ctx = RenameHookContext(
-                    old_path=old_path,
-                    new_path=new_path,
-                    context=context,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    is_directory=bool(_rename_result.is_directory),
-                    metadata=_old_meta,
-                )
-                self._kernel.dispatch_post_hooks("rename", _rename_ctx)
-            return {}
-
-        # Python fallback for DT_MOUNT/DT_EXTERNAL_STORAGE (Rust returns
-        # hit=false for these). No child-walking needed — mounts are single
-        # entries; Rust's rename_path() handles children atomically.
-        # Lazy routing — only happens on fallback (DT_MOUNT/DT_EXTERNAL_STORAGE).
-        old_route = self.router.route(old_path, zone_id=self._zone_id)
-        new_route = self.router.route(new_path, zone_id=self._zone_id)
-        is_implicit_dir = not old_route.metastore.exists(
-            old_path
-        ) and self.metadata.is_implicit_directory(old_path)
-        if not old_route.metastore.exists(old_path) and not is_implicit_dir:
-            raise NexusFileNotFoundError(old_path)
-
-        meta = old_route.metastore.get(old_path)
-        is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
-
-        # Check destination — use backend.file_exists() for PAS backends
-        if new_route.metastore.exists(new_path):
-            if force:
-                self.sys_unlink(new_path, recursive=True, context=context)
-            elif hasattr(new_route.backend, "file_exists"):
-                if new_route.backend.file_exists(new_route.backend_path):
-                    raise FileExistsError(f"Destination path already exists: {new_path}")
-                logger.warning(
-                    "Cleaning up stale metadata for %s (file not in backend storage)",
-                    new_path,
-                )
-                new_route.metastore.delete(new_path)
-            else:
-                raise FileExistsError(f"Destination path already exists: {new_path}")
-
-        # Metadata rename (put-first for crash safety)
-        from dataclasses import replace as _replace
-
-        _old_meta = old_route.metastore.get(old_path)
-        if _old_meta is not None:
-            _new_meta = _replace(_old_meta, path=new_path)
-            new_route.metastore.put(_new_meta)
-            old_route.metastore.delete(old_path)
-        elif not is_directory:
-            raise NexusFileNotFoundError(old_path)
-
-        # Rename children for implicit directories (no explicit entry in
-        # metastore, but children exist). Rust's rename_path() only handles
-        # entries it finds via metastore.get() — implicit dirs have no entry.
-        if is_directory:
-            _prefix = old_path.rstrip("/") + "/"
-            for child in old_route.metastore.list(_prefix, recursive=True):
-                _child_new = new_path + child.path[len(old_path) :]
-                _child_new_meta = _replace(child, path=_child_new)
-                new_route.metastore.put(_child_new_meta)
-                old_route.metastore.delete(child.path)
-
-        # PAS backend propagation
-        if hasattr(old_route.backend, "rename"):
-            try:
-                old_route.backend.rename(
-                    old_route.backend_path,
-                    new_route.backend_path,
-                    context=context,
-                )
-            except Exception as _be:
-                logger.warning(
-                    "Backend rename %s → %s failed (metadata already updated): %s",
-                    old_route.backend_path,
-                    new_route.backend_path,
-                    _be,
-                )
-
-        # Python fallback POST hooks (for DT_MOUNT/DT_EXTERNAL_STORAGE)
+        # POST-INTERCEPT hooks
         if _rename_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import RenameHookContext
 
@@ -936,11 +788,10 @@ class MetadataMixin:
                 context=context,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                is_directory=bool(is_directory),
-                metadata=None,
+                is_directory=bool(_rename_result.is_directory),
+                metadata=meta,
             )
             self._kernel.dispatch_post_hooks("rename", _rename_ctx)
-
         return {}
 
     # ------------------------------------------------------------------
@@ -981,6 +832,10 @@ class MetadataMixin:
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
 
+        # Route both paths
+        src_route = self.router.route(src_path, zone_id=self._zone_id)
+        dst_route = self.router.route(dst_path, zone_id=self._zone_id)
+
         # Virtual .readme/ destination is read-only (Issue #3728).
         self._reject_if_virtual_readme(dst_path, context, op="copy")
 
@@ -1017,12 +872,10 @@ class MetadataMixin:
                 backend file that hasn't been synced to the metastore
                 still blocks the copy.
                 """
-                if self.metadata.exists(dst_path):
+                if dst_route.metastore.exists(dst_path):
                     raise FileExistsError(f"Destination path already exists: {dst_path}")
-                _dst_rust = self._kernel.route(dst_path, self._zone_id)
-                _dst_info = self._driver_coordinator.get_mount_info_canonical(_dst_rust.mount_point)
-                _dst_bp = _dst_rust.backend_path or ""
-                _dst_be = _dst_info.backend if _dst_info else None
+                _dst_bp = getattr(dst_route, "backend_path", "") or ""
+                _dst_be = getattr(dst_route, "backend", None)
                 _fn = getattr(_dst_be, "content_exists", None)
                 if _dst_be is not None and callable(_fn):
                     from dataclasses import replace as _replace
@@ -1069,12 +922,23 @@ class MetadataMixin:
                 "modified_at": virtual_write_result.get("modified_at"),
             }
 
-        # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy.
-        # Rust validates source existence + rejects directories internally.
+        # Fast-fail
+        if not src_route.metastore.exists(src_path) and not self.metadata.is_implicit_directory(
+            src_path
+        ):
+            raise NexusFileNotFoundError(src_path)
+
+        src_meta = src_route.metastore.get(src_path)
+        if src_meta is None:
+            raise NexusFileNotFoundError(src_path)
+        if src_meta.mime_type == "inode/directory":
+            raise IsADirectoryError(f"Cannot copy a directory: {src_path}")
+
+        # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
 
-        # POST-INTERCEPT hooks (zero consumers use metadata field)
+        # POST-INTERCEPT hooks
         if _copy_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import CopyHookContext
 
@@ -1084,7 +948,7 @@ class MetadataMixin:
                 context=context,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                metadata=None,
+                metadata=src_meta,
             )
             self._kernel.dispatch_post_hooks("copy", _copy_ctx)
 
@@ -1099,7 +963,7 @@ class MetadataMixin:
 
         # Python fallback — Rust sys_copy returned miss (should be rare)
         logger.debug("sys_copy miss for %s → %s, falling back to Python", src_path, dst_path)
-        if self.metadata.exists(dst_path):
+        if dst_route.metastore.exists(dst_path):
             raise FileExistsError(f"Destination path already exists: {dst_path}")
 
         # Read source content and write to destination (no VFS lock needed —
@@ -1199,27 +1063,25 @@ class MetadataMixin:
 
         # Get size from backend if not in metadata
         size = meta.size
-        if size is None and meta.etag and meta.is_external_storage:
-            # Only external connectors need a backend call — CAS backends
-            # always have size set in metastore by sys_write.
+        if size is None and meta.etag:
+            # Try to get size from backend
             self._get_context_identity(context)
-            _rust_route = self._kernel.route(path, self._zone_id)
-            _dlc_info = self._driver_coordinator.get_mount_info_canonical(_rust_route.mount_point)
+            route = self.router.route(
+                path,
+                zone_id=self._zone_id,
+            )
             try:
                 # Add backend_path to context for path-based connectors
                 size_context = context
                 if context:
                     from dataclasses import replace
 
-                    from nexus.core.path_utils import extract_zone_id
-
                     size_context = replace(
                         context,
-                        backend_path=_rust_route.backend_path,
-                        mount_path=extract_zone_id(_rust_route.mount_point)[1],
+                        backend_path=route.backend_path,
+                        mount_path=route.mount_point,
                     )
-                _be = _dlc_info.backend if _dlc_info else None
-                size = _be.get_content_size(meta.etag, context=size_context) if _be else None
+                size = route.backend.get_content_size(meta.etag, context=size_context)
             except Exception as exc:
                 logger.debug("Failed to get content size for %s: %s", path, exc)
                 size = None
@@ -1385,22 +1247,8 @@ class MetadataMixin:
             except PermissionDeniedError:
                 return False
 
-            # Rust kernel fast-path: dcache hit → redb metastore fallback
-            if getattr(self, "_kernel", None) is not None and self._kernel.access(
-                path, self._zone_id
-            ):
-                return True
-
             if self.metadata.exists(path):
                 return True
-            # Fallback: check Rust dcache/metastore (sys_write only updates Rust side)
-            try:
-                _stat = self.sys_stat(path, context=context)
-                if _stat is not None:
-                    return True
-            except Exception:
-                pass
-            # Check implicit directory (path has children but no explicit entry)
             if is_implicit_dir:
                 return True
             # Virtual .readme/ overlay check (Issue #3728) — before reporting
@@ -1744,23 +1592,20 @@ class MetadataMixin:
         # Only intercept ExternalRouteResult — these are mounts with
         # is_external_storage metadata set. Plain RouteResult backends
         # (LocalBackend, CASLocalBackend, etc.) use the normal metastore path.
-        if path and path != "/" and getattr(self, "_kernel", None):
+        if path and path != "/" and getattr(self, "router", None):
             try:
+                from nexus.core.router import ExternalRouteResult
+
                 _is_admin = (
                     context.is_admin
                     if context is not None and not isinstance(context, dict)
                     else (context.get("is_admin", False) if isinstance(context, dict) else False)
                 )
-                _rust_route = self._kernel.route(path, self._zone_id)
-                _dlc_info = self._driver_coordinator.get_mount_info_canonical(
-                    _rust_route.mount_point
-                )
-                backend = _dlc_info.backend if _dlc_info else None
-                if _rust_route.is_external and backend is not None:
-                    from nexus.core.path_utils import extract_zone_id as _ezi
-
-                    backend_path = _rust_route.backend_path or ""
-                    mount_point = _ezi(_rust_route.mount_point)[1] or ""
+                _route = self.router.route(path, zone_id=self._zone_id)
+                backend = getattr(_route, "backend", None)
+                if isinstance(_route, ExternalRouteResult) and backend is not None:
+                    backend_path = getattr(_route, "backend_path", "") or ""
+                    mount_point = getattr(_route, "mount_point", "") or ""
                     _ctx = (
                         _dc_replace(
                             context,

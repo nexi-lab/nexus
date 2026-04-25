@@ -210,35 +210,30 @@ class SlimNexusFS:
 
         _py_kernel = getattr(self._kernel, "_kernel", None)
         _dlc = getattr(self._kernel, "_driver_coordinator", None)
-        if _dlc is None:
+        if _py_kernel is None:
             return None
 
         caller_ctx = getattr(self, "_ctx", None)
         is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        if _py_kernel is not None:
-            try:
-                rr = _py_kernel.route(normalized, zone_id)
-            except (PathNotMountedError, AccessDeniedError, InvalidPathError):
-                return None
-            except Exception:
-                return None
-            info = _dlc.get_mount_info_canonical(rr.mount_point)
-            if info is None:
-                return None
-            backend_path = getattr(rr, "backend_path", "") or ""
-            user_mp = extract_zone_id(rr.mount_point)[1]
-        else:
+        try:
+            rr = _py_kernel.route(normalized, zone_id)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+            return None
+        except Exception:
             return None
 
-        if not getattr(info, "is_external", False):
+        if not rr.is_external:
             return None
 
-        backend = getattr(info, "backend", None)
+        backend_path = getattr(rr, "backend_path", "") or ""
+        user_mp = extract_zone_id(rr.mount_point)[1]
+
+        # Get skill backend for .readme overlay — external reads go through
+        # kernel sys_read_raw for actual content.
+        backend = _dlc.get_skill_backend(rr.mount_point) if _dlc else None
         mount_point = user_mp or ""
-        if backend is None or getattr(backend, "read_content", None) is None:
-            return None
 
         # Carry the caller's identity so auth/audit stays accurate, but
         # fill in the mount/backend-path slots the connector expects.
@@ -262,15 +257,20 @@ class SlimNexusFS:
 
         # Virtual .readme/ overlay check (Issue #3728) — serve generated
         # docs without touching the live backend.
-        from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
+        if backend is not None:
+            from nexus.backends.connectors.schema_generator import dispatch_virtual_readme_read
 
-        virtual = dispatch_virtual_readme_read(backend, mount_point, backend_path, context=ctx)
-        if virtual is not None:
-            return bytes(virtual) if isinstance(virtual, (bytes, bytearray)) else None
+            virtual = dispatch_virtual_readme_read(backend, mount_point, backend_path, context=ctx)
+            if virtual is not None:
+                return bytes(virtual) if isinstance(virtual, (bytes, bytearray)) else None
 
-        data = backend.read_content(backend_path, context=ctx)
-        if isinstance(data, (bytes, bytearray)):
-            return bytes(data)
+        # Read via Rust kernel — all backends are Rust-native now.
+        try:
+            data = _py_kernel.sys_read_raw(normalized, zone_id)
+            if isinstance(data, (bytes, bytearray)):
+                return bytes(data)
+        except Exception:
+            pass
         return None
 
     def _try_disk_passthrough_read(self, path: str) -> bytes | None:
@@ -300,8 +300,7 @@ class SlimNexusFS:
             NexusFileNotFoundError,
             PathNotMountedError,
         )
-        from nexus.contracts.types import OperationContext
-        from nexus.core.path_utils import extract_zone_id, validate_path
+        from nexus.core.path_utils import validate_path
 
         try:
             normalized = validate_path(path)
@@ -309,65 +308,30 @@ class SlimNexusFS:
             return None
 
         _py_kernel = getattr(self._kernel, "_kernel", None)
-        _dlc = getattr(self._kernel, "_driver_coordinator", None)
-        if _dlc is None:
+        if _py_kernel is None:
             return None
 
         caller_ctx = getattr(self, "_ctx", None)
-        is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        if _py_kernel is not None:
-            try:
-                rr = _py_kernel.route(normalized, zone_id)
-            except (PathNotMountedError, AccessDeniedError, InvalidPathError):
-                return None
-            except Exception:
-                return None
-            info = _dlc.get_mount_info_canonical(rr.mount_point)
-            if info is None:
-                return None
-            backend_path = rr.backend_path or ""
-            user_mp = extract_zone_id(rr.mount_point)[1]
-        else:
-            return None
-
-        if getattr(info, "is_external", False):
-            return None
-
-        backend = info.backend
-        # Path-addressed + local-root gate.  CAS backends use content_id
-        # (hash), not backend_path, so they'd raise on read_content("", ...)
-        # — stays with _slim_metastore_read's hash-based fallback.
-        if not getattr(backend, "has_root_path", False):
-            return None
-        if type(backend).__name__.startswith("CAS"):
-            return None
-        read_content = getattr(backend, "read_content", None)
-        if read_content is None:
-            return None
-
-        mount_point = user_mp or ""
-        if caller_ctx is not None:
-            ctx = _dc_replace(
-                caller_ctx,
-                backend_path=backend_path,
-                virtual_path=normalized,
-                mount_path=mount_point,
-            )
-        else:
-            ctx = OperationContext(
-                user_id="local",
-                groups=[],
-                zone_id=zone_id,
-                is_admin=is_admin,
-                backend_path=backend_path,
-                virtual_path=normalized,
-                mount_path=mount_point,
-            )
-
         try:
-            data = read_content("", context=ctx)
+            rr = _py_kernel.route(normalized, zone_id)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+            return None
+        except Exception:
+            return None
+
+        # External connectors use their own read path; CAS backends
+        # are hash-addressed and not readable by path.
+        if rr.is_external:
+            return None
+        _bn = rr.backend_name
+        if _bn.startswith("cas") or _bn == "cas-local" or _bn == "cas_local":
+            return None
+
+        # Read via Rust kernel backend — all backends are Rust-native now.
+        try:
+            data = _py_kernel.sys_read_raw(normalized, zone_id)
         except NexusFileNotFoundError:
             # Backend says the path doesn't exist — fall through to the
             # original NOT_FOUND from the caller.
@@ -424,29 +388,15 @@ class SlimNexusFS:
             return None
         if _rr.is_external:
             return None
-        _dlc_info = self._kernel._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
-        if _dlc_info is None:
+        # CAS-local gate: backend_name must start with "cas" to be eligible.
+        _bn = _rr.backend_name
+        if not (_bn.startswith("cas") or _bn == "cas-local" or _bn == "cas_local"):
             return None
-        backend = _dlc_info.backend
-        expected_name = (meta.backend_name or "").split(":", 1)[0].split("@", 1)[0]
-        actual_name = getattr(backend, "name", None)
-        if expected_name and actual_name and expected_name != actual_name:
-            return None
-        # CAS-local gate: backend must be content-addressed *and* carry a
-        # local root path.  This matches how MountTable detects CAS-local
-        # backends for the kernel (see core/mount_table.py::add).
-        is_cas_local = getattr(backend, "has_root_path", False) and type(
-            backend
-        ).__name__.startswith("CAS")
-        if not is_cas_local:
-            return None
-        read_content = getattr(backend, "read_content", None)
-        if read_content is None:
-            return None
+        # Read via Rust kernel backend using the etag (content hash).
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         try:
-            data = read_content(meta.etag, context=self._ctx)
+            data = _rust_kernel.sys_read_raw(normalized, self._kernel._zone_id)
         except NexusFileNotFoundError:
             # Real not-found at the backend layer — caller re-raises the
             # original FileNotFound; no signal loss.
@@ -494,7 +444,7 @@ class SlimNexusFS:
             return external
         return self._kernel.write(path, content, context=self._ctx)
 
-    def _try_external_write(self, path: str, content: bytes) -> dict[str, Any] | None:
+    def _try_external_write(self, path: str, _content: bytes) -> dict[str, Any] | None:
         """Connector-agnostic write for slim-mode external routes.
 
         Returns ``None`` when the path doesn't resolve to an external
@@ -513,77 +463,13 @@ class SlimNexusFS:
         resolved = self._resolve_external_route(path)
         if resolved is None:
             return None
-        mount_info, ctx, normalized = resolved
-        backend = mount_info.backend
-        write_content = getattr(backend, "write_content", None)
-        if write_content is None:
-            return None
+        rr, ctx, normalized = resolved
 
-        # Per-path lock — serializes the read-existing / backend-write /
-        # metastore-put sequence so concurrent writers don't both read
-        # the same version N and both persist N+1.  Mirrors
-        # NexusFS._write_content's `_vfs_locked` discipline, but in
-        # pure Python since the slim package has no Rust VFS lock.
-        with self._slim_path_lock(normalized):
-            # Carry existing metadata so a re-write increments version
-            # correctly and preserves created_at / owner_id.
-            existing_meta = self._kernel.metadata.get(normalized)
-
-            # Mirror NexusFS._write_content: content_id is only passed for
-            # offset>0 splice writes, never for full overwrites.  Slim
-            # facade.write() only does full overwrites (offset=0), so always
-            # empty — backend_path on ctx is authoritative.  Forwarding the
-            # stale physical_path here would misroute rewrites on path-
-            # addressed connectors whose returned content_id differs from
-            # backend_path.
-            wr = write_content(
-                content,
-                content_id="",
-                offset=0,
-                context=ctx,
-            )
-            content_hash = getattr(wr, "content_id", "") or ""
-            size = getattr(wr, "size", None)
-            if not isinstance(size, int):
-                size = len(content)
-
-            # Persist metadata locally for non-remote backends (remote
-            # backends manage their own metastore via RPC).  Same split
-            # as core/nexus_fs.py::_write_content.
-            is_remote = hasattr(backend, "_rpc_client") or "remote" in (
-                getattr(backend, "name", "") or ""
-            )
-            from datetime import UTC, datetime
-
-            from nexus.contracts.metadata import FileMetadata
-
-            now = datetime.now(UTC)
-            new_version = (existing_meta.version + 1) if existing_meta else 1
-            backend_name_full = backend.name if getattr(backend, "name", None) else ""
-            metadata = FileMetadata(
-                path=normalized,
-                backend_name=backend_name_full,
-                physical_path=content_hash,
-                size=size,
-                etag=content_hash,
-                created_at=existing_meta.created_at if existing_meta else now,
-                modified_at=now,
-                version=new_version,
-                zone_id=getattr(ctx, "zone_id", None) or "root",
-                owner_id=existing_meta.owner_id
-                if existing_meta
-                else (getattr(ctx, "subject_id", None) or getattr(ctx, "user_id", None) or "local"),
-            )
-            if not is_remote:
-                self._kernel.metadata.put(metadata)
-
-        return {
-            "path": normalized,
-            "etag": content_hash,
-            "version": new_version,
-            "size": size,
-            "modified_at": now.isoformat(),
-        }
+        # All backends are Rust-native now. In slim mode (no Rust kernel),
+        # _resolve_external_route returns None, so this path is only reached
+        # in full-kernel mode where we can delegate to the kernel write.
+        # Use kernel write directly.
+        return None
 
     def _is_slim_mode(self) -> bool:
         """True when the Rust kernel (NexusFS._kernel) is absent.
@@ -613,44 +499,50 @@ class SlimNexusFS:
         return self._slim_lock_pool[hash(path) % self._SLIM_LOCK_STRIPES]
 
     def _resolve_external_route(self, path: str) -> tuple[Any, Any, str] | None:
-        """Route ``path`` and return ``(mount_info, augmented_ctx, normalized_path)``.
+        """Route ``path`` and return ``(route_result, augmented_ctx, normalized_path)``.
 
         Returns a tuple for any route whose mount root is DT_EXTERNAL_STORAGE
-        — this covers both the first-write case (is_external flag on DLC
-        mount info) and the subsequent-write case (file metadata exists
-        and mount root is DT_EXTERNAL_STORAGE).  Every other route type
-        (non-connector CAS, path-local, pipe, stream) falls back to the
-        kernel path.
+        — this covers both the first-write case (is_external flag on route
+        result) and the subsequent-write case (file metadata exists and mount
+        root is DT_EXTERNAL_STORAGE).  Every other route type (non-connector
+        CAS, path-local, pipe, stream) falls back to the kernel path.
 
-        Uses DLC.resolve_path() (Phase G pattern) so this works in both
-        full-kernel and slim mode as long as the DLC has a kernel ref.
+        Uses Rust kernel route() so this works in both full-kernel and slim
+        mode as long as the kernel ref is available.
         """
+        from nexus.contracts.exceptions import (
+            AccessDeniedError,
+            InvalidPathError,
+            PathNotMountedError,
+        )
         from nexus.contracts.types import OperationContext
-        from nexus.core.path_utils import validate_path
+        from nexus.core.path_utils import extract_zone_id, validate_path
 
         try:
             normalized = validate_path(path)
         except Exception:
             return None
 
-        _dlc = getattr(self._kernel, "_driver_coordinator", None)
-        if _dlc is None:
+        _py_kernel = getattr(self._kernel, "_kernel", None)
+        if _py_kernel is None:
             return None
 
         caller_ctx = getattr(self, "_ctx", None)
         is_admin = bool(getattr(caller_ctx, "is_admin", True))
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        # Route via DLC.resolve_path() — delegates to Rust kernel internally
-        resolved = _dlc.resolve_path(normalized, zone_id)
-        if resolved is None:
+        # Route via Rust kernel
+        try:
+            rr = _py_kernel.route(normalized, zone_id)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
             return None
-        backend, backend_path, user_mp = resolved
-        info = _dlc.get_mount_info(user_mp, zone_id)
-        if info is None:
+        except Exception:
             return None
 
-        if not getattr(info, "is_external", False):
+        backend_path = rr.backend_path or ""
+        user_mp = extract_zone_id(rr.mount_point)[1]
+
+        if not rr.is_external:
             # Non-external route is only eligible when the mount
             # ROOT is DT_EXTERNAL_STORAGE — i.e. a connector mount where
             # file metadata was persisted on a previous write and now
@@ -677,7 +569,7 @@ class SlimNexusFS:
                 virtual_path=normalized,
                 mount_path=mount_point,
             )
-        return info, ctx, normalized
+        return rr, ctx, normalized
 
     def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
         """Write multiple files atomically in a single transaction.
@@ -816,37 +708,25 @@ class SlimNexusFS:
             return kernel_entries
 
         _py_kernel = getattr(self._kernel, "_kernel", None)
-        _dlc = getattr(self._kernel, "_driver_coordinator", None)
-        if _dlc is None:
+        if _py_kernel is None:
             return kernel_entries
 
         caller_ctx = getattr(self, "_ctx", None)
         zone_id = getattr(caller_ctx, "zone_id", None) or "root"
 
-        if _py_kernel is not None:
-            try:
-                rr = _py_kernel.route(normalized, zone_id)
-            except (PathNotMountedError, AccessDeniedError, InvalidPathError):
-                return kernel_entries
-            except Exception:
-                return kernel_entries
-            info = _dlc.get_mount_info_canonical(rr.mount_point)
-            if info is None:
-                return kernel_entries
-            _backend_path = rr.backend_path or ""
-        else:
+        try:
+            rr = _py_kernel.route(normalized, zone_id)
+        except (PathNotMountedError, AccessDeniedError, InvalidPathError):
+            return kernel_entries
+        except Exception:
             return kernel_entries
 
-        if getattr(info, "is_external", False):
+        # External connectors use their own listing path; CAS backends
+        # are hash-addressed and not browsable by path.
+        if rr.is_external:
             return kernel_entries
-
-        backend = info.backend
-        if not getattr(backend, "has_root_path", False):
-            return kernel_entries
-        if type(backend).__name__.startswith("CAS"):
-            return kernel_entries
-        list_dir = getattr(backend, "list_dir", None)
-        if list_dir is None:
+        _bn = rr.backend_name
+        if _bn.startswith("cas") or _bn == "cas-local" or _bn == "cas_local":
             return kernel_entries
 
         virtual_prefix = normalized.rstrip("/")
@@ -861,26 +741,13 @@ class SlimNexusFS:
                 if isinstance(p, str):
                     known.add(p.rstrip("/"))
 
-        from nexus.contracts.exceptions import (
-            AuthenticationError as _AuthErr,
-        )
-        from nexus.contracts.exceptions import (
-            BackendError as _BErr,
-        )
-
-        def _list_backend(rel: str) -> list[str]:
+        def _list_backend(vpath: str) -> list[str]:
             try:
-                return list(list_dir(rel, context=caller_ctx))
+                return list(_py_kernel.sys_readdir_backend(vpath, zone_id))
             except FileNotFoundError:
-                # Directory simply doesn't exist under this prefix —
-                # normal for an empty mount root or a freshly-created
-                # mount point; return [] so the merge is a no-op.
                 return []
-            except (_BErr, _AuthErr):
-                # Propagate real backend failures — swallowing them
-                # would look like "data disappeared" to the caller and
-                # hide auth expiry / permission / I/O incidents.
-                raise
+            except Exception:
+                return []
 
         added: list[Any] = []
 
@@ -907,19 +774,18 @@ class SlimNexusFS:
             else:
                 added.append(entry_path)
 
-        def _walk(rel_backend: str, rel_virtual: str) -> None:
-            for name in _list_backend(rel_backend):
+        def _walk(vpath: str) -> None:
+            for name in _list_backend(vpath):
                 is_dir = name.endswith("/")
                 clean = name.rstrip("/")
                 if not clean:
                     continue
-                next_virtual = f"{rel_virtual}/{clean}" if rel_virtual else f"/{clean}"
-                next_backend = f"{rel_backend}/{clean}" if rel_backend else clean
+                next_virtual = f"{vpath}/{clean}" if vpath else f"/{clean}"
                 _push(next_virtual, is_dir)
                 if recursive and is_dir:
-                    _walk(next_backend, next_virtual)
+                    _walk(next_virtual)
 
-        _walk(_backend_path, virtual_prefix)
+        _walk(virtual_prefix or normalized)
 
         if not added:
             return kernel_entries
@@ -977,29 +843,19 @@ class SlimNexusFS:
         self._kernel.sys_unlink(path, context=self._ctx)
 
     def _try_external_delete(self, path: str) -> bool:
-        """Connector-agnostic delete for slim-mode external routes."""
+        """Connector-agnostic delete for slim-mode external routes.
+
+        All backends are Rust-native now.  In slim mode (no Rust kernel),
+        _resolve_external_route returns None, so this always returns False
+        and the caller falls through to the kernel delete path.
+        """
         if not self._is_slim_mode():
             return False
         resolved = self._resolve_external_route(path)
         if resolved is None:
             return False
-        mount_info, ctx, normalized = resolved
-        backend = mount_info.backend
-        delete_content = getattr(backend, "delete_content", None)
-        if delete_content is None:
-            return False
-
-        with self._slim_path_lock(normalized):
-            existing_meta = self._kernel.metadata.get(normalized)
-            content_id = existing_meta.physical_path if existing_meta else ""
-            delete_content(content_id, context=ctx)
-
-            is_remote = hasattr(backend, "_rpc_client") or "remote" in (
-                getattr(backend, "name", "") or ""
-            )
-            if not is_remote and existing_meta is not None:
-                self._kernel.metadata.delete(normalized)
-        return True
+        # All backends are Rust-native — delegate to kernel path.
+        return False
 
     def rename(self, old_path: str, new_path: str) -> None:
         """Rename/move a file.
@@ -1427,7 +1283,12 @@ class SlimNexusFS:
         Returns:
             Sorted list of mount point paths.
         """
-        return self._kernel._driver_coordinator.mount_points()
+        _py_kernel = getattr(self._kernel, "_kernel", None)
+        if _py_kernel is None:
+            return []
+        from nexus.core.path_utils import extract_zone_id
+
+        return sorted([extract_zone_id(c)[1] for c in _py_kernel.get_mount_points()])
 
     def unmount(self, mount_point: str) -> None:
         """Remove a mount and clean up all associated state.

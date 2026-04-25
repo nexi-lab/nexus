@@ -373,6 +373,30 @@ impl ObjectStore for XBackend {
     fn rmdir(&self, _path: &str, _recursive: bool) -> Result<(), StorageError> {
         Ok(())
     }
+
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, StorageError> {
+        let (endpoint, _param) = Self::resolve_path(path);
+        match endpoint {
+            "root" => Ok(vec![
+                "timeline/".into(),
+                "mentions/".into(),
+                "posts/".into(),
+                "bookmarks/".into(),
+                "search/".into(),
+                "users/".into(),
+            ]),
+            "timeline" | "mentions" | "posts" | "bookmarks" => {
+                // These are leaf endpoints — read_content returns JSON data, not listings
+                Err(StorageError::NotSupported("X endpoint is not a directory"))
+            }
+            "search" | "users" => Err(StorageError::NotSupported(
+                "X endpoint requires a parameter",
+            )),
+            _ => Err(StorageError::NotFound(format!(
+                "Unknown endpoint: {endpoint}"
+            ))),
+        }
+    }
 }
 
 mod urlencoding {

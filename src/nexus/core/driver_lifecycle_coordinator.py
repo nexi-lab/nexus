@@ -10,10 +10,12 @@ Responsibilities:
     1. Add/remove backend in kernel MountTable (via ``PyKernel.add_mount``)
     2. Register/unregister backend's hook_spec with KernelDispatch
     3. Broadcast mount/unmount events via KernelDispatch hooks
-    4. Own a Python-side map of ``_PyMountInfo`` records for fields the
-       Rust kernel does not track (connector
-       backend refs) — the kernel is the single source of truth for
-       routing (F2 MountTable migration).
+
+The Rust kernel is the single source of truth for routing, mount existence,
+backend ownership, and metadata.  This Python-side coordinator only keeps:
+    - ``_skill_backends``: Python connector instances that have a ``skill_name``
+      attribute, so the virtual ``.readme/`` overlay (Issue #3728) can generate
+      documentation from class metadata.  All I/O goes through Rust syscalls.
 
 Kernel-owned: created in ``NexusFS.__init__()`` (like ServiceRegistry).
 Always available after kernel construction.
@@ -25,7 +27,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -38,33 +39,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class _PyMountInfo:
-    """Python-only fields for a mount.
-
-    The kernel (``PyKernel``) is the single source of truth for routing —
-    it owns mount points and backend adapters plus per-zone metastores.
-    This dataclass keeps the Python-only references the kernel does not
-    carry: connector backend objects (some backends are still Python)
-    and the zone id of the mount.
-    """
-
-    backend: "ObjectStoreABC"
-    zone_id: str
-    is_external: bool = False
-
-
 class DriverLifecycleCoordinator:
     """Kernel primitive: driver mount lifecycle (Python bookkeeping).
 
     Rust DLC (``dlc.rs``) owns routing table + metastore + dcache.
-    Python DLC stores ``_PyMountInfo`` (backend refs) + dispatches events.
+    Python DLC stores skill-backend refs for .readme overlay + dispatches events.
 
     Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
     """
 
     __slots__ = (
-        "_mounts",
+        "_skill_backends",
         "_dispatch",
         "_kernel",
         "_self_address",
@@ -79,7 +64,7 @@ class DriverLifecycleCoordinator:
         self_address: str | None = None,
         transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
-        self._mounts: dict[str, _PyMountInfo] = {}
+        self._skill_backends: dict[str, Any] = {}
         self._dispatch = dispatch
         self._kernel = kernel
         self._self_address: str | None = self_address
@@ -101,59 +86,46 @@ class DriverLifecycleCoordinator:
             base = f"{backend.name}:{mount_point}"
         return f"{base}@{self._self_address}" if self._self_address else base
 
-    def resolve_backend(self, backend_name: str) -> "ObjectStoreABC":
-        """Resolve backend by scanning the DLC mount map.
+    # ------------------------------------------------------------------
+    # Skill backend registry (virtual .readme overlay)
+    # ------------------------------------------------------------------
 
-        Local name → scan mounts for a matching ``backend.name``.
-        Remote origin → lazy-create RemoteBackend via transport pool.
+    def register_skill_backend(
+        self,
+        mount_point: str,
+        backend: Any,
+        *,
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> None:
+        """Register a Python connector backend for .readme overlay.
+
+        Only stores backends with a ``skill_name`` attribute — the virtual
+        .readme overlay needs Python class metadata to generate docs.
+        All I/O goes through Rust kernel syscalls.
         """
-        from nexus.contracts.backend_address import BackendAddress
+        if not getattr(backend, "skill_name", None):
+            return
+        normalized = normalize_path(mount_point)
+        canonical = canonicalize_path(normalized, zone_id)
+        self._skill_backends[canonical] = backend
 
-        bare_name = backend_name.split(":")[0] if ":" in backend_name else backend_name
-        bare_name = bare_name.split("@")[0] if "@" in bare_name else bare_name
-        for info in self._mounts.values():
-            if info.backend.name == bare_name:
-                return info.backend
+    def get_skill_backend(self, canonical: str) -> Any | None:
+        """Get the Python connector backend for a mount (for .readme overlay).
 
-        addr = BackendAddress.parse(backend_name)
-        if addr.has_origin:
-            origin = addr.origins[0]
-            if self._transport_pool is None:
-                raise KeyError(f"Cannot create RemoteBackend for '{origin}': no transport pool")
-            from nexus.backends.storage.remote import RemoteBackend
-
-            transport = self._transport_pool.get(origin)
-            return RemoteBackend(transport)
-
-        raise KeyError(f"Backend '{backend_name}' not found in mount table")
+        Returns None for mounts that don't have a skill backend.
+        """
+        return self._skill_backends.get(canonical)
 
     # ------------------------------------------------------------------
     # Mount / unmount
     # ------------------------------------------------------------------
 
-    def _store_mount_info(
-        self,
-        mount_point: str,
-        backend: "ObjectStoreABC",
-        *,
-        zone_id: str = ROOT_ZONE_ID,
-        is_external: bool = False,
-    ) -> None:
-        """Store Python-side mount info + dispatch mount event.
-
-        Kernel-side wiring (routing table, metastore, dcache, lock manager)
-        is handled by Rust ``Kernel::sys_setattr(DT_MOUNT)`` before this
-        method is called.
-        """
-        normalized = normalize_path(mount_point)
-        canonical = canonicalize_path(normalized, zone_id)
-
-        info = _PyMountInfo(
-            backend=backend,
-            zone_id=zone_id,
-            is_external=is_external,
-        )
-        self._mounts[canonical] = info
+    def dispatch_mount_event(self, mount_point: str) -> None:
+        """Dispatch a mount event. Called after Rust kernel mount completes."""
+        try:
+            normalized = normalize_path(mount_point)
+        except ValueError:
+            return
         self._dispatch.dispatch_event("mount", normalized)
 
     def unmount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
@@ -165,8 +137,9 @@ class DriverLifecycleCoordinator:
             normalized = normalize_path(mount_point)
         except ValueError:
             return False
-        canonical = canonicalize_path(normalized, zone_id)
-        if canonical not in self._mounts:
+
+        # Check with Rust kernel if mount exists
+        if self._kernel is not None and not self._kernel.has_mount(normalized, zone_id):
             return False
 
         # Fire unmount event BEFORE removing state
@@ -180,47 +153,42 @@ class DriverLifecycleCoordinator:
             with contextlib.suppress(Exception):
                 self._kernel.kernel_unmount(normalized, zone_id)
 
-        del self._mounts[canonical]
+        # Clean up skill backend ref if any
+        canonical = canonicalize_path(normalized, zone_id)
+        self._skill_backends.pop(canonical, None)
         return True
 
     # ------------------------------------------------------------------
-    # DLC read helpers (used by kernel, zone_manager, etc.)
+    # Kernel-delegated queries (thin wrappers for backward compat)
     # ------------------------------------------------------------------
 
-    def get_mount_info(
-        self, mount_point: str, zone_id: str = ROOT_ZONE_ID
-    ) -> "_PyMountInfo | None":
-        """Return the ``_PyMountInfo`` for an exact mount point, or None."""
-        try:
-            normalized = normalize_path(mount_point)
-        except ValueError:
-            return None
-        canonical = canonicalize_path(normalized, zone_id)
-        return self._mounts.get(canonical)
+    def mount_points(self, zone_id: str | None = None) -> list[str]:
+        """Return user-facing mount points (no zone prefix).
 
-    def get_mount_info_canonical(self, canonical: str) -> "_PyMountInfo | None":
-        """Direct lookup by canonical key (``/{zone_id}{mount_point}``)."""
-        return self._mounts.get(canonical)
+        If ``zone_id`` is provided, only mounts in that zone are returned.
+        Delegates to Rust kernel ``get_mount_points()``.
+        """
+        if self._kernel is None:
+            return []
+        result: list[str] = []
+        for canonical in self._kernel.get_mount_points():
+            z, user_mp = extract_zone_id(canonical)
+            if zone_id is not None and z != zone_id:
+                continue
+            result.append(user_mp)
+        return sorted(result)
 
-    def list_mounts(self) -> "list[tuple[str, _PyMountInfo]]":
-        """Return all ``(canonical_key, _PyMountInfo)`` pairs."""
-        return list(self._mounts.items())
+    def resolve_path(self, path: str, zone_id: str = ROOT_ZONE_ID) -> "tuple[str, str, str] | None":
+        """Resolve virtual path → (backend_name, backend_path, mount_point).
 
-    def get_root_backend(self, zone_id: str = ROOT_ZONE_ID) -> "ObjectStoreABC | None":
-        """Return the backend mounted at ``/`` for the given zone, or None."""
-        info = self.get_mount_info("/", zone_id)
-        return info.backend if info is not None else None
-
-    def resolve_path(
-        self, path: str, zone_id: str = ROOT_ZONE_ID
-    ) -> "tuple[ObjectStoreABC, str, str] | None":
-        """Resolve virtual path → (backend, backend_path, mount_point).
-
-        Delegates LPM to Rust VFSRouter (kernel-internal), then looks up
-        the Python backend ref from the mount map.
+        Delegates LPM to Rust VFSRouter (kernel-internal).
 
         Returns None when the path is not covered by any mount (e.g.
         IPC pipe/stream paths) or when no Rust kernel is available.
+
+        Note: Returns (backend_name, backend_path, user_mp) NOT a backend
+        object.  Callers that need the backend name should use the first
+        element.  Callers that need I/O should use kernel syscalls.
         """
         if self._kernel is None:
             return None
@@ -228,21 +196,5 @@ class DriverLifecycleCoordinator:
             rr = self._kernel.route(path, zone_id)
         except (ValueError, Exception):
             return None
-        info = self.get_mount_info_canonical(rr.mount_point)
-        if info is None:
-            return None
         user_mp = extract_zone_id(rr.mount_point)[1]
-        return (info.backend, rr.backend_path, user_mp)
-
-    def mount_points(self, zone_id: str | None = None) -> list[str]:
-        """Return user-facing mount points (no zone prefix).
-
-        If ``zone_id`` is provided, only mounts in that zone are returned.
-        """
-        result: list[str] = []
-        for canonical in self._mounts:
-            z, user_mp = extract_zone_id(canonical)
-            if zone_id is not None and z != zone_id:
-                continue
-            result.append(user_mp)
-        return sorted(result)
+        return (rr.backend_name, rr.backend_path, user_mp)

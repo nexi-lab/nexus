@@ -280,4 +280,20 @@ impl ObjectStore for HNBackend {
             "HN backend has a fixed virtual structure",
         ))
     }
+
+    fn list_dir(&self, path: &str) -> Result<Vec<String>, StorageError> {
+        let (feed, rank) = Self::resolve_path(path)?;
+        if feed.is_empty() {
+            // Root — list feed directories
+            Ok(VALID_FEEDS.iter().map(|f| format!("{f}/")).collect())
+        } else if rank.is_none() {
+            // Feed directory — list story files
+            Ok((1..=self.stories_per_feed)
+                .map(|i| format!("{i}.json"))
+                .collect())
+        } else {
+            // Story file — not a directory
+            Err(StorageError::NotSupported("not a directory"))
+        }
+    }
 }

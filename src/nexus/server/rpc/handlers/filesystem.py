@@ -52,10 +52,9 @@ def generate_download_url(
     """
     try:
         _rr = nexus_fs._kernel.route(path, nexus_fs._zone_id)
-        _di = nexus_fs._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
-        if _di is None:
+        backend = nexus_fs._driver_coordinator.get_skill_backend(_rr.mount_point)
+        if backend is None:
             return None
-        backend = _di.backend
         backend_path = _rr.backend_path
 
         # S3 or GCS connector with signed URL support
@@ -497,11 +496,10 @@ def _augment_paths_with_virtual_readme(
 
     try:
         _rr = nexus_fs._kernel.route(target_path, nexus_fs._zone_id)
-        _di = nexus_fs._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+        backend = nexus_fs._driver_coordinator.get_skill_backend(_rr.mount_point)
     except Exception:
         return paths_to_index
 
-    backend = _di.backend if _di else None
     if backend is None or not _has_skill_name(backend):
         return paths_to_index
 

@@ -196,9 +196,13 @@ class VersionService:
         resolved = self._dlc.resolve_path(path, zone_id)
         if resolved is None:
             raise RuntimeError(f"No backend found for path: {path}")
-        backend, _backend_path, _mount_point = resolved
+        # resolve_path returns (backend_name, backend_path, mount_point).
+        # Read content via kernel syscall instead of Python backend object.
+        _kernel = getattr(self, "_kernel", None) or getattr(self._dlc, "_kernel", None)
+        if _kernel is None:
+            raise RuntimeError("No kernel available for version read")
 
-        return await asyncio.to_thread(backend.read_content, version_meta.etag)
+        return await asyncio.to_thread(_kernel.sys_read_raw, path, zone_id)
 
     @rpc_expose(description="List file versions")
     async def list_versions(

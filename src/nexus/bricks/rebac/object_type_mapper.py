@@ -42,6 +42,30 @@ class ObjectTypeMapper:
             )
             return "file"
 
+    def get_object_type_by_name(self, backend_name: str, backend_path: str) -> str:
+        """Get ReBAC object type from backend name (no Python backend object).
+
+        Used when only the backend_name string is available (DLC.resolve_path
+        now returns strings instead of backend objects).  Defaults to 'file'.
+        """
+        _ = backend_name, backend_path  # reserved for future type inference
+        return "file"
+
+    def get_object_id_by_name(
+        self,
+        backend_name: str,
+        backend_path: str,
+        virtual_path: str,
+        object_type: str,
+    ) -> str:
+        """Get ReBAC object ID from backend name (no Python backend object).
+
+        For file objects, uses the virtual path.  Non-file objects also
+        default to virtual_path since the Python backend is not available.
+        """
+        _ = backend_name, backend_path, object_type  # reserved for future inference
+        return virtual_path
+
     def get_object_id(
         self,
         backend: "Backend",

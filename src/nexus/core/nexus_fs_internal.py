@@ -163,11 +163,10 @@ class InternalMixin:
         try:
             _, _, is_admin = self._get_context_identity(ctx)
             _rr = self._kernel.route(path, self._zone_id)
-            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+            backend = self._driver_coordinator.get_skill_backend(_rr.mount_point)
         except Exception:
             return None
 
-        backend = _di.backend if _di else None
         if backend is None:
             return None
 
@@ -256,11 +255,10 @@ class InternalMixin:
         try:
             _, _, is_admin = self._get_context_identity(context)
             _rr = self._kernel.route(path, self._zone_id)
-            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+            backend = self._driver_coordinator.get_skill_backend(_rr.mount_point)
         except Exception:
             return  # non-routable path — let the real call surface the error
 
-        backend = _di.backend if _di else None
         if backend is None:
             return
 
@@ -305,11 +303,10 @@ class InternalMixin:
         try:
             _, _, is_admin = self._get_context_identity(context)
             _rr = self._kernel.route(path, self._zone_id)
-            _di = self._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
+            backend = self._driver_coordinator.get_skill_backend(_rr.mount_point)
         except Exception:
             return None
 
-        backend = _di.backend if _di else None
         if backend is None:
             return None
 

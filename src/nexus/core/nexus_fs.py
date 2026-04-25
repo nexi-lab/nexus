@@ -941,14 +941,14 @@ class NexusFS(  # type: ignore[misc]
         if self._record_store is not None:
             self._record_store.close()
 
-        # Close mounted backends that hold resources (e.g., OAuth connectors with SQLite)
+        # Close mounted skill backends that hold resources (e.g., OAuth connectors with SQLite)
         if hasattr(self, "_driver_coordinator"):
             from nexus.core.protocols.connector import OAuthCapableProtocol
 
-            for _canon_key, _mount_info in self._driver_coordinator.list_mounts():
+            for _backend in self._driver_coordinator._skill_backends.values():
                 try:
-                    if isinstance(_mount_info.backend, OAuthCapableProtocol):
-                        _mount_info.backend.token_manager.close()
+                    if isinstance(_backend, OAuthCapableProtocol):
+                        _backend.token_manager.close()
                 except Exception as e:
                     logger.debug("Failed to close backend token manager: %s", e)
 

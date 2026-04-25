@@ -142,6 +142,8 @@ pub struct RouteResult {
     /// True when the routed mount is an external connector — Python must
     /// dispatch the operation through a Python-side backend adapter.
     pub is_external: bool,
+    /// Backend name from the mount entry (e.g. "cas-local", "hn", "cli:gh").
+    pub backend_name: String,
 }
 
 /// Legacy alias so kernel/generated code using the pre-migration type name
@@ -428,6 +430,7 @@ impl VFSRouter {
                 let mount_point = current.to_string();
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let is_external = entry.is_external;
+                let backend_name = entry.backend_name.clone();
                 let resolved_zone = entry
                     .target_zone_id
                     .clone()
@@ -439,6 +442,7 @@ impl VFSRouter {
                     backend_path,
                     zone_id: resolved_zone,
                     is_external,
+                    backend_name,
                 });
             }
 
@@ -560,6 +564,23 @@ impl VFSRouter {
     pub fn rmdir(&self, canonical_key: &str, backend_path: &str, recursive: bool) -> Option<()> {
         let entry = self.entries.get(canonical_key)?;
         entry.backend.as_ref()?.rmdir(backend_path, recursive).ok()
+    }
+
+    /// List directory entries via the mount's backend.
+    pub fn list_dir(
+        &self,
+        canonical_key: &str,
+        backend_path: &str,
+    ) -> Result<Vec<String>, StorageError> {
+        let entry = self
+            .entries
+            .get(canonical_key)
+            .ok_or_else(|| StorageError::NotFound(format!("mount not found: {canonical_key}")))?;
+        let backend = entry
+            .backend
+            .as_ref()
+            .ok_or(StorageError::NotSupported("no backend for mount"))?;
+        backend.list_dir(backend_path)
     }
 }
 

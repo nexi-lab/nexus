@@ -35,7 +35,6 @@ class ContextualNexusFS:
     """Kernel wrapper that uses a caller-selected operation context."""
 
     def __init__(self, kernel: Any, *, user_id: str = "local") -> None:
-        from nexus.contracts.constants import ROOT_ZONE_ID
         from nexus.contracts.types import OperationContext
 
         self._kernel = kernel
@@ -133,70 +132,22 @@ class ContextualNexusFS:
 
         try:
             _rr = self._kernel._kernel.route(path, self._kernel._zone_id)
-            _di = self._kernel._driver_coordinator.get_mount_info_canonical(_rr.mount_point)
         except Exception:
             return None
 
-        backend = _di.backend if _di else None
-        if backend is None or (
-            not hasattr(backend, "list_dir") and not hasattr(backend, "list_dir_details")
-        ):
+        # All backends are Rust-native — use kernel sys_readdir_backend
+        # for connector-backed directories.
+        if not _rr.is_external:
             return None
 
-        detailed_entries: list[dict[str, Any]] | None = None
-        if hasattr(backend, "list_dir_details"):
-            try:
-                candidate = await asyncio.to_thread(
-                    backend.list_dir_details, _rr.backend_path, self._ctx
-                )
-                if isinstance(candidate, list):
-                    detailed_entries = [item for item in candidate if isinstance(item, dict)]
-            except NotImplementedError:
-                detailed_entries = None
-            except Exception:
-                detailed_entries = None
-
-        if detailed_entries is not None:
-            mount_root = path.rstrip("/") or "/"
-            if detail:
-                detailed_rows: list[dict[str, Any]] = []
-                for entry in detailed_entries:
-                    name = str(entry.get("name", "")).rstrip("/")
-                    if not name:
-                        continue
-                    is_dir = bool(entry.get("is_directory", False))
-                    full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
-                    detailed_rows.append(
-                        {
-                            "path": full_path,
-                            "size": int(entry.get("size", 0) or 0),
-                            "is_directory": is_dir,
-                            "etag": entry.get("etag"),
-                            "mime_type": entry.get(
-                                "mime_type",
-                                "inode/directory" if is_dir else "application/octet-stream",
-                            ),
-                            "created_at": entry.get("created_at"),
-                            "modified_at": entry.get("modified_at"),
-                            "version": entry.get("version", 0),
-                            "zone_id": entry.get("zone_id", ROOT_ZONE_ID),
-                            "entry_type": 1 if is_dir else 0,
-                        }
-                    )
-                return detailed_rows
-
-            listed_paths: list[str] = []
-            for entry in detailed_entries:
-                name = str(entry.get("name", "")).rstrip("/")
-                if not name:
-                    continue
-                full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
-                listed_paths.append(full_path)
-            return listed_paths
-
+        # Use Rust kernel sys_readdir_backend for listing.
         try:
-            raw_entries = await asyncio.to_thread(backend.list_dir, _rr.backend_path, self._ctx)
-        except NotImplementedError:
+            raw_entries = list(
+                self._kernel._kernel.sys_readdir_backend(path, self._kernel._zone_id)
+            )
+        except Exception:
+            return None
+        if not raw_entries:
             return None
 
         now = datetime.now(UTC).isoformat()

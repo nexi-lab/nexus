@@ -285,6 +285,7 @@ class TigerCache:
                     result = client.hgetall(key)
                     if not isinstance(result, dict) or not result:
                         return None
+                    assert isinstance(result, dict)
                     data = result.get(b"data")
                     rev = result.get(b"revision")
                     if data is None or rev is None:

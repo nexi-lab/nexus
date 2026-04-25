@@ -40,7 +40,7 @@ class TimeTravelService:
         self,
         *,
         session_factory: Callable[..., Any],
-        backend: Backend,
+        backend: Backend | None = None,
         default_zone_id: str | None = None,
     ) -> None:
         """Initialise the time-travel service.
@@ -258,7 +258,7 @@ class TimeTravelService:
         content = None
         metadata_dict: dict[str, Any] = {}
 
-        if next_write and next_write.snapshot_hash:
+        if next_write and next_write.snapshot_hash and self._backend is not None:
             content = self._backend.read_content(next_write.snapshot_hash, context=None)
             if next_write.metadata_snapshot:
                 metadata_dict = json.loads(next_write.metadata_snapshot)
@@ -273,7 +273,8 @@ class TimeTravelService:
                 content_hash = current_path.content_hash
                 if content_hash is None:
                     raise NexusFileNotFoundError(f"File {path} has no content hash")
-                content = self._backend.read_content(content_hash, context=None)
+                if self._backend is not None:
+                    content = self._backend.read_content(content_hash, context=None)
                 metadata_dict = {
                     "size": current_path.size_bytes,
                     "version": current_path.current_version,
@@ -289,7 +290,7 @@ class TimeTravelService:
                         next_delete = op
                         break
 
-                if next_delete and next_delete.snapshot_hash:
+                if next_delete and next_delete.snapshot_hash and self._backend is not None:
                     content = self._backend.read_content(next_delete.snapshot_hash, context=None)
                     if next_delete.metadata_snapshot:
                         metadata_dict = json.loads(next_delete.metadata_snapshot)

@@ -120,7 +120,7 @@ def _wire_services(
 
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
     # NexusFS.__init__). Root mount ("/") registered via sys_setattr(DT_MOUNT)
-    # + _store_mount_info() in create_nexus_fs().
+    # in create_nexus_fs().
     nx.sys_setattr("/__sys__/services/driver_coordinator", service=nx._driver_coordinator)
 
     # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic

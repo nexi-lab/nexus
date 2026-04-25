@@ -12,9 +12,7 @@ Key design decisions:
   - Comprehensive error handling with structured logging
 """
 
-import hashlib
 import logging
-import posixpath
 from datetime import UTC, datetime
 from typing import Any
 
@@ -39,38 +37,6 @@ from nexus.bricks.search.models import DocumentChunkModel, FilePathModel
 from nexus.bricks.search.protocols import FileReaderProtocol
 
 logger = logging.getLogger(__name__)
-
-
-def _looks_like_virtual_readme(path: str) -> bool:
-    """Heuristic: does ``path`` match a virtual ``.readme/`` overlay entry?
-
-    Issue #3728: the virtual ``.readme/`` tree has no metastore rows.
-    When ``_query_file_model`` misses on a path under ``.readme/``, this
-    helper lets the indexer treat it as a virtual-doc candidate and
-    synthesize a path_id instead of silently dropping the file.
-
-    The check is intentionally path-shape-only — the router /
-    backend introspection that would give us definitive "is this
-    virtual?" answers isn't available from ``IndexingService``
-    (which only holds a ``FileReaderProtocol``).  False positives
-    are bounded: a user-created real ``.readme/`` folder whose row
-    happens to be missing would index with a synthetic ``virtual:``
-    path_id which doesn't collide with real path_ids.
-    """
-    normalized = posixpath.normpath(path)
-    segments = normalized.split("/")
-    return any(seg == ".readme" for seg in segments)
-
-
-def _virtual_path_id(path: str) -> str:
-    """Deterministic synthetic path_id for a virtual readme path.
-
-    Prefixed with ``virtual:`` so it can't collide with a real
-    FilePathModel path_id.  SHA-256 of the virtual path keeps it
-    stable across runs so re-indexing deletes the previous chunks
-    via the pipeline's path_id-keyed upsert.
-    """
-    return "virtual:" + hashlib.sha256(path.encode("utf-8")).hexdigest()
 
 
 # Binary extensions excluded from directory indexing.
@@ -379,23 +345,7 @@ class IndexingService:
                         documents.append(
                             (file_path, content, file_model.path_id),
                         )
-                    elif _looks_like_virtual_readme(file_path):
-                        # Issue #3728: virtual ``.readme/`` overlay paths
-                        # are row-less by design — the tree is served from
-                        # class metadata at read time so there's nothing
-                        # to persist.  Use a deterministic synthetic
-                        # path_id so the search pipeline can still chunk
-                        # + embed + store the content.  The ``virtual:``
-                        # prefix namespaces them away from real FilePathModel
-                        # path_ids so they can't collide.
-                        #
-                        # Known limitation: when the connector class
-                        # metadata changes (e.g. a nexus upgrade), the
-                        # synthetic path_id stays the same but the
-                        # embeddings become stale.  Users need to
-                        # re-trigger indexing (remount) to refresh.
-                        synth_path_id = _virtual_path_id(file_path)
-                        documents.append((file_path, content, synth_path_id))
+
                 except Exception:
                     logger.warning(
                         "[INDEXING-SVC] Skipping %s: failed to read or resolve",

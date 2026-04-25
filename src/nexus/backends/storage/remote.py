@@ -4,10 +4,9 @@ Proxies content operations to a remote Nexus peer over gRPC via ``RPCTransport``
 Implements the ``ObjectStoreABC`` interface so the kernel can run its natural
 VFS pipeline for cross-zone content fetches.
 
-Used by DriverLifecycleCoordinator.resolve_backend() for federation reads
-when a local backend miss falls back to a remote origin node. NOT used for
-REMOTE deployment profile — that is handled by Rust RemoteBackend installed
-via ``sys_setattr(backend_type="remote")``.
+Used for federation reads when a local backend miss falls back to a remote
+origin node. NOT used for REMOTE deployment profile — that is handled by
+Rust RemoteBackend installed via ``sys_setattr(backend_type="remote")``.
 
 Content deletion (``delete_content``) is a deliberate no-op: the kernel
 always follows with ``metastore.delete(path)`` which triggers the

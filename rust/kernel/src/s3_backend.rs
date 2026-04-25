@@ -67,6 +67,27 @@ impl S3Backend {
             .unwrap_or_else(|| format!("https://{}.s3.{}.amazonaws.com", self.bucket, self.region))
     }
 
+    /// Canonical host for SigV4 signing (must match the ``Host`` header of
+    /// the actual request, otherwise the signature is invalid).
+    ///
+    /// - With a custom endpoint (S3-compatible providers like Tencent COS,
+    ///   MinIO, Cloudflare R2): parses the host portion out of the URL.
+    /// - Without an endpoint: defaults to AWS virtual-hosted-style host.
+    fn host(&self) -> String {
+        if let Some(ref ep) = self.endpoint {
+            let after_scheme = ep
+                .strip_prefix("https://")
+                .or_else(|| ep.strip_prefix("http://"))
+                .unwrap_or(ep);
+            match after_scheme.find('/') {
+                Some(i) => after_scheme[..i].to_string(),
+                None => after_scheme.to_string(),
+            }
+        } else {
+            format!("{}.s3.{}.amazonaws.com", self.bucket, self.region)
+        }
+    }
+
     /// AWS Sigv4 signing for S3 requests.
     fn sign_request(
         &self,
@@ -80,8 +101,10 @@ impl S3Backend {
         let credential_scope = format!("{}/{}/s3/aws4_request", date_stamp, self.region);
 
         let canonical_headers = format!(
-            "host:{}.s3.{}.amazonaws.com\nx-amz-content-sha256:{}\nx-amz-date:{}\n",
-            self.bucket, self.region, content_sha256, amz_date
+            "host:{}\nx-amz-content-sha256:{}\nx-amz-date:{}\n",
+            self.host(),
+            content_sha256,
+            amz_date
         );
         let signed_headers = "host;x-amz-content-sha256;x-amz-date";
 
@@ -357,4 +380,90 @@ fn s3_uri_encode(s: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk(endpoint: Option<&str>) -> S3Backend {
+        S3Backend::new(
+            "test",
+            "mybucket",
+            "",
+            "us-east-1",
+            "AKIA",
+            "secret",
+            endpoint,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn host_aws_default() {
+        let b = mk(None);
+        assert_eq!(b.host(), "mybucket.s3.us-east-1.amazonaws.com");
+    }
+
+    #[test]
+    fn host_custom_endpoint_https() {
+        let b = mk(Some("https://mybucket.cos.ap-beijing.myqcloud.com"));
+        assert_eq!(b.host(), "mybucket.cos.ap-beijing.myqcloud.com");
+    }
+
+    #[test]
+    fn host_custom_endpoint_http() {
+        let b = mk(Some("http://minio.local:9000"));
+        assert_eq!(b.host(), "minio.local:9000");
+    }
+
+    #[test]
+    fn host_custom_endpoint_with_trailing_path_stripped() {
+        let b = mk(Some("https://example.com/some/path"));
+        assert_eq!(b.host(), "example.com");
+    }
+
+    #[test]
+    fn host_custom_endpoint_no_scheme() {
+        let b = mk(Some("bucket.cos.example/path"));
+        assert_eq!(b.host(), "bucket.cos.example");
+    }
+
+    #[test]
+    fn signed_headers_use_canonical_host() {
+        // Canonical host in SigV4 must match what we'll send as ``Host`` —
+        // for COS that is the endpoint host, not ``*.amazonaws.com``.
+        let b = mk(Some("https://mybucket.cos.ap-beijing.myqcloud.com"));
+        let now = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let headers = b.sign_request("GET", "/key", "UNSIGNED-PAYLOAD", &now);
+        let auth = headers.iter().find(|(k, _)| k == "Authorization").unwrap();
+        // The signature itself is opaque, but the SignedHeaders list must
+        // include ``host`` and the canonical-headers block (rebuilt during
+        // verification by the server) must use the COS host. This test
+        // pins the regression behavior — if someone re-introduces a
+        // hardcoded ``amazonaws.com`` in canonical_headers, the produced
+        // signature changes and the test below catches it.
+        assert!(auth
+            .1
+            .contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"));
+
+        // Re-sign with the same inputs but no endpoint and assert the
+        // signature differs — proves canonical_headers actually depends on
+        // host().
+        let b_aws = mk(None);
+        let headers_aws = b_aws.sign_request("GET", "/key", "UNSIGNED-PAYLOAD", &now);
+        let auth_aws = headers_aws
+            .iter()
+            .find(|(k, _)| k == "Authorization")
+            .unwrap();
+        let sig = |a: &str| {
+            a.split("Signature=")
+                .nth(1)
+                .map(|s| s.trim().to_string())
+                .unwrap()
+        };
+        assert_ne!(sig(&auth.1), sig(&auth_aws.1));
+    }
 }

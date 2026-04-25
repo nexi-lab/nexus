@@ -19,7 +19,7 @@
 //! search-delegation/zone-scoping.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -377,16 +377,18 @@ impl NexusVfsService for VfsServiceImpl {
 /// Spawn the VFS gRPC server on a dedicated tokio runtime and return a
 /// shutdown handle. The runtime is owned by the handle — drop the
 /// handle (or call `shutdown_blocking`) to stop the server.
+///
+/// Re-entrancy: no process-wide guard. Multiple servers can coexist on
+/// distinct bind addresses; if two callers ask for the same port, the
+/// second one's `tonic::transport::Server::serve_with_shutdown` will
+/// surface the OS-level `EADDRINUSE`. This is the right semantics for
+/// tests that spin up several FastAPI lifespans inside one Python
+/// process — each shutdown drops the handle and frees the port.
 pub fn spawn(
     kernel: Arc<Kernel>,
     cfg: VfsGrpcConfig,
     bridge: PyBridge,
 ) -> Result<VfsGrpcHandle, String> {
-    static SERVER_CLAIMED: AtomicBool = AtomicBool::new(false);
-    if SERVER_CLAIMED.swap(true, Ordering::AcqRel) {
-        return Err("VFS gRPC server already started in this process".to_string());
-    }
-
     // Dedicated runtime so server lifetime tracks `VfsGrpcHandle`. 2
     // worker threads is sufficient for I/O-bound gRPC handlers; CPU
     // work happens inside `Kernel::sys_*` which uses its own pools.

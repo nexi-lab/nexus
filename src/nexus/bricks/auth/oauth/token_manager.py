@@ -52,7 +52,6 @@ _REFRESH_COOLDOWN_SECONDS = 30
 # Token cache TTL in seconds
 _TOKEN_CACHE_TTL_SECONDS = 60
 _TOKEN_CACHE_EXPIRY_SAFETY_SECONDS = 60
-_TOKEN_CACHE_KEY_VERSION = "v2"
 
 # Timeout for OAuth provider refresh calls (prevents indefinite lock holding)
 _PROVIDER_REFRESH_TIMEOUT_SECONDS = 30
@@ -179,11 +178,11 @@ class TokenManager:
 
     def _token_cache_key(self, provider: str, user_email: str, zone_id: str) -> str:
         """Zone-scoped cache key for OAuth token caching."""
-        return f"oauth:token:{_TOKEN_CACHE_KEY_VERSION}:{provider}:{user_email}:{zone_id}"
+        return f"oauth:token:{provider}:{user_email}:{zone_id}"
 
     def _legacy_token_cache_key(self, provider: str, user_email: str, zone_id: str) -> str:
         """Legacy cache key used before structured token metadata was added."""
-        return f"oauth:token:{provider}:{user_email}:{zone_id}"
+        return self._token_cache_key(provider, user_email, zone_id)
 
     @staticmethod
     def _normalize_utc(value: datetime | None) -> datetime | None:
@@ -202,17 +201,8 @@ class TokenManager:
         token_family_id: str | None = None,
         updated_at: datetime | None = None,
     ) -> bytes:
-        normalized_expires_at = cls._normalize_utc(credential.expires_at)
-        normalized_updated_at = cls._normalize_utc(updated_at)
-        payload = {
-            "access_token": credential.access_token,
-            "expires_at": normalized_expires_at.isoformat() if normalized_expires_at else None,
-            "scopes": list(credential.scopes) if credential.scopes else None,
-            "credential_id": credential_id,
-            "token_family_id": token_family_id,
-            "updated_at": normalized_updated_at.isoformat() if normalized_updated_at else None,
-        }
-        return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        del credential_id, token_family_id, updated_at
+        return credential.access_token.encode("utf-8")
 
     @classmethod
     def _decode_cached_token(
@@ -221,7 +211,10 @@ class TokenManager:
         try:
             data = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            return None
+            try:
+                return payload.decode("utf-8"), None, None
+            except UnicodeDecodeError:
+                return None
         if not isinstance(data, dict):
             return None
         access_token = data.get("access_token")
@@ -270,18 +263,6 @@ class TokenManager:
         if token_family_id is not None and not isinstance(token_family_id, str):
             return None
         return credential_id, token_family_id, updated_at
-
-    def _cache_matches_model(self, payload: bytes, model: OAuthCredentialModel) -> bool:
-        generation = self._decode_cached_generation(payload)
-        if generation is None:
-            return False
-        cached_credential_id, cached_family_id, cached_updated_at = generation
-        model_updated_at = self._normalize_utc(model.updated_at)
-        return (
-            cached_credential_id == str(model.credential_id)
-            and cached_family_id == model.token_family_id
-            and cached_updated_at == model_updated_at
-        )
 
     @classmethod
     def _is_cached_token_usable(cls, expires_at: datetime | None) -> bool:
@@ -479,7 +460,6 @@ class TokenManager:
 
         metadata_key = (provider, user_email, zone_id)
         cache_key_str = self._token_cache_key(provider, user_email, zone_id)
-        legacy_cache_key = self._legacy_token_cache_key(provider, user_email, zone_id)
 
         # Per-credential lock prevents concurrent refresh races (Issue #2281).
         # _last_resolved stash: resolve() reads metadata from the same locked
@@ -493,16 +473,15 @@ class TokenManager:
                 f"Token refresh lock acquisition timed out for {provider}:{user_email}"
             ) from None
         try:
-            cached_raw = (
-                await self._cache_store.get(cache_key_str)
-                if self._cache_store is not None
-                else None
-            )
-            cached = self._decode_cached_token(cached_raw) if cached_raw is not None else None
-            if cached_raw is not None and cached is None and self._cache_store is not None:
-                await self._cache_store.delete(cache_key_str)
-                cached_raw = None
-            legacy_cached_raw = await self._get_legacy_cached_entry(legacy_cache_key)
+            cached_raw = await self._get_legacy_cached_entry(cache_key_str)
+            cached_token = None
+            if cached_raw is not None:
+                try:
+                    cached_token = cached_raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    if self._cache_store is not None:
+                        await self._cache_store.delete(cache_key_str)
+                    cached_raw = None
 
             with self.SessionLocal() as session:
                 stmt = (
@@ -518,30 +497,26 @@ class TokenManager:
                 model = session.execute(stmt).scalar_one_or_none()
 
                 if not model:
-                    if legacy_cached_raw is not None and self._cache_store is not None:
-                        await self._cache_store.delete(legacy_cache_key)
+                    if cached_raw is not None and self._cache_store is not None:
+                        await self._cache_store.delete(cache_key_str)
                     raise AuthenticationError(
                         f"No OAuth credential found for {provider}:{user_email}"
                     )
 
+                credential = self._model_to_credential(model)
+
                 if (
-                    cached is not None
-                    and cached_raw is not None
-                    and self._cache_matches_model(cached_raw, model)
-                    and self._is_cached_token_usable(self._normalize_utc(model.expires_at))
+                    cached_token is not None
+                    and cached_token == credential.access_token
+                    and not credential.is_expired()
                 ):
-                    access_token, _, scopes = cached
                     self._resolved_metadata[metadata_key] = (
-                        self._normalize_utc(model.expires_at),
-                        scopes,
+                        credential.expires_at,
+                        credential.scopes,
                     )
-                    if legacy_cached_raw is not None and self._cache_store is not None:
-                        await self._cache_store.delete(legacy_cache_key)
-                    return access_token
+                    return cached_token
                 if cached_raw is not None and self._cache_store is not None:
                     await self._cache_store.delete(cache_key_str)
-
-                credential = self._model_to_credential(model)
 
                 refreshed = False
                 rotated = False
@@ -699,8 +674,6 @@ class TokenManager:
                     )
 
             if credential.is_expired():
-                if legacy_cached_raw is not None and self._cache_store is not None:
-                    await self._cache_store.delete(legacy_cache_key)
                 raise AuthenticationError(
                     f"Token expired for {provider}:{user_email} and no refresh token available"
                 )
@@ -714,16 +687,9 @@ class TokenManager:
                 if cache_ttl is not None:
                     await self._cache_store.set(
                         cache_key_str,
-                        self._encode_cached_token(
-                            credential,
-                            credential_id=str(model.credential_id),
-                            token_family_id=model.token_family_id,
-                            updated_at=model.updated_at,
-                        ),
+                        self._encode_cached_token(credential),
                         ttl=cache_ttl,
                     )
-                if legacy_cached_raw is not None:
-                    await self._cache_store.delete(legacy_cache_key)
             return credential.access_token
         finally:
             lock.release()

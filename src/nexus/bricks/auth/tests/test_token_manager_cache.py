@@ -111,10 +111,7 @@ async def test_expired_cache_entry_is_ignored_and_replaced(manager: TokenManager
     assert token == "fresh-db-token"
     refreshed_raw = await manager._cache_store.get(cache_key)
     assert refreshed_raw is not None
-    refreshed = manager._decode_cached_token(refreshed_raw)
-    assert refreshed is not None
-    assert refreshed[0] == "fresh-db-token"
-    assert refreshed[2] == ("scope.a",)
+    assert refreshed_raw.decode() == "fresh-db-token"
 
 
 @pytest.mark.asyncio
@@ -146,9 +143,7 @@ async def test_cache_ttl_is_capped_by_safe_remaining_lifetime(manager: TokenMana
 
 
 @pytest.mark.asyncio
-async def test_structured_cache_uses_versioned_key_and_keeps_legacy_key_empty(
-    manager: TokenManager,
-) -> None:
+async def test_token_cache_uses_main_key_for_raw_token(manager: TokenManager) -> None:
     credential = OAuthCredential(
         access_token="fresh-db-token",
         expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -161,19 +156,19 @@ async def test_structured_cache_uses_versioned_key_and_keeps_legacy_key_empty(
         credential=credential,
     )
 
-    versioned_key = manager._token_cache_key("google", "alice@example.com", "root")
-    legacy_key = manager._legacy_token_cache_key("google", "alice@example.com", "root")
+    cache_key = manager._token_cache_key("google", "alice@example.com", "root")
 
     token = await manager.get_valid_token("google", "alice@example.com")
 
     assert token == "fresh-db-token"
     assert manager._cache_store is not None
-    assert await manager._cache_store.get(versioned_key) is not None
-    assert await manager._cache_store.get(legacy_key) is None
+    cached = await manager._cache_store.get(cache_key)
+    assert cached is not None
+    assert cached.decode() == "fresh-db-token"
 
 
 @pytest.mark.asyncio
-async def test_legacy_raw_cache_entries_are_migrated_after_db_validation(
+async def test_raw_cache_entries_are_accepted_after_db_validation(
     manager: TokenManager,
 ) -> None:
     credential = OAuthCredential(
@@ -187,23 +182,21 @@ async def test_legacy_raw_cache_entries_are_migrated_after_db_validation(
         user_email="alice@example.com",
         credential=credential,
     )
-    versioned_key = manager._token_cache_key("google", "alice@example.com", "root")
-    legacy_key = manager._legacy_token_cache_key("google", "alice@example.com", "root")
+    cache_key = manager._token_cache_key("google", "alice@example.com", "root")
     assert manager._cache_store is not None
-    await manager._cache_store.set(legacy_key, b"legacy-raw-token", ttl=60)
+    await manager._cache_store.set(cache_key, b"legacy-raw-token", ttl=60)
 
     token = await manager.get_valid_token("google", "alice@example.com")
 
     assert token == "legacy-raw-token"
-    assert await manager._cache_store.get(legacy_key) is None
-    assert await manager._cache_store.get(versioned_key) is not None
+    assert await manager._cache_store.get(cache_key) == b"legacy-raw-token"
 
 
 @pytest.mark.asyncio
 async def test_legacy_raw_cache_entry_is_rejected_when_db_credential_missing(
     manager: TokenManager,
 ) -> None:
-    legacy_key = manager._legacy_token_cache_key("google", "alice@example.com", "root")
+    legacy_key = manager._token_cache_key("google", "alice@example.com", "root")
     assert manager._cache_store is not None
     await manager._cache_store.set(legacy_key, b"legacy-raw-token", ttl=60)
 

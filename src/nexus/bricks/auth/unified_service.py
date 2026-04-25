@@ -633,6 +633,23 @@ class UnifiedAuthService:
 
         ordered_matches = self._ordered_oauth_matches(matches)
         if desired_targets:
+            if (
+                native is not None
+                and ordered_matches
+                and all(bool(match.get("is_expired")) for match in ordered_matches)
+            ):
+                native_result = await self._google_target_test_result(
+                    service,
+                    desired_targets,
+                    source=native["source"],
+                    native=native,
+                    user_email=user_email or native.get("email"),
+                )
+                native_result["message"] = "Stored OAuth credential is expired; " + str(
+                    native_result.get("message", "using local native CLI auth.")
+                )
+                native_result["stored_oauth_status"] = AuthStatus.EXPIRED.value
+                return native_result
             first_failure: dict[str, Any] | None = None
             for oauth_match in ordered_matches:
                 result = await self._oauth_service.test_credential(
@@ -681,13 +698,10 @@ class UnifiedAuthService:
                     native_result["message"] = "Stored OAuth target validation failed; " + str(
                         native_result.get("message", "using local native CLI auth.")
                     )
+                    native_result["stored_oauth_status"] = AuthStatus.ERROR.value
                     if bool(native_result.get("success")):
-                        native_result["stored_oauth_status"] = (
-                            AuthStatus.EXPIRED.value
-                            if all(bool(match.get("is_expired")) for match in ordered_matches)
-                            else AuthStatus.ERROR.value
-                        )
                         return native_result
+                    return native_result
                 return first_failure
 
         candidate = self._preferred_oauth_match(matches)

@@ -692,9 +692,9 @@ class TestTombstoning:
                 super().__init__()
                 self.calls: list[tuple[str, tuple[int, int]]] = []
 
-            def upsert(self, profile) -> None:  # noqa: ANN001
+            def upsert(self, profile, *, preserve_runtime_state: bool = False) -> None:  # noqa: ANN001
                 self.calls.append(("upsert", (1, 0)))
-                super().upsert(profile)
+                super().upsert(profile, preserve_runtime_state=preserve_runtime_state)
 
             def delete(self, pid: str) -> None:
                 self.calls.append(("delete", (0, 1)))

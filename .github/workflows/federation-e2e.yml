@@ -25,7 +25,7 @@ on:
       - 'rust/**'
       - 'proto/**'
       - 'src/nexus/**'
-      - 'tests/e2e/docker/test_federation_e2e.py'
+      - 'tests/e2e/docker/test_federation*.py'
       - '.dockerignore'
       - '.github/workflows/federation-e2e.yml'
   pull_request:
@@ -39,7 +39,7 @@ on:
       - 'rust/**'
       - 'proto/**'
       - 'src/nexus/**'
-      - 'tests/e2e/docker/test_federation_e2e.py'
+      - 'tests/e2e/docker/test_federation*.py'
       - '.dockerignore'
       - '.github/workflows/federation-e2e.yml'
 

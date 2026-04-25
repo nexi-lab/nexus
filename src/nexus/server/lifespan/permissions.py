@@ -30,6 +30,7 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
     """
     bg_tasks: list[asyncio.Task] = []
 
+    _seed_root_zone(svc)  # Issue #3897 — satisfy api_key_zones FK on first key insert
     await _startup_async_rebac(app, svc)
     await _startup_cache_brick(app, svc)
     await _startup_durable_invalidation(app, svc)  # Issue #3396
@@ -44,6 +45,43 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _seed_root_zone(svc: "LifespanServices") -> None:
+    """Ensure ``zones.root`` exists so api_key_zones FK inserts succeed.
+
+    Without this row, the first call to ``create_api_key`` (e.g. via
+    ``POST /api/v2/agents/register``) hits FK ``api_key_zones_zone_id_fkey``
+    when ``zone_id`` defaults to ``ROOT_ZONE_ID``.
+    """
+    session_factory = svc.session_factory
+    if session_factory is None:
+        return
+
+    from datetime import UTC, datetime
+
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.storage.models import ZoneModel
+
+    try:
+        with session_factory() as session:
+            existing = session.get(ZoneModel, ROOT_ZONE_ID)
+            if existing is not None:
+                return
+            session.add(
+                ZoneModel(
+                    zone_id=ROOT_ZONE_ID,
+                    name="Root",
+                    phase="Active",
+                    finalizers="[]",
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+            logger.info("Seeded default zone %r", ROOT_ZONE_ID)
+    except Exception as exc:
+        logger.warning("Failed to seed default zone %r: %s", ROOT_ZONE_ID, exc)
 
 
 async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:

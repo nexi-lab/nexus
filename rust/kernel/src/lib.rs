@@ -16,6 +16,7 @@ mod agent_registry;
 mod anthropic_backend;
 #[cfg(feature = "connectors")]
 pub mod anthropic_streaming;
+pub mod audit_hook;
 pub mod backend;
 mod bitmap;
 mod blob_fetcher;

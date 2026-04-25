@@ -299,10 +299,13 @@ pub struct ReadHookCtx {
 pub struct WriteHookCtx {
     pub path: String,
     pub identity: HookIdentity,
+    /// Pre-hook: full payload. Post-hook: empty vec (use size_bytes instead).
     pub content: Vec<u8>,
     pub is_new_file: bool,
     pub content_hash: Option<String>,
     pub new_version: u64,
+    /// Populated in post-hook context; None in pre-hook.
+    pub size_bytes: Option<u64>,
 }
 
 /// DeleteHookContext — pre/post delete intercept.

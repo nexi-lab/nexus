@@ -2194,6 +2194,23 @@ impl Kernel {
             .map_err(KernelError::PermissionDenied)
     }
 
+    /// Dispatch POST-INTERCEPT hooks from NativeHookRegistry (fire-and-forget).
+    /// No-op when registry is empty (zero-cost lock check).
+    pub fn dispatch_native_post(&self, ctx: &HookContext) {
+        let registry = self.native_hooks.lock();
+        if registry.count() == 0 {
+            return;
+        }
+        registry.dispatch_post(ctx);
+    }
+
+    /// Register a native Rust hook (e.g. AuditHook) with the kernel.
+    /// The hook receives pre/post callbacks for every VFS operation.
+    #[allow(dead_code)]
+    pub fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
+        self.native_hooks.lock().register(hook);
+    }
+
     // ── Zone revision counter (§10 A2) ────────────────────────────────
 
     /// Get or create zone revision entry.
@@ -2839,6 +2856,7 @@ impl Kernel {
             is_new_file: false,
             content_hash: None,
             new_version: 0,
+            size_bytes: None,
         }))?;
 
         // 2. Route (check write access)
@@ -3039,6 +3057,23 @@ impl Kernel {
                     ev.is_new = old_version == 0;
                     ev.old_etag = old_etag;
                 });
+
+                // Native POST hooks (fire-and-forget — AuditHook sends to channel
+                // in ~100 ns; no content clone on post path).
+                self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
+                    path: path.to_string(),
+                    identity: HookIdentity {
+                        user_id: ctx.user_id.clone(),
+                        zone_id: ctx.zone_id.clone(),
+                        agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                        is_admin: ctx.is_admin,
+                    },
+                    content: vec![],
+                    is_new_file: result_is_new,
+                    content_hash: None,
+                    new_version: new_version.into(),
+                    size_bytes: Some(wr.size),
+                }));
 
                 Ok(SysWriteResult {
                     hit: true,
@@ -3311,6 +3346,15 @@ impl Kernel {
         });
 
         // 11. Return hit=true with metadata for event payload
+        self.dispatch_native_post(&HookContext::Delete(DeleteHookCtx {
+            path: path.to_string(),
+            identity: HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            },
+        }));
         Ok(SysUnlinkResult {
             hit: true,
             entry_type: entry.entry_type,
@@ -3538,6 +3582,19 @@ impl Kernel {
         self.dispatch_mutation(FileEventType::FileRename, old_path, ctx, |ev| {
             ev.new_path = Some(new_path_owned);
         });
+
+        // Native POST hooks
+        self.dispatch_native_post(&HookContext::Rename(RenameHookCtx {
+            old_path: old_path.to_string(),
+            new_path: new_path.to_string(),
+            identity: HookIdentity {
+                user_id: ctx.user_id.clone(),
+                zone_id: ctx.zone_id.clone(),
+                agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                is_admin: ctx.is_admin,
+            },
+            is_directory,
+        }));
 
         // Extract old metadata fields for Python post-hook dispatch.
         // Prefer metastore (old_meta) over dcache (old_entry) for accuracy.

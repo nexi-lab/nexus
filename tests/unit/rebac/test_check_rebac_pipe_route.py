@@ -78,19 +78,17 @@ def test_stream_path_does_not_trigger_warning(caplog) -> None:
     assert isinstance(result, bool)
 
 
-def test_route_with_backend_still_uses_mapper(caplog) -> None:
-    """A route result with both backend + backend_path still goes
-    through ObjectTypeMapper, so this fix doesn't regress the file path."""
-    fake_backend = MagicMock(name="backend")
-    fake_backend.get_object_type = MagicMock(return_value="file")
-    fake_backend.name = "localfs"
-
-    # Mock DLC to return (backend, backend_path, mount_point) tuple
+def test_route_with_backend_name_uses_mapper(caplog) -> None:
+    """A route result with (backend_name, backend_path, mount_point) goes
+    through ObjectTypeMapper.get_object_type_by_name (string-based, no
+    Python backend object). resolve_path now returns strings."""
+    # Mock DLC to return (backend_name: str, backend_path, mount_point)
     dlc = MagicMock()
-    dlc.resolve_path = MagicMock(return_value=(fake_backend, "foo", "/"))
+    dlc.resolve_path = MagicMock(return_value=("localfs", "foo", "/"))
 
     enf = _enforcer_with_dlc(dlc)
 
     enf._check_rebac("/root/foo", Permission.READ, _ctx())
 
-    fake_backend.get_object_type.assert_called_once_with("foo")
+    # resolve_path was called with the path and zone_id
+    dlc.resolve_path.assert_called_once_with("/root/foo", "root")

@@ -65,7 +65,7 @@ def mock_fs():
     fs._rebac_manager.hierarchy_manager.remove_parent_tuples = MagicMock(return_value=1)
     # DriverLifecycleCoordinator for mount listing
     mock_dlc = MagicMock()
-    mock_dlc.list_mounts.return_value = []
+    mock_dlc.mount_points.return_value = []
     fs._driver_coordinator = mock_dlc
     fs.SessionLocal = MagicMock()
     fs.read = MagicMock(return_value={"content": b"data", "path": "/test/file.txt"})
@@ -391,48 +391,36 @@ class TestMountOperations:
     """Tests for mount listing and path resolution."""
 
     def test_list_mounts(self, gateway, mock_fs):
-        """list_mounts returns formatted mount list."""
-        dlc_info = MagicMock()
-        dlc_info.backend = MagicMock()
-        type(dlc_info.backend).__name__ = "CASLocalBackend"
-        mock_fs._driver_coordinator.list_mounts.return_value = [
-            ("/root/mnt/test", dlc_info),
-        ]
+        """list_mounts returns formatted mount list from mount_points()."""
+        mock_fs._driver_coordinator.mount_points.return_value = ["/mnt/test"]
 
         result = gateway.list_mounts()
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/test"
-        assert result[0]["backend_type"] == "CASLocalBackend"
+        assert result[0]["backend_type"] == "rust-native"
+        assert result[0]["backend"] is None
 
     def test_get_mount_for_path_found(self, gateway, mock_fs):
         """get_mount_for_path returns mount info."""
-        dlc_info = MagicMock()
-        dlc_info.backend = MagicMock()
-        dlc_info.backend.name = "my_backend"
-        mock_fs._driver_coordinator.list_mounts.return_value = [
-            ("/root/mnt", dlc_info),
-        ]
+        mock_fs._driver_coordinator.mount_points.return_value = ["/mnt"]
 
         result = gateway.get_mount_for_path("/mnt/subdir/file.txt")
         assert result is not None
         assert result["mount_point"] == "/mnt"
         assert result["backend_path"] == "subdir/file.txt"
+        assert result["backend"] is None
 
     def test_get_mount_for_path_root(self, gateway, mock_fs):
         """get_mount_for_path handles root mount."""
-        dlc_info = MagicMock()
-        dlc_info.backend = MagicMock()
-        dlc_info.backend.name = "root_backend"
-        mock_fs._driver_coordinator.list_mounts.return_value = [
-            ("/root/", dlc_info),
-        ]
+        mock_fs._driver_coordinator.mount_points.return_value = ["/"]
 
         result = gateway.get_mount_for_path("/any/path")
         assert result is not None
         assert result["mount_point"] == "/"
+        assert result["backend"] is None
 
     def test_get_mount_for_path_not_found(self, gateway, mock_fs):
         """get_mount_for_path returns None when no mount matches."""
-        mock_fs._driver_coordinator.list_mounts.return_value = []
+        mock_fs._driver_coordinator.mount_points.return_value = []
         result = gateway.get_mount_for_path("/orphan/path")
         assert result is None

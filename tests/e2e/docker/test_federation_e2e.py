@@ -2081,14 +2081,44 @@ class TestPartialReplicationFailure:
         # runner can take real seconds.
         _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=120)
         for path in written:
-            _wait_replicated(
-                grpc2,
-                "/corp/eng/",
-                path,
-                api_key,
-                msg=f"Post-partition catch-up missing: {path}",
-                timeout=60,
-            )
+            try:
+                _wait_replicated(
+                    grpc2,
+                    "/corp/eng/",
+                    path,
+                    api_key,
+                    msg=f"Post-partition catch-up missing: {path}",
+                    timeout=60,
+                )
+            except Exception:
+                # Diagnostic: when the per-file gate trips even after
+                # `_wait_nodes_caught_up` returned, dump the cluster
+                # state so the next run has data instead of just "list
+                # was empty after 60s". Capture both nodes' raft view
+                # of root + corp-eng (term/leader/applied_index) and
+                # the zone-relative listing both nodes report. Don't
+                # swallow — re-raise after dumping.
+                import json
+                import sys
+
+                diag: dict = {}
+                for label, t in [("node-1", grpc1), ("node-2", grpc2)]:
+                    diag[label] = {}
+                    for zone in [ROOT_ZONE_ID, "corp-eng"]:
+                        info = _grpc_call(
+                            t, "federation_cluster_info", {"zone_id": zone}, api_key=api_key
+                        )
+                        diag[label][zone] = info.get("result")
+                    ls = _grpc_call(t, "list", {"path": "/corp/eng/"}, api_key=api_key)
+                    diag[label]["list_corp_eng"] = ls
+                    st = _grpc_call(t, "sys_stat", {"path": path}, api_key=api_key)
+                    diag[label]["sys_stat_target"] = st
+                print(
+                    f"\n=== test_partition_then_heal diagnostic for {path} ===",
+                    file=sys.stderr,
+                )
+                print(json.dumps(diag, indent=2, default=str), file=sys.stderr)
+                raise
 
 
 # ===================================================================

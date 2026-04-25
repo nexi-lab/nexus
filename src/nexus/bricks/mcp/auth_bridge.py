@@ -37,8 +37,12 @@ def op_context_to_auth_dict(op_context: Any) -> dict[str, Any]:
             "is_admin": False,
         }
     zone_id = getattr(op_context, "zone_id", None) or ROOT_ZONE_ID
-    zone_set_attr = getattr(op_context, "zone_set", ()) or ()
-    zone_perms_attr = getattr(op_context, "zone_perms", ()) or ()
+    raw_zone_set = getattr(op_context, "zone_set", None)
+    zone_set_attr: tuple = tuple(raw_zone_set) if isinstance(raw_zone_set, (tuple, list)) else ()
+    raw_zone_perms = getattr(op_context, "zone_perms", None)
+    zone_perms_attr: tuple = (
+        tuple(raw_zone_perms) if isinstance(raw_zone_perms, (tuple, list)) else ()
+    )
     return {
         "subject_id": getattr(op_context, "subject_id", None)
         or getattr(op_context, "user_id", "anonymous"),

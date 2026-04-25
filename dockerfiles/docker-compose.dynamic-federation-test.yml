@@ -231,12 +231,29 @@ services:
       sse-mock:
         condition: service_healthy
     entrypoint: []
+    # Run as root so /var/run/docker.sock (mounted from host) is
+    # readable regardless of which gid the host's docker group uses.
+    # On the local Linux Docker Desktop the socket happens to be gid=999
+    # which collides with the image's nexus group — tests pass. On
+    # GitHub Actions the host gid differs and `pytest.skip()` fires for
+    # every test that calls `docker.from_env()` or `container.exec_run`
+    # (Docker SDK based: TestLeaderFailover, TestFullFailoverRecovery,
+    # TestPartialReplicationFailure, TestZoneSnapshotExportImport, all 4
+    # CLI surface tests). Running the test runner as root sidesteps the
+    # host-gid mismatch — same effect every developer's `sudo docker`
+    # has, scoped to a throwaway container.
+    user: "0:0"
     volumes:
       - ..:/app
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: /app/src
+      # Suppress pytest cache warnings — the /app volume is owned by
+      # the host user and read-write only for them; pytest tries to
+      # write `.pytest_cache/` there and noisily warns. Point cache
+      # under /tmp inside the container instead.
+      PYTEST_ADDOPTS: "-o cache_dir=/tmp/.pytest_cache"
     command: >
       bash -c '
         echo "Installing test dependencies..."

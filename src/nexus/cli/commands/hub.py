@@ -19,7 +19,12 @@ from nexus.cli.commands._hub_common import (
     get_session_factory,
     parse_duration,
 )
-from nexus.storage.api_key_ops import create_api_key
+from nexus.storage.api_key_ops import (
+    add_zone_to_key,
+    create_api_key,
+    get_zones_for_key,
+    remove_zone_from_key,
+)
 from nexus.storage.models import APIKeyModel, APIKeyZoneModel, ZoneModel
 
 
@@ -274,6 +279,79 @@ def token_revoke(identifier: str) -> None:
         row.revoked_at = datetime.now(UTC)
 
     click.echo(f"revoked {row.name} ({row.key_id}). Effective within 60s (auth cache TTL).")
+
+
+@token.group("zones")
+def token_zones() -> None:
+    """Manage a token's zone allow-list (#3785)."""
+
+
+def _resolve_token_by_name(session: Any, name: str) -> APIKeyModel:
+    row: APIKeyModel | None = (
+        session.execute(
+            select(APIKeyModel).where(APIKeyModel.name == name).where(APIKeyModel.revoked == 0)
+        )
+        .scalars()
+        .first()
+    )
+    if row is None:
+        raise click.ClickException(f"no active token named {name!r}")
+    return row
+
+
+@token_zones.command("add")
+@click.option("--name", required=True, help="Token name.")
+@click.option("--zone", "zone_id", required=True, help="Zone to add.")
+def token_zones_add(name: str, zone_id: str) -> None:
+    """Add a zone to a token's allow-list. Idempotent."""
+    factory = get_session_factory()
+    with factory() as session, session.begin():
+        active = (
+            session.execute(
+                select(ZoneModel)
+                .where(ZoneModel.zone_id == zone_id)
+                .where(ZoneModel.phase == "Active")
+                .where(ZoneModel.deleted_at.is_(None))
+            )
+            .scalars()
+            .first()
+        )
+        if active is None:
+            raise click.ClickException(
+                f"zone {zone_id!r} is not active. Use `nexus zone create` first."
+            )
+        token_row = _resolve_token_by_name(session, name)
+        added = add_zone_to_key(session, token_row.key_id, zone_id)
+    click.echo(f"{'added' if added else 'no change'}: {name} → {zone_id}")
+
+
+@token_zones.command("remove")
+@click.option("--name", required=True, help="Token name.")
+@click.option("--zone", "zone_id", required=True, help="Zone to remove.")
+def token_zones_remove(name: str, zone_id: str) -> None:
+    """Remove a zone from a token's allow-list. Refuses to leave token zoneless."""
+    factory = get_session_factory()
+    with factory() as session, session.begin():
+        token_row = _resolve_token_by_name(session, name)
+        try:
+            removed = remove_zone_from_key(session, token_row.key_id, zone_id)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+    click.echo(f"{'removed' if removed else 'no change'}: {name} → {zone_id}")
+
+
+@token_zones.command("show")
+@click.option("--name", required=True, help="Token name.")
+def token_zones_show(name: str) -> None:
+    """Print the token's zone allow-list (primary first)."""
+    factory = get_session_factory()
+    with factory() as session:
+        token_row = _resolve_token_by_name(session, name)
+        zones = get_zones_for_key(session, token_row.key_id)
+    primary = token_row.zone_id
+    ordered = ([primary] if primary in zones else []) + sorted(z for z in zones if z != primary)
+    for z in ordered:
+        click.echo(z)
 
 
 @hub.group("zone")

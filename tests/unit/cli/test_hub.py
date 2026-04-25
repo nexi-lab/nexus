@@ -701,3 +701,77 @@ def test_token_list_json_includes_zones(monkeypatch):
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["tokens"][0]["zones"] == ["eng", "ops"]
+
+
+def test_token_zones_add_invokes_helper(monkeypatch):
+    row = MagicMock()
+    row.key_id = "kid_a"
+    session = MagicMock()
+    # Sequence: zone Active check (zone exists), then resolve token by name
+    active_zone = MagicMock()
+    active_zone.zone_id = "ops"
+    session.execute.return_value.scalars.return_value.first.side_effect = [
+        active_zone,  # zone Active
+        row,  # token by name
+    ]
+
+    captured = {}
+
+    def fake_add(s, key_id, zone_id):
+        captured.update(key_id=key_id, zone_id=zone_id)
+        return True
+
+    monkeypatch.setattr("nexus.cli.commands.hub.add_zone_to_key", fake_add)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "zones", "add", "--name", "alice", "--zone", "ops"])
+    assert result.exit_code == 0, result.output
+    assert captured == {"key_id": "kid_a", "zone_id": "ops"}
+
+
+def test_token_zones_remove_refuses_last_zone(monkeypatch):
+    row = MagicMock()
+    row.key_id = "kid_a"
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = row
+
+    def fake_remove(s, key_id, zone_id):
+        raise ValueError(f"refusing to remove last zone {zone_id!r} from key {key_id!r}")
+
+    monkeypatch.setattr("nexus.cli.commands.hub.remove_zone_from_key", fake_remove)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "zones", "remove", "--name", "alice", "--zone", "eng"])
+    assert result.exit_code != 0
+    assert "last zone" in result.output
+
+
+def test_token_zones_show_lists_zones(monkeypatch):
+    row = MagicMock()
+    row.key_id = "kid_a"
+    row.zone_id = "eng"
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.first.return_value = row
+
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_zones_for_key",
+        lambda s, kid: ["eng", "ops"],
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["token", "zones", "show", "--name", "alice"])
+    assert result.exit_code == 0, result.output
+    assert "eng" in result.output
+    assert "ops" in result.output

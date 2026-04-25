@@ -30,11 +30,11 @@ class _InMemoryMetastore:
     def get(self, path: str) -> FileMetadata | None:
         return self._data.get(path)
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def put(self, metadata: FileMetadata) -> int | None:
         self._data[metadata.path] = metadata
         return None
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def delete(self, path: str) -> dict[str, Any] | None:
         if path in self._data:
             del self._data[path]
             return {"path": path}

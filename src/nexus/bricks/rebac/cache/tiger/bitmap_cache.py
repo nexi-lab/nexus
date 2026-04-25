@@ -283,7 +283,7 @@ class TigerCache:
 
                 if operation == "get":
                     result = client.hgetall(key)
-                    if not result:
+                    if not isinstance(result, dict) or not result:
                         return None
                     data = result.get(b"data")
                     rev = result.get(b"revision")
@@ -324,7 +324,10 @@ class TigerCache:
                     # Use SCAN for safe iteration
                     cursor = 0
                     while True:
-                        cursor, keys = client.scan(cursor=cursor, match=pattern, count=100)
+                        _scan_result = client.scan(cursor=cursor, match=pattern, count=100)
+                        if not isinstance(_scan_result, tuple):
+                            break
+                        cursor, keys = _scan_result
                         if keys:
                             client.delete(*keys)
                             count += len(keys)

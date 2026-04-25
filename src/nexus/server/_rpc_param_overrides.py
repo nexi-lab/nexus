@@ -239,7 +239,6 @@ class SetMetadataParams:
 
     path: str
     metadata: dict[str, Any] | None = None
-    consistency: str = "sc"
 
 
 # ============================================================

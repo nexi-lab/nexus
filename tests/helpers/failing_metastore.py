@@ -88,13 +88,13 @@ class FailingMetastore(MetastoreABC):
         self._maybe_fail("get")
         return self._inner.get(path)
 
-    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def _put_raw(self, metadata: FileMetadata) -> int | None:
         self._maybe_fail("put")
-        return self._inner.put(metadata, consistency=consistency)
+        return self._inner.put(metadata)
 
-    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def _delete_raw(self, path: str) -> dict[str, Any] | None:
         self._maybe_fail("delete")
-        return self._inner.delete(path, consistency=consistency)
+        return self._inner.delete(path)
 
     def _exists_raw(self, path: str) -> bool:
         self._maybe_fail("exists")
@@ -133,11 +133,10 @@ class FailingMetastore(MetastoreABC):
         self,
         metadata_list: Sequence[FileMetadata],
         *,
-        consistency: str = "sc",
         skip_snapshot: bool = False,
     ) -> None:
         self._maybe_fail("put_batch")
-        self._inner.put_batch(metadata_list, consistency=consistency, skip_snapshot=skip_snapshot)
+        self._inner.put_batch(metadata_list, skip_snapshot=skip_snapshot)
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         self._maybe_fail("batch_get_content_ids")

@@ -3421,7 +3421,8 @@ impl Kernel {
         };
 
         // DT_PIPE/DT_STREAM: rename not supported (IPC endpoints are identity-bound)
-        // DT_MOUNT (2) / DT_EXTERNAL_STORAGE (5): Python handles unmount logic
+        // DT_MOUNT (2) / DT_EXTERNAL_STORAGE (5): single metastore entries —
+        // normal rename logic handles them (backend.rename() is a no-op for mounts).
         match entry_type {
             DT_PIPE | DT_STREAM => {
                 release_locks(&self.lock_manager, lock1, lock2);
@@ -3430,25 +3431,12 @@ impl Kernel {
                     entry_type, old_path
                 )));
             }
-            2 | 5 => {
-                release_locks(&self.lock_manager, lock1, lock2);
-                return Ok(SysRenameResult {
-                    hit: false,
-                    success: false,
-                    post_hook_needed: false,
-                    is_directory,
-                    old_etag: None,
-                    old_size: None,
-                    old_version: None,
-                    old_modified_at_ms: None,
-                });
-            }
             _ => {}
         }
 
-        // 5. Destination conflict check
+        // 5. Destination conflict check — use new_route's metastore for cross-mount
         let new_exists = self
-            .with_metastore(&old_route.mount_point, |ms| {
+            .with_metastore(&new_route.mount_point, |ms| {
                 ms.exists(&new_zone_path).unwrap_or(false)
             })
             .unwrap_or(false);
@@ -3460,24 +3448,55 @@ impl Kernel {
             )));
         }
 
-        // 6. Atomic rename (and, for directories, recursive child rewrite)
-        //    via the `Metastore::rename_path` helper added in F3 C1. Redb
-        //    overrides this with a single write txn, so the entire rename
-        //    is crash-safe on the standalone-redb hot path; the default
-        //    trait impl is a put-then-delete that matches the previous
-        //    hand-rolled loop below.
-        // Always call rename_path: handles both explicit entries and
-        // implicit directories (children-only rename when root entry is None).
-        self.with_metastore(&old_route.mount_point, |ms| {
-            let _ = ms.rename_path(&old_zone_path, &new_zone_path);
-        });
+        // 6. Rename — cross-mount vs same-mount
+        let is_cross_mount = old_route.mount_point != new_route.mount_point;
 
-        // 8. Backend rename (best-effort, PAS only)
-        let _ = self.vfs_router.rename_file(
-            &old_route.mount_point,
-            &old_route.backend_path,
-            &new_route.backend_path,
-        );
+        if is_cross_mount {
+            // Cross-mount: PUT→new metastore, DELETE→old metastore
+            // CAS content is hash-addressed — no backend move needed.
+            if let Some(old_m) = old_meta.as_ref() {
+                let mut new_m = old_m.clone();
+                new_m.path = new_zone_path.clone();
+                self.with_metastore(&new_route.mount_point, |ms| {
+                    let _ = ms.put(&new_zone_path, new_m);
+                });
+                self.with_metastore(&old_route.mount_point, |ms| {
+                    let _ = ms.delete(&old_zone_path);
+                });
+            }
+            // Directory children: list→put→delete
+            let old_prefix = format!("{}/", old_zone_path.trim_end_matches('/'));
+            if let Some(Ok(children)) =
+                self.with_metastore(&old_route.mount_point, |ms| ms.list(&old_prefix))
+            {
+                for child in children {
+                    let suffix = &child.path[old_zone_path.len()..];
+                    let child_new_path = format!("{}{}", new_zone_path, suffix);
+                    let mut child_meta = child.clone();
+                    child_meta.path = child_new_path.clone();
+                    self.with_metastore(&new_route.mount_point, |ms| {
+                        let _ = ms.put(&child_new_path, child_meta);
+                    });
+                    self.with_metastore(&old_route.mount_point, |ms| {
+                        let _ = ms.delete(&child.path);
+                    });
+                }
+            }
+            // DCache eviction for moved paths
+            self.dcache.evict(&old_zone_path);
+            self.dcache
+                .evict_prefix(&format!("{}/", old_zone_path.trim_end_matches('/')));
+        } else {
+            // Same-mount: atomic rename_path (redb single txn)
+            self.with_metastore(&old_route.mount_point, |ms| {
+                let _ = ms.rename_path(&old_zone_path, &new_zone_path);
+            });
+            let _ = self.vfs_router.rename_file(
+                &old_route.mount_point,
+                &old_route.backend_path,
+                &new_route.backend_path,
+            );
+        }
 
         // 9. DCache: evict old + put new; evict children prefix for directories
         if let Some(entry) = self.dcache.get_entry(old_path) {
@@ -6225,5 +6244,132 @@ mod tests {
                 e.path
             );
         }
+    }
+
+    #[test]
+    fn test_sys_rename_cross_mount() {
+        use crate::metastore::{FileMetadata, MemoryMetastore};
+        use std::sync::Arc;
+
+        let k = Kernel::new();
+        let zone = contracts::ROOT_ZONE_ID;
+
+        // Set up two separate mounts with independent MemoryMetastores
+        let ms_a = Arc::new(MemoryMetastore::new());
+        let ms_b = Arc::new(MemoryMetastore::new());
+
+        k.vfs_router.add_mount("/mnt_a", zone, "local", None, false);
+        k.vfs_router.add_mount("/mnt_b", zone, "local", None, false);
+
+        let canon_a = crate::vfs_router::canonicalize_mount_path("/mnt_a", zone);
+        let canon_b = crate::vfs_router::canonicalize_mount_path("/mnt_b", zone);
+        k.vfs_router.install_metastore(
+            &canon_a,
+            ms_a.clone() as Arc<dyn crate::metastore::Metastore>,
+        );
+        k.vfs_router.install_metastore(
+            &canon_b,
+            ms_b.clone() as Arc<dyn crate::metastore::Metastore>,
+        );
+
+        // Seed a file in mount A's metastore
+        let meta = FileMetadata {
+            path: "/file.txt".to_string(),
+            backend_name: "local".to_string(),
+            physical_path: String::new(),
+            size: 42,
+            entry_type: DT_REG,
+            ..Default::default()
+        };
+        ms_a.put("/file.txt", meta).unwrap();
+        assert!(ms_a.exists("/file.txt").unwrap());
+        assert!(!ms_b.exists("/file.txt").unwrap());
+
+        // Cross-mount rename: /mnt_a/file.txt → /mnt_b/file.txt
+        let ctx = OperationContext::new("test", zone, true, None, true);
+        let result = k
+            .sys_rename("/mnt_a/file.txt", "/mnt_b/file.txt", &ctx)
+            .unwrap();
+        assert!(result.hit, "cross-mount rename should return hit=true");
+        assert!(result.success, "cross-mount rename should succeed");
+
+        // Old metastore should be empty, new metastore should have the entry
+        assert!(
+            !ms_a.exists("/file.txt").unwrap(),
+            "source metastore should no longer contain the file"
+        );
+        assert!(
+            ms_b.exists("/file.txt").unwrap(),
+            "destination metastore should contain the file"
+        );
+        let moved = ms_b.get("/file.txt").unwrap().unwrap();
+        assert_eq!(moved.size, 42);
+        assert_eq!(moved.path, "/file.txt");
+    }
+
+    #[test]
+    fn test_sys_rename_cross_mount_directory_children() {
+        use crate::metastore::{FileMetadata, MemoryMetastore};
+        use std::sync::Arc;
+
+        let k = Kernel::new();
+        let zone = contracts::ROOT_ZONE_ID;
+
+        let ms_a = Arc::new(MemoryMetastore::new());
+        let ms_b = Arc::new(MemoryMetastore::new());
+
+        k.vfs_router.add_mount("/mnt_a", zone, "local", None, false);
+        k.vfs_router.add_mount("/mnt_b", zone, "local", None, false);
+
+        let canon_a = crate::vfs_router::canonicalize_mount_path("/mnt_a", zone);
+        let canon_b = crate::vfs_router::canonicalize_mount_path("/mnt_b", zone);
+        k.vfs_router.install_metastore(
+            &canon_a,
+            ms_a.clone() as Arc<dyn crate::metastore::Metastore>,
+        );
+        k.vfs_router.install_metastore(
+            &canon_b,
+            ms_b.clone() as Arc<dyn crate::metastore::Metastore>,
+        );
+
+        // Seed a directory with children
+        let dir_meta = FileMetadata {
+            path: "/docs".to_string(),
+            entry_type: DT_DIR,
+            ..Default::default()
+        };
+        let child1 = FileMetadata {
+            path: "/docs/a.md".to_string(),
+            size: 10,
+            entry_type: DT_REG,
+            ..Default::default()
+        };
+        let child2 = FileMetadata {
+            path: "/docs/b.md".to_string(),
+            size: 20,
+            entry_type: DT_REG,
+            ..Default::default()
+        };
+        ms_a.put("/docs", dir_meta).unwrap();
+        ms_a.put("/docs/a.md", child1).unwrap();
+        ms_a.put("/docs/b.md", child2).unwrap();
+
+        let ctx = OperationContext::new("test", zone, true, None, true);
+        let result = k.sys_rename("/mnt_a/docs", "/mnt_b/docs", &ctx).unwrap();
+        assert!(result.hit);
+        assert!(result.success);
+        assert!(result.is_directory);
+
+        // All entries should have moved from ms_a to ms_b
+        assert!(!ms_a.exists("/docs").unwrap());
+        assert!(!ms_a.exists("/docs/a.md").unwrap());
+        assert!(!ms_a.exists("/docs/b.md").unwrap());
+
+        assert!(ms_b.exists("/docs").unwrap());
+        assert!(ms_b.exists("/docs/a.md").unwrap());
+        assert!(ms_b.exists("/docs/b.md").unwrap());
+
+        assert_eq!(ms_b.get("/docs/a.md").unwrap().unwrap().size, 10);
+        assert_eq!(ms_b.get("/docs/b.md").unwrap().unwrap().size, 20);
     }
 }

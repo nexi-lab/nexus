@@ -216,7 +216,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write(consistency=)`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*` |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*` |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver
@@ -227,7 +227,7 @@ etag ownership and zone isolation.
 **Kernel-managed metadata side effects** (POSIX ``generic_write_end`` pattern):
 kernel updates mtime, size, version, etag in VFS lock after
 ``backend.write_content()``. Drivers only manage content.
-``"sc"`` (strong, default) or ``"ec"`` (eventual, local-first) consistency.
+Consistency is zone-level (configured at metastore layer), not per-write.
 
 ### 2.4 VFS Dispatch (KernelDispatch)
 
@@ -450,14 +450,16 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
 - **StreamBackend protocol** — pluggable backing store for DT_STREAM data.
   ``io_profile`` determines which backend is used at creation time.
   Implementations: ``MemoryStreamBackend`` (in-memory, default),
-  ``SharedMemoryStreamBackend`` (mmap shared memory, cross-process, ~1-5μs).
+  ``SharedMemoryStreamBackend`` (mmap shared memory, cross-process, ~1-5μs),
+  ``WalStreamCore`` (Raft-replicated WAL, durable + distributed).
 
 **io_profile — Backend Selection via sys_setattr:**
 
 ``sys_setattr(path, entry_type=DT_PIPE|DT_STREAM, io_profile=...)`` selects the
 backend implementation at creation time. ``io_profile`` defaults to ``"memory"``
 (in-process ring buffer); ``"shared_memory"`` creates mmap-based cross-process
-IPC. Rust kernel creates the backend, registers it in PipeManager/StreamManager,
+IPC; ``"wal"`` creates a Raft-replicated WAL stream (requires federation).
+Rust kernel creates the backend, registers it in PipeManager/StreamManager,
 and returns SHM metadata (``shm_path``, ``data_rd_fd``, ``space_rd_fd``) to
 Python for asyncio integration. sys_read/sys_write go through Rust PipeManager
 regardless of io_profile — zero Python state.

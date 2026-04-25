@@ -89,7 +89,7 @@ class MetastoreABC(ABC):
         _get_raw, _put_raw, _delete_raw, _exists_raw, _list_raw, close
 
     Concrete methods (may override for performance):
-        is_committed, list_iter,
+        list_iter,
         _get_batch_raw, _delete_batch_raw, _put_batch_raw
     """
 
@@ -114,37 +114,18 @@ class MetastoreABC(ABC):
             _sync_to_rust(self._kernel, result)
         return result
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
-        """Store or update file metadata (write-through dcache).
-
-        Args:
-            metadata: File metadata to store.
-            consistency: Consistency mode for the write:
-                - ``"sc"`` — blocks until Raft commit. Returns None.
-                - ``"ec"`` — fire-and-forget. Returns write token (int).
-                  Use for low-latency writes where immediate durability
-                  is not required.  Raft replicates in background.
-
-        Returns:
-            EC mode: write token (int) for polling via is_committed().
-            SC mode: None (write is already committed when this returns).
-
-        Note:
-            Raft natively batches consecutive proposals into a single
-            AppendEntries RPC (tikv/raft-rs), so application-level
-            batching is unnecessary.  Use ``"ec"`` for throughput,
-            ``"sc"`` for durability.
-        """
+    def put(self, metadata: FileMetadata) -> None:
+        """Store or update file metadata (write-through dcache)."""
         self._dcache[metadata.path] = metadata
         _sync_to_rust(self._kernel, metadata)
-        return self._put_raw(metadata, consistency=consistency)
+        self._put_raw(metadata)
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def delete(self, path: str) -> dict[str, Any] | None:
         """Delete file metadata (evicts dcache entry)."""
         self._dcache.pop(path, None)
         if self._kernel is not None:
             self._kernel.dcache_evict(path)
-        return self._delete_raw(path, consistency=consistency)
+        return self._delete_raw(path)
 
     def dcache_evict_prefix(self, prefix: str) -> int:
         """Evict all dcache entries whose path starts with *prefix*.
@@ -241,22 +222,14 @@ class MetastoreABC(ABC):
         self,
         metadata_list: Sequence[FileMetadata],
         *,
-        consistency: str = "sc",
         skip_snapshot: bool = False,
     ) -> None:
-        """Store or update multiple file metadata (write-through dcache).
-
-        Args:
-            metadata_list: List of file metadata to store.
-            consistency: Consistency mode (see put() for details).
-            skip_snapshot: Skip pre-write snapshot for rollback. Use when
-                the caller has its own retry logic (e.g., deferred buffer).
-        """
+        """Store or update multiple file metadata (write-through dcache)."""
         kernel = self._kernel
         for meta in metadata_list:
             self._dcache[meta.path] = meta
             _sync_to_rust(kernel, meta)
-        self._put_batch_raw(metadata_list, consistency=consistency, skip_snapshot=skip_snapshot)
+        self._put_batch_raw(metadata_list, skip_snapshot=skip_snapshot)
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         """Get content IDs (hashes) for multiple paths (dcache-accelerated)."""
@@ -265,21 +238,6 @@ class MetastoreABC(ABC):
             metadata = self.get(path)
             result[path] = metadata.etag if metadata else None
         return result
-
-    # ── Consistency (no cache interaction) ────────────────────────────
-
-    def is_committed(self, _token: int) -> str | None:
-        """Check if an EC write token has been replicated to a majority.
-
-        Args:
-            token: Write token returned by put() with consistency="ec".
-
-        Returns:
-            "committed" — replicated to majority.
-            "pending" — local only, awaiting replication.
-            None — invalid token or no replication log.
-        """
-        return None
 
     # ── Observability ─────────────────────────────────────────────────
 
@@ -300,11 +258,11 @@ class MetastoreABC(ABC):
         """Get metadata from the underlying store (no cache)."""
 
     @abstractmethod
-    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def _put_raw(self, metadata: FileMetadata) -> None:
         """Store metadata in the underlying store (no cache)."""
 
     @abstractmethod
-    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def _delete_raw(self, path: str) -> dict[str, Any] | None:
         """Delete metadata from the underlying store (no cache)."""
 
     @abstractmethod
@@ -336,7 +294,6 @@ class MetastoreABC(ABC):
         self,
         metadata_list: Sequence[FileMetadata],
         *,
-        consistency: str = "sc",  # noqa: ARG002
         skip_snapshot: bool = False,  # noqa: ARG002
     ) -> None:
         """Store multiple metadata entries in the underlying store."""
@@ -380,12 +337,11 @@ class RustMetastoreProxy(MetastoreABC):
         result: FileMetadata | None = self._rust_kernel.metastore_get(path)
         return result
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:  # noqa: ARG002
+    def put(self, metadata: FileMetadata) -> None:
         """Store metadata via Rust metastore."""
         self._rust_kernel.metastore_put(metadata)
-        return None
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:  # noqa: ARG002
+    def delete(self, path: str) -> dict[str, Any] | None:
         """Delete metadata via Rust metastore + evict from Rust DCache."""
         deleted = self._rust_kernel.metastore_delete(path)
         self._rust_kernel.dcache_evict(path)
@@ -450,7 +406,6 @@ class RustMetastoreProxy(MetastoreABC):
         self,
         metadata_list: Sequence[FileMetadata],
         *,
-        consistency: str = "sc",  # noqa: ARG002
         skip_snapshot: bool = False,  # noqa: ARG002
     ) -> None:
         """Batch put via Rust metastore."""
@@ -525,8 +480,6 @@ class RustMetastoreProxy(MetastoreABC):
         self,
         metadata: FileMetadata,
         expected_version: int,
-        *,
-        consistency: str = "sc",  # noqa: ARG002
     ) -> Any:
         return self._rust_kernel.metastore_put_if_version(metadata, expected_version)
 
@@ -553,11 +506,10 @@ class RustMetastoreProxy(MetastoreABC):
         result: FileMetadata | None = self._rust_kernel.metastore_get(path)
         return result
 
-    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:  # noqa: ARG002
+    def _put_raw(self, metadata: FileMetadata) -> None:
         self._rust_kernel.metastore_put(metadata)
-        return None
 
-    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:  # noqa: ARG002
+    def _delete_raw(self, path: str) -> dict[str, Any] | None:
         deleted = self._rust_kernel.metastore_delete(path)
         return {"deleted": deleted}
 

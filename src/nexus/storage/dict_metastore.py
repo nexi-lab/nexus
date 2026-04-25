@@ -90,11 +90,9 @@ class DictMetastore(MetastoreABC):
     def _get_raw(self, path: str) -> FileMetadata | None:
         return self._store.get(path)
 
-    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
-        del consistency
+    def _put_raw(self, metadata: FileMetadata) -> None:
         self._store[metadata.path] = metadata
         self._flush()
-        return None
 
     def put_if_version(
         self,

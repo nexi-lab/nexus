@@ -760,15 +760,11 @@ class MountService:
         """
         mounts = []
 
-        from nexus.core.path_utils import extract_zone_id
         from nexus.core.protocols.vfs_router import MountInfo
 
-        dlc_mounts = self._dlc.list_mounts() if self._dlc else []
+        mount_points = self._dlc.mount_points() if self._dlc else []
         router_mounts = sorted(
-            [
-                MountInfo(mount_point=extract_zone_id(k)[1], backend=info.backend)
-                for k, info in dlc_mounts
-            ],
+            [MountInfo(mount_point=mp, backend=None) for mp in mount_points],
             key=lambda m: m.mount_point,
         )
         logger.info(f"[LIST_MOUNTS] Total mounts in DLC: {len(router_mounts)}")

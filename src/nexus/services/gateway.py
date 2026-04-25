@@ -517,17 +517,15 @@ class NexusFSGateway:
             Dict with mount_point, backend, backend_path keys,
             or None if no mount matches.
         """
-        from nexus.core.path_utils import extract_zone_id
 
         dlc = self._fs._driver_coordinator
-        all_mounts = [(extract_zone_id(k)[1], info) for k, info in dlc.list_mounts()]
-        all_mounts.sort(key=lambda x: len(x[0]), reverse=True)
-        for mp, info in all_mounts:
+        all_mounts = sorted(dlc.mount_points(), key=len, reverse=True)
+        for mp in all_mounts:
             if path == mp or path.startswith(mp + "/") or mp == "/":
                 backend_path = path.lstrip("/") if mp == "/" else path[len(mp) :].lstrip("/")
                 return {
                     "mount_point": mp,
-                    "backend": info.backend,
+                    "backend": None,
                     "backend_path": backend_path,
                 }
         return None

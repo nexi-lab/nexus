@@ -217,6 +217,6 @@ class TestLongestPrefixMatchInvariants:
             result = _lookup_lpm(dlc, query_path)
             if result is not None:
                 # The deeper mount should match
-                assert result[1].backend is backend_deep
+                assert result[1] is backend_deep
         except (InvalidPathError, ValueError):
             pass  # Path validation may reject generated paths

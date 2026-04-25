@@ -216,3 +216,45 @@ def revoke_api_key(session: "Session", key_id: str) -> bool:
     session.flush()
 
     return True
+
+
+def get_zones_for_key(session: "Session", key_id: str) -> list[str]:
+    """Return the full zone allow-list for a token (#3785)."""
+    from sqlalchemy import select
+
+    from nexus.storage.models import APIKeyZoneModel
+
+    rows = (
+        session.execute(select(APIKeyZoneModel.zone_id).where(APIKeyZoneModel.key_id == key_id))
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+def add_zone_to_key(session: "Session", key_id: str, zone_id: str) -> bool:
+    """Add a zone to a token's allow-list. Idempotent — returns False if already present."""
+    from nexus.storage.models import APIKeyZoneModel
+
+    existing = session.get(APIKeyZoneModel, (key_id, zone_id))
+    if existing is not None:
+        return False
+    session.add(APIKeyZoneModel(key_id=key_id, zone_id=zone_id))
+    return True
+
+
+def remove_zone_from_key(session: "Session", key_id: str, zone_id: str) -> bool:
+    """Remove a zone. Refuses to leave a token with zero zones (raises ValueError)."""
+    from nexus.storage.models import APIKeyZoneModel
+
+    current = get_zones_for_key(session, key_id)
+    if zone_id not in current:
+        return False
+    if len(current) == 1:
+        raise ValueError(
+            f"refusing to remove last zone {zone_id!r} from key {key_id!r}; "
+            "revoke the token instead"
+        )
+    row = session.get(APIKeyZoneModel, (key_id, zone_id))
+    session.delete(row)
+    return True

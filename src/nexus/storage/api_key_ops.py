@@ -283,7 +283,7 @@ def get_primary_zone(session: "Session", key_id: str) -> str | None:
     """
     from sqlalchemy import select
 
-    from nexus.storage.models.auth import APIKeyZoneModel
+    from nexus.storage.models import APIKeyZoneModel
 
     stmt = (
         select(APIKeyZoneModel.zone_id)
@@ -304,7 +304,7 @@ def get_primary_zones_for_keys(session: "Session", key_ids: list[str]) -> dict[s
         return {}
     from sqlalchemy import func, select
 
-    from nexus.storage.models.auth import APIKeyZoneModel
+    from nexus.storage.models import APIKeyZoneModel
 
     rn = (
         func.row_number()

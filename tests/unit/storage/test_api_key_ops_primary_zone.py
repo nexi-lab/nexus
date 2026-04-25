@@ -74,12 +74,22 @@ def test_get_primary_zones_for_keys_single_query(session):
 
     a, _ = create_api_key(session, user_id="u1", name="a", zones=["eng"])
     b, _ = create_api_key(session, user_id="u1", name="b", zones=["ops"])
-    session.flush()  # Ensure zones are flushed before capturing queries
     seen: list[str] = []
 
     @event.listens_for(session.bind, "before_cursor_execute")
     def _capture(conn, cursor, statement, *_):  # noqa: ARG001
         seen.append(statement)
 
-    get_primary_zones_for_keys(session, [a, b])
-    assert sum(1 for s in seen if "api_key_zones" in s) == 1
+    result = get_primary_zones_for_keys(session, [a, b])
+    # Correctness: result must be right (catches "1 query, wrong shape").
+    assert result == {a: "eng", b: "ops"}
+    # Efficiency: exactly one SELECT query touched the junction.
+    junction_stmts = [
+        s for s in seen if "api_key_zones" in s and s.strip().upper().startswith("SELECT")
+    ]
+    assert len(junction_stmts) == 1
+    # Shape: server did the filtering + primary selection (catches
+    # "1 query that pulls every row and filters in Python").
+    sql = junction_stmts[0].lower()
+    assert " in (" in sql, "expected server-side key_id IN (...) filter"
+    assert "row_number" in sql, "expected window-function primary selection"

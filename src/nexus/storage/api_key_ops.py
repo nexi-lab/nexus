@@ -273,6 +273,59 @@ def get_zone_perms_for_key(session: "Session", key_id: str) -> list[tuple[str, s
     return [(zid, perms) for zid, perms in rows]
 
 
+def get_primary_zone(session: "Session", key_id: str) -> str | None:
+    """Return the token's primary zone, or None if it has no zones.
+
+    Primary = the row with the smallest granted_at. Ties broken by zone_id ASC
+    so the result is deterministic across snapshots and replays.
+
+    Replaces direct reads of the deprecated APIKeyModel.zone_id column (#3871).
+    """
+    from sqlalchemy import select
+
+    from nexus.storage.models.auth import APIKeyZoneModel
+
+    stmt = (
+        select(APIKeyZoneModel.zone_id)
+        .where(APIKeyZoneModel.key_id == key_id)
+        .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
+        .limit(1)
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def get_primary_zones_for_keys(session: "Session", key_ids: list[str]) -> dict[str, str]:
+    """Batch variant of get_primary_zone for renderers walking many rows.
+
+    Single round-trip via a window function. Returns {key_id: primary_zone};
+    zoneless keys are absent from the dict.
+    """
+    if not key_ids:
+        return {}
+    from sqlalchemy import func, select
+
+    from nexus.storage.models.auth import APIKeyZoneModel
+
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=APIKeyZoneModel.key_id,
+            order_by=(
+                APIKeyZoneModel.granted_at.asc(),
+                APIKeyZoneModel.zone_id.asc(),
+            ),
+        )
+        .label("rn")
+    )
+    inner = (
+        select(APIKeyZoneModel.key_id, APIKeyZoneModel.zone_id, rn)
+        .where(APIKeyZoneModel.key_id.in_(key_ids))
+        .subquery()
+    )
+    stmt = select(inner.c.key_id, inner.c.zone_id).where(inner.c.rn == 1)
+    return {row.key_id: row.zone_id for row in session.execute(stmt)}
+
+
 def add_zone_to_key(session: "Session", key_id: str, zone_id: str, permissions: str = "rw") -> bool:
     """Add a zone to a token's allow-list. Idempotent — returns False if already present."""
     from nexus.storage.models import APIKeyZoneModel

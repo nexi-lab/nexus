@@ -23,9 +23,8 @@ def op_context_to_auth_dict(op_context: Any) -> dict[str, Any]:
     """Convert an ``OperationContext`` (or None) into an auth_result dict.
 
     ``_apply_rebac_filter`` expects a dict with ``subject_id``,
-    ``zone_id``, and ``is_admin`` keys — the same shape that the HTTP
-    ``require_auth`` dependency returns.  This helper bridges the MCP
-    ``OperationContext`` into that format.
+    ``zone_id``, ``zone_set`` (#3785), and ``is_admin`` keys — the same
+    shape that the HTTP ``require_auth`` dependency returns.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -33,12 +32,16 @@ def op_context_to_auth_dict(op_context: Any) -> dict[str, Any]:
         return {
             "subject_id": "anonymous",
             "zone_id": ROOT_ZONE_ID,
+            "zone_set": [],
             "is_admin": False,
         }
+    zone_id = getattr(op_context, "zone_id", None) or ROOT_ZONE_ID
+    zone_set_attr = getattr(op_context, "zone_set", ()) or ()
     return {
         "subject_id": getattr(op_context, "subject_id", None)
         or getattr(op_context, "user_id", "anonymous"),
-        "zone_id": getattr(op_context, "zone_id", None) or ROOT_ZONE_ID,
+        "zone_id": zone_id,
+        "zone_set": list(zone_set_attr) if zone_set_attr else [zone_id],
         "is_admin": bool(getattr(op_context, "is_admin", False)),
     }
 
@@ -193,6 +196,7 @@ def resolve_mcp_operation_context(
                         "subject_type",
                         "subject_id",
                         "zone_id",
+                        "zone_set",
                         "is_admin",
                         "agent_generation",
                         "inherit_permissions",
@@ -205,11 +209,14 @@ def resolve_mcp_operation_context(
                 zone_id = auth_dict.get("zone_id") or ROOT_ZONE_ID
                 is_admin = bool(auth_dict.get("is_admin", False))
                 agent_generation = auth_dict.get("agent_generation")
+                zone_set_raw = auth_dict.get("zone_set")
+                zone_set = tuple(zone_set_raw) if zone_set_raw else (zone_id,)
                 return OperationContext(
                     user_id=subject_id,
                     subject_type=subject_type,
                     subject_id=subject_id,
                     zone_id=zone_id,
+                    zone_set=zone_set,
                     groups=[],
                     is_admin=is_admin,
                     is_system=False,

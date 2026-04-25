@@ -103,3 +103,19 @@ def test_explicit_unauthenticated_not_cached():
     auth_bridge.authenticate_api_key(provider, "sk-z_u_id_xyz")
 
     assert provider.authenticate.call_count == 2
+
+
+def test_zone_set_cached_with_identity():
+    """Cached identity preserves zone_set tuple (#3785)."""
+    result = _mk_auth_result(subject_id="alice", zone_id="eng")
+    result.zone_set = ("eng", "ops")  # provider returns full set
+
+    provider = MagicMock()
+    provider.authenticate = MagicMock(return_value=result)
+
+    cached_1 = auth_bridge.authenticate_api_key(provider, "sk-test_alice_x_abcdefghij")
+    cached_2 = auth_bridge.authenticate_api_key(provider, "sk-test_alice_x_abcdefghij")
+
+    assert cached_1.zone_set == ("eng", "ops")
+    assert cached_2.zone_set == ("eng", "ops")
+    assert provider.authenticate.call_count == 1

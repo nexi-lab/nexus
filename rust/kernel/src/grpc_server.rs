@@ -746,7 +746,10 @@ pub fn start_vfs_grpc_server(
         dispatch_call,
     };
 
-    let kernel_arc = kernel.borrow().arc_kernel();
+    // `inner` is `pub(crate)` (see `generated_pyo3.rs::PyKernel` field
+    // doc); cloning the Arc here is the SSOT route — no extra accessor
+    // method that codegen would have to remember to emit.
+    let kernel_arc = Arc::clone(&kernel.borrow().inner);
     let handle = spawn(kernel_arc, cfg, bridge).map_err(PyRuntimeError::new_err)?;
 
     Ok(PyVfsGrpcServerHandle {

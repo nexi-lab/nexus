@@ -868,7 +868,11 @@ impl From<RustRouteResult> for PyRustRouteResult {
 ///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)
 #[pyclass(name = "Kernel")]
 pub struct PyKernel {
-    inner: Arc<Kernel>,
+    /// Crate-visible so `grpc_server.rs` (and any other
+    /// kernel-internal task spawner) can clone the Arc
+    /// without an extra accessor method that codegen would
+    /// have to preserve. Not exposed to Python.
+    pub(crate) inner: Arc<Kernel>,
     hooks: Mutex<HookRegistry>,
 }
 

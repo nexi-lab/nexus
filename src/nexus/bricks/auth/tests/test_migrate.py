@@ -274,3 +274,27 @@ class TestDualReadStore:
         p = sqlite_store.get("openai/test")
         assert p is not None
         assert p.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+
+    def test_mark_failure_materializes_legacy_only_profile(
+        self, sqlite_store: SqliteAuthProfileStore
+    ) -> None:
+        old_adapter = OldStoreAdapter(_fake_old_creds(("google", "legacy@co.com")))
+        dual = DualReadAuthProfileStore(sqlite_store, old_adapter)
+
+        dual.mark_failure("google/legacy@co.com", AuthProfileFailureReason.RATE_LIMIT)
+
+        p = sqlite_store.get("google/legacy@co.com")
+        assert p is not None
+        assert p.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+
+    def test_mark_success_materializes_legacy_only_profile(
+        self, sqlite_store: SqliteAuthProfileStore
+    ) -> None:
+        old_adapter = OldStoreAdapter(_fake_old_creds(("google", "legacy@co.com")))
+        dual = DualReadAuthProfileStore(sqlite_store, old_adapter)
+
+        dual.mark_success("google/legacy@co.com")
+
+        p = sqlite_store.get("google/legacy@co.com")
+        assert p is not None
+        assert p.usage_stats.success_count == 1

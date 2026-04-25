@@ -42,10 +42,11 @@ import random
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from nexus.bricks.auth.profile import (
+    COOLDOWN_UNCHANGED,
     AuthProfile,
     AuthProfileFailureReason,
     AuthProfileStore,
@@ -55,6 +56,15 @@ from nexus.bricks.auth.profile import (
 logger = logging.getLogger(__name__)
 
 SelectionStrategy = Literal["first_ok", "round_robin", "random", "least_used"]
+
+
+def _normalize_utc_timestamp(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
 
 # Failures that trigger a single automatic retry with a different credential.
 _RETRIABLE_REASONS: frozenset[AuthProfileFailureReason] = frozenset(
@@ -208,7 +218,7 @@ class CredentialPool:
         This prevents off-by-one races at exact cooldown boundaries and makes
         parametrized boundary tests deterministic.
         """
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         all_profiles = self.store.list(provider=self.provider)
         if account_identifier is not None:
@@ -288,14 +298,7 @@ class CredentialPool:
         Safe rule: only clear the cooldown if it has already passed (or was
         never set), meaning no newer failure has imposed a future cooldown.
         """
-        stats = profile.usage_stats
-        stats.success_count += 1
-        stats.last_used_at = datetime.utcnow()
-        now = datetime.utcnow()
-        if stats.cooldown_until is None or stats.cooldown_until <= now:
-            stats.cooldown_until = None
-            stats.cooldown_reason = None
-        self.store.upsert(profile)
+        self.store.mark_success(profile.id)
 
     def mark_failure(
         self,
@@ -303,14 +306,14 @@ class CredentialPool:
         reason: AuthProfileFailureReason,
     ) -> None:
         """Record a failure and apply the policy cooldown for this reason."""
-        stats = profile.usage_stats
-        stats.failure_count += 1
-        stats.last_used_at = datetime.utcnow()
         cooldown = self._cooldown_policy.get(reason)
-        if cooldown is not None:
-            stats.cooldown_until = datetime.utcnow() + cooldown
-        stats.cooldown_reason = reason
-        self.store.upsert(profile)
+        now = datetime.now(UTC)
+        cooldown_until = now + cooldown if cooldown is not None else COOLDOWN_UNCHANGED
+        self.store.mark_failure(
+            profile.id,
+            reason,
+            cooldown_until=cooldown_until,
+        )
         logger.warning(
             "Credential failure: provider=%s account=%s reason=%s cooldown=%s",
             self.provider,
@@ -484,9 +487,13 @@ class CredentialPool:
         selection independently. A profile is usable when neither is in the future.
         """
         stats: ProfileUsageStats = profile.usage_stats
-        if stats.disabled_until is not None and stats.disabled_until > now:
+        normalized_now = _normalize_utc_timestamp(now)
+        assert normalized_now is not None
+        disabled_until = _normalize_utc_timestamp(stats.disabled_until)
+        if disabled_until is not None and disabled_until > normalized_now:
             return False
-        return not (stats.cooldown_until is not None and stats.cooldown_until > now)
+        cooldown_until = _normalize_utc_timestamp(stats.cooldown_until)
+        return not (cooldown_until is not None and cooldown_until > normalized_now)
 
 
 # ---------------------------------------------------------------------------

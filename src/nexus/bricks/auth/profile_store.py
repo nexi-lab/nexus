@@ -6,7 +6,7 @@ Implements the AuthProfileStore protocol with:
   - busy_timeout=5000 for brief writer contention during migration
   - synchronous=NORMAL (safe with WAL — checkpoints handle durability)
   - LRU-capped in-memory cache (default 64, configurable) fronting reads
-  - Dirty-bit + periodic flush for success stats (decision 13A)
+  - Direct SQL updates for success/failure counters (multi-process safe)
   - 500-char truncation of raw_error on write (decision 7A)
 
 Architecture: mirrors the _sqlite_meta.py pattern (single connection,
@@ -21,15 +21,20 @@ import sqlite3
 import threading
 import time
 from collections import OrderedDict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from nexus.bricks.auth.profile import (
+    COOLDOWN_UNCHANGED,
     RAW_ERROR_MAX_LEN,
     AuthProfile,
     AuthProfileFailureReason,
+    CooldownUpdate,
     ProfileUsageStats,
+    _merge_cooldown_state,
+    _merge_usage_stats_for_preserve,
+    _normalize_utc_timestamp,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,13 +103,14 @@ ON CONFLICT(id) DO UPDATE SET
 
 
 def _dt_to_iso(dt: datetime | None) -> str | None:
-    return dt.isoformat() if dt else None
+    normalized = _normalize_utc_timestamp(dt)
+    return normalized.isoformat() if normalized else None
 
 
 def _iso_to_dt(val: Any) -> datetime | None:
     if val is None:
         return None
-    return datetime.fromisoformat(val)
+    return _normalize_utc_timestamp(datetime.fromisoformat(val))
 
 
 def _reason_to_str(reason: AuthProfileFailureReason | None) -> str | None:
@@ -165,6 +171,27 @@ def _profile_to_tuple(p: AuthProfile) -> tuple[Any, ...]:
     )
 
 
+def _merge_profile_for_write(
+    existing: AuthProfile | None,
+    requested: AuthProfile,
+    *,
+    preserve_runtime_state: bool,
+) -> AuthProfile:
+    if existing is None or not preserve_runtime_state:
+        return requested
+    return AuthProfile(
+        id=requested.id,
+        provider=requested.provider,
+        account_identifier=requested.account_identifier,
+        backend=requested.backend,
+        backend_key=requested.backend_key,
+        last_synced_at=requested.last_synced_at,
+        sync_ttl_seconds=requested.sync_ttl_seconds,
+        usage_stats=_merge_usage_stats_for_preserve(existing.usage_stats, requested.usage_stats),
+        preserve_runtime_state=requested.preserve_runtime_state,
+    )
+
+
 # ---------------------------------------------------------------------------
 # SqliteAuthProfileStore
 # ---------------------------------------------------------------------------
@@ -175,8 +202,9 @@ class SqliteAuthProfileStore:
 
     Uses a single sqlite3 connection with WAL journal mode. All reads go
     through an LRU in-memory cache. Writes go through to SQLite and evict
-    the cache entry. Success stats are buffered via a dirty-bit mechanism
-    and flushed periodically or on failure/shutdown.
+    the cache entry. Success/failure counters are updated directly in SQLite
+    so concurrent writers never flush stale cooldown state back over newer
+    rows.
 
     Thread-safe: all mutable state is protected by ``_lock``.
     """
@@ -195,7 +223,8 @@ class SqliteAuthProfileStore:
 
         # LRU cache: OrderedDict with move_to_end on access, popitem on overflow.
         self._cache: OrderedDict[str, AuthProfile] = OrderedDict()
-        # Dirty set: profile IDs with buffered success stats not yet flushed.
+        # Retained for backwards-compatible flush()/close() behavior; currently
+        # unused because success/failure writes are immediate.
         self._dirty: set[str] = set()
         self._last_flush_time: float = time.monotonic()
 
@@ -234,7 +263,8 @@ class SqliteAuthProfileStore:
             profiles = []
             for r in rows:
                 profile_id = r["id"]
-                # Prefer dirty cached version (has buffered success stats)
+                # Dirty entries are kept for API compatibility, but success/failure
+                # updates are now immediate so this branch is normally cold.
                 if profile_id in self._dirty and profile_id in self._cache:
                     profiles.append(self._cache[profile_id])
                 else:
@@ -259,15 +289,28 @@ class SqliteAuthProfileStore:
             self._cache_put(profile)
             return profile
 
-    def upsert(self, profile: AuthProfile) -> None:
+    def upsert(self, profile: AuthProfile, *, preserve_runtime_state: bool = False) -> None:
         with self._lock:
-            self._conn.execute(_UPSERT, _profile_to_tuple(profile))
-            self._conn.commit()
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                existing_row = self._conn.execute(
+                    "SELECT * FROM auth_profiles WHERE id = ?", (profile.id,)
+                ).fetchone()
+                merged = _merge_profile_for_write(
+                    _row_to_profile(existing_row) if existing_row is not None else None,
+                    profile,
+                    preserve_runtime_state=preserve_runtime_state,
+                )
+                self._conn.execute(_UPSERT, _profile_to_tuple(merged))
+                self._conn.commit()
+            except sqlite3.Error:
+                self._conn.rollback()
+                raise
             # Evict from cache so next read picks up the fresh row.
             # Then re-populate with the in-memory object (which is authoritative).
             self._cache.pop(profile.id, None)
             self._dirty.discard(profile.id)
-            self._cache_put(profile)
+            self._cache_put(merged)
 
     def delete(self, profile_id: str) -> None:
         with self._lock:
@@ -296,8 +339,18 @@ class SqliteAuthProfileStore:
         with self._lock:
             try:
                 self._conn.execute("BEGIN IMMEDIATE")
+                merged_upserts: list[AuthProfile] = []
                 for p in upserts:
-                    self._conn.execute(_UPSERT, _profile_to_tuple(p))
+                    existing_row = self._conn.execute(
+                        "SELECT * FROM auth_profiles WHERE id = ?", (p.id,)
+                    ).fetchone()
+                    merged = _merge_profile_for_write(
+                        _row_to_profile(existing_row) if existing_row is not None else None,
+                        p,
+                        preserve_runtime_state=True,
+                    )
+                    self._conn.execute(_UPSERT, _profile_to_tuple(merged))
+                    merged_upserts.append(merged)
                 for pid in deletes:
                     self._conn.execute("DELETE FROM auth_profiles WHERE id = ?", (pid,))
                 self._conn.commit()
@@ -306,7 +359,7 @@ class SqliteAuthProfileStore:
                 raise
             # Refresh cache after the transaction so readers via get() also
             # see the new state. Evict deletes; replace upserts.
-            for p in upserts:
+            for p in merged_upserts:
                 self._cache.pop(p.id, None)
                 self._dirty.discard(p.id)
                 self._cache_put(p)
@@ -315,30 +368,34 @@ class SqliteAuthProfileStore:
                 self._dirty.discard(pid)
 
     def mark_success(self, profile_id: str) -> None:
-        """Buffer a success stat in the LRU cache (dirty-bit, no immediate write).
-
-        Flushed to SQLite on: mark_failure(), close(), or periodic interval.
-        """
+        """Record a successful credential use directly in SQLite."""
         with self._lock:
-            profile = self._cache.get(profile_id)
-            if profile is None:
-                # Not in cache — load from SQLite
-                row = self._conn.execute(
-                    "SELECT * FROM auth_profiles WHERE id = ?", (profile_id,)
-                ).fetchone()
-                if row is None:
-                    return
-                profile = _row_to_profile(row)
-                self._cache_put(profile)
-            stats = profile.usage_stats
-            stats.success_count += 1
-            stats.last_used_at = datetime.utcnow()
-            # Clear cooldown if it has already passed
-            now = datetime.utcnow()
-            if stats.cooldown_until is None or stats.cooldown_until <= now:
-                stats.cooldown_until = None
-                stats.cooldown_reason = None
-            self._dirty.add(profile_id)
+            now = datetime.now(UTC)
+            now_iso = _dt_to_iso(now)
+            self._conn.execute(
+                "UPDATE auth_profiles SET "
+                "    success_count = success_count + 1, "
+                "    last_used_at = ?, "
+                "    cooldown_until = CASE "
+                "        WHEN cooldown_until IS NULL OR cooldown_until <= ? "
+                "        THEN NULL ELSE cooldown_until END, "
+                "    cooldown_reason = CASE "
+                "        WHEN cooldown_until IS NULL OR cooldown_until <= ? "
+                "        THEN NULL ELSE cooldown_reason END "
+                "WHERE id = ?",
+                (now_iso, now_iso, now_iso, profile_id),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM auth_profiles WHERE id = ?", (profile_id,)
+            ).fetchone()
+            if row is None:
+                self._cache.pop(profile_id, None)
+                self._dirty.discard(profile_id)
+                return
+            self._cache.pop(profile_id, None)
+            self._dirty.discard(profile_id)
+            self._cache_put(_row_to_profile(row))
 
     def mark_failure(
         self,
@@ -346,28 +403,58 @@ class SqliteAuthProfileStore:
         reason: AuthProfileFailureReason,
         *,
         raw_error: str | None = None,
+        cooldown_until: CooldownUpdate = COOLDOWN_UNCHANGED,
     ) -> None:
         """Record a failure — immediately persisted (cooldown must be durable)."""
         with self._lock:
-            profile = self._cache.get(profile_id)
-            if profile is None:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
                 row = self._conn.execute(
                     "SELECT * FROM auth_profiles WHERE id = ?", (profile_id,)
                 ).fetchone()
                 if row is None:
+                    self._conn.rollback()
                     return
                 profile = _row_to_profile(row)
-                self._cache_put(profile)
-            stats = profile.usage_stats
-            stats.failure_count += 1
-            stats.last_used_at = datetime.utcnow()
-            stats.cooldown_reason = reason
-            if raw_error is not None:
-                stats.raw_error = raw_error[:RAW_ERROR_MAX_LEN]
-            # Write immediately — cooldown state must be durable
-            self._conn.execute(_UPSERT, _profile_to_tuple(profile))
-            self._conn.commit()
+                stats = profile.usage_stats
+                last_used_at = datetime.now(UTC)
+                merged_until, merged_reason = _merge_cooldown_state(
+                    existing_until=stats.cooldown_until,
+                    existing_reason=stats.cooldown_reason,
+                    requested_until=cooldown_until,
+                    requested_reason=reason,
+                    now=last_used_at,
+                )
+                self._conn.execute(
+                    "UPDATE auth_profiles SET "
+                    "    failure_count = failure_count + 1, "
+                    "    last_used_at = ?, "
+                    "    cooldown_until = ?, "
+                    "    cooldown_reason = ?, "
+                    "    raw_error = COALESCE(?, raw_error) "
+                    "WHERE id = ?",
+                    (
+                        _dt_to_iso(last_used_at),
+                        _dt_to_iso(merged_until),
+                        _reason_to_str(merged_reason),
+                        raw_error[:RAW_ERROR_MAX_LEN] if raw_error is not None else None,
+                        profile_id,
+                    ),
+                )
+                self._conn.commit()
+            except sqlite3.Error:
+                self._conn.rollback()
+                raise
+            refreshed = self._conn.execute(
+                "SELECT * FROM auth_profiles WHERE id = ?", (profile_id,)
+            ).fetchone()
+            if refreshed is None:
+                self._cache.pop(profile_id, None)
+                self._dirty.discard(profile_id)
+                return
+            self._cache.pop(profile_id, None)
             self._dirty.discard(profile_id)
+            self._cache_put(_row_to_profile(refreshed))
 
     # ------------------------------------------------------------------
     # Lifecycle

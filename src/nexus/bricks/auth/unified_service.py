@@ -459,10 +459,9 @@ class UnifiedAuthService:
                         continue
 
                     if not expired and service in _SERVICE_TARGET_ALIASES:
-                        target_summary = await self._google_target_summary_for_stored_oauth(
+                        target_summary = await self._google_target_summary_for_best_stored_oauth(
                             service,
-                            str(matching[0].get("provider", "")),
-                            str(matching[0].get("user_email", "")),
+                            matching,
                         )
                         summaries.append(
                             AuthSummary(
@@ -632,15 +631,73 @@ class UnifiedAuthService:
                 "message": f"Run `nexus auth connect {service} oauth`.",
             }
 
-        candidate = matches[0]
-        if desired_targets and not bool(candidate.get("is_expired")):
-            return await self._google_target_test_result_for_stored_oauth(
-                service,
-                desired_targets,
-                provider=str(candidate["provider"]),
-                user_email=str(candidate["user_email"]),
-                default_source="oauth",
-            )
+        ordered_matches = self._ordered_oauth_matches(matches)
+        if desired_targets:
+            first_failure: dict[str, Any] | None = None
+            for oauth_match in ordered_matches:
+                result = await self._oauth_service.test_credential(
+                    provider=str(oauth_match["provider"]),
+                    user_email=str(oauth_match["user_email"]),
+                    context=context,
+                )
+                valid = (
+                    bool(result.get("success"))
+                    if "success" in result
+                    else bool(result.get("valid"))
+                )
+                if not valid:
+                    if first_failure is None:
+                        first_failure = {
+                            "success": False,
+                            "service": service,
+                            "source": "oauth",
+                            "message": str(
+                                result.get("message")
+                                or result.get("error")
+                                or "OAuth credential test failed."
+                            ),
+                        }
+                    continue
+                target_result = await self._google_target_test_result_for_stored_oauth(
+                    service,
+                    desired_targets,
+                    provider=str(oauth_match["provider"]),
+                    user_email=str(oauth_match["user_email"]),
+                    default_source=str(result.get("source", "oauth")),
+                )
+                if bool(target_result.get("success")):
+                    return target_result
+                if first_failure is None:
+                    first_failure = target_result
+            if first_failure is not None:
+                if native is not None:
+                    native_result = await self._google_target_test_result(
+                        service,
+                        desired_targets,
+                        source=native["source"],
+                        native=native,
+                        user_email=user_email or native.get("email"),
+                    )
+                    native_result["message"] = "Stored OAuth target validation failed; " + str(
+                        native_result.get("message", "using local native CLI auth.")
+                    )
+                    if bool(native_result.get("success")):
+                        native_result["stored_oauth_status"] = (
+                            AuthStatus.EXPIRED.value
+                            if all(bool(match.get("is_expired")) for match in ordered_matches)
+                            else AuthStatus.ERROR.value
+                        )
+                        return native_result
+                return first_failure
+
+        candidate = self._preferred_oauth_match(matches)
+        if candidate is None:
+            return {
+                "success": False,
+                "service": service,
+                "source": "oauth",
+                "message": f"Run `nexus auth connect {service} oauth`.",
+            }
 
         if bool(candidate.get("is_expired")) and native is not None:
             if desired_targets:
@@ -662,6 +719,37 @@ class UnifiedAuthService:
                 "source": native["source"],
                 "message": "Stored OAuth credential is expired; using local native CLI auth.",
             }
+
+        if not desired_targets and not bool(candidate.get("is_expired")):
+            generic_failure: dict[str, Any] | None = None
+            for oauth_match in ordered_matches:
+                result = await self._oauth_service.test_credential(
+                    provider=str(oauth_match["provider"]),
+                    user_email=str(oauth_match["user_email"]),
+                    context=context,
+                )
+                valid = (
+                    bool(result.get("success"))
+                    if "success" in result
+                    else bool(result.get("valid"))
+                )
+                if valid:
+                    result["service"] = service
+                    result.setdefault("source", "oauth")
+                    return result
+                if generic_failure is None:
+                    generic_failure = result
+            failure = generic_failure or {}
+            message = str(
+                failure.get("message") or failure.get("error") or "OAuth credential test failed."
+            )
+            return {
+                "success": False,
+                "service": service,
+                "source": "oauth",
+                "message": message,
+            }
+
         result = await self._oauth_service.test_credential(
             provider=str(candidate["provider"]),
             user_email=str(candidate["user_email"]),
@@ -839,6 +927,66 @@ class UnifiedAuthService:
         # _gws_native_for_email already filters by user_email when given, so
         # no redundant check needed here.
         return self._gws_native_for_email(user_email=user_email)
+
+    @staticmethod
+    def _ordered_oauth_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(matches, key=lambda match: bool(match.get("is_expired")))
+
+    @staticmethod
+    def _preferred_oauth_match(matches: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for match in UnifiedAuthService._ordered_oauth_matches(matches):
+            if not bool(match.get("is_expired")):
+                return match
+        return matches[0] if matches else None
+
+    async def _google_target_summary_for_best_stored_oauth(
+        self,
+        service: str,
+        matches: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        first_failure: dict[str, Any] | None = None
+        for match in matches:
+            if bool(match.get("is_expired")):
+                continue
+            summary = await self._google_target_summary_for_stored_oauth(
+                service,
+                str(match.get("provider", "")),
+                str(match.get("user_email", "")),
+            )
+            if summary["status"] == AuthStatus.AUTHED:
+                return summary
+            if first_failure is None:
+                first_failure = summary
+        return first_failure or {
+            "status": AuthStatus.ERROR,
+            "message": "Stored OAuth credential could not be validated for target verification.",
+            "details": {},
+        }
+
+    async def _google_target_test_result_for_best_stored_oauth(
+        self,
+        service: str,
+        targets: tuple[str, ...],
+        matches: list[dict[str, Any]],
+        *,
+        default_source: str,
+    ) -> dict[str, Any] | None:
+        first_failure: dict[str, Any] | None = None
+        for match in matches:
+            if bool(match.get("is_expired")):
+                continue
+            result = await self._google_target_test_result_for_stored_oauth(
+                service,
+                targets,
+                provider=str(match.get("provider", "")),
+                user_email=str(match.get("user_email", "")),
+                default_source=default_source,
+            )
+            if bool(result.get("success")):
+                return result
+            if first_failure is None:
+                first_failure = result
+        return first_failure
 
     def _google_targets_for_service(
         self,

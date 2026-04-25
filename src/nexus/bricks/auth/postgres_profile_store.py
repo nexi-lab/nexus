@@ -41,7 +41,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import create_engine, text
@@ -63,10 +63,15 @@ from nexus.bricks.auth.envelope_metrics import (
     KEK_ROTATE_ROWS,
 )
 from nexus.bricks.auth.profile import (
+    COOLDOWN_UNCHANGED,
     RAW_ERROR_MAX_LEN,
     AuthProfile,
     AuthProfileFailureReason,
+    CooldownUpdate,
     ProfileUsageStats,
+    _merge_cooldown_state,
+    _merge_usage_stats_for_preserve,
+    _normalize_utc_timestamp,
 )
 
 logger = logging.getLogger(__name__)
@@ -875,12 +880,12 @@ def _str_to_reason(val: Any) -> AuthProfileFailureReason | None:
 
 def _row_to_profile(row: Any) -> AuthProfile:
     stats = ProfileUsageStats(
-        last_used_at=row.last_used_at,
+        last_used_at=_normalize_utc_timestamp(row.last_used_at),
         success_count=row.success_count,
         failure_count=row.failure_count,
-        cooldown_until=row.cooldown_until,
+        cooldown_until=_normalize_utc_timestamp(row.cooldown_until),
         cooldown_reason=_str_to_reason(row.cooldown_reason),
-        disabled_until=row.disabled_until,
+        disabled_until=_normalize_utc_timestamp(row.disabled_until),
         raw_error=row.raw_error,
     )
     return AuthProfile(
@@ -889,7 +894,7 @@ def _row_to_profile(row: Any) -> AuthProfile:
         account_identifier=row.account_identifier,
         backend=row.backend,
         backend_key=row.backend_key,
-        last_synced_at=row.last_synced_at,
+        last_synced_at=_normalize_utc_timestamp(row.last_synced_at),
         sync_ttl_seconds=row.sync_ttl_seconds,
         usage_stats=stats,
     )
@@ -913,14 +918,14 @@ def _profile_params(
         "account_identifier": profile.account_identifier,
         "backend": profile.backend,
         "backend_key": profile.backend_key,
-        "last_synced_at": profile.last_synced_at,
+        "last_synced_at": _normalize_utc_timestamp(profile.last_synced_at),
         "sync_ttl_seconds": profile.sync_ttl_seconds,
-        "last_used_at": s.last_used_at,
+        "last_used_at": _normalize_utc_timestamp(s.last_used_at),
         "success_count": s.success_count,
         "failure_count": s.failure_count,
-        "cooldown_until": s.cooldown_until,
+        "cooldown_until": _normalize_utc_timestamp(s.cooldown_until),
         "cooldown_reason": _reason_to_str(s.cooldown_reason),
-        "disabled_until": s.disabled_until,
+        "disabled_until": _normalize_utc_timestamp(s.disabled_until),
         "raw_error": raw_error,
     }
 
@@ -1041,12 +1046,40 @@ class PostgresAuthProfileStore:
             ).fetchone()
         return _row_to_profile(row) if row is not None else None
 
-    def upsert(self, profile: AuthProfile) -> None:
-        params = _profile_params(
-            profile,
-            tenant_id=self._tenant_id,
-            principal_id=self._principal_id,
+    def _merge_profile_for_write(
+        self,
+        conn: Connection,
+        profile: AuthProfile,
+        *,
+        preserve_runtime_state: bool,
+    ) -> AuthProfile:
+        row = conn.execute(
+            text(
+                "SELECT * FROM auth_profiles "
+                "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id"
+            ),
+            {
+                "tid": self._tenant_id,
+                "pid": self._principal_id,
+                "id": profile.id,
+            },
+        ).fetchone()
+        if row is None or not preserve_runtime_state:
+            return profile
+        current = _row_to_profile(row)
+        return AuthProfile(
+            id=profile.id,
+            provider=profile.provider,
+            account_identifier=profile.account_identifier,
+            backend=profile.backend,
+            backend_key=profile.backend_key,
+            last_synced_at=profile.last_synced_at,
+            sync_ttl_seconds=profile.sync_ttl_seconds,
+            usage_stats=_merge_usage_stats_for_preserve(current.usage_stats, profile.usage_stats),
+            preserve_runtime_state=profile.preserve_runtime_state,
         )
+
+    def upsert(self, profile: AuthProfile, *, preserve_runtime_state: bool = False) -> None:
         # Take the same ``(tenant_id, profile_id)`` advisory lock that
         # ``upsert_strict`` uses, so a plain ``upsert`` cannot slip a
         # foreign-principal row in between a strict call's check and
@@ -1059,7 +1092,19 @@ class PostgresAuthProfileStore:
                 {"k": lock_key},
             )
             self._reject_if_routing_change_on_encrypted(conn, profile)
-            conn.execute(text(_UPSERT_SQL), params)
+            merged_profile = self._merge_profile_for_write(
+                conn,
+                profile,
+                preserve_runtime_state=preserve_runtime_state,
+            )
+            conn.execute(
+                text(_UPSERT_SQL),
+                _profile_params(
+                    merged_profile,
+                    tenant_id=self._tenant_id,
+                    principal_id=self._principal_id,
+                ),
+            )
 
     def _reject_if_routing_change_on_encrypted(
         self, conn: Connection, profile: AuthProfile
@@ -1171,10 +1216,15 @@ class PostgresAuthProfileStore:
                         "Use upsert_with_credential() or delete() for these rows first."
                     )
             for p in upserts:
+                merged_profile = self._merge_profile_for_write(
+                    conn,
+                    p,
+                    preserve_runtime_state=True,
+                )
                 conn.execute(
                     text(_UPSERT_SQL),
                     _profile_params(
-                        p,
+                        merged_profile,
                         tenant_id=self._tenant_id,
                         principal_id=self._principal_id,
                     ),
@@ -1236,6 +1286,7 @@ class PostgresAuthProfileStore:
         reason: AuthProfileFailureReason,
         *,
         raw_error: str | None = None,
+        cooldown_until: CooldownUpdate = COOLDOWN_UNCHANGED,
     ) -> None:
         truncated = raw_error[:RAW_ERROR_MAX_LEN] if raw_error else None
         lock_key = f"{self._tenant_id}/{profile_id}"
@@ -1244,12 +1295,34 @@ class PostgresAuthProfileStore:
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                 {"k": lock_key},
             )
+            row = conn.execute(
+                text(
+                    "SELECT cooldown_until, cooldown_reason "
+                    "FROM auth_profiles "
+                    "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id"
+                ),
+                {
+                    "tid": self._tenant_id,
+                    "pid": self._principal_id,
+                    "id": profile_id,
+                },
+            ).fetchone()
+            if row is None:
+                return
+            merged_until, merged_reason = _merge_cooldown_state(
+                existing_until=row.cooldown_until,
+                existing_reason=_str_to_reason(row.cooldown_reason),
+                requested_until=cooldown_until,
+                requested_reason=reason,
+                now=datetime.now(UTC),
+            )
             conn.execute(
                 text(
                     "UPDATE auth_profiles SET "
                     "    failure_count = failure_count + 1, "
                     "    last_used_at = NOW(), "
-                    "    cooldown_reason = :reason, "
+                    "    cooldown_reason = :cooldown_reason, "
+                    "    cooldown_until = :cooldown_until, "
                     "    raw_error = COALESCE(:raw_error, raw_error) "
                     "WHERE tenant_id = :tid AND principal_id = :pid AND id = :id"
                 ),
@@ -1257,7 +1330,8 @@ class PostgresAuthProfileStore:
                     "tid": self._tenant_id,
                     "pid": self._principal_id,
                     "id": profile_id,
-                    "reason": reason.value,
+                    "cooldown_reason": _reason_to_str(merged_reason),
+                    "cooldown_until": merged_until,
                     "raw_error": truncated,
                 },
             )
@@ -1320,24 +1394,29 @@ class PostgresAuthProfileStore:
             dek, self._serialize_credential(credential), aad=aad
         )
         wrapped_dek, kek_version = provider.wrap_dek(dek, tenant_id=self._tenant_id, aad=aad)
-        params = _profile_params(
-            profile, tenant_id=self._tenant_id, principal_id=self._principal_id
-        )
-        params.update(
-            ciphertext=ciphertext,
-            wrapped_dek=wrapped_dek,
-            nonce=nonce,
-            aad=aad,
-            kek_version=kek_version,
-            source_file_hash=source_file_hash,
-            daemon_version=daemon_version,
-            machine_id=machine_id,
-        )
         lock_key = f"{self._tenant_id}/{profile.id}"
         with self._scoped() as conn:
             conn.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                 {"k": lock_key},
+            )
+            merged_profile = self._merge_profile_for_write(
+                conn,
+                profile,
+                preserve_runtime_state=True,
+            )
+            params = _profile_params(
+                merged_profile, tenant_id=self._tenant_id, principal_id=self._principal_id
+            )
+            params.update(
+                ciphertext=ciphertext,
+                wrapped_dek=wrapped_dek,
+                nonce=nonce,
+                aad=aad,
+                kek_version=kek_version,
+                source_file_hash=source_file_hash,
+                daemon_version=daemon_version,
+                machine_id=machine_id,
             )
             conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
 
@@ -1381,24 +1460,29 @@ class PostgresAuthProfileStore:
         missing = required - envelope.keys()
         if missing:
             raise ValueError(f"upsert_with_envelope: envelope missing keys {sorted(missing)}")
-        params = _profile_params(
-            profile, tenant_id=self._tenant_id, principal_id=self._principal_id
-        )
-        params.update(
-            ciphertext=envelope["ciphertext"],
-            wrapped_dek=envelope["wrapped_dek"],
-            nonce=envelope["nonce"],
-            aad=envelope["aad"],
-            kek_version=envelope["kek_version"],
-            source_file_hash=source_file_hash,
-            daemon_version=daemon_version,
-            machine_id=machine_id,
-        )
         lock_key = f"{self._tenant_id}/{profile.id}"
         if conn is not None:
             conn.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                 {"k": lock_key},
+            )
+            merged_profile = self._merge_profile_for_write(
+                conn,
+                profile,
+                preserve_runtime_state=True,
+            )
+            params = _profile_params(
+                merged_profile, tenant_id=self._tenant_id, principal_id=self._principal_id
+            )
+            params.update(
+                ciphertext=envelope["ciphertext"],
+                wrapped_dek=envelope["wrapped_dek"],
+                nonce=envelope["nonce"],
+                aad=envelope["aad"],
+                kek_version=envelope["kek_version"],
+                source_file_hash=source_file_hash,
+                daemon_version=daemon_version,
+                machine_id=machine_id,
             )
             conn.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
             return
@@ -1406,6 +1490,24 @@ class PostgresAuthProfileStore:
             scoped.execute(
                 text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
                 {"k": lock_key},
+            )
+            merged_profile = self._merge_profile_for_write(
+                scoped,
+                profile,
+                preserve_runtime_state=True,
+            )
+            params = _profile_params(
+                merged_profile, tenant_id=self._tenant_id, principal_id=self._principal_id
+            )
+            params.update(
+                ciphertext=envelope["ciphertext"],
+                wrapped_dek=envelope["wrapped_dek"],
+                nonce=envelope["nonce"],
+                aad=envelope["aad"],
+                kek_version=envelope["kek_version"],
+                source_file_hash=source_file_hash,
+                daemon_version=daemon_version,
+                machine_id=machine_id,
             )
             scoped.execute(text(_UPSERT_WITH_CREDENTIAL_SQL), params)
 
@@ -1824,10 +1926,15 @@ class PostgresAuthProfileStore:
                     foreign_principals=sorted(row[0] for row in foreign),
                 )
             self._reject_if_routing_change_on_encrypted(conn, profile)
+            merged_profile = self._merge_profile_for_write(
+                conn,
+                profile,
+                preserve_runtime_state=False,
+            )
             conn.execute(
                 text(_UPSERT_SQL),
                 _profile_params(
-                    profile,
+                    merged_profile,
                     tenant_id=self._tenant_id,
                     principal_id=self._principal_id,
                 ),

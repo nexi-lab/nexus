@@ -256,6 +256,22 @@ class TestUsageStats:
         assert result.usage_stats.cooldown_until is None
         assert result.usage_stats.cooldown_reason is None
 
+    def test_upsert_strict_allows_authoritative_cooldown_clear(
+        self, pg_store: PostgresAuthProfileStore
+    ) -> None:
+        pg_store.upsert(
+            make_profile(
+                "p1",
+                cooldown_until=datetime.now(UTC) + timedelta(hours=1),
+                cooldown_reason=AuthProfileFailureReason.RATE_LIMIT,
+            )
+        )
+        pg_store.upsert_strict(make_profile("p1"))
+        result = pg_store.get("p1")
+        assert result is not None
+        assert result.usage_stats.cooldown_until is None
+        assert result.usage_stats.cooldown_reason is None
+
     def test_mark_success_preserves_active_cooldown(
         self, pg_store: PostgresAuthProfileStore
     ) -> None:
@@ -291,6 +307,127 @@ class TestUsageStats:
         assert result is not None
         assert result.usage_stats.raw_error is not None
         assert len(result.usage_stats.raw_error) == RAW_ERROR_MAX_LEN
+
+    def test_mark_failure_can_set_cooldown_until(self, pg_store: PostgresAuthProfileStore) -> None:
+        pg_store.upsert(make_profile("p1"))
+        future = datetime.now(UTC) + timedelta(hours=1)
+        pg_store.mark_failure(
+            "p1",
+            AuthProfileFailureReason.RATE_LIMIT,
+            cooldown_until=future,
+        )
+        result = pg_store.get("p1")
+        assert result is not None
+        assert result.usage_stats.cooldown_until is not None
+        assert result.usage_stats.cooldown_until == future
+
+    def test_shorter_cooldown_does_not_replace_longer_active_cooldown(
+        self, pg_store: PostgresAuthProfileStore
+    ) -> None:
+        pg_store.upsert(
+            make_profile(
+                "p1",
+                cooldown_until=datetime.now(UTC) + timedelta(hours=1),
+                cooldown_reason=AuthProfileFailureReason.RATE_LIMIT,
+            )
+        )
+        shorter = datetime.now(UTC) + timedelta(seconds=30)
+        pg_store.mark_failure(
+            "p1",
+            AuthProfileFailureReason.TIMEOUT,
+            cooldown_until=shorter,
+        )
+        result = pg_store.get("p1")
+        assert result is not None
+        assert result.usage_stats.cooldown_until is not None
+        assert result.usage_stats.cooldown_until > datetime.now(UTC) + timedelta(minutes=50)
+        assert result.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+
+    def test_upsert_with_stale_profile_preserves_active_cooldown(
+        self, pg_store: PostgresAuthProfileStore
+    ) -> None:
+        pg_store.upsert(make_profile("p1"))
+        stale = pg_store.get("p1")
+        assert stale is not None
+        future = datetime.now(UTC) + timedelta(hours=1)
+        pg_store.mark_failure(
+            "p1",
+            AuthProfileFailureReason.RATE_LIMIT,
+            cooldown_until=future,
+        )
+
+        pg_store.upsert(stale, preserve_runtime_state=True)
+
+        result = pg_store.get("p1")
+        assert result is not None
+        assert result.usage_stats.cooldown_until == future
+        assert result.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+
+    def test_replace_owned_subset_with_stale_profile_preserves_active_cooldown(
+        self, pg_store: PostgresAuthProfileStore
+    ) -> None:
+        pg_store.upsert(make_profile("p1"))
+        stale = pg_store.get("p1")
+        assert stale is not None
+        future = datetime.now(UTC) + timedelta(hours=1)
+        pg_store.mark_failure(
+            "p1",
+            AuthProfileFailureReason.RATE_LIMIT,
+            cooldown_until=future,
+        )
+
+        pg_store.replace_owned_subset(upserts=[stale], deletes=[])
+
+        result = pg_store.get("p1")
+        assert result is not None
+        assert result.usage_stats.cooldown_until == future
+        assert result.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+
+    def test_upsert_can_clear_active_cooldown_when_authoritative(
+        self, pg_store: PostgresAuthProfileStore
+    ) -> None:
+        pg_store.upsert(
+            make_profile(
+                "p1",
+                cooldown_until=datetime.now(UTC) + timedelta(hours=1),
+                cooldown_reason=AuthProfileFailureReason.RATE_LIMIT,
+            )
+        )
+        pg_store.upsert(make_profile("p1"))
+        result = pg_store.get("p1")
+        assert result is not None
+        assert result.usage_stats.cooldown_until is None
+        assert result.usage_stats.cooldown_reason is None
+
+    def test_upsert_with_credential_preserves_active_cooldown(
+        self, pg_engine: Engine, tenant_id: uuid.UUID, principal_id: uuid.UUID
+    ) -> None:
+        store = PostgresAuthProfileStore(
+            PG_URL,
+            tenant_id=tenant_id,
+            principal_id=principal_id,
+            engine=pg_engine,
+            encryption_provider=InMemoryEncryptionProvider(),
+        )
+        store.upsert(make_profile("p1"))
+        stale = store.get("p1")
+        assert stale is not None
+        future = datetime.now(UTC) + timedelta(hours=1)
+        store.mark_failure(
+            "p1",
+            AuthProfileFailureReason.RATE_LIMIT,
+            cooldown_until=future,
+        )
+
+        store.upsert_with_credential(
+            stale,
+            ResolvedCredential(kind="bearer_token", access_token="fresh-token"),
+        )
+
+        result = store.get("p1")
+        assert result is not None
+        assert result.usage_stats.cooldown_until == future
+        assert result.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
 
 
 # ---------------------------------------------------------------------------

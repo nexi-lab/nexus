@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -87,6 +87,39 @@ def make_pool(
         cooldown_overrides=cooldown_overrides,
     )
     return pool, store
+
+
+def _clone_profile(profile: AuthProfile) -> AuthProfile:
+    stats = profile.usage_stats
+    return AuthProfile(
+        id=profile.id,
+        provider=profile.provider,
+        account_identifier=profile.account_identifier,
+        backend=profile.backend,
+        backend_key=profile.backend_key,
+        last_synced_at=profile.last_synced_at,
+        sync_ttl_seconds=profile.sync_ttl_seconds,
+        usage_stats=ProfileUsageStats(
+            last_used_at=stats.last_used_at,
+            success_count=stats.success_count,
+            failure_count=stats.failure_count,
+            cooldown_until=stats.cooldown_until,
+            cooldown_reason=stats.cooldown_reason,
+            disabled_until=stats.disabled_until,
+            raw_error=stats.raw_error,
+        ),
+    )
+
+
+class SnapshottingStore(InMemoryAuthProfileStore):
+    """Return detached snapshots so stale-object overwrite bugs reproduce in tests."""
+
+    def list(self, *, provider: str | None = None) -> list[AuthProfile]:
+        return [_clone_profile(p) for p in super().list(provider=provider)]
+
+    def get(self, profile_id: str) -> AuthProfile | None:
+        profile = super().get(profile_id)
+        return _clone_profile(profile) if profile is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +215,14 @@ async def test_select_skips_cooled_down_profiles() -> None:
     assert result.id == "p3"
 
 
+async def test_select_handles_timezone_aware_cooldowns() -> None:
+    pool, store = make_pool(strategy="first_ok")
+    store.upsert(make_profile("p1", cooldown_until=datetime.now(UTC) + timedelta(hours=1)))
+    store.upsert(make_profile("p2"))
+    result = await pool.select()
+    assert result.id == "p2"
+
+
 async def test_mark_failure_sets_cooldown() -> None:
     pool, store = make_pool("p1", strategy="first_ok")
     profile = store.get("p1")
@@ -192,7 +233,7 @@ async def test_mark_failure_sets_cooldown() -> None:
     updated = store.get("p1")
     assert updated is not None
     assert updated.usage_stats.cooldown_until is not None
-    assert updated.usage_stats.cooldown_until > datetime.utcnow()
+    assert updated.usage_stats.cooldown_until > datetime.now(UTC)
     assert updated.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
     assert updated.usage_stats.failure_count == 1
 
@@ -235,7 +276,7 @@ async def test_mark_success_clears_expired_cooldown() -> None:
     assert profile is not None
 
     # Manually set a cooldown in the past
-    profile.usage_stats.cooldown_until = datetime.utcnow() - timedelta(seconds=1)
+    profile.usage_stats.cooldown_until = datetime.now(UTC) - timedelta(seconds=1)
     profile.usage_stats.cooldown_reason = AuthProfileFailureReason.RATE_LIMIT
     store.upsert(profile)
 
@@ -359,9 +400,71 @@ async def test_cooldown_override_changes_duration() -> None:
     assert updated.usage_stats.cooldown_until is not None
 
     # Should be ~2 minutes, not the default 1 hour
-    expected_min = datetime.utcnow() + timedelta(minutes=1, seconds=30)
-    expected_max = datetime.utcnow() + timedelta(minutes=2, seconds=30)
+    expected_min = datetime.now(UTC) + timedelta(minutes=1, seconds=30)
+    expected_max = datetime.now(UTC) + timedelta(minutes=2, seconds=30)
     assert expected_min < updated.usage_stats.cooldown_until < expected_max
+
+
+async def test_mark_success_does_not_clobber_newer_store_state() -> None:
+    store = SnapshottingStore()
+    store.upsert(make_profile("p1"))
+    pool = CredentialPool(provider="openai", store=store, strategy="first_ok")
+
+    stale_profile = await pool.select()
+    latest = store.get("p1")
+    assert latest is not None
+    latest.usage_stats.cooldown_until = datetime.now(UTC) + timedelta(hours=1)
+    latest.usage_stats.cooldown_reason = AuthProfileFailureReason.RATE_LIMIT
+    store.upsert(latest)
+
+    pool.mark_success(stale_profile)
+
+    after = store.get("p1")
+    assert after is not None
+    assert after.usage_stats.cooldown_until is not None
+    assert after.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
+    assert after.usage_stats.success_count == 1
+
+
+async def test_no_cooldown_failure_does_not_clear_newer_store_cooldown() -> None:
+    store = SnapshottingStore()
+    store.upsert(make_profile("p1"))
+    pool = CredentialPool(provider="openai", store=store, strategy="first_ok")
+
+    stale_profile = await pool.select()
+    latest = store.get("p1")
+    assert latest is not None
+    latest.usage_stats.cooldown_until = datetime.now(UTC) + timedelta(hours=1)
+    latest.usage_stats.cooldown_reason = AuthProfileFailureReason.RATE_LIMIT
+    store.upsert(latest)
+
+    pool.mark_failure(stale_profile, AuthProfileFailureReason.AUTH)
+
+    after = store.get("p1")
+    assert after is not None
+    assert after.usage_stats.cooldown_until is not None
+    assert after.usage_stats.cooldown_until > datetime.now(UTC)
+
+
+async def test_shorter_failure_cooldown_does_not_replace_longer_active_cooldown() -> None:
+    store = SnapshottingStore()
+    store.upsert(make_profile("p1"))
+    pool = CredentialPool(provider="openai", store=store, strategy="first_ok")
+
+    stale_profile = await pool.select()
+    latest = store.get("p1")
+    assert latest is not None
+    latest.usage_stats.cooldown_until = datetime.now(UTC) + timedelta(hours=1)
+    latest.usage_stats.cooldown_reason = AuthProfileFailureReason.RATE_LIMIT
+    store.upsert(latest)
+
+    pool.mark_failure(stale_profile, AuthProfileFailureReason.TIMEOUT)
+
+    after = store.get("p1")
+    assert after is not None
+    assert after.usage_stats.cooldown_until is not None
+    assert after.usage_stats.cooldown_until > datetime.now(UTC) + timedelta(minutes=50)
+    assert after.usage_stats.cooldown_reason == AuthProfileFailureReason.RATE_LIMIT
 
 
 # ---------------------------------------------------------------------------

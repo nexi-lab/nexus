@@ -281,12 +281,24 @@ message ReplicateEntriesResponse {
 
 // === ReadBlob (R20.18.7 — driver-to-driver CAS fetch) ===
 
-// ReadBlobRequest asks a peer for the blob bytes keyed by content hash.
+// ReadBlobRequest asks a peer for the blob bytes.
+//
+// Two addressing modes:
+//   - `content_hash` set, `path` empty → CAS lookup by hash on the peer's
+//     local backends. Used by chunk fetch and CAS-backed federation.
+//   - `path` set → drive the peer's VFSRouter at that global path, so PAS
+//     mounts (PathLocalBackend, S3Backend, …) can serve cross-node reads.
+//     `content_hash` is ignored when `path` is non-empty.
+//
 // Internal RPC; authentication is the transport's mTLS (client cert signed
 // by the cluster CA), so no explicit auth field is carried in the body.
 message ReadBlobRequest {
-  // Content address (e.g. SHA-256 hex).
+  // Content address (e.g. SHA-256 hex). Used when `path` is empty.
   string content_hash = 1;
+  // Global VFS path on the peer. Used for PAS-backed federation reads;
+  // the peer routes through its own VFSRouter the same way `sys_read`
+  // would.
+  string path = 2;
 }
 
 // ReadBlobResponse returns either the blob bytes or a non-empty `error`.

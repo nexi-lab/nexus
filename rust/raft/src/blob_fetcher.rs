@@ -10,15 +10,25 @@
 
 use std::sync::Arc;
 
-/// Peer-facing CAS blob read.
+/// Peer-facing blob read.
 ///
-/// Implementations resolve `content_hash` against whatever local store
-/// holds the blob (typically the root mount's CAS backend).
+/// Two addressing modes:
+///   - `read_blob(content_hash)` resolves the hash against local CAS
+///     backends — used for chunk fetch and CAS-backed federation.
+///   - `read_path(path)` drives the local VFSRouter at that global path
+///     — used for PAS-backed federation where the writer's file lives
+///     on disk / S3 / … under a path-addressed mount.
 #[tonic::async_trait]
 pub trait BlobFetcher: Send + Sync {
     /// Return the raw blob bytes for `content_hash` or a `String` error
     /// (e.g. `"not found"`). Transport framing is the caller's job.
     async fn read_blob(&self, content_hash: &str) -> Result<Vec<u8>, String>;
+
+    /// Serve a peer's path-addressed read by routing through the local
+    /// VFSRouter. Used for federation cross-node reads when the writer's
+    /// mount is path-addressed — the reader has no content hash, so it
+    /// asks the writer to read its own local file by path.
+    async fn read_path(&self, path: &str) -> Result<Vec<u8>, String>;
 }
 
 /// Late-bindable slot for the fetcher.

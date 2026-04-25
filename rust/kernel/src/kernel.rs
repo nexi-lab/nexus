@@ -2727,15 +2727,18 @@ impl Kernel {
     /// Federation on-demand content fetch.
     ///
     /// When local CAS has no blob but metadata does, `last_writer_address`
-    /// names the node that wrote it. We call VFS `ReadBlob` there to pull
-    /// the blob. Used by follower nodes after metadata has been
-    /// Raft-replicated ahead of content.
+    /// names the node that wrote it. The kernel pulls bytes via the
+    /// driver-to-driver `ReadBlob` RPC on that peer:
     ///
-    /// Returns `Err(FileNotFound)` if:
-    /// - `last_writer_address` is unset (write predates federation)
-    /// - it equals `self_address` (we ARE the writer — blob is gone)
-    /// - entry has no content hash
-    /// - the remote call fails
+    /// - Entry carries a content hash (CAS backends, S3 etag, …) →
+    ///   peer dedup-fetches by hash.
+    /// - Entry has no content hash (path-addressed mount) → peer reads
+    ///   the file by path through its own `VFSRouter`. Lets PAS-backed
+    ///   federation reads succeed even though the reader has no content
+    ///   to dedup against.
+    ///
+    /// Returns `Err(FileNotFound)` when `last_writer_address` is unset,
+    /// equals `self_address`, or the remote call fails.
     fn try_remote_fetch(
         &self,
         path: &str,
@@ -2757,31 +2760,29 @@ impl Kernel {
             }
         }
 
-        // Need a content hash for ReadBlob.
-        let content_hash = entry
-            .etag
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(not_found)?
-            .to_string();
-
         // Drive the RPC on the kernel-owned shared runtime — reusing the
         // pooled tonic Channel from `peer_client`. No more one-shot
         // `new_current_thread()` per call (that pattern left the runtime
         // lingering if the future hadn't finished draining; see R11
         // hypothesis #2).
-        let data = self
-            .peer_client
-            .fetch_blob(origin, &content_hash)
-            .map_err(KernelError::IOError)?;
+        let content_hash = entry.etag.as_deref().filter(|s| !s.is_empty());
+        let data = match content_hash {
+            Some(hash) => self.peer_client.fetch_blob(origin, hash),
+            None => self.peer_client.fetch_path(origin, path),
+        }
+        .map_err(KernelError::IOError)?;
 
         // Cache the remote-fetched blob into the local mount backend so
         // subsequent reads hit locally. Critical for failover: once the
         // origin goes down, re-fetch would fail but the blob must still
-        // be readable. write_content is idempotent for CAS backends.
-        let _ = self
-            .vfs_router
-            .write_content(mount_point, &data, &content_hash, ctx, 0);
+        // be readable. write_content is idempotent for CAS backends; for
+        // PAS we skip the cache write because the local mount root may
+        // not have the path-addressed slot wired.
+        if let Some(hash) = content_hash {
+            let _ = self
+                .vfs_router
+                .write_content(mount_point, &data, hash, ctx, 0);
+        }
 
         Ok(SysReadResult {
             data: Some(data),
@@ -4654,9 +4655,10 @@ impl Kernel {
     /// once `VFSRouter` has any backends registered. Idempotent —
     /// writing twice just replaces the previous fetcher Arc.
     fn wire_blob_fetcher(&self, slot: nexus_raft::blob_fetcher::BlobFetcherSlot) {
-        let fetcher = Arc::new(crate::blob_fetcher::KernelBlobFetcher::new(Arc::clone(
-            &self.vfs_router,
-        )));
+        let fetcher = Arc::new(crate::blob_fetcher::KernelBlobFetcher::new(
+            Arc::clone(&self.vfs_router),
+            Arc::clone(&self.dcache),
+        ));
         *slot.write() = Some(fetcher as Arc<dyn nexus_raft::blob_fetcher::BlobFetcher>);
     }
 

@@ -76,6 +76,8 @@ def create_api_key(
     name: str,
     subject_type: str = "user",
     subject_id: str | None = None,
+    *,
+    zones: list[str] | None = None,
     zone_id: str | None = None,
     is_admin: bool = False,
     expires_at: datetime | None = None,
@@ -89,15 +91,32 @@ def create_api_key(
         name: Human-readable key name.
         subject_type: Type of subject ("user", "agent", or "service").
         subject_id: Custom subject ID (for agents). Defaults to user_id.
-        zone_id: Optional zone identifier.
+        zones: List of zone identifiers for this key (#3785). The first
+            zone becomes the primary zone (stored on APIKeyModel.zone_id).
+            One junction row is written to ``api_key_zones`` per zone.
+            Takes precedence over ``zone_id`` when both are supplied.
+        zone_id: Legacy single-zone identifier. Kept for backward compat;
+            prefer ``zones`` for new callers. Ignored when ``zones`` is set.
         is_admin: Whether this key has admin privileges.
         expires_at: Optional expiry datetime (UTC).
         inherit_permissions: Whether agent inherits owner's permissions.
 
     Returns:
         Tuple of (key_id, raw_key). Raw key is only returned once.
+
+    Raises:
+        ValueError: If ``zones`` is explicitly passed as an empty list, or if
+            ``subject_type`` is invalid. Passing neither ``zones`` nor
+            ``zone_id`` is still allowed (zone-less key, backward compat).
     """
-    from nexus.storage.models import APIKeyModel
+    from nexus.storage.models import APIKeyModel, APIKeyZoneModel
+
+    # Resolve effective zone list; zones= wins over legacy zone_id=
+    if zones is None:
+        zones = [zone_id] if zone_id else []
+    elif len(zones) == 0:
+        raise ValueError("create_api_key: zones list must not be empty")
+    primary_zone = zones[0] if zones else None
 
     final_subject_id = subject_id or user_id
 
@@ -105,7 +124,7 @@ def create_api_key(
     if subject_type not in valid_subject_types:
         raise ValueError(f"subject_type must be one of {valid_subject_types}, got {subject_type}")
 
-    zone_prefix = f"{zone_id[:8]}_" if zone_id else ""
+    zone_prefix = f"{primary_zone[:8]}_" if primary_zone else ""
     subject_prefix = final_subject_id[:12] if subject_type == "agent" else user_id[:8]
     random_suffix = secrets.token_hex(16)
     key_id_part = secrets.token_hex(4)
@@ -117,7 +136,7 @@ def create_api_key(
         key_hash=key_hash,
         user_id=user_id,
         name=name,
-        zone_id=zone_id,
+        zone_id=primary_zone,
         is_admin=int(is_admin),
         expires_at=expires_at,
         subject_type=subject_type,
@@ -126,7 +145,10 @@ def create_api_key(
     )
 
     session.add(api_key)
-    session.flush()
+    session.flush()  # populate api_key.key_id before junction inserts
+
+    for z in zones:
+        session.add(APIKeyZoneModel(key_id=api_key.key_id, zone_id=z))
 
     return (api_key.key_id, raw_key)
 

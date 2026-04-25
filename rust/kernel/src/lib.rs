@@ -44,6 +44,7 @@ mod hash;
 mod hn_backend;
 mod hook_registry;
 mod io;
+pub mod ipc;
 mod kernel;
 pub mod lock_manager;
 pub mod locks;

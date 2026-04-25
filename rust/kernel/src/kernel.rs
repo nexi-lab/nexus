@@ -1316,6 +1316,7 @@ impl Kernel {
     }
 
     /// Get full entry (returns CachedEntry for wrapper to convert).
+    #[allow(private_interfaces)]
     pub fn dcache_get_full(&self, path: &str) -> Option<CachedEntry> {
         self.dcache.get_entry(path)
     }
@@ -2099,6 +2100,7 @@ impl Kernel {
     /// is no other mode. Observers needing synchronous-blocking semantics
     /// must be moved to INTERCEPT POST.
     #[allow(dead_code)]
+    #[allow(private_interfaces)]
     pub fn register_observer(
         &self,
         observer: Arc<dyn MutationObserver>,
@@ -2125,6 +2127,7 @@ impl Kernel {
     /// observer re-enters the kernel.
     ///
     /// Called by every successful Tier 1 mutation syscall via dispatch_mutation.
+    #[allow(private_interfaces)]
     pub fn dispatch_observers(&self, event: &FileEvent) {
         let observers = self.observers.lock().matching(event.event_type as u32);
         for obs in observers {
@@ -2144,6 +2147,7 @@ impl Kernel {
     }
 
     /// Dispatch a manually constructed FileEvent (for DLC mount/unmount, Python fallback).
+    #[allow(private_interfaces)]
     pub fn dispatch_event(&self, event_type: FileEventType, path: &str) {
         let event = FileEvent::new(event_type, path);
         self.dispatch_observers(&event);
@@ -2207,7 +2211,7 @@ impl Kernel {
     /// Register a native Rust hook (e.g. AuditHook) with the kernel.
     /// The hook receives pre/post callbacks for every VFS operation.
     #[allow(dead_code)]
-    pub fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
+    pub(crate) fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
         self.native_hooks.lock().register(hook);
     }
 
@@ -2317,6 +2321,7 @@ impl Kernel {
 
     /// sys_watch — block until a file event matching the pattern arrives, or timeout.
     /// Tier 1 syscall (inotify equivalent). Returns matching FileEvent or None on timeout.
+    #[allow(private_interfaces)]
     pub fn sys_watch(&self, pattern: &str, timeout_ms: u64) -> Option<FileEvent> {
         self.file_watches.wait_for_event(pattern, timeout_ms)
     }

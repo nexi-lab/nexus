@@ -891,6 +891,60 @@ def test_resolve_rejects_revoke_committed_after_initial_machine_check(engine):
         store.decrypt_profile = real_decrypt
 
 
+def test_warm_cache_unsampled_hit_still_runs_revocation_gate(engine):
+    """The 99% common case (warm cache, audit sampled out) must STILL run
+    the SHARE-lock revocation gate inside audit.write, not skip it via
+    early return.
+
+    Setup: hit_sample_rate=0.0 so every cache hit is sampled out. Prime
+    cache, revoke daemon, request again. Even with no audit row written,
+    the gate must fire and raise MachineUnknownOrRevoked. Closes the
+    last F26 sub-finding (sampled-out cache hits bypass the gate).
+    """
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    _seed_github_envelope(
+        engine=engine, tenant_id=tenant, principal_id=principal, encryption=encryption
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    # Force every hit to be sampled out so the gate is the ONLY thing
+    # the audit.write call does on the hit path.
+    consumer = CredentialConsumer(
+        store=PostgresAuthProfileStore("", tenant_id=tenant, principal_id=principal, engine=engine),
+        encryption=encryption,
+        dek_cache=DEKCache(),
+        cred_cache=ResolvedCredCache(ceiling_seconds=300),
+        adapters={"github": GithubProviderAdapter()},
+        audit=ReadAuditWriter(engine=engine, hit_sample_rate=0.0),
+    )
+    # Prime the cache with a legit request.
+    consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    # Revoke the daemon. The next resolve will hit the cache, fingerprint
+    # will match, and would early-return without the gate. With the gate,
+    # audit.write's SHARE-lock SELECT sees revoked_at IS NOT NULL → raises.
+    _revoke_machine(engine=engine, tenant_id=tenant, machine_id=machine)
+    # The top-of-resolve assert_machine_active will catch this too —
+    # neutralise it via monkeypatch so we exercise the cache-hit gate
+    # (the audit.write SHARE-lock SELECT) specifically.
+    store = consumer._store
+    assert store is not None
+
+    def _passthrough(*args, **kwargs):  # noqa: ARG001
+        pass
+
+    monkeypatched_attr = "assert_machine_active"
+    real_assert = getattr(store, monkeypatched_attr)
+    object.__setattr__(store, monkeypatched_attr, _passthrough)
+    try:
+        with pytest.raises(MachineUnknownOrRevoked):
+            consumer.resolve(
+                claims=_claims(tenant, principal, machine), provider="github", purpose="x"
+            )
+    finally:
+        object.__setattr__(store, monkeypatched_attr, real_assert)
+
+
 def test_audit_write_atomically_rejects_revoked_machine(engine):
     """ReadAuditWriter.write itself enforces the revocation gate inside
     its own transaction (SELECT FOR SHARE on daemon_machines + audit

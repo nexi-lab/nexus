@@ -78,8 +78,11 @@ class ReadAuditWriter:
         (sampled) still observe the revocation gate but swallow audit
         insert failures so operational telemetry blips don't block reads.
         """
-        if cache_hit and self._rng.random() >= self._hit_sample_rate:
-            return  # sampled out
+        # Sampling decision — but the revocation gate STILL runs for
+        # sampled-out cache hits. Without that, the 99% of hits that
+        # don't get an audit row would also skip the SHARE-lock SELECT
+        # and be vulnerable to the F26 race the gate exists to close.
+        sampled_out = cache_hit and self._rng.random() >= self._hit_sample_rate
 
         truncated_purpose = purpose[:_PURPOSE_MAX_LEN]
         # Local imports — read_audit is imported at module load by the
@@ -115,6 +118,11 @@ class ReadAuditWriter:
                         provider=provider,
                         cause="machine_revoked",
                     )
+                if sampled_out:
+                    # Gate passed; skip the audit INSERT since this hit
+                    # was sampled out. The SHARE lock is released on
+                    # COMMIT below — same atomicity guarantee, no audit row.
+                    return
                 conn.execute(
                     text(
                         "INSERT INTO auth_profile_reads "

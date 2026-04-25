@@ -170,6 +170,29 @@ class APIKeyModel(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class APIKeyZoneModel(Base):
+    """Junction: token → zone allow-list (#3785). Composite PK (key_id, zone_id)."""
+
+    __tablename__ = "api_key_zones"
+
+    key_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("api_keys.key_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    zone_id: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("zones.zone_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    granted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+
+    __table_args__ = (
+        Index("idx_api_key_zones_key", "key_id"),
+        Index("idx_api_key_zones_zone", "zone_id"),
+    )
+
+
 class OAuthAPIKeyModel(Base):
     """Stores encrypted API key values for OAuth users."""
 

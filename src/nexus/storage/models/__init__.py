@@ -47,6 +47,7 @@ from nexus.storage.models.audit_checkpoint import AuditCheckpointModel as AuditC
 
 # Domain: Auth (Users, API Keys, OAuth, Zones)
 from nexus.storage.models.auth import APIKeyModel as APIKeyModel
+from nexus.storage.models.auth import APIKeyZoneModel as APIKeyZoneModel
 from nexus.storage.models.auth import ExternalUserServiceModel as ExternalUserServiceModel
 from nexus.storage.models.auth import OAuthAPIKeyModel as OAuthAPIKeyModel
 from nexus.storage.models.auth import OAuthCredentialModel as OAuthCredentialModel

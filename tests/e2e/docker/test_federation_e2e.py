@@ -2068,6 +2068,18 @@ class TestPartialReplicationFailure:
         assert reconnected, "Failed to reconnect node-2; cluster may be in bad state."
 
         _wait_healthy([cluster["node2"]], timeout=60)
+        # Protocol-level gate first: poll raft applied_index until node-2
+        # catches up on root + corp-eng. Without this, the per-file
+        # `_wait_replicated` loop only watches `list()` output — passes
+        # cleanly when raft is healthy, but on slow networks (GH Actions
+        # bridge networks reconnecting after `network disconnect/connect`)
+        # it can spend its whole 60s polling stale state because the
+        # apply pump on node-2 hasn't finished draining the catch-up
+        # MsgApp burst yet. Raft `commit_index` / `applied_index` is the
+        # signal that the catch-up actually landed; bound the wait
+        # generously since a partition + recovery on a constrained
+        # runner can take real seconds.
+        _wait_nodes_caught_up([grpc1, grpc2], [ROOT_ZONE_ID, "corp-eng"], api_key, timeout=120)
         for path in written:
             _wait_replicated(
                 grpc2,

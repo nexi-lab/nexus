@@ -18,24 +18,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Known FileMetadata field names (generated from proto).
 # Used by from_json() to strip unknown keys from external dicts.
-_KNOWN_FIELDS: frozenset[str] = frozenset(
-    {
-        "path",
-        "backend_name",
-        "physical_path",
-        "size",
-        "etag",
-        "mime_type",
-        "created_at",
-        "modified_at",
-        "version",
-        "zone_id",
-        "owner_id",
-        "entry_type",
-        "target_zone_id",
-        "ttl_seconds",
-    }
-)
+_KNOWN_FIELDS: frozenset[str] = frozenset({"path", "size", "etag", "mime_type", "created_at", "modified_at", "version", "zone_id", "owner_id", "entry_type", "target_zone_id", "ttl_seconds", "last_writer_address"})
 
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
@@ -63,8 +46,6 @@ def _utcnow_naive() -> datetime:
 
 PROTO_TO_SQL: dict[str, str | None] = {
     "path": "virtual_path",
-    "backend_name": "backend_id",
-    "physical_path": "physical_path",
     "size": "size_bytes",
     "etag": "content_hash",
     "mime_type": "file_type",
@@ -76,6 +57,7 @@ PROTO_TO_SQL: dict[str, str | None] = {
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
+    "last_writer_address": None,  # SQL backend (FilePathModel) doesn't currently persist last writer; add a column when needed.
 }
 
 
@@ -95,8 +77,6 @@ class MetadataMapper:
 
         return metadata_pb2.FileMetadata(
             path=metadata.path,
-            backend_name=metadata.backend_name,
-            physical_path=metadata.physical_path or "",
             size=metadata.size,
             etag=metadata.etag or "",
             mime_type=metadata.mime_type or "",
@@ -108,6 +88,7 @@ class MetadataMapper:
             entry_type=metadata_pb2.DirEntryType.Name(metadata.entry_type),
             target_zone_id=metadata.target_zone_id or "",
             ttl_seconds=metadata.ttl_seconds,
+            last_writer_address=metadata.last_writer_address or "",
         )
 
     @staticmethod
@@ -126,8 +107,6 @@ class MetadataMapper:
 
         return FileMetadata(
             path=proto.path,
-            backend_name=proto.backend_name,
-            physical_path=proto.physical_path or proto.path,
             size=proto.size,
             etag=proto.etag or None,
             mime_type=proto.mime_type or None,
@@ -139,6 +118,7 @@ class MetadataMapper:
             entry_type=proto.entry_type,
             target_zone_id=proto.target_zone_id or None,
             ttl_seconds=proto.ttl_seconds,
+            last_writer_address=proto.last_writer_address or None,
         )
 
     # -- JSON serialization (GENERATED) -------------------------------------
@@ -148,8 +128,6 @@ class MetadataMapper:
         """Convert FileMetadata to JSON-serializable dict."""
         return {
             "path": metadata.path,
-            "backend_name": metadata.backend_name,
-            "physical_path": metadata.physical_path,
             "size": metadata.size,
             "etag": metadata.etag,
             "mime_type": metadata.mime_type,
@@ -161,6 +139,7 @@ class MetadataMapper:
             "entry_type": metadata.entry_type,
             "target_zone_id": metadata.target_zone_id,
             "ttl_seconds": metadata.ttl_seconds,
+            "last_writer_address": metadata.last_writer_address,
         }
 
     @staticmethod
@@ -197,8 +176,6 @@ class MetadataMapper:
         """
         values: dict[str, Any] = {
             "virtual_path": metadata.path,
-            "backend_id": metadata.backend_name or "local",
-            "physical_path": metadata.physical_path or metadata.path,
             "size_bytes": metadata.size or 0,
             "content_hash": metadata.etag,
             "file_type": metadata.mime_type,
@@ -215,8 +192,6 @@ class MetadataMapper:
     def to_file_path_update_values(metadata: FileMetadata) -> dict[str, Any]:
         """Convert FileMetadata to dict for UPDATE operations."""
         return {
-            "backend_id": metadata.backend_name,
-            "physical_path": metadata.physical_path,
             "size_bytes": metadata.size or 0,
             "content_hash": metadata.etag,
             "file_type": metadata.mime_type,

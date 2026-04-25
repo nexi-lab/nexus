@@ -231,8 +231,6 @@ fn extract_metadata(
     let _ = py;
     Ok(FileMetadata {
         path: get_str("path")?,
-        backend_name: get_str("backend_name")?,
-        physical_path: get_str("physical_path")?,
         size: obj
             .getattr("size")
             .and_then(|v| v.extract::<u64>())
@@ -250,6 +248,7 @@ fn extract_metadata(
         mime_type: get_opt_str("mime_type")?,
         created_at_ms: extract_opt_datetime_ms(obj, "created_at"),
         modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),
+        last_writer_address: get_opt_str("last_writer_address")?,
     })
 }
 
@@ -280,12 +279,6 @@ fn to_python_metadata<'py>(
         .map_err(err)?;
     let kwargs = PyDict::new(py);
     kwargs.set_item("path", &meta.path).map_err(err)?;
-    kwargs
-        .set_item("backend_name", &meta.backend_name)
-        .map_err(err)?;
-    kwargs
-        .set_item("physical_path", &meta.physical_path)
-        .map_err(err)?;
     kwargs.set_item("size", meta.size).map_err(err)?;
     kwargs.set_item("etag", meta.etag.as_deref()).map_err(err)?;
     kwargs.set_item("version", meta.version).map_err(err)?;
@@ -1195,34 +1188,32 @@ impl PyKernel {
 
     // ── DCache proxy methods ─────────────��─────────────────────────────
 
-    #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]
+    #[pyo3(signature = (path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None, last_writer_address=None))]
     #[allow(clippy::too_many_arguments)]
     fn dcache_put(
         &self,
         path: &str,
-        backend_name: &str,
-        physical_path: &str,
         size: u64,
         entry_type: u8,
         version: u32,
         etag: Option<&str>,
         zone_id: Option<&str>,
         mime_type: Option<&str>,
+        last_writer_address: Option<&str>,
     ) {
         self.inner.dcache_put(
             path,
-            backend_name,
-            physical_path,
             size,
             entry_type,
             version,
             etag,
             zone_id,
             mime_type,
+            last_writer_address,
         );
     }
 
-    fn dcache_get(&self, path: &str) -> Option<(String, String, u8)> {
+    fn dcache_get(&self, path: &str) -> Option<(u8, Option<String>)> {
         self.inner.dcache_get(path)
     }
 
@@ -1230,14 +1221,13 @@ impl PyKernel {
         match self.inner.dcache_get_full(path) {
             Some(e) => {
                 let dict = PyDict::new(py);
-                dict.set_item("backend_name", &e.backend_name)?;
-                dict.set_item("physical_path", &e.physical_path)?;
                 dict.set_item("size", e.size)?;
                 dict.set_item("etag", e.etag.as_deref())?;
                 dict.set_item("version", e.version)?;
                 dict.set_item("entry_type", e.entry_type)?;
                 dict.set_item("zone_id", e.zone_id.as_deref())?;
                 dict.set_item("mime_type", e.mime_type.as_deref())?;
+                dict.set_item("last_writer_address", e.last_writer_address.as_deref())?;
                 Ok(Some(dict.into()))
             }
             None => Ok(None),
@@ -1443,14 +1433,14 @@ impl PyKernel {
             })?;
         let backend = entry.backend.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "llm_start_streaming: mount has no backend: {}",
-                entry.backend_name
+                "llm_start_streaming: mount has no backend at {}",
+                mount_point
             ))
         })?;
         let llm = backend.as_llm_streaming().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "llm_start_streaming: backend {} does not support streaming",
-                entry.backend_name
+                "llm_start_streaming: backend at mount {} does not support streaming",
+                mount_point
             ))
         })?;
         let stream_manager = Arc::clone(&self.inner.stream_manager);
@@ -2314,9 +2304,8 @@ impl PyKernel {
             Some(s) => {
                 let dict = PyDict::new(py);
                 dict.set_item("path", &s.path)?;
-                dict.set_item("backend_name", &s.backend_name)?;
-                dict.set_item("physical_path", &s.physical_path)?;
                 dict.set_item("size", s.size)?;
+                dict.set_item("last_writer_address", s.last_writer_address.as_deref())?;
                 dict.set_item("etag", s.etag.as_deref())?;
                 dict.set_item("mime_type", &s.mime_type)?;
                 set_optional_iso_datetime(py, &dict, "created_at", s.created_at_ms)?;

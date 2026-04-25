@@ -69,8 +69,6 @@ class CompactFileMetadata:
     """
 
     path_id: int
-    backend_name_id: int
-    physical_path_id: int
     size: int
     etag_id: int
     mime_type_id: int
@@ -81,14 +79,13 @@ class CompactFileMetadata:
     owner_id_intern: int
     entry_type: int
     target_zone_id_intern: int
+    last_writer_address_id: int
 
     @classmethod
     def from_file_metadata(cls, m: FileMetadata) -> CompactFileMetadata:
         """Create CompactFileMetadata from FileMetadata."""
         return cls(
             path_id=_intern(m.path),
-            backend_name_id=_intern(m.backend_name),
-            physical_path_id=_intern(m.physical_path),
             size=m.size,
             etag_id=_intern(m.etag),
             mime_type_id=_intern(m.mime_type),
@@ -99,6 +96,7 @@ class CompactFileMetadata:
             owner_id_intern=_intern(m.owner_id),
             entry_type=m.entry_type,
             target_zone_id_intern=_intern(m.target_zone_id),
+            last_writer_address_id=_intern(m.last_writer_address),
         )
 
     def to_file_metadata(self) -> FileMetadata:
@@ -107,8 +105,6 @@ class CompactFileMetadata:
 
         return FileMetadata(
             path=_resolve_required(self.path_id),
-            backend_name=_resolve_required(self.backend_name_id),
-            physical_path=_resolve_required(self.physical_path_id),
             size=self.size,
             etag=_resolve(self.etag_id),
             mime_type=_resolve(self.mime_type_id),
@@ -119,6 +115,7 @@ class CompactFileMetadata:
             owner_id=_resolve(self.owner_id_intern),
             entry_type=self.entry_type,
             target_zone_id=_resolve(self.target_zone_id_intern),
+            last_writer_address=_resolve(self.last_writer_address_id),
         )
 
 

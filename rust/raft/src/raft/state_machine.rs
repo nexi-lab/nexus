@@ -331,17 +331,20 @@ pub trait StateMachine: Send + Sync {
 #[cfg(feature = "grpc")]
 #[derive(Debug, Clone)]
 pub enum MountApplyEvent {
-    /// DT_MOUNT upsert. ``target_zone_id`` + ``backend_name`` come from
-    /// the decoded ``FileMetadata`` proto written by this apply —
-    /// snapshotted at fire time so a subsequent apply to the same key
-    /// cannot race the callback into wiring the wrong target.
+    /// DT_MOUNT upsert. ``target_zone_id`` comes from the decoded
+    /// ``FileMetadata`` proto written by this apply — snapshotted at
+    /// fire time so a subsequent apply to the same key cannot race
+    /// the callback into wiring the wrong target.
     ///
     /// Post-R20.16.8 / R20.16.9 the event does NOT carry io_profile /
     /// readonly / admin_only — those knobs were retired as YAGNI.
+    /// Post-schema-cleanup the event also stops carrying ``backend_name`` —
+    /// the kernel-side wire path passes a constant label down to the
+    /// router (mount records' backend is supplied separately by the
+    /// router's mount config).
     Set {
         key: String,
         target_zone_id: String,
-        backend_name: String,
     },
     /// DT_MOUNT delete. No proto payload — the entry was removed inside
     /// the same apply txn, so callers look up the prior mount via their
@@ -792,7 +795,6 @@ impl FullStateMachine {
                     MountApplyEvent::Set {
                         key: key.clone(),
                         target_zone_id: proto.target_zone_id,
-                        backend_name: proto.backend_name,
                     }
                 } else if let Some(k) = delete_mount_key {
                     // R20.18.5: overwrite of prior DT_MOUNT with a
@@ -1124,7 +1126,7 @@ impl FullStateMachine {
     }
 
     /// Iterate every DT_MOUNT entry in this state machine, returning
-    /// ``(key, target_zone_id, backend_name)`` triples (R20.16.4).
+    /// ``(key, target_zone_id)`` pairs (R20.16.4).
     ///
     /// Used by the kernel's startup replay to re-drive every historic
     /// federation mount through ``wire_federation_mount`` — apply-cb
@@ -1134,7 +1136,7 @@ impl FullStateMachine {
     /// Lenient: skips entries that fail to decode or aren't DT_MOUNT
     /// or have an empty target_zone_id.
     #[cfg(feature = "grpc")]
-    pub fn iter_dt_mount_entries(&self) -> Result<Vec<(String, String, String)>> {
+    pub fn iter_dt_mount_entries(&self) -> Result<Vec<(String, String)>> {
         use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
         use prost::Message as ProstMessage;
 
@@ -1145,7 +1147,7 @@ impl FullStateMachine {
             };
             const DT_MOUNT: i32 = 2;
             if proto.entry_type == DT_MOUNT && !proto.target_zone_id.is_empty() {
-                result.push((key, proto.target_zone_id, proto.backend_name));
+                result.push((key, proto.target_zone_id));
             }
         }
         Ok(result)
@@ -1892,7 +1894,6 @@ mod tests {
                 entry_type,
                 zone_id: zone.to_string(),
                 target_zone_id: target.to_string(),
-                backend_name: backend.to_string(),
                 ..Default::default()
             }
             .encode_to_vec()
@@ -1927,11 +1928,9 @@ mod tests {
                 MountApplyEvent::Set {
                     key,
                     target_zone_id,
-                    backend_name,
                 } => {
                     assert_eq!(key, "/mnt/peer");
                     assert_eq!(target_zone_id, "zone-b");
-                    assert_eq!(backend_name, "cas-local");
                 }
                 other => panic!("expected Set event, got {other:?}"),
             }
@@ -2025,7 +2024,6 @@ mod tests {
         let value = ProtoFileMetadata {
             entry_type: 2,
             target_zone_id: "zone-b".into(),
-            backend_name: "cas-local".into(),
             ..Default::default()
         }
         .encode_to_vec();

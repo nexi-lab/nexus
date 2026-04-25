@@ -131,8 +131,6 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, Metast
         .map_err(|e| MetastoreError::IOError(format!("FileMetadata proto decode: {e}")))?;
     Ok(KernelFileMetadata {
         path: proto.path,
-        backend_name: proto.backend_name,
-        physical_path: proto.physical_path,
         size: proto.size as u64,
         etag: if proto.etag.is_empty() {
             None
@@ -153,6 +151,11 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, Metast
         },
         created_at_ms: None,
         modified_at_ms: None,
+        last_writer_address: if proto.last_writer_address.is_empty() {
+            None
+        } else {
+            Some(proto.last_writer_address)
+        },
     })
 }
 
@@ -164,14 +167,13 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
     // ``ZoneMetastore`` are non-mount kinds whose target is always "".
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
-        backend_name: meta.backend_name.clone(),
-        physical_path: meta.physical_path.clone(),
         size: meta.size as i64,
         etag: meta.etag.clone().unwrap_or_default(),
         version: meta.version as i32,
         entry_type: meta.entry_type as i32,
         zone_id: meta.zone_id.clone().unwrap_or_default(),
         mime_type: meta.mime_type.clone().unwrap_or_default(),
+        last_writer_address: meta.last_writer_address.clone().unwrap_or_default(),
         ..Default::default()
     };
     proto.encode_to_vec()

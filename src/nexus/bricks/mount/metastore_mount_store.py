@@ -4,6 +4,19 @@ Replaces MountConfigModel (SQLAlchemy ORM) for persisting mount configs.
 Stores mount configurations in the Metastore (redb) under a reserved path prefix.
 
 Issue #192: Migrate MountConfigModel from RecordStore to Metastore.
+
+Storage layout
+--------------
+Mount records reuse the file-metadata KV slot keyed by ``mnt:{mount_point}``.
+The ``mnt:`` path prefix uniquely identifies them — record-level type tags
+are unnecessary. The full mount config JSON is stashed in ``etag`` (a
+Nullable string slot the metastore already round-trips). Etag's normal
+file-content-hash semantics do not apply to these synthetic records, and
+nothing else in the system reads ``etag`` for ``mnt:``-prefixed paths.
+
+Migration note: a follow-up PR should move mount config off FileMetadata
+into a dedicated KV abstraction (e.g. a small sqlite table or a raw redb
+sub-store), at which point this kludge disappears.
 """
 
 from __future__ import annotations
@@ -18,7 +31,6 @@ from nexus.contracts.metadata import FileMetadata
 logger = logging.getLogger(__name__)
 
 _MNT_PREFIX = "mnt:"
-_MNT_BACKEND = "_mount_config"
 
 
 class _MetastoreProto(Protocol):
@@ -32,11 +44,24 @@ class _MetastoreProto(Protocol):
     ) -> list[FileMetadata]: ...
 
 
+def _payload_of(fm: FileMetadata) -> dict[str, Any] | None:
+    if not fm.etag:
+        return None
+    try:
+        data = json.loads(fm.etag)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _record(key: str, payload: dict[str, Any]) -> FileMetadata:
+    return FileMetadata(path=key, size=0, etag=json.dumps(payload))
+
+
 class MetastoreMountStore:
     """Mount configuration store backed by MetastoreABC.
 
-    Key pattern: ``mnt:{mount_point}`` → JSON envelope with all mount fields.
-    Uses FileMetadata as the storage envelope.
+    Key pattern: ``mnt:{mount_point}`` → mount config JSON in ``etag``.
     """
 
     def __init__(self, metastore: _MetastoreProto) -> None:
@@ -57,32 +82,23 @@ class MetastoreMountStore:
         self._validate(mount_point, backend_type, backend_config)
 
         key = f"{_MNT_PREFIX}{mount_point}"
-        existing = self._metastore.get(key)
-        if existing is not None and existing.backend_name.startswith(_MNT_BACKEND):
+        if self._metastore.get(key) is not None:
             raise ValueError(f"Mount already exists at {mount_point}")
 
         now = datetime.now(UTC).isoformat()
-        payload = json.dumps(
-            {
-                "mount_id": mount_id,
-                "mount_point": mount_point,
-                "backend_type": backend_type,
-                "backend_config": backend_config,
-                "owner_user_id": owner_user_id,
-                "zone_id": zone_id,
-                "description": description,
-                "replication": replication,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
-        fm = FileMetadata(
-            path=key,
-            backend_name=_MNT_BACKEND,
-            physical_path=payload,
-            size=0,
-        )
-        self._metastore.put(fm)
+        payload = {
+            "mount_id": mount_id,
+            "mount_point": mount_point,
+            "backend_type": backend_type,
+            "backend_config": backend_config,
+            "owner_user_id": owner_user_id,
+            "zone_id": zone_id,
+            "description": description,
+            "replication": replication,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._metastore.put(_record(key, payload))
         return mount_id
 
     def update(
@@ -95,12 +111,10 @@ class MetastoreMountStore:
         """Update an existing mount configuration. Returns False if not found."""
         key = f"{_MNT_PREFIX}{mount_point}"
         existing = self._metastore.get(key)
-        if existing is None or not existing.backend_name.startswith(_MNT_BACKEND):
+        if existing is None:
             return False
-
-        try:
-            data: dict[str, Any] = json.loads(existing.physical_path)
-        except (json.JSONDecodeError, KeyError):
+        data = _payload_of(existing)
+        if data is None:
             return False
 
         if backend_config is not None:
@@ -111,25 +125,15 @@ class MetastoreMountStore:
             data["replication"] = replication
         data["updated_at"] = datetime.now(UTC).isoformat()
 
-        fm = FileMetadata(
-            path=key,
-            backend_name=_MNT_BACKEND,
-            physical_path=json.dumps(data),
-            size=0,
-        )
-        self._metastore.put(fm)
+        self._metastore.put(_record(key, data))
         return True
 
     def get(self, mount_point: str) -> dict[str, Any] | None:
         """Get a mount configuration by mount_point."""
         fm = self._metastore.get(f"{_MNT_PREFIX}{mount_point}")
-        if fm is None or not fm.backend_name.startswith(_MNT_BACKEND):
+        if fm is None:
             return None
-        try:
-            data: dict[str, Any] = json.loads(fm.physical_path)
-            return data
-        except (json.JSONDecodeError, KeyError):
-            return None
+        return _payload_of(fm)
 
     def list_all(
         self,
@@ -140,11 +144,8 @@ class MetastoreMountStore:
         entries = self._metastore.list(_MNT_PREFIX)
         results: list[dict[str, Any]] = []
         for fm in entries:
-            if not fm.backend_name.startswith(_MNT_BACKEND):
-                continue
-            try:
-                data: dict[str, Any] = json.loads(fm.physical_path)
-            except (json.JSONDecodeError, KeyError):
+            data = _payload_of(fm)
+            if data is None:
                 continue
             if owner_user_id and data.get("owner_user_id") != owner_user_id:
                 continue
@@ -157,8 +158,7 @@ class MetastoreMountStore:
     def remove(self, mount_point: str) -> bool:
         """Remove a mount configuration. Returns False if not found."""
         key = f"{_MNT_PREFIX}{mount_point}"
-        existing = self._metastore.get(key)
-        if existing is None or not existing.backend_name.startswith(_MNT_BACKEND):
+        if self._metastore.get(key) is None:
             return False
         self._metastore.delete(key)
         return True

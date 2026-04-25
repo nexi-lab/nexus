@@ -19,8 +19,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.backend_address import BackendAddress
-
 if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
 
@@ -42,8 +40,6 @@ class FileMetadata:
     """
 
     path: str
-    backend_name: str
-    physical_path: str
     size: int
     etag: str | None = None
     mime_type: str | None = None
@@ -55,6 +51,7 @@ class FileMetadata:
     entry_type: int = 0
     target_zone_id: str | None = None
     ttl_seconds: float = 0.0
+    last_writer_address: str | None = None
 
     @property
     def is_reg(self) -> bool:
@@ -80,23 +77,6 @@ class FileMetadata:
     def is_external_storage(self) -> bool:
         return self.entry_type == 5
 
-    @property
-    def backend_address(self) -> BackendAddress:
-        """Parse backend_name into typed BackendAddress (type + origin nodes).
-
-        Returns:
-            BackendAddress with backend_type and origins tuple.
-
-        Example:
-            >>> meta = FileMetadata(path="/a", backend_name="local@10.0.0.5:50051",
-            ...                     physical_path="abc", size=0)
-            >>> meta.backend_address.backend_type
-            'local'
-            >>> meta.backend_address.origins
-            ('10.0.0.5:50051',)
-        """
-        return BackendAddress.parse(self.backend_name)
-
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict.
 
@@ -105,8 +85,6 @@ class FileMetadata:
         """
         return {
             "path": self.path,
-            "backend_name": self.backend_name,
-            "physical_path": self.physical_path,
             "size": self.size,
             "etag": self.etag,
             "mime_type": self.mime_type,
@@ -118,6 +96,7 @@ class FileMetadata:
             "entry_type": self.entry_type,
             "target_zone_id": self.target_zone_id,
             "ttl_seconds": self.ttl_seconds,
+            "last_writer_address": self.last_writer_address,
         }
 
     def validate(self) -> None:
@@ -140,12 +119,6 @@ class FileMetadata:
         # DT_PIPE/DT_STREAM inodes: in-memory buffers, no backend storage required
         if self.entry_type in (3, 4):  # DT_PIPE, DT_STREAM
             return
-
-        if not self.backend_name:
-            raise ValidationError("backend_name is required", path=self.path)
-
-        if not self.physical_path:
-            raise ValidationError("physical_path is required", path=self.path)
 
         if self.size < 0:
             raise ValidationError(f"size cannot be negative, got {self.size}", path=self.path)

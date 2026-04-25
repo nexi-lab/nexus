@@ -23,9 +23,7 @@ pub(crate) const DT_STREAM: u8 = 4;
 /// Hot-path projection of FileMetadata.
 #[derive(Clone, Debug, Default)]
 #[allow(dead_code)]
-pub struct CachedEntry {
-    pub(crate) backend_name: String,
-    pub(crate) physical_path: String,
+pub(crate) struct CachedEntry {
     pub(crate) size: u64,
     pub(crate) etag: Option<String>,
     pub(crate) version: u32,
@@ -34,13 +32,12 @@ pub struct CachedEntry {
     pub(crate) mime_type: Option<String>,
     pub(crate) created_at_ms: Option<i64>,
     pub(crate) modified_at_ms: Option<i64>,
+    pub(crate) last_writer_address: Option<String>,
 }
 
 impl From<&crate::metastore::FileMetadata> for CachedEntry {
     fn from(m: &crate::metastore::FileMetadata) -> Self {
         Self {
-            backend_name: m.backend_name.clone(),
-            physical_path: m.physical_path.clone(),
             size: m.size,
             etag: m.etag.clone(),
             version: m.version,
@@ -49,6 +46,7 @@ impl From<&crate::metastore::FileMetadata> for CachedEntry {
             mime_type: m.mime_type.clone(),
             created_at_ms: m.created_at_ms,
             modified_at_ms: m.modified_at_ms,
+            last_writer_address: m.last_writer_address.clone(),
         }
     }
 }
@@ -145,18 +143,14 @@ impl DCache {
             .collect()
     }
 
-    /// Get hot-path tuple: (backend_name, physical_path, entry_type).
+    /// Get hot-path tuple: (entry_type, last_writer_address).
     /// Updates hit/miss counters.
-    pub(crate) fn get_hot(&self, path: &str) -> Option<(String, String, u8)> {
+    pub(crate) fn get_hot(&self, path: &str) -> Option<(u8, Option<String>)> {
         match self.cache.get(path) {
             Some(entry) => {
                 self.hits.fetch_add(1, Ordering::Relaxed);
                 let e = entry.value();
-                Some((
-                    e.backend_name.clone(),
-                    e.physical_path.clone(),
-                    e.entry_type,
-                ))
+                Some((e.entry_type, e.last_writer_address.clone()))
             }
             None => {
                 self.misses.fetch_add(1, Ordering::Relaxed);
@@ -203,8 +197,6 @@ mod tests {
         dc.put(
             "/docs/readme.md",
             CachedEntry {
-                backend_name: "local".to_string(),
-                physical_path: "/data/readme.md".to_string(),
                 size: 1024,
                 etag: Some("abc123".to_string()),
                 version: 1,
@@ -213,12 +205,11 @@ mod tests {
                 mime_type: Some("text/markdown".to_string()),
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         );
 
         let entry = dc.get_entry("/docs/readme.md").unwrap();
-        assert_eq!(entry.backend_name, "local");
-        assert_eq!(entry.physical_path, "/data/readme.md");
         assert_eq!(entry.size, 1024);
         assert_eq!(entry.etag.as_deref(), Some("abc123"));
         assert_eq!(entry.version, 1);
@@ -240,8 +231,6 @@ mod tests {
         dc.put(
             "/a",
             CachedEntry {
-                backend_name: "local".to_string(),
-                physical_path: "/a".to_string(),
                 size: 0,
                 etag: None,
                 version: 1,
@@ -250,6 +239,7 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         );
         assert!(dc.contains("/a"));
@@ -262,8 +252,6 @@ mod tests {
         dc.put(
             "/hit",
             CachedEntry {
-                backend_name: "local".to_string(),
-                physical_path: "/hit".to_string(),
                 size: 0,
                 etag: None,
                 version: 1,
@@ -272,6 +260,7 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         );
 
@@ -299,8 +288,6 @@ mod tests {
         dc.put(
             "/tmp",
             CachedEntry {
-                backend_name: "local".to_string(),
-                physical_path: "/tmp".to_string(),
                 size: 0,
                 etag: None,
                 version: 1,
@@ -309,6 +296,7 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         );
         assert!(dc.evict("/tmp"));
@@ -324,8 +312,6 @@ mod tests {
             dc.put(
                 p,
                 CachedEntry {
-                    backend_name: "local".to_string(),
-                    physical_path: p.to_string(),
                     size: 0,
                     etag: None,
                     version: 1,
@@ -334,6 +320,7 @@ mod tests {
                     mime_type: None,
                     created_at_ms: None,
                     modified_at_ms: None,
+                last_writer_address: None,
                 },
             );
         }
@@ -350,8 +337,6 @@ mod tests {
         dc.put(
             "/file",
             CachedEntry {
-                backend_name: "local".to_string(),
-                physical_path: "/data/file".to_string(),
                 size: 100,
                 etag: Some("hash".to_string()),
                 version: 1,
@@ -360,12 +345,12 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         );
-        let (bn, pp, et) = dc.get_hot("/file").unwrap();
-        assert_eq!(bn, "local");
-        assert_eq!(pp, "/data/file");
+        let (et, last_writer) = dc.get_hot("/file").unwrap();
         assert_eq!(et, DT_REG);
+        assert!(last_writer.is_none());
         assert!(dc.get_hot("/missing").is_none());
     }
 
@@ -375,8 +360,6 @@ mod tests {
         dc.put(
             "/a",
             CachedEntry {
-                backend_name: "local".to_string(),
-                physical_path: "/a".to_string(),
                 size: 0,
                 etag: None,
                 version: 1,
@@ -385,6 +368,7 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         );
         dc.get_entry("/a"); // hit
@@ -401,8 +385,6 @@ mod tests {
         dc.put(
             "/a",
             CachedEntry {
-                backend_name: "local".to_string(),
-                physical_path: "/a".to_string(),
                 size: 0,
                 etag: None,
                 version: 1,
@@ -411,6 +393,7 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         );
         dc.get_entry("/a"); // hit

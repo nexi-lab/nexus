@@ -81,7 +81,6 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     # System bricks (lightweight — always meet requirements in practice)
     "eventlog": BrickRequirement(min_memory_mb=32),
     "namespace": BrickRequirement(min_memory_mb=32),
-    "agent_runtime": BrickRequirement(min_memory_mb=32),
     "permissions": BrickRequirement(min_memory_mb=32),
     "scheduler": BrickRequirement(min_memory_mb=32),
     # Additional feature bricks

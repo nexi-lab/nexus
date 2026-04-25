@@ -76,8 +76,8 @@ class TestSandboxProfileEnum:
         assert sandbox.issubset(full)
 
     def test_sandbox_size(self) -> None:
-        """SANDBOX = LITE (7) + 3 adds (SEARCH, MCP, PARSERS) = 10 bricks."""
-        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 10
+        """SANDBOX = LITE (6) + 3 adds (SEARCH, MCP, PARSERS) = 9 bricks."""
+        assert len(DeploymentProfile.SANDBOX.default_bricks()) == 9
 
 
 class TestSandboxTuning:

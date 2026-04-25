@@ -70,7 +70,6 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
 _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "memory": ("memory", "memory"),
     "agent": ("agent", "agent"),
-    "chat": ("chat", "chat"),
     "acp_cli": ("acp", "acp"),
     "admin": ("admin", "admin"),
     "sandbox": ("sandbox", "sandbox"),

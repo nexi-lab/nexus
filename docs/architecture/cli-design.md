@@ -30,11 +30,6 @@ Start a REMOTE-profile NexusFS that proxies all syscalls to a running
 `nexusd` via gRPC. Functionally a thin client — no local storage, no
 bricks. Requires a `nexusd` to be running.
 
-**Embedded commands** (`chat`):
-Start a full NexusFS instance (e.g. CLUSTER profile) in-process, with
-local storage (`~/.nexus/data`), bricks, and kernel. No `nexusd` required.
-The NexusFS is exclusive to this process and exits when the process exits.
-
 ```
 nexus <command> [args] [flags]
 ```
@@ -109,7 +104,6 @@ a long-running background process without implying centralized architecture.
 | `glob`, `grep` | `nexus` | Search via RPC |
 | `admin`, `rebac`, `versions` | `nexus` | Management via RPC |
 | `status`, `doctor` | `nexus` | Health checks via RPC |
-| `chat` | `nexus` | Agent REPL (embedded NexusFS or --with nexusd) |
 | `profile`, `connect`, `config` | `nexus` | Local CLI config (no RPC) |
 | Start daemon | `nexusd` | Starts the node process |
 | `join` (federation) | `nexusd` | Node-local operation |

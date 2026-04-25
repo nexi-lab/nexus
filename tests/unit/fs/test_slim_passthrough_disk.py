@@ -30,7 +30,13 @@ from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
 
 
-def _build_slim(db_path: Path, data_dir: Path, mount_point: str = "/files") -> SlimNexusFS:
+def _build_slim(
+    db_path: Path,
+    data_dir: Path,
+    mount_point: str = "/files",
+    *,
+    return_backend: bool = False,
+) -> SlimNexusFS | tuple[SlimNexusFS, PathLocalBackend]:
     metastore = SQLiteMetastore(str(db_path))
     backend = PathLocalBackend(root_path=data_dir)
     kernel = NexusFS(
@@ -42,7 +48,10 @@ def _build_slim(db_path: Path, data_dir: Path, mount_point: str = "/files") -> S
     )
     kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
     metastore.put(_make_mount_entry(mount_point, backend.name))
-    return SlimNexusFS(kernel)
+    slim = SlimNexusFS(kernel)
+    if return_backend:
+        return slim, backend
+    return slim
 
 
 def test_preexisting_ondisk_file_is_readable(tmp_path: Path) -> None:
@@ -116,13 +125,12 @@ def test_passthrough_read_propagates_backend_errors(
     data_dir.mkdir()
     (data_dir / "broken.txt").write_bytes(b"data")
 
-    slim = _build_slim(db_path, data_dir)
+    slim, backend = _build_slim(db_path, data_dir, return_backend=True)
 
     def _raise_backend_error(*_a: object, **_kw: object) -> bytes:
         raise BackendError("simulated disk corruption", backend="path_local")
 
     try:
-        backend = slim._kernel._driver_coordinator.get_mount_info("/files").backend
         monkeypatch.setattr(backend, "read_content", _raise_backend_error)
 
         with pytest.raises(BackendError, match="simulated disk corruption"):
@@ -143,13 +151,12 @@ def test_passthrough_ls_propagates_backend_errors(
     data_dir.mkdir()
     (data_dir / "file.txt").write_bytes(b"x")
 
-    slim = _build_slim(db_path, data_dir)
+    slim, backend = _build_slim(db_path, data_dir, return_backend=True)
 
     def _raise_backend_error(*_a: object, **_kw: object) -> list[str]:
         raise BackendError("simulated listing failure", backend="path_local")
 
     try:
-        backend = slim._kernel._driver_coordinator.get_mount_info("/files").backend
         monkeypatch.setattr(backend, "list_dir", _raise_backend_error)
 
         with pytest.raises(BackendError, match="simulated listing failure"):

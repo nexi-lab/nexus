@@ -76,6 +76,7 @@ class _FakeExternalBackend:
     (instead of going through the kernel-hook path)."""
 
     name = "fake_external"
+    skill_name = "fake_external"
     has_root_path = False
 
     def __init__(self) -> None:
@@ -129,10 +130,10 @@ def _build_slim_with_external_mount(
         ),
     )
     mount_point = "/ext"
-    # DLC stores the mount info; the metastore entry marks it
+    # DLC stores the skill backend; the metastore entry marks it
     # DT_EXTERNAL_STORAGE so the facade's route() returns an
     # ExternalRouteResult.  Matches the production flow.
-    kernel._driver_coordinator._store_mount_info(mount_point, backend, is_external=True)
+    kernel._driver_coordinator.register_skill_backend(mount_point, backend)
     metastore.put(_make_mount_entry(mount_point, backend.name, entry_type=DT_EXTERNAL_STORAGE))
     # Force slim-mode (_is_slim_mode checks NexusFS._kernel is None) while
     # giving the DLC a mock Rust kernel for DLC.resolve_path() routing.
@@ -207,7 +208,7 @@ def test_slim_rewrite_does_not_forward_stale_content_id(tmp_path: Path) -> None:
         permissions=PermissionConfig(enforce=False),
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
-    kernel._driver_coordinator._store_mount_info("/ext", backend, is_external=True)
+    kernel._driver_coordinator.register_skill_backend("/ext", backend)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
     kernel._driver_coordinator._kernel = _make_mock_py_kernel("/ext")
     kernel._kernel = None
@@ -250,7 +251,7 @@ def test_slim_external_write_is_connector_agnostic(tmp_path: Path) -> None:
         permissions=PermissionConfig(enforce=False),
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
-    kernel._driver_coordinator._store_mount_info("/any", backend, is_external=True)
+    kernel._driver_coordinator.register_skill_backend("/any", backend)
     metastore.put(_make_mount_entry("/any", backend.name, entry_type=DT_EXTERNAL_STORAGE))
     kernel._driver_coordinator._kernel = _make_mock_py_kernel("/any")
     kernel._kernel = None
@@ -308,7 +309,7 @@ def test_slim_write_lock_is_shared_across_facade_instances(tmp_path: Path) -> No
         permissions=PermissionConfig(enforce=False),
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
-    kernel._driver_coordinator._store_mount_info("/ext", backend, is_external=True)
+    kernel._driver_coordinator.register_skill_backend("/ext", backend)
     metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
     kernel._driver_coordinator._kernel = _make_mock_py_kernel("/ext")
     kernel._kernel = None
@@ -357,7 +358,7 @@ def test_slim_external_write_not_triggered_for_non_external_routes(
         permissions=PermissionConfig(enforce=False),
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
-    kernel._driver_coordinator._store_mount_info("/local", backend)
+    kernel._driver_coordinator.register_skill_backend("/local", backend)
     # Note: NOT DT_EXTERNAL_STORAGE → _resolve_external_route returns None
     # because the is_external check fails.  The fall-through short-circuits
     # and the kernel write path runs (which raises AttributeError in slim mode).

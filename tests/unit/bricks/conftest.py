@@ -117,7 +117,7 @@ def mock_router():
         MagicMock configured for path routing operations
     """
     mock = MagicMock()
-    mock.resolve_backend.return_value = MagicMock()
+    mock.get_skill_backend.return_value = MagicMock()
     mock.get_mount_point.return_value = "/mnt/test"
     return mock
 

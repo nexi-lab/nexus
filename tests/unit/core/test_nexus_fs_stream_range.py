@@ -34,9 +34,9 @@ class _StubFS:
         self._pipe_manager = None
         self._stream_manager = MagicMock()
         self._stream_manager._buffers = {}
-        # DriverLifecycleCoordinator stub — resolve_backend returns the test backend
+        # DriverLifecycleCoordinator stub (routing is Rust-owned; keep ref for stub sys_read)
         self._driver_coordinator = MagicMock()
-        self._driver_coordinator.resolve_backend.return_value = backend
+        self._test_backend = backend
 
     def _validate_path(self, path):
         if not path.startswith("/"):
@@ -60,9 +60,7 @@ class _StubFS:
         meta = self.metadata.get(path)
         if meta is None:
             raise NexusFileNotFoundError(path)
-        content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
-            meta.etag or ""
-        )
+        content = self._test_backend.read_content(meta.etag or "")
         if offset:
             content = content[offset:]
         if count is not None:

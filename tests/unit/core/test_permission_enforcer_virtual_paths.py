@@ -41,17 +41,10 @@ class MockBackend:
         return self._object_id or backend_path
 
 
-class _MountInfo:
-    """Minimal mount info for tests."""
-
-    def __init__(self, backend: "MockBackend") -> None:
-        self.backend = backend
-
-
 class MockDLC:
     """Mock DLC with resolve_path() simulating mount point stripping.
 
-    resolve_path(path, zone_id) returns (backend, backend_path, mount_point).
+    resolve_path(path, zone_id) returns (backend_name, backend_path, mount_point).
     """
 
     def __init__(self, mount_point: str = "/mnt/gcs", backend: MockBackend | None = None):
@@ -68,9 +61,6 @@ class MockDLC:
             backend_path = path.lstrip("/")
 
         return (self._backend, backend_path, self.mount_point)
-
-    def get_mount_info_canonical(self, mount_point: str) -> "_MountInfo | None":
-        return _MountInfo(self._backend)
 
 
 class MockReBACManager:

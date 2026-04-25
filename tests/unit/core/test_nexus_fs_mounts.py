@@ -560,14 +560,8 @@ class TestMountIntegration:
         # Write to the mount
         nx.write("/mnt/write/test.txt", b"Hello from mount!")
 
-        # Read back via kernel route to avoid pool collision
-        # (all CASLocalBackend instances have name="local", so the pool
-        # can only hold one; resolve_backend may return a different instance)
-        meta = nx.metadata.get("/mnt/write/test.txt")
-        assert meta is not None
-        rr = nx._kernel.route("/mnt/write/test.txt", nx._zone_id)
-        dlc_info = nx._driver_coordinator.get_mount_info_canonical(rr.mount_point)
-        content = dlc_info.backend.read_content(meta.etag)
+        # Read back via Rust kernel syscall (routing is Rust-owned now)
+        content = nx.sys_read("/mnt/write/test.txt")
         assert content == b"Hello from mount!"
 
     @pytest.mark.asyncio
@@ -620,20 +614,12 @@ class TestMountIntegration:
         nx.write("/mnt/one/file.txt", b"Mount 1")
         nx.write("/mnt/two/file.txt", b"Mount 2")
 
-        # Read back via kernel route to avoid pool collision.
-        # All CASLocalBackend instances share name="local", so the
-        # coordinator's backend_pool can only hold one at a time;
-        # resolve_backend("local") returns whichever was last registered.
-        # Verify content via DLC mount info (correctly resolved by LPM).
+        # Read back via Rust kernel syscall (routing is Rust-owned now).
         for mount_path, expected in [
             ("/mnt/one/file.txt", b"Mount 1"),
             ("/mnt/two/file.txt", b"Mount 2"),
         ]:
-            meta = nx.metadata.get(mount_path)
-            assert meta is not None, f"metadata missing for {mount_path}"
-            rr = nx._kernel.route(mount_path, nx._zone_id)
-            dlc_info = nx._driver_coordinator.get_mount_info_canonical(rr.mount_point)
-            content = dlc_info.backend.read_content(meta.etag)
+            content = nx.sys_read(mount_path)
             assert content == expected, f"content mismatch for {mount_path}"
 
 

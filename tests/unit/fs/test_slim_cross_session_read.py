@@ -26,7 +26,9 @@ from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
 
 
-def _build_slim(db_path: Path, data_dir: Path) -> SlimNexusFS:
+def _build_slim(
+    db_path: Path, data_dir: Path, *, return_backend: bool = False
+) -> SlimNexusFS | tuple[SlimNexusFS, CASLocalBackend]:
     metastore = SQLiteMetastore(str(db_path))
     backend = CASLocalBackend(root_path=data_dir)
     kernel = NexusFS(
@@ -41,7 +43,10 @@ def _build_slim(db_path: Path, data_dir: Path) -> SlimNexusFS:
     # the kernel shuts down (cross-session read path for #3821).
     kernel.sys_setattr("/files", entry_type=DT_MOUNT, backend=backend)
     metastore.put(_make_mount_entry("/files", backend.name))
-    return SlimNexusFS(kernel)
+    slim = SlimNexusFS(kernel)
+    if return_backend:
+        return slim, backend
+    return slim
 
 
 def test_slim_read_survives_fresh_process(tmp_path: Path) -> None:
@@ -97,10 +102,9 @@ def test_slim_read_propagates_non_notfound_backend_errors(
     writer.write("/files/corrupt.txt", b"payload")
     writer.close()
 
-    reader = _build_slim(db_path, data_dir)
+    reader, backend = _build_slim(db_path, data_dir, return_backend=True)
     # Force the backend's ``read_content`` to raise a non-not-found error
     # — this mirrors a corrupt blob or unreadable data file on disk.
-    backend = reader._kernel._driver_coordinator.get_mount_info("/files").backend
 
     def _raise_backend_error(*_a: object, **_kw: object) -> bytes:
         raise BackendError("simulated disk corruption", backend="local")

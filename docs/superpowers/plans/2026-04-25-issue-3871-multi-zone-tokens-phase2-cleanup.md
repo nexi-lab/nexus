@@ -133,7 +133,8 @@ def session():
 
 
 def test_get_primary_zone_returns_none_for_zoneless_key(session):
-    key_id, _ = create_api_key(session, user_id="u1", name="admin", zones=[])
+    # `zones=[]` raises ValueError; zoneless = omit both `zones` and `zone_id`.
+    key_id, _ = create_api_key(session, user_id="u1", name="admin", is_admin=True)
     assert get_primary_zone(session, key_id) is None
 
 
@@ -151,7 +152,8 @@ def test_get_primary_zone_returns_min_granted_at(session):
 
 
 def test_get_primary_zone_tiebreaker_is_zone_id_asc(session):
-    key_id, _ = create_api_key(session, user_id="u1", name="tied", zones=[])
+    # Create zoneless then add two junction rows by hand with identical granted_at.
+    key_id, _ = create_api_key(session, user_id="u1", name="tied", is_admin=True)
     same = dt.datetime(2026, 4, 25, 12, 0, 0)
     session.add(APIKeyZoneModel(key_id=key_id, zone_id="ops", granted_at=same, permissions="rw"))
     session.add(APIKeyZoneModel(key_id=key_id, zone_id="eng", granted_at=same, permissions="rw"))
@@ -166,19 +168,19 @@ def test_get_primary_zones_for_keys_empty_input(session):
 def test_get_primary_zones_for_keys_batch(session):
     a, _ = create_api_key(session, user_id="u1", name="a", zones=["eng"])
     b, _ = create_api_key(session, user_id="u1", name="b", zones=["ops"])
-    c, _ = create_api_key(session, user_id="u1", name="c", zones=[])
+    c, _ = create_api_key(session, user_id="u1", name="c", is_admin=True)  # zoneless
     result = get_primary_zones_for_keys(session, [a, b, c])
     assert result == {a: "eng", b: "ops"}  # c absent (zoneless)
 
 
 def test_get_primary_zones_for_keys_single_query(session):
+    from sqlalchemy import event
     a, _ = create_api_key(session, user_id="u1", name="a", zones=["eng"])
     b, _ = create_api_key(session, user_id="u1", name="b", zones=["ops"])
     seen: list[str] = []
     @event.listens_for(session.bind, "before_cursor_execute")
     def _capture(conn, cursor, statement, *_):  # noqa: ARG001
         seen.append(statement)
-    from sqlalchemy import event  # noqa: E402
     get_primary_zones_for_keys(session, [a, b])
     assert sum(1 for s in seen if "api_key_zones" in s) == 1
 ```
@@ -775,7 +777,8 @@ def test_create_api_key_writes_null_zone_id_for_multi_zone_key(session):
 
 
 def test_create_api_key_writes_null_zone_id_for_zoneless_admin_key(session):
-    key_id, _ = create_api_key(session, user_id="u1", name="root", zones=[])
+    # Zoneless = omit both `zones` and `zone_id` (passing `zones=[]` raises ValueError).
+    key_id, _ = create_api_key(session, user_id="u1", name="root", is_admin=True)
     row = session.get(APIKeyModel, key_id)
     assert row.zone_id is None
 ```
@@ -1246,7 +1249,7 @@ def test_token_list_json_zone_field_is_none_for_zoneless_admin_key(session_facto
     """Zoneless admin keys legitimately have no primary; emit None, not crash."""
     SessionLocal = session_factory_with_keys
     with SessionLocal() as s:
-        create_api_key(s, user_id="u1", name="root", zones=[], is_admin=1)
+        create_api_key(s, user_id="u1", name="root", is_admin=True)  # zoneless
 
     runner = CliRunner()
     result = runner.invoke(hub, ["token", "list", "--json"])

@@ -59,7 +59,7 @@ def mock_dlc():
         "/archives",
         "/external",
         "/shared",
-        "/system",
+        "/__sys__",
         "/workspace",
     ]
     return dlc

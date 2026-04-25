@@ -76,7 +76,7 @@ class TestScopedReadBatchCrossScopeRejection:
     @pytest.mark.asyncio
     def test_system_namespace_raises(self, scoped):
         with pytest.raises(AccessDeniedError):
-            scoped.read_batch(["/system/config.json"])
+            scoped.read_batch(["/__sys__/config.json"])
 
     @pytest.mark.asyncio
     def test_mnt_namespace_raises(self, scoped):

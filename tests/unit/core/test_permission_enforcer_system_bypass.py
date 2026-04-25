@@ -50,7 +50,7 @@ class TestSystemBypassReadOperations:
         assert enforcer.check("/workspace/file.txt", Permission.READ, ctx) is True
         assert enforcer.check("/mnt/gcs/data.csv", Permission.READ, ctx) is True
         assert enforcer.check("/user/alice/private.txt", Permission.READ, ctx) is True
-        assert enforcer.check("/system/config.yaml", Permission.READ, ctx) is True
+        assert enforcer.check("/__sys__/config.yaml", Permission.READ, ctx) is True
 
     def test_system_read_bypasses_rebac(self):
         """System READ operations should bypass ReBAC checks."""
@@ -73,9 +73,9 @@ class TestSystemBypassWriteOperations:
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # Should allow WRITE to /system/* paths
-        assert enforcer.check("/system/config.yaml", Permission.WRITE, ctx) is True
-        assert enforcer.check("/system/cache/data.bin", Permission.WRITE, ctx) is True
-        assert enforcer.check("/system/logs/app.log", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/config.yaml", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/cache/data.bin", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/logs/app.log", Permission.WRITE, ctx) is True
 
     def test_system_cannot_write_to_non_system_paths(self):
         """System CANNOT WRITE to non-/system/* paths (security)."""
@@ -115,8 +115,8 @@ class TestSystemBypassExecuteOperations:
         enforcer = PermissionEnforcer(rebac_manager=MockReBACManager())
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
-        assert enforcer.check("/system/scripts/backup.sh", Permission.EXECUTE, ctx) is True
-        assert enforcer.check("/system/bin/indexer", Permission.EXECUTE, ctx) is True
+        assert enforcer.check("/__sys__/scripts/backup.sh", Permission.EXECUTE, ctx) is True
+        assert enforcer.check("/__sys__/bin/indexer", Permission.EXECUTE, ctx) is True
 
     def test_system_cannot_execute_non_system_scripts(self):
         """System CANNOT EXECUTE scripts outside /system/* (security)."""
@@ -150,7 +150,7 @@ class TestSystemBypassKillSwitch:
             enforcer.check("/any/file.txt", Permission.READ, ctx)
 
         with pytest.raises(PermissionError, match="System bypass disabled"):
-            enforcer.check("/system/config.yaml", Permission.WRITE, ctx)
+            enforcer.check("/__sys__/config.yaml", Permission.WRITE, ctx)
 
     def test_system_bypass_kill_switch_enabled(self):
         """When kill-switch is ON, system operations work normally."""
@@ -161,7 +161,7 @@ class TestSystemBypassKillSwitch:
         assert enforcer.check("/any/file.txt", Permission.READ, ctx) is True
 
         # WRITE on /system/* should work
-        assert enforcer.check("/system/config.yaml", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/config.yaml", Permission.WRITE, ctx) is True
 
 
 class TestSystemBypassAuditLogging:
@@ -288,9 +288,9 @@ class TestSystemBypassEdgeCases:
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
         # All should work
-        assert enforcer.check("/system/file.txt", Permission.WRITE, ctx) is True
-        assert enforcer.check("/system/sub/file.txt", Permission.WRITE, ctx) is True
-        assert enforcer.check("/system/deep/nested/path/file.txt", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/file.txt", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/sub/file.txt", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/deep/nested/path/file.txt", Permission.WRITE, ctx) is True
 
     def test_system_bypass_without_audit_store_works(self):
         """System bypass should work without audit store."""
@@ -302,4 +302,4 @@ class TestSystemBypassEdgeCases:
 
         # Should not raise error
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-        assert enforcer.check("/system/config.yaml", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/config.yaml", Permission.WRITE, ctx) is True

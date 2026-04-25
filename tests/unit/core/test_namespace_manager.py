@@ -179,7 +179,7 @@ class TestNamespaceManagerVisibility:
         assert namespace_manager.is_visible(subject, "/workspace/anything") is False
         assert namespace_manager.is_visible(subject, "/workspace") is False
         assert namespace_manager.is_visible(subject, "/shared/zone1/data") is False
-        assert namespace_manager.is_visible(subject, "/system/config") is False
+        assert namespace_manager.is_visible(subject, "/__sys__/config") is False
 
         # Mount table should be empty
         mount_table = namespace_manager.get_mount_table(subject)

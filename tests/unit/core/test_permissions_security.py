@@ -347,7 +347,7 @@ class TestSystemBypassBehaviour:
         """System context can only write to /system/* paths."""
         enforcer = PermissionEnforcer()
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
-        assert enforcer.check("/system/config.json", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/config.json", Permission.WRITE, ctx) is True
 
     def test_system_write_denied_outside_system_path(self):
         """System context CANNOT write to non-/system/ paths."""
@@ -368,7 +368,7 @@ class TestSystemBypassBehaviour:
         enforcer = PermissionEnforcer(allow_system_bypass=False)
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
         with pytest.raises(PermissionError, match="System bypass disabled"):
-            enforcer.check("/system/file.txt", Permission.READ, ctx)
+            enforcer.check("/__sys__/file.txt", Permission.READ, ctx)
 
     def test_system_bypass_prefix_attack_blocked(self):
         """Paths like /systemdata should NOT match /system/ bypass."""
@@ -381,7 +381,7 @@ class TestSystemBypassBehaviour:
         """Exact /system path (not /system/) is allowed for write."""
         enforcer = PermissionEnforcer()
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
-        assert enforcer.check("/system", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__", Permission.WRITE, ctx) is True
 
 
 # ---------------------------------------------------------------------------

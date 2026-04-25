@@ -523,7 +523,7 @@ class ReBACShareMixin:
             "/skills",
             "/workspace",
             "/shared",
-            "/system",
+            "/__sys__",
             "/archives",
             "/external",
         ]

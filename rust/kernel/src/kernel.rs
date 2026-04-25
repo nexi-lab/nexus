@@ -2852,7 +2852,7 @@ impl Kernel {
                 agent_id: ctx.agent_id.clone().unwrap_or_default(),
                 is_admin: ctx.is_admin,
             },
-            content: content.to_vec(),
+            content: vec![], // no clone — no current hook inspects content
             is_new_file: false,
             content_hash: None,
             new_version: 0,

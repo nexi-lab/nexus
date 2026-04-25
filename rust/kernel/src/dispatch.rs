@@ -299,7 +299,9 @@ pub struct ReadHookCtx {
 pub struct WriteHookCtx {
     pub path: String,
     pub identity: HookIdentity,
-    /// Pre-hook: full payload. Post-hook: empty vec (use size_bytes instead).
+    /// Both pre- and post-hook: empty vec. Hooks that inspect write content
+    /// (e.g. DLP) must opt in explicitly — no content is ever cloned here.
+    /// Use `size_bytes` for byte-count metadata in post-hook context.
     pub content: Vec<u8>,
     pub is_new_file: bool,
     pub content_hash: Option<String>,

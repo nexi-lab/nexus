@@ -276,6 +276,46 @@ class DatabaseAPIKeyAuth(AuthProvider):
         return (api_key.key_id, raw_key)
 
     @classmethod
+    def list_keys(
+        cls, session: Session, user_id: str | None = None, zone_id: str | None = None
+    ) -> list[dict]:
+        """List API keys, optionally filtered by user and/or zone.
+
+        Args:
+            session: SQLAlchemy session.
+            user_id: If provided, only return keys for this user.
+            zone_id: If provided, return keys that grant access to this zone
+                (matches every junction row, not just primary zone).
+
+        Returns:
+            List of dicts with at least {key_id, user_id, name, revoked, expires_at}.
+        """
+        from nexus.storage.models import APIKeyModel
+
+        stmt = select(APIKeyModel)
+        if user_id is not None:
+            stmt = stmt.where(APIKeyModel.user_id == user_id)
+        if zone_id is not None:
+            from nexus.storage.models import APIKeyZoneModel
+
+            stmt = (
+                stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
+                .where(APIKeyZoneModel.zone_id == zone_id)
+                .distinct()
+            )
+        results = session.execute(stmt).scalars().all()
+        return [
+            {
+                "key_id": key.key_id,
+                "user_id": key.user_id,
+                "name": key.name,
+                "revoked": key.revoked,
+                "expires_at": key.expires_at,
+            }
+            for key in results
+        ]
+
+    @classmethod
     def revoke_key(cls, session: Session, key_id: str, *, zone_id: str | None = None) -> bool:
         """Revoke an API key.
 

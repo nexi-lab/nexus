@@ -272,13 +272,15 @@ git commit -m "feat(#3871): get_primary_zone helper (junction-backed primary zon
 
 ---
 
-## Task 2: Migrate `database_key.py::list_keys` filter
+## Task 2: Migrate `database_key.py::DatabaseAPIKeyAuth.revoke_key` filter
 
-**Purpose:** First of four filter migrations. `list_keys(zone_id=…)` in the auth provider must match every key that grants the requested zone, not just keys whose primary is that zone.
+**Purpose:** First of four filter migrations. **Plan correction (2026-04-25):** the F4a audit listed this site as `list_keys`, but no `list_keys` method exists in `database_key.py` on develop post-#3886. The actual `WHERE APIKeyModel.zone_id == zone_id` filter is inside `DatabaseAPIKeyAuth.revoke_key` at line ~295. This task migrates that filter so `revoke_key(key_id, zone_id="ops")` succeeds for any key that grants `ops` access — not just keys whose primary is `ops`.
+
+(The other `revoke_key` site — `SqlAlchemyApiKeyStore.revoke_key` in `sqlalchemy_api_key_store.py` — is a different class in a different file and is migrated by Task 5.)
 
 **Files:**
 - Modify: `src/nexus/bricks/auth/providers/database_key.py`
-- Test: `tests/unit/bricks/auth/providers/test_database_key_junction_filter.py`
+- Test: `tests/unit/bricks/auth/providers/test_database_key_revoke_junction_filter.py`
 
 - [ ] **Step 1: Locate the current filter line**
 
@@ -286,14 +288,14 @@ Run:
 ```bash
 rg -n "APIKeyModel\.zone_id == zone_id" src/nexus/bricks/auth/providers/database_key.py
 ```
-Expected: one hit inside `list_keys`. Note the line number for the edit.
+Expected: one hit inside `revoke_key`. Note the line number for the edit.
 
 - [ ] **Step 2: Write the failing test**
 
-Create `tests/unit/bricks/auth/providers/test_database_key_junction_filter.py`:
+Create `tests/unit/bricks/auth/providers/test_database_key_revoke_junction_filter.py`:
 
 ```python
-"""list_keys zone filter must match every junction row, not just primary (#3871)."""
+"""DatabaseAPIKeyAuth.revoke_key zone filter must match every junction row (#3871)."""
 from __future__ import annotations
 
 import pytest
@@ -302,6 +304,7 @@ from sqlalchemy.orm import Session
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.api_key_ops import create_api_key
+from nexus.storage.models import APIKeyModel
 from nexus.storage.models._base import Base
 from nexus.storage.models.auth import ZoneModel
 
@@ -317,25 +320,36 @@ def session():
         yield s
 
 
-def test_list_keys_zone_filter_matches_every_granted_zone(session):
+def test_revoke_key_zone_filter_matches_multi_zone_key_via_junction(session):
+    """A multi-zone key whose primary is 'eng' must be revocable when caller scopes to 'ops'."""
     multi_id, _ = create_api_key(session, user_id="u1", name="multi", zones=["eng", "ops"])
+
+    revoked = DatabaseAPIKeyAuth.revoke_key(session, multi_id, zone_id="ops")
+    assert revoked is True
+
+    refreshed = session.get(APIKeyModel, multi_id)
+    assert refreshed.revoked == 1
+
+
+def test_revoke_key_zone_filter_rejects_non_member(session):
+    """Caller scoped to a zone the key doesn't grant must NOT revoke."""
     eng_only, _ = create_api_key(session, user_id="u1", name="eng_only", zones=["eng"])
 
-    rows_eng = DatabaseAPIKeyAuth.list_keys(session, zone_id="eng")
-    rows_ops = DatabaseAPIKeyAuth.list_keys(session, zone_id="ops")
+    revoked = DatabaseAPIKeyAuth.revoke_key(session, eng_only, zone_id="ops")
+    assert revoked is False
 
-    assert {r["key_id"] for r in rows_eng} == {multi_id, eng_only}
-    assert {r["key_id"] for r in rows_ops} == {multi_id}
+    refreshed = session.get(APIKeyModel, eng_only)
+    assert refreshed.revoked == 0
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `uv run pytest tests/unit/bricks/auth/providers/test_database_key_junction_filter.py -v`
-Expected: `test_list_keys_zone_filter_matches_every_granted_zone` FAILs because `multi` was not returned for `ops` (its primary is `eng`, so the current `WHERE zone_id = 'ops'` filter misses it).
+Run: `uv run pytest tests/unit/bricks/auth/providers/test_database_key_revoke_junction_filter.py -v`
+Expected: `test_revoke_key_zone_filter_matches_multi_zone_key_via_junction` FAILs (`revoked is False` because the multi-zone key's `APIKeyModel.zone_id` is `eng`, not `ops`).
 
 - [ ] **Step 4: Apply the junction join**
 
-Edit `src/nexus/bricks/auth/providers/database_key.py`. Locate `list_keys` (search: `def list_keys`). Find the block:
+Edit `src/nexus/bricks/auth/providers/database_key.py`. Locate `revoke_key`. Find the block:
 
 ```python
 if zone_id is not None:
@@ -353,28 +367,32 @@ if zone_id is not None:
     )
 ```
 
-(If `APIKeyZoneModel` is already imported at module top, drop the inline import and add it to the module-level import list.)
+(If `APIKeyZoneModel` is already imported at module top, drop the inline import.)
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `uv run pytest tests/unit/bricks/auth/providers/test_database_key_junction_filter.py -v`
-Expected: PASS.
+Run: `uv run pytest tests/unit/bricks/auth/providers/test_database_key_revoke_junction_filter.py -v`
+Expected: 2 PASS.
 
-- [ ] **Step 6: Run the broader auth-provider test file to catch regressions**
+- [ ] **Step 6: Run the broader auth-provider tests for regressions**
 
 Run: `uv run pytest tests/unit/bricks/auth/providers/ -v`
-Expected: all green (or only pre-existing flakes documented in PR #3886).
+Expected: all green (or only pre-existing flakes from #3886).
 
 - [ ] **Step 7: Lint**
 
-Run: `uv run ruff check src/nexus/bricks/auth/providers/database_key.py tests/unit/bricks/auth/providers/test_database_key_junction_filter.py`
+Run:
+```bash
+uv run ruff check src/nexus/bricks/auth/providers/database_key.py tests/unit/bricks/auth/providers/test_database_key_revoke_junction_filter.py
+uv run ruff format --check src/nexus/bricks/auth/providers/database_key.py tests/unit/bricks/auth/providers/test_database_key_revoke_junction_filter.py
+```
 Expected: clean.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/nexus/bricks/auth/providers/database_key.py tests/unit/bricks/auth/providers/test_database_key_junction_filter.py
-git commit -m "feat(#3871): list_keys zone filter via api_key_zones junction"
+git add src/nexus/bricks/auth/providers/database_key.py tests/unit/bricks/auth/providers/test_database_key_revoke_junction_filter.py
+git commit -m "feat(#3871): DatabaseAPIKeyAuth.revoke_key zone filter via junction"
 ```
 
 ---
@@ -509,21 +527,23 @@ git commit -m "feat(#3871): REST list-keys zone filter via junction"
 
 ---
 
-## Task 4: Migrate admin RPC filters (3 statements)
+## Task 4: Migrate admin RPC filters (3 + 1 sites)
 
-**Purpose:** Third filter migration. `server/rpc/handlers/admin.py` has three `WHERE APIKeyModel.zone_id == params.zone_id` statements (list, list_by_zone, revoke). All three need the same junction join.
+**Purpose:** Third filter migration. `server/rpc/handlers/admin.py` has three `WHERE APIKeyModel.zone_id == params.zone_id` statements (list, list_by_zone, revoke) plus one self-zone count query at line ~404 that reads `api_key.zone_id` for the caller's primary zone. All four need the same junction-based fix.
+
+**Plan correction (2026-04-25):** the F4a audit categorized the count site at line 404 as "kept-as-fallback", but after Task 6 stops writing `APIKeyModel.zone_id` the read returns `NULL` for new keys, silently widening the self-demotion guard from per-zone to global. Folding it into Phase 2 prevents the regression. Replacement: read the caller's zone set from the junction via `get_zones_for_key(session, api_key.key_id)`.
 
 **Files:**
 - Modify: `src/nexus/server/rpc/handlers/admin.py`
 - Test: `tests/unit/server/rpc/handlers/test_admin_junction_filter.py`
 
-- [ ] **Step 1: Locate the three filter lines**
+- [ ] **Step 1: Locate every filter line**
 
 Run:
 ```bash
-rg -n "APIKeyModel\.zone_id == (params\.)?zone_id" src/nexus/server/rpc/handlers/admin.py
+rg -n "APIKeyModel\.zone_id" src/nexus/server/rpc/handlers/admin.py
 ```
-Expected: 3 hits. Note the function each one belongs to.
+Expected: 4 hits. Three are `== params.zone_id` (list/list_by_zone/revoke). One is `== api_key.zone_id` (the self-demotion guard count). Note the function each one belongs to.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -580,7 +600,7 @@ def test_admin_list_by_zone_returns_every_member(session_with_keys):
 Run: `uv run pytest tests/unit/server/rpc/handlers/test_admin_junction_filter.py -v`
 Expected: FAILs (multi key not visible under `ops` filter).
 
-- [ ] **Step 4: Apply the junction join at all three sites**
+- [ ] **Step 4: Apply the junction join at all three `params.zone_id` sites**
 
 Edit `src/nexus/server/rpc/handlers/admin.py`. For **each** of the three `if params.zone_id: stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)` blocks, replace with:
 
@@ -594,6 +614,50 @@ if params.zone_id:
 ```
 
 Promote the `APIKeyZoneModel` import to the module top once (drop the inline imports after that).
+
+- [ ] **Step 4b: Migrate the self-demotion guard count (line ~404)**
+
+Find the block (currently around line 403):
+
+```python
+if api_key.zone_id:
+    count_stmt = count_stmt.where(APIKeyModel.zone_id == api_key.zone_id)
+```
+
+Replace with:
+
+```python
+from nexus.storage.api_key_ops import get_zones_for_key
+caller_zones = get_zones_for_key(session, api_key.key_id)
+if caller_zones:
+    from nexus.storage.models import APIKeyZoneModel
+    count_stmt = (
+        count_stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
+                  .where(APIKeyZoneModel.zone_id.in_(caller_zones))
+                  .distinct()
+    )
+```
+
+This preserves the original semantic ("is the caller the last admin in their own zone?") for both single-zone and multi-zone callers. For zoneless admin callers (`get_zones_for_key` returns `[]`), the guard counts global admin keys — same as today's `if api_key.zone_id:` falsy branch.
+
+Add a third assertion to the test:
+
+```python
+def test_admin_update_key_self_demotion_guard_uses_junction(session_with_keys):
+    """The self-demotion guard's per-zone count must source the caller's zones from the junction."""
+    session, multi_id, eng_id = session_with_keys
+    # Create an admin key whose primary is `eng` but who also grants `ops`.
+    admin_id, _ = create_api_key(session, user_id="u1", name="admin", zones=["eng", "ops"], is_admin=True)
+    # Make `eng_id` admin so there are 2 admins in `eng`.
+    session.get(__import__("nexus.storage.models", fromlist=["APIKeyModel"]).APIKeyModel, eng_id).is_admin = 1
+    session.commit()
+
+    # Demoting `admin_id` is allowed (eng still has eng_id as admin); should NOT raise.
+    params = SimpleNamespace(key_id=admin_id, is_admin=False, zone_id=None, name=None, expires_days=None)
+    admin.update_key(session, params)  # adjust to real handler signature
+```
+
+Adjust `admin.update_key` (or whatever the handler that contains line ~404 is named — `rg -n "def " src/nexus/server/rpc/handlers/admin.py | grep -i update` to find).
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -614,7 +678,7 @@ Expected: clean.
 
 ```bash
 git add src/nexus/server/rpc/handlers/admin.py tests/unit/server/rpc/handlers/test_admin_junction_filter.py
-git commit -m "feat(#3871): admin RPC zone filters via junction (3 sites)"
+git commit -m "feat(#3871): admin RPC zone filters via junction (3 + self-demotion guard)"
 ```
 
 ---

@@ -526,6 +526,88 @@ class TestTxtaiBackendConcurrency:
         assert len(seen) == 2
         assert seen[0] is not seen[1]
 
+    def test_native_section_serialises_across_loops(self) -> None:
+        """Issue #3894 review: cross-loop work must not overlap inside the
+        native section, otherwise faiss/SQLAlchemy state can race.
+        """
+        import threading
+        import time as _time
+
+        backend = TxtaiBackend()
+        active = 0
+        max_active = 0
+        active_lock = threading.Lock()
+        errors: list[BaseException] = []
+
+        async def critical() -> None:
+            nonlocal active, max_active
+            async with backend._exclusive():
+                with active_lock:
+                    active += 1
+                    if active > max_active:
+                        max_active = active
+                # Force an interleaving window.
+                await asyncio.sleep(0.05)
+                with active_lock:
+                    active -= 1
+
+        def runner() -> None:
+            try:
+                asyncio.run(critical())
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=runner) for _ in range(4)]
+        t0 = _time.perf_counter()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        elapsed = _time.perf_counter() - t0
+
+        assert errors == [], f"native section raised: {errors!r}"
+        assert max_active == 1, f"cross-loop critical sections overlapped: max={max_active}"
+        # Four sleeps of 0.05s, fully serialised, must take at least ~0.18s.
+        assert elapsed >= 0.18, f"sections did not serialise: elapsed={elapsed:.3f}s"
+
+    def test_startup_runs_once_across_loops(self) -> None:
+        """Issue #3894 review: only one loop should run _startup_impl, even when
+        startup() is called concurrently from multiple loops.
+        """
+        import threading
+
+        backend = TxtaiBackend()
+        impl_calls = 0
+        impl_lock = threading.Lock()
+        errors: list[BaseException] = []
+
+        async def fake_impl() -> None:
+            nonlocal impl_calls
+            with impl_lock:
+                impl_calls += 1
+            # Hold long enough for the other loop to enter startup() and see
+            # _startup_running.
+            await asyncio.sleep(0.1)
+            backend._started = True
+
+        backend._startup_impl = fake_impl
+
+        def runner() -> None:
+            try:
+                asyncio.run(backend.startup())
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=runner) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"startup raised: {errors!r}"
+        assert impl_calls == 1, f"_startup_impl ran {impl_calls} times, expected 1"
+        assert backend._started is True
+
     @pytest.mark.asyncio
     async def test_search_during_shutdown_returns_empty(self) -> None:
         """search() must not dereference None if shutdown() clears _embeddings."""

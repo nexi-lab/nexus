@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
 import time
 import weakref
+from collections.abc import AsyncIterator
 from typing import Any, Protocol, cast, runtime_checkable
 
 from nexus.bricks.search.results import BaseSearchResult
@@ -144,65 +146,107 @@ class TxtaiBackend:
         self._reranker: Any = None
         self.last_rerank_ms: float = 0.0
         self._started = False
-        self._startup_task: asyncio.Task[None] | None = None
         self._reranker_task: asyncio.Task[None] | None = None
         # Path for txtai config.json — needed for pgvector persistence.
         # txtai stores index metadata (dimensions, offset) in a local file
         # and reads it back on load() to reconnect to pgvector tables.
         self._config_path = data_path or "/app/data/.txtai-index"
-        # Per-loop locks (Issue #3894). asyncio.Lock binds to the running loop
-        # on first acquire (Python 3.11+); a single instance reused across loops
-        # raises "bound to a different event loop" and never recovers. Keys are
-        # weak so locks GC with their loop.
+        # Locking strategy (Issue #3894):
+        #   1. Per-loop asyncio.Lock — fair FIFO queueing of coroutines on
+        #      *the same* event loop. Required because asyncio.Lock binds to
+        #      the running loop on first acquire (Python 3.11+); a single
+        #      instance reused from a different loop raises
+        #      "bound to a different event loop" and the daemon wedges.
+        #   2. Process-wide threading.Lock — serialises native txtai/faiss/
+        #      SQLAlchemy work *across* event loops, restoring the global
+        #      mutual-exclusion contract that the original single asyncio.Lock
+        #      provided in single-loop deployments. Acquired inside
+        #      asyncio.to_thread so the event loop never blocks waiting for
+        #      it; threading.Lock permits release from any thread.
         self._locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
             weakref.WeakKeyDictionary()
         )
-        self._startup_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
-            weakref.WeakKeyDictionary()
-        )
+        self._native_lock = threading.Lock()
+        # Startup gate — only one loop runs _startup_impl; others poll
+        # ``_started``. Plain threading.Lock so it is loop-agnostic.
+        self._startup_native_lock = threading.Lock()
+        self._startup_running = False
 
     def _get_lock(self) -> asyncio.Lock:
-        # Serialises access to _embeddings / _reranker on the current loop.
-        # faiss (used by txtai) is NOT thread-safe for concurrent search+write,
-        # and asyncio.to_thread() dispatches to a thread pool, so concurrent
-        # coroutines on the same loop must be serialised here.
+        # Same-loop coroutine fairness layer; cross-loop exclusion is provided
+        # by ``_native_lock`` inside ``_exclusive``.
         loop = asyncio.get_running_loop()
+        # Lazy GC: asyncio.Lock keeps a strong reference to its bound loop after
+        # contention, so the WeakKeyDictionary's weak key alone cannot collect
+        # closed loops. Drop entries whose loop is closed before we lookup.
+        for dead in [k for k in list(self._locks) if k.is_closed()]:
+            self._locks.pop(dead, None)
         lock = self._locks.get(loop)
         if lock is None:
             lock = self._locks.setdefault(loop, asyncio.Lock())
         return lock
 
-    def _get_startup_lock(self) -> asyncio.Lock:
-        loop = asyncio.get_running_loop()
-        lock = self._startup_locks.get(loop)
-        if lock is None:
-            lock = self._startup_locks.setdefault(loop, asyncio.Lock())
-        return lock
+    @contextlib.asynccontextmanager
+    async def _exclusive(self) -> AsyncIterator[None]:
+        """Take the per-loop async lock + the cross-loop native lock.
+
+        Replaces the original ``async with self._lock:`` contract. The native
+        section serialises faiss/SQLAlchemy work across every event loop in
+        the process; the per-loop async lock keeps same-loop coroutines fair
+        without spawning a worker thread per attempt.
+        """
+        async with self._get_lock():
+            await asyncio.to_thread(self._native_lock.acquire)
+            try:
+                yield
+            finally:
+                self._native_lock.release()
 
     async def startup(self) -> None:
-        """Initialize txtai resources once."""
+        """Initialize txtai resources once across any number of event loops."""
         if self._started or self._embeddings is not None:
             if self._embeddings is not None:
                 self._started = True
             return
 
-        async with self._get_startup_lock():
+        # Decide which loop owns initialisation. The threading.Lock makes this
+        # decision atomic across loops; we never hand a Task created on one
+        # loop to a coroutine running on another (which would raise
+        # "Task ... attached to a different loop").
+        should_init = False
+        with self._startup_native_lock:
             if self._started:
                 return
-            if self._startup_task is None or self._startup_task.done():
-                self._startup_task = asyncio.create_task(self._startup_impl())
-            task = self._startup_task
+            if not self._startup_running:
+                self._startup_running = True
+                should_init = True
 
-        await task
+        if should_init:
+            try:
+                await self._startup_impl()
+            finally:
+                with self._startup_native_lock:
+                    self._startup_running = False
+        else:
+            # Another loop owns init; poll until it flips ``_started``. Polling
+            # is intentionally simple — there is no cross-loop async primitive
+            # we can wait on safely.
+            while not self._started:
+                await asyncio.sleep(0.05)
 
     def kickoff_startup(self) -> None:
-        """Begin backend startup in the background without blocking app readiness."""
+        """Begin backend startup in the background without blocking app readiness.
+
+        Spawns a task on the current loop. The new ``startup`` flow uses a
+        threading.Lock gate so concurrent kickoffs from different loops cannot
+        run ``_startup_impl`` more than once — the duplicate callers will
+        observe ``_startup_running`` and poll for completion instead.
+        """
         if self._started or self._embeddings is not None:
             if self._embeddings is not None:
                 self._started = True
             return
-        if self._startup_task is None or self._startup_task.done():
-            self._startup_task = asyncio.create_task(self._startup_impl())
+        asyncio.create_task(self.startup())
 
     @staticmethod
     def _configure_litellm() -> None:
@@ -426,7 +470,7 @@ class TxtaiBackend:
             reranker = await asyncio.to_thread(
                 lambda: Similarity(path=self._reranker_model, crossencode=True)
             )
-            async with self._get_lock():
+            async with self._exclusive():
                 self._reranker = reranker
             logger.info("Reranker initialized: %s", self._reranker_model)
         except Exception:
@@ -435,7 +479,7 @@ class TxtaiBackend:
                 self._reranker_model,
                 exc_info=True,
             )
-            async with self._get_lock():
+            async with self._exclusive():
                 self._reranker = None
 
     async def shutdown(self) -> None:
@@ -445,7 +489,7 @@ class TxtaiBackend:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._reranker_task
         self._reranker_task = None
-        async with self._get_lock():
+        async with self._exclusive():
             self._reranker = None
             if self._embeddings is not None:
                 await asyncio.to_thread(self._save)
@@ -502,7 +546,7 @@ class TxtaiBackend:
 
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
-        async with self._get_lock():
+        async with self._exclusive():
             if not self._embeddings:
                 return 0
             try:
@@ -567,7 +611,7 @@ class TxtaiBackend:
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
 
-        async with self._get_lock():
+        async with self._exclusive():
             if not self._embeddings:
                 return 0
             for attempt in range(2):
@@ -685,7 +729,7 @@ class TxtaiBackend:
             return 0
         await self.startup()
 
-        async with self._get_lock():
+        async with self._exclusive():
             if not self._embeddings:
                 return 0
             try:
@@ -746,7 +790,7 @@ class TxtaiBackend:
         # Concurrent search() and upsert()/index() calls would touch the same
         # mutable DB session from different threads, causing PendingRollback
         # errors and inconsistent results.
-        async with self._get_lock():
+        async with self._exclusive():
             if not self._embeddings:
                 return []
             raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
@@ -814,7 +858,7 @@ class TxtaiBackend:
         # across search and write paths, so concurrent batchsearch + upsert
         # corrupts the session (InFailedSqlTransaction / PendingRollback).
         try:
-            async with self._get_lock():
+            async with self._exclusive():
                 if not self._embeddings:
                     return [[] for _ in queries]
                 raw_results = await asyncio.to_thread(self._embeddings.batchsearch, sqls)
@@ -858,7 +902,7 @@ class TxtaiBackend:
             return results[:limit]
 
         # txtai Similarity returns [(index, score), ...] sorted by score desc
-        async with self._get_lock():
+        async with self._exclusive():
             if not self._reranker:
                 return results[:limit]
             try:
@@ -905,7 +949,7 @@ class TxtaiBackend:
         # Build SQL with zone_id + optional path filter (same as regular search)
         sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=limit)
 
-        async with self._get_lock():
+        async with self._exclusive():
             if not self._embeddings or not getattr(self._embeddings, "graph", None):
                 return []
             # txtai's Embeddings.search() uses graph as boost when graph is configured

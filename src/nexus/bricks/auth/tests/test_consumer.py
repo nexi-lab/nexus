@@ -496,6 +496,55 @@ def test_warm_cache_evicts_when_source_goes_stale(engine):
         consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
 
 
+def test_cross_machine_denial_does_not_decrypt_payload(engine, monkeypatch):
+    """Disallowed cross-machine read must reject BEFORE the envelope is
+    unwrapped — we never want another daemon's plaintext to land in
+    process memory just to be discarded.
+
+    Counts ``encryption.unwrap_count`` and proves it stays at 0 across
+    a denied request. Regression for codex round-7 finding F22.
+    """
+    monkeypatch.delenv("NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ", raising=False)
+    encryption = InMemoryEncryptionProvider()
+    tenant, principal, reader_machine, _ = _setup_cross_machine_envelope(engine, encryption)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    before = encryption.unwrap_count
+    with pytest.raises(MachineUnknownOrRevoked) as exc:
+        consumer.resolve(
+            claims=_claims(tenant, principal, reader_machine), provider="github", purpose="x"
+        )
+    assert exc.value.cause == "cross_machine_read_disallowed"
+    assert encryption.unwrap_count == before, (
+        "DEK was unwrapped despite the cross-machine policy denying the read"
+    )
+
+
+def test_stale_source_does_not_decrypt_payload(engine):
+    """Stale-source rejection on cache miss must reject BEFORE decrypt —
+    a stuck daemon's last envelope must never be materialized just to
+    return 409 stale_source. Regression for codex round-7 finding F22.
+    """
+    encryption = InMemoryEncryptionProvider()
+    tenant = uuid.uuid4()
+    principal = uuid.uuid4()
+    # Seed the row with last_synced_at already past sync_ttl_seconds (300).
+    _seed_github_envelope(
+        engine=engine,
+        tenant_id=tenant,
+        principal_id=principal,
+        encryption=encryption,
+        lsa_offset_seconds=3600,  # one hour stale
+    )
+    machine = _seed_active_machine(engine=engine, tenant_id=tenant, principal_id=principal)
+    consumer = _make_consumer(engine, tenant, principal, encryption=encryption)
+    before = encryption.unwrap_count
+    with pytest.raises(StaleSource):
+        consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
+    assert encryption.unwrap_count == before, (
+        "DEK was unwrapped despite the row being known stale before decrypt"
+    )
+
+
 def test_cache_hit_audit_row_names_real_profile_and_kek_version(engine):
     """Sampled cache-hit audit rows must name the credential that was served
     (profile_id + kek_version from the cached fingerprint), not a sentinel
@@ -657,7 +706,9 @@ def test_cache_hit_evicts_when_profile_disabled_after_caching(engine):
         )
     with pytest.raises(ProfileNotFoundForCaller) as exc:
         consumer.resolve(claims=_claims(tenant, principal, machine), provider="github", purpose="x")
-    assert exc.value.cause == "profile_disabled_or_cooldown"
+    # Unified cause name — assert_profile_active runs at the front of every
+    # request now, raising ProfileNotFound for disable/cooldown/missing alike.
+    assert exc.value.cause == "no_active_profile"
 
 
 def test_resolve_rejects_when_multiple_profiles_for_provider(engine):

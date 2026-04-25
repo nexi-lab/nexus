@@ -221,6 +221,43 @@ class CredentialConsumer:
             engine=self._engine,
         )
 
+    def _enforce_cross_machine(
+        self,
+        *,
+        writer_machine_id: "uuid.UUID | None",
+        claims: "DaemonClaims",
+        provider: str,
+    ) -> None:
+        """Reject cross-machine reads unless the operator opted in.
+
+        Raises ``MachineUnknownOrRevoked(cross_machine_read_disallowed)``
+        when reader != writer and ``NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ``
+        is not enabled. Always logs + metrics on cross-machine reads
+        (allowed or denied) so implicit sharing is visible.
+        """
+        if writer_machine_id is None or writer_machine_id == claims.machine_id:
+            return
+        _logger.warning(
+            "cross_machine_read tenant=%s principal=%s provider=%s reader=%s writer=%s",
+            claims.tenant_id,
+            claims.principal_id,
+            provider,
+            claims.machine_id,
+            writer_machine_id,
+        )
+        CROSS_MACHINE_READS.labels(provider=provider).inc()
+        if os.environ.get("NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ", "").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            raise MachineUnknownOrRevoked.from_row(
+                tenant_id=claims.tenant_id,
+                principal_id=claims.principal_id,
+                provider=provider,
+                cause="cross_machine_read_disallowed",
+            )
+
     def resolve(
         self,
         *,
@@ -230,9 +267,9 @@ class CredentialConsumer:
         force_refresh: bool = False,
     ) -> MaterializedCredential:
         import time
-        from datetime import UTC, datetime, timedelta
+        from datetime import UTC, datetime
 
-        from nexus.bricks.auth.postgres_profile_store import ProfileNotFound
+        from nexus.bricks.auth.postgres_profile_store import ProfileFingerprint, ProfileNotFound
 
         start = time.monotonic()
         cache_label = "miss"
@@ -270,51 +307,54 @@ class CredentialConsumer:
                 machine_id=claims.machine_id,
             )
 
+            # All policy gates run BEFORE decrypt. Without this order, a
+            # disallowed cross-machine read or a stale row would still
+            # cause the server to KMS-unwrap the DEK and AES-GCM decrypt
+            # the payload — pulling another daemon's plaintext into
+            # process memory just to throw it away. Move stale + cross-
+            # machine to the front so the rejection happens against
+            # ciphertext + indexed metadata only.
+            try:
+                fp_pre = self._get_store(claims).assert_profile_active(
+                    principal_id=claims.principal_id,
+                    provider=provider,
+                )
+            except ProfileNotFound as exc:
+                # Cache may have an entry pointing at the now-missing row.
+                self._cred_cache.evict(cache_key)
+                raise ProfileNotFoundForCaller.from_row(
+                    tenant_id=claims.tenant_id,
+                    principal_id=claims.principal_id,
+                    provider=provider,
+                    cause="no_active_profile",
+                ) from exc
+            except (MultipleProfilesForProvider, StaleSource):
+                # Either condition invalidates whatever was cached; evict
+                # before bubbling so the next request goes through the
+                # full miss path against any new state.
+                self._cred_cache.evict(cache_key)
+                raise
+
+            self._enforce_cross_machine(
+                writer_machine_id=fp_pre.writer_machine_id,
+                claims=claims,
+                provider=provider,
+            )
+
             if not force_refresh:
                 entry = self._cred_cache.get(cache_key, now=now)
                 if entry is not None:
-                    # Cache hit must STILL re-check profile state — operator
-                    # disable, automatic cooldown, freshly-pushed ambiguous
-                    # second envelope, stale source, OR a row rewrite by a
-                    # different daemon all need to take effect within ms
-                    # instead of waiting for the cache TTL. The check is one
-                    # indexed query (COUNT FILTER + LIMIT 1); no decrypt,
-                    # no payload read.
-                    try:
-                        current = self._get_store(claims).assert_profile_active(
-                            principal_id=claims.principal_id,
-                            provider=provider,
-                        )
-                    except ProfileNotFound as exc:
-                        self._cred_cache.evict(cache_key)
-                        raise ProfileNotFoundForCaller.from_row(
-                            tenant_id=claims.tenant_id,
-                            principal_id=claims.principal_id,
-                            provider=provider,
-                            cause="profile_disabled_or_cooldown",
-                        ) from exc
-                    except (MultipleProfilesForProvider, StaleSource):
-                        # Stale source on a warm cache means the daemon
-                        # stopped pushing for longer than sync_ttl_seconds —
-                        # serving the cached plaintext would mask a stuck
-                        # daemon. Evict + propagate so the router 409s.
-                        self._cred_cache.evict(cache_key)
-                        raise
-
                     cached_fp = entry.fingerprint
                     # Detect a row rewrite since the cache was primed: a
                     # different profile_id (deleted + replaced), a different
                     # writer machine (another daemon overwrote the same
                     # provider/account), or a bumped last_synced_at (daemon
                     # pushed a fresh envelope, possibly rotating the upstream
-                    # credential). Any difference → cached plaintext is stale
-                    # AND the cross-machine read policy must be re-evaluated
-                    # against the new writer. Evict + fall through to the
-                    # decrypt path which re-applies all policy gates.
+                    # credential). Any difference → cached plaintext is stale.
                     if (
-                        current.profile_id != cached_fp.profile_id
-                        or current.writer_machine_id != cached_fp.writer_machine_id
-                        or current.last_synced_at != cached_fp.last_synced_at
+                        fp_pre.profile_id != cached_fp.profile_id
+                        or fp_pre.writer_machine_id != cached_fp.writer_machine_id
+                        or fp_pre.last_synced_at != cached_fp.last_synced_at
                     ):
                         self._cred_cache.evict(cache_key)
                     else:
@@ -348,16 +388,6 @@ class CredentialConsumer:
                     cause="no_envelope_row",
                 ) from exc
 
-            # Stale-source check: last_synced_at + sync_ttl must be in the future.
-            ttl_window = timedelta(seconds=decrypted.sync_ttl_seconds)
-            if decrypted.last_synced_at + ttl_window < now:
-                raise StaleSource.from_row(
-                    tenant_id=claims.tenant_id,
-                    principal_id=claims.principal_id,
-                    provider=provider,
-                    cause=f"last_synced_at_age={int((now - decrypted.last_synced_at).total_seconds())}s",
-                )
-
             try:
                 materialized = adapter.materialize(decrypted.plaintext)
             except (ValueError, KeyError) as exc:
@@ -368,38 +398,16 @@ class CredentialConsumer:
                     cause=f"{type(exc).__name__}",
                 ) from exc
 
-            # Cross-machine read enforcement: by default the daemon that
-            # reads must be the same daemon that pushed the envelope. A
-            # compromised secondary daemon for the same principal could
-            # otherwise exchange another machine's GitHub PAT or AWS keys
-            # without an explicit sharing grant. Operators with legitimate
-            # fleet patterns (CI runners, multi-bot deployments) can opt
-            # out via NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ=1; we still log
-            # + metric so the implicit sharing is visible.
-            if (
-                decrypted.writer_machine_id is not None
-                and decrypted.writer_machine_id != claims.machine_id
-            ):
-                _logger.warning(
-                    "cross_machine_read tenant=%s principal=%s provider=%s reader=%s writer=%s",
-                    claims.tenant_id,
-                    claims.principal_id,
-                    provider,
-                    claims.machine_id,
-                    decrypted.writer_machine_id,
-                )
-                CROSS_MACHINE_READS.labels(provider=provider).inc()
-                if os.environ.get("NEXUS_AUTH_ALLOW_CROSS_MACHINE_READ", "").lower() not in (
-                    "1",
-                    "true",
-                    "yes",
-                ):
-                    raise MachineUnknownOrRevoked.from_row(
-                        tenant_id=claims.tenant_id,
-                        principal_id=claims.principal_id,
-                        provider=provider,
-                        cause="cross_machine_read_disallowed",
-                    )
+            # Defense-in-depth: re-apply cross-machine policy against the
+            # decrypted row's writer_machine_id. Catches the (rare) race
+            # where the row was rewritten between assert_profile_active
+            # and decrypt_profile — the pre-check passed against the OLD
+            # writer but the row we actually decrypted has a different one.
+            self._enforce_cross_machine(
+                writer_machine_id=decrypted.writer_machine_id,
+                claims=claims,
+                provider=provider,
+            )
 
             # IMPORTANT: write audit BEFORE caching so a failed mandatory
             # cache-miss audit doesn't poison the cache. Without this order,
@@ -417,7 +425,6 @@ class CredentialConsumer:
                 cache_hit=False,
                 kek_version=decrypted.kek_version,
             )
-            from nexus.bricks.auth.postgres_profile_store import ProfileFingerprint
 
             self._cred_cache.put(
                 cache_key,

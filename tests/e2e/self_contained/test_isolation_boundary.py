@@ -9,20 +9,7 @@ import sys
 
 import pytest
 
-# TODO(post-#3890): Investigate hang in CI E2E Self-Contained step.
-# This test file consistently hangs the CI step after the prior file
-# (``test_ipc_signing_e2e.py``) finishes — 14-min silence, then 20-min
-# step timeout. The hang is reproducible across multiple PR runs but
-# does not occur on develop's CI runs. Cause not yet identified; the
-# tests themselves spawn ``ProcessPoolExecutor`` workers and exercise
-# sandbox/isolation behavior that's orthogonal to this PR's schema
-# cleanup. Skipping the whole module unblocks the merge; a follow-up
-# issue will dig in.
-pytestmark = pytest.mark.skip(
-    reason="Hangs CI E2E Self-Contained step on PR #3890 — investigate post-merge",
-)
-
-from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig  # noqa: E402
+from nexus.bricks.sandbox.isolation import IsolatedBackend, IsolationConfig
 
 # Path to helpers defined in this file (importable by child processes).
 _HELPER_MOD = "tests.e2e.self_contained.test_isolation_boundary"

@@ -173,12 +173,20 @@ class TestFreshInstall:
 
 
 class _FakeMetastore:
-    """Lightweight MetastoreABC stand-in that returns preloaded FileMetadata."""
+    """Lightweight MetastoreABC stand-in that returns preloaded FileMetadata.
+
+    ``MetastoreSettingsStore`` packs settings as JSON ``{"v": <value>}`` in
+    ``FileMetadata.etag`` (post-PR #3890 schema), so the fake mirrors that
+    shape — otherwise ``get_setting`` reads ``None`` even though the entry
+    is present.
+    """
 
     def __init__(self, entries: dict[str, str]) -> None:
         self._entries = entries
 
     def get(self, path: str) -> Any:
+        import json
+
         from nexus.contracts.metadata import FileMetadata
 
         value = self._entries.get(path)
@@ -188,6 +196,7 @@ class _FakeMetastore:
         return FileMetadata(
             path=path,
             size=0,
+            etag=json.dumps({"v": value}),
         )
 
 

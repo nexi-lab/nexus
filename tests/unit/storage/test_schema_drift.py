@@ -167,15 +167,14 @@ class TestRoundtripConsistency:
         assert values["posix_uid"] is None
 
     def test_fields_not_yet_in_sql_are_documented(self) -> None:
-        """entry_type and target_zone_id are in proto but not yet in SQL.
+        """Proto fields that are deliberately not persisted in SQL.
 
-        This test documents the gap and will fail when we add the columns,
-        reminding us to update the mapping.
+        Documents the intentional gap; will fail if a new field appears
+        without an explicit mapping decision.
         """
         none_mapped = {k for k, v in PROTO_TO_SQL_FIELD_MAP.items() if v is None}
-        # These are the expected gaps — update this when columns are added
-        assert none_mapped == {"entry_type", "target_zone_id", "ttl_seconds"}, (
-            f"Expected only entry_type, target_zone_id, and ttl_seconds to be unmapped, "
-            f"but got: {none_mapped}. "
-            f"Did you add a column to FilePathModel? Update PROTO_TO_SQL_FIELD_MAP."
+        expected = {"entry_type", "target_zone_id", "ttl_seconds", "last_writer_address"}
+        assert none_mapped == expected, (
+            f"Expected SQL-excluded fields {expected}, got {none_mapped}. "
+            f"Did you add/remove a proto field? Update PROTO_TO_SQL_FIELD_MAP."
         )

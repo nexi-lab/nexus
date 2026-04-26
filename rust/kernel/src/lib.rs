@@ -81,6 +81,7 @@ mod raft_metastore;
 mod rebac;
 mod remote_backend;
 mod remote_metastore;
+pub(crate) mod remote_stream;
 mod replication;
 mod rpc_transport;
 #[cfg(feature = "connectors")]

@@ -2211,6 +2211,46 @@ impl Kernel {
         self.native_hooks.lock().register(hook);
     }
 
+    /// Wire up an `AuditHook` backed by a WAL-replicated DT_STREAM.
+    ///
+    /// Creates a `WalStreamCore` for `stream_path` using the Raft consensus of
+    /// `zone_id`, registers the stream with `StreamManager` (so Python can read
+    /// audit records via `sys_read`), writes the DT_STREAM inode to DCache and
+    /// metastore, and installs the hook into the kernel's native hook registry.
+    ///
+    /// Safe to call after `init_federation_from_env` has loaded the zone.
+    /// The `stream_manager.register` is idempotent — a second call with the
+    /// same path is silently ignored so the hook is not double-installed.
+    pub(crate) fn start_audit_hook(
+        &self,
+        zone_id: &str,
+        stream_path: &str,
+    ) -> Result<(), KernelError> {
+        let zm = self.zone_manager_arc().ok_or_else(|| {
+            KernelError::IOError("start_audit_hook: federation not active (set NEXUS_PEERS)".into())
+        })?;
+        let consensus = zm.registry().get_node(zone_id).ok_or_else(|| {
+            KernelError::IOError(format!("start_audit_hook: zone {zone_id} not loaded"))
+        })?;
+        let runtime = zm.runtime_handle();
+        let wal_consensus: Arc<dyn crate::wal_stream::WalConsensus> =
+            Arc::new(crate::wal_stream::RaftWalConsensus::new(consensus, runtime));
+        let wal_stream = Arc::new(crate::wal_stream::WalStreamCore::new(
+            wal_consensus,
+            stream_path.to_string(),
+        ));
+        // Register with StreamManager — ignore Exists (idempotent re-call).
+        let _ = self.stream_manager.register(
+            stream_path,
+            Arc::clone(&wal_stream) as Arc<dyn crate::stream::StreamBackend>,
+        );
+        // Seed DCache + metastore inode so sys_read can locate the stream.
+        self.write_stream_inode(stream_path, 0);
+        let hook = crate::audit_hook::AuditHook::new(wal_stream);
+        self.register_native_hook(Box::new(hook));
+        Ok(())
+    }
+
     // ── Zone revision counter (§10 A2) ────────────────────────────────
 
     /// Get or create zone revision entry.

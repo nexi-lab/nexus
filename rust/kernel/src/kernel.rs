@@ -2283,7 +2283,7 @@ impl Kernel {
             Arc::clone(&wal_stream) as Arc<dyn crate::stream::StreamBackend>,
         );
         // Seed DCache + metastore inode so sys_read can locate the stream.
-        self.write_stream_inode(stream_path, 0);
+        let _ = self.write_stream_inode(stream_path, 0);
         let hook = crate::audit_hook::AuditHook::new(wal_stream);
         self.register_native_hook(Box::new(hook));
         Ok(())

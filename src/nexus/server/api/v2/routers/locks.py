@@ -39,7 +39,7 @@ def _get_nexus_fs(request: Request) -> Any:
 
 
 def _normalize_mode(mode: str) -> str:
-    """Map API lock modes to AdvisoryLockManager modes."""
+    """Map API lock modes to kernel advisory lock modes."""
     mode_norm = (mode or "mutex").strip().lower()
     if mode_norm in {"shared", "read", "reader"}:
         return "shared"

@@ -833,7 +833,10 @@ class TxtaiBackend:
 
         # Over-fetch when reranker is available so it has enough candidates.
         # 2x balances rerank quality vs CPU latency (~10ms per candidate).
-        fetch_limit = limit * 2 if self._reranker else limit
+        # Issue #3900: also over-fetch in hybrid mode where txtai's BM25 and
+        # dense scorers can each emit the same id, so a `limit`-row page can
+        # collapse to <limit unique results after dedupe.
+        fetch_limit = limit * 2 if (self._reranker or search_type == "hybrid") else limit
 
         sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit)
         # Even with pgvector, we must serialize against writes because txtai
@@ -846,8 +849,19 @@ class TxtaiBackend:
                 return []
             raw: list[dict[str, Any]] = await self._run_native(self._embeddings.search, sql)
 
-        results: list[BaseSearchResult] = []
+        # Issue #3900: in hybrid mode, txtai concatenates BM25 and dense
+        # rankings without dedup, so the same id can appear twice. Collapse
+        # by id, keeping the highest score. The over-fetch above ensures we
+        # still have enough unique rows to fill the caller's limit.
+        deduped: dict[str, dict[str, Any]] = {}
         for r in raw:
+            key = str(r.get("id", "")) or f"{r.get('path', '')}:{r.get('text', '')}"
+            existing = deduped.get(key)
+            if existing is None or float(r.get("score", 0.0)) > float(existing.get("score", 0.0)):
+                deduped[key] = r
+
+        results: list[BaseSearchResult] = []
+        for r in deduped.values():
             score = float(r.get("score", 0.0))
             result = BaseSearchResult(
                 path=r.get("path", ""),
@@ -862,6 +876,10 @@ class TxtaiBackend:
                 result.keyword_score = score
                 result.vector_score = score
             results.append(result)
+
+        # Sort by score desc so the post-dedupe slice keeps the best rows
+        # when over-fetch returned more unique ids than the caller asked for.
+        results.sort(key=lambda r: r.score, reverse=True)
 
         # Cross-encoder reranking
         if self._reranker and results:
@@ -896,12 +914,20 @@ class TxtaiBackend:
 
         # Build SQL queries — txtai's batchsearch handles embedding internally
         # in one batch call to litellm (which calls OpenAI once with all texts)
+        # Issue #3900: hybrid mode emits the same id twice (BM25 + dense), so
+        # over-fetch and dedupe-then-slice to honour the caller's limit.
         sqls = []
+        per_query_limits: list[int] = []
         for q_spec in queries:
             q_text = q_spec.get("q", "")
             limit = int(q_spec.get("limit", 10))
+            per_query_limits.append(limit)
             path_filter = q_spec.get("path")
-            sql = _build_search_sql(q_text, zone_id=zone_id, path_filter=path_filter, limit=limit)
+            q_type = str(q_spec.get("type", "hybrid"))
+            fetch_limit = limit * 2 if q_type == "hybrid" else limit
+            sql = _build_search_sql(
+                q_text, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit
+            )
             sqls.append(sql)
 
         # txtai.batchsearch() embeds all queries in ONE API call internally.
@@ -918,13 +944,24 @@ class TxtaiBackend:
             await self._run_native(self._rollback_db_sessions)
             return [[] for _ in queries]
 
-        # Convert each query's raw results into BaseSearchResult lists
+        # Convert each query's raw results into BaseSearchResult lists.
+        # Issue #3900: dedupe by id so hybrid BM25+dense rows don't surface
+        # the same chunk twice; sort by score and slice to the per-query
+        # limit so over-fetched candidates are trimmed to the caller's ask.
         all_results: list[list[BaseSearchResult]] = []
-        for raw in raw_results:
-            results: list[BaseSearchResult] = []
+        for raw, q_limit in zip(raw_results, per_query_limits, strict=True):
+            deduped: dict[str, dict[str, Any]] = {}
             for r in raw:
                 if not isinstance(r, dict):
                     continue
+                key = str(r.get("id", "")) or f"{r.get('path', '')}:{r.get('text', '')}"
+                existing = deduped.get(key)
+                if existing is None or float(r.get("score", 0.0)) > float(
+                    existing.get("score", 0.0)
+                ):
+                    deduped[key] = r
+            results: list[BaseSearchResult] = []
+            for r in deduped.values():
                 score = float(r.get("score", 0.0))
                 results.append(
                     BaseSearchResult(
@@ -935,7 +972,8 @@ class TxtaiBackend:
                         vector_score=score,
                     )
                 )
-            all_results.append(results)
+            results.sort(key=lambda r: r.score, reverse=True)
+            all_results.append(results[:q_limit])
 
         return all_results
 
@@ -997,8 +1035,11 @@ class TxtaiBackend:
         """
         await self.startup()
 
-        # Build SQL with zone_id + optional path filter (same as regular search)
-        sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=limit)
+        # Build SQL with zone_id + optional path filter (same as regular search).
+        # Issue #3900: graph mode runs on top of hybrid retrieval, so the same
+        # id can appear twice; over-fetch and dedupe-then-slice to honour limit.
+        fetch_limit = limit * 2
+        sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit)
 
         async with self._exclusive():
             if not self._embeddings or not getattr(self._embeddings, "graph", None):
@@ -1006,8 +1047,17 @@ class TxtaiBackend:
             # txtai's Embeddings.search() uses graph as boost when graph is configured
             raw: list[dict[str, Any]] = await self._run_native(self._embeddings.search, sql)
 
-        results: list[BaseSearchResult] = []
+        # Issue #3900: dedupe by id so hybrid BM25+dense rows don't surface
+        # the same chunk twice in graph-augmented mode either.
+        deduped: dict[str, dict[str, Any]] = {}
         for r in raw:
+            key = str(r.get("id", "")) or f"{r.get('path', '')}:{r.get('text', '')}"
+            existing = deduped.get(key)
+            if existing is None or float(r.get("score", 0.0)) > float(existing.get("score", 0.0)):
+                deduped[key] = r
+
+        results: list[BaseSearchResult] = []
+        for r in deduped.values():
             score = float(r.get("score", 0.0))
             results.append(
                 BaseSearchResult(
@@ -1018,7 +1068,8 @@ class TxtaiBackend:
                     vector_score=score,
                 )
             )
-        return results
+        results.sort(key=lambda r: r.score, reverse=True)
+        return results[:limit]
 
     async def get_entity_neighbors(
         self,

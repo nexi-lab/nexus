@@ -16,6 +16,7 @@ mod agent_registry;
 mod anthropic_backend;
 #[cfg(feature = "connectors")]
 pub mod anthropic_streaming;
+pub mod audit_hook;
 pub mod backend;
 mod bitmap;
 mod blob_fetcher;
@@ -43,6 +44,7 @@ mod hash;
 mod hn_backend;
 mod hook_registry;
 mod io;
+pub mod ipc;
 mod kernel;
 pub mod lock_manager;
 pub mod locks;
@@ -61,6 +63,8 @@ pub mod generated_pyo3;
 // are zero-PyO3 fast-paths; Call still uses a PyO3 callback into the
 // Python `dispatch_method` pending the broader 195-service migration.
 pub mod grpc_server;
+#[cfg(feature = "nostr")]
+pub mod nostr_relay;
 #[cfg(feature = "connectors")]
 mod openai_backend;
 #[cfg(feature = "connectors")]
@@ -77,6 +81,7 @@ mod raft_metastore;
 mod rebac;
 mod remote_backend;
 mod remote_metastore;
+pub(crate) mod remote_stream;
 mod replication;
 mod rpc_transport;
 #[cfg(feature = "connectors")]

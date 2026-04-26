@@ -3127,6 +3127,84 @@ impl PyKernel {
         })?;
         Ok(i64::from_be_bytes(arr))
     }
+
+    // ── Replication scanner ─────────────────────────────────────────────
+
+    /// Start a background replication scanner for `zone_id`.
+    ///
+    /// `policies_json` is a JSON array:
+    /// `[{"path_prefix":"/p","target":{"type":"all_voters"}}]`
+    /// target.type: `"all_voters"` | `"mount"` (+ `"mount"` field) | `"nodes"` (+ `"addrs"` list).
+    ///
+    /// Returns `True` on success, raises `ValueError` on bad JSON.
+    fn start_replication_scanner(
+        &self,
+        zone_id: &str,
+        policies_json: &str,
+        interval_ms: u64,
+    ) -> PyResult<bool> {
+        use crate::replication::{MountReplicationPolicy, ReplicationScanner, ReplicationTarget};
+        use serde_json::Value;
+
+        let raw: Vec<Value> = serde_json::from_str(policies_json).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "start_replication_scanner: invalid policies_json: {e}"
+            ))
+        })?;
+
+        let mut policies = Vec::with_capacity(raw.len());
+        for item in raw {
+            let prefix = item["path_prefix"]
+                .as_str()
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "start_replication_scanner: missing path_prefix",
+                    )
+                })?
+                .to_string();
+            let target_obj = &item["target"];
+            let target_type = target_obj["type"].as_str().unwrap_or("all_voters");
+            let target = match target_type {
+                "mount" => {
+                    let mount = target_obj["mount"].as_str().unwrap_or("").to_string();
+                    ReplicationTarget::Mount(mount)
+                }
+                "nodes" => {
+                    let addrs = target_obj["addrs"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    ReplicationTarget::Nodes(addrs)
+                }
+                _ => ReplicationTarget::AllVoters,
+            };
+            policies.push(MountReplicationPolicy {
+                path_prefix: prefix,
+                target,
+            });
+        }
+
+        let scanner = std::sync::Arc::new(ReplicationScanner::new(interval_ms, zone_id, policies));
+        scanner.start(std::sync::Arc::clone(&self.inner));
+        Ok(true)
+    }
+
+    // ── Audit hook ─────────────────────────────────────────────────────
+
+    /// Install an AuditHook backed by a WAL DT_STREAM at `stream_path`.
+    ///
+    /// The zone identified by `zone_id` must already be loaded and have an
+    /// active Raft consensus node.  Raises `RuntimeError` if the zone is not
+    /// found or federation is not active.
+    fn start_audit_hook(&self, zone_id: &str, stream_path: &str) -> PyResult<()> {
+        self.inner
+            .start_audit_hook(zone_id, stream_path)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))
+    }
 }
 
 // ── Private: hook dispatch (wrapper-only) ───────────────────────────────

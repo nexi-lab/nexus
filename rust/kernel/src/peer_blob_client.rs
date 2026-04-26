@@ -184,6 +184,63 @@ impl PeerBlobClient {
         let fut = self.fetch_blob_async(address, content_hash);
         self.runtime.block_on(fut)
     }
+
+    /// Fetch a file by VFS path from a peer's NexusVFSService gRPC endpoint
+    /// (port 2028).  Used by the path-first replication scanner to pull content
+    /// that has been replicated to a peer's metastore but not yet locally stored.
+    ///
+    /// `peer_vfs_addr` is the peer's VFS gRPC endpoint (`host:port` or
+    /// `scheme://host:port`).  The channel pool is shared with `fetch_blob_async`
+    /// so TLS material installed via `install_tls_config` applies here too.
+    pub(crate) async fn fetch_path_async(
+        &self,
+        peer_vfs_addr: &str,
+        path: &str,
+    ) -> Result<Vec<u8>, String> {
+        let _global_permit = self
+            .global_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| format!("global semaphore closed: {e}"))?;
+        let per_peer = self.per_peer_semaphore(peer_vfs_addr);
+        let _peer_permit = per_peer
+            .acquire_owned()
+            .await
+            .map_err(|e| format!("per-peer semaphore closed: {e}"))?;
+
+        let channel = self.channel_for(peer_vfs_addr).await?;
+        let mut client =
+            crate::kernel::vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(channel)
+                .max_decoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES)
+                .max_encoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES);
+        let mut request = tonic::Request::new(crate::kernel::vfs_proto::ReadRequest {
+            path: path.to_string(),
+            auth_token: String::new(),
+            content_id: String::new(),
+        });
+        request.set_timeout(self.timeout);
+
+        let resp = client
+            .read(request)
+            .await
+            .map_err(|e| format!("VFS Read {} path {}: {}", peer_vfs_addr, path, e))?
+            .into_inner();
+        if resp.is_error {
+            let msg = String::from_utf8_lossy(&resp.error_payload).to_string();
+            return Err(format!(
+                "VFS Read {} path {} error: {}",
+                peer_vfs_addr, path, msg
+            ));
+        }
+        Ok(resp.content)
+    }
+
+    /// Blocking sync wrapper for `fetch_path_async`. Safe to call from any thread.
+    pub(crate) fn fetch_path(&self, peer_vfs_addr: &str, path: &str) -> Result<Vec<u8>, String> {
+        let fut = self.fetch_path_async(peer_vfs_addr, path);
+        self.runtime.block_on(fut)
+    }
 }
 
 /// Build the kernel-owned multi-threaded runtime. Two workers is plenty for

@@ -48,14 +48,18 @@ tracing = "0.1"
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false, optional = true }
 hmac = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
-futures-util = { version = "0.3", default-features = false, optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
+tokio-tungstenite = { version = "0.26", optional = true }
+k256 = { version = "0.13", features = ["schnorr"], optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+base64 = "0.22"
 mimalloc = { workspace = true, optional = true }
 
 [features]
 default = ["mimalloc", "connectors", "py-hook-adapters"]
 mimalloc = ["dep:mimalloc"]
 connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
+nostr = ["dep:tokio-tungstenite", "dep:k256", "dep:sha2", "dep:futures-util"]
 # §11 Phase 14: Python hook/resolver adapters. Enabled by default (POST hooks
 # still use PyInterceptHookAdapter). Disable to compile out all Python-to-Rust
 # adapter bridging — requires ALL hooks to be NativeInterceptHook impls.

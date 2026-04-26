@@ -1,27 +1,66 @@
 //! ContentReplicationService — pure Rust replication scanner (§10 E1).
 //!
-//! Background scan loop: metastore range scan → check local CAS → gRPC ReadBlob
-//! → ObjectStore write. All components already Rust.
+//! Background scan loop: metastore range scan → policy lookup → gRPC fetch
+//! or intra-node copy.  Policy resolution is injected at construction via
+//! `MountReplicationPolicy` (matches Python `ReplicationPolicyResolver`
+//! longest-prefix semantics).  All components already Rust.
 //!
-//! Policy resolution can remain Python initially (injected via callback).
-//! Launched as background task via tokio runtime (already in kernel for gRPC).
-
-#![allow(dead_code)]
+//! Launched as a background thread; stop via `ReplicationScanner::stop()`.
 
 use crate::kernel::OperationContext;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+// ── Policy types ────────────────────────────────────────────────────────────
+
+/// Where replicated content should be sent / pulled from.
+#[allow(dead_code)]
+pub(crate) enum ReplicationTarget {
+    /// Replicate to / pull from all Raft voters in the zone.
+    AllVoters,
+    /// Replicate to / pull from specific peer VFS addresses (host:port).
+    Nodes(Vec<String>),
+    /// Intra-node copy to another local mount path.
+    Mount(String),
+}
+
+/// Replication policy for a single path prefix.
+#[allow(dead_code)]
+pub(crate) struct MountReplicationPolicy {
+    /// VFS path prefix this policy applies to (e.g. `/zone1/data`).
+    pub path_prefix: String,
+    /// Target for replication.
+    pub target: ReplicationTarget,
+}
+
+// ── Longest-prefix resolver ─────────────────────────────────────────────────
+
+/// Return the policy whose `path_prefix` is the longest prefix of `path`,
+/// or `None` if no policy matches.  Mirrors `ReplicationPolicyResolver.get_policy()`.
+#[allow(dead_code)]
+fn resolve_policy<'a>(
+    path: &str,
+    policies: &'a [MountReplicationPolicy],
+) -> Option<&'a MountReplicationPolicy> {
+    policies
+        .iter()
+        .filter(|p| path.starts_with(&p.path_prefix))
+        .max_by_key(|p| p.path_prefix.len())
+}
+
+// ── Scanner ─────────────────────────────────────────────────────────────────
+
 /// Replication scanner — scans metastore for entries needing replication.
 pub(crate) struct ReplicationScanner {
     /// Scan interval in milliseconds.
+    #[allow(dead_code)]
     interval_ms: u64,
-    /// Zone ID to scan.
+    /// Zone ID to scan (used as metastore prefix and OperationContext zone).
+    #[allow(dead_code)]
     zone_id: String,
-    /// Source mount point (where to read content from).
-    source_mount: String,
-    /// Target mount point (where to replicate content to).
-    target_mount: String,
+    /// Ordered list of mount replication policies (longest-prefix wins).
+    #[allow(dead_code)]
+    policies: Vec<MountReplicationPolicy>,
     /// Running flag — set to false to stop the background loop.
     running: Arc<AtomicBool>,
     /// Counters for monitoring.
@@ -32,17 +71,19 @@ pub(crate) struct ReplicationScanner {
 }
 
 impl ReplicationScanner {
+    /// Construct a new scanner.  `policies` is evaluated in longest-prefix
+    /// order on every scan; callers supply the full list (Python side reads
+    /// mount configs and serialises them as JSON).
+    #[allow(dead_code)]
     pub(crate) fn new(
         interval_ms: u64,
         zone_id: &str,
-        source_mount: &str,
-        target_mount: &str,
+        policies: Vec<MountReplicationPolicy>,
     ) -> Self {
         Self {
             interval_ms,
             zone_id: zone_id.to_string(),
-            source_mount: source_mount.to_string(),
-            target_mount: target_mount.to_string(),
+            policies,
             running: Arc::new(AtomicBool::new(false)),
             scanned_count: Arc::new(AtomicU64::new(0)),
             replicated_count: Arc::new(AtomicU64::new(0)),
@@ -51,13 +92,19 @@ impl ReplicationScanner {
         }
     }
 
-    /// Run one scan-and-replicate pass using the kernel.
+    /// Run one scan-and-replicate pass.
     ///
-    /// 1. metastore.list(zone_prefix) — get all entries
-    /// 2. For each entry with etag: check if content exists in target
-    /// 3. If missing: read from source → write to target
+    /// Semantics (path-first, matching Python `ContentReplicationService`):
     ///
-    /// Returns (scanned, replicated, errors).
+    /// 1. `metastore.list(zone_prefix)` — get all entries (no etag skip).
+    /// 2. `resolve_policy(entry.path)` — skip entries with no policy.
+    /// 3. Dispatch by target type:
+    ///    - `Mount(m)`: intra-node `sys_read` → `sys_write` (router picks mount).
+    ///    - `Nodes(addrs)` / `AllVoters`: `PeerBlobClient::fetch_path` from the
+    ///      first responsive peer → `sys_write` locally.
+    ///
+    /// Returns `(scanned, replicated, errors)`.
+    #[allow(dead_code)]
     pub(crate) fn scan_and_replicate(
         &self,
         kernel: &crate::kernel::Kernel,
@@ -75,36 +122,50 @@ impl ReplicationScanner {
 
         for entry in &entries {
             scanned += 1;
-            let _etag = match &entry.etag {
-                Some(e) if !e.is_empty() => e.clone(),
-                _ => continue, // No content to replicate
+
+            let policy = match resolve_policy(&entry.path, &self.policies) {
+                Some(p) => p,
+                None => continue,
             };
 
-            // Check if content exists in target mount
-            let target_read = kernel.route(&entry.path, &self.zone_id);
-            if target_read.is_err() {
-                continue; // Not routable to target
-            }
-
-            // Try reading from source
-            let content = match kernel.sys_read(&entry.path, &ctx) {
-                Ok(r) => match r.data {
-                    Some(data) => data,
-                    None => continue,
-                },
-                Err(_) => continue,
-            };
-
-            // Write to target (the router will pick the target mount based on routing)
-            match kernel.sys_write(&entry.path, &ctx, &content, 0) {
-                Ok(r) if r.hit => {
-                    replicated += 1;
+            match &policy.target {
+                ReplicationTarget::Mount(_m) => {
+                    // Intra-node: read from source, write to same path (router
+                    // selects the appropriate mount based on its routing table).
+                    let content = match kernel.sys_read(&entry.path, &ctx) {
+                        Ok(r) => match r.data {
+                            Some(data) => data,
+                            None => continue,
+                        },
+                        Err(_) => continue,
+                    };
+                    match kernel.sys_write(&entry.path, &ctx, &content, 0) {
+                        Ok(r) if r.hit => replicated += 1,
+                        Ok(_) => errors += 1,
+                        Err(_) => errors += 1,
+                    }
                 }
-                Ok(_) => {
-                    errors += 1;
+
+                ReplicationTarget::Nodes(addrs) => {
+                    // Pull from the first peer that responds, store locally.
+                    let fetched = addrs
+                        .iter()
+                        .find_map(|addr| kernel.peer_client.fetch_path(addr, &entry.path).ok());
+                    match fetched {
+                        Some(content) => match kernel.sys_write(&entry.path, &ctx, &content, 0) {
+                            Ok(r) if r.hit => replicated += 1,
+                            Ok(_) => errors += 1,
+                            Err(_) => errors += 1,
+                        },
+                        None => errors += 1,
+                    }
                 }
-                Err(_) => {
-                    errors += 1;
+
+                ReplicationTarget::AllVoters => {
+                    // Voter address discovery requires access to ZoneManager,
+                    // which is not yet plumbed into ReplicationScanner.  Use
+                    // Nodes(addrs) with explicit addresses for now.
+                    // TODO(replication): resolve voter list from zone_manager.
                 }
             }
         }
@@ -126,11 +187,9 @@ impl ReplicationScanner {
 
     /// Start the background scan loop in a dedicated thread.
     ///
-    /// The loop runs until `stop()` is called. Each iteration:
-    /// 1. Sleeps for `interval_ms`
-    /// 2. Calls `scan_and_replicate(kernel)`
-    ///
-    /// Thread-safe: the kernel Arc is shared, scanner stats are atomic.
+    /// The thread holds an `Arc<Self>` so the scanner stays alive until `stop()`
+    /// is called and the current sleep expires.
+    #[allow(dead_code)]
     pub(crate) fn start(self: &Arc<Self>, kernel: Arc<crate::kernel::Kernel>) {
         if self.running.swap(true, Ordering::SeqCst) {
             return; // Already running
@@ -152,16 +211,19 @@ impl ReplicationScanner {
     }
 
     /// Check if the scanner is running.
+    #[allow(dead_code)]
     pub(crate) fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
 
-    /// Signal the scanner to stop.
+    /// Signal the scanner to stop (takes effect after the current sleep expires).
+    #[allow(dead_code)]
     pub(crate) fn stop(&self) {
         self.running.store(false, Ordering::Relaxed);
     }
 
     /// Get stats: (scanned, replicated, errors, last_scan_ms).
+    #[allow(dead_code)]
     pub(crate) fn stats(&self) -> (u64, u64, u64, u64) {
         (
             self.scanned_count.load(Ordering::Relaxed),

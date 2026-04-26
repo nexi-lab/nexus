@@ -667,58 +667,51 @@ class MetadataMixin:
         if _handled:
             return _result
 
-        # ── Call Rust first — handles DT_REG, DT_PIPE, DT_STREAM ────
+        # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        _unlink_result = self._kernel.sys_unlink(path, _rust_ctx)
+        _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
 
         if _unlink_result.hit:
-            # Rust handled: DT_REG (file delete), DT_PIPE (pipe destroy),
-            # DT_STREAM (stream destroy). Fire POST-hooks and return.
+            # Rust handled the full operation (§12e: DT_DIR inlined via sys_rmdir).
             if _unlink_result.post_hook_needed:
-                from nexus.contracts.vfs_hooks import DeleteHookContext
+                et = _unlink_result.entry_type
+                if et == DT_DIR:
+                    from nexus.contracts.vfs_hooks import RmdirHookContext
 
-                self._kernel.dispatch_post_hooks(
-                    "delete",
-                    DeleteHookContext(
-                        path=path,
-                        context=context,
-                        zone_id=zone_id,
-                        agent_id=agent_id,
-                    ),
-                )
+                    ctx = self._resolve_cred(context)
+                    self._kernel.dispatch_post_hooks(
+                        "rmdir",
+                        RmdirHookContext(
+                            path=path,
+                            context=ctx,
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            recursive=recursive,
+                        ),
+                    )
+                else:
+                    from nexus.contracts.vfs_hooks import DeleteHookContext
+
+                    self._kernel.dispatch_post_hooks(
+                        "delete",
+                        DeleteHookContext(
+                            path=path,
+                            context=context,
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                        ),
+                    )
             return {}
 
-        # ── Rust miss: branch on entry_type ──────────────────────────
+        # ── Rust miss: only DT_EXTERNAL_STORAGE (5) or not-found ─────
         et = _unlink_result.entry_type
         if et == 0:
-            # Not found in metastore/dcache
             raise NexusFileNotFoundError(path)
 
-        # DT_DIR: delegate to Rust sys_rmdir (recursive child delete,
-        # backend rmdir, dcache evict, observer dispatch).
-        from nexus.contracts.metadata import DT_DIR as _DT_DIR
-
-        if et == _DT_DIR:
-            _rmdir_result = self._kernel.sys_rmdir(path, _rust_ctx, recursive)
-            if _rmdir_result.post_hook_needed:
-                from nexus.contracts.vfs_hooks import RmdirHookContext
-
-                ctx = self._resolve_cred(context)
-                self._kernel.dispatch_post_hooks(
-                    "rmdir",
-                    RmdirHookContext(
-                        path=path,
-                        context=ctx,
-                        zone_id=zone_id,
-                        agent_id=agent_id,
-                        recursive=recursive,
-                    ),
-                )
-            return {}
-
-        # DT_MOUNT (2) / DT_EXTERNAL_STORAGE (5): unmount via DLC (Python service-tier)
-        if et in (2, 5):
+        # DT_EXTERNAL_STORAGE (5): unmount via DLC (Python service-tier,
+        # connector teardown / token revocation).
+        if et == 5:
             ctx = self._resolve_cred(context)
             from nexus.contracts.vfs_hooks import RmdirHookContext
 
@@ -726,7 +719,7 @@ class MetadataMixin:
             removed = self._driver_coordinator.unmount(path)
             if removed:
                 self.metadata.delete(path)
-                logger.info("sys_unlink: unmounted %s", path)
+                logger.info("sys_unlink: unmounted external connector %s", path)
             return {}
 
         # Unknown entry type — should not happen
@@ -877,30 +870,15 @@ class MetadataMixin:
             )
             self._kernel.dispatch_post_hooks("copy", _copy_ctx)
 
-        if _copy_result.hit:
-            return {
-                "src_path": src_path,
-                "dst_path": dst_path,
-                "size": _copy_result.size,
-                "etag": _copy_result.etag,
-                "version": _copy_result.version,
-            }
-
-        # Python fallback — Rust sys_copy returned miss (should be rare)
-        logger.debug("sys_copy miss for %s → %s, falling back to Python", src_path, dst_path)
-        if self.metadata.exists(dst_path):
-            raise FileExistsError(f"Destination path already exists: {dst_path}")
-
-        # Read source content and write to destination (no VFS lock needed —
-        # Rust kernel handles I/O locking internally via sys_read/sys_write).
-        src_content = self.sys_read(src_path, context=context)
-        write_result = self.write(dst_path, src_content, context=context)
+        # §12e: Rust sys_copy now raises KernelError for non-regular files
+        # (DT_DIR, DT_PIPE, DT_STREAM) instead of returning hit=false.
+        # No Python fallback needed.
         return {
             "src_path": src_path,
             "dst_path": dst_path,
-            "size": len(src_content),
-            "etag": write_result.get("etag"),
-            "version": write_result.get("version"),
+            "size": _copy_result.size,
+            "etag": _copy_result.etag,
+            "version": _copy_result.version,
         }
 
     # ── Tier 2 metadata ──────────────────────────────────────────────

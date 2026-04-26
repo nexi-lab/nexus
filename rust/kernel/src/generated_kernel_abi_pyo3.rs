@@ -2362,12 +2362,13 @@ impl PyKernel {
 
     // ── sys_unlink ────────────────────────────────────────────────────
 
-    #[pyo3(signature = (path, ctx))]
+    #[pyo3(signature = (path, ctx, recursive=false))]
     fn sys_unlink(
         &self,
         py: Python<'_>,
         path: &str,
         ctx: &PyOperationContext,
+        recursive: bool,
     ) -> PyResult<PySysUnlinkResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("delete") {
@@ -2382,7 +2383,7 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_unlink(path, &rust_ctx));
+        let result = py.detach(|| self.inner.sys_unlink(path, &rust_ctx, recursive));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysUnlinkResult {

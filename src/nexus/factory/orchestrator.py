@@ -596,13 +596,8 @@ def _register_vfs_hooks(
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # FileWatcher is now Rust kernel-internal (sys_watch + dispatch_observers).
     # No Python FileWatcher registration needed.
-
-    # Remote watcher: default StreamRemoteWatcher (DT_STREAM, no external deps).
-    from nexus.core.remote_watcher import StreamEventObserver, StreamRemoteWatcher
-
-    _stream_watcher = StreamRemoteWatcher(nx)
-    _stream_observer = StreamEventObserver(_stream_watcher)
-    _enlist("stream_event_observer", _stream_observer)
+    # StreamRemoteWatcher/StreamEventObserver also Rust kernel-internal
+    # (stream_observer.rs MutationObserver). No Python wiring needed.
 
     # EventBus (optional): NATS/Dragonfly for distributed pub/sub.
     _event_bus = None

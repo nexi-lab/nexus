@@ -4,7 +4,7 @@ Services-tier wrapper for naming clarity. EventBusBase already satisfies
 RemoteWatchProtocol — this class makes the role explicit and allows
 future extension (e.g. filtered subscriptions, backpressure).
 
-See: core/remote_watcher.py for StreamRemoteWatcher (kernel-tier default).
+See: Rust kernel stream_observer.rs for kernel-tier event dispatch.
 """
 
 from __future__ import annotations

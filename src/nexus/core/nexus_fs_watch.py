@@ -2,8 +2,7 @@
 
 Tier 1: sys_watch (blocking wait for file changes)
 
-Delegates to kernel FileWatcher primitive which races local OBSERVE
-(in-memory futures, ~0µs) and optional remote watcher (federation).
+Delegates to Rust kernel sys_watch (FileWatchRegistry.wait_for_event).
 """
 
 from __future__ import annotations
@@ -15,14 +14,11 @@ from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.file_watcher import FileWatcher
 
 
 class WatchMixin:
-    """File watching: sys_watch → FileWatcher."""
+    """File watching: sys_watch → Rust kernel."""
 
-    # Provided by NexusFS.__init__
-    _file_watcher: "FileWatcher"
     _kernel: Any
 
     def _resolve_cred(self, context: Any) -> Any: ...

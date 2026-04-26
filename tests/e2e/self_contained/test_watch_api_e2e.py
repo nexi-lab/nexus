@@ -64,7 +64,7 @@ class TestWatchAPIEndpoint:
 
             if response.status_code == 200:
                 data = response.json()
-                # StreamRemoteWatcher may capture the mkdir event;
+                # Rust kernel StreamEventObserver may capture the mkdir event;
                 # EventBus-backed mode may not (external infra not started).
                 # Both are valid: timeout=True (no events) or changes present.
                 assert isinstance(data.get("timeout"), bool)

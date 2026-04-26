@@ -459,14 +459,31 @@ print_success "Charlie is a member of project1-viewers"
 
 print_subsection "2.2 Grant permissions to the GROUP (not individual users)"
 
-# Grant group permission on the BASE directory so they can write files there
-if nexus rebac create group project1-editors direct_editor file $DEMO_BASE --subject-relation member 2>/dev/null; then
-    print_success "Group has editor access via --subject-relation"
-else
-    # FALLBACK: CLI doesn't support --subject-relation, use alternative pattern
-    print_warning "--subject-relation not supported, using alternative group pattern"
-    nexus rebac create group project1-editors editor_binding file $DEMO_BASE 2>/dev/null || true
-fi
+# Grant group:project1-editors#member direct_editor on the BASE directory.
+# Use Python SDK with 3-element subject tuple (type, id, relation) — the CLI
+# --subject-relation flag is not stable across versions.
+nexus_python << GRANT_GROUP
+import sys, os
+sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
+import nexus
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
+rebac = nx.service("rebac")
+base = os.getenv('DEMO_BASE')
+result = rebac.rebac_create_sync(
+    subject=("group", "project1-editors", "member"),
+    relation="direct_editor",
+    object=("file", base),
+    zone_id="default",
+)
+print(f"✓ Created relationship tuple")
+print(f"  Tuple ID: {{'tuple_id': '{result.get('tuple_id', '')}', 'revision': {result.get('revision', '')}}}")
+print(f"  Subject: group:project1-editors#member")
+print(f"    (userset-as-subject: all 'member' of group:project1-editors)")
+print(f"  Relation: direct_editor")
+print(f"  Object: file:{base}")
+nx.close()
+GRANT_GROUP
+print_success "Group has editor access via userset subject (group:project1-editors#member)"
 
 # BUGFIX: Create team-file.txt so it exists before explain/checks
 echo "Team file content" | nexus write $DEMO_BASE/team-file.txt - 2>/dev/null

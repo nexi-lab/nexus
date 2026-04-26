@@ -99,46 +99,7 @@ class SlimNexusFS:
         Raises:
             NexusFileNotFoundError: If file does not exist.
         """
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        try:
-            return self._kernel.sys_read(path, context=self._ctx)
-        except NexusFileNotFoundError:
-            # Rust sys_read handles all backend types uniformly (§12d):
-            # CAS via etag, path-local/external via backend_path fallback.
-            # Only slim-mode (no Rust kernel) needs the Python metastore
-            # fallback for CAS entries (#3821).
-            data = self._slim_metastore_read(path)
-            if data is None:
-                raise
-            return data
-
-    def _slim_metastore_read(self, path: str) -> bytes | None:
-        """Read via Python metastore + Rust backend (slim fallback, #3821).
-
-        Only relevant in slim-mode where the Rust kernel cannot see the
-        Python SQLiteMetastore.  The etag check naturally gates to CAS
-        entries (path-addressed backends don't store etags).
-        """
-        from nexus.core.path_utils import validate_path
-
-        try:
-            normalized = validate_path(path)
-        except Exception:
-            return None
-        meta = self._kernel.metadata.get(normalized)
-        if meta is None or not meta.etag:
-            return None
-        _rust_kernel = getattr(self._kernel, "_kernel", None)
-        if _rust_kernel is None:
-            return None
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        try:
-            data = _rust_kernel.sys_read_raw(normalized, self._kernel._zone_id)
-        except NexusFileNotFoundError:
-            return None
-        return bytes(data) if isinstance(data, (bytes, bytearray)) else None
+        return self._kernel.sys_read(path, context=self._ctx)
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
         """Read a specific byte range from a file.

@@ -1,9 +1,9 @@
 """Regression test: _check_rebac handles IPC paths without erroring.
 
 PathRouter was deleted in S12 Phase F3. The enforcer now uses
-``dlc.resolve_path()`` directly. IPC paths (DT_PIPE / DT_STREAM)
-may not be routable via mount LPM; resolve_path returns None for them,
-which the enforcer handles gracefully.
+``_kernel.sys_stat()`` for backend name resolution. IPC paths
+(DT_PIPE / DT_STREAM) may not be routable via mount LPM;
+sys_stat returns None for them, which the enforcer handles gracefully.
 
 This test verifies that IPC paths do not cause unexpected warnings or
 errors in _check_rebac.
@@ -45,17 +45,17 @@ def _ctx() -> OperationContext:
 def test_pipe_path_does_not_trigger_warning(caplog) -> None:
     """IPC pipe paths that are not routable should not cause warnings.
 
-    dlc.resolve_path() returns None for unmounted pipe paths. The enforcer
+    _kernel.sys_stat() returns None for unmounted pipe paths. The enforcer
     handles None gracefully (no warning) and falls back to "file" type.
     """
     dlc = MagicMock()
-    dlc.resolve_path = MagicMock(return_value=None)
+    dlc._kernel.sys_stat.return_value = None
     enf = _enforcer_with_dlc(dlc)
 
     with caplog.at_level(logging.WARNING, logger="nexus.bricks.rebac.enforcer"):
         result = enf._check_rebac("/root/pipes/x", Permission.READ, _ctx())
 
-    # resolve_path returns None -- no warning should appear.
+    # sys_stat returns None -- no warning should appear.
     assert not any("Failed to route" in r.message for r in caplog.records), (
         f"unexpected warning(s): {[r.message for r in caplog.records]}"
     )
@@ -66,7 +66,7 @@ def test_pipe_path_does_not_trigger_warning(caplog) -> None:
 def test_stream_path_does_not_trigger_warning(caplog) -> None:
     """IPC stream paths that are not routable should not cause warnings."""
     dlc = MagicMock()
-    dlc.resolve_path = MagicMock(return_value=None)
+    dlc._kernel.sys_stat.return_value = None
     enf = _enforcer_with_dlc(dlc)
 
     with caplog.at_level(logging.WARNING, logger="nexus.bricks.rebac.enforcer"):
@@ -79,16 +79,16 @@ def test_stream_path_does_not_trigger_warning(caplog) -> None:
 
 
 def test_route_with_backend_name_uses_mapper(caplog) -> None:
-    """A route result with (backend_name, backend_path, mount_point) goes
-    through ObjectTypeMapper.get_object_type_by_name (string-based, no
-    Python backend object). resolve_path now returns strings."""
-    # Mock DLC to return (backend_name: str, backend_path, mount_point)
+    """A sys_stat result with backend_name goes through
+    ObjectTypeMapper.get_object_type_by_name (string-based, no
+    Python backend object). sys_stat returns stat dict."""
+    # Mock kernel sys_stat to return a stat dict with backend_name
     dlc = MagicMock()
-    dlc.resolve_path = MagicMock(return_value=("localfs", "foo", "/"))
+    dlc._kernel.sys_stat.return_value = {"backend_name": "localfs"}
 
     enf = _enforcer_with_dlc(dlc)
 
     enf._check_rebac("/root/foo", Permission.READ, _ctx())
 
-    # resolve_path was called with the path and zone_id
-    dlc.resolve_path.assert_called_once_with("/root/foo", "root")
+    # sys_stat was called with the path and zone_id
+    dlc._kernel.sys_stat.assert_called_once_with("/root/foo", "root")

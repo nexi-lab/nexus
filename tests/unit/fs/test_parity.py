@@ -1,6 +1,6 @@
 """Sync parity tests.
 
-Validates that SlimNexusFS and SyncNexusFS produce identical results
+Validates that direct kernel calls and SyncNexusFS produce identical results
 for all public API methods on the same backend.
 
 Uses a shared test class pattern (like httpx, httpcore) to avoid
@@ -19,13 +19,13 @@ from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.fs import _make_mount_entry
-from nexus.fs._facade import SlimNexusFS
+from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
 from nexus.fs._sqlite_meta import SQLiteMetastore
 from nexus.fs._sync import SyncNexusFS
 
 
-def _build_fs(tmp_path: Path) -> SlimNexusFS:
-    """Build a SlimNexusFS with a real local backend."""
+def _build_fs(tmp_path: Path) -> NexusFS:
+    """Build a NexusFS kernel with a real local backend."""
     from nexus.backends.storage.cas_local import CASLocalBackend
 
     db_path = str(tmp_path / "metadata.db")
@@ -50,84 +50,86 @@ def _build_fs(tmp_path: Path) -> SlimNexusFS:
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
     metastore.put(_make_mount_entry("/local", backend.name))
 
-    return SlimNexusFS(kernel)
+    return kernel
 
 
-# ── SlimNexusFS tests (sync) ──────────────────────────────────────────
+# -- Kernel-direct tests (sync) --------------------------------------------
 
 
 @pytest.fixture
-def slim_fs(tmp_path: Path) -> SlimNexusFS:
+def slim_fs(tmp_path: Path) -> NexusFS:
     return _build_fs(tmp_path)
 
 
 class TestSlimOperations:
-    """Full lifecycle via the sync SlimNexusFS API."""
+    """Full lifecycle via direct kernel sys_* calls."""
 
-    def test_write_read_parity(self, slim_fs: SlimNexusFS):
+    def test_write_read_parity(self, slim_fs: NexusFS):
         content = b"parity test content"
-        slim_fs.write("/local/parity.txt", content)
-        result = slim_fs.read("/local/parity.txt")
+        slim_fs.write("/local/parity.txt", content, context=LOCAL_CONTEXT)
+        result = slim_fs.sys_read("/local/parity.txt", context=LOCAL_CONTEXT)
         assert result == content
 
-    def test_stat_parity(self, slim_fs: SlimNexusFS):
-        slim_fs.write("/local/stat.txt", b"stat content")
-        stat = slim_fs.stat("/local/stat.txt")
+    def test_stat_parity(self, slim_fs: NexusFS):
+        slim_fs.write("/local/stat.txt", b"stat content", context=LOCAL_CONTEXT)
+        stat = slim_fs.sys_stat("/local/stat.txt", context=LOCAL_CONTEXT)
         assert stat is not None
         assert stat["size"] == 12
         assert stat["is_directory"] is False
         assert stat["path"] == "/local/stat.txt"
 
-    def test_ls_parity(self, slim_fs: SlimNexusFS):
-        slim_fs.write("/local/ls_a.txt", b"a")
-        slim_fs.write("/local/ls_b.txt", b"b")
-        entries = slim_fs.ls("/local/", detail=False, recursive=True)
+    def test_ls_parity(self, slim_fs: NexusFS):
+        slim_fs.write("/local/ls_a.txt", b"a", context=LOCAL_CONTEXT)
+        slim_fs.write("/local/ls_b.txt", b"b", context=LOCAL_CONTEXT)
+        entries = list(
+            slim_fs.sys_readdir("/local/", recursive=True, details=False, context=LOCAL_CONTEXT)
+        )
         paths = sorted(e for e in entries if e.endswith(".txt"))
         assert "/local/ls_a.txt" in paths
         assert "/local/ls_b.txt" in paths
 
-    def test_exists_parity(self, slim_fs: SlimNexusFS):
-        assert not slim_fs.exists("/local/nope.txt")
-        slim_fs.write("/local/nope.txt", b"now")
-        assert slim_fs.exists("/local/nope.txt")
+    def test_exists_parity(self, slim_fs: NexusFS):
+        assert not slim_fs.access("/local/nope.txt", context=LOCAL_CONTEXT)
+        slim_fs.write("/local/nope.txt", b"now", context=LOCAL_CONTEXT)
+        assert slim_fs.access("/local/nope.txt", context=LOCAL_CONTEXT)
 
-    def test_delete_parity(self, slim_fs: SlimNexusFS):
-        slim_fs.write("/local/del.txt", b"bye")
-        slim_fs.delete("/local/del.txt")
-        assert slim_fs.stat("/local/del.txt") is None
+    def test_delete_parity(self, slim_fs: NexusFS):
+        slim_fs.write("/local/del.txt", b"bye", context=LOCAL_CONTEXT)
+        slim_fs.sys_unlink("/local/del.txt", context=LOCAL_CONTEXT)
+        assert slim_fs.sys_stat("/local/del.txt", context=LOCAL_CONTEXT) is None
 
-    def test_rename_parity(self, slim_fs: SlimNexusFS):
-        slim_fs.write("/local/old_p.txt", b"rename")
-        slim_fs.rename("/local/old_p.txt", "/local/new_p.txt")
-        assert slim_fs.read("/local/new_p.txt") == b"rename"
+    def test_rename_parity(self, slim_fs: NexusFS):
+        slim_fs.write("/local/old_p.txt", b"rename", context=LOCAL_CONTEXT)
+        slim_fs.sys_rename("/local/old_p.txt", "/local/new_p.txt", context=LOCAL_CONTEXT)
+        assert slim_fs.sys_read("/local/new_p.txt", context=LOCAL_CONTEXT) == b"rename"
 
-    def test_copy_parity(self, slim_fs: SlimNexusFS):
-        slim_fs.write("/local/cp_src.txt", b"copy")
-        slim_fs.copy("/local/cp_src.txt", "/local/cp_dst.txt")
-        assert slim_fs.read("/local/cp_dst.txt") == b"copy"
+    def test_copy_parity(self, slim_fs: NexusFS):
+        slim_fs.write("/local/cp_src.txt", b"copy", context=LOCAL_CONTEXT)
+        slim_fs.sys_copy("/local/cp_src.txt", "/local/cp_dst.txt", context=LOCAL_CONTEXT)
+        assert slim_fs.sys_read("/local/cp_dst.txt", context=LOCAL_CONTEXT) == b"copy"
 
-    def test_mkdir_parity(self, slim_fs: SlimNexusFS):
-        slim_fs.mkdir("/local/parity_dir")
-        stat = slim_fs.stat("/local/parity_dir")
+    def test_mkdir_parity(self, slim_fs: NexusFS):
+        slim_fs.mkdir("/local/parity_dir", parents=True, exist_ok=True, context=LOCAL_CONTEXT)
+        stat = slim_fs.sys_stat("/local/parity_dir", context=LOCAL_CONTEXT)
         assert stat is not None
         assert stat["is_directory"] is True
 
-    def test_list_mounts_parity(self, slim_fs: SlimNexusFS):
-        assert "/local" in slim_fs.list_mounts()
+    def test_list_mounts_parity(self, slim_fs: NexusFS):
+        assert "/local" in list_mounts(slim_fs)
 
-    def test_read_range_parity(self, slim_fs: SlimNexusFS):
-        slim_fs.write("/local/range.txt", b"0123456789")
-        result = slim_fs.read_range("/local/range.txt", 2, 7)
+    def test_read_range_parity(self, slim_fs: NexusFS):
+        slim_fs.write("/local/range.txt", b"0123456789", context=LOCAL_CONTEXT)
+        result = slim_fs.read_range("/local/range.txt", 2, 7, context=LOCAL_CONTEXT)
         assert result == b"23456"
 
 
-# ── Sync tests (must produce identical results) ──────────────────────────
+# -- Sync tests (must produce identical results) --------------------------
 
 
 @pytest.fixture
 def sync_fs(tmp_path: Path) -> SyncNexusFS:
-    slim_facade = _build_fs(tmp_path)
-    return SyncNexusFS(slim_facade)
+    kernel = _build_fs(tmp_path)
+    return SyncNexusFS(kernel)
 
 
 class TestSyncOperations:

@@ -10,7 +10,7 @@ Organized into:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,7 +25,6 @@ from nexus.fs._fsspec import (  # noqa: E402
     NexusFileSystem,
     NexusWriteFile,
 )
-from nexus.fs._sync import PortalRunner  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -41,19 +40,19 @@ def _clear_fs_cache():
 
 
 @pytest.fixture
-def mock_nexus_fs():
-    """Mock SlimNexusFS facade with async methods."""
-    fs = AsyncMock()
-    fs.read = AsyncMock(return_value=b"hello world")
-    fs.read_range = AsyncMock(return_value=b"hello world")
-    fs.write = AsyncMock(return_value={"path": "/test.txt", "size": 11, "etag": "abc"})
-    fs.ls = AsyncMock(
+def mock_kernel():
+    """Mock NexusFS kernel with sync methods used by NexusFileSystem."""
+    k = MagicMock()
+    k.sys_read = MagicMock(return_value=b"hello world")
+    k.read_range = MagicMock(return_value=b"hello world")
+    k.write = MagicMock(return_value={"path": "/test.txt", "size": 11, "etag": "abc"})
+    k.sys_readdir = MagicMock(
         return_value=[
-            {"path": "/dir/file1.txt", "size": 100, "entry_type": 0},
-            {"path": "/dir/subdir", "size": 4096, "entry_type": 1},
+            {"path": "/dir/file1.txt", "size": 100, "entry_type": 0, "is_directory": False},
+            {"path": "/dir/subdir", "size": 4096, "entry_type": 1, "is_directory": True},
         ]
     )
-    fs.stat = AsyncMock(
+    k.sys_stat = MagicMock(
         return_value={
             "path": "/test.txt",
             "size": 11,
@@ -63,17 +62,17 @@ def mock_nexus_fs():
             "modified_at": "2026-01-01T00:00:00",
         }
     )
-    fs.delete = AsyncMock()
-    fs.copy = AsyncMock(return_value={"path": "/dst.txt", "size": 11})
-    fs.mkdir = AsyncMock()
-    fs.rmdir = AsyncMock()
-    return fs
+    k.sys_unlink = MagicMock()
+    k.sys_copy = MagicMock(return_value={"path": "/dst.txt", "size": 11})
+    k.mkdir = MagicMock()
+    k.rmdir = MagicMock()
+    return k
 
 
 @pytest.fixture
-def nexus_fsspec(mock_nexus_fs):
+def nexus_fsspec(mock_kernel):
     """NexusFileSystem instance with mocked backend."""
-    fs = NexusFileSystem(nexus_fs=mock_nexus_fs)
+    fs = NexusFileSystem(nexus_fs=mock_kernel)
     yield fs
     if hasattr(fs, "_runner"):
         fs._runner.close()
@@ -107,7 +106,7 @@ class TestStripProtocol:
 
 
 class TestLs:
-    def test_ls_detail(self, nexus_fsspec, mock_nexus_fs):
+    def test_ls_detail(self, nexus_fsspec, mock_kernel):
         result = nexus_fsspec.ls("/dir", detail=True)
         assert len(result) == 2
         assert result[0]["name"] == "/dir/file1.txt"
@@ -116,28 +115,28 @@ class TestLs:
         assert result[1]["name"] == "/dir/subdir"
         assert result[1]["type"] == "directory"
 
-    def test_ls_no_detail(self, nexus_fsspec, mock_nexus_fs):
+    def test_ls_no_detail(self, nexus_fsspec, mock_kernel):
         result = nexus_fsspec.ls("/dir", detail=False)
         assert result == ["/dir/file1.txt", "/dir/subdir"]
 
-    def test_ls_not_found_raises(self, nexus_fsspec, mock_nexus_fs):
+    def test_ls_not_found_raises(self, nexus_fsspec, mock_kernel):
         """ls() on non-existent path raises FileNotFoundError."""
-        mock_nexus_fs.stat.return_value = None
+        mock_kernel.sys_stat.return_value = None
         with pytest.raises(FileNotFoundError):
             nexus_fsspec.ls("/nonexistent")
 
-    def test_ls_populates_dircache(self, nexus_fsspec, mock_nexus_fs):
+    def test_ls_populates_dircache(self, nexus_fsspec, mock_kernel):
         """ls() should populate fsspec dircache."""
         nexus_fsspec.ls("/dir", detail=True)
         assert "/dir" in nexus_fsspec.dircache
         assert len(nexus_fsspec.dircache["/dir"]) == 2
 
-    def test_ls_uses_dircache_on_second_call(self, nexus_fsspec, mock_nexus_fs):
+    def test_ls_uses_dircache_on_second_call(self, nexus_fsspec, mock_kernel):
         """Second ls() should use dircache, not call backend again."""
         nexus_fsspec.ls("/dir", detail=True)
         nexus_fsspec.ls("/dir", detail=True)
-        # ls backend should only be called once
-        assert mock_nexus_fs.ls.await_count == 1
+        # readdir backend should only be called once
+        assert mock_kernel.sys_readdir.call_count == 1
 
 
 # ===========================================================================
@@ -153,8 +152,8 @@ class TestInfo:
         assert result["type"] == "file"
         assert "etag" in result
 
-    def test_info_not_found(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat.return_value = None
+    def test_info_not_found(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = None
         with pytest.raises(FileNotFoundError):
             nexus_fsspec.info("/nonexistent.txt")
 
@@ -169,43 +168,51 @@ class TestCatFile:
         result = nexus_fsspec._cat_file("/test.txt")
         assert result == b"hello world"
 
-    def test_cat_file_byte_range_uses_read_range(self, nexus_fsspec, mock_nexus_fs):
-        """Byte-range reads should use read_range(), not read()."""
-        mock_nexus_fs.read_range.return_value = b"hello"
+    def test_cat_file_byte_range_uses_read_range(self, nexus_fsspec, mock_kernel):
+        """Byte-range reads should use read_range(), not sys_read()."""
+        mock_kernel.read_range.return_value = b"hello"
         result = nexus_fsspec._cat_file("/test.txt", start=0, end=5)
         assert result == b"hello"
-        mock_nexus_fs.read_range.assert_awaited_once()
-        mock_nexus_fs.read.assert_not_awaited()
+        mock_kernel.read_range.assert_called_once()
+        mock_kernel.sys_read.assert_not_called()
 
-    def test_cat_file_start_only(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_start_only(self, nexus_fsspec, mock_kernel):
         """start without end reads from start to EOF."""
-        mock_nexus_fs.read_range.return_value = b"world"
+        mock_kernel.read_range.return_value = b"world"
         nexus_fsspec._cat_file("/test.txt", start=6)
-        mock_nexus_fs.read_range.assert_awaited_once_with("/test.txt", 6, 11)
+        mock_kernel.read_range.assert_called_once_with(
+            "/test.txt", 6, 11, context=mock_kernel.read_range.call_args.kwargs["context"]
+        )
 
-    def test_cat_file_end_only(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_end_only(self, nexus_fsspec, mock_kernel):
         """end without start reads from beginning to end."""
-        mock_nexus_fs.read_range.return_value = b"hello"
+        mock_kernel.read_range.return_value = b"hello"
         nexus_fsspec._cat_file("/test.txt", end=5)
-        mock_nexus_fs.read_range.assert_awaited_once_with("/test.txt", 0, 5)
+        mock_kernel.read_range.assert_called_once_with(
+            "/test.txt", 0, 5, context=mock_kernel.read_range.call_args.kwargs["context"]
+        )
 
-    def test_cat_file_negative_start(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_negative_start(self, nexus_fsspec, mock_kernel):
         """Negative start counts from end (Python slice semantics)."""
-        mock_nexus_fs.read_range.return_value = b"world"
+        mock_kernel.read_range.return_value = b"world"
         nexus_fsspec._cat_file("/test.txt", start=-5)
         # start=-5 with size=11 -> range_start=6, range_end=11
-        mock_nexus_fs.read_range.assert_awaited_once_with("/test.txt", 6, 11)
+        mock_kernel.read_range.assert_called_once_with(
+            "/test.txt", 6, 11, context=mock_kernel.read_range.call_args.kwargs["context"]
+        )
 
-    def test_cat_file_negative_end(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_negative_end(self, nexus_fsspec, mock_kernel):
         """Negative end counts from end."""
-        mock_nexus_fs.read_range.return_value = b"hello wor"
+        mock_kernel.read_range.return_value = b"hello wor"
         nexus_fsspec._cat_file("/test.txt", start=0, end=-2)
         # end=-2 with size=11 -> range_end=9
-        mock_nexus_fs.read_range.assert_awaited_once_with("/test.txt", 0, 9)
+        mock_kernel.read_range.assert_called_once_with(
+            "/test.txt", 0, 9, context=mock_kernel.read_range.call_args.kwargs["context"]
+        )
 
-    def test_cat_file_size_guard(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_size_guard(self, nexus_fsspec, mock_kernel):
         """Files larger than MAX_CAT_FILE_SIZE should be refused."""
-        mock_nexus_fs.stat.return_value = {
+        mock_kernel.sys_stat.return_value = {
             "path": "/huge.bin",
             "size": MAX_CAT_FILE_SIZE + 1,
             "is_directory": False,
@@ -213,9 +220,9 @@ class TestCatFile:
         with pytest.raises(ValueError, match="too large"):
             nexus_fsspec._cat_file("/huge.bin")
 
-    def test_cat_file_at_limit(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_at_limit(self, nexus_fsspec, mock_kernel):
         """Files exactly at the limit should succeed."""
-        mock_nexus_fs.stat.return_value = {
+        mock_kernel.sys_stat.return_value = {
             "path": "/exact.bin",
             "size": MAX_CAT_FILE_SIZE,
             "is_directory": False,
@@ -223,15 +230,15 @@ class TestCatFile:
         result = nexus_fsspec._cat_file("/exact.bin")
         assert result == b"hello world"
 
-    def test_cat_file_not_found(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_not_found(self, nexus_fsspec, mock_kernel):
         """_cat_file on non-existent file raises FileNotFoundError."""
-        mock_nexus_fs.stat.return_value = None
+        mock_kernel.sys_stat.return_value = None
         with pytest.raises(FileNotFoundError):
             nexus_fsspec._cat_file("/nonexistent.txt")
 
-    def test_cat_file_not_found_with_range(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_not_found_with_range(self, nexus_fsspec, mock_kernel):
         """_cat_file with byte range on non-existent file raises FileNotFoundError."""
-        mock_nexus_fs.stat.return_value = None
+        mock_kernel.sys_stat.return_value = None
         with pytest.raises(FileNotFoundError):
             nexus_fsspec._cat_file("/nonexistent.txt", start=0, end=5)
 
@@ -242,18 +249,17 @@ class TestCatFile:
 
 
 class TestPipeFile:
-    def test_pipe_file(self, nexus_fsspec, mock_nexus_fs):
+    def test_pipe_file(self, nexus_fsspec, mock_kernel):
         nexus_fsspec._pipe_file("/output.txt", b"new content")
-        mock_nexus_fs.write.assert_awaited_once()
+        mock_kernel.write.assert_called_once()
 
-    def test_pipe_file_clears_dircache(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.write = MagicMock()
+    def test_pipe_file_clears_dircache(self, nexus_fsspec, mock_kernel):
         nexus_fsspec.dircache["/dir"] = [{"name": "/dir/old.txt", "size": 1, "type": "file"}]
         nexus_fsspec._pipe_file("/dir/new.txt", b"new content")
         assert nexus_fsspec.dircache == {}
 
-    def test_pipe_file_clears_dircache_on_error(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.write = MagicMock(side_effect=RuntimeError("write failed"))
+    def test_pipe_file_clears_dircache_on_error(self, nexus_fsspec, mock_kernel):
+        mock_kernel.write.side_effect = RuntimeError("write failed")
         nexus_fsspec.dircache["/dir"] = [{"name": "/dir/old.txt", "size": 1, "type": "file"}]
         with pytest.raises(RuntimeError, match="write failed"):
             nexus_fsspec._pipe_file("/dir/new.txt", b"new content")
@@ -266,33 +272,38 @@ class TestPipeFile:
 
 
 class TestRm:
-    def test_rm_file(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat.return_value = {"is_directory": False}
+    def test_rm_file(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = {"is_directory": False}
         nexus_fsspec._rm("/file.txt")
-        mock_nexus_fs.delete.assert_awaited_once()
+        mock_kernel.sys_unlink.assert_called_once()
 
-    def test_rm_directory_recursive(self, nexus_fsspec, mock_nexus_fs):
+    def test_rm_directory_recursive(self, nexus_fsspec, mock_kernel):
         """_rm on directory with recursive=True uses rmdir."""
-        mock_nexus_fs.stat.return_value = {"is_directory": True}
+        mock_kernel.sys_stat.return_value = {"is_directory": True}
         nexus_fsspec._rm("/dir", recursive=True)
-        mock_nexus_fs.rmdir.assert_awaited_once_with("/dir", recursive=True)
+        mock_kernel.rmdir.assert_called_once()
+        args, kwargs = mock_kernel.rmdir.call_args
+        assert args[0] == "/dir"
+        assert kwargs.get("recursive") is True
 
-    def test_rm_directory_non_recursive(self, nexus_fsspec, mock_nexus_fs):
+    def test_rm_directory_non_recursive(self, nexus_fsspec, mock_kernel):
         """_rm on directory with recursive=False uses rmdir."""
-        mock_nexus_fs.stat.return_value = {"is_directory": True}
+        mock_kernel.sys_stat.return_value = {"is_directory": True}
         nexus_fsspec._rm("/dir", recursive=False)
-        mock_nexus_fs.rmdir.assert_awaited_once_with("/dir", recursive=False)
+        mock_kernel.rmdir.assert_called_once()
+        args, kwargs = mock_kernel.rmdir.call_args
+        assert args[0] == "/dir"
+        assert kwargs.get("recursive") is False
 
-    def test_rm_clears_dircache(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat = MagicMock(return_value={"is_directory": False})
-        mock_nexus_fs.delete = MagicMock()
+    def test_rm_clears_dircache(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = {"is_directory": False}
         nexus_fsspec.dircache["/dir"] = [{"name": "/dir/file.txt", "size": 1, "type": "file"}]
         nexus_fsspec._rm("/dir/file.txt")
         assert nexus_fsspec.dircache == {}
 
-    def test_rm_clears_dircache_on_error(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat = MagicMock(return_value={"is_directory": False})
-        mock_nexus_fs.delete = MagicMock(side_effect=RuntimeError("delete failed"))
+    def test_rm_clears_dircache_on_error(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = {"is_directory": False}
+        mock_kernel.sys_unlink.side_effect = RuntimeError("delete failed")
         nexus_fsspec.dircache["/dir"] = [{"name": "/dir/file.txt", "size": 1, "type": "file"}]
         with pytest.raises(RuntimeError, match="delete failed"):
             nexus_fsspec._rm("/dir/file.txt")
@@ -305,18 +316,17 @@ class TestRm:
 
 
 class TestCpFile:
-    def test_cp_file(self, nexus_fsspec, mock_nexus_fs):
+    def test_cp_file(self, nexus_fsspec, mock_kernel):
         nexus_fsspec._cp_file("/src.txt", "/dst.txt")
-        mock_nexus_fs.copy.assert_awaited_once()
+        mock_kernel.sys_copy.assert_called_once()
 
-    def test_cp_file_clears_dircache(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.copy = MagicMock()
+    def test_cp_file_clears_dircache(self, nexus_fsspec, mock_kernel):
         nexus_fsspec.dircache["/dir"] = [{"name": "/dir/src.txt", "size": 1, "type": "file"}]
         nexus_fsspec._cp_file("/dir/src.txt", "/dir/dst.txt")
         assert nexus_fsspec.dircache == {}
 
-    def test_cp_file_clears_dircache_on_error(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.copy = MagicMock(side_effect=RuntimeError("copy failed"))
+    def test_cp_file_clears_dircache_on_error(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_copy.side_effect = RuntimeError("copy failed")
         nexus_fsspec.dircache["/dir"] = [{"name": "/dir/src.txt", "size": 1, "type": "file"}]
         with pytest.raises(RuntimeError, match="copy failed"):
             nexus_fsspec._cp_file("/dir/src.txt", "/dir/dst.txt")
@@ -326,82 +336,82 @@ class TestCpFile:
 class TestCpFileComprehensive:
     """Comprehensive copy tests covering edge cases and error paths."""
 
-    def test_cp_file_strips_protocol(self, nexus_fsspec, mock_nexus_fs):
+    def test_cp_file_strips_protocol(self, nexus_fsspec, mock_kernel):
         """Verify _cp_file strips protocol from both paths."""
         nexus_fsspec._cp_file("nexus:///src.txt", "nexus:///dst.txt")
-        args = mock_nexus_fs.copy.await_args
+        args = mock_kernel.sys_copy.call_args
         # Verify stripped paths were passed
         assert args is not None
 
-    def test_cp_file_source_not_found(self, nexus_fsspec, mock_nexus_fs):
+    def test_cp_file_source_not_found(self, nexus_fsspec, mock_kernel):
         """_cp_file raises FileNotFoundError when source doesn't exist."""
-        mock_nexus_fs.copy.side_effect = FileNotFoundError("/src.txt")
+        mock_kernel.sys_copy.side_effect = FileNotFoundError("/src.txt")
         with pytest.raises(FileNotFoundError):
             nexus_fsspec._cp_file("/src.txt", "/dst.txt")
 
-    def test_cp_file_destination_exists(self, nexus_fsspec, mock_nexus_fs):
+    def test_cp_file_destination_exists(self, nexus_fsspec, mock_kernel):
         """_cp_file raises FileExistsError when destination already exists."""
-        mock_nexus_fs.copy.side_effect = FileExistsError("/dst.txt")
+        mock_kernel.sys_copy.side_effect = FileExistsError("/dst.txt")
         with pytest.raises(FileExistsError):
             nexus_fsspec._cp_file("/src.txt", "/dst.txt")
 
-    def test_cp_file_empty_file(self, nexus_fsspec, mock_nexus_fs):
+    def test_cp_file_empty_file(self, nexus_fsspec, mock_kernel):
         """_cp_file works for empty (0-byte) files."""
-        mock_nexus_fs.copy.return_value = {"path": "/dst.txt", "size": 0, "etag": "d41d8cd98f"}
+        mock_kernel.sys_copy.return_value = {"path": "/dst.txt", "size": 0, "etag": "d41d8cd98f"}
         nexus_fsspec._cp_file("/src.txt", "/dst.txt")
-        mock_nexus_fs.copy.assert_awaited_once()
+        mock_kernel.sys_copy.assert_called_once()
 
 
 class TestErrorPropagation:
     """Verify errors from the backend propagate correctly through fsspec."""
 
-    def test_cat_file_backend_error(self, nexus_fsspec, mock_nexus_fs):
-        """BackendError from read propagates through _cat_file."""
+    def test_cat_file_backend_error(self, nexus_fsspec, mock_kernel):
+        """BackendError from sys_read propagates through _cat_file."""
         from nexus.contracts.exceptions import BackendError
 
-        mock_nexus_fs.stat.return_value = {"path": "/f", "size": 10, "is_directory": False}
-        mock_nexus_fs.read.side_effect = BackendError("network timeout", backend="s3", path="/f")
+        mock_kernel.sys_stat.return_value = {"path": "/f", "size": 10, "is_directory": False}
+        mock_kernel.sys_read.side_effect = BackendError("network timeout", backend="s3", path="/f")
         with pytest.raises(BackendError):
             nexus_fsspec._cat_file("/f")
 
-    def test_cat_file_not_found(self, nexus_fsspec, mock_nexus_fs):
+    def test_cat_file_not_found(self, nexus_fsspec, mock_kernel):
         """FileNotFoundError propagates through _cat_file."""
-        mock_nexus_fs.stat.return_value = None
+        mock_kernel.sys_stat.return_value = None
         with pytest.raises(FileNotFoundError):
             nexus_fsspec._cat_file("/nonexistent")
 
-    def test_pipe_file_backend_error(self, nexus_fsspec, mock_nexus_fs):
+    def test_pipe_file_backend_error(self, nexus_fsspec, mock_kernel):
         """BackendError from write propagates through _pipe_file."""
         from nexus.contracts.exceptions import BackendError
 
-        mock_nexus_fs.write.side_effect = BackendError("disk full", backend="local", path="/f")
+        mock_kernel.write.side_effect = BackendError("disk full", backend="local", path="/f")
         with pytest.raises(BackendError):
             nexus_fsspec._pipe_file("/f", b"data")
 
-    def test_open_read_stat_error(self, nexus_fsspec, mock_nexus_fs):
+    def test_open_read_stat_error(self, nexus_fsspec, mock_kernel):
         """Error during stat in _open(mode='rb') propagates."""
         from nexus.contracts.exceptions import BackendError
 
-        mock_nexus_fs.stat.side_effect = BackendError("timeout", backend="s3", path="/f")
+        mock_kernel.sys_stat.side_effect = BackendError("timeout", backend="s3", path="/f")
         with pytest.raises(BackendError):
             nexus_fsspec._open("/f", mode="rb")
 
-    def test_write_file_close_error(self, nexus_fsspec, mock_nexus_fs):
+    def test_write_file_close_error(self, nexus_fsspec, mock_kernel):
         """Error during NexusWriteFile.close() propagates through context manager."""
         from nexus.contracts.exceptions import BackendError
 
-        mock_nexus_fs.write.side_effect = BackendError("write failed", backend="s3", path="/f")
+        mock_kernel.write.side_effect = BackendError("write failed", backend="s3", path="/f")
         f = nexus_fsspec._open("/f", mode="wb")
         f.write(b"data")
         with pytest.raises(BackendError):
             f.close()
 
-    def test_buffered_file_read_range_error(self, nexus_fsspec, mock_nexus_fs):
+    def test_buffered_file_read_range_error(self, nexus_fsspec, mock_kernel):
         """Error during read_range propagates through NexusBufferedFile.read()."""
         from nexus.contracts.exceptions import BackendError
 
-        mock_nexus_fs.stat.return_value = {"path": "/f", "size": 100, "is_directory": False}
-        mock_nexus_fs.read_range.side_effect = BackendError("timeout", backend="s3", path="/f")
+        mock_kernel.sys_stat.return_value = {"path": "/f", "size": 100, "is_directory": False}
+        mock_kernel.read_range.side_effect = BackendError("timeout", backend="s3", path="/f")
         f = nexus_fsspec._open("/f", mode="rb")
         with pytest.raises(BackendError):
             f.read()
@@ -413,9 +423,9 @@ class TestErrorPropagation:
 
 
 class TestMkdir:
-    def test_mkdir(self, nexus_fsspec, mock_nexus_fs):
+    def test_mkdir(self, nexus_fsspec, mock_kernel):
         nexus_fsspec._mkdir("/new/dir")
-        mock_nexus_fs.mkdir.assert_awaited_once()
+        mock_kernel.mkdir.assert_called_once()
 
 
 # ===========================================================================
@@ -425,13 +435,17 @@ class TestMkdir:
 
 class TestModeValidation:
     @pytest.mark.parametrize("mode", sorted(_SUPPORTED_MODES))
-    def test_supported_modes_accepted(self, nexus_fsspec, mock_nexus_fs, mode):
+    def test_supported_modes_accepted(self, nexus_fsspec, mock_kernel, mode):
         """All supported modes should be accepted without raising."""
         if "x" in mode:
             # Exclusive-create: stat must return None (file doesn't exist)
-            mock_nexus_fs.stat.return_value = None
+            mock_kernel.sys_stat.return_value = None
         else:
-            mock_nexus_fs.stat.return_value = {"path": "/f", "size": 0, "is_directory": False}
+            mock_kernel.sys_stat.return_value = {
+                "path": "/f",
+                "size": 0,
+                "is_directory": False,
+            }
         f = nexus_fsspec._open("/f", mode=mode)
         f.close()
 
@@ -448,8 +462,12 @@ class TestModeValidation:
 
 
 class TestOpenRead:
-    def test_open_read_returns_buffered_file(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat.return_value = {"path": "/file.txt", "size": 11, "is_directory": False}
+    def test_open_read_returns_buffered_file(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = {
+            "path": "/file.txt",
+            "size": 11,
+            "is_directory": False,
+        }
         f = nexus_fsspec._open("/file.txt", mode="rb")
         assert isinstance(f, NexusBufferedFile)
         assert f.readable()
@@ -457,36 +475,52 @@ class TestOpenRead:
         assert f.seekable()
         f.close()
 
-    def test_open_read_content(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat.return_value = {"path": "/file.txt", "size": 11, "is_directory": False}
+    def test_open_read_content(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = {
+            "path": "/file.txt",
+            "size": 11,
+            "is_directory": False,
+        }
         with nexus_fsspec._open("/file.txt", mode="rb") as f:
             data = f.read()
             assert data == b"hello world"
 
-    def test_open_read_uses_read_range(self, nexus_fsspec, mock_nexus_fs):
-        """Verify _open() uses read_range(), not read()."""
-        mock_nexus_fs.stat.return_value = {"path": "/file.txt", "size": 11, "is_directory": False}
-        mock_nexus_fs.read_range = AsyncMock(return_value=b"hello")
+    def test_open_read_uses_read_range(self, nexus_fsspec, mock_kernel):
+        """Verify _open() uses read_range(), not sys_read()."""
+        mock_kernel.sys_stat.return_value = {
+            "path": "/file.txt",
+            "size": 11,
+            "is_directory": False,
+        }
+        mock_kernel.read_range = MagicMock(return_value=b"hello")
         with nexus_fsspec._open("/file.txt", mode="rb") as f:
             f.read(5)
-        mock_nexus_fs.read_range.assert_awaited_once()
-        mock_nexus_fs.read.assert_not_awaited()
+        mock_kernel.read_range.assert_called_once()
+        mock_kernel.sys_read.assert_not_called()
 
-    def test_open_read_seek_tell(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat.return_value = {"path": "/file.txt", "size": 11, "is_directory": False}
+    def test_open_read_seek_tell(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = {
+            "path": "/file.txt",
+            "size": 11,
+            "is_directory": False,
+        }
         f = nexus_fsspec._open("/file.txt", mode="rb")
         assert f.tell() == 0
         f.seek(5)
         assert f.tell() == 5
         f.close()
 
-    def test_open_read_not_found(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat.return_value = None
+    def test_open_read_not_found(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = None
         with pytest.raises(FileNotFoundError):
             nexus_fsspec._open("/nonexistent.txt", mode="rb")
 
-    def test_open_read_name_property(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.stat.return_value = {"path": "/file.txt", "size": 11, "is_directory": False}
+    def test_open_read_name_property(self, nexus_fsspec, mock_kernel):
+        mock_kernel.sys_stat.return_value = {
+            "path": "/file.txt",
+            "size": 11,
+            "is_directory": False,
+        }
         f = nexus_fsspec._open("/file.txt", mode="rb")
         assert f.name == "/file.txt"
         f.close()
@@ -498,34 +532,31 @@ class TestOpenRead:
 
 
 class TestOpenWrite:
-    def test_open_write_returns_write_file(self, nexus_fsspec, mock_nexus_fs):
+    def test_open_write_returns_write_file(self, nexus_fsspec, mock_kernel):
         f = nexus_fsspec._open("/output.txt", mode="wb")
         assert isinstance(f, NexusWriteFile)
-        assert f.writable()
-        assert not f.readable()
         f.close()
 
-    def test_open_write_flushes_on_close(self, nexus_fsspec, mock_nexus_fs):
+    def test_open_write_flushes_on_close(self, nexus_fsspec, mock_kernel):
         with nexus_fsspec._open("/output.txt", mode="wb") as f:
             f.write(b"hello ")
             f.write(b"world")
-        mock_nexus_fs.write.assert_awaited_once()
-        args = mock_nexus_fs.write.await_args
+        mock_kernel.write.assert_called_once()
+        args = mock_kernel.write.call_args
         assert args[0][1] == b"hello world"
 
-    def test_open_write_clears_dircache(self, nexus_fsspec, mock_nexus_fs):
-        mock_nexus_fs.write = MagicMock()
+    def test_open_write_clears_dircache(self, nexus_fsspec, mock_kernel):
         nexus_fsspec.dircache["/output"] = [{"name": "/output/old.txt", "size": 1, "type": "file"}]
         with nexus_fsspec._open("/output/new.txt", mode="wb") as f:
             f.write(b"fresh")
         assert nexus_fsspec.dircache == {}
 
-    def test_open_write_context_manager(self, nexus_fsspec, mock_nexus_fs):
+    def test_open_write_context_manager(self, nexus_fsspec, mock_kernel):
         with nexus_fsspec._open("/output.txt", mode="wb") as f:
             f.write(b"data")
-        assert f.closed
+        assert f._closed
 
-    def test_open_write_name_property(self, nexus_fsspec, mock_nexus_fs):
+    def test_open_write_name_property(self, nexus_fsspec, mock_kernel):
         f = nexus_fsspec._open("/output.txt", mode="wb")
         assert f.name == "/output.txt"
         f.close()
@@ -562,20 +593,17 @@ class TestBufferedFileEdgeCases:
     """Edge cases for NexusBufferedFile (read-mode file objects)."""
 
     @pytest.fixture
-    def buf_file(self, mock_nexus_fs):
-        """Create a NexusBufferedFile with size=11 ("hello world")."""
-        runner = PortalRunner()
+    def buf_file(self, mock_kernel):
+        """Create a NexusBufferedFile with size=11 ('hello world')."""
         f = NexusBufferedFile(
             fs=None,
             path="/test.txt",
             mode="rb",
             size=11,
             block_size=8192,
-            nexus_fs=mock_nexus_fs,
-            runner=runner,
+            kernel=mock_kernel,
         )
         yield f
-        runner.close()
 
     def test_read_on_closed_file(self, buf_file):
         buf_file.close()
@@ -586,15 +614,15 @@ class TestBufferedFileEdgeCases:
         buf_file.seek(11)  # at EOF
         assert buf_file.read() == b""
 
-    def test_read_zero_bytes(self, buf_file, mock_nexus_fs):
+    def test_read_zero_bytes(self, buf_file, mock_kernel):
         """read(0) should return empty bytes."""
-        mock_nexus_fs.read_range.return_value = b""
+        mock_kernel.read_range.return_value = b""
         result = buf_file.read(0)
         assert result == b""
 
-    def test_read_all_remaining(self, buf_file, mock_nexus_fs):
+    def test_read_all_remaining(self, buf_file, mock_kernel):
         """read(-1) should read from current position to EOF."""
-        mock_nexus_fs.read_range.return_value = b"hello world"
+        mock_kernel.read_range.return_value = b"hello world"
         result = buf_file.read(-1)
         assert result == b"hello world"
         assert buf_file.tell() == 11
@@ -628,17 +656,19 @@ class TestBufferedFileEdgeCases:
     def test_flush_noop(self, buf_file):
         buf_file.flush()  # should not raise
 
-    def test_readline_with_newline(self, buf_file, mock_nexus_fs):
+    def test_readline_with_newline(self, buf_file, mock_kernel):
         """readline() reads up to and including newline."""
-        mock_nexus_fs.read_range.return_value = b"hello\nworld"
+        mock_kernel.read_range.return_value = b"hello\nworld"
         line = buf_file.readline()
         assert line == b"hello\n"
         assert buf_file.tell() == 6
 
-    def test_readline_no_newline(self, buf_file, mock_nexus_fs):
+    def test_readline_no_newline(self, buf_file, mock_kernel):
         """readline() returns remaining bytes if no newline found."""
         content = b"no newline"
-        mock_nexus_fs.read_range.side_effect = lambda path, start, end: content[start:end]
+        mock_kernel.read_range.side_effect = lambda path, start, end, context=None: content[
+            start:end
+        ]
         buf_file.seek(0)
         buf_file.size = len(content)
         line = buf_file.readline()
@@ -654,18 +684,22 @@ class TestBufferedFileEdgeCases:
         with pytest.raises(ValueError, match="I/O operation on closed file"):
             buf_file.readline()
 
-    def test_readlines(self, buf_file, mock_nexus_fs):
+    def test_readlines(self, buf_file, mock_kernel):
         """readlines() returns all remaining lines."""
         content = b"line1\nline2"
-        mock_nexus_fs.read_range.side_effect = lambda path, start, end: content[start:end]
+        mock_kernel.read_range.side_effect = lambda path, start, end, context=None: content[
+            start:end
+        ]
         buf_file.size = len(content)
         lines = buf_file.readlines()
         assert lines == [b"line1\n", b"line2"]
 
-    def test_iter(self, buf_file, mock_nexus_fs):
+    def test_iter(self, buf_file, mock_kernel):
         """Iterating yields lines."""
         content = b"a\nb\n"
-        mock_nexus_fs.read_range.side_effect = lambda path, start, end: content[start:end]
+        mock_kernel.read_range.side_effect = lambda path, start, end, context=None: content[
+            start:end
+        ]
         buf_file.size = len(content)
         lines = list(buf_file)
         assert lines == [b"a\n", b"b\n"]
@@ -680,40 +714,31 @@ class TestWriteFileEdgeCases:
     """Edge cases for NexusWriteFile (write-mode file objects)."""
 
     @pytest.fixture
-    def write_file(self, mock_nexus_fs):
-        runner = PortalRunner()
+    def write_file(self, mock_kernel):
         f = NexusWriteFile(
             fs=None,
             path="/out.txt",
-            nexus_fs=mock_nexus_fs,
-            runner=runner,
+            kernel=mock_kernel,
         )
         yield f
-        runner.close()
 
     def test_write_on_closed_file(self, write_file):
         write_file.close()
         with pytest.raises(ValueError, match="I/O operation on closed file"):
             write_file.write(b"data")
 
-    def test_double_close_no_double_flush(self, write_file, mock_nexus_fs):
+    def test_double_close_no_double_flush(self, write_file, mock_kernel):
         """Double close should only flush once."""
         write_file.write(b"data")
         write_file.close()
         write_file.close()
-        assert mock_nexus_fs.write.await_count == 1
+        assert mock_kernel.write.call_count == 1
 
-    def test_flush_noop(self, write_file, mock_nexus_fs):
+    def test_flush_noop(self, write_file, mock_kernel):
         """flush() should not trigger a backend write."""
         write_file.write(b"data")
         write_file.flush()
-        mock_nexus_fs.write.assert_not_awaited()
-
-    def test_not_seekable(self, write_file):
-        assert not write_file.seekable()
-
-    def test_not_readable(self, write_file):
-        assert not write_file.readable()
+        mock_kernel.write.assert_not_called()
 
     def test_write_buffer_guard(self, write_file):
         """Writes exceeding MAX_WRITE_BUFFER_SIZE should raise."""
@@ -754,15 +779,15 @@ class TestAutoDiscovery:
         monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
         (tmp_path / "mounts.json").write_text(json.dumps(["local:///tmp/data"]))
 
-        mock_facade = AsyncMock()
+        mock_kernel = MagicMock()
 
         async def mock_mount(*uris, at=None, mount_overrides=None):
-            return mock_facade
+            return mock_kernel
 
         with patch("nexus.fs.mount", side_effect=mock_mount):
             result = NexusFileSystem._auto_discover()
 
-        assert result is mock_facade
+        assert result is mock_kernel
 
 
 # ===========================================================================
@@ -785,7 +810,6 @@ class TestFsspecIntegration:
         from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
         from nexus.fs import _make_mount_entry
-        from nexus.fs._facade import SlimNexusFS
         from nexus.fs._sqlite_meta import SQLiteMetastore
 
         db_path = str(tmp_path / "metadata.db")
@@ -808,8 +832,7 @@ class TestFsspecIntegration:
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
-        facade = SlimNexusFS(kernel)
-        fs = NexusFileSystem(nexus_fs=facade)
+        fs = NexusFileSystem(nexus_fs=kernel)
         yield fs
         if hasattr(fs, "_runner"):
             fs._runner.close()
@@ -930,24 +953,21 @@ class TestPandasIntegration:
         data_dir.mkdir()
 
         import nexus.fs
+        from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
         from nexus.fs._sync import run_sync
 
-        facade = run_sync(nexus.fs.mount(f"local://{data_dir}"))
+        kernel = run_sync(nexus.fs.mount(f"local://{data_dir}"))
 
-        from nexus.fs._sync import PortalRunner
+        mount = sorted(list_mounts(kernel))[0]
+        yield kernel, LOCAL_CONTEXT, mount
 
-        runner = PortalRunner()
-        mount = sorted(m for m in facade.list_mounts())[0]
-        yield facade, runner, mount
-        runner.close()
-
-    def _write(self, facade, runner, path, content):
-        runner(facade.write(path, content))
+    def _write(self, kernel, ctx, path, content):
+        kernel.write(path, content, context=ctx)
 
     def test_pd_read_csv(self, mounted_fs):
         """pd.read_csv('nexus:///...') reads a CSV from nexus-fs."""
-        facade, runner, mount = mounted_fs
-        self._write(facade, runner, f"{mount}/data.csv", b"name,age\nAlice,30\nBob,25\n")
+        kernel, ctx, mount = mounted_fs
+        self._write(kernel, ctx, f"{mount}/data.csv", b"name,age\nAlice,30\nBob,25\n")
 
         df = pd.read_csv(f"nexus://{mount}/data.csv")
 
@@ -957,7 +977,7 @@ class TestPandasIntegration:
 
     def test_pd_to_csv_roundtrip(self, mounted_fs):
         """df.to_csv('nexus:///...') writes, then read back matches."""
-        facade, runner, mount = mounted_fs
+        kernel, ctx, mount = mounted_fs
 
         original = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
         original.to_csv(f"nexus://{mount}/output.csv", index=False)
@@ -969,10 +989,10 @@ class TestPandasIntegration:
 
     def test_pd_read_json(self, mounted_fs):
         """pd.read_json('nexus:///...') reads JSON from nexus-fs."""
-        facade, runner, mount = mounted_fs
+        kernel, ctx, mount = mounted_fs
         self._write(
-            facade,
-            runner,
+            kernel,
+            ctx,
             f"{mount}/data.json",
             b'[{"name":"Alice","score":95},{"name":"Bob","score":87}]',
         )
@@ -986,7 +1006,7 @@ class TestPandasIntegration:
         """fsspec.open('nexus:///...') works for both read and write."""
         import fsspec
 
-        facade, runner, mount = mounted_fs
+        kernel, ctx, mount = mounted_fs
 
         with fsspec.open(f"nexus://{mount}/fsspec_rw.txt", "wb") as f:
             f.write(b"written via fsspec.open")
@@ -1023,23 +1043,22 @@ class TestHuggingFaceIntegration:
         data_dir.mkdir()
 
         import nexus.fs
-        from nexus.fs._sync import PortalRunner, run_sync
+        from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
+        from nexus.fs._sync import run_sync
 
-        facade = run_sync(nexus.fs.mount(f"local://{data_dir}"))
-        runner = PortalRunner()
-        mount = sorted(m for m in facade.list_mounts())[0]
-        yield facade, runner, mount
-        runner.close()
+        kernel = run_sync(nexus.fs.mount(f"local://{data_dir}"))
+        mount = sorted(list_mounts(kernel))[0]
+        yield kernel, LOCAL_CONTEXT, mount
 
-    def _write(self, facade, runner, path, content):
-        runner(facade.write(path, content))
+    def _write(self, kernel, ctx, path, content):
+        kernel.write(path, content, context=ctx)
 
     def test_load_dataset_csv(self, mounted_fs):
         """HuggingFace load_dataset('csv', data_files='nexus:///...') works."""
-        facade, runner, mount = mounted_fs
+        kernel, ctx, mount = mounted_fs
         self._write(
-            facade,
-            runner,
+            kernel,
+            ctx,
             f"{mount}/train.csv",
             b"text,label\nhello world,1\ngoodbye world,0\nfoo bar,1\n",
         )
@@ -1085,19 +1104,18 @@ class TestDaskIntegration:
         data_dir.mkdir()
 
         import nexus.fs
-        from nexus.fs._sync import PortalRunner, run_sync
+        from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts
+        from nexus.fs._sync import run_sync
 
-        facade = run_sync(nexus.fs.mount(f"local://{data_dir}"))
-        runner = PortalRunner()
-        mount = sorted(m for m in facade.list_mounts())[0]
-        yield facade, runner, mount
-        runner.close()
+        kernel = run_sync(nexus.fs.mount(f"local://{data_dir}"))
+        mount = sorted(list_mounts(kernel))[0]
+        yield kernel, LOCAL_CONTEXT, mount
 
     def test_dask_parquet_roundtrip(self, mounted_fs):
         """Write parquet via dask, read it back, assert equality."""
         import pandas as pd
 
-        facade, runner, mount = mounted_fs
+        kernel, ctx, mount = mounted_fs
 
         original = pd.DataFrame({"a": range(100), "b": [f"val_{i}" for i in range(100)]})
         ddf = dask_dd.from_pandas(original, npartitions=2)

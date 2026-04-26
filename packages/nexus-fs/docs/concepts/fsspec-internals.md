@@ -22,7 +22,7 @@ After installing `nexus-fs[fsspec]`, any call to
 graph LR
     A[pandas / dask / HF] -->|nexus:// URL| B[fsspec]
     B -->|filesystem protocol| C[NexusFileSystem]
-    C -->|sync bridge| D[SlimNexusFS]
+    C -->|kernel calls| D[NexusFS kernel]
     D -->|mount routing| E[Storage Backend]
 ```
 
@@ -30,17 +30,18 @@ graph LR
 
 1. Receives fsspec method calls (`cat`, `pipe`, `ls`, `info`, `open`)
 2. Strips the `nexus://` protocol prefix
-3. Delegates to `SlimNexusFS` methods via `anyio.from_thread.run()`
+3. Delegates to `NexusFS` kernel `sys_*` methods (passing
+   ``LOCAL_CONTEXT`` from ``nexus.fs._helpers``)
 4. Converts results to fsspec's expected format
 
 ## Auto-discovery
 
-When `NexusFileSystem` is created without an explicit `SlimNexusFS`
-instance, it auto-discovers mounts from the local state directory:
+When `NexusFileSystem` is created without an explicit `NexusFS`
+kernel, it auto-discovers mounts from the local state directory:
 
 1. Reads `$TMPDIR/nexus-fs/mounts.json` (or `$NEXUS_FS_STATE_DIR/mounts.json` if set)
 2. Reconstructs mount URIs from the saved state
-3. Calls `mount()` to create a `SlimNexusFS` instance
+3. Calls `mount()` to create a `NexusFS` kernel
 
 This means you can mount backends via the CLI or Python, and then
 use `nexus://` URLs in pandas without any manual setup.
@@ -62,8 +63,9 @@ For `rb` and `r` modes. Supports:
 - Context manager (`with fs.open(...) as f`)
 
 Internally, `NexusBufferedFile` fetches the full file content on first
-access and buffers it in memory. For large files (>1 GB), use
-`SlimNexusFS.read_range()` instead.
+access and buffers it in memory. For large files (>1 GB), call
+``kernel.read_range(path, start, end, context=LOCAL_CONTEXT)``
+directly on the `NexusFS` kernel instead.
 
 ### NexusWriteFile (write mode)
 
@@ -71,7 +73,7 @@ For `wb` and `w` modes. Supports:
 
 - `write(data)` — append data to buffer
 - `flush()` — no-op (data is buffered)
-- `close()` — flushes buffer to backend via `SlimNexusFS.write()`
+- `close()` — flushes buffer to backend via the kernel's `write()`
 - Context manager (`with fs.open(...) as f`)
 
 The write buffer has a 1 GB limit. Writing more than 1 GB raises
@@ -79,20 +81,24 @@ The write buffer has a 1 GB limit. Writing more than 1 GB raises
 
 ## Method mapping
 
-| fsspec method | nexus-fs call |
-|---------------|---------------|
-| `cat(path)` | `read(path)` |
-| `cat(path, start, end)` | `read_range(path, start, end)` |
-| `pipe(path, data)` | `write(path, data)` |
-| `ls(path, detail)` | `ls(path, detail)` |
-| `info(path)` | `stat(path)` |
-| `rm(path)` | `delete(path)` or `rmdir(path, recursive=True)` |
-| `cp(src, dst)` | `copy(src, dst)` |
-| `mkdir(path)` | `mkdir(path, parents=True)` |
+| fsspec method | nexus-fs kernel call |
+|---------------|----------------------|
+| `cat(path)` | `sys_read(path, context=LOCAL_CONTEXT)` |
+| `cat(path, start, end)` | `read_range(path, start, end, context=LOCAL_CONTEXT)` |
+| `pipe(path, data)` | `write(path, data, context=LOCAL_CONTEXT)` |
+| `ls(path, detail)` | `sys_readdir(path, recursive=False, details=detail, context=LOCAL_CONTEXT)` |
+| `info(path)` | `sys_stat(path, context=LOCAL_CONTEXT)` |
+| `rm(path)` | `sys_unlink(path, context=LOCAL_CONTEXT)` or `rmdir(path, recursive=True, context=LOCAL_CONTEXT)` |
+| `cp(src, dst)` | `sys_copy(src, dst, context=LOCAL_CONTEXT)` |
+| `mkdir(path)` | `mkdir(path, parents=True, exist_ok=True, context=LOCAL_CONTEXT)` |
+
+The `LOCAL_CONTEXT` operation context is importable from
+`nexus.fs._helpers` (also re-exported as `nexus.fs.LOCAL_CONTEXT`).
 
 ## Sync bridge
 
-`NexusFileSystem` is synchronous (as fsspec requires), but `SlimNexusFS`
-is async. The bridge uses `anyio.from_thread.run()` to call async methods
-from synchronous fsspec code. This is the same approach used by httpx
-and other async-first libraries with sync wrappers.
+`NexusFileSystem` is synchronous (as fsspec requires) and the
+`NexusFS` kernel exposes synchronous `sys_*` methods, so no
+async-to-sync bridge is needed for the hot path. The
+``_runner`` is retained only for resource cleanup hooks that may
+still produce coroutines.

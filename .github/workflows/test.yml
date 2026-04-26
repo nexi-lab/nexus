@@ -520,8 +520,8 @@ jobs:
           /tmp/nexus-fs-test/bin/python -c "
           import nexus.fs
           print(f'nexus-fs v{nexus.fs.__version__}')
-          _ = nexus.fs.SlimNexusFS
           _ = nexus.fs.parse_uri
+          _ = nexus.fs.LOCAL_CONTEXT
           print('Import OK')
           "
 

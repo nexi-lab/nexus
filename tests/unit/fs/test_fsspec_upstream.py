@@ -34,7 +34,6 @@ from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
-from nexus.fs._facade import SlimNexusFS  # noqa: E402
 from nexus.fs._fsspec import NexusFileSystem  # noqa: E402
 from nexus.fs._sqlite_meta import SQLiteMetastore  # noqa: E402
 
@@ -67,8 +66,7 @@ def _build_nexus_fsspec(tmp_path: Path) -> NexusFileSystem:
         zone_id=ROOT_ZONE_ID,
         is_admin=True,
     )
-    facade = SlimNexusFS(kernel)
-    return NexusFileSystem(nexus_fs=facade)
+    return NexusFileSystem(nexus_fs=kernel)
 
 
 class NexusFixtures(AbstractFixtures):

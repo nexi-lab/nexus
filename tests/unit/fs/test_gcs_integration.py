@@ -1,13 +1,13 @@
 """GCS backend integration tests using a mock transport.
 
-Tests the full SlimNexusFS lifecycle against a mocked GCS backend.
+Tests the full kernel lifecycle against a mocked GCS backend.
 Uses unittest.mock to intercept the GCS transport layer, providing
 an in-memory blob store that exercises the real CAS addressing engine.
 
 This validates:
-- The mount("gcs://...") → CASGCSBackend wiring
+- The mount("gcs://...") -> CASGCSBackend wiring
 - CAS addressing with GCS-style key layout
-- Full SlimNexusFS API surface against the GCS backend
+- Full kernel API surface against the GCS backend
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
-from nexus.fs._facade import SlimNexusFS  # noqa: E402
+from nexus.fs._helpers import LOCAL_CONTEXT, list_mounts  # noqa: E402
 from nexus.fs._sqlite_meta import SQLiteMetastore  # noqa: E402
 
 
@@ -102,8 +102,8 @@ class InMemoryBlobStore:
         return True  # Bucket always exists in tests
 
 
-def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
-    """Build SlimNexusFS with a mock GCS backend."""
+def _build_gcs_fs(tmp_path: Path) -> tuple[NexusFS, str]:
+    """Build NexusFS kernel with a mock GCS backend."""
     blob_store = InMemoryBlobStore()
 
     # Mock the GCS client so CASGCSBackend doesn't need real credentials
@@ -147,17 +147,17 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     # Create DT_MOUNT entry
     metastore.put(_make_mount_entry(mount_point, backend.name))
 
-    return SlimNexusFS(kernel), mount_point
+    return kernel, mount_point
 
 
 @pytest.fixture
 def gcs_fs(tmp_path: Path):
-    """Provide a SlimNexusFS with a mocked GCS backend."""
+    """Provide a NexusFS kernel with a mocked GCS backend."""
     return _build_gcs_fs(tmp_path)
 
 
 @pytest.mark.skip(
-    reason="GCS lifecycle now handled by Rust GcsBackend — Python mock transport "
+    reason="GCS lifecycle now handled by Rust GcsBackend - Python mock transport "
     "is bypassed. These tests need rewriting as Rust-level GCS integration tests."
 )
 @pytest.mark.integration
@@ -166,15 +166,15 @@ class TestGCSBackendLifecycle:
     async def test_write_and_read(self, gcs_fs):
         fs, mp = gcs_fs
         content = b"Hello from GCS!"
-        fs.write(f"{mp}/test.txt", content)
-        result = fs.read(f"{mp}/test.txt")
+        fs.write(f"{mp}/test.txt", content, context=LOCAL_CONTEXT)
+        result = fs.sys_read(f"{mp}/test.txt", context=LOCAL_CONTEXT)
         assert result == content
 
     @pytest.mark.asyncio
     async def test_stat(self, gcs_fs):
         fs, mp = gcs_fs
-        fs.write(f"{mp}/meta.txt", b"metadata test")
-        stat = fs.stat(f"{mp}/meta.txt")
+        fs.write(f"{mp}/meta.txt", b"metadata test", context=LOCAL_CONTEXT)
+        stat = fs.sys_stat(f"{mp}/meta.txt", context=LOCAL_CONTEXT)
         assert stat is not None
         assert stat["size"] == 13
         assert stat["is_directory"] is False
@@ -182,9 +182,11 @@ class TestGCSBackendLifecycle:
     @pytest.mark.asyncio
     async def test_ls(self, gcs_fs):
         fs, mp = gcs_fs
-        fs.write(f"{mp}/a.txt", b"aaa")
-        fs.write(f"{mp}/b.txt", b"bbb")
-        entries = fs.ls(f"{mp}/", detail=False, recursive=True)
+        fs.write(f"{mp}/a.txt", b"aaa", context=LOCAL_CONTEXT)
+        fs.write(f"{mp}/b.txt", b"bbb", context=LOCAL_CONTEXT)
+        entries = list(
+            fs.sys_readdir(f"{mp}/", recursive=True, details=False, context=LOCAL_CONTEXT)
+        )
         paths = [e for e in entries if e.endswith(".txt")]
         assert f"{mp}/a.txt" in paths
         assert f"{mp}/b.txt" in paths
@@ -192,60 +194,60 @@ class TestGCSBackendLifecycle:
     @pytest.mark.asyncio
     async def test_exists(self, gcs_fs):
         fs, mp = gcs_fs
-        assert not fs.exists(f"{mp}/nofile.txt")
-        fs.write(f"{mp}/nofile.txt", b"now I exist")
-        assert fs.exists(f"{mp}/nofile.txt")
+        assert not fs.access(f"{mp}/nofile.txt", context=LOCAL_CONTEXT)
+        fs.write(f"{mp}/nofile.txt", b"now I exist", context=LOCAL_CONTEXT)
+        assert fs.access(f"{mp}/nofile.txt", context=LOCAL_CONTEXT)
 
     @pytest.mark.asyncio
     async def test_delete(self, gcs_fs):
         fs, mp = gcs_fs
-        fs.write(f"{mp}/delete-me.txt", b"bye")
-        fs.delete(f"{mp}/delete-me.txt")
-        stat = fs.stat(f"{mp}/delete-me.txt")
+        fs.write(f"{mp}/delete-me.txt", b"bye", context=LOCAL_CONTEXT)
+        fs.sys_unlink(f"{mp}/delete-me.txt", context=LOCAL_CONTEXT)
+        stat = fs.sys_stat(f"{mp}/delete-me.txt", context=LOCAL_CONTEXT)
         assert stat is None
 
     @pytest.mark.asyncio
     async def test_copy(self, gcs_fs):
         fs, mp = gcs_fs
-        fs.write(f"{mp}/src.txt", b"copy me")
-        fs.copy(f"{mp}/src.txt", f"{mp}/dst.txt")
-        src = fs.read(f"{mp}/src.txt")
-        dst = fs.read(f"{mp}/dst.txt")
+        fs.write(f"{mp}/src.txt", b"copy me", context=LOCAL_CONTEXT)
+        fs.sys_copy(f"{mp}/src.txt", f"{mp}/dst.txt", context=LOCAL_CONTEXT)
+        src = fs.sys_read(f"{mp}/src.txt", context=LOCAL_CONTEXT)
+        dst = fs.sys_read(f"{mp}/dst.txt", context=LOCAL_CONTEXT)
         assert src == dst == b"copy me"
 
     @pytest.mark.asyncio
     async def test_mkdir(self, gcs_fs):
         fs, mp = gcs_fs
-        fs.mkdir(f"{mp}/subdir")
-        stat = fs.stat(f"{mp}/subdir")
+        fs.mkdir(f"{mp}/subdir", parents=True, exist_ok=True, context=LOCAL_CONTEXT)
+        stat = fs.sys_stat(f"{mp}/subdir", context=LOCAL_CONTEXT)
         assert stat is not None
         assert stat["is_directory"] is True
 
     @pytest.mark.asyncio
     async def test_list_mounts(self, gcs_fs):
         fs, mp = gcs_fs
-        mounts = fs.list_mounts()
+        mounts = list_mounts(fs)
         assert mp in mounts
 
     @pytest.mark.asyncio
     async def test_overwrite(self, gcs_fs):
         fs, mp = gcs_fs
-        fs.write(f"{mp}/ow.txt", b"version 1")
-        fs.write(f"{mp}/ow.txt", b"version 2")
-        result = fs.read(f"{mp}/ow.txt")
+        fs.write(f"{mp}/ow.txt", b"version 1", context=LOCAL_CONTEXT)
+        fs.write(f"{mp}/ow.txt", b"version 2", context=LOCAL_CONTEXT)
+        result = fs.sys_read(f"{mp}/ow.txt", context=LOCAL_CONTEXT)
         assert result == b"version 2"
 
     @pytest.mark.asyncio
     async def test_binary_content(self, gcs_fs):
         fs, mp = gcs_fs
         content = bytes(range(256))
-        fs.write(f"{mp}/binary.bin", content)
-        result = fs.read(f"{mp}/binary.bin")
+        fs.write(f"{mp}/binary.bin", content, context=LOCAL_CONTEXT)
+        result = fs.sys_read(f"{mp}/binary.bin", context=LOCAL_CONTEXT)
         assert result == content
 
     @pytest.mark.asyncio
     async def test_empty_file(self, gcs_fs):
         fs, mp = gcs_fs
-        fs.write(f"{mp}/empty.txt", b"")
-        result = fs.read(f"{mp}/empty.txt")
+        fs.write(f"{mp}/empty.txt", b"", context=LOCAL_CONTEXT)
+        result = fs.sys_read(f"{mp}/empty.txt", context=LOCAL_CONTEXT)
         assert result == b""

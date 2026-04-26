@@ -9,7 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import inspect
 import os
 import sqlite3
 import threading
@@ -21,36 +20,9 @@ import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
-from nexus.fs._facade import SlimNexusFS
+from nexus.fs._helpers import LOCAL_CONTEXT
+from nexus.fs._helpers import close as _close_fs
 from nexus.fs._sqlite_meta import SQLiteMetastore, _retry_on_busy
-from nexus.fs._sync import SyncNexusFS
-
-# =========================================================================
-# Issue 8B / 12A: Method-set parity between SlimNexusFS and SyncNexusFS
-# =========================================================================
-
-
-class TestMethodSetParity:
-    """SyncNexusFS must expose every public method from SlimNexusFS."""
-
-    @staticmethod
-    def _public_methods(cls: type) -> set[str]:
-        return {
-            name
-            for name, val in inspect.getmembers(cls)
-            if not name.startswith("_")
-            and callable(val)
-            and name not in ("kernel",)  # property escape hatch, not a method
-        }
-
-    def test_sync_exposes_all_async_methods(self) -> None:
-        async_methods = self._public_methods(SlimNexusFS)
-        sync_methods = self._public_methods(SyncNexusFS)
-        missing = async_methods - sync_methods
-        assert not missing, (
-            f"SyncNexusFS is missing public methods from SlimNexusFS: {sorted(missing)}"
-        )
-
 
 # =========================================================================
 # Issue 9A: mount() cleanup on failure
@@ -519,8 +491,8 @@ class TestPathsPermissions:
         assert p == target
 
 
-class TestSlimNexusFSLifecycle:
-    """Tests for the context manager and close() on SlimNexusFS."""
+class TestKernelLifecycle:
+    """Tests for the close() helper on the NexusFS kernel."""
 
     @pytest.mark.asyncio
     async def test_close_is_idempotent(self, tmp_path):
@@ -554,13 +526,12 @@ class TestSlimNexusFSLifecycle:
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
-        fs = SlimNexusFS(kernel)
-        fs.close()
-        fs.close()  # should not raise
+        _close_fs(kernel)
+        _close_fs(kernel)  # should not raise
 
     @pytest.mark.asyncio
-    async def test_context_manager(self, tmp_path):
-        """with SlimNexusFS should call close() on exit."""
+    async def test_close_after_use(self, tmp_path):
+        """try/finally close() pattern should work end-to-end."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
@@ -590,9 +561,10 @@ class TestSlimNexusFSLifecycle:
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
-        with SlimNexusFS(kernel) as fs:
-            fs.write("/local/ctx.txt", b"context manager")
-            content = fs.read("/local/ctx.txt")
+        fs = kernel
+        try:
+            fs.write("/local/ctx.txt", b"context manager", context=LOCAL_CONTEXT)
+            content = fs.sys_read("/local/ctx.txt", context=LOCAL_CONTEXT)
             assert content == b"context manager"
-
-        assert fs._closed is True
+        finally:
+            _close_fs(fs)

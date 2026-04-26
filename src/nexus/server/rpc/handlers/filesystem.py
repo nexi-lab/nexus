@@ -10,7 +10,6 @@ layer — they MUST NOT call async code directly.
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.path_utils import (
     unscope_internal_dict,
@@ -36,76 +35,12 @@ def generate_download_url(
 ) -> dict[str, Any] | None:
     """Generate presigned/signed URL for direct download if backend supports it.
 
-    Supported backends:
-    - S3: Returns presigned URL for direct download from S3
-    - GCS: Returns signed URL for direct download from GCS
-    - Local: Returns streaming endpoint URL with signed token
-
-    Args:
-        nexus_fs: NexusFS instance
-        path: Virtual file path
-        context: Operation context
-        expires_in: URL expiration time in seconds
-
-    Returns:
-        Dict with download_url, expires_in, method, backend if supported, None otherwise
+    Currently a no-op stub: Python backend references were deleted when all
+    backends migrated to Rust.  The Rust kernel has
+    ``vfs_router.generate_download_url()`` but it is not yet wired to this
+    RPC handler.  Callers fall through to plain sys_read.
     """
-    try:
-        _rr = nexus_fs._kernel.route(path, nexus_fs._zone_id)
-        backend = None
-        if backend is None:
-            return None
-        backend_path = _rr.backend_path
-
-        # S3 or GCS connector with signed URL support
-        if hasattr(backend, "has_feature") and backend.has_feature(BackendFeature.SIGNED_URL):
-            from dataclasses import replace
-
-            if context and hasattr(context, "backend_path"):
-                context = replace(context, backend_path=backend_path)
-
-            # S3 uses generate_presigned_url, GCS uses generate_signed_url
-            # (method unification deferred to Phase 6 cleanup)
-            generate_fn = getattr(
-                backend,
-                "generate_presigned_url",
-                getattr(backend, "generate_signed_url", None),
-            )
-            if generate_fn is None:
-                raise RuntimeError("Backend declares SIGNED_URL but has no signed URL method")
-            result = generate_fn(backend_path, expires_in, context)
-            return {
-                "download_url": result["url"],
-                "expires_in": result["expires_in"],
-                "method": result["method"],
-                "backend": getattr(backend, "name", "unknown"),
-            }
-
-        # Local backend - use streaming endpoint with signed token
-        if hasattr(backend, "has_feature") and backend.has_feature(BackendFeature.ROOT_PATH):
-            from urllib.parse import quote
-
-            from nexus.server.streaming import _sign_stream_token
-
-            zone_id = ROOT_ZONE_ID
-            if context and hasattr(context, "zone_id"):
-                zone_id = context.zone_id or ROOT_ZONE_ID
-
-            token = _sign_stream_token(path, expires_in, zone_id)
-            encoded_path = quote(path.lstrip("/"), safe="")
-
-            return {
-                "download_url": f"/api/stream/{encoded_path}?token={token}&zone_id={zone_id}",
-                "expires_in": expires_in,
-                "method": "GET",
-                "backend": "local",
-            }
-
-        return None
-
-    except Exception as e:
-        logger.warning(f"Failed to generate download URL for {path}: {e}")
-        return None
+    return None
 
 
 # ---------------------------------------------------------------------------

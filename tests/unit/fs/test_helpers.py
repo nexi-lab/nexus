@@ -59,7 +59,7 @@ def test_unmount_rejects_when_meta_not_mount():
         unmount(kernel, "/some/path")
 
 
-def test_unmount_calls_kernel_unmount_then_scrubs_mounts_json(
+def test_unmount_calls_sys_unlink_then_scrubs_mounts_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
@@ -74,9 +74,6 @@ def test_unmount_calls_kernel_unmount_then_scrubs_mounts_json(
     meta.zone_id = ROOT_ZONE_ID
     kernel.metadata.get.return_value = meta
 
-    py_kernel = MagicMock()
-    kernel._kernel = py_kernel
-
     with (
         patch(
             "nexus.fs._uri.derive_mount_point",
@@ -89,7 +86,12 @@ def test_unmount_calls_kernel_unmount_then_scrubs_mounts_json(
     ):
         unmount(kernel, "/local/foo")
 
-    py_kernel.kernel_unmount.assert_called_once_with("/local/foo", ROOT_ZONE_ID)
+    # The full unmount lifecycle is now a single sys_unlink call — the
+    # kernel delegates to dlc::unmount internally when the entry is DT_MOUNT.
+    kernel.sys_unlink.assert_called_once()
+    args, kwargs = kernel.sys_unlink.call_args
+    assert args[0] == "/local/foo"
+    assert kwargs.get("context") is not None
 
     # mounts.json was rewritten without the entry
     remaining = json.loads(mounts_file.read_text())

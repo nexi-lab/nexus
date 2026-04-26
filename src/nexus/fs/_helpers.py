@@ -51,10 +51,11 @@ def list_mounts(kernel: NexusFS) -> list[str]:
 def unmount(kernel: NexusFS, mount_point: str) -> None:
     """Remove *mount_point* and clean up runtime + persisted state.
 
-    Steps:
-        1. Drop runtime + metastore + dcache state via ``kernel_unmount``.
-        2. Strip the matching entry from ``mounts.json`` so the mount
-           does not resurrect on next boot.
+    The runtime tear-down (metastore delete + dcache evict + routing
+    remove) is a single ``kernel.sys_unlink`` call — sys_unlink delegates
+    to ``dlc::unmount`` when the entry is a DT_MOUNT. Only the
+    ``mounts.json`` scrub stays Python-side because the kernel doesn't
+    own that config file.
     """
     from nexus.core.path_utils import validate_path
 
@@ -63,10 +64,7 @@ def unmount(kernel: NexusFS, mount_point: str) -> None:
     if meta is None or not meta.is_mount:
         raise ValueError(f"'{normalized}' is not a mount point")
 
-    py_kernel = getattr(kernel, "_kernel", None)
-    if py_kernel is not None:
-        zone_id = meta.zone_id or ROOT_ZONE_ID
-        py_kernel.kernel_unmount(normalized, zone_id)
+    kernel.sys_unlink(normalized, context=LOCAL_CONTEXT)
 
     with contextlib.suppress(OSError):
         from nexus.fs._paths import load_persisted_mounts, save_persisted_mounts

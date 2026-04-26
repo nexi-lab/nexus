@@ -2984,7 +2984,7 @@ impl PyKernel {
                 tracing::warn!("cascade unmount {parent_zone}{mount_path} failed: {e}");
             }
         }
-        zm.remove_zone(zone_id)
+        zm.remove_zone(zone_id, false)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 

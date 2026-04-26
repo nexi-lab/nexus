@@ -445,8 +445,43 @@ impl ZoneManager {
             .map(|node| ZoneHandle::new(node, self.runtime.handle().clone(), zone_id.to_string()))
     }
 
+    /// Read a zone's POSIX `i_links_count` (mount references).
+    ///
+    /// Returns `0` for zones that have never been mounted (key absent).
+    /// Returns `Ok(None)` if the zone itself is not registered locally.
+    pub fn get_links_count(&self, zone_id: &str) -> Result<Option<i64>> {
+        let Some(node) = self.registry.get_node(zone_id) else {
+            return Ok(None);
+        };
+        let key = I_LINKS_COUNT_KEY.to_string();
+        let bytes = self.runtime.handle().block_on(async move {
+            node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&key))
+                .await
+        })?;
+        let count = bytes
+            .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+            .map(i64::from_be_bytes)
+            .unwrap_or(0);
+        Ok(Some(count))
+    }
+
     /// Remove a zone — shut down transport loop, delete on-disk dir.
-    pub fn remove_zone(&self, zone_id: &str) -> Result<()> {
+    ///
+    /// POSIX semantics: when `force` is false, refuses removal while
+    /// `i_links_count > 0` (i.e. the zone is still mounted somewhere).
+    /// Mirrors Python `ZoneManager.remove_zone(force=...)`.
+    pub fn remove_zone(&self, zone_id: &str, force: bool) -> Result<()> {
+        if !force {
+            if let Some(count) = self.get_links_count(zone_id)? {
+                if count > 0 {
+                    return Err(RaftError::InvalidState(format!(
+                        "Zone '{}' still has {} reference(s) (i_links_count > 0); \
+                         unmount all references first, or pass force=true.",
+                        zone_id, count
+                    )));
+                }
+            }
+        }
         self.runtime
             .handle()
             .block_on(self.registry.remove_zone(zone_id))

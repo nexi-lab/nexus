@@ -179,12 +179,12 @@ class TestRuntimeBoundary:
         from nexus.fs._backend_factory import create_backend  # noqa: F401
         from nexus.fs._cli import main  # CLI entry point
         from nexus.fs._constants import DEFAULT_MAX_FILE_SIZE  # noqa: F401
-        from nexus.fs._facade import SlimNexusFS  # noqa: F401
+        from nexus.fs._helpers import LOCAL_CONTEXT  # noqa: F401
         from nexus.fs._paths import mounts_file, state_dir  # noqa: F401
         from nexus.fs._uri import parse_uri  # noqa: F401
 
         # Access lazy attributes to trigger __getattr__
-        _ = nexus.fs.SlimNexusFS
+        _ = nexus.fs.LOCAL_CONTEXT
         _ = nexus.fs.parse_uri
         assert callable(nexus.fs.mount)
 

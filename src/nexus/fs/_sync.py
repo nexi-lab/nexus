@@ -11,7 +11,7 @@ Three supported scenarios:
 Usage:
     from nexus.fs._sync import SyncNexusFS
 
-    with SyncNexusFS(async_facade) as fs:
+    with SyncNexusFS(kernel) as fs:
         content = fs.read("/s3/bucket/file.txt")
 """
 
@@ -20,6 +20,8 @@ from __future__ import annotations
 from typing import Any, TypeVar, cast
 
 from anyio.from_thread import BlockingPortalProvider
+
+from nexus.fs._helpers import LOCAL_CONTEXT
 
 T = TypeVar("T")
 
@@ -86,19 +88,24 @@ class PortalRunner:
 
 
 class SyncNexusFS:
-    """Synchronous wrapper around the async NexusFS facade.
+    """Synchronous wrapper around a ``NexusFS`` kernel.
 
-    Keeps a persistent event loop alive across calls via PortalRunner.
-    Use as a context manager or call close() when done::
+    Most kernel methods are already synchronous (``sys_read``,
+    ``sys_stat``, ...), but the wrapper still keeps a ``PortalRunner``
+    for the few entry points that may run a coroutine (e.g. resource
+    cleanup) and to preserve the original ``with SyncNexusFS(...)``
+    contract.
 
-        with SyncNexusFS(async_facade) as fs:
+    Use as a context manager or call ``close()`` when done::
+
+        with SyncNexusFS(kernel) as fs:
             content = fs.read("/path")
 
     Thread-safe — multiple threads can use the same SyncNexusFS instance.
     """
 
-    def __init__(self, async_fs: Any) -> None:
-        self._async = async_fs
+    def __init__(self, kernel: Any) -> None:
+        self._kernel = kernel
         self._runner = PortalRunner()
 
     # -- Context manager -------------------------------------------------------
@@ -109,40 +116,42 @@ class SyncNexusFS:
     def __exit__(self, *args: Any) -> None:
         self.close()
 
-    # -- Expose the public facade methods as sync versions ---------------------
+    # -- Sync wrappers around kernel sys_* / public methods --------------------
 
     def read(self, path: str) -> bytes:
-        return cast(bytes, self._runner(self._async.read(path)))
+        return cast(bytes, self._kernel.sys_read(path, context=LOCAL_CONTEXT))
 
     def write(self, path: str, content: bytes) -> dict[str, Any]:
-        return cast(dict[str, Any], self._runner(self._async.write(path, content)))
+        return cast(dict[str, Any], self._kernel.write(path, content, context=LOCAL_CONTEXT))
 
     def ls(self, path: str = "/", detail: bool = False) -> list[Any]:
-        return cast(
-            list[Any],
-            self._runner(self._async.ls(path, detail=detail)),
+        return list(
+            self._kernel.sys_readdir(path, recursive=False, details=detail, context=LOCAL_CONTEXT)
         )
 
     def stat(self, path: str) -> dict[str, Any] | None:
-        return cast(dict[str, Any] | None, self._runner(self._async.stat(path)))
+        return cast(
+            dict[str, Any] | None,
+            self._kernel.sys_stat(path, context=LOCAL_CONTEXT),
+        )
 
     def delete(self, path: str) -> None:
-        self._runner(self._async.delete(path))
+        self._kernel.sys_unlink(path, context=LOCAL_CONTEXT)
 
     def mkdir(self, path: str, parents: bool = True) -> None:
-        self._runner(self._async.mkdir(path, parents=parents))
+        self._kernel.mkdir(path, parents=parents, exist_ok=True, context=LOCAL_CONTEXT)
 
     def rmdir(self, path: str, recursive: bool = False) -> None:
-        self._runner(self._async.rmdir(path, recursive=recursive))
+        self._kernel.rmdir(path, recursive=recursive, context=LOCAL_CONTEXT)
 
     def rename(self, old_path: str, new_path: str) -> None:
-        self._runner(self._async.rename(old_path, new_path))
+        self._kernel.sys_rename(old_path, new_path, context=LOCAL_CONTEXT)
 
     def exists(self, path: str) -> bool:
-        return cast(bool, self._runner(self._async.exists(path)))
+        return cast(bool, self._kernel.access(path, context=LOCAL_CONTEXT))
 
     def copy(self, src: str, dst: str) -> dict[str, Any]:
-        return cast(dict[str, Any], self._runner(self._async.copy(src, dst)))
+        return cast(dict[str, Any], self._kernel.sys_copy(src, dst, context=LOCAL_CONTEXT))
 
     def edit(
         self,
@@ -155,19 +164,18 @@ class SyncNexusFS:
     ) -> dict[str, Any]:
         return cast(
             dict[str, Any],
-            self._runner(
-                self._async.edit(
-                    path,
-                    edits,
-                    if_match=if_match,
-                    fuzzy_threshold=fuzzy_threshold,
-                    preview=preview,
-                )
+            self._kernel.edit(
+                path,
+                edits,
+                context=LOCAL_CONTEXT,
+                if_match=if_match,
+                fuzzy_threshold=fuzzy_threshold,
+                preview=preview,
             ),
         )
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
-        return cast(bytes, self._runner(self._async.read_range(path, start, end)))
+        return cast(bytes, self._kernel.read_range(path, start, end, context=LOCAL_CONTEXT))
 
     def grep(
         self,
@@ -177,33 +185,35 @@ class SyncNexusFS:
         ignore_case: bool = False,
         max_results: int = 1000,
     ) -> list[dict[str, Any]]:
-        return cast(
-            list[dict[str, Any]],
-            self._runner(
-                self._async.grep(
-                    pattern,
-                    path,
-                    ignore_case=ignore_case,
-                    max_results=max_results,
-                )
-            ),
+        from nexus.fs._helpers import grep as _grep
+
+        return _grep(
+            self._kernel,
+            pattern,
+            path,
+            ignore_case=ignore_case,
+            max_results=max_results,
         )
 
     def glob(self, pattern: str, path: str = "/") -> list[str]:
-        return cast(list[str], self._runner(self._async.glob(pattern, path)))
+        from nexus.fs._helpers import glob as _glob
+
+        return _glob(self._kernel, pattern, path)
 
     def list_mounts(self) -> list[str]:
-        """List all mount points (synchronous -- no portal needed)."""
-        return cast(list[str], self._async.list_mounts())
+        from nexus.fs._helpers import list_mounts as _list_mounts
+
+        return _list_mounts(self._kernel)
 
     def unmount(self, mount_point: str) -> None:
-        """Remove a mount and clean up all associated state (synchronous wrapper)."""
-        self._runner(self._async.unmount(mount_point))
+        from nexus.fs._helpers import unmount as _unmount
+
+        _unmount(self._kernel, mount_point)
 
     def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
         return cast(
             list[dict[str, Any]],
-            self._runner(self._async.write_batch(files)),
+            self._kernel.write_batch(files, context=LOCAL_CONTEXT),
         )
 
     def read_batch(
@@ -214,14 +224,15 @@ class SyncNexusFS:
     ) -> list[dict[str, Any]]:
         return cast(
             list[dict[str, Any]],
-            self._runner(self._async.read_batch(paths, partial=partial)),
+            self._kernel.read_batch(paths, partial=partial, context=LOCAL_CONTEXT),
         )
 
     def close(self) -> None:
-        """Clean up resources held by the underlying async facade and portal."""
-        if hasattr(self._async, "close"):
-            import contextlib
+        """Close the underlying kernel and release the portal worker."""
+        import contextlib
 
-            with contextlib.suppress(Exception):
-                self._runner(self._async.close())
+        from nexus.fs._helpers import close as _close_kernel
+
+        with contextlib.suppress(Exception):
+            _close_kernel(self._kernel)
         self._runner.close()

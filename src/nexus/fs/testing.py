@@ -30,7 +30,7 @@ from typing import Any
 def ephemeral_mount(*uris: str, **kwargs: Any) -> Iterator[Any]:
     """Mount backends without writing to mounts.json.
 
-    Guarantees teardown via ``SlimNexusFS.close()`` even if the body raises.
+    Guarantees teardown via the kernel's ``close()`` even if the body raises.
     Suitable for sync test code.  For async tests use ``async_ephemeral_mount``.
 
     Args:
@@ -39,7 +39,7 @@ def ephemeral_mount(*uris: str, **kwargs: Any) -> Iterator[Any]:
             ``ephemeral`` is always forced to ``True``; passing it explicitly is a no-op.
 
     Yields:
-        SlimNexusFS facade with all backends mounted.
+        ``NexusFS`` kernel instance with all backends mounted.
 
     Example::
 
@@ -126,7 +126,7 @@ def _close_fs_sync(fs: Any) -> None:
 
 
 async def _close_fs_async(fs: Any) -> None:
-    """Best-effort close of a SlimNexusFS (close is sync)."""
+    """Best-effort close of a ``NexusFS`` kernel (close is sync)."""
     close = getattr(fs, "close", None)
     if close is None:
         return

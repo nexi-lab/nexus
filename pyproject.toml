@@ -1035,6 +1035,20 @@ forbidden_modules = [
     "nexus.raft.zone_manager",
 ]
 
+# Contract 4: SlimNexusFS facade — deleted in para-pc-7. Callers should
+# hold a NexusFS kernel directly and use nexus.fs._helpers (LOCAL_CONTEXT,
+# list_mounts, unmount, close, grep, glob) for the few operations that
+# kept Python-side orchestration. Re-introducing the wrapper would re-add
+# a dead layer and confuse future contributors.
+[[tool.importlinter.contracts]]
+id = "no-deleted-fs-facade"
+name = "Deleted nexus.fs._facade must not be reintroduced"
+type = "forbidden"
+source_modules = ["nexus"]
+forbidden_modules = [
+    "nexus.fs._facade",
+]
+
 [dependency-groups]
 dev = [
     "freezegun>=1.5.5",

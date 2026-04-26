@@ -83,7 +83,7 @@ sequenceDiagram
     Backend Factory-->>mount(): Local backend instance
     mount()->>Kernel: register mount(/s3/bucket/, s3_backend)
     mount()->>Kernel: register mount(/local/data/, local_backend)
-    Kernel-->>User: SlimNexusFS facade
+    Kernel-->>User: NexusFS kernel
 ```
 
 1. **Parse**: Each URI is parsed into a `MountSpec` via `parse_uri()`.
@@ -94,8 +94,9 @@ sequenceDiagram
    trigger credential discovery at this stage.
 4. **Register**: Each backend is registered with the kernel at its mount
    point.
-5. **Return facade**: A `SlimNexusFS` (async) or `SyncNexusFS` (sync)
-   facade is returned, providing the unified API.
+5. **Return kernel**: A `NexusFS` kernel is returned. Call its `sys_*`
+   methods directly with `LOCAL_CONTEXT` from `nexus.fs._helpers`, or
+   wrap it in `SyncNexusFS` for the legacy synchronous facade API.
 
 ## Namespace routing
 

@@ -213,10 +213,15 @@ class TestConcurrentExecution:
     @pytest.mark.asyncio
     async def test_run_all_checks_with_mock_fs(self):
         mock_fs = MagicMock()
-        mock_fs.list_mounts.return_value = ["/local/data"]
-        mock_fs.ls = MagicMock(return_value=[])
+        # `list_mounts(kernel)` helper inspects ``kernel._kernel.get_mount_points()``
+        mock_fs._kernel.get_mount_points.return_value = ["root:/local/data"]
+        mock_fs.sys_readdir = MagicMock(return_value=[])
 
-        results = await run_all_checks(fs=mock_fs)
+        with patch(
+            "nexus.core.path_utils.extract_zone_id",
+            return_value=("root", "/local/data"),
+        ):
+            results = await run_all_checks(fs=mock_fs)
         mount_results = results["Mounts"]
         assert len(mount_results) == 1
         assert mount_results[0].status == DoctorStatus.CONNECTED
@@ -224,10 +229,14 @@ class TestConcurrentExecution:
     @pytest.mark.asyncio
     async def test_mount_connectivity_failure(self):
         mock_fs = MagicMock()
-        mock_fs.list_mounts.return_value = ["/s3/bucket"]
-        mock_fs.ls = MagicMock(side_effect=ConnectionError("network unreachable"))
+        mock_fs._kernel.get_mount_points.return_value = ["root:/s3/bucket"]
+        mock_fs.sys_readdir = MagicMock(side_effect=ConnectionError("network unreachable"))
 
-        results = await run_all_checks(fs=mock_fs)
+        with patch(
+            "nexus.core.path_utils.extract_zone_id",
+            return_value=("root", "/s3/bucket"),
+        ):
+            results = await run_all_checks(fs=mock_fs)
         mount_results = results["Mounts"]
         assert len(mount_results) == 1
         assert mount_results[0].status == DoctorStatus.FAIL

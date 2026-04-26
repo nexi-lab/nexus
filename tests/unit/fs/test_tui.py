@@ -45,7 +45,7 @@ def _make_mock_fs(
     read_content: bytes = b"hello world",
     stat_result: dict | None = None,
 ) -> MagicMock:
-    """Create a mock SlimNexusFS."""
+    """Create a mock ContextualNexusFS-style object for TUI tests."""
     fs = MagicMock()
     fs.list_mounts.return_value = mount_points or ["/local/data"]
     fs.ls = AsyncMock(return_value=ls_entries or [])

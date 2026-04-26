@@ -10,18 +10,56 @@ from click.testing import CliRunner
 from nexus.fs._cli import main
 
 
-class _FakeFS:
-    """Minimal stand-in for SlimNexusFS returned by mount()."""
+class _FakeKernel:
+    """Minimal stand-in for the NexusFS kernel returned by mount().
+
+    The CLI's ``mount_add`` calls ``list_mounts(kernel)`` (which reads
+    ``kernel._kernel.get_mount_points()`` and runs each through
+    ``extract_zone_id``) and ``close(kernel)`` (which calls
+    ``kernel.close()`` then ``kernel.metadata.close()``), so the stub
+    needs to expose those.
+    """
 
     def __init__(self, mounts: list[str]) -> None:
-        self._mounts = mounts
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        self._mount_points = list(mounts)
+
+        # ``list_mounts`` strips the leading zone segment from each entry,
+        # so we have to feed it zone-prefixed canonical paths.  Inputs
+        # like "/s3/my-bucket" become "/{zone}/s3/my-bucket".
+        zone_prefixed = [f"/{ROOT_ZONE_ID}{mp}" for mp in self._mount_points]
+
+        class _InnerKernel:
+            def __init__(self, mps: list[str]) -> None:
+                self._mps = mps
+
+            def get_mount_points(self) -> list[str]:
+                return list(self._mps)
+
+        self._kernel = _InnerKernel(zone_prefixed)
+
+        class _Meta:
+            def close(self) -> None:
+                pass
+
+        self.metadata = _Meta()
 
     def list_mounts(self) -> list[str]:
-        return self._mounts
+        # Convenience shim for tests that read kernel.list_mounts() directly
+        # (legacy behavior carried over from the SlimNexusFS facade).
+        return list(self._mount_points)
+
+    def close(self) -> None:
+        pass
+
+
+# Backwards-compatible alias for tests that still reference the old name.
+_FakeFS = _FakeKernel
 
 
 def _make_mock_mount(mounts: list[str]) -> AsyncMock:
-    return AsyncMock(return_value=_FakeFS(mounts))
+    return AsyncMock(return_value=_FakeKernel(mounts))
 
 
 def _env_no_auto_json() -> dict[str, str]:
@@ -399,7 +437,7 @@ class TestMountPersistence:
         )
 
         mock_mount = _make_mock_mount(["/data"])
-        mock_mount.return_value.copy = AsyncMock(return_value={"size": 10})
+        mock_mount.return_value.sys_copy = MagicMock(return_value={"size": 10})
 
         with patch("nexus.fs.mount", mock_mount):
             runner = CliRunner(env=_env_no_auto_json())
@@ -425,7 +463,7 @@ class TestMountPersistence:
         )
 
         mock_mount = _make_mock_mount(["/data", "/local/b"])
-        mock_mount.return_value.copy = AsyncMock(return_value={"size": 10})
+        mock_mount.return_value.sys_copy = MagicMock(return_value={"size": 10})
 
         with patch("nexus.fs.mount", mock_mount):
             runner = CliRunner(env=_env_no_auto_json())
@@ -445,7 +483,7 @@ class TestMountPersistence:
         (tmp_path / "mounts.json").write_text(json.dumps(["s3://old-bucket"]))
 
         mock_mount = _make_mock_mount(["/s3/old-bucket"])
-        mock_mount.return_value.copy = AsyncMock(return_value={"size": 5})
+        mock_mount.return_value.sys_copy = MagicMock(return_value={"size": 5})
 
         with patch("nexus.fs.mount", mock_mount):
             runner = CliRunner(env=_env_no_auto_json())

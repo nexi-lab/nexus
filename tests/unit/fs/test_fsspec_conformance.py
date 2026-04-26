@@ -20,7 +20,6 @@ from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.fs import _make_mount_entry  # noqa: E402
-from nexus.fs._facade import SlimNexusFS  # noqa: E402
 from nexus.fs._fsspec import NexusFileSystem  # noqa: E402
 from nexus.fs._sqlite_meta import SQLiteMetastore  # noqa: E402
 
@@ -153,8 +152,7 @@ class NexusFsFixtures(abstract.AbstractFixtures):
             is_admin=True,
         )
 
-        facade = SlimNexusFS(kernel)
-        nfs = _ConformanceFS(nexus_fs=facade)
+        nfs = _ConformanceFS(nexus_fs=kernel)
         yield nfs
         nfs._runner.close()
         _ConformanceFS.clear_instance_cache()

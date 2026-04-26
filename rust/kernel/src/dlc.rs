@@ -146,7 +146,6 @@ impl DriverLifecycleCoordinator {
     /// Unmount with full lifecycle: metastore delete + dcache evict + routing remove.
     ///
     /// Returns `true` if mount was removed, `false` if not found.
-    #[allow(dead_code)]
     pub fn unmount(&self, kernel: &Kernel, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize(mount_point, zone_id);
 

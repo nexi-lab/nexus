@@ -1,7 +1,7 @@
-"""E2E tests for SlimNexusFS.write_batch() and .read_batch() (Issue #3700).
+"""E2E tests for kernel write_batch() and read_batch() (Issue #3700).
 
-Boots a real NexusFS kernel (SQLite + CASLocalBackend) and exercises the SDK
-facade layer — no mocks, no external server process required.
+Boots a real NexusFS kernel (SQLite + CASLocalBackend) and exercises the kernel
+batch APIs - no mocks, no external server process required.
 
 Verifies:
 - write_batch returns correct metadata (etag, version, size)
@@ -25,7 +25,7 @@ from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.fs import _make_mount_entry
-from nexus.fs._facade import SlimNexusFS
+from nexus.fs._helpers import LOCAL_CONTEXT
 from nexus.fs._sqlite_meta import SQLiteMetastore
 
 # ---------------------------------------------------------------------------
@@ -34,8 +34,8 @@ from nexus.fs._sqlite_meta import SQLiteMetastore
 
 
 @pytest.fixture()
-def slim(tmp_path: Path) -> SlimNexusFS:
-    """SlimNexusFS backed by SQLite metastore + CASLocalBackend."""
+def slim(tmp_path: Path) -> NexusFS:
+    """NexusFS kernel backed by SQLite metastore + CASLocalBackend."""
     from nexus.backends.storage.cas_local import CASLocalBackend
 
     db_path = str(tmp_path / "meta.db")
@@ -58,7 +58,7 @@ def slim(tmp_path: Path) -> SlimNexusFS:
     kernel.sys_setattr("/files", entry_type=DT_MOUNT, backend=backend)
     metastore.put(_make_mount_entry("/files", backend.name))
 
-    return SlimNexusFS(kernel)
+    return kernel
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +68,8 @@ def slim(tmp_path: Path) -> SlimNexusFS:
 
 class TestSlimWriteBatch:
     @pytest.mark.asyncio
-    async def test_write_single_file(self, slim: SlimNexusFS) -> None:
-        results = slim.write_batch([("/files/a.txt", b"alpha")])
+    async def test_write_single_file(self, slim: NexusFS) -> None:
+        results = slim.write_batch([("/files/a.txt", b"alpha")], context=LOCAL_CONTEXT)
         assert len(results) == 1
         r = results[0]
         assert r["size"] == 5
@@ -77,13 +77,13 @@ class TestSlimWriteBatch:
         assert r.get("etag") is not None
 
     @pytest.mark.asyncio
-    async def test_write_multiple_files(self, slim: SlimNexusFS) -> None:
+    async def test_write_multiple_files(self, slim: NexusFS) -> None:
         files = [
             ("/files/x.txt", b"xxx"),
             ("/files/y.txt", b"yyyy"),
             ("/files/z.txt", b"zzzzz"),
         ]
-        results = slim.write_batch(files)
+        results = slim.write_batch(files, context=LOCAL_CONTEXT)
         assert len(results) == 3
         # Results are in input order: x, y, z
         assert results[0]["size"] == 3
@@ -91,20 +91,20 @@ class TestSlimWriteBatch:
         assert results[2]["size"] == 5
 
     @pytest.mark.asyncio
-    async def test_write_empty_content(self, slim: SlimNexusFS) -> None:
-        results = slim.write_batch([("/files/empty.txt", b"")])
+    async def test_write_empty_content(self, slim: NexusFS) -> None:
+        results = slim.write_batch([("/files/empty.txt", b"")], context=LOCAL_CONTEXT)
         assert results[0]["size"] == 0
 
     @pytest.mark.asyncio
-    async def test_write_binary_content(self, slim: SlimNexusFS) -> None:
+    async def test_write_binary_content(self, slim: NexusFS) -> None:
         binary = bytes(range(256))
-        results = slim.write_batch([("/files/bin.bin", binary)])
+        results = slim.write_batch([("/files/bin.bin", binary)], context=LOCAL_CONTEXT)
         assert results[0]["size"] == 256
 
     @pytest.mark.asyncio
-    async def test_overwrite_increments_version(self, slim: SlimNexusFS) -> None:
-        r1 = slim.write_batch([("/files/ver.txt", b"v1")])
-        r2 = slim.write_batch([("/files/ver.txt", b"v2")])
+    async def test_overwrite_increments_version(self, slim: NexusFS) -> None:
+        r1 = slim.write_batch([("/files/ver.txt", b"v1")], context=LOCAL_CONTEXT)
+        r2 = slim.write_batch([("/files/ver.txt", b"v2")], context=LOCAL_CONTEXT)
         assert r2[0]["version"] > r1[0]["version"]
 
 
@@ -115,68 +115,71 @@ class TestSlimWriteBatch:
 
 class TestSlimReadBatch:
     @pytest.mark.asyncio
-    async def test_read_single_file(self, slim: SlimNexusFS) -> None:
-        slim.write_batch([("/files/r1.txt", b"read me")])
-        results = slim.read_batch(["/files/r1.txt"])
+    async def test_read_single_file(self, slim: NexusFS) -> None:
+        slim.write_batch([("/files/r1.txt", b"read me")], context=LOCAL_CONTEXT)
+        results = slim.read_batch(["/files/r1.txt"], context=LOCAL_CONTEXT)
         assert len(results) == 1
         assert results[0]["content"] == b"read me"
         assert results[0]["path"] == "/files/r1.txt"
 
     @pytest.mark.asyncio
-    async def test_read_multiple_files_preserves_order(self, slim: SlimNexusFS) -> None:
+    async def test_read_multiple_files_preserves_order(self, slim: NexusFS) -> None:
         slim.write_batch(
             [
                 ("/files/ord1.txt", b"first"),
                 ("/files/ord2.txt", b"second"),
                 ("/files/ord3.txt", b"third"),
-            ]
+            ],
+            context=LOCAL_CONTEXT,
         )
         results = slim.read_batch(
             [
                 "/files/ord3.txt",
                 "/files/ord1.txt",
                 "/files/ord2.txt",
-            ]
+            ],
+            context=LOCAL_CONTEXT,
         )
         assert results[0]["content"] == b"third"
         assert results[1]["content"] == b"first"
         assert results[2]["content"] == b"second"
 
     @pytest.mark.asyncio
-    async def test_read_strict_missing_raises(self, slim: SlimNexusFS) -> None:
+    async def test_read_strict_missing_raises(self, slim: NexusFS) -> None:
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
-            slim.read_batch(["/files/ghost.txt"])
+            slim.read_batch(["/files/ghost.txt"], context=LOCAL_CONTEXT)
 
     @pytest.mark.asyncio
-    async def test_read_partial_missing_returns_error_item(self, slim: SlimNexusFS) -> None:
-        results = slim.read_batch(["/files/ghost.txt"], partial=True)
+    async def test_read_partial_missing_returns_error_item(self, slim: NexusFS) -> None:
+        results = slim.read_batch(["/files/ghost.txt"], partial=True, context=LOCAL_CONTEXT)
         assert len(results) == 1
         assert "error" in results[0]
         assert results[0]["path"] == "/files/ghost.txt"
 
     @pytest.mark.asyncio
-    async def test_read_partial_mixed(self, slim: SlimNexusFS) -> None:
-        slim.write_batch([("/files/pm_exists.txt", b"here")])
+    async def test_read_partial_mixed(self, slim: NexusFS) -> None:
+        slim.write_batch([("/files/pm_exists.txt", b"here")], context=LOCAL_CONTEXT)
         results = slim.read_batch(
             ["/files/pm_exists.txt", "/files/pm_missing.txt"],
             partial=True,
+            context=LOCAL_CONTEXT,
         )
         assert len(results) == 2
         assert results[0]["content"] == b"here"
         assert "error" in results[1]
 
     @pytest.mark.asyncio
-    async def test_read_empty_batch(self, slim: SlimNexusFS) -> None:
-        results = slim.read_batch([])
+    async def test_read_empty_batch(self, slim: NexusFS) -> None:
+        results = slim.read_batch([], context=LOCAL_CONTEXT)
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_read_binary_content(self, slim: SlimNexusFS) -> None:
+    async def test_read_binary_content(self, slim: NexusFS) -> None:
         binary = bytes(range(256))
-        slim.write_batch([("/files/rb.bin", binary)])
-        results = slim.read_batch(["/files/rb.bin"])
+        slim.write_batch([("/files/rb.bin", binary)], context=LOCAL_CONTEXT)
+        results = slim.read_batch(["/files/rb.bin"], context=LOCAL_CONTEXT)
         assert results[0]["content"] == binary
         assert results[0]["size"] == 256
 
@@ -188,14 +191,17 @@ class TestSlimReadBatch:
 
 class TestSlimBatchRoundTrip:
     @pytest.mark.asyncio
-    async def test_write_then_read_etag_matches(self, slim: SlimNexusFS) -> None:
+    async def test_write_then_read_etag_matches(self, slim: NexusFS) -> None:
         write_results = slim.write_batch(
             [
                 ("/files/rt_a.txt", b"payload A"),
                 ("/files/rt_b.txt", b"payload B"),
-            ]
+            ],
+            context=LOCAL_CONTEXT,
         )
-        read_results = slim.read_batch(["/files/rt_a.txt", "/files/rt_b.txt"])
+        read_results = slim.read_batch(
+            ["/files/rt_a.txt", "/files/rt_b.txt"], context=LOCAL_CONTEXT
+        )
 
         # Content matches
         assert read_results[0]["content"] == b"payload A"
@@ -207,12 +213,12 @@ class TestSlimBatchRoundTrip:
             assert read_results[1]["etag"] == write_results[1]["etag"]
 
     @pytest.mark.asyncio
-    async def test_large_batch_50_files(self, slim: SlimNexusFS) -> None:
+    async def test_large_batch_50_files(self, slim: NexusFS) -> None:
         files = [(f"/files/batch_{i:03d}.txt", f"content_{i}".encode()) for i in range(50)]
-        slim.write_batch(files)
+        slim.write_batch(files, context=LOCAL_CONTEXT)
 
         paths = [p for p, _ in files]
-        results = slim.read_batch(paths)
+        results = slim.read_batch(paths, context=LOCAL_CONTEXT)
 
         assert len(results) == 50
         for i, (path, content) in enumerate(files):
@@ -220,14 +226,14 @@ class TestSlimBatchRoundTrip:
             assert results[i]["content"] == content
 
     @pytest.mark.asyncio
-    async def test_write_batch_faster_than_individual(self, slim: SlimNexusFS) -> None:
-        """Batch of 20 writes should succeed — perf regression smoke test."""
+    async def test_write_batch_faster_than_individual(self, slim: NexusFS) -> None:
+        """Batch of 20 writes should succeed - perf regression smoke test."""
         import time
 
         files = [(f"/files/perf_{i:03d}.txt", f"data_{i}".encode()) for i in range(20)]
 
         start = time.perf_counter()
-        results = slim.write_batch(files)
+        results = slim.write_batch(files, context=LOCAL_CONTEXT)
         elapsed = time.perf_counter() - start
 
         assert len(results) == 20

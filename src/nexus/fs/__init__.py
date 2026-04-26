@@ -32,13 +32,16 @@ logger = logging.getLogger(__name__)
 _lazy_cache: dict[str, Any] = {}
 
 _LAZY_IMPORTS = {
-    "SlimNexusFS": ("nexus.fs._facade", "SlimNexusFS"),
     "SyncNexusFS": ("nexus.fs._sync", "SyncNexusFS"),
     "NexusFileSystem": ("nexus.fs._fsspec", "NexusFileSystem"),
     "parse_uri": ("nexus.fs._uri", "parse_uri"),
     "MountSpec": ("nexus.fs._uri", "MountSpec"),
     "generate_auth_url": ("nexus.fs._oauth_support", "generate_auth_url"),
     "exchange_auth_code": ("nexus.fs._oauth_support", "exchange_auth_code"),
+    "LOCAL_CONTEXT": ("nexus.fs._helpers", "LOCAL_CONTEXT"),
+    "list_mounts": ("nexus.fs._helpers", "list_mounts"),
+    "unmount": ("nexus.fs._helpers", "unmount"),
+    "close": ("nexus.fs._helpers", "close"),
 }
 
 
@@ -62,7 +65,7 @@ async def mount(
     ephemeral: bool = False,
     name: str | None = None,
 ) -> Any:
-    """Mount one or more backends and return a SlimNexusFS facade.
+    """Mount one or more backends and return a ``NexusFS`` kernel.
 
     Args:
         *uris: One or more backend URIs (e.g., "s3://bucket", "local://./data").
@@ -75,14 +78,14 @@ async def mount(
             warning instead of aborting the entire mount.  Useful for CLI
             commands that should not fail because of an unrelated broken mount.
         ephemeral: If True, skip writing to mounts.json entirely.  The mount
-            is active for the lifetime of the returned SlimNexusFS object only.
+            is active for the lifetime of the returned ``NexusFS`` only.
             Use this in tests and one-shot scripts to avoid accumulating stale
             entries.  See also ``nexus.fs.testing.ephemeral_mount``.
         name: Optional human label for the mount (single-URI only).  Stored
             in mounts.json as ``"name"`` and usable with ``nexus-fs mount rm``.
 
     Returns:
-        SlimNexusFS facade with all backends mounted.
+        ``NexusFS`` kernel instance with all backends mounted.
 
     Raises:
         NexusURIError: If a URI is invalid.
@@ -137,7 +140,6 @@ async def mount(
 
     # Create metastore
     from nexus.fs._backend_factory import create_backend
-    from nexus.fs._facade import SlimNexusFS
     from nexus.fs._paths import metadata_db
     from nexus.fs._sqlite_meta import SQLiteMetastore
 
@@ -235,7 +237,7 @@ async def mount(
         metastore.close()
         raise
 
-    return SlimNexusFS(kernel)
+    return kernel
 
 
 def mount_sync(

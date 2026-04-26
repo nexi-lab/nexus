@@ -23,8 +23,6 @@ class TestGetReadyWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/test/path",  # virtual_path
-                "backend1",  # backend_id
-                "/physical/path",  # physical_path
                 "file",  # file_type
                 1024,  # size_bytes
                 "hash123",  # content_hash
@@ -77,8 +75,6 @@ class TestGetReadyWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/test/path",  # virtual_path
-                "backend1",  # backend_id
-                "/physical/path",  # physical_path
                 "file",  # file_type
                 1024,  # size_bytes
                 "hash123",  # content_hash
@@ -126,8 +122,6 @@ class TestGetPendingWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/pending/path",  # virtual_path
-                "backend1",  # backend_id
-                "/physical/path",  # physical_path
                 "file",  # file_type
                 2048,  # size_bytes
                 "hash456",  # content_hash
@@ -192,8 +186,6 @@ class TestGetBlockedWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/blocked/path",  # virtual_path
-                "backend1",  # backend_id
-                "/physical/path",  # physical_path
                 "file",  # file_type
                 4096,  # size_bytes
                 "hash789",  # content_hash
@@ -259,7 +251,6 @@ class TestGetInProgressWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/progress/path",  # virtual_path
-                "backend1",  # backend_id
                 "file",  # file_type
                 8192,  # size_bytes
                 "2024-01-01",  # created_at
@@ -309,7 +300,6 @@ class TestGetInProgressWork:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/progress/path",  # virtual_path
-                "backend1",  # backend_id
                 "file",  # file_type
                 8192,  # size_bytes
                 "2024-01-01",  # created_at
@@ -357,7 +347,6 @@ class TestGetWorkByPriority:
                 uuid.uuid4(),  # path_id
                 uuid.uuid4(),  # zone_id
                 "/priority/path",  # virtual_path
-                "backend1",  # backend_id
                 "file",  # file_type
                 16384,  # size_bytes
                 "2024-01-01",  # created_at
@@ -407,7 +396,6 @@ class TestGetWorkByPriority:
                 uuid.uuid4(),
                 uuid.uuid4(),
                 "/high/priority",
-                "backend1",
                 "file",
                 100,
                 "2024-01-01",
@@ -420,7 +408,6 @@ class TestGetWorkByPriority:
                 uuid.uuid4(),
                 uuid.uuid4(),
                 "/low/priority",
-                "backend1",
                 "file",
                 100,
                 "2024-01-01",

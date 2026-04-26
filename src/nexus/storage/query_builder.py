@@ -64,8 +64,8 @@ class WorkQueryBuilder:
                     "content_hash": row[5],
                     "created_at": row[6],
                     "updated_at": row[7],
-                    "status": json.loads(row[10]) if row[10] else None,
-                    "priority": json.loads(row[11]) if row[11] else None,
+                    "status": json.loads(row[8]) if row[8] else None,
+                    "priority": json.loads(row[9]) if row[9] else None,
                 }
                 for row in rows
             ]
@@ -110,8 +110,8 @@ class WorkQueryBuilder:
                     "content_hash": row[5],
                     "created_at": row[6],
                     "updated_at": row[7],
-                    "status": json.loads(row[10]) if row[10] else None,
-                    "priority": json.loads(row[11]) if row[11] else None,
+                    "status": json.loads(row[8]) if row[8] else None,
+                    "priority": json.loads(row[9]) if row[9] else None,
                 }
                 for row in rows
             ]
@@ -156,8 +156,8 @@ class WorkQueryBuilder:
                     "content_hash": row[5],
                     "created_at": row[6],
                     "updated_at": row[7],
-                    "status": json.loads(row[10]) if row[10] else None,
-                    "priority": json.loads(row[11]) if row[11] else None,
+                    "status": json.loads(row[8]) if row[8] else None,
+                    "priority": json.loads(row[9]) if row[9] else None,
                     "blocker_count": row[10],
                 }
                 for row in rows
@@ -198,13 +198,13 @@ class WorkQueryBuilder:
                     "path_id": row[0],
                     "zone_id": row[1],
                     "virtual_path": row[2],
-                    "file_type": row[4],
-                    "size_bytes": row[3],
-                    "created_at": row[4],
-                    "updated_at": row[5],
-                    "status": json.loads(row[8]) if row[8] else None,
-                    "worker_id": json.loads(row[9]) if row[9] else None,
-                    "started_at": json.loads(row[10]) if row[10] else None,
+                    "file_type": row[3],
+                    "size_bytes": row[4],
+                    "created_at": row[5],
+                    "updated_at": row[6],
+                    "status": json.loads(row[7]) if row[7] else None,
+                    "worker_id": json.loads(row[8]) if row[8] else None,
+                    "started_at": json.loads(row[9]) if row[9] else None,
                 }
                 for row in rows
             ]
@@ -244,13 +244,13 @@ class WorkQueryBuilder:
                     "path_id": row[0],
                     "zone_id": row[1],
                     "virtual_path": row[2],
-                    "file_type": row[4],
-                    "size_bytes": row[3],
-                    "created_at": row[4],
-                    "updated_at": row[5],
-                    "status": json.loads(row[8]) if row[8] else None,
-                    "priority": json.loads(row[9]) if row[9] else None,
-                    "tags": json.loads(row[10]) if row[10] else None,
+                    "file_type": row[3],
+                    "size_bytes": row[4],
+                    "created_at": row[5],
+                    "updated_at": row[6],
+                    "status": json.loads(row[7]) if row[7] else None,
+                    "priority": json.loads(row[8]) if row[8] else None,
+                    "tags": json.loads(row[9]) if row[9] else None,
                 }
                 for row in rows
             ]

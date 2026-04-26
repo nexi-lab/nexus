@@ -3374,8 +3374,26 @@ impl Kernel {
                 });
             }
             DT_DIR => return miss(entry.entry_type),
-            // DT_MOUNT (2) and DT_EXTERNAL_STORAGE (5) → Python handles unmount
-            2 | 5 => return miss(entry.entry_type),
+            // DT_MOUNT (2) → full unmount lifecycle (metastore + dcache + routing
+            // table). Returns hit=true so callers don't need a separate
+            // Python-side `unmount()` shim — `sys_unlink(mount_path)` is the
+            // single entry point.
+            DT_MOUNT => {
+                let zone_id = entry.zone_id.clone().unwrap_or_else(|| ctx.zone_id.clone());
+                self.dlc.unmount(self, path, &zone_id);
+                return Ok(SysUnlinkResult {
+                    hit: true,
+                    entry_type: DT_MOUNT,
+                    post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
+                    path: path.to_string(),
+                    etag: entry.etag,
+                    size: entry.size,
+                });
+            }
+            // DT_EXTERNAL_STORAGE (5) — connector-backed mounts (oauth/api).
+            // Their lifecycle (token revocation, connector teardown) lives
+            // in Python; keep as a miss so the Python layer dispatches.
+            5 => return miss(entry.entry_type),
             _ => {}
         }
 
@@ -6558,5 +6576,45 @@ mod tests {
 
         assert_eq!(ms_b.get("/docs/a.md").unwrap().unwrap().size, 10);
         assert_eq!(ms_b.get("/docs/b.md").unwrap().unwrap().size, 20);
+    }
+
+    /// sys_unlink on a DT_MOUNT path runs the full unmount lifecycle:
+    /// metastore delete + dcache evict + routing remove. Replaces today's
+    /// silent miss; callers no longer need a separate Python-side shim.
+    #[test]
+    fn test_sys_unlink_mount_root_delegates_to_dlc_unmount() {
+        use crate::metastore::{FileMetadata, MemoryMetastore};
+        use std::sync::Arc;
+
+        let k = Kernel::new();
+        let zone = contracts::ROOT_ZONE_ID;
+
+        let ms = Arc::new(MemoryMetastore::new());
+        k.vfs_router.add_mount("/mnt", zone, "local", None, false);
+        let canon = crate::vfs_router::canonicalize_mount_path("/mnt", zone);
+        k.vfs_router
+            .install_metastore(&canon, ms.clone() as Arc<dyn crate::metastore::Metastore>);
+
+        // Seed a DT_MOUNT entry at the mount root and a child file.
+        let mount_meta = FileMetadata {
+            path: "/mnt".to_string(),
+            backend_name: "local".to_string(),
+            entry_type: DT_MOUNT,
+            zone_id: Some(zone.to_string()),
+            ..Default::default()
+        };
+        ms.put("/mnt", mount_meta).unwrap();
+
+        let ctx = OperationContext::new("test", zone, true, None, true);
+        let result = k.sys_unlink("/mnt", &ctx).unwrap();
+
+        assert!(result.hit, "DT_MOUNT unlink should return hit=true");
+        assert_eq!(result.entry_type, DT_MOUNT);
+
+        // Mount is gone from the routing table
+        assert!(
+            !k.vfs_router.mount_points().iter().any(|m| m == "/mnt"),
+            "mount point should have been removed from the routing table"
+        );
     }
 }

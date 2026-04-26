@@ -154,12 +154,21 @@ def require_database_auth(auth_provider: Any) -> None:
         )
 
 
-def format_api_key_response(api_key: Any, *, include_sensitive: bool = False) -> dict[str, Any]:
+def format_api_key_response(
+    api_key: Any,
+    *,
+    include_sensitive: bool = False,
+    primary_zone: str | None = None,
+) -> dict[str, Any]:
     """Serialize an APIKeyModel to a response dict.
 
     Args:
         api_key: SQLAlchemy APIKeyModel instance.
         include_sensitive: If True, include revocation and usage fields.
+        primary_zone: Precomputed primary zone from junction (get_primary_zone).
+            When provided, emitted as zone_id instead of the deprecated
+            APIKeyModel.zone_id column.  Callers that don't pass this arg
+            fall back to the legacy column read for backward compat.
 
     Returns:
         Dict with key metadata, safe for JSON serialization.
@@ -170,7 +179,7 @@ def format_api_key_response(api_key: Any, *, include_sensitive: bool = False) ->
         "subject_type": api_key.subject_type,
         "subject_id": api_key.subject_id,
         "name": api_key.name,
-        "zone_id": api_key.zone_id,
+        "zone_id": primary_zone if primary_zone is not None else api_key.zone_id,
         "is_admin": bool(api_key.is_admin),
         "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
         "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
@@ -337,7 +346,15 @@ def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dic
         stmt = stmt.limit(params.limit).offset(params.offset)
         api_keys = list(session.scalars(stmt).all())
 
-        keys = [format_api_key_response(key, include_sensitive=True) for key in api_keys]
+        from nexus.storage.api_key_ops import get_primary_zones_for_keys
+
+        primary_map = get_primary_zones_for_keys(session, [k.key_id for k in api_keys])
+        keys = [
+            format_api_key_response(
+                key, include_sensitive=True, primary_zone=primary_map.get(key.key_id)
+            )
+            for key in api_keys
+        ]
         return {"keys": keys, "total": total}
 
 
@@ -368,7 +385,10 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
         if not api_key:
             raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
 
-        return format_api_key_response(api_key, include_sensitive=True)
+        from nexus.storage.api_key_ops import get_primary_zone
+
+        primary = get_primary_zone(session, api_key.key_id)
+        return format_api_key_response(api_key, include_sensitive=True, primary_zone=primary)
 
 
 def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
@@ -463,7 +483,10 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
 
         session.commit()
 
+        from nexus.storage.api_key_ops import get_primary_zone
+
+        primary = get_primary_zone(session, api_key.key_id)
         return {
             "success": True,
-            **format_api_key_response(api_key),
+            **format_api_key_response(api_key, primary_zone=primary),
         }

@@ -393,6 +393,11 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
 
     Zone access filter — matches every key that grants this zone, not only
     keys whose primary is this zone (#3871).
+
+    The self-demotion guard counts admins whose junction zones overlap (OR/IN)
+    with the caller's zone set, and uses ``count(DISTINCT key_id)`` to handle
+    multi-zone admins correctly.  A multi-zone admin is the "last" only if no
+    other admin covers any of their zones.
     """
     from datetime import timedelta
 
@@ -419,26 +424,31 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
 
         # Self-demotion guard: prevent removing admin from the last admin key
         if params.is_admin is False and api_key.is_admin:
+            import sqlalchemy as sa
             from sqlalchemy import func
 
-            count_stmt = (
-                select(func.count())
-                .select_from(APIKeyModel)
-                .where(
-                    APIKeyModel.is_admin == 1,
-                    APIKeyModel.revoked == 0,
-                )
-            )
             from nexus.storage.api_key_ops import get_zones_for_key
 
             caller_zones = get_zones_for_key(session, api_key.key_id)
+
+            # Base predicates: live admin keys.
+            base_filters = [APIKeyModel.is_admin == 1, APIKeyModel.revoked == 0]
+
             if caller_zones:
                 from nexus.storage.models import APIKeyZoneModel
 
                 count_stmt = (
-                    count_stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
+                    select(func.count(sa.distinct(APIKeyModel.key_id)))
+                    .select_from(APIKeyModel)
+                    .where(*base_filters)
+                    .join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
                     .where(APIKeyZoneModel.zone_id.in_(caller_zones))
-                    .distinct()
+                )
+            else:
+                count_stmt = (
+                    select(func.count(sa.distinct(APIKeyModel.key_id)))
+                    .select_from(APIKeyModel)
+                    .where(*base_filters)
                 )
             admin_count = session.scalar(count_stmt)
             if admin_count is not None and admin_count <= 1:

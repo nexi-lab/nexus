@@ -109,3 +109,30 @@ def test_handle_admin_update_key_self_demotion_guard_uses_junction(auth_provider
     # Should succeed — admin_b is still admin in `eng`.
     result = admin.handle_admin_update_key(auth_provider, params, context)
     assert result["key_id"] == admin_a
+
+
+def test_self_demotion_guard_blocks_last_multi_zone_admin(auth_provider_and_keys):
+    """Guard must fire when the sole admin has multiple junction rows (#3871).
+
+    Regression test for the count(DISTINCT key_id) fix — `select(count()).distinct()`
+    counts join rows, not keys. For a sole admin in 2 zones, count(*) returns 2,
+    which would incorrectly satisfy `> 1` and allow demotion to zero admins.
+    """
+    from nexus.contracts.exceptions import ValidationError
+
+    auth_provider, context, SessionLocal, _multi_id, _eng_id = auth_provider_and_keys
+    with SessionLocal() as s:
+        sole_id, _ = create_api_key(
+            s, user_id="u1", name="sole", zones=["eng", "ops"], is_admin=True
+        )
+        s.commit()
+
+    params = SimpleNamespace(
+        key_id=sole_id,
+        zone_id=None,
+        name=None,
+        is_admin=False,
+        expires_days=None,
+    )
+    with pytest.raises(ValidationError, match="last admin key"):
+        admin.handle_admin_update_key(auth_provider, params, context)

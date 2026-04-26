@@ -386,23 +386,17 @@ class TestHandleAdminUpdateKey:
         assert result["name"] == "new-name"
 
     def test_update_with_wrong_zone_raises(self, auth_provider, admin_context):
-        """Updating a key from the wrong zone should raise NotFound."""
+        """Updating a key with wrong zone should raise NotFound (junction-based, #3871)."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
+        from nexus.storage.api_key_ops import create_api_key
 
-        create_params = FakeParams(
-            name="zone-locked",
-            zone_id="zone1",
-            user_id="u1",
-            is_admin=False,
-            expires_days=None,
-            subject_type="user",
-            subject_id=None,
-        )
-        created = handle_admin_create_key(auth_provider, create_params, admin_context)
+        with auth_provider.session_factory() as s:
+            key_id, _ = create_api_key(s, user_id="u1", name="iso", zones=["zone1"])
+            s.commit()
 
         update_params = FakeParams(
-            key_id=created["key_id"],
-            zone_id="zone2",
+            key_id=key_id,
+            zone_id="zone2",  # wrong zone
             name="hacked",
             is_admin=None,
             expires_days=None,

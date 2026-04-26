@@ -269,26 +269,26 @@ def mount_add(
         name = None
         uris = args
 
+    from nexus.fs._helpers import close as _close_kernel
+    from nexus.fs._helpers import list_mounts as _list_mounts
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
+        import contextlib
+
         from nexus.fs import mount
 
-        fs = await mount(*uris, at=at, ephemeral=ephemeral, name=name)
+        kernel = await mount(*uris, at=at, ephemeral=ephemeral, name=name)
         try:
-            mounts = fs.list_mounts()
+            mounts = _list_mounts(kernel)
             return {"mounts": mounts, "uris": list(uris), "name": name}
         finally:
             # Release the kernel + SQLite/redb file lock before returning from
             # the CLI invocation. Without this, a second ``mount`` call in the
             # same process (e.g. a test runner reusing CliRunner) cannot
             # reopen the metastore file and silently no-ops its writes.
-            import contextlib
-
-            _close = getattr(fs, "close", None)
-            if _close is not None:
-                with contextlib.suppress(Exception):
-                    _close()
+            with contextlib.suppress(Exception):
+                _close_kernel(kernel)
 
     try:
         data = run_sync(_run())
@@ -842,13 +842,15 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
                 "  nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
             )
 
-        fs = await mount(
+        from nexus.fs._helpers import LOCAL_CONTEXT
+
+        kernel = await mount(
             *uris,
             mount_overrides=overrides or None,
             skip_unavailable=True,
         )
 
-        result = await fs.copy(source, dest)
+        result = kernel.sys_copy(source, dest, context=LOCAL_CONTEXT)
         return {"source": source, "dest": dest, **result}
 
     try:
@@ -874,13 +876,13 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
     )
 
 
-def _boot_fs() -> Any:
-    """Boot a SlimNexusFS from persisted mounts only.
+def _boot_kernel() -> Any:
+    """Boot a kernel ``NexusFS`` from persisted mounts only.
 
-    Shared by ls, cat, write, edit, rm, mkdir, stat.
-    Uses only previously persisted mounts — does not accept ad-hoc URIs
-    to avoid mutating global mount state as a side effect of one-shot
-    commands.  Users should run ``nexus-fs mount <uri>`` first.
+    Shared by ls, cat, write, edit, rm, mkdir, stat. Uses only previously
+    persisted mounts — does not accept ad-hoc URIs to avoid mutating
+    global mount state as a side effect of one-shot commands. Users
+    should run ``nexus-fs mount <uri>`` first.
     """
 
     async def _run() -> Any:
@@ -925,9 +927,14 @@ def ls(
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs()
-        entries = fs.ls(path, detail=detail, recursive=recursive)
-        fs.close()
+        from nexus.fs._helpers import LOCAL_CONTEXT
+        from nexus.fs._helpers import close as _close_kernel
+
+        kernel = await _boot_kernel()
+        entries = list(
+            kernel.sys_readdir(path, recursive=recursive, details=detail, context=LOCAL_CONTEXT)
+        )
+        _close_kernel(kernel)
         return {"path": path, "entries": entries}
 
     try:
@@ -963,9 +970,12 @@ def cat(path: str) -> None:
     from nexus.fs._sync import run_sync
 
     async def _run() -> bytes:
-        fs = await _boot_fs()
-        content: bytes = fs.read(path)
-        fs.close()
+        from nexus.fs._helpers import LOCAL_CONTEXT
+        from nexus.fs._helpers import close as _close_kernel
+
+        kernel = await _boot_kernel()
+        content: bytes = kernel.sys_read(path, context=LOCAL_CONTEXT)
+        _close_kernel(kernel)
         return content
 
     try:
@@ -1029,9 +1039,12 @@ def write(
         sys.exit(1)
 
     async def _run() -> dict:
-        fs = await _boot_fs()
-        result = fs.write(path, content)
-        fs.close()
+        from nexus.fs._helpers import LOCAL_CONTEXT
+        from nexus.fs._helpers import close as _close_kernel
+
+        kernel = await _boot_kernel()
+        result = kernel.write(path, content, context=LOCAL_CONTEXT)
+        _close_kernel(kernel)
         return {"path": path, **result}
 
     try:
@@ -1093,14 +1106,18 @@ def edit(
         parsed_edits.append({"old_str": old, "new_str": new})
 
     async def _run() -> dict:
-        fs = await _boot_fs()
-        result = fs.edit(
+        from nexus.fs._helpers import LOCAL_CONTEXT
+        from nexus.fs._helpers import close as _close_kernel
+
+        kernel = await _boot_kernel()
+        result = kernel.edit(
             path,
             parsed_edits,
+            context=LOCAL_CONTEXT,
             preview=preview,
             fuzzy_threshold=fuzzy,
         )
-        fs.close()
+        _close_kernel(kernel)
         # Strip new_content from result to prevent leaking full file body
         # into JSON output (auto-JSON in piped/CI contexts).
         result.pop("new_content", None)
@@ -1147,9 +1164,12 @@ def rm(path: str, output_opts: OutputOptions) -> None:
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs()
-        fs.delete(path)
-        fs.close()
+        from nexus.fs._helpers import LOCAL_CONTEXT
+        from nexus.fs._helpers import close as _close_kernel
+
+        kernel = await _boot_kernel()
+        kernel.sys_unlink(path, context=LOCAL_CONTEXT)
+        _close_kernel(kernel)
         return {"path": path, "deleted": True}
 
     try:
@@ -1183,9 +1203,12 @@ def mkdir(
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs()
-        fs.mkdir(path, parents=parents)
-        fs.close()
+        from nexus.fs._helpers import LOCAL_CONTEXT
+        from nexus.fs._helpers import close as _close_kernel
+
+        kernel = await _boot_kernel()
+        kernel.mkdir(path, parents=parents, exist_ok=True, context=LOCAL_CONTEXT)
+        _close_kernel(kernel)
         return {"path": path, "created": True}
 
     try:
@@ -1214,9 +1237,12 @@ def stat(path: str, output_opts: OutputOptions) -> None:
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict[str, Any]:
-        fs = await _boot_fs()
-        info: dict[str, Any] | None = fs.stat(path)
-        fs.close()
+        from nexus.fs._helpers import LOCAL_CONTEXT
+        from nexus.fs._helpers import close as _close_kernel
+
+        kernel = await _boot_kernel()
+        info: dict[str, Any] | None = kernel.sys_stat(path, context=LOCAL_CONTEXT)
+        _close_kernel(kernel)
         if info is None:
             raise FileNotFoundError(f"Not found: {path}")
         return info
@@ -1270,14 +1296,18 @@ def grep(
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs()
-        matches = fs.grep(
+        from nexus.fs._helpers import close as _close_kernel
+        from nexus.fs._helpers import grep as _grep
+
+        kernel = await _boot_kernel()
+        matches = _grep(
+            kernel,
             pattern,
             path,
             ignore_case=ignore_case,
             max_results=max_results,
         )
-        fs.close()
+        _close_kernel(kernel)
         return {"pattern": pattern, "path": path, "matches": matches, "count": len(matches)}
 
     try:
@@ -1317,9 +1347,12 @@ def glob_cmd(
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs()
-        matches = fs.glob(pattern, path)
-        fs.close()
+        from nexus.fs._helpers import close as _close_kernel
+        from nexus.fs._helpers import glob as _glob
+
+        kernel = await _boot_kernel()
+        matches = _glob(kernel, pattern, path)
+        _close_kernel(kernel)
         return {"pattern": pattern, "path": path, "matches": matches, "count": len(matches)}
 
     try:

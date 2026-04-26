@@ -22,9 +22,45 @@ use crate::vfs_router::{
     canonicalize_mount_path as canonicalize, RouteError, RustRouteResult, VFSRouter,
 };
 use dashmap::DashMap;
-use parking_lot::{Condvar, Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// Extension trait giving parking_lot's two read-lock methods names that
+/// describe what they DO rather than what they're called for, so a reader
+/// (human or AI) doesn't have to consult the docs to know which is safe.
+///
+/// parking_lot exposes:
+/// * ``read()`` — yields to a queued writer (writer-fair). Same-thread
+///   recursion can deadlock.
+/// * ``read_recursive()`` — does NOT yield (reader priority). Same-thread
+///   recursion always succeeds.
+///
+/// The standard names hide the policy and the deadlock risk. We rename:
+/// * ``read_unconditional`` — unconditionally takes a shared read; safe
+///   under recursion.
+/// * ``read_yielding_to_writer`` — explicitly opts in to writer fairness;
+///   **not** safe under recursion.
+///
+/// Pick ``read_unconditional`` whenever there's any chance a callback
+/// triggered while the lock is held could re-enter; pick the other only
+/// when writer starvation is a real concern *and* recursion is impossible.
+pub(crate) trait RwLockExt<T: ?Sized> {
+    fn read_unconditional(&self) -> RwLockReadGuard<'_, T>;
+    #[allow(dead_code)]
+    fn read_yielding_to_writer(&self) -> RwLockReadGuard<'_, T>;
+}
+
+impl<T: ?Sized> RwLockExt<T> for RwLock<T> {
+    #[inline]
+    fn read_unconditional(&self) -> RwLockReadGuard<'_, T> {
+        self.read_recursive()
+    }
+    #[inline]
+    fn read_yielding_to_writer(&self) -> RwLockReadGuard<'_, T> {
+        self.read()
+    }
+}
 
 /// VFS gRPC client stubs — used by `try_remote_fetch` to pull blobs from
 /// the origin node when metadata has been Raft-replicated but the CAS
@@ -2231,20 +2267,14 @@ impl Kernel {
     /// Returns Err(KernelError) if any hook aborts.
     /// No-op when registry is empty (zero-cost lock check).
     ///
-    /// Uses ``read_recursive()`` (not plain ``read()``) so a hook that
-    /// re-enters ``sys_read`` — typical of ReBAC's permission_hook reading
-    /// its own ``/__sys__/rebac/namespaces/...`` config during a permission
-    /// check — does not deadlock on the recursive shared lock acquisition.
-    ///
-    /// Per parking_lot docs, ``read()`` "may result in a deadlock" if the
-    /// current thread already holds a read on the same RwLock; only
-    /// ``read_recursive()`` is guaranteed to succeed without blocking when
-    /// the caller already holds a read lock. The (theoretical) writer-
-    /// starvation cost of read_recursive doesn't matter here: the only
-    /// writer is ``register_native_hook``, which runs once at startup and
-    /// not concurrently with dispatch.
+    /// Uses ``read_unconditional()`` (not the writer-fair variant) so a
+    /// hook that re-enters ``sys_read`` — typical of ReBAC's permission_hook
+    /// reading its own ``/__sys__/rebac/namespaces/...`` config during a
+    /// permission check — does not deadlock on the recursive shared lock.
+    /// The only writer here is ``register_native_hook`` at startup, so the
+    /// usual writer-starvation concern doesn't apply.
     pub fn dispatch_native_pre(&self, ctx: &HookContext) -> Result<(), KernelError> {
-        let registry = self.native_hooks.read_recursive();
+        let registry = self.native_hooks.read_unconditional();
         if registry.count() == 0 {
             return Ok(());
         }
@@ -2255,9 +2285,9 @@ impl Kernel {
 
     /// Dispatch POST-INTERCEPT hooks from NativeHookRegistry (fire-and-forget).
     /// No-op when registry is empty (zero-cost lock check).
-    /// Uses ``read_recursive`` for the same reason as ``dispatch_native_pre``.
+    /// Uses ``read_unconditional`` for the same recursion reason as the pre dispatch.
     pub fn dispatch_native_post(&self, ctx: &HookContext) {
-        let registry = self.native_hooks.read_recursive();
+        let registry = self.native_hooks.read_unconditional();
         if registry.count() == 0 {
             return;
         }

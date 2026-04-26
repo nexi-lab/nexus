@@ -12,8 +12,11 @@
 
 #![allow(dead_code)]
 
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use pyo3::prelude::*;
+// Brings ``read_unconditional`` / ``read_yielding_to_writer`` into scope
+// — see ``RwLockExt`` in ``kernel.rs`` for the rationale.
+use crate::kernel::RwLockExt;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::path::Path;
 use std::sync::Arc;
@@ -838,7 +841,17 @@ pub struct PyKernel {
     /// without an extra accessor method that codegen would
     /// have to preserve. Not exposed to Python.
     pub(crate) inner: Arc<Kernel>,
-    hooks: Mutex<HookRegistry>,
+    // RwLock (not Mutex) so a hook callback can re-enter
+    // ``sys_*`` without deadlocking. The recursion is real:
+    // ReBAC's permission_hook reads its own ``/__sys__/rebac/...``
+    // config via ``sys_read`` during a permission check, which
+    // re-enters dispatch_pre_hooks on the same thread. Read sites
+    // call ``read_unconditional`` (the ``RwLockExt`` rename for
+    // parking_lot's ``read_recursive``) so the recursive shared
+    // acquisition always succeeds; writes happen only at hook
+    // register / unregister, never during dispatch, so the writer-
+    // starvation cost does not apply.
+    hooks: RwLock<HookRegistry>,
 }
 
 // Rust-side helpers on PyKernel — NOT exposed to Python (no #[pymethods]).
@@ -858,7 +871,7 @@ impl PyKernel {
     fn new() -> Self {
         Self {
             inner: Arc::new(Kernel::new()),
-            hooks: Mutex::new(HookRegistry::new()),
+            hooks: RwLock::new(HookRegistry::new()),
         }
     }
 
@@ -2009,7 +2022,7 @@ impl PyKernel {
         {
             let adapter = PyInterceptHookAdapter::new(py, hook.clone_ref(py));
             self.hooks
-                .lock()
+                .write()
                 .register(op, Box::new(adapter), hook, has_pre, is_async_post, name);
             Ok(())
         }
@@ -2024,23 +2037,23 @@ impl PyKernel {
     }
 
     fn unregister_hook(&self, py: Python<'_>, op: &str, hook: &Bound<'_, PyAny>) -> bool {
-        self.hooks.lock().unregister(py, op, hook)
+        self.hooks.write().unregister(py, op, hook)
     }
 
     fn get_pre_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
-        self.hooks.lock().get_pre_hooks(py, op)
+        self.hooks.read_unconditional().get_pre_hooks(py, op)
     }
 
     fn get_post_hooks(&self, py: Python<'_>, op: &str) -> (Vec<Py<PyAny>>, Vec<Py<PyAny>>) {
-        self.hooks.lock().get_post_hooks(py, op)
+        self.hooks.read_unconditional().get_post_hooks(py, op)
     }
 
     fn get_all_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
-        self.hooks.lock().get_all_hooks(py, op)
+        self.hooks.read_unconditional().get_all_hooks(py, op)
     }
 
     fn hook_count(&self, op: &str) -> usize {
-        self.hooks.lock().count(op)
+        self.hooks.read_unconditional().count(op)
     }
 
     // ── sys_watch (inotify equivalent) ───────────────────────────────
@@ -2112,7 +2125,7 @@ impl PyKernel {
         if !self.inner.has_hooks(op) {
             return Ok(());
         }
-        let hooks = self.hooks.lock();
+        let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
             match op {
@@ -2152,7 +2165,7 @@ impl PyKernel {
         self.dispatch_post_hooks_sync(op, &hook_ctx);
 
         // 2. Return async hooks for Python to schedule
-        let hooks = self.hooks.lock();
+        let hooks = self.hooks.read_unconditional();
         let (_, async_hooks) = hooks.get_post_hooks(py, op);
         Ok(async_hooks)
     }
@@ -3209,7 +3222,7 @@ impl PyKernel {
 impl PyKernel {
     /// Internal pre-hook dispatch (used by Tier 1 syscalls).
     fn dispatch_pre_hooks_inner(&self, op: &str, hook_ctx: &Py<PyAny>) -> PyResult<()> {
-        let hooks = self.hooks.lock();
+        let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
             match op {
@@ -3235,7 +3248,7 @@ impl PyKernel {
     /// Async hooks are NOT handled here — Python thin wrapper schedules
     /// them via asyncio.gather (codegen or manual).
     fn dispatch_post_hooks_sync(&self, op: &str, hook_ctx: &Py<PyAny>) {
-        let hooks = self.hooks.lock();
+        let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_post_hook_impls(op);
         for hook in impls {
             match op {

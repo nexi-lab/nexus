@@ -597,6 +597,23 @@ Any layer may import from them; they must **not** import from `nexus.core`,
 
 **Core distinction:** `contracts/` = **what** (shapes of data). `lib/` = **how** (behavior).
 
+### Python ↔ Rust Crate Mapping
+
+Both tier-neutral packages have a Rust mirror. Names match so a reader
+jumping between the two trees finds the same module in the same place.
+
+| Tier-neutral package | Python                | Rust crate (workspace member)             |
+|----------------------|-----------------------|-------------------------------------------|
+| `contracts`          | `src/nexus/contracts` | `rust/contracts/`                         |
+| `lib`                | `src/nexus/lib`       | `rust/lib/` (Phase A — formerly `library/`) |
+
+`rust/lib/` is WASM-clean by default; PyO3 wrappers for the algorithms
+live behind the optional `python` feature in `rust/lib/src/python/*.rs`
+(rebac, search, trigram, glob, io, prefix, simd, path_utils, bitmap,
+bloom, hash). The kernel cdylib enables that feature so
+`nexus_kernel`'s `#[pymodule]` delegates the algorithm-wrapper
+registration to a single `lib::python::register(m)` call.
+
 ### Placement Decision Tree
 
 ```

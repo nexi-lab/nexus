@@ -2,9 +2,7 @@
 
 Exposes ~10 public methods from the kernel NexusFS. Internal methods
 (sandbox, workflows, bulk operations, dispatch hooks) are hidden.
-
-The facade also provides optimized implementations where the full kernel
-path is unnecessarily heavy for slim-package use (e.g., single-lookup stat).
+All I/O delegates directly to the Rust kernel.
 
 Usage:
     from nexus.fs._facade import SlimNexusFS
@@ -21,7 +19,6 @@ import threading
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
 
@@ -56,27 +53,13 @@ def _make_stat_dict(
     }
 
 
-# Default context for slim-mode (single-user, no auth)
+# Default context for facade operations (single-user, no auth)
 _SLIM_CONTEXT = OperationContext(
     user_id="local",
     groups=[],
     zone_id=ROOT_ZONE_ID,
     is_admin=True,
 )
-
-
-class _LockPoolHolder:
-    """Thin wrapper so a lock stripe pool can live in a WeakValueDictionary.
-
-    Python's WeakValueDictionary doesn't accept tuples as values (they
-    aren't weak-referenceable), but a user-defined class instance is.
-    The pool field stays immutable — replace holders, don't mutate.
-    """
-
-    __slots__ = ("pool", "__weakref__")
-
-    def __init__(self, pool: tuple[threading.Lock, ...]) -> None:
-        self.pool = pool
 
 
 class SlimNexusFS:
@@ -89,54 +72,10 @@ class SlimNexusFS:
         read, write, ls, stat, delete, mkdir, rmdir, rename, exists, copy
     """
 
-    # Stripe count for the slim-mode per-path lock pool.  64 stripes is
-    # plenty to keep same-path writes serialized while avoiding the
-    # unbounded-dict growth a per-path Lock registry would produce in a
-    # long-lived process.  Collisions (two unrelated paths sharing a
-    # stripe) only cost brief contention — never incorrectness, since
-    # same-path writes still serialize on the same stripe.
-    _SLIM_LOCK_STRIPES = 64
-
-    # Shared stripe pools keyed by kernel identity — two SlimNexusFS
-    # wrappers around the same NexusFS must share locks, otherwise
-    # concurrent writers via different wrappers can both read version
-    # N and both persist N+1.  WeakValueDictionary so pools get GC'd
-    # along with their kernel.
-    _shared_lock_pools: "Any" = None  # lazily set below
-    _shared_lock_pools_mutex: "threading.Lock" = threading.Lock()
-
     def __init__(self, kernel: NexusFS) -> None:
         self._kernel = kernel
         self._ctx = _SLIM_CONTEXT
         self._closed = False
-        # Holder kept as an attribute so the WeakValueDictionary entry
-        # survives as long as at least one facade references it.  Once
-        # every facade around this kernel is gone the holder is GC'd
-        # and the shared-pools dict entry drops automatically.
-        self._slim_lock_pool_holder = self._resolve_shared_lock_pool(kernel)
-        self._slim_lock_pool = self._slim_lock_pool_holder.pool
-
-    @classmethod
-    def _resolve_shared_lock_pool(cls, kernel: NexusFS) -> _LockPoolHolder:
-        """Return a stripe pool shared across every facade wrapping ``kernel``.
-
-        Keying on ``id(kernel)`` means two SlimNexusFS instances built
-        on the same NexusFS resolve to the same pool, so writes through
-        either wrapper serialize correctly on the same path's stripe.
-        Pools are stored in a WeakValueDictionary so they release once
-        no facade references them anymore — no long-lived growth.
-        """
-        import weakref
-
-        with cls._shared_lock_pools_mutex:
-            if cls._shared_lock_pools is None:
-                cls._shared_lock_pools = weakref.WeakValueDictionary()
-            holder: _LockPoolHolder | None = cls._shared_lock_pools.get(id(kernel))
-            if holder is None:
-                pool = tuple(threading.Lock() for _ in range(cls._SLIM_LOCK_STRIPES))
-                holder = _LockPoolHolder(pool)
-                cls._shared_lock_pools[id(kernel)] = holder
-            return holder
 
     @property
     def kernel(self) -> NexusFS:
@@ -157,46 +96,7 @@ class SlimNexusFS:
         Raises:
             NexusFileNotFoundError: If file does not exist.
         """
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        try:
-            return self._kernel.sys_read(path, context=self._ctx)
-        except NexusFileNotFoundError:
-            # Rust sys_read handles all backend types uniformly (§12d):
-            # CAS via etag, path-local/external via backend_path fallback.
-            # Only slim-mode (no Rust kernel) needs the Python metastore
-            # fallback for CAS entries (#3821).
-            data = self._slim_metastore_read(path)
-            if data is None:
-                raise
-            return data
-
-    def _slim_metastore_read(self, path: str) -> bytes | None:
-        """Read via Python metastore + Rust backend (slim fallback, #3821).
-
-        Only relevant in slim-mode where the Rust kernel cannot see the
-        Python SQLiteMetastore.  The etag check naturally gates to CAS
-        entries (path-addressed backends don't store etags).
-        """
-        from nexus.core.path_utils import validate_path
-
-        try:
-            normalized = validate_path(path)
-        except Exception:
-            return None
-        meta = self._kernel.metadata.get(normalized)
-        if meta is None or not meta.etag:
-            return None
-        _rust_kernel = getattr(self._kernel, "_kernel", None)
-        if _rust_kernel is None:
-            return None
-        from nexus.contracts.exceptions import NexusFileNotFoundError
-
-        try:
-            data = _rust_kernel.sys_read_raw(normalized, self._kernel._zone_id)
-        except NexusFileNotFoundError:
-            return None
-        return bytes(data) if isinstance(data, (bytes, bytearray)) else None
+        return self._kernel.sys_read(path, context=self._ctx)
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
         """Read a specific byte range from a file.
@@ -226,22 +126,6 @@ class SlimNexusFS:
             Dict with path, size, etag, version.
         """
         return self._kernel.write(path, content, context=self._ctx)
-
-    def _slim_path_lock(self, path: str) -> threading.Lock:
-        """Return a striped per-path lock for slim-mode serialization.
-
-        The Rust kernel's VFS lock isn't available in slim mode, so
-        writes/deletes serialize on a ``threading.Lock`` selected by
-        hashing the virtual path into a fixed-size stripe pool.  Same
-        path always maps to the same stripe, so concurrent writers on
-        one path serialize correctly.  Different paths may share a
-        stripe (brief contention) but never incorrectness.  The
-        fixed-size pool avoids the unbounded memory growth a per-path
-        dict would produce in long-lived processes.
-        """
-        # Python's built-in hash() is randomized per-process but stable
-        # within a process, which is exactly the property we need here.
-        return self._slim_lock_pool[hash(path) % self._SLIM_LOCK_STRIPES]
 
     def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
         """Write multiple files atomically in a single transaction.
@@ -484,24 +368,6 @@ class SlimNexusFS:
         _kstat = self._kernel.sys_stat(normalized, context=self._ctx)
         if _kstat is not None:
             return _kstat
-
-        meta: FileMetadata | None = None
-
-        if meta is not None:
-            is_dir = meta.is_dir or meta.is_mount or meta.mime_type == "inode/directory"
-            return _make_stat_dict(
-                path=meta.path,
-                size=meta.size or (4096 if is_dir else 0),
-                etag=meta.etag,
-                mime_type=meta.mime_type
-                or ("inode/directory" if is_dir else "application/octet-stream"),
-                created_at=meta.created_at.isoformat() if meta.created_at else None,
-                modified_at=meta.modified_at.isoformat() if meta.modified_at else None,
-                is_directory=is_dir,
-                version=meta.version,
-                zone_id=meta.zone_id,
-                entry_type=meta.entry_type,
-            )
 
         # No explicit entry — check if it's an implicit directory.
         # is_implicit_directory is on concrete metastore classes, not the ABC.

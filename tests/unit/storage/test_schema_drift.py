@@ -21,8 +21,6 @@ from nexus.storage.models import FilePathModel
 PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     # Proto field -> FilePathModel column (None = not in SQL, by design)
     "path": "virtual_path",
-    "backend_name": "backend_id",
-    "physical_path": "physical_path",
     "size": "size_bytes",
     "etag": "content_hash",
     "mime_type": "file_type",
@@ -34,6 +32,7 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     "target_zone_id": None,  # DT_MOUNT target, not in SQL
     "owner_id": "posix_uid",
     "ttl_seconds": None,  # Storage-layer TTL routing, not persisted in SQL (#3405)
+    "last_writer_address": None,  # Federation routing hint, not persisted in SQL
 }
 
 # Fields that exist in FilePathModel but NOT in FileMetadata (PG-only concerns)
@@ -141,8 +140,6 @@ class TestRoundtripConsistency:
         values = self._metadata_to_file_path_values(metadata)
 
         assert values["virtual_path"] == "/zone1/docs/readme.md"
-        assert values["backend_id"] == "s3"
-        assert values["physical_path"] == "/bucket/abc123"
         assert values["size_bytes"] == 2048
         assert values["content_hash"] == "sha256-xyz789"
         assert values["file_type"] == "text/markdown"
@@ -164,8 +161,6 @@ class TestRoundtripConsistency:
 
         values = self._metadata_to_file_path_values(metadata)
 
-        assert values["backend_id"] == "local"  # default
-        assert values["physical_path"] == "/test/file.txt"  # fallback to path
         assert values["content_hash"] is None
         assert values["file_type"] is None
         assert values["zone_id"] == ROOT_ZONE_ID  # default

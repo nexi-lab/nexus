@@ -2284,6 +2284,7 @@ dependencies = [
  "protoc-bin-vendored",
  "pyo3",
  "raft 0.7.0",
+ "rand 0.8.5",
  "rcgen",
  "redb",
  "serde",

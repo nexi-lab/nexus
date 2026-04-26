@@ -337,6 +337,24 @@ class TestTxtaiBackendSearch:
         results = await backend.search("nothing", zone_id="z")
         assert results == []
 
+    @pytest.mark.asyncio
+    async def test_search_dedupes_hybrid_duplicates(self) -> None:
+        """Issue #3900: hybrid mode must not surface the same id twice.
+
+        txtai's hybrid scorer returns one row per scorer (BM25 + dense), so
+        the same chunk can appear in `raw` more than once. The backend must
+        collapse rows by id and keep the best score.
+        """
+        backend, mock_emb = self._make_backend_with_mock()
+        mock_emb.search.return_value = [
+            {"id": "demo-1", "path": "/p/demo-1", "text": "t", "score": 0.55, "zone_id": "z"},
+            {"id": "demo-1", "path": "/p/demo-1", "text": "t", "score": 0.40, "zone_id": "z"},
+            {"id": "demo-2", "path": "/p/demo-2", "text": "u", "score": 0.30, "zone_id": "z"},
+        ]
+        results = await backend.search("q", zone_id="z", search_type="hybrid")
+        assert [r.path for r in results] == ["/p/demo-1", "/p/demo-2"]
+        assert results[0].score == 0.55  # higher of the two demo-1 scores
+
 
 # =============================================================================
 # TxtaiBackend index operations

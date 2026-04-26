@@ -846,8 +846,19 @@ class TxtaiBackend:
                 return []
             raw: list[dict[str, Any]] = await self._run_native(self._embeddings.search, sql)
 
-        results: list[BaseSearchResult] = []
+        # Issue #3900: in hybrid mode, txtai concatenates BM25 and dense
+        # rankings without dedup, so the same id can appear twice. Collapse
+        # by id, keeping the highest score and the row order it first
+        # appeared at.
+        deduped: dict[str, dict[str, Any]] = {}
         for r in raw:
+            key = str(r.get("id", "")) or f"{r.get('path', '')}:{r.get('text', '')}"
+            existing = deduped.get(key)
+            if existing is None or float(r.get("score", 0.0)) > float(existing.get("score", 0.0)):
+                deduped[key] = r
+
+        results: list[BaseSearchResult] = []
+        for r in deduped.values():
             score = float(r.get("score", 0.0))
             result = BaseSearchResult(
                 path=r.get("path", ""),
@@ -918,13 +929,23 @@ class TxtaiBackend:
             await self._run_native(self._rollback_db_sessions)
             return [[] for _ in queries]
 
-        # Convert each query's raw results into BaseSearchResult lists
+        # Convert each query's raw results into BaseSearchResult lists.
+        # Issue #3900: dedupe by id so hybrid BM25+dense rows don't surface
+        # the same chunk twice.
         all_results: list[list[BaseSearchResult]] = []
         for raw in raw_results:
-            results: list[BaseSearchResult] = []
+            deduped: dict[str, dict[str, Any]] = {}
             for r in raw:
                 if not isinstance(r, dict):
                     continue
+                key = str(r.get("id", "")) or f"{r.get('path', '')}:{r.get('text', '')}"
+                existing = deduped.get(key)
+                if existing is None or float(r.get("score", 0.0)) > float(
+                    existing.get("score", 0.0)
+                ):
+                    deduped[key] = r
+            results: list[BaseSearchResult] = []
+            for r in deduped.values():
                 score = float(r.get("score", 0.0))
                 results.append(
                     BaseSearchResult(
@@ -1006,8 +1027,17 @@ class TxtaiBackend:
             # txtai's Embeddings.search() uses graph as boost when graph is configured
             raw: list[dict[str, Any]] = await self._run_native(self._embeddings.search, sql)
 
-        results: list[BaseSearchResult] = []
+        # Issue #3900: dedupe by id so hybrid BM25+dense rows don't surface
+        # the same chunk twice in graph-augmented mode either.
+        deduped: dict[str, dict[str, Any]] = {}
         for r in raw:
+            key = str(r.get("id", "")) or f"{r.get('path', '')}:{r.get('text', '')}"
+            existing = deduped.get(key)
+            if existing is None or float(r.get("score", 0.0)) > float(existing.get("score", 0.0)):
+                deduped[key] = r
+
+        results: list[BaseSearchResult] = []
+        for r in deduped.values():
             score = float(r.get("score", 0.0))
             results.append(
                 BaseSearchResult(

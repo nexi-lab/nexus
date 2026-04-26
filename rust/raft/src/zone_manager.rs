@@ -415,8 +415,19 @@ impl ZoneManager {
         ))
     }
 
-    /// Join an existing zone as a new Voter.
-    pub fn join_zone(&self, zone_id: &str, peers: Vec<String>) -> Result<Arc<ZoneHandle>> {
+    /// Join an existing zone as a Voter (learner=false) or Learner (learner=true).
+    ///
+    /// Sets up the local Raft state machine with skip_bootstrap=true so the
+    /// leader's snapshot installs the correct ConfState. The caller is
+    /// responsible for sending a JoinZone RPC to the leader (via
+    /// PyFederationClient::request_join_zone) with the same learner flag so
+    /// the leader proposes AddNode vs AddLearnerNode accordingly.
+    pub fn join_zone(
+        &self,
+        zone_id: &str,
+        peers: Vec<String>,
+        learner: bool,
+    ) -> Result<Arc<ZoneHandle>> {
         let peer_addrs: Vec<NodeAddress> = peers
             .iter()
             .map(|s| {
@@ -430,7 +441,7 @@ impl ZoneManager {
             .handle()
             .block_on(
                 self.registry
-                    .join_zone(zone_id, peer_addrs, self.runtime.handle()),
+                    .join_zone(zone_id, peer_addrs, learner, self.runtime.handle()),
             )
             .map_err(|e| RaftError::Raft(format!("Failed to join zone: {}", e)))?;
 

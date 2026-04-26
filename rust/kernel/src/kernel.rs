@@ -5083,7 +5083,7 @@ impl Kernel {
                 return Ok(()); // Idempotent — already loaded from disk.
             }
             if is_joiner {
-                zm.join_zone(zone_id, peers.clone()).map_err(|e| {
+                zm.join_zone(zone_id, peers.clone(), false).map_err(|e| {
                     KernelError::Federation(format!("join_zone({}): {}", zone_id, e))
                 })?;
             } else {

@@ -174,6 +174,7 @@ impl FederationClient {
         zone_id: &str,
         node_id: u64,
         node_address: &str,
+        as_learner: bool,
         depth: u8,
     ) -> Result<(), String> {
         if depth > 1 {
@@ -188,6 +189,7 @@ impl FederationClient {
             zone_id: zone_id.to_string(),
             node_id,
             node_address: node_address.to_string(),
+            as_learner,
         });
         request.set_timeout(self.timeout);
 
@@ -213,6 +215,7 @@ impl FederationClient {
                     zone_id,
                     node_id,
                     node_address,
+                    as_learner,
                     depth + 1,
                 ));
                 return fut.await;
@@ -369,6 +372,7 @@ impl PyFederationClient {
         zone_id: &str,
         node_id: u64,
         node_address: &str,
+        as_learner: bool,
     ) -> PyResult<()> {
         let peer_addr = peer_addr.to_string();
         let zone_id = zone_id.to_string();
@@ -378,7 +382,14 @@ impl PyFederationClient {
         py.detach(|| {
             inner
                 .runtime
-                .block_on(inner.request_join_zone(&peer_addr, &zone_id, node_id, &node_address, 0))
+                .block_on(inner.request_join_zone(
+                    &peer_addr,
+                    &zone_id,
+                    node_id,
+                    &node_address,
+                    as_learner,
+                    0,
+                ))
                 .map_err(PyRuntimeError::new_err)
         })
     }

@@ -1,8 +1,12 @@
-#![allow(dead_code)]
+﻿#![allow(dead_code)]
 //! AgentRegistry — Rust backing store for agent lifecycle (§10 B1-B3).
 //!
 //! Kernel-knows pattern: Python AgentRegistry delegates to Rust backing store.
 //! DashMap<pid, AgentDescriptor> for O(1) lookup.
+//!
+//! AgentState mirrors `contracts/process_types.py` exactly (SSOT).
+//! Lifecycle: REGISTERED → WARMING_UP → READY ↔ BUSY → TERMINATED
+//!            READY/BUSY → SUSPENDED → READY
 //!
 //! Also contains:
 //!   - AgentStatusResolver: impl PathResolver for /{zone}/proc/{pid}/status (B2)
@@ -10,7 +14,10 @@
 
 use crate::dispatch::PathResolver;
 use dashmap::DashMap;
+use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 // ── AgentDescriptor ────────────────────────────────────────────────────
 
@@ -36,15 +43,21 @@ pub(crate) enum AgentKind {
     Worker,
     Daemon,
     Unmanaged,
+    Managed,
 }
 
-/// Agent process state.
+/// Agent process state — mirrors contracts/process_types.py AgentState (SSOT).
+///
+/// Lifecycle:
+///   REGISTERED → WARMING_UP → READY ↔ BUSY → TERMINATED
+///   READY/BUSY → SUSPENDED → READY
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AgentState {
     Registered,
-    Running,
-    Stopped,
-    Failed,
+    WarmingUp,
+    Ready,
+    Busy,
+    Suspended,
     Terminated,
 }
 
@@ -52,22 +65,28 @@ impl AgentState {
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
             AgentState::Registered => "REGISTERED",
-            AgentState::Running => "RUNNING",
-            AgentState::Stopped => "STOPPED",
-            AgentState::Failed => "FAILED",
+            AgentState::WarmingUp => "WARMING_UP",
+            AgentState::Ready => "READY",
+            AgentState::Busy => "BUSY",
+            AgentState::Suspended => "SUSPENDED",
             AgentState::Terminated => "TERMINATED",
         }
     }
 
     pub(crate) fn from_str(s: &str) -> Option<Self> {
         match s {
-            "REGISTERED" => Some(AgentState::Registered),
-            "RUNNING" => Some(AgentState::Running),
-            "STOPPED" => Some(AgentState::Stopped),
-            "FAILED" => Some(AgentState::Failed),
-            "TERMINATED" => Some(AgentState::Terminated),
+            "REGISTERED" | "registered" => Some(AgentState::Registered),
+            "WARMING_UP" | "warming_up" => Some(AgentState::WarmingUp),
+            "READY" | "ready" => Some(AgentState::Ready),
+            "BUSY" | "busy" => Some(AgentState::Busy),
+            "SUSPENDED" | "suspended" => Some(AgentState::Suspended),
+            "TERMINATED" | "terminated" => Some(AgentState::Terminated),
             _ => None,
         }
+    }
+
+    pub(crate) fn is_terminal(&self) -> bool {
+        matches!(self, AgentState::Terminated)
     }
 }
 
@@ -77,6 +96,7 @@ impl AgentKind {
             AgentKind::Worker => "WORKER",
             AgentKind::Daemon => "DAEMON",
             AgentKind::Unmanaged => "UNMANAGED",
+            AgentKind::Managed => "MANAGED",
         }
     }
 
@@ -84,8 +104,25 @@ impl AgentKind {
         match s {
             "WORKER" => Some(AgentKind::Worker),
             "DAEMON" => Some(AgentKind::Daemon),
-            "UNMANAGED" => Some(AgentKind::Unmanaged),
+            "UNMANAGED" | "unmanaged" => Some(AgentKind::Unmanaged),
+            "MANAGED" | "managed" => Some(AgentKind::Managed),
             _ => None,
+        }
+    }
+}
+
+// ── Per-agent notification ──────────────────────────────────────────────
+
+struct AgentNotify {
+    mutex: Mutex<()>,
+    state_changed: Condvar,
+}
+
+impl AgentNotify {
+    fn new() -> Self {
+        Self {
+            mutex: Mutex::new(()),
+            state_changed: Condvar::new(),
         }
     }
 }
@@ -96,12 +133,14 @@ impl AgentKind {
 /// DashMap<pid, AgentDescriptor> for lock-free concurrent access.
 pub(crate) struct AgentRegistry {
     agents: DashMap<String, AgentDescriptor>,
+    notify: DashMap<String, Arc<AgentNotify>>,
 }
 
 impl AgentRegistry {
     pub(crate) fn new() -> Self {
         Self {
             agents: DashMap::new(),
+            notify: DashMap::new(),
         }
     }
 
@@ -111,7 +150,11 @@ impl AgentRegistry {
         match self.agents.entry(desc.pid.clone()) {
             Entry::Occupied(_) => false,
             Entry::Vacant(v) => {
+                let pid = desc.pid.clone();
                 v.insert(desc);
+                self.notify
+                    .entry(pid)
+                    .or_insert_with(|| Arc::new(AgentNotify::new()));
                 true
             }
         }
@@ -119,7 +162,14 @@ impl AgentRegistry {
 
     /// Unregister (remove) an agent by pid. Returns the descriptor if found.
     pub(crate) fn unregister(&self, pid: &str) -> Option<AgentDescriptor> {
-        self.agents.remove(pid).map(|(_, v)| v)
+        let result = self.agents.remove(pid).map(|(_, v)| v);
+        if result.is_some() {
+            if let Some((_, notify)) = self.notify.remove(pid) {
+                let _guard = notify.mutex.lock();
+                notify.state_changed.notify_all();
+            }
+        }
+        result
     }
 
     /// Get agent descriptor by pid.
@@ -131,6 +181,11 @@ impl AgentRegistry {
     pub(crate) fn update_state(&self, pid: &str, new_state: AgentState) -> bool {
         if let Some(mut entry) = self.agents.get_mut(pid) {
             entry.state = new_state;
+            drop(entry);
+            if let Some(notify) = self.notify.get(pid) {
+                let _guard = notify.mutex.lock();
+                notify.state_changed.notify_all();
+            }
             true
         } else {
             false
@@ -147,6 +202,11 @@ impl AgentRegistry {
         if let Some(mut entry) = self.agents.get_mut(pid) {
             entry.state = new_state;
             entry.exit_code = Some(exit_code);
+            drop(entry);
+            if let Some(notify) = self.notify.get(pid) {
+                let _guard = notify.mutex.lock();
+                notify.state_changed.notify_all();
+            }
             true
         } else {
             false
@@ -186,6 +246,66 @@ impl AgentRegistry {
     /// Number of registered agents.
     pub(crate) fn count(&self) -> usize {
         self.agents.len()
+    }
+
+    /// Block until agent `pid` reaches `target_state` or timeout.
+    ///
+    /// Returns the state string when the target is reached, or
+    /// `Err("timeout")` / `Err("not_found")` on failure.
+    ///
+    /// Callers must hold no DashMap refs across this call (no deadlock).
+    pub(crate) fn wait_for_state(
+        &self,
+        pid: &str,
+        target_state: &AgentState,
+        timeout_ms: u64,
+    ) -> Result<String, String> {
+        let notify = match self.notify.get(pid) {
+            Some(n) => Arc::clone(n.value()),
+            None => return Err("not_found".to_string()),
+        };
+
+        // Fast path
+        if let Some(desc) = self.agents.get(pid) {
+            if &desc.state == target_state || desc.state.is_terminal() {
+                return Ok(desc.state.as_str().to_string());
+            }
+        } else {
+            return Err("not_found".to_string());
+        }
+
+        // Slow path: park on condvar
+        let timeout = Duration::from_millis(timeout_ms);
+        let deadline = std::time::Instant::now() + timeout;
+        let mut guard = notify.mutex.lock();
+
+        loop {
+            match self.agents.get(pid) {
+                Some(desc) if &desc.state == target_state || desc.state.is_terminal() => {
+                    return Ok(desc.state.as_str().to_string());
+                }
+                None => return Err("not_found".to_string()),
+                _ => {}
+            }
+
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err("timeout".to_string());
+            }
+            if notify
+                .state_changed
+                .wait_for(&mut guard, remaining)
+                .timed_out()
+            {
+                match self.agents.get(pid) {
+                    Some(desc) if &desc.state == target_state || desc.state.is_terminal() => {
+                        return Ok(desc.state.as_str().to_string());
+                    }
+                    None => return Err("not_found".to_string()),
+                    _ => return Err("timeout".to_string()),
+                }
+            }
+        }
     }
 }
 
@@ -356,8 +476,12 @@ mod tests {
     fn test_update_state() {
         let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "agent1"));
-        assert!(reg.update_state("p1", AgentState::Running));
-        assert_eq!(reg.get("p1").unwrap().state, AgentState::Running);
+        assert!(reg.update_state("p1", AgentState::WarmingUp));
+        assert_eq!(reg.get("p1").unwrap().state, AgentState::WarmingUp);
+        assert!(reg.update_state("p1", AgentState::Ready));
+        assert_eq!(reg.get("p1").unwrap().state, AgentState::Ready);
+        assert!(reg.update_state("p1", AgentState::Busy));
+        assert_eq!(reg.get("p1").unwrap().state, AgentState::Busy);
     }
 
     #[test]
@@ -374,10 +498,10 @@ mod tests {
         let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "a1"));
         reg.register(make_desc("p2", "a2"));
-        reg.update_state("p2", AgentState::Running);
-        let running = reg.list(None, Some(&AgentState::Running), None);
-        assert_eq!(running.len(), 1);
-        assert_eq!(running[0].pid, "p2");
+        reg.update_state("p2", AgentState::Ready);
+        let ready = reg.list(None, Some(&AgentState::Ready), None);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].pid, "p2");
     }
 
     #[test]
@@ -408,5 +532,57 @@ mod tests {
         // Non-matching paths
         assert!(resolver.try_read("/zone1/proc/abc123/other").is_none());
         assert!(resolver.try_read("/zone1/notproc/abc123/status").is_none());
+    }
+
+    #[test]
+    fn test_wait_for_state_fast_path() {
+        let reg = AgentRegistry::new();
+        reg.register(make_desc("p1", "a1"));
+        reg.update_state("p1", AgentState::Ready);
+        let result = reg.wait_for_state("p1", &AgentState::Ready, 100);
+        assert_eq!(result.unwrap(), "READY");
+    }
+
+    #[test]
+    fn test_wait_for_state_blocking() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let reg = Arc::new(AgentRegistry::new());
+        reg.register(make_desc("p1", "a1"));
+
+        let reg2 = Arc::clone(&reg);
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            reg2.update_state("p1", AgentState::Ready);
+        });
+
+        let result = reg.wait_for_state("p1", &AgentState::Ready, 500);
+        writer.join().unwrap();
+        assert_eq!(result.unwrap(), "READY");
+    }
+
+    #[test]
+    fn test_wait_for_state_timeout() {
+        let reg = AgentRegistry::new();
+        reg.register(make_desc("p1", "a1"));
+        // Never transition — should timeout
+        let result = reg.wait_for_state("p1", &AgentState::Ready, 50);
+        assert_eq!(result.unwrap_err(), "timeout");
+    }
+
+    #[test]
+    fn test_state_from_str_roundtrip() {
+        for (s, expected) in [
+            ("REGISTERED", AgentState::Registered),
+            ("WARMING_UP", AgentState::WarmingUp),
+            ("READY", AgentState::Ready),
+            ("BUSY", AgentState::Busy),
+            ("SUSPENDED", AgentState::Suspended),
+            ("TERMINATED", AgentState::Terminated),
+        ] {
+            assert_eq!(AgentState::from_str(s).unwrap(), expected);
+            assert_eq!(expected.as_str(), s);
+        }
     }
 }

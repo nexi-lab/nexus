@@ -1,19 +1,15 @@
 """AgentStatusResolver — procfs virtual filesystem for AgentRegistry.
 
-Implements VFSPathResolver ``try_*`` protocol (#1665) to provide
-``/{zone}/proc/{pid}/status`` as virtual files generated from
-AgentRegistry's in-memory state at read time.  Like Linux ``/proc``,
+Implements the VFSPathResolver ``try_*`` protocol to provide
+``/{zone}/proc/{pid}/status`` as virtual files generated from the
+AgentRegistry in-memory state at read time. Like Linux ``/proc``,
 nothing is stored on disk.
 
-    core/agent_status_resolver.py = fs/proc/ (procfs)
-    core/agent_registry.py        = kernel/fork.c (task_struct table)
+    services/agents/agent_status_resolver.py = fs/proc/ (procfs)
+    services/agents/agent_registry.py        = kernel/fork.c (task_struct table)
 
 Registration: factory/orchestrator.py registers AgentStatusResolver via
 coordinator.enlist() at boot, after AgentRegistry creation.
-
-Issue #1810: Renamed from ProcResolver and migrated from
-services/proc/ to core/ — resolving agent status is a kernel
-concern (reads kernel-owned AgentRegistry).
 """
 
 from __future__ import annotations
@@ -26,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
-    from nexus.core.agent_registry import AgentRegistry
+    from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

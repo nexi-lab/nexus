@@ -664,13 +664,16 @@ def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: An
 
 
 def _init_audit_hook(nx_fs: "NexusFS") -> None:
-    """Start the AuditHook if federation is active.
+    """Wire the root zone's AuditHook at boot.
 
-    Wires a Rust AuditHook to a WAL-replicated DT_STREAM so every VFS
-    operation is durably recorded. Requires a loaded Raft zone — silently
-    skips if federation is not yet active (standalone / dev-mode deployments).
+    Writes a Rust AuditHook into the WAL-replicated DT_STREAM at
+    ``/audit/traces/`` so every VFS mutation in the root zone is durably
+    recorded. Only meaningful in federation mode — the call requires a
+    loaded Raft zone and silently skips otherwise.
 
-    The audit stream is readable at ``/audit/traces/`` via sys_read.
+    Non-root zones are wired by ``kernel.zone_create(zone_id, audit=True)``
+    / ``kernel.zone_join(zone_id, as_learner, audit=True)`` directly from
+    Rust, so they do not pass through this function.
     """
     kernel = getattr(nx_fs, "_kernel", None)
     if kernel is None:
@@ -683,7 +686,7 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
         kernel.start_audit_hook(audit_zone, audit_stream_path)
         logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
     except RuntimeError as e:
-        # Federation not active or zone not loaded — expected in dev mode.
+        # Federation not active or zone not loaded — expected in standalone mode.
         logger.debug("Audit hook not started (federation inactive): %s", e)
     except Exception as e:
         logger.warning("Failed to start audit hook: %s", e)

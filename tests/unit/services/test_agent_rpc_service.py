@@ -3,7 +3,7 @@ from typing import Any, cast
 import pytest
 
 from nexus.contracts.process_types import AgentSignal, AgentState
-from nexus.core.agent_registry import AgentRegistry
+from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.agents.agent_rpc_service import AgentRPCService
 from nexus.services.agents.agent_warmup import AgentWarmupService
 from nexus.services.agents.warmup_steps import register_standard_steps

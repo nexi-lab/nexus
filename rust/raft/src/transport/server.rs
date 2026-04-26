@@ -872,15 +872,16 @@ impl ZoneApiService for ZoneApiServiceImpl {
             "JoinZone request received",
         );
 
-        // Propose ConfChange(AddNode) with address in context (etcd pattern).
+        // Propose ConfChange with address in context (etcd pattern).
         // This waits for the ConfChange to be committed and applied.
         use raft::eraftpb::ConfChangeType;
+        let change_type = if req.as_learner {
+            ConfChangeType::AddLearnerNode
+        } else {
+            ConfChangeType::AddNode
+        };
         match node
-            .propose_conf_change(
-                ConfChangeType::AddNode,
-                req.node_id,
-                req.node_address.into_bytes(),
-            )
+            .propose_conf_change(change_type, req.node_id, req.node_address.into_bytes())
             .await
         {
             Ok(conf_state) => {

@@ -1,15 +1,15 @@
 """Unit tests for AgentStatusResolver — procfs virtual filesystem.
 
 Tests VFSPathResolver try_* conformance: try_read, try_write/try_delete rejection.
-See: src/nexus/core/agent_status_resolver.py
+See: src/nexus/services/agents/agent_status_resolver.py
 """
 
 import json
 
 import pytest
 
-from nexus.core.agent_registry import AgentRegistry
-from nexus.core.agent_status_resolver import AgentStatusResolver
+from nexus.services.agents.agent_registry import AgentRegistry
+from nexus.services.agents.agent_status_resolver import AgentStatusResolver
 
 ZONE = "test-zone"
 OWNER = "user-1"

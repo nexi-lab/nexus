@@ -11,7 +11,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// literals.
 pub use contracts::ROOT_ZONE_ID;
 
-mod agent_registry;
+mod agent_status_resolver;
 #[cfg(feature = "connectors")]
 mod anthropic_backend;
 #[cfg(feature = "connectors")]
@@ -81,6 +81,7 @@ mod raft_metastore;
 mod rebac;
 mod remote_backend;
 mod remote_metastore;
+pub(crate) mod remote_pipe;
 pub(crate) mod remote_stream;
 mod replication;
 mod rpc_transport;

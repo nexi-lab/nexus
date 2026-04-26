@@ -2723,9 +2723,9 @@ impl PyKernel {
         parent_pid: Option<&str>,
         connection_id: Option<&str>,
     ) -> bool {
-        use crate::agent_registry::{AgentDescriptor, AgentKind, AgentState};
+        use services::agent_table::{AgentDescriptor, AgentKind, AgentState};
         let kind = AgentKind::from_str(kind).unwrap_or(AgentKind::Worker);
-        self.inner.agent_registry.register(AgentDescriptor {
+        self.inner.agent_table.register(AgentDescriptor {
             pid: pid.to_string(),
             name: name.to_string(),
             kind,
@@ -2742,12 +2742,12 @@ impl PyKernel {
 
     /// Unregister an agent by pid.
     fn agent_unregister(&self, pid: &str) -> bool {
-        self.inner.agent_registry.unregister(pid).is_some()
+        self.inner.agent_table.unregister(pid).is_some()
     }
 
     /// Get agent descriptor as dict.
     fn agent_get<'py>(&self, py: Python<'py>, pid: &str) -> PyResult<Option<Bound<'py, PyDict>>> {
-        match self.inner.agent_registry.get(pid) {
+        match self.inner.agent_table.get(pid) {
             Some(desc) => {
                 let dict = PyDict::new(py);
                 dict.set_item("pid", &desc.pid)?;
@@ -2769,9 +2769,9 @@ impl PyKernel {
 
     /// Update agent state. Returns true if found.
     fn agent_update_state(&self, pid: &str, new_state: &str) -> bool {
-        use crate::agent_registry::AgentState;
+        use services::agent_table::AgentState;
         match AgentState::from_str(new_state) {
-            Some(state) => self.inner.agent_registry.update_state(pid, state),
+            Some(state) => self.inner.agent_table.update_state(pid, state),
             None => false,
         }
     }
@@ -2785,12 +2785,12 @@ impl PyKernel {
         state: Option<&str>,
         kind: Option<&str>,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
-        use crate::agent_registry::{AgentKind, AgentState};
+        use services::agent_table::{AgentKind, AgentState};
         let state_filter = state.and_then(AgentState::from_str);
         let kind_filter = kind.and_then(AgentKind::from_str);
         let agents =
             self.inner
-                .agent_registry
+                .agent_table
                 .list(zone_id, state_filter.as_ref(), kind_filter.as_ref());
         let mut result = Vec::with_capacity(agents.len());
         for desc in agents {
@@ -2809,12 +2809,36 @@ impl PyKernel {
 
     /// Update heartbeat timestamp for an agent.
     fn agent_heartbeat(&self, pid: &str, timestamp_ms: u64) -> bool {
-        self.inner.agent_registry.heartbeat(pid, timestamp_ms)
+        self.inner.agent_table.heartbeat(pid, timestamp_ms)
     }
 
     /// Get number of registered agents.
     fn agent_count(&self) -> usize {
-        self.inner.agent_registry.count()
+        self.inner.agent_table.count()
+    }
+
+    /// Block (GIL-free) until agent `pid` reaches `target_state` or timeout.
+    ///
+    /// Returns the state string on success. Raises `RuntimeError` on
+    /// timeout ("timeout") or unknown pid ("not_found").
+    fn agent_wait(
+        &self,
+        py: Python<'_>,
+        pid: &str,
+        target_state: &str,
+        timeout_ms: u64,
+    ) -> PyResult<String> {
+        use services::agent_table::AgentState;
+        let target = AgentState::from_str(target_state).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("unknown agent state: {target_state}"))
+        })?;
+        let pid = pid.to_string();
+        let registry = std::sync::Arc::clone(&self.inner.agent_table);
+        py.detach(|| {
+            registry
+                .wait_for_state(&pid, &target, timeout_ms)
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)
+        })
     }
 
     // ── Service registry ─────────────────────────────────────────────
@@ -2950,8 +2974,10 @@ impl PyKernel {
     // tracked as a post-merge follow-up.
 
     /// Create a raft zone on this node. Idempotent when the zone
-    /// already exists (returns the existing zone id).
-    fn zone_create(&self, zone_id: &str) -> PyResult<String> {
+    /// already exists (returns the existing zone id). When `audit`
+    /// is true, wires an AuditHook backed by a WAL DT_STREAM at
+    /// `/{zone_id}/audit/traces/` immediately after zone setup.
+    fn zone_create(&self, zone_id: &str, audit: bool) -> PyResult<String> {
         let zm = self.inner.zone_manager_arc().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
                 "federation not active — set NEXUS_PEERS to enable",
@@ -2967,6 +2993,12 @@ impl PyKernel {
         if let Some(consensus) = zm.registry().get_node(zone_id) {
             self.inner
                 .install_federation_mount_coherence(zone_id, consensus);
+        }
+        if audit {
+            let stream_path = format!("/{zone_id}/audit/traces/");
+            self.inner
+                .start_audit_hook(zone_id, &stream_path)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
         }
         Ok(zone_id.to_string())
     }
@@ -3095,20 +3127,27 @@ impl PyKernel {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// Join an existing zone as a new Voter.
-    fn zone_join(&self, zone_id: &str) -> PyResult<String> {
+    /// Join an existing zone as a new Voter or Learner. When `audit`
+    /// is true, wires an AuditHook after the zone is set up.
+    fn zone_join(&self, zone_id: &str, as_learner: bool, audit: bool) -> PyResult<String> {
         let zm = self
             .inner
             .zone_manager_arc()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("federation not active"))?;
         let peers = zm.default_peers().to_vec();
-        zm.join_zone(zone_id, peers)
+        zm.join_zone(zone_id, peers, as_learner)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         // R20.18.5: joined zones need the apply-cb installed so that
         // DT_MOUNT events replicated from the leader propagate here.
         if let Some(consensus) = zm.registry().get_node(zone_id) {
             self.inner
                 .install_federation_mount_coherence(zone_id, consensus);
+        }
+        if audit {
+            let stream_path = format!("/{zone_id}/audit/traces/");
+            self.inner
+                .start_audit_hook(zone_id, &stream_path)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
         }
         Ok(zone_id.to_string())
     }

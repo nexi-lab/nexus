@@ -30,7 +30,7 @@ from nexus.contracts.grant_helpers import GrantInput, grants_to_rebac_tuples
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.core.agent_registry import AgentRegistry
+    from nexus.services.agents.agent_registry import AgentRegistry
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)

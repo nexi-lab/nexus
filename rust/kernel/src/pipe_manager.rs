@@ -263,6 +263,58 @@ impl PipeManager {
         self.buffers.iter().map(|r| r.key().clone()).collect()
     }
 
+    /// Move up to `count` messages from `from` pipe into `to` pipe (zero-copy
+    /// within the same process — analogous to Linux `splice(2)` between pipes).
+    ///
+    /// Returns the number of messages moved. Stops early if `from` is empty or
+    /// `to` is full. Both pipes must exist; order of operations: pop from `from`,
+    /// push to `to`, wake `to` readers once per batch.
+    #[allow(dead_code)]
+    pub(crate) fn splice(
+        &self,
+        from: &str,
+        to: &str,
+        count: usize,
+    ) -> Result<usize, PipeManagerError> {
+        let src = self
+            .buffers
+            .get(from)
+            .ok_or_else(|| PipeManagerError::NotFound(from.to_string()))?;
+        let dst = self
+            .buffers
+            .get(to)
+            .ok_or_else(|| PipeManagerError::NotFound(to.to_string()))?;
+
+        let mut moved = 0;
+        for _ in 0..count {
+            let data = match src.pop() {
+                Ok(d) => d,
+                Err(PipeError::Empty | PipeError::ClosedEmpty) => break,
+                Err(e) => return Err(PipeManagerError::Backend(e)),
+            };
+            match dst.push(&data) {
+                Ok(_) => moved += 1,
+                Err(e) => {
+                    // Push the message back so it isn't lost on Full / Closed.
+                    let _ = src.push(&data);
+                    if matches!(e, PipeError::Full(..)) {
+                        break;
+                    }
+                    return Err(PipeManagerError::Backend(e));
+                }
+            }
+        }
+
+        if moved > 0 {
+            if let Some(notify) = self.notify.get(to) {
+                let _guard = notify.mutex.lock();
+                notify.not_empty.notify_one();
+            }
+        }
+
+        Ok(moved)
+    }
+
     /// Close all pipes (shutdown).
     pub(crate) fn close_all(&self) {
         for entry in self.buffers.iter() {

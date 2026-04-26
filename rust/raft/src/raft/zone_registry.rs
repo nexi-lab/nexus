@@ -155,22 +155,26 @@ impl ZoneRaftRegistry {
             .await
     }
 
-    /// Join an existing zone as a new Voter.
+    /// Join an existing zone as a Voter or Learner.
     ///
     /// Unlike `create_zone`, this does NOT bootstrap ConfState and does NOT campaign.
     /// The leader's snapshot will bring the correct voter set after ConfChange commit.
     ///
-    /// After calling this, send a JoinZone RPC to the leader.
+    /// `learner` is informational here — the actual Voter/Learner classification is
+    /// determined by the ConfChange the leader proposes (AddNode vs AddLearnerNode).
+    /// Callers must send a JoinZone RPC to the leader with the same learner flag via
+    /// PyFederationClient::request_join_zone.
     #[allow(clippy::result_large_err)]
     pub async fn join_zone(
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
+        _learner: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
         // Per raft contract: joining nodes start uninitialized (empty ConfState).
         // The leader will send a snapshot with the correct voter set after
-        // the ConfChange(AddNode) is committed.
+        // the ConfChange(AddNode/AddLearnerNode) is committed.
         let config = RaftConfig {
             id: self.node_id,
             peers: vec![],

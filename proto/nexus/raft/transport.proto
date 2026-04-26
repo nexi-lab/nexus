@@ -152,7 +152,8 @@ message GetClusterInfoResponse {
 }
 
 // JoinZoneRequest is sent by a new node to an existing zone member.
-// The leader will propose a ConfChange(AddVoter) for the joining node.
+// The leader will propose a ConfChange(AddVoter) for the joining node,
+// or ConfChange(AddLearnerNode) when as_learner is true.
 message JoinZoneRequest {
   // Zone to join.
   string zone_id = 1;
@@ -160,6 +161,9 @@ message JoinZoneRequest {
   uint64 node_id = 2;
   // The joining node's gRPC address (e.g., "http://10.0.0.3:2126").
   string node_address = 3;
+  // When true, leader proposes AddLearnerNode instead of AddNode.
+  // Learners receive log replication but do not count toward quorum.
+  bool as_learner = 4;
 }
 
 // JoinZoneResponse is returned after the ConfChange is committed.

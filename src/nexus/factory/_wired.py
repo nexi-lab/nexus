@@ -419,9 +419,12 @@ def _boot_post_kernel_services(
         _agent_reg = _acp_ref
     if _agent_reg is None:
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
-            _agent_reg = AgentRegistry()
+            # Pass the Rust kernel so AgentRegistry dual-writes state into
+            # the AgentTable SSOT — keeps the procfs PathResolver and any
+            # blocking agent_wait callers in sync with Python writes.
+            _agent_reg = AgentRegistry(kernel=getattr(nx, "_kernel", None))
             nx.sys_setattr("/__sys__/services/agent_registry", service=_agent_reg)
             logger.debug("[BOOT:WIRED] AgentRegistry constructed by wired tier")
         except Exception as exc:

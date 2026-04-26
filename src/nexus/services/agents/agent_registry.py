@@ -1,23 +1,36 @@
-"""AgentRegistry — kernel agent lifecycle manager.
+"""AgentRegistry — service-tier agent lifecycle manager.
 
-Pure in-memory agent registry, analogous to Linux task_struct array.
-No metastore persistence — agent state is ephemeral (tied to OS
-process lifespan).  On nexusd restart, all agents are gone.
+Thin shim over the Rust ``services::agent_table::AgentTable`` SSOT. State
+(pid → AgentState + condvar wakeup) lives in Rust; this class adds the
+Python-side OS behavior layer:
 
-VFS visibility is provided by AgentStatusResolver (procfs model): reading
-``/{zone}/proc/{pid}/status`` generates content from memory at
-read time, like Linux ``/proc/{pid}/status``.
+  * PID allocation
+  * Parent/child tree maintenance
+  * VALID_AGENT_TRANSITIONS validation
+  * Signal semantics (SIGTERM → kill, SIGCONT → READY + bump generation,
+    SIGUSR1 → label merge, etc.)
+  * IPC provisioning hook
+  * Richer PCB fields not stored in Rust (cwd, root, labels, generation,
+    children, external_info) — kept on the Python AgentDescriptor
 
-    core/agent_registry.py  = kernel/fork.c + kernel/exit.c + kernel/signal.c
-    core/agent_status_resolver.py           = fs/proc/ (procfs virtual filesystem)
+Every state-mutating call propagates to Rust via ``kernel.agent_*`` so
+the kernel-side ``AgentStatusResolver`` (procfs view) and any blocking
+``kernel.agent_wait`` waiter see the same lifecycle. Reads currently
+serve from the local Python descriptor cache because PCB fields aren't
+mirrored in Rust; the cache is invalidated by every Python mutation
+that goes through this class, so it stays consistent with the Rust
+state SSOT it dual-writes.
+
+  services/agents/agent_registry.py = kernel/fork.c + exit.c + signal.c
+  rust/services/src/agent_table.rs   = task_struct array
+  rust/kernel/src/agent_status_resolver.rs = fs/proc/
 
 Concurrency model:
-  - spawn/kill/signal/get/list are synchronous (fast PID allocation
-    + in-memory dict write). Safe under asyncio event loop (no await).
-  - wait() is async (blocks on asyncio.Event until target state).
-  - State transitions are validated against VALID_AGENT_TRANSITIONS.
+  * spawn / kill / signal / get / list_processes are synchronous
+  * wait()       — async wrapper around the Rust condvar (GIL released)
+  * wait_state() — sync entry into the same Rust condvar
 
-See: contracts/process_types.py for AgentDescriptor, AgentState.
+See: contracts/process_types.py for AgentDescriptor / AgentState.
 """
 
 import asyncio
@@ -44,27 +57,32 @@ logger = logging.getLogger(__name__)
 
 
 class AgentRegistry:
-    """Manages agent lifecycle — PID allocation, state machine, signals, wait().
+    """Service-tier agent lifecycle manager backed by the Rust AgentTable SSOT."""
 
-    Pure in-memory — analogous to Linux's task_struct table.
-    VFS visibility via AgentStatusResolver (procfs), not metastore persistence.
-    """
-
-    def __init__(self) -> None:
+    def __init__(self, kernel: Any | None = None) -> None:
         self._processes: dict[str, AgentDescriptor] = {}
-        self._wait_events: dict[str, list[asyncio.Event]] = {}
+        self._kernel: Any = kernel  # nexus_kernel.Kernel — None disables Rust dual-write
         self._provisioner: Any = None  # Optional IPC provisioner (AgentProvisioner)
+        # asyncio.Event fallback used when no kernel is attached. Production
+        # path (factory-wired with the kernel) goes through the Rust condvar
+        # in agent_wait; this fallback exists so unit tests of the Python
+        # behavior layer don't require a Rust kernel.
+        self._wait_events: dict[str, list[asyncio.Event]] = {}
+
+    # ------------------------------------------------------------------
+    # Kernel binding
+    # ------------------------------------------------------------------
+
+    def attach_kernel(self, kernel: Any) -> None:
+        """Late-bind the kernel after construction (factory wiring path)."""
+        self._kernel = kernel
 
     # ------------------------------------------------------------------
     # IPC provisioner hook
     # ------------------------------------------------------------------
 
     def set_provisioner(self, provisioner: Any) -> None:
-        """Inject IPC provisioner for automatic directory creation on register.
-
-        Called by factory after both AgentRegistry and AgentProvisioner exist.
-        When set, ``provision()`` delegates to ``provisioner.provision()``.
-        """
+        """Inject IPC provisioner for automatic directory creation on register."""
         self._provisioner = provisioner
         logger.debug("AgentRegistry: IPC provisioner set")
 
@@ -75,11 +93,7 @@ class AgentRegistry:
         skills: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> bool:
-        """Provision IPC directories for an agent. Non-fatal.
-
-        Returns True if provisioning succeeded, False otherwise.
-        No-op (returns False) when no provisioner is configured.
-        """
+        """Provision IPC directories for an agent. Non-fatal."""
         if self._provisioner is None:
             return False
         try:
@@ -92,6 +106,57 @@ class AgentRegistry:
                 exc,
             )
             return False
+
+    # ------------------------------------------------------------------
+    # Rust SSOT dual-write helpers
+    # ------------------------------------------------------------------
+
+    def _kernel_register(self, desc: AgentDescriptor) -> None:
+        """Mirror a Python descriptor into the Rust AgentTable.
+
+        Rust accepts both upper- and lowercase enum strings; we forward the
+        StrEnum value as-is (lowercase).
+        """
+        if self._kernel is None:
+            return
+        try:
+            created_ms = int(desc.created_at.timestamp() * 1000)
+            self._kernel.agent_register(
+                desc.pid,
+                desc.name,
+                desc.kind.value,
+                desc.owner_id,
+                desc.zone_id,
+                created_ms,
+                desc.ppid,
+                desc.external_info.connection_id if desc.external_info else None,
+            )
+        except Exception as exc:  # SSOT lag is recoverable; never block Python writes
+            logger.warning("agent_table dual-write (register) failed for %s: %s", desc.pid, exc)
+
+    def _kernel_update_state(self, pid: str, state: AgentState) -> None:
+        if self._kernel is None:
+            return
+        try:
+            self._kernel.agent_update_state(pid, state.value)
+        except Exception as exc:
+            logger.warning("agent_table dual-write (update_state) failed for %s: %s", pid, exc)
+
+    def _kernel_unregister(self, pid: str) -> None:
+        if self._kernel is None:
+            return
+        try:
+            self._kernel.agent_unregister(pid)
+        except Exception as exc:
+            logger.warning("agent_table dual-write (unregister) failed for %s: %s", pid, exc)
+
+    def _kernel_heartbeat(self, pid: str, when: datetime) -> None:
+        if self._kernel is None:
+            return
+        try:
+            self._kernel.agent_heartbeat(pid, int(when.timestamp() * 1000))
+        except Exception as exc:
+            logger.warning("agent_table dual-write (heartbeat) failed for %s: %s", pid, exc)
 
     # ------------------------------------------------------------------
     # PID allocation
@@ -120,11 +185,12 @@ class AgentRegistry:
         now = datetime.now(UTC)
         updated = replace(desc, state=new_state, updated_at=now, **kwargs)
         self._processes[desc.pid] = updated
+        self._kernel_update_state(desc.pid, new_state)
         self._notify_waiters(desc.pid)
         return updated
 
     def _notify_waiters(self, pid: str) -> None:
-        """Wake all waiters for a PID."""
+        """Wake asyncio waiters parked on this PID (kernel-less fallback path)."""
         events = self._wait_events.get(pid)
         if events:
             for ev in events:
@@ -148,7 +214,6 @@ class AgentRegistry:
         labels: dict[str, str] | None = None,
     ) -> AgentDescriptor:
         """Create a new process in REGISTERED state."""
-        # Validate parent
         if parent_pid is not None:
             parent = self._processes.get(parent_pid)
             if parent is None:
@@ -174,8 +239,8 @@ class AgentRegistry:
         )
 
         self._processes[pid] = desc
+        self._kernel_register(desc)
 
-        # Update parent.children
         if parent_pid is not None:
             parent = self._processes[parent_pid]
             updated_parent = replace(
@@ -195,11 +260,10 @@ class AgentRegistry:
             raise AgentNotFoundError(f"process not found: {pid}")
 
         if desc.state == AgentState.TERMINATED:
-            return desc  # already dead
+            return desc
 
         updated = self._transition(desc, AgentState.TERMINATED, exit_code=exit_code)
 
-        # Auto-reap if orphan (no parent to wait())
         if updated.ppid is None:
             self._reap(updated)
 
@@ -226,13 +290,15 @@ class AgentRegistry:
             case AgentSignal.SIGTERM:
                 return self.kill(pid)
             case AgentSignal.SIGKILL:
-                # Force kill + immediate reap regardless of parent
                 if desc.state != AgentState.TERMINATED:
                     desc = self._transition(desc, AgentState.TERMINATED, exit_code=-9)
                 self._reap(desc)
                 return desc
             case AgentSignal.SIGUSR1:
-                # User-defined signal — merge payload into labels, notify waiters
+                # Label-only update: no state change, no Rust write needed
+                # (AgentTable does not store labels — Python-side PCB only).
+                # Wake fallback asyncio waiters so callers observing label
+                # changes via the kernel-less wait() path see the update.
                 if payload:
                     merged = {**desc.labels, **{k: str(v) for k, v in payload.items()}}
                     desc = replace(desc, labels=merged, updated_at=datetime.now(UTC))
@@ -242,6 +308,33 @@ class AgentRegistry:
             case _:
                 raise AgentError(f"unknown signal: {sig}")
 
+    def wait_state(
+        self,
+        pid: str,
+        target_state: AgentState | str,
+        timeout_ms: int = 5000,
+    ) -> AgentDescriptor | None:
+        """Block until the agent reaches ``target_state`` or timeout.
+
+        Returns the (Python) descriptor when the target is reached, ``None``
+        on timeout. Delegates to ``kernel.agent_wait`` which parks on a Rust
+        condvar with the GIL released.
+        """
+        if self._kernel is None:
+            raise RuntimeError("AgentRegistry.wait_state requires a kernel attachment")
+        target_str = target_state.value if isinstance(target_state, AgentState) else target_state
+        try:
+            self._kernel.agent_wait(pid, target_str, int(timeout_ms))
+        except RuntimeError as exc:
+            msg = str(exc)
+            if "timeout" in msg or "not_found" in msg:
+                return None
+            raise
+        desc = self._processes.get(pid)
+        if desc is not None and desc.state == AgentState.TERMINATED:
+            self._reap(desc)
+        return desc
+
     async def wait(
         self,
         pid: str,
@@ -249,21 +342,53 @@ class AgentRegistry:
         target_states: frozenset[AgentState] | None = None,
         timeout: float | None = None,
     ) -> AgentDescriptor | None:
-        """Wait for process to reach target state. Reaps ZOMBIE on return."""
+        """Wait for a target state.
+
+        Production path (kernel attached): pumps the Rust condvar through
+        ``asyncio.to_thread`` — the Rust call releases the GIL so other
+        coroutines keep running.
+
+        Fallback path (no kernel — unit tests of the Python behavior
+        layer): parks on a per-pid asyncio.Event. Behaviorally identical
+        to the prior pure-Python implementation.
+
+        ``target_states`` accepts a set for source-compat. Multi-state
+        callers waiting on the Rust path receive the strictest single
+        target (TERMINATED preferred, else first member); the condvar
+        wakes on any transition so callers needing the full set should
+        re-check ``get(pid).state`` after each wake.
+        """
         if target_states is None:
             target_states = frozenset({AgentState.TERMINATED})
+        if not target_states:
+            raise ValueError("target_states must be non-empty")
 
         desc = self._processes.get(pid)
         if desc is None:
             raise AgentNotFoundError(f"process not found: {pid}")
-
-        # Already in target state?
         if desc.state in target_states:
             if desc.state == AgentState.TERMINATED:
                 self._reap(desc)
             return desc
 
-        # Create event and wait
+        if self._kernel is not None:
+            target = (
+                AgentState.TERMINATED
+                if AgentState.TERMINATED in target_states
+                else next(iter(target_states))
+            )
+            timeout_ms = int(timeout * 1000) if timeout is not None else 60_000
+            return await asyncio.to_thread(self.wait_state, pid, target, timeout_ms)
+
+        return await self._wait_via_event(pid, target_states, timeout)
+
+    async def _wait_via_event(
+        self,
+        pid: str,
+        target_states: frozenset[AgentState],
+        timeout: float | None,
+    ) -> AgentDescriptor | None:
+        """Kernel-less fallback for unit tests."""
         event = asyncio.Event()
         waiters = self._wait_events.setdefault(pid, [])
         waiters.append(event)
@@ -276,14 +401,11 @@ class AgentRegistry:
 
                 desc = self._processes.get(pid)
                 if desc is None:
-                    return None  # reaped by someone else
-
+                    return None
                 if desc.state in target_states:
                     if desc.state == AgentState.TERMINATED:
                         self._reap(desc)
                     return desc
-
-                # Not in target state yet — reset and wait again
                 event.clear()
         finally:
             waiters = self._wait_events.get(pid, [])
@@ -317,7 +439,7 @@ class AgentRegistry:
         return result
 
     # ------------------------------------------------------------------
-    # Convenience queries (Issue #1692)
+    # Convenience queries
     # ------------------------------------------------------------------
 
     def count_by_state(self, state: AgentState, *, zone_id: str | None = None) -> int:
@@ -391,6 +513,7 @@ class AgentRegistry:
         new_ext = replace(desc.external_info, last_heartbeat=now)
         updated = replace(desc, external_info=new_ext, updated_at=now)
         self._processes[pid] = updated
+        self._kernel_heartbeat(pid, now)
         return updated
 
     def unregister_external(self, pid: str) -> None:
@@ -414,8 +537,8 @@ class AgentRegistry:
         pid = desc.pid
         self._processes.pop(pid, None)
         self._wait_events.pop(pid, None)
+        self._kernel_unregister(pid)
 
-        # Remove from parent's children list
         if desc.ppid is not None:
             parent = self._processes.get(desc.ppid)
             if parent is not None:
@@ -440,6 +563,11 @@ class AgentRegistry:
             if desc is not None and desc.state != AgentState.TERMINATED:
                 with contextlib.suppress(AgentError, InvalidTransitionError):
                     self.kill(pid)
+        # Best-effort kernel unregister for anything still in the local cache
+        # (kill() cascades through _reap which already calls _kernel_unregister,
+        # but TERMINATED-on-construction or partial-init paths can land here).
+        for pid in list(self._processes):
+            self._kernel_unregister(pid)
         self._processes.clear()
         self._wait_events.clear()
         logger.debug("AgentRegistry closed — all agents cleared")

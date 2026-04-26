@@ -17,12 +17,12 @@ from nexus.bricks.delegation.models import DelegationMode
 from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.core.agent_registry import AgentRegistry
 from nexus.server.api.v2.routers.delegation import (
     DelegateRequest,
     DelegateResponse,
     _handle_delegation_error,
 )
+from nexus.services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

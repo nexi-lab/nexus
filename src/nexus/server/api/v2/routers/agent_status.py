@@ -286,20 +286,30 @@ async def list_agents(
                 except Exception:
                     pass
 
-                rows = session.scalars(
-                    select(APIKeyModel).where(
+                # #3871 round 6: filter via api_key_zones junction so the
+                # zone_id query parameter actually scopes the listing. Pre-#3871
+                # this used APIKeyModel.zone_id, which is now NULL for keys
+                # minted post-Phase 2 — that allowed cross-zone leakage where
+                # an agent in 'ops' could be listed under '?zone_id=eng'.
+                from nexus.storage.models.auth import APIKeyZoneModel
+
+                rows = session.execute(
+                    select(APIKeyModel, APIKeyZoneModel.zone_id)
+                    .join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
+                    .where(
                         APIKeyModel.subject_type == "agent",
                         APIKeyModel.revoked == 0,
+                        APIKeyZoneModel.zone_id == zone_id,
                     )
                 ).all()
-                for key in rows:
+                for key, key_zone_id in rows:
                     aid = key.subject_id
                     if aid and aid not in running_map:
                         state = "delegated" if aid in delegated_ids else "registered"
                         running_map[aid] = AgentListItem(
                             agent_id=aid,
                             owner_id=key.user_id or "",
-                            zone_id=key.zone_id or zone_id,
+                            zone_id=key_zone_id,
                             name=key.name or aid,
                             state=state,
                             generation=0,

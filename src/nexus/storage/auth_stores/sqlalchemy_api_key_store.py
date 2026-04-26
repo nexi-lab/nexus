@@ -73,18 +73,19 @@ class SQLAlchemyAPIKeyStore:
             )
 
         with self._session_factory() as session:
-            # #3871 round 3: validate zone exists before junction insert (FK
-            # api_key_zones.zone_id -> zones.zone_id). Surfaces a controlled
-            # ValueError instead of an opaque IntegrityError. Caller must
-            # create the ZoneModel up front.
+            # #3871 round 3+6: validate zone exists, is Active, and not
+            # deleted before junction insert. Round 6 also rejects
+            # Terminating/soft-deleted zones — otherwise the token mints
+            # successfully but the lifecycle gate rejects at first auth.
             if zone_id:
                 from nexus.storage.models import ZoneModel
 
                 zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
-                if zone is None:
+                if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
                     raise ValueError(
-                        f"SQLAlchemyAPIKeyStore.create_key: zone {zone_id!r} does not exist; "
-                        "create the zone before issuing keys against it"
+                        f"SQLAlchemyAPIKeyStore.create_key: zone {zone_id!r} is not active "
+                        "(missing, Terminating, or soft-deleted); create or restore "
+                        "the zone before issuing keys against it"
                     )
 
             session.add(key)

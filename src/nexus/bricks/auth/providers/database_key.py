@@ -298,19 +298,20 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 "(zoneless tokens are reserved for global admins, #3871)"
             )
 
-        # #3871 round 3: validate zone exists before inserting junction row.
-        # Surfaces a controlled ValidationError instead of an opaque
-        # IntegrityError from the FK constraint (api_key_zones.zone_id ->
-        # zones.zone_id). Caller (provisioning, OAuth, hub) must create the
-        # ZoneModel up front.
+        # #3871 round 3+6: validate zone exists, is Active, and not deleted
+        # before inserting junction row. Surfaces a controlled ValueError
+        # instead of (a) an opaque IntegrityError from the FK constraint or
+        # (b) a returned raw key that the lifecycle gate immediately rejects
+        # at first authentication (already persisted/displayed once).
         if zone_id:
             from nexus.storage.models import ZoneModel
 
             zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
-            if zone is None:
+            if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
                 raise ValueError(
-                    f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} does not exist; "
-                    "create the zone before issuing keys against it"
+                    f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} is not active "
+                    "(missing, Terminating, or soft-deleted); create or restore "
+                    "the zone before issuing keys against it"
                 )
 
         api_key = APIKeyModel(

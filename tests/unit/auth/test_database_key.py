@@ -376,7 +376,7 @@ class TestZoneLifecycleGate:
         """#3871 round 3: create_key validates the ZoneModel exists. Issuing a
         key against an unknown zone surfaces a controlled ValueError instead
         of an opaque IntegrityError from the api_key_zones FK."""
-        with session_factory() as session, pytest.raises(ValueError, match="does not exist"):
+        with session_factory() as session, pytest.raises(ValueError, match="is not active"):
             _create_key(session, zone_id="unknown_zone")
 
     @pytest.mark.asyncio

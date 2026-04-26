@@ -136,6 +136,9 @@ def test_concurrent_insert_race_treated_as_success(session_factory):
         def get(self, *a, **kw):
             return self._inner.get(*a, **kw)
 
+        def get_bind(self, *a, **kw):
+            return self._inner.get_bind(*a, **kw)
+
         def add(self, obj) -> None:
             if not races:
                 # Simulate a competing writer landing the row first.

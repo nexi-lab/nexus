@@ -39,14 +39,18 @@ class _SessionFactory(Protocol):
 def ensure_root_zone(session_factory: _SessionFactory) -> None:
     """Make sure ``zones.root`` exists and is Active.
 
-    Fails closed:
+    Fails closed on any condition the caller can act on:
     - missing row → insert; on IntegrityError (concurrent insert race)
       re-read in a fresh session and require the row to be present;
     - present row → require ``phase == "Active"`` and
       ``deleted_at IS NULL``.
 
-    Anything else raises ``RuntimeError`` so the caller (server startup,
-    record-store init) refuses to come up with a broken default zone.
+    Skips quietly when the ``zones`` table does not yet exist. Schema
+    bootstrap is layered (Alembic in prod; ``create_all`` in dev/test),
+    and partial-schema environments must not turn a "schema not built
+    yet" state into a fatal startup error. Real DB faults
+    (connectivity, permissions) still propagate because they raise other
+    SQLAlchemy errors.
 
     Args:
         session_factory: callable returning a SQLAlchemy ``Session``
@@ -55,10 +59,19 @@ def ensure_root_zone(session_factory: _SessionFactory) -> None:
     """
     from datetime import UTC, datetime
 
+    from sqlalchemy import inspect
     from sqlalchemy.exc import IntegrityError
 
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.storage.models import ZoneModel
+
+    with session_factory() as probe_session:
+        bind = probe_session.get_bind()
+        if not inspect(bind).has_table(ZoneModel.__tablename__):
+            logger.debug(
+                "zones table absent; skipping root-zone bootstrap (schema is built by another path)"
+            )
+            return
 
     with session_factory() as session:
         existing = session.get(ZoneModel, ROOT_ZONE_ID)

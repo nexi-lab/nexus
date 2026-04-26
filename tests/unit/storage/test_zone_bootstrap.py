@@ -90,6 +90,22 @@ def test_ensure_root_zone_rejects_inactive_phase(tmp_path):
         ensure_root_zone(factory)
 
 
+def test_ensure_root_zone_skips_when_zones_table_absent(tmp_path):
+    """Schema bootstrap is layered — partial-schema envs must not be fatal.
+
+    When the zones table doesn't exist yet (another bootstrap path will
+    create it), ensure_root_zone is a no-op rather than raising. This
+    keeps fail-closed semantics for real DB faults but tolerates the
+    interleavings that exist in dev/test fixtures.
+    """
+    db = tmp_path / "store.db"
+    engine = create_engine(f"sqlite:///{db}")
+    # Note: NO Base.metadata.create_all — zones table never created.
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    ensure_root_zone(factory)  # must not raise
+
+
 def test_ensure_root_zone_rejects_soft_deleted(tmp_path):
     """deleted_at set on root must fail the bootstrap loudly."""
     db = tmp_path / "store.db"

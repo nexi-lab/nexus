@@ -250,6 +250,51 @@ jobs:
             -e NEXUS_GRPC_TLS=false \
             nexus-e2e nexus demo init
 
+      - name: Seed search index
+        run: |
+          # nexus demo init writes files but does NOT trigger the semantic embedding
+          # pipeline.  Run both:
+          #   1. nexus reindex --target search  — rebuilds BM25 keyword index from MCL
+          #   2. nexus search index /workspace/demo — generates vector embeddings
+          # Both are required for `nexus search query` (HERB QA) to return results.
+          echo "Rebuilding BM25 keyword index..."
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            nexus-e2e nexus reindex --target search || true
+
+          echo "Building semantic (vector) index for /workspace/demo..."
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            -e NEXUS_GRPC_PORT=2029 \
+            -e NEXUS_GRPC_TLS=false \
+            nexus-e2e nexus search index /workspace/demo || true
+
+          # Poll until search returns results (up to 90s)
+          echo "Polling search readiness..."
+          for i in $(seq 1 18); do
+            result=$(docker exec \
+              -e NEXUS_URL=http://localhost:2026 \
+              -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+              -e NEXUS_PROFILE=remote \
+              nexus-e2e nexus search query "Nexus Core" --limit 1 2>/dev/null || true)
+            if echo "$result" | grep -q "prod-001"; then
+              echo "Search index ready after ${i}×5s"
+              break
+            fi
+            echo "  not ready (attempt ${i}/18)..."
+            sleep 5
+          done
+          # Final status (non-fatal — test script enforces the HERB gate)
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            nexus-e2e nexus search query "Nexus Core" --limit 1 || true
+
       - name: Copy test scripts into container
         run: |
           docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/

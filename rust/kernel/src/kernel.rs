@@ -6589,7 +6589,7 @@ mod tests {
         let zone = contracts::ROOT_ZONE_ID;
 
         let ms = Arc::new(MemoryMetastore::new());
-        k.vfs_router.add_mount("/mnt", zone, "local", None, false);
+        k.vfs_router.add_mount("/mnt", zone, None, false);
         let canon = crate::vfs_router::canonicalize_mount_path("/mnt", zone);
         k.vfs_router
             .install_metastore(&canon, ms.clone() as Arc<dyn crate::metastore::Metastore>);
@@ -6597,7 +6597,6 @@ mod tests {
         // Seed a DT_MOUNT entry at the mount root and a child file.
         let mount_meta = FileMetadata {
             path: "/mnt".to_string(),
-            backend_name: "local".to_string(),
             entry_type: DT_MOUNT,
             zone_id: Some(zone.to_string()),
             ..Default::default()

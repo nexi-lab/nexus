@@ -258,8 +258,6 @@ class TestBootBrickServices:
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
-            "ipc_zone_id",
-            "ipc_provisioner",
             "delegation_service",
             "version_service",
             "rebac_circuit_breaker",

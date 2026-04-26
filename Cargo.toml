@@ -2,9 +2,10 @@
 resolver = "2"
 members = [
     "rust/contracts",
-    "rust/library",
+    "rust/lib",
     "rust/transport",
     "rust/kernel",
+    "rust/backends",
     "rust/services",
     "rust/raft",
     "rust/tasks",
@@ -15,9 +16,19 @@ exclude = ["nexus-fuse"]
 
 [workspace.dependencies]
 contracts = { path = "rust/contracts" }
-library = { path = "rust/library" }
+lib = { path = "rust/lib" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
+# Driver impls (Phase D). Optional `python` feature pulled by kernel cdylib
+# so its `#[pymodule]` can expose backends `#[pyclass]` types alongside
+# the kernel's own.
+backends = { path = "rust/backends" }
+# `kernel` is the cdylib crate but it also exposes an rlib (see
+# rust/kernel/Cargo.toml `crate-type = ["cdylib", "rlib"]`) — `backends`
+# depends on the rlib half for `kernel::core::traits::ObjectStore`.
+# Keep `default-features = false` so `extension-module` does not leak
+# into rlib builds; kernel cdylib supplies that on its own dep.
+kernel = { path = "rust/kernel", default-features = false }
 # F2 C8 (Option A): raft is an rlib inside the nexus_kernel cdylib.
 # kernel pulls it in as a Rust dependency to reach ZoneConsensus /
 # FullStateMachine for federation metastore wiring. Direction is

@@ -1,0 +1,68 @@
+[package]
+name = "backends"
+version = "0.1.0"
+edition = "2021"
+description = "ObjectStore driver impls — connector backends, CAS local, path local, blob-pack local. Implements kernel::core::traits::ObjectStore. Phase D parallel-layers crate."
+
+[lib]
+name = "backends"
+crate-type = ["rlib"]
+
+[features]
+default = ["connectors"]
+# `python` enables `backends::python` PyO3 wrappers. Mirrors
+# kernel/lib's gating: pure-Rust by default, kernel cdylib pulls
+# `features = ["python"]` to expose `#[pyclass]` types.
+python = ["dep:pyo3"]
+# Connector HTTP / streaming dependency stack — pulled when any of the
+# cloud / API backends are compiled in.
+connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
+nostr = ["dep:tokio-tungstenite", "dep:k256", "dep:sha2", "dep:futures-util"]
+
+[dependencies]
+contracts = { workspace = true }
+kernel = { workspace = true }
+lib = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ahash = { workspace = true }
+regex = { workspace = true }
+memchr = { workspace = true }
+globset = { workspace = true }
+blake3 = { workspace = true }
+fastcdc = { workspace = true }
+roaring = { workspace = true }
+crc32fast = { workspace = true }
+encoding_rs = "0.8.35"
+rayon = "1.11"
+libc = "0.2"
+memmap2 = "0.9.9"
+tempfile = "3"
+dashmap = "6.1"
+parking_lot = "0.12"
+redb = "2"
+uuid = { version = "1", features = ["v4"] }
+lru = "0.16"
+simdutf8 = "0.1"
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros"] }
+futures = "0.3"
+tracing = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+base64 = "0.22"
+# pyo3 features unioned by cargo when kernel cdylib enables `extension-module`
+# on its own pyo3 dep — backends does not need to set extension-module here.
+pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+# Connector / cloud HTTP stack — feature-gated so non-connector builds
+# stay slim.
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false, optional = true }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
+tokio-tungstenite = { version = "0.26", optional = true }
+k256 = { version = "0.13", features = ["schnorr"], optional = true }
+
+[dev-dependencies]
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+tempfile = "3"

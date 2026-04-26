@@ -219,6 +219,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "backends"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "base64",
+ "blake3",
+ "chrono",
+ "contracts",
+ "crc32fast",
+ "dashmap",
+ "encoding_rs",
+ "fastcdc",
+ "futures",
+ "futures-util",
+ "globset",
+ "hmac",
+ "k256",
+ "kernel",
+ "lib",
+ "libc",
+ "lru",
+ "memchr",
+ "memmap2",
+ "parking_lot",
+ "prost",
+ "pyo3",
+ "rayon",
+ "rcgen",
+ "redb",
+ "regex",
+ "reqwest",
+ "roaring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "simdutf8",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tonic",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1518,8 +1563,8 @@ dependencies = [
  "globset",
  "hmac",
  "k256",
+ "lib",
  "libc",
- "library",
  "lru",
  "memchr",
  "memmap2",
@@ -1565,6 +1610,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "lib"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "blake3",
+ "bloomfilter",
+ "crc32fast",
+ "dashmap",
+ "encoding_rs",
+ "getrandom 0.3.4",
+ "globset",
+ "lru",
+ "memchr",
+ "memmap2",
+ "parking_lot",
+ "proptest",
+ "pyo3",
+ "rayon",
+ "regex",
+ "regex-syntax",
+ "roaring",
+ "serde",
+ "serde_json",
+ "simdutf8",
+ "simsimd",
+ "string-interner",
+ "tempfile",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1578,25 +1653,6 @@ checksum = "667f4fec20f29dfc6bc7357c582d91796c169ad7e2fce709468aefeb2c099870"
 dependencies = [
  "cc",
  "libc",
-]
-
-[[package]]
-name = "library"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "blake3",
- "crc32fast",
- "getrandom 0.3.4",
- "globset",
- "memchr",
- "proptest",
- "regex",
- "regex-syntax",
- "roaring",
- "serde",
- "serde_json",
- "string-interner",
 ]
 
 [[package]]

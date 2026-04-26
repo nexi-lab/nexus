@@ -6,7 +6,6 @@ from nexus.cli.clients.conflicts import ConflictsClient
 from nexus.cli.clients.delegation import DelegationClient
 from nexus.cli.clients.graph import GraphClient
 from nexus.cli.clients.identity import IdentityClient
-from nexus.cli.clients.ipc import IPCClient
 from nexus.cli.clients.manifest import ManifestClient
 from nexus.cli.clients.rlm import RLMClient
 from nexus.cli.clients.scheduler import SchedulerClient
@@ -20,7 +19,6 @@ __all__ = [
     "ConflictsClient",
     "DelegationClient",
     "GraphClient",
-    "IPCClient",
     "IdentityClient",
     "ManifestClient",
     "NexusAPIError",

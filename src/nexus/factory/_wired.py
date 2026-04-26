@@ -51,7 +51,8 @@ def _boot_post_kernel_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] NexusFSGateway unavailable: %s", exc)
 
-    # --- IPC: deferred to initialize() via _initialize_wired_ipc() ---
+    # --- IPC brick deleted (Phase M of parallel-layers PR; PR #3912's
+    #     Rust replacement covers the wakeup / discovery surface).
 
     # --- ReBACService: Permission and access control operations ---
     rebac_service: Any = None
@@ -643,120 +644,10 @@ def _boot_post_kernel_services(
     return result
 
 
-def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
-    """IPC mount + provisioner creation — deferred from link() to initialize().
-
-    Performs I/O (mkdir) so it cannot run in the pure-memory link() phase.
-    NexusFS is passed directly to IPC components (no adapter layer).
-    """
-    _ipc_zone_id = services.get("ipc_zone_id")
-    if _ipc_zone_id is None:
-        # If the IPC brick isn't registered at all, the profile has disabled
-        # it — skip IPC init entirely (fail-closed). Only fall back when the
-        # brick DID register the zone but the value was lost on its way into
-        # the services dict (the upstream wiring bug this patch addresses).
-        _svc_fn = getattr(nx, "service", None)
-        _registered = _svc_fn("ipc_zone_id") if _svc_fn is not None else None
-        if _registered is None:
-            return
-        # Use the actual registered value — service_lookup returns raw instance.
-        _resolved = _registered
-        if not isinstance(_resolved, str) or not _resolved:
-            logger.error(
-                "[BOOT:WIRED] IPC init: registered ipc_zone_id has invalid type/"
-                "value (%r); skipping IPC wiring to avoid cross-zone leak.",
-                _resolved,
-            )
-            return
-        _ipc_zone_id = _resolved
-        logger.warning(
-            "[BOOT:WIRED] IPC init: ipc_zone_id registered but not threaded "
-            "through services dict — recovered from service registry (%r). "
-            "Caller in _lifecycle.py should thread the value explicitly.",
-            _ipc_zone_id,
-        )
-
-    try:
-        # Mount a LocalConnector at /agents for IPC file storage
-        from pathlib import Path
-
-        from nexus.backends.storage.local_connector import LocalConnectorBackend
-
-        _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
-        _ipc_data_dir.mkdir(parents=True, exist_ok=True)
-        _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
-        from nexus.contracts.metadata import DT_MOUNT
-
-        nx.sys_setattr("/agents", entry_type=DT_MOUNT, backend=_ipc_connector)
-
-        # Ensure the /agents metadata entry has target_zone_id set.
-        # Single source of truth = _ipc_zone_id. Using nx._zone_id here would
-        # make mount metadata disagree with AgentProvisioner in federated /
-        # multi-zone setups where the two can legitimately diverge.
-        # Reconcile on mismatch — legacy deployments may have persisted a
-        # stale value (e.g. nx._zone_id) from before this patch.
-        try:
-            from nexus.contracts.metadata import DT_MOUNT
-
-            existing = nx.metadata.get("/agents")
-            if existing is not None and existing.target_zone_id != _ipc_zone_id:
-                from dataclasses import replace as _replace
-
-                _prior = existing.target_zone_id
-                # DT_REG/DT_DIR/DT_MOUNT/DT_PIPE are enum values (0..3), not
-                # bitflags — ``DT_DIR | DT_MOUNT`` would produce DT_PIPE (=3)
-                # and corrupt the /agents inode.
-                updated = _replace(
-                    existing,
-                    entry_type=DT_MOUNT,
-                    target_zone_id=_ipc_zone_id,
-                )
-                nx.metadata.put(updated)
-                if _prior:
-                    logger.warning(
-                        "[BOOT:WIRED] /agents mount target_zone_id reconciled: "
-                        "%r → %r (matches AgentProvisioner zone)",
-                        _prior,
-                        _ipc_zone_id,
-                    )
-                else:
-                    logger.debug(
-                        "[BOOT:WIRED] Set target_zone_id=%s on /agents mount", _ipc_zone_id
-                    )
-        except Exception as e:
-            logger.debug("[BOOT:WIRED] Could not set /agents target_zone_id: %s", e)
-
-        # Create AgentProvisioner with NexusFS directly (no adapter)
-        from nexus.bricks.ipc.provisioning import AgentProvisioner
-
-        _provisioner = AgentProvisioner(
-            vfs=nx,
-            zone_id=_ipc_zone_id,
-        )
-        services["ipc_provisioner"] = _provisioner
-
-        # Also register with the service registry so lifespan/ipc.py can
-        # resolve it via nx.service("ipc_provisioner"). Without this the
-        # provisioner only lives in the local services dict and the FastAPI
-        # lifespan hook never wires it onto app.state.ipc_nexus_fs.
-        # Use enlist(allow_overwrite=True) so re-entry on hot-reload replaces atomically.
-        nx.sys_setattr(
-            "/__sys__/services/ipc_provisioner",
-            service=_provisioner,
-            allow_overwrite=True,
-        )
-
-        # Wire provisioner into AgentRegistry so register → provision is automatic
-        _agent_reg_svc = nx.service("agent_registry")
-        _agent_reg = _agent_reg_svc if _agent_reg_svc is not None else None
-        if _agent_reg is not None and hasattr(_agent_reg, "set_provisioner"):
-            _agent_reg.set_provisioner(_provisioner)
-
-        logger.debug(
-            "[BOOT:WIRED] IPC LocalConnector mounted at /agents + AgentProvisioner created"
-        )
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] IPC mount failed: %s", exc)
+# Phase M deleted `_initialize_wired_ipc` along with the entire
+# `nexus.bricks.ipc` brick — its Rust replacement is in flight under
+# PR #3912 and the LocalConnector / AgentProvisioner wiring it set up
+# is unused on every supported profile.
 
 
 # Backward compatibility alias

@@ -708,7 +708,7 @@ mod tests {
         let content = b"hash consistency check";
 
         let engine_hash = engine.write_content(content).unwrap();
-        let direct_hash = library::hash::hash_content(content);
+        let direct_hash = lib::hash::hash_content(content);
         assert_eq!(engine_hash, direct_hash);
     }
 

@@ -88,7 +88,8 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "federation": ("federation", "federation"),
     # Issue #2812: Missing CLI commands for identity, ipc, etc.
     "identity": ("identity", "identity"),
-    "ipc": ("ipc", "ipc"),
+    # `ipc` command deleted in Phase M of the parallel-layers PR —
+    # `nexus.bricks.ipc` removed; PR #3912 ships the Rust replacement.
     "delegation": ("delegation", "delegation"),
     "scheduler_cli": ("scheduler", "scheduler"),
     # "share" removed: /api/v2/share-links endpoints not implemented server-side

@@ -1,0 +1,71 @@
+[package]
+name = "lib"
+version = "0.1.0"
+edition = "2021"
+description = "Shared Rust utilities — bloom, hash, search, trigram, ReBAC, path/prefix/simd/io/glob (WASM/edge compatible by default; PyO3 wrappers behind `python` feature). Linux libc analogue per KERNEL-ARCHITECTURE.md §6."
+
+[lib]
+name = "lib"
+crate-type = ["rlib"]
+
+[features]
+# Pure-Rust algorithms compile WASM-clean by default. Enable `python` from
+# kernel cdylib (or any other crate that wants the PyO3 wrappers) to pull
+# `lib::python::*` plus the optional pyo3 + native-only crate stack
+# (rayon parallelism, memmap2 / simsimd / encoding_rs SIMD-ish helpers,
+# lru / parking_lot / dashmap, simdutf8). Default WASM build does not
+# pull any of these.
+python = [
+    "dep:pyo3",
+    "dep:rayon",
+    "dep:memmap2",
+    "dep:simdutf8",
+    "dep:simsimd",
+    "dep:encoding_rs",
+    "dep:lru",
+    "dep:parking_lot",
+    "dep:dashmap",
+    "dep:bloomfilter",
+]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ahash = { workspace = true }
+regex = { workspace = true }
+memchr = { workspace = true }
+roaring = { workspace = true }  # used by lib::bitmap pure-Rust helpers
+globset = { workspace = true }
+blake3 = { workspace = true }
+string-interner = { workspace = true }
+regex-syntax = { workspace = true }
+crc32fast = { workspace = true }
+# `extension-module` and other cdylib-only features intentionally omitted —
+# kernel cdylib enables those on its own pyo3 dep; cargo unifies to the
+# right featureset at link time.
+pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+# Phase H deps — needed by `lib::python::*` only. Pure-Rust algorithm
+# files in `lib::*` siblings stay WASM-clean.
+rayon = { version = "1.11", optional = true }
+memmap2 = { version = "0.9.9", optional = true }
+simdutf8 = { version = "0.1", optional = true }
+simsimd = { version = "6", optional = true }
+encoding_rs = { version = "0.8.35", optional = true }
+lru = { version = "0.16", optional = true }
+parking_lot = { version = "0.12", optional = true }
+dashmap = { version = "6.1", optional = true }
+# Phase I — kernel/src/bloom.rs PyO3 wrapper used the `bloomfilter`
+# crate; pulled in alongside the move so `BloomFilter` pyclass keeps
+# the same backing impl. (lib's pure-Rust `bloom` algorithm is a
+# separate WASM-clean module.)
+bloomfilter = { version = "3.0", optional = true }
+# `roaring` is unconditional (lib::bitmap pure-Rust algos use it) — see
+# the `[dependencies]` line above; no extra entry needed for the
+# `python` feature.
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+proptest = "1.5"
+tempfile = "3"

@@ -292,7 +292,9 @@ async fn run_join(
     let peers = vec![peer_addr.to_string()];
 
     if zm.get_zone(remote_zone_id).is_none() {
-        zm.join_zone(remote_zone_id, peers)
+        // CLI `join` defaults to full voter; learner promotion is reserved
+        // for the gRPC path (PyZoneManager.join_zone exposes the flag).
+        zm.join_zone(remote_zone_id, peers, false)
             .map_err(|e| anyhow::anyhow!("join_zone({}): {}", remote_zone_id, e))?;
     }
     zm.mount(parent_zone, local_path, remote_zone_id, true)

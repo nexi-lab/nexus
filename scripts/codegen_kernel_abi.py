@@ -33,8 +33,87 @@ STUBS_PATH = ROOT / "stubs" / "nexus_kernel" / "__init__.pyi"
 EXPORTS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_exports.py"
 PROTOCOLS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_protocols.py"
 API_GROUPS_PATH = ROOT / "src" / "nexus" / "_kernel_api_groups.py"
-# generated_pyo3.rs is the single PyO3 transport file (Phase H → PR 21: fully codegen).
-GENERATED_PYO3_PATH = RUST_SRC / "generated_pyo3.rs"
+# Single PyO3 transport file. Phase C renamed from `generated_pyo3.rs` to
+# the more explicit `generated_kernel_abi_pyo3.rs` so a future codegen
+# generated_lib_abi_pyo3.rs (Phase H — `lib::python::*` wrappers) can
+# coexist without filename collision.
+GENERATED_PYO3_PATH = RUST_SRC / "generated_kernel_abi_pyo3.rs"
+
+
+# Phase C compat: lib.rs still references modules under their flat
+# pre-Phase-C names via `pub use core::… as <flat_name>` re-exports.
+# Map the flat name → on-disk file for the codegen scanner.
+FLAT_TO_NESTED_ALIASES: dict[str, str] = {
+    # Phase C: kernel-internal modules nested under core/.
+    "lock_manager": "core/lock/mod.rs",
+    "locks": "core/lock/locks.rs",
+    "semaphore": "core/lock/semaphore.rs",
+    "dispatch": "core/dispatch/mod.rs",
+    "hook_registry": "core/dispatch/hook_registry.rs",
+    "metastore": "core/metastore/mod.rs",
+    "remote_metastore": "core/metastore/remote.rs",
+    "pipe": "core/pipe/mod.rs",
+    "pipe_manager": "core/pipe/manager.rs",
+    "shm_pipe": "core/pipe/shm.rs",
+    "stdio_pipe": "core/pipe/stdio.rs",
+    "remote_pipe": "core/pipe/remote.rs",
+    "stream": "core/stream/mod.rs",
+    "stream_manager": "core/stream/manager.rs",
+    "stream_observer": "core/stream/observer.rs",
+    "shm_stream": "core/stream/shm.rs",
+    "stdio_stream": "core/stream/stdio.rs",
+    "remote_stream": "core/stream/remote.rs",
+    "wal_stream": "core/stream/wal.rs",
+    "vfs_router": "core/vfs_router.rs",
+    "dlc": "core/dlc.rs",
+    "dcache": "core/dcache.rs",
+    "service_registry": "core/service_registry.rs",
+    "file_watch": "core/file_watch.rs",
+}
+
+# Phase H/I: PyO3 wrappers for the lib algorithms now live in
+# rust/lib/src/python/. The codegen still uses flat module names
+# (rebac, search, glob, io, prefix, simd, trigram, path_utils, bitmap,
+# bloom, hash) in the registration calls; this map locates the actual
+# .rs file for each.
+LIB_PYTHON_DIR = ROOT / "rust" / "lib" / "src" / "python"
+LIB_PYTHON_MODULES: set[str] = {
+    "bitmap",
+    "bloom",
+    "glob",
+    "hash",
+    "io",
+    "path_utils",
+    "prefix",
+    "rebac",
+    "search",
+    "simd",
+    "trigram",
+}
+
+
+def _resolve_module_path(mod_name: str) -> Path | None:
+    """Return the on-disk `.rs` file for a flat module name, or None.
+
+    Resolution order:
+      1. Phase H/I — `rust/lib/src/python/<mod>.rs` for algorithm wrappers
+         that moved out of kernel.
+      2. Phase C nested file aliases (kernel core/* tree).
+      3. Flat `rust/kernel/src/<mod>.rs` fallback.
+    """
+    if mod_name in LIB_PYTHON_MODULES:
+        candidate = LIB_PYTHON_DIR / f"{mod_name}.rs"
+        if candidate.exists():
+            return candidate
+    aliased = FLAT_TO_NESTED_ALIASES.get(mod_name)
+    if aliased is not None:
+        candidate = RUST_SRC / aliased
+        if candidate.exists():
+            return candidate
+    flat = RUST_SRC / f"{mod_name}.rs"
+    return flat if flat.exists() else None
+
+
 KERNEL_RPC_HANDLERS_PATH = (
     ROOT / "src" / "nexus" / "server" / "rpc" / "handlers" / "_kernel_lock.py"
 )
@@ -667,15 +746,28 @@ def parse_traits(text: str) -> list[TraitDef]:
 def parse_lib_exports(
     text: str,
 ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-    """Parse lib.rs → ([(module, func_name), ...], [(module, class_name), ...])."""
+    """Parse lib.rs → ([(module, func_name), ...], [(module, class_name), ...]).
+
+    The scanner ignores commented-out call sites — Phase C added doc
+    comments that quote ``m.add_class::<MOD::Name>`` to point readers at
+    this regex; the regex would otherwise match those quotes and emit
+    spurious entries.
+    """
+    # Strip line comments before scanning so we don't pick up the
+    # rustdoc lines that quote `add_class::<…>` / `wrap_pyfunction!(…)`
+    # in module-level documentation. Block comments left as-is — they
+    # are rare in this file and quoting these macros inside one would
+    # be unusual.
+    stripped = re.sub(r"//[^\n]*", "", text)
+
     functions: list[tuple[str, str]] = []
     classes: list[tuple[str, str]] = []
 
     # Handle multi-line wrap_pyfunction! calls with \s*
-    for m in re.finditer(r"wrap_pyfunction!\(\s*(\w+)::(\w+)\s*,", text):
+    for m in re.finditer(r"wrap_pyfunction!\(\s*(\w+)::(\w+)\s*,", stripped):
         functions.append((m.group(1), m.group(2)))
 
-    for m in re.finditer(r"add_class::<(\w+)::(\w+)>", text):
+    for m in re.finditer(r"add_class::<(\w+)::(\w+)>", stripped):
         classes.append((m.group(1), m.group(2)))
 
     return functions, classes
@@ -4954,8 +5046,17 @@ def collect_all() -> tuple[
 
     Returns (module_functions, classes, class_order, traits, all_export_names).
     """
+    # Phase H/I: kernel/src/lib.rs delegates to `lib::python::register(m)`
+    # for all algorithm wrappers (rebac, search, glob, io, prefix, simd,
+    # trigram, path_utils, bitmap, bloom, hash). Scan both lib.rs files
+    # and merge so the codegen sees the full set of `wrap_pyfunction!` /
+    # `add_class::<…>` registrations.
     lib_text = (RUST_SRC / "lib.rs").read_text()
-    func_exports, class_exports = parse_lib_exports(lib_text)
+    lib_python_text = ""
+    lib_python_mod = ROOT / "rust" / "lib" / "src" / "python" / "mod.rs"
+    if lib_python_mod.exists():
+        lib_python_text = lib_python_mod.read_text()
+    func_exports, class_exports = parse_lib_exports(lib_text + "\n" + lib_python_text)
 
     # Build set of exported function names per module
     exported_names: dict[str, set[str]] = {}
@@ -4965,8 +5066,8 @@ def collect_all() -> tuple[
     # Collect functions by module (filtered by lib.rs exports)
     module_functions: dict[str, list[FuncDef]] = {}
     for mod_name, names in exported_names.items():
-        rs_path = RUST_SRC / f"{mod_name}.rs"
-        if not rs_path.exists():
+        rs_path = _resolve_module_path(mod_name)
+        if rs_path is None:
             continue
         text = rs_path.read_text()
         all_funcs = parse_pyfunctions(text)
@@ -4988,8 +5089,8 @@ def collect_all() -> tuple[
     for mod_name, cls_name in class_exports:
         if cls_name in classes:
             continue
-        rs_path = RUST_SRC / f"{mod_name}.rs"
-        if not rs_path.exists():
+        rs_path = _resolve_module_path(mod_name)
+        if rs_path is None:
             continue
         text = rs_path.read_text()
         methods = parse_pymethods(text, cls_name)
@@ -4999,13 +5100,32 @@ def collect_all() -> tuple[
         classes[cls_name] = cls
         class_order.append(cls_name)
 
-    # Collect traits from dispatch.rs, metastore.rs, and backend.rs
+    # Collect traits from dispatch / hook_registry / metastore (flat) +
+    # core/traits/*.rs (Phase B lifted ObjectStore, ExternalTransport,
+    # StreamBackend, PipeBackend out of the flat backend.rs / stream.rs /
+    # pipe.rs into per-pillar files).
     traits: list[TraitDef] = []
-    for rs_file in ["dispatch.rs", "hook_registry.rs", "metastore.rs", "backend.rs"]:
-        rs_path = RUST_SRC / rs_file
+    # Phase C nested dispatch / metastore under core/. The trait scan
+    # walks the post-Phase-C locations directly; pre-Phase-C flat files
+    # are still tried as a fallback so this script keeps working on
+    # checkouts that haven't run Phase C yet.
+    trait_paths: list[Path] = [
+        RUST_SRC / "core" / "dispatch" / "mod.rs",
+        RUST_SRC / "core" / "dispatch" / "hook_registry.rs",
+        RUST_SRC / "core" / "metastore" / "mod.rs",
+        RUST_SRC / "dispatch.rs",
+        RUST_SRC / "hook_registry.rs",
+        RUST_SRC / "metastore.rs",
+    ]
+    for rs_path in trait_paths:
         if rs_path.exists():
-            text = rs_path.read_text()
-            traits.extend(parse_traits(text))
+            traits.extend(parse_traits(rs_path.read_text()))
+    core_traits_dir = RUST_SRC / "core" / "traits"
+    if core_traits_dir.is_dir():
+        for trait_path in sorted(core_traits_dir.glob("*.rs")):
+            if trait_path.name == "mod.rs":
+                continue
+            traits.extend(parse_traits(trait_path.read_text()))
 
     # All export names (for kernel_exports.py) — use Python-visible names
     # (#[pyclass(name = "...")] renaming), not Rust struct names.

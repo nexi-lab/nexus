@@ -111,7 +111,7 @@ impl RemoteChunkFetcher for GrpcChunkFetcher {
             while let Some((addr, result)) = futs.next().await {
                 match result {
                     Ok(bytes) => {
-                        let actual = library::hash::hash_content(&bytes);
+                        let actual = lib::hash::hash_content(&bytes);
                         if actual != hash_owned {
                             tracing::warn!(
                                 target = "cas_remote",

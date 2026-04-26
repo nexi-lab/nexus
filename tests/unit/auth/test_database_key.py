@@ -423,8 +423,8 @@ def test_authenticate_loads_zone_set_from_junction(tmp_path):
     assert sorted(result.zone_set) == ["eng", "ops"]
 
 
-def test_authenticate_legacy_token_falls_back_to_zone_id(tmp_path):
-    """Legacy single-zone token (no junction rows) → zone_set = (zone_id,)."""
+def test_authenticate_legacy_token_no_fallback(tmp_path):
+    """Legacy single-zone token (no junction rows) → zone_set = () (#3871 Phase 2 removes fallback)."""
     import asyncio
 
     from sqlalchemy import create_engine
@@ -459,7 +459,8 @@ def test_authenticate_legacy_token_falls_back_to_zone_id(tmp_path):
     result = asyncio.run(auth.authenticate(raw_key))
 
     assert result.authenticated is True
-    assert result.zone_set == ("eng",)
+    # Phase 2: junction is sole truth; no junction rows → empty zone_set (no fallback to zone_id col).
+    assert result.zone_set == ()
 
 
 # ── #3785 AC #5: expired token rejected before zone_set resolves ──

@@ -129,9 +129,9 @@ class DatabaseAPIKeyAuth(AuthProvider):
             from nexus.storage.models import APIKeyZoneModel
 
             zone_perm_rows = session.execute(
-                select(APIKeyZoneModel.zone_id, APIKeyZoneModel.permissions).where(
-                    APIKeyZoneModel.key_id == api_key.key_id
-                )
+                select(APIKeyZoneModel.zone_id, APIKeyZoneModel.permissions)
+                .where(APIKeyZoneModel.key_id == api_key.key_id)
+                .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
             ).all()
 
             # Cache all ORM attributes eagerly before session close
@@ -145,20 +145,17 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 if hasattr(api_key, "subject_id") and api_key.subject_id
                 else api_key.user_id
             )
-            zone_id = api_key.zone_id
+            # After #3871: api_key.zone_id is NULL for keys minted post-Phase 2.
+            # Source primary zone from the junction (MIN granted_at, zone_id ASC tiebreaker).
+            zone_id = zone_perm_rows[0][0] if zone_perm_rows else api_key.zone_id
             is_admin = bool(api_key.is_admin)
             key_id = api_key.key_id
             key_name = api_key.name
             expires_at_iso = api_key.expires_at.isoformat() if api_key.expires_at else None
 
-            # Derive zone_perms: junction rows → use them; otherwise fall back
-            # to legacy single-zone key (api_key.zone_id) defaulting to "rw",
-            # or () for zoneless keys. zone_set is rebuilt by AuthResult.__post_init__.
-            zone_perms: tuple[tuple[str, str], ...] = (
-                tuple((z, p) for z, p in zone_perm_rows)
-                if zone_perm_rows
-                else (((api_key.zone_id, "rw"),) if api_key.zone_id else ())
-            )
+            # Derive zone_perms: junction is sole source of truth (#3871 Phase 2).
+            # zone_set is rebuilt by AuthResult.__post_init__.
+            zone_perms: tuple[tuple[str, str], ...] = tuple((z, p) for z, p in zone_perm_rows)
 
         # Decision #13: Fire-and-forget last_used_at update (outside session)
         self._update_last_used_background(token_hash)

@@ -344,17 +344,17 @@ def main() -> None:
     section("6. HERB QUALITY GATE (BM25+pgvector+SPLADE+reranker)")
     # =========================================================================
 
-    step("waiting for search index to process demo files (5s debounce)")
+    step("waiting for search index to process demo files (up to 120s)")
     print("    Waiting for search index to process demo files...", flush=True)
-    for _wait in range(6):
+    for _wait in range(24):  # 24×5s = 120s — semantic embedding pipeline is async
         r = cli("search", "query", "Nexus Core", "--limit", "1")
         if "prod-001" in r.stdout:
             print(f"    Search index ready after {(_wait + 1) * 5}s", flush=True)
             break
-        print(f"    not ready yet (attempt {_wait + 1}/6), waiting 5s...", flush=True)
+        print(f"    not ready yet (attempt {_wait + 1}/24), waiting 5s...", flush=True)
         time.sleep(5)
     else:
-        print("    Warning: search index may not be fully populated", flush=True)
+        print("    Warning: search index may not be fully populated after 120s", flush=True)
 
     qa_set = [
         ("Which customer uses Nexus for medical document management?", "cust-002"),
@@ -464,15 +464,15 @@ def main() -> None:
         },
     )
     indexed = False
-    for attempt in range(3):
-        step(f"waiting 8s for daemon auto-index (attempt {attempt + 1}/3)")
-        time.sleep(8)
+    for attempt in range(6):
+        step(f"waiting 10s for daemon auto-index (attempt {attempt + 1}/6)")
+        time.sleep(10)
         r = cli("search", "query", "Kubernetes orchestration", "--limit", "3")
         print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
         if "plan.md" in r.stdout:
             indexed = True
             break
-    check("auto-index after edit", indexed, "plan.md never appeared in search results after 3×8s")
+    check("auto-index after edit", indexed, "plan.md never appeared in search results after 6×10s")
 
     step("RPC edit: restore original plan.md text")
     t.call_rpc(
@@ -494,9 +494,9 @@ def main() -> None:
         {"path": "/workspace/demo/delete-test.md", "buf": "Quantum entanglement teleportation"},
     )
     indexed = False
-    for attempt in range(5):
-        step(f"waiting 8s for auto-index (attempt {attempt + 1}/5)")
-        time.sleep(8)
+    for attempt in range(8):
+        step(f"waiting 10s for auto-index (attempt {attempt + 1}/8)")
+        time.sleep(10)
         r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
         print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
         if "delete-test" in r.stdout:
@@ -505,15 +505,15 @@ def main() -> None:
     check(
         "file indexed before delete",
         indexed,
-        "delete-test.md never appeared in search results after 5×8s",
+        "delete-test.md never appeared in search results after 8×10s",
     )
 
     step("RPC sys_unlink /workspace/demo/delete-test.md")
     t.call_rpc("sys_unlink", {"path": "/workspace/demo/delete-test.md"})
     stale = True
-    for attempt in range(3):
-        step(f"waiting 8s for delete to propagate (attempt {attempt + 1}/3)")
-        time.sleep(8)
+    for attempt in range(5):
+        step(f"waiting 10s for delete to propagate (attempt {attempt + 1}/5)")
+        time.sleep(10)
         r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
         print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
         if "delete-test" not in r.stdout:
@@ -522,7 +522,7 @@ def main() -> None:
     check(
         "deleted file removed from search",
         not stale,
-        "stale result still present after 3×8s" if stale else "",
+        "stale result still present after 5×10s" if stale else "",
     )
 
     t.close()

@@ -58,11 +58,20 @@ pub(crate) use core::stream;
 pub(crate) use core::stream::manager as stream_manager;
 #[cfg(unix)]
 pub(crate) use core::stream::shm as shm_stream;
+// `core::stream::stdio` only ships its pyclass on Unix (the
+// `StdioStreamBackend` impl is `#[cfg(unix)]`); the cdylib's
+// `m.add_class::<stdio_stream::StdioStreamBackend>` line below is
+// likewise cfg-gated, so the shim must match. Without the shim the
+// Linux build trips `unresolved module \`stdio_stream\`` even though
+// the Windows build (where neither the shim nor the add_class line
+// are emitted) compiles fine.
+#[cfg(unix)]
+pub(crate) use core::stream::stdio as stdio_stream;
 pub(crate) use core::stream::wal as wal_stream;
 // Note: core::lock::semaphore, core::pipe::remote, core::stream::observer,
-// core::stream::remote, core::stream::stdio — not re-exported under
-// flat names; their pre-Phase-C flat aliases were dead. Reach them
-// through `crate::core::*` directly going forward.
+// core::stream::remote — not re-exported under flat names; their
+// pre-Phase-C flat aliases were dead. Reach them through
+// `crate::core::*` directly going forward.
 
 // ── Modules that have not moved yet ──────────────────────────────────
 // These stay flat through Phase C; later phases relocate them:

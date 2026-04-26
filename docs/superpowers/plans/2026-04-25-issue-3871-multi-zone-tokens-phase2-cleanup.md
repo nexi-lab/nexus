@@ -891,12 +891,20 @@ git commit -m "feat(#3871): sqlalchemy_api_key_store.revoke_key zone filter via 
 
 ## Task 6: Stop writing `APIKeyModel.zone_id`
 
-**Purpose:** Sever the link from `create_api_key` to the deprecated column. New keys persist `zone_id=NULL`; the junction is the only zone record.
+**Purpose:** Sever the link from key-creation paths to the deprecated column. New keys persist `zone_id=NULL`; the junction is the only zone record.
+
+**Plan correction (2026-04-25):** there are TWO key-creation paths writing `APIKeyModel.zone_id` on develop:
+1. `src/nexus/storage/api_key_ops.py::create_api_key` (the junction-aware path) — sets `zone_id=primary_zone` as a backfill alias.
+2. `src/nexus/storage/auth_stores/sqlalchemy_api_key_store.py::SQLAlchemyAPIKeyStore.create_key` (the legacy non-junction path) — sets `zone_id=zone_id or ROOT_ZONE_ID` and writes NO junction row.
+
+Both must be migrated. The legacy path becomes a strict subset of `create_api_key` once it routes through it. We won't delete the legacy method entirely (it's called from `handle_admin_create_key`), but it must populate the junction so its keys are visible to the new junction-based filters. The simplest fix: have `SQLAlchemyAPIKeyStore.create_key` insert a junction row whenever a `zone_id` is supplied.
 
 **Files:**
-- Modify: `src/nexus/storage/api_key_ops.py`
-- Modify: `src/nexus/storage/models/auth.py`
+- Modify: `src/nexus/storage/api_key_ops.py` — `create_api_key` writes `zone_id=None`
+- Modify: `src/nexus/storage/auth_stores/sqlalchemy_api_key_store.py` — `create_key` writes `zone_id=None` AND inserts a junction row when `zone_id` arg is supplied
+- Modify: `src/nexus/storage/models/auth.py` — docstring update
 - Test: `tests/unit/storage/test_api_key_ops_no_zone_id_write.py`
+- Test: `tests/unit/storage/auth_stores/test_sqlalchemy_api_key_store_no_zone_id_write.py`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -952,9 +960,65 @@ Expected: 2 FAILs (single + multi tests). The zoneless test already passes today
 
 - [ ] **Step 3: Update `create_api_key`**
 
-Edit `src/nexus/storage/api_key_ops.py`. Locate `create_api_key`. Find the line that sets `zone_id` on `APIKeyModel(...)` (search: `zone_id=primary_zone` or `zone_id=zones[0]`). Replace with `zone_id=None`. The function should no longer compute or pass a primary zone to the column.
+Edit `src/nexus/storage/api_key_ops.py`. Locate `create_api_key` (around line 82). Find the line that sets `zone_id` on `APIKeyModel(...)` (around line 166: `zone_id=primary_zone`). Replace with `zone_id=None`. The function should no longer compute or pass a primary zone to the column.
 
 The junction insert (`INSERT INTO api_key_zones …`) elsewhere in `create_api_key` is unchanged — that is the surviving write path.
+
+- [ ] **Step 3b: Update `SQLAlchemyAPIKeyStore.create_key` to populate the junction**
+
+Edit `src/nexus/storage/auth_stores/sqlalchemy_api_key_store.py`. Locate `create_key` (around line 45). The method currently sets `zone_id=zone_id or ROOT_ZONE_ID` on the `APIKeyModel` and writes NO junction row. Change to:
+
+1. Write `zone_id=None` on the `APIKeyModel` (drop the `or ROOT_ZONE_ID` fallback).
+2. After `session.add(key)` and `session.flush()` (to populate `key.key_id`), if a non-empty `zone_id` argument was supplied, also insert an `APIKeyZoneModel(key_id=key.key_id, zone_id=zone_id, permissions="rw")` row.
+
+Read the current `create_key` implementation first (lines 45-80) to see the exact structure (commit/flush calls, what's already imported). Match the existing style. The junction insert is conditional: zoneless admin keys (no `zone_id` arg) should NOT get a junction row.
+
+Add a test in `tests/unit/storage/auth_stores/test_sqlalchemy_api_key_store_no_zone_id_write.py`:
+
+```python
+"""SQLAlchemyAPIKeyStore.create_key must not write APIKeyModel.zone_id; populates junction (#3871)."""
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from nexus.storage.api_key_ops import get_zones_for_key
+from nexus.storage.auth_stores.sqlalchemy_api_key_store import SQLAlchemyAPIKeyStore
+from nexus.storage.models import APIKeyModel
+from nexus.storage.models._base import Base
+from nexus.storage.models.auth import ZoneModel
+
+
+@pytest.fixture
+def store_and_factory(tmp_path):
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+    with SessionLocal() as s:
+        s.add(ZoneModel(zone_id="eng", name="eng", phase="Active"))
+        s.commit()
+    return SQLAlchemyAPIKeyStore(session_factory=SessionLocal), SessionLocal
+
+
+def test_create_key_writes_null_zone_id_with_zone_arg(store_and_factory):
+    store, SessionLocal = store_and_factory
+    dto = store.create_key(key_hash="h1", user_id="u1", name="k", zone_id="eng")
+    with SessionLocal() as s:
+        row = s.get(APIKeyModel, dto.key_id)
+        assert row.zone_id is None  # column not used
+        assert get_zones_for_key(s, dto.key_id) == ["eng"]  # junction populated
+
+
+def test_create_key_writes_null_zone_id_zoneless(store_and_factory):
+    store, SessionLocal = store_and_factory
+    dto = store.create_key(key_hash="h2", user_id="u1", name="root")  # no zone_id
+    with SessionLocal() as s:
+        row = s.get(APIKeyModel, dto.key_id)
+        assert row.zone_id is None
+        assert get_zones_for_key(s, dto.key_id) == []  # no junction row
+```
 
 - [ ] **Step 4: Update `APIKeyModel.zone_id` docstring**
 
@@ -996,8 +1060,8 @@ Expected: clean.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/nexus/storage/api_key_ops.py src/nexus/storage/models/auth.py tests/unit/storage/test_api_key_ops_no_zone_id_write.py tests/unit/storage/
-git commit -m "feat(#3871): create_api_key stops writing APIKeyModel.zone_id"
+git add src/nexus/storage/api_key_ops.py src/nexus/storage/models/auth.py src/nexus/storage/auth_stores/sqlalchemy_api_key_store.py tests/unit/storage/test_api_key_ops_no_zone_id_write.py tests/unit/storage/auth_stores/test_sqlalchemy_api_key_store_no_zone_id_write.py tests/unit/storage/
+git commit -m "feat(#3871): both key-create paths stop writing zone_id; store populates junction"
 ```
 
 ---

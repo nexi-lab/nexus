@@ -151,7 +151,16 @@ pub struct RouteResult {
     /// True when the routed mount is an external connector — Python must
     /// dispatch the operation through a Python-side backend adapter.
     pub is_external: bool,
-    /// Backend name from the mount entry (e.g. "cas-local", "hn", "cli:gh").
+    /// True when the routed backend is content-addressed (CAS).
+    ///
+    /// Derived from the backend trait's `as_cas()` downcast — single
+    /// source of truth, no string-prefix sniffing. Replaces the prior
+    /// pattern of testing `backend_name.starts_with("cas")`.
+    pub is_cas: bool,
+    /// Display label for the routed backend (e.g. "cas-local", "hn",
+    /// "cli:gh"). Surfaced for HTTP/RPC display, CLI-connector detection
+    /// in the connectors router, and logs. **Not** for CAS detection —
+    /// use `is_cas` for that.
     pub backend_name: String,
 }
 
@@ -469,7 +478,22 @@ impl VFSRouter {
                 let mount_point = current.to_string();
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let is_external = entry.is_external;
-                let backend_name = entry.backend_name.clone();
+                // CAS detection via trait downcast — no string sniffing.
+                // Mounts with no Rust backend (Python-side connector) are
+                // not CAS.
+                let is_cas = entry
+                    .backend
+                    .as_ref()
+                    .map(|b| b.as_cas().is_some())
+                    .unwrap_or(false);
+                // Display label — derived from the backend's own ``name()``.
+                // Empty when no Rust backend (caller can disambiguate via
+                // ``is_external``).
+                let backend_name = entry
+                    .backend
+                    .as_ref()
+                    .map(|b| b.name().to_string())
+                    .unwrap_or_default();
                 let resolved_zone = entry
                     .target_zone_id
                     .clone()
@@ -481,6 +505,7 @@ impl VFSRouter {
                     backend_path,
                     zone_id: resolved_zone,
                     is_external,
+                    is_cas,
                     backend_name,
                 });
             }

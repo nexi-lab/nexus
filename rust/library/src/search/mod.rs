@@ -60,7 +60,10 @@ pub fn extract_original_match(
 
     for orig_ch in original.chars() {
         let orig_next = orig_pos + orig_ch.len_utf8();
-        let lowered_len = orig_ch.to_lowercase().map(|ch| ch.len_utf8()).sum::<usize>();
+        let lowered_len = orig_ch
+            .to_lowercase()
+            .map(|ch| ch.len_utf8())
+            .sum::<usize>();
         let lower_next = lower_pos + lowered_len;
 
         // If match starts anywhere inside this lowered-char span,

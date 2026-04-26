@@ -1376,7 +1376,7 @@ impl Kernel {
     }
 
     /// Get full entry (returns CachedEntry for wrapper to convert).
-    pub fn dcache_get_full(&self, path: &str) -> Option<CachedEntry> {
+    pub(crate) fn dcache_get_full(&self, path: &str) -> Option<CachedEntry> {
         self.dcache.get_entry(path)
     }
 

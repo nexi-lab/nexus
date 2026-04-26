@@ -453,15 +453,7 @@ pub fn expand_permission(
             }
             RelationConfig::Union { union } => {
                 for rel in union {
-                    expand_permission(
-                        rel,
-                        object,
-                        graph,
-                        namespaces,
-                        subjects,
-                        visited,
-                        depth + 1,
-                    );
+                    expand_permission(rel, object, graph, namespaces, subjects, visited, depth + 1);
                 }
             }
             RelationConfig::TupleToUserset { tuple_to_userset } => {

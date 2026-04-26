@@ -693,7 +693,7 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
         # Reconcile on mismatch — legacy deployments may have persisted a
         # stale value (e.g. nx._zone_id) from before this patch.
         try:
-            from nexus.core.metadata import DT_MOUNT
+            from nexus.contracts.metadata import DT_MOUNT
 
             existing = nx.metadata.get("/agents")
             if existing is not None and existing.target_zone_id != _ipc_zone_id:

@@ -668,7 +668,13 @@ fn collect_candidates_include_group_tuple_to_userset_reverse() {
 fn collect_candidates_expand_nested_permission_aliases() {
     // read -> can_read -> viewer -> direct tuple
     // Candidate discovery must recursively expand permission aliases.
-    let tuples = vec![tuple_direct("user", "alice", "viewer", "file", "/nested.txt")];
+    let tuples = vec![tuple_direct(
+        "user",
+        "alice",
+        "viewer",
+        "file",
+        "/nested.txt",
+    )];
     let graph = ReBACGraph::from_tuples(&tuples);
     let config_json = r#"{"relations":{"viewer":"direct"},"permissions":{
         "read":["can_read"],

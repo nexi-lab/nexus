@@ -17,7 +17,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import unscope_internal_path
 
 if TYPE_CHECKING:
@@ -272,16 +271,10 @@ class BulkReBACStrategy:
 
         checks = []
         for path in remaining:
-            obj_type = "file"
-            if ctx.dlc and not path.startswith("/workspace"):
-                try:
-                    resolved = ctx.dlc.resolve_path(path, ctx.context.zone_id or ROOT_ZONE_ID)
-                    if resolved is not None:
-                        _backend_name, _bp, user_mp = resolved
-                        if user_mp and user_mp != "/":
-                            obj_type = user_mp.strip("/").split("/")[0]
-                except (KeyError, ValueError, AttributeError, LookupError) as e:
-                    logger.debug("Route resolution failed for path %s: %s", path, e)
+            # Derive obj_type from the first path segment (same as mount_point
+            # first segment by LPM routing).  No resolve_path needed (§12d).
+            first_seg = path.strip("/").split("/")[0] if path and path != "/" else ""
+            obj_type = first_seg if first_seg and not path.startswith("/workspace") else "file"
             checks.append((subject, "read", (obj_type, unscope_internal_path(path))))
 
         # Retry-once on transient I/O failures only

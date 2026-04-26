@@ -695,69 +695,18 @@ async def list_mounted_connectors(
     mount_svc = _get_mount_service(request)
     mounts = await mount_svc.list_mounts()
 
-    nx = _get_nx(request)
     result = []
     for m in mounts:
         mp = m.get("mount_point", "")
-        skill_name = None
-        operations: list[str] = []
-        sync_status: str | None = None
-        last_sync: str | None = None
-        try:
-            # Route to a dummy file path inside the mount to get the backend
-            _resolved = nx._driver_coordinator.resolve_path(f"{mp.rstrip('/')}/_.yaml", "root")
-            if _resolved:
-                backend = None
-                if backend is not None:
-                    skill_name = getattr(backend, "SKILL_NAME", None)
-                    # Check multiple sources for operation names
-                    schemas = getattr(backend, "SCHEMAS", {})
-                    traits = getattr(backend, "OPERATION_TRAITS", {})
-                    if schemas:
-                        operations = list(schemas.keys())
-                    elif traits:
-                        operations = list(traits.keys())
-
-                # Extract sync status from backend state or cache metadata.
-                # Backends that implement sync track their last sync time and
-                # status via _last_sync_at / _sync_status attributes or via
-                # the cache mixin's session metadata.
-                sync_status = getattr(backend, "_sync_status", None) if backend else None
-                raw_last_sync = getattr(backend, "_last_sync_at", None) if backend else None
-                if raw_last_sync is not None:
-                    import datetime
-
-                    if isinstance(raw_last_sync, (int, float)):
-                        dt = datetime.datetime.fromtimestamp(raw_last_sync, tz=datetime.UTC)
-                    elif isinstance(raw_last_sync, datetime.datetime):
-                        dt = raw_last_sync
-                    else:
-                        dt = None
-                    if dt:
-                        delta = datetime.datetime.now(tz=datetime.UTC) - dt
-                        secs = int(delta.total_seconds())
-                        if secs < 60:
-                            last_sync = f"{secs}s ago"
-                        elif secs < 3600:
-                            last_sync = f"{secs // 60}m ago"
-                        else:
-                            last_sync = f"{secs // 3600}h ago"
-        except Exception:
-            pass
-
-        # Fall back to mount-level metadata for sync info
-        if sync_status is None:
-            sync_status = m.get("sync_status")
-        if last_sync is None:
-            last_sync = m.get("last_sync")
-
+        # All backends are Rust-native — no Python backend metadata
+        # for skill_name/operations.  Use mount-level metadata only.
         result.append(
             MountInfo(
                 mount_point=mp,
-                skill_name=skill_name,
-                operations=operations,
-                sync_status=sync_status,
-                last_sync=last_sync,
+                skill_name=None,
+                operations=[],
+                sync_status=m.get("sync_status"),
+                last_sync=m.get("last_sync"),
             )
         )
 
@@ -917,18 +866,21 @@ async def write_to_connector(
 
     nx = _get_nx(request)
 
-    # Preflight route resolution to discover backend type and backend_path.
-    # Routing decision only — actual auth is enforced by backend.write_content()
-    # (CLI connectors) or nx.write() (kernel path).
+    # Preflight: discover backend type via sys_stat (§12d).
     _route_backend_name = None
     _backend_path = None
-    try:
-        _resolved = nx._driver_coordinator.resolve_path(mount_path, "root")
-        if _resolved:
-            _route_backend_name = _resolved[0]
-            _backend_path = _resolved[1]
-    except Exception:
-        pass
+    _py_kernel = getattr(nx, "_kernel", None)
+    if _py_kernel is not None:
+        try:
+            _stat_d = _py_kernel.sys_stat(mount_path, "root")
+            if _stat_d and isinstance(_stat_d, dict):
+                _route_backend_name = _stat_d.get("backend_name")
+            # Derive backend_path from path minus mount point (first 2 segments)
+            _parts = mount_path.strip("/").split("/")
+            _mp = "/" + "/".join(_parts[:2]) if len(_parts) >= 2 else "/" + _parts[0]
+            _backend_path = mount_path[len(_mp) :].lstrip("/")
+        except Exception:
+            pass
 
     write_context = OperationContext(
         user_id=auth.get("subject_id", "system"),

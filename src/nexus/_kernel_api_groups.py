@@ -139,7 +139,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "register_share",
         "register_watch",
         "release_metastores",
-        "route",
         "service_close_all",
         "service_contains",
         "service_count",

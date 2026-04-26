@@ -175,11 +175,8 @@ class OperationUndoService:
     def _read_content_from_cas(self, path: str, content_hash: str) -> bytes:
         """Read content from CAS via DLC, with optional fallback."""
         try:
-            resolved = self._dlc.resolve_path(path, "root") if self._dlc else None
-            if resolved is None:
-                raise RuntimeError(f"No backend found for path: {path}")
-            # resolve_path returns (backend_name, ...). Read via kernel.
-            _kernel = getattr(self._dlc, "_kernel", None)
+            # Read via kernel syscall — sys_read_raw raises on missing path.
+            _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
             if _kernel is None:
                 raise RuntimeError(f"No kernel available for CAS read: {path}")
             result: bytes = _kernel.sys_read_raw(path, "root")

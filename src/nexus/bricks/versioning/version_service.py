@@ -193,11 +193,7 @@ class VersionService:
             raise RuntimeError("DLC not configured for VersionService")
 
         zone_id = (context.zone_id if context else None) or ROOT_ZONE_ID
-        resolved = self._dlc.resolve_path(path, zone_id)
-        if resolved is None:
-            raise RuntimeError(f"No backend found for path: {path}")
-        # resolve_path returns (backend_name, backend_path, mount_point).
-        # Read content via kernel syscall instead of Python backend object.
+        # Read content via kernel syscall — sys_read_raw raises on missing path.
         _kernel = getattr(self, "_kernel", None) or getattr(self._dlc, "_kernel", None)
         if _kernel is None:
             raise RuntimeError("No kernel available for version read")
@@ -312,11 +308,6 @@ class VersionService:
         # DLC presence is a precondition for rollback (derives from mount context).
         if self._dlc is None:
             raise RuntimeError("DLC not configured for VersionService")
-        if (
-            self._dlc.resolve_path(path, (context.zone_id if context else None) or ROOT_ZONE_ID)
-            is None
-        ):
-            raise RuntimeError(f"No backend found for path: {path}")
 
         # Perform rollback via VersionManager + session_factory
         # (RaftMetadataStore lacks rollback(); use SQL version history instead)

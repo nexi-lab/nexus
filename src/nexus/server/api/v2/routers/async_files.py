@@ -142,16 +142,7 @@ async def _read_connector_by_physical_path(
     if routing fails so the caller can fall back to standard fs.read().
     """
     try:
-        # Extract mount point from display path (e.g. /mnt/gmail from /mnt/gmail/INBOX/...)
-        parts = display_path.split("/")
-        if len(parts) < 3:
-            return None
-        mount_point = "/".join(parts[:3])  # /mnt/gmail or /mnt/calendar
-
-        resolved = fs._driver_coordinator.resolve_path(mount_point, "root")
-        if resolved is None:
-            return None
-        # resolve_path returns (backend_name, ...). Read via kernel.
+        # Read via kernel syscall — sys_read_raw raises on missing path.
         _py_kernel = getattr(fs, "_kernel", None)
         if _py_kernel is None:
             return None
@@ -796,13 +787,6 @@ def create_async_files_router(
                         status_code=403,
                         detail=f"version is not recorded for this path in transaction {transaction_id!r}",
                     )
-                try:
-                    _resolved = fs._driver_coordinator.resolve_path(path, "root")
-                except Exception as exc:
-                    raise NexusFileNotFoundError(f"{path} (version {version})") from exc
-                if _resolved is None:
-                    raise NexusFileNotFoundError(f"{path} (version {version})")
-                _route_backend_name, _route_backend_path, _route_mp = _resolved
                 # --- Enforce standard read authorization via the VFS path ---
                 try:
                     _accessible = fs.access(path, context=context)
@@ -810,18 +794,23 @@ def create_async_files_router(
                     raise HTTPException(status_code=403, detail=str(e)) from e
                 if not _accessible:
                     raise NexusFileNotFoundError(path)
-                # --- Gate on CAS-capable backend ---
-                # All backends are Rust-native; check backend_name for CAS capability.
-                if not (
-                    _route_backend_name.startswith("cas") or _route_backend_name == "cas-local"
-                ):
-                    raise HTTPException(
-                        status_code=422,
-                        detail=(
-                            f"Historical version reads are only supported on CAS-addressed backends; "
-                            f"backend for {path!r} does not support content-addressed history"
-                        ),
+                # --- Gate on CAS-capable backend via sys_stat ---
+                _py_kernel_stat = getattr(fs, "_kernel", None)
+                if _py_kernel_stat is not None:
+                    _stat_d = _py_kernel_stat.sys_stat(path, "root")
+                    _bn = (
+                        (_stat_d.get("backend_name", "") if isinstance(_stat_d, dict) else "")
+                        if _stat_d
+                        else ""
                     )
+                    if _bn and not _bn.startswith("cas"):
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"Historical version reads are only supported on CAS-addressed backends; "
+                                f"backend for {path!r} does not support content-addressed history"
+                            ),
+                        )
                 # Read via kernel — Rust backend handles CAS read.
                 _py_kernel = getattr(fs, "_kernel", None)
                 if _py_kernel is None:

@@ -132,24 +132,3 @@ class DriverLifecycleCoordinator:
                 continue
             result.append(user_mp)
         return sorted(result)
-
-    def resolve_path(self, path: str, zone_id: str = ROOT_ZONE_ID) -> "tuple[str, str, str] | None":
-        """Resolve virtual path → (backend_name, backend_path, mount_point).
-
-        Delegates LPM to Rust VFSRouter (kernel-internal).
-
-        Returns None when the path is not covered by any mount (e.g.
-        IPC pipe/stream paths) or when no Rust kernel is available.
-
-        Note: Returns (backend_name, backend_path, user_mp) NOT a backend
-        object.  Callers that need the backend name should use the first
-        element.  Callers that need I/O should use kernel syscalls.
-        """
-        if self._kernel is None:
-            return None
-        try:
-            rr = self._kernel.route(path, zone_id)
-        except (ValueError, Exception):
-            return None
-        user_mp = extract_zone_id(rr.mount_point)[1]
-        return (rr.backend_name, rr.backend_path, user_mp)

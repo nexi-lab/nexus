@@ -419,7 +419,7 @@ def _boot_post_kernel_services(
         _agent_reg = _acp_ref
     if _agent_reg is None:
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             _agent_reg = AgentRegistry()
             nx.sys_setattr("/__sys__/services/agent_registry", service=_agent_reg)

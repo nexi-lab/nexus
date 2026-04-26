@@ -22,7 +22,7 @@ import pytest
 
 from nexus.contracts.agent_warmup_types import WarmupContext, WarmupStep
 from nexus.contracts.process_types import AgentSignal, AgentState
-from nexus.core.agent_registry import AgentRegistry
+from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.agents.agent_warmup import AgentWarmupService
 
 # ---------------------------------------------------------------------------

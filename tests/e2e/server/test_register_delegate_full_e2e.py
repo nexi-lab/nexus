@@ -20,8 +20,8 @@ from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.core.agent_registry import AgentRegistry
 from nexus.services.agents.agent_registration import AgentRegistrationService
+from nexus.services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 

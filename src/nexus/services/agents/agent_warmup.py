@@ -40,7 +40,7 @@ from nexus.contracts.process_types import (
 )
 
 if TYPE_CHECKING:
-    from nexus.core.agent_registry import AgentRegistry
+    from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

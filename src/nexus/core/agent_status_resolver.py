@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
-    from nexus.core.agent_registry import AgentRegistry
+    from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

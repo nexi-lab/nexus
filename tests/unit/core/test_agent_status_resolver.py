@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from nexus.core.agent_registry import AgentRegistry
 from nexus.core.agent_status_resolver import AgentStatusResolver
+from nexus.services.agents.agent_registry import AgentRegistry
 
 ZONE = "test-zone"
 OWNER = "user-1"

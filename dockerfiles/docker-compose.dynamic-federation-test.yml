@@ -257,15 +257,16 @@ services:
     command: >
       bash -c '
         set -e
-        echo "Installing test dependencies..."
+        # Test deps that are MISSING from the production
+        # nexus-fullnode image. Already-present (httpx, grpcio,
+        # docker, google.protobuf, click) are NOT reinstalled —
+        # cuts ~25-30s off cold runs vs the prior superset list.
         # `--retries 10 --timeout 60` rides through transient PyPI
-        # outages: the warm-cache CI run regression-tested this when
-        # `grpcio-tools` came back as "from versions: none" once and
-        # killed the whole run. With retries, the same outage now
-        # delays by ~30 s instead of failing the workflow.
+        # outages (regression-tested when grpcio-tools once 404`d).
+        echo "Installing missing test dependencies..."
         pip install --retries 10 --timeout 60 -q \
           -i "${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}" \
-          pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
+          pytest pytest-asyncio pytest-timeout
         echo "Running dynamic federation E2E tests..."
         # Glob, not a single file: any future `test_federation_*.py`
         # in the same dir is auto-picked up by both local invocation

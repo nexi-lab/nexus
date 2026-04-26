@@ -1,8 +1,7 @@
 # Nexus Kernel Architecture
 
-**Status:** Active — kernel architecture SSOT
-**Rule:** Keep this file small and precise. Prefer inplace edits over additions.
-Delegate details to `federation-memo.md` and `data-storage-matrix.md`.
+Kernel architecture SSOT. Keep small and precise — prefer inplace edits over
+additions. Delegate details to `federation-memo.md` and `data-storage-matrix.md`.
 
 ---
 
@@ -97,24 +96,32 @@ the appropriate methods during `NexusFS.bootstrap()` / `NexusFS.close()`.
 Rust `ServiceRegistry` calls `start()/stop()` via `asyncio.run()` (Python
 stdlib only, zero nexus bridge imports).
 
-`swap_service()` supports **all services** (#1452). Unified path:
-refcount drain → unhook old → replace → rehook new.
+`swap_service()` supports all services. Unified path: refcount drain → unhook
+old → replace → rehook new.
 
-**AgentRegistry** (`core.agent_registry`): In-memory agent process table
-(`task_struct` analogue). Not a kernel primitive — accessed via
-`nx.service("agent_registry")`. See `core/agent_registry.py`.
+**AgentRegistry** (`nexus.services.agents.agent_registry`): service-tier
+agent lifecycle manager. Mounts under `nx.service("agent_registry")`.
+State (pid → AgentState + condvar wakeup) lives in the Rust `services::agent_table::AgentTable`
+SSOT (`rust/services/src/agent_table.rs`); the Python service is a thin
+shim that adds OS behavior — PID allocation, parent/child tree, signal
+semantics, transition validation, IPC provisioning — and dual-writes
+every state mutation into the Rust table so the kernel-side
+`AgentStatusResolver` (procfs view at `/{zone}/proc/{pid}/status`) and
+any blocking `kernel.agent_wait` callers stay synchronized. Profiles
+without agent workloads (REMOTE) skip construction; the kernel boots
+the same way either path.
 
-**Kernel DI patterns** (two mechanisms, never reads service containers directly):
+**Kernel DI patterns** (two mechanisms; the kernel reaches services only via
+`ServiceRegistry` lookups or factory-injected closures):
 
 | Pattern | Kernel `__init__` | Factory `_do_link()` | Example |
 |---------|-------------------|---------------------|---------|
 | **Kernel owns** | Creates instance | — | LockManager (I/O + advisory), KernelDispatch, PipeManager, StreamManager, FileWatcher, ServiceRegistry, DriverLifecycleCoordinator |
 | **Kernel knows** (sentinel) | `self._x = None` | Injects real value; `None` = graceful degrade | `_token_manager`, `_sandbox_manager`, `_coordination_client`, `_event_client` |
 
-"Kernel knows" follows the Linux LSM pattern: kernel declares a default (None),
-factory overrides at link-time. The kernel never imports service-layer modules.
-`AgentRegistry` is accessed via `ServiceRegistry` (`register_factory`), not as
-a kernel sentinel — no-agent profiles (REMOTE) never construct it.
+"Kernel knows" follows the Linux LSM pattern: kernel declares a default
+(`None`), factory overrides at link-time. Kernel modules import only from
+`contracts/`, `lib/`, and other kernel-tier packages.
 
 Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks
 (PermissionCheckHook). No hook registered = no check = zero overhead.
@@ -246,7 +253,7 @@ unmount). These are kernel-owned callback lists (implemented by
 | **INTERCEPT** | Synchronous, ordered (pre + post) | Yes (abort/policy) | LSM security hooks |
 | **OBSERVE** | Fire-and-forget | No | `fsnotify()` / `notifier_call_chain()` |
 
-**Driver lifecycle hooks (Issue #1811):**
+**Driver lifecycle hooks:**
 
 | Phase | Semantics | Short-circuit? | Linux Analogue |
 |-------|-----------|----------------|----------------|
@@ -504,7 +511,7 @@ See `federation-memo.md` §7j for design rationale.
 
 ## 5. Kernel-Authored Standards
 
-**Category:** Kernel-Authored Standard (≠ kernel interface) | **Audience:** Services
+**Category:** Kernel-Authored Standard (service-tier contract) | **Audience:** Services
 
 ### 5.1 The "Standard Plug" Principle
 
@@ -534,7 +541,7 @@ conformance at registration, and resolves kernel dependencies via
 
 ### 5.2 RecordStoreABC — Relational Storage Standard
 
-**Package:** `storage.record_store` | **NOT a kernel interface — service-only**
+**Package:** `storage.record_store` | **Service-tier interface (consumed by services, defined by kernel)**
 
 | Property | Value |
 |----------|-------|
@@ -552,7 +559,7 @@ bilateral interface conformance, not from kernel providing these features direct
 
 ### 5.3 Service Protocols — 40+ Scenario Domains
 
-**Package:** `contracts.protocols` | **NOT kernel interfaces — service standards**
+**Package:** `contracts.protocols` | **Service-tier standards (defined by kernel, implemented by services)**
 
 40+ `typing.Protocol` classes with `@runtime_checkable`, organized by domain
 (Permission, Search, Mount, Agent, Events, Memory, Domain, Audit, Cross-Cutting).

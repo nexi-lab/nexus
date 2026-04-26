@@ -12,7 +12,6 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from nexus.contracts.auth_store_types import APIKeyDTO
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models import APIKeyModel, APIKeyZoneModel
 
 logger = logging.getLogger(__name__)
@@ -61,13 +60,16 @@ class SQLAlchemyAPIKeyStore:
             name=name,
             subject_type=subject_type,
             subject_id=subject_id or user_id,
-            zone_id=zone_id or ROOT_ZONE_ID,
+            zone_id=None,
             is_admin=int(is_admin),
             expires_at=expires_at,
             inherit_permissions=int(inherit_permissions),
         )
         with self._session_factory() as session:
             session.add(key)
+            session.flush()  # populate key.key_id before junction insert
+            if zone_id:  # non-empty zone_id → populate junction
+                session.add(APIKeyZoneModel(key_id=key.key_id, zone_id=zone_id, permissions="rw"))
             session.commit()
             session.refresh(key)
             return _to_dto(key)

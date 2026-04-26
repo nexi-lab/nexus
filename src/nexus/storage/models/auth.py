@@ -153,12 +153,11 @@ class APIKeyModel(Base):
     subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
     subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     zone_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    """Deprecated (#3785). Backfill alias for `api_key_zones.zone_id` first row.
-
-    New callers should use `get_zones_for_key`/`get_zone_perms_for_key` against
-    the junction table. Nullable so admin/zoneless keys store NULL instead of
-    being silently coerced to ROOT_ZONE_ID.
-    """
+    """DEPRECATED — column scheduled for removal in Phase 3 of #3871.
+    Always NULL on keys minted on or after Phase 2 (#3871). Source of
+    truth is `api_key_zones`. Use `get_primary_zone(key_id)` for
+    "primary zone" semantics or `get_zones_for_key(key_id)` for the
+    full set."""
     is_admin: Mapped[int] = mapped_column(Integer, default=0)
 
     inherit_permissions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

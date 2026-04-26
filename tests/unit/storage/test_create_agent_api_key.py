@@ -47,7 +47,7 @@ class TestCreateAgentApiKey:
         assert model.subject_type == "agent"
         assert model.subject_id == "test-agent-01"
         assert model.user_id == "alice"
-        assert model.zone_id == ROOT_ZONE_ID
+        assert model.zone_id is None  # column no longer written (#3871)
         assert raw_key.startswith("sk-")
 
     def test_agent_id_passed_as_subject_id(self, session):

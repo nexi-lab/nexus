@@ -2231,14 +2231,20 @@ impl Kernel {
     /// Returns Err(KernelError) if any hook aborts.
     /// No-op when registry is empty (zero-cost lock check).
     ///
-    /// Uses ``read()`` (not ``write()``) so a hook that re-enters
-    /// ``sys_read`` — typical of ReBAC's permission_hook reading its own
-    /// ``/__sys__/rebac/namespaces/...`` config during a permission check —
-    /// can take its own read-lock recursively. With a Mutex this deadlocked
-    /// at the second ``lock()``; ``parking_lot::RwLock`` allows multiple
-    /// concurrent + recursive readers.
+    /// Uses ``read_recursive()`` (not plain ``read()``) so a hook that
+    /// re-enters ``sys_read`` — typical of ReBAC's permission_hook reading
+    /// its own ``/__sys__/rebac/namespaces/...`` config during a permission
+    /// check — does not deadlock on the recursive shared lock acquisition.
+    ///
+    /// Per parking_lot docs, ``read()`` "may result in a deadlock" if the
+    /// current thread already holds a read on the same RwLock; only
+    /// ``read_recursive()`` is guaranteed to succeed without blocking when
+    /// the caller already holds a read lock. The (theoretical) writer-
+    /// starvation cost of read_recursive doesn't matter here: the only
+    /// writer is ``register_native_hook``, which runs once at startup and
+    /// not concurrently with dispatch.
     pub fn dispatch_native_pre(&self, ctx: &HookContext) -> Result<(), KernelError> {
-        let registry = self.native_hooks.read();
+        let registry = self.native_hooks.read_recursive();
         if registry.count() == 0 {
             return Ok(());
         }
@@ -2249,8 +2255,9 @@ impl Kernel {
 
     /// Dispatch POST-INTERCEPT hooks from NativeHookRegistry (fire-and-forget).
     /// No-op when registry is empty (zero-cost lock check).
+    /// Uses ``read_recursive`` for the same reason as ``dispatch_native_pre``.
     pub fn dispatch_native_post(&self, ctx: &HookContext) {
-        let registry = self.native_hooks.read();
+        let registry = self.native_hooks.read_recursive();
         if registry.count() == 0 {
             return;
         }

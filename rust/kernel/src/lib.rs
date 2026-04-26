@@ -17,6 +17,14 @@ mod anthropic_backend;
 #[cfg(feature = "connectors")]
 pub mod anthropic_streaming;
 pub mod audit_hook;
+// Phase B: traits + types for the ObjectStore pillar split out of the
+// (former) flat `backend.rs` into `core::traits::object_store`. The
+// `_backend_impls` module is the kernel-internal holding pen for the
+// 3 concrete impls (`CasLocalBackend`, `PathLocalBackend`,
+// `LocalConnectorBackend`); Phase D lifts them into `backends/`. The
+// `backend` module is a thin re-export shim so callers continue to use
+// the flat `crate::backend::ObjectStore` path through Phase B–C.
+mod _backend_impls;
 pub mod backend;
 mod bitmap;
 mod blob_fetcher;
@@ -27,6 +35,7 @@ mod cas_remote;
 mod cas_transport;
 #[cfg(feature = "connectors")]
 mod cli_backend;
+pub mod core;
 mod dcache;
 mod dispatch;
 mod dlc;

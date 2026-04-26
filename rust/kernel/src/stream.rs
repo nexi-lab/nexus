@@ -45,39 +45,13 @@ unsafe impl Send for MemoryStreamBackend {}
 unsafe impl Sync for MemoryStreamBackend {}
 
 // ---------------------------------------------------------------------------
-// Internal error type
+// StreamBackend / StreamError now live in `crate::core::traits::stream_backend`
+// (Phase B). Re-exported here so `crate::stream::StreamBackend` /
+// `crate::stream::StreamError` paths used throughout the kernel keep
+// resolving without per-caller churn.
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
-#[allow(dead_code)]
-pub(crate) enum StreamError {
-    Closed(&'static str),
-    Full(usize, usize),
-    Empty,
-    ClosedEmpty,
-    Oversized(usize, usize),
-    InvalidOffset(usize, usize),
-}
-
-// ---------------------------------------------------------------------------
-// StreamBackend trait — uniform interface for all stream backends
-// ---------------------------------------------------------------------------
-
-/// Uniform interface for stream backends (memory, shared memory, future gRPC).
-///
-/// Enables `DashMap<String, Arc<dyn StreamBackend>>` in StreamManager for
-/// heterogeneous backend dispatch.
-#[allow(dead_code)] // Used via Arc<dyn StreamBackend> in StreamManager + generated_pyo3.rs
-pub(crate) trait StreamBackend: Send + Sync {
-    fn push(&self, data: &[u8]) -> Result<usize, StreamError>;
-    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError>;
-    fn read_batch(&self, offset: usize, count: usize)
-        -> Result<(Vec<Vec<u8>>, usize), StreamError>;
-    fn close(&self);
-    fn is_closed(&self) -> bool;
-    fn tail_offset(&self) -> usize;
-    fn msg_count(&self) -> usize;
-}
+pub(crate) use crate::core::traits::stream_backend::{StreamBackend, StreamError};
 
 // ---------------------------------------------------------------------------
 // StreamBackend impl for MemoryStreamBackend

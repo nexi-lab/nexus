@@ -51,36 +51,13 @@ unsafe impl Send for MemoryPipeBackend {}
 unsafe impl Sync for MemoryPipeBackend {}
 
 // ---------------------------------------------------------------------------
-// Internal error type
+// PipeBackend / PipeError now live in `crate::core::traits::pipe_backend`
+// (Phase B). Re-exported here so `crate::pipe::PipeBackend` /
+// `crate::pipe::PipeError` paths used throughout the kernel keep
+// resolving without per-caller churn.
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
-pub(crate) enum PipeError {
-    Closed(&'static str),
-    Full(usize, usize),
-    Empty,
-    ClosedEmpty,
-    Oversized(usize, usize),
-}
-
-// ---------------------------------------------------------------------------
-// PipeBackend trait — uniform interface for all pipe backends
-// ---------------------------------------------------------------------------
-
-/// Uniform interface for pipe backends (memory, shared memory, future gRPC).
-///
-/// Enables `DashMap<String, Arc<dyn PipeBackend>>` in PipeManager for
-/// heterogeneous backend dispatch.
-#[allow(dead_code)] // Used via Arc<dyn PipeBackend> in PipeManager + generated_pyo3.rs
-pub(crate) trait PipeBackend: Send + Sync {
-    fn push(&self, data: &[u8]) -> Result<usize, PipeError>;
-    fn pop(&self) -> Result<Vec<u8>, PipeError>;
-    fn close(&self);
-    fn is_closed(&self) -> bool;
-    fn is_empty(&self) -> bool;
-    fn size(&self) -> usize;
-    fn msg_count(&self) -> usize;
-}
+pub(crate) use crate::core::traits::pipe_backend::{PipeBackend, PipeError};
 
 // ---------------------------------------------------------------------------
 // Internal helpers — pub(crate) for direct Kernel IPC registry access

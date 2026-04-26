@@ -4999,13 +4999,22 @@ def collect_all() -> tuple[
         classes[cls_name] = cls
         class_order.append(cls_name)
 
-    # Collect traits from dispatch.rs, metastore.rs, and backend.rs
+    # Collect traits from dispatch / hook_registry / metastore (flat) +
+    # core/traits/*.rs (Phase B lifted ObjectStore, ExternalTransport,
+    # StreamBackend, PipeBackend out of the flat backend.rs / stream.rs /
+    # pipe.rs into per-pillar files).
     traits: list[TraitDef] = []
-    for rs_file in ["dispatch.rs", "hook_registry.rs", "metastore.rs", "backend.rs"]:
+    flat_trait_files = ["dispatch.rs", "hook_registry.rs", "metastore.rs"]
+    for rs_file in flat_trait_files:
         rs_path = RUST_SRC / rs_file
         if rs_path.exists():
-            text = rs_path.read_text()
-            traits.extend(parse_traits(text))
+            traits.extend(parse_traits(rs_path.read_text()))
+    core_traits_dir = RUST_SRC / "core" / "traits"
+    if core_traits_dir.is_dir():
+        for trait_path in sorted(core_traits_dir.glob("*.rs")):
+            if trait_path.name == "mod.rs":
+                continue
+            traits.extend(parse_traits(trait_path.read_text()))
 
     # All export names (for kernel_exports.py) — use Python-visible names
     # (#[pyclass(name = "...")] renaming), not Rust struct names.

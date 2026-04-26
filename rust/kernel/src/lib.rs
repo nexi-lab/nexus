@@ -11,21 +11,80 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// literals.
 pub use contracts::ROOT_ZONE_ID;
 
+// ── §3 / §4 trait + primitive surface (Phase C) ───────────────────────
+// Every kernel-internal pillar nested under `core/` so the kernel
+// file set is self-evident. Driver / service / transport impls move
+// out into parallel crates in Phases D–G.
+pub mod core;
+
+// Phase B holding pen for ObjectStore impls (CasLocalBackend,
+// PathLocalBackend, LocalConnectorBackend) — Phase D lifts them into
+// `backends/`. `backend` is a flat re-export shim over the trait
+// (in `core::traits::object_store`) plus the impls so the 17 callers
+// using `use crate::backend::{ObjectStore, ...}` keep working through
+// the transition.
+mod _backend_impls;
+pub mod backend;
+
+// ── Phase C compat shims ─────────────────────────────────────────────
+// Pre-Phase-C kernel modules are re-exported from `core::*` under
+// their flat names so callers do not churn. These shims retire as
+// callers migrate to canonical `crate::core::*` paths in Phases D–G.
+//
+// Visibility mirrors the original (`pub mod` stays `pub use`,
+// private `mod` stays `pub(crate) use`).
+pub(crate) use core::dcache;
+pub(crate) use core::dispatch;
+pub(crate) use core::dispatch::hook_registry;
+pub(crate) use core::dlc;
+pub(crate) use core::file_watch;
+pub use core::lock as lock_manager;
+pub use core::lock::locks;
+pub use core::metastore;
+pub use core::vfs_router;
+// Kept under flat `semaphore::` so `m.add_class::<semaphore::VFSSemaphore>()`
+// in #[pymodule] keeps the single-segment shape that
+// scripts/codegen_kernel_abi.py's `add_class::<MOD::Name>` regex matches.
+pub(crate) use core::lock::semaphore;
+pub(crate) use core::metastore::remote as remote_metastore;
+pub(crate) use core::pipe;
+pub(crate) use core::pipe::manager as pipe_manager;
+#[cfg(unix)]
+pub(crate) use core::pipe::shm as shm_pipe;
+#[cfg(unix)]
+pub(crate) use core::pipe::stdio as stdio_pipe;
+pub(crate) use core::service_registry;
+pub(crate) use core::stream;
+pub(crate) use core::stream::manager as stream_manager;
+#[cfg(unix)]
+pub(crate) use core::stream::shm as shm_stream;
+pub(crate) use core::stream::wal as wal_stream;
+// Note: core::lock::semaphore, core::pipe::remote, core::stream::observer,
+// core::stream::remote, core::stream::stdio — not re-exported under
+// flat names; their pre-Phase-C flat aliases were dead. Reach them
+// through `crate::core::*` directly going forward.
+
+// ── Modules that have not moved yet ──────────────────────────────────
+// These stay flat through Phase C; later phases relocate them:
+//   * Phase D — `_backend_impls`, anthropic / openai / s3 / gcs /
+//     gdrive / gmail / slack / hn / x / cli / nostr_relay /
+//     remote_backend / volume_engine / volume_index, plus the four
+//     CAS pillar files (cas_engine / cas_chunking / cas_remote /
+//     cas_transport).
+//   * Phase E — audit_hook, permission_hook.
+//   * Phase F — federation_client, peer_blob_client, blob_fetcher,
+//     grpc_server, rpc_transport, ipc.
+//   * Phase G — raft_metastore, replication.
+//   * Phase H — bitmap, bloom, hash (delete duplicates with lib),
+//     glob, io, path_utils, prefix, rebac, search, simd, trigram.
+//   * Phase E — agent_status_resolver (services/agents).
+
 mod agent_status_resolver;
 #[cfg(feature = "connectors")]
 mod anthropic_backend;
 #[cfg(feature = "connectors")]
 pub mod anthropic_streaming;
 pub mod audit_hook;
-// Phase B: traits + types for the ObjectStore pillar split out of the
-// (former) flat `backend.rs` into `core::traits::object_store`. The
-// `_backend_impls` module is the kernel-internal holding pen for the
-// 3 concrete impls (`CasLocalBackend`, `PathLocalBackend`,
-// `LocalConnectorBackend`); Phase D lifts them into `backends/`. The
-// `backend` module is a thin re-export shim so callers continue to use
-// the flat `crate::backend::ObjectStore` path through Phase B–C.
-mod _backend_impls;
-pub mod backend;
 mod bitmap;
 mod blob_fetcher;
 mod bloom;
@@ -35,12 +94,7 @@ mod cas_remote;
 mod cas_transport;
 #[cfg(feature = "connectors")]
 mod cli_backend;
-pub mod core;
-mod dcache;
-mod dispatch;
-mod dlc;
 mod federation_client;
-mod file_watch;
 #[cfg(feature = "connectors")]
 mod gcs_backend;
 #[cfg(feature = "connectors")]
@@ -51,22 +105,20 @@ mod gmail_backend;
 mod hash;
 #[cfg(feature = "connectors")]
 mod hn_backend;
-mod hook_registry;
 mod io;
 pub mod ipc;
 mod kernel;
-pub mod lock_manager;
-pub mod locks;
-pub mod metastore;
-// VFS router (kernel SSOT for mount entries — backend + per-mount
-// metastore + access flags + LPM routing). Kernel primitive.
-pub mod vfs_router;
-// `generated_pyo3` kept public so other crates (e.g. `rust/raft`) can
-// reference `PyKernel` via cross-crate PyO3 borrows — needed for
+// `generated_kernel_abi_pyo3` (renamed from `generated_pyo3` in Phase C)
+// kept public so other crates (e.g. `rust/raft`) can reference `PyKernel`
+// via cross-crate PyO3 borrows — needed for
 // `PyZoneHandle::attach_to_kernel_mount()` which wires a Raft-backed
 // `Metastore` into `Kernel::mount_metastores` without surfacing a
 // separate `KernelMetastore` Python class.
-pub mod generated_pyo3;
+pub mod generated_kernel_abi_pyo3;
+// Compat alias so any out-of-tree consumer pinned to the pre-Phase-C
+// path keeps working through one release. Removable once downstream
+// confirmed migrated.
+pub use generated_kernel_abi_pyo3 as generated_pyo3;
 // Rust-native gRPC server for NexusVFSService — replaces the Python
 // `grpc.aio.server` so :2028 is owned by tonic. Read/Write/Delete/Ping
 // are zero-PyO3 fast-paths; Call still uses a PyO3 callback into the
@@ -83,38 +135,21 @@ pub mod openai_streaming;
 mod path_utils;
 mod peer_blob_client;
 mod permission_hook;
-mod pipe;
-mod pipe_manager;
 mod prefix;
 mod raft_metastore;
 mod rebac;
 mod remote_backend;
-mod remote_metastore;
-pub(crate) mod remote_pipe;
-pub(crate) mod remote_stream;
 mod replication;
 mod rpc_transport;
 #[cfg(feature = "connectors")]
 mod s3_backend;
 mod search;
-mod semaphore;
-mod service_registry;
-#[cfg(unix)]
-mod shm_pipe;
-#[cfg(unix)]
-mod shm_stream;
 mod simd;
 #[cfg(feature = "connectors")]
 mod slack_backend;
-#[cfg(unix)]
-mod stdio_pipe;
-mod stdio_stream;
-mod stream;
-mod stream_manager;
 mod trigram;
 mod volume_engine;
 mod volume_index;
-mod wal_stream;
 #[cfg(feature = "connectors")]
 mod x_backend;
 
@@ -220,10 +255,10 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
         m
     )?)?;
     // Kernel (Issue #1868 — PyKernel wraps pure Rust Kernel)
-    m.add_class::<generated_pyo3::PyOperationContext>()?;
-    m.add_class::<generated_pyo3::PyKernel>()?;
-    m.add_class::<generated_pyo3::PySysReadResult>()?;
-    m.add_class::<generated_pyo3::PySysWriteResult>()?;
+    m.add_class::<generated_kernel_abi_pyo3::PyOperationContext>()?;
+    m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
+    m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
+    m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
     // Path utilities (Issue #1817 prerequisite)
     m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;

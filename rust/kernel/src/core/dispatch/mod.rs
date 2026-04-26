@@ -11,6 +11,11 @@
 //!
 //! Issue #1868: PR 22 — dispatch.rs fully pure Rust.
 
+// Phase C nested layout:
+//   core/dispatch/mod.rs            — was kernel/src/dispatch.rs
+//   core/dispatch/hook_registry.rs  — was kernel/src/hook_registry.rs
+pub mod hook_registry;
+
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -14,6 +14,19 @@
 //! Error encoding: Rust raises `RuntimeError("PipeFull:…")` etc. Python translates
 //! to the matching exception class.
 
+// Phase C nested layout (§4.2 — DT_PIPE pillar):
+//   core/pipe/mod.rs     — MemoryPipeBackend  (was kernel/src/pipe.rs)
+//   core/pipe/manager.rs — PipeManager        (was kernel/src/pipe_manager.rs)
+//   core/pipe/shm.rs     — SharedMemoryPipe   (was kernel/src/shm_pipe.rs)
+//   core/pipe/stdio.rs   — StdioPipeBackend   (was kernel/src/stdio_pipe.rs)
+//   core/pipe/remote.rs  — RemotePipeBackend  (was kernel/src/remote_pipe.rs)
+pub mod manager;
+pub mod remote;
+#[cfg(unix)]
+pub mod shm;
+#[cfg(unix)]
+pub mod stdio;
+
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 

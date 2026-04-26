@@ -21,6 +21,13 @@
 //! path mutates the same `Arc<Mutex<LockState>>`. Reads hit that Arc
 //! directly, so they observe exactly what the local apply committed.
 
+// Phase C nested layout:
+//   core/lock/mod.rs       — was kernel/src/lock_manager.rs
+//   core/lock/locks.rs     — was kernel/src/locks.rs
+//   core/lock/semaphore.rs — was kernel/src/semaphore.rs
+pub mod locks;
+pub mod semaphore;
+
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};

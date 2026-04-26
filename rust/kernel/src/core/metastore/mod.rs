@@ -9,6 +9,11 @@
 //! Issue #1868: Pure Rust ABI — no PyO3 dependency.
 //! PyMetastoreAdapter lives in generated_store.rs (auto-generated).
 
+// Phase C nested layout:
+//   core/metastore/mod.rs    — was kernel/src/metastore.rs
+//   core/metastore/remote.rs — was kernel/src/remote_metastore.rs
+pub mod remote;
+
 /// Metadata record for a single file/directory.
 ///
 /// Mirrors the Python `FileMetadata` fields needed by the Rust kernel.

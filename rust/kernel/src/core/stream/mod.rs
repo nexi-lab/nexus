@@ -10,6 +10,22 @@
 //! Error encoding: Rust raises `RuntimeError("StreamFull:…")` etc. Python
 //! translates to the matching exception class.
 
+// Phase C nested layout (§4.2 — DT_STREAM pillar):
+//   core/stream/mod.rs      — MemoryStreamBackend (was kernel/src/stream.rs)
+//   core/stream/manager.rs  — StreamManager       (was kernel/src/stream_manager.rs)
+//   core/stream/observer.rs — StreamObserver      (was kernel/src/stream_observer.rs)
+//   core/stream/shm.rs      — SharedMemoryStream  (was kernel/src/shm_stream.rs)
+//   core/stream/stdio.rs    — StdioStreamBackend  (was kernel/src/stdio_stream.rs)
+//   core/stream/remote.rs   — RemoteStreamBackend (was kernel/src/remote_stream.rs)
+//   core/stream/wal.rs      — WalStreamCore       (was kernel/src/wal_stream.rs)
+pub mod manager;
+pub mod observer;
+pub mod remote;
+#[cfg(unix)]
+pub mod shm;
+pub mod stdio;
+pub mod wal;
+
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 

@@ -292,6 +292,9 @@ def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dic
     """Handle admin_list_keys method.
 
     Performance optimized: All filtering happens in SQL instead of Python.
+
+    Zone access filter — matches every key that grants this zone, not only
+    keys whose primary is this zone (#3871).
     """
     from sqlalchemy import func, or_, select
 
@@ -306,7 +309,13 @@ def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dic
         if params.user_id:
             stmt = stmt.where(APIKeyModel.user_id == params.user_id)
         if params.zone_id:
-            stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
+            from nexus.storage.models import APIKeyZoneModel
+
+            stmt = (
+                stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
+                .where(APIKeyZoneModel.zone_id == params.zone_id)
+                .distinct()
+            )
         if params.is_admin is not None:
             stmt = stmt.where(APIKeyModel.is_admin == int(params.is_admin))
         if not params.include_revoked:
@@ -333,7 +342,11 @@ def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dic
 
 
 def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
-    """Handle admin_get_key method."""
+    """Handle admin_get_key method.
+
+    Zone access filter — matches every key that grants this zone, not only
+    keys whose primary is this zone (#3871).
+    """
     from sqlalchemy import select
 
     from nexus.contracts.exceptions import NexusFileNotFoundError
@@ -345,7 +358,11 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
         if params.zone_id:
-            stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
+            from nexus.storage.models import APIKeyZoneModel
+
+            stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+                APIKeyZoneModel.zone_id == params.zone_id
+            )
         api_key = session.scalar(stmt)
 
         if not api_key:
@@ -372,7 +389,11 @@ def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> di
 
 
 def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
-    """Handle admin_update_key method."""
+    """Handle admin_update_key method.
+
+    Zone access filter — matches every key that grants this zone, not only
+    keys whose primary is this zone (#3871).
+    """
     from datetime import timedelta
 
     from sqlalchemy import select
@@ -386,7 +407,11 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
     with auth_provider.session_factory() as session:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == params.key_id)
         if params.zone_id:
-            stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
+            from nexus.storage.models import APIKeyZoneModel
+
+            stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+                APIKeyZoneModel.zone_id == params.zone_id
+            )
         api_key = session.scalar(stmt)
 
         if not api_key:
@@ -396,12 +421,25 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
         if params.is_admin is False and api_key.is_admin:
             from sqlalchemy import func
 
-            count_stmt = select(func.count()).where(
-                APIKeyModel.is_admin == 1,
-                APIKeyModel.revoked == 0,
+            count_stmt = (
+                select(func.count())
+                .select_from(APIKeyModel)
+                .where(
+                    APIKeyModel.is_admin == 1,
+                    APIKeyModel.revoked == 0,
+                )
             )
-            if api_key.zone_id:
-                count_stmt = count_stmt.where(APIKeyModel.zone_id == api_key.zone_id)
+            from nexus.storage.api_key_ops import get_zones_for_key
+
+            caller_zones = get_zones_for_key(session, api_key.key_id)
+            if caller_zones:
+                from nexus.storage.models import APIKeyZoneModel
+
+                count_stmt = (
+                    count_stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
+                    .where(APIKeyZoneModel.zone_id.in_(caller_zones))
+                    .distinct()
+                )
             admin_count = session.scalar(count_stmt)
             if admin_count is not None and admin_count <= 1:
                 raise ValidationError("Cannot remove admin privileges from the last admin key")

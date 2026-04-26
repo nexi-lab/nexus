@@ -103,8 +103,7 @@ class ContentMixin:
         # DT_PIPE / DT_STREAM: entry_type signals IPC dispatch below.
         #
         # Slim-package mode: ``nexus-fs`` can ship without ``nexus_kernel``,
-        # in which case ``self._kernel`` is None. Raise NexusFileNotFoundError
-        # so the SlimNexusFS facade's Python fallback chain takes over.
+        # in which case ``self._kernel`` is None.
         if self._kernel is None:
             raise NexusFileNotFoundError(path)
         _rust_ctx = self._build_rust_ctx(context, _is_admin)

@@ -2,9 +2,7 @@
 
 Exposes ~10 public methods from the kernel NexusFS. Internal methods
 (sandbox, workflows, bulk operations, dispatch hooks) are hidden.
-
-The facade also provides optimized implementations where the full kernel
-path is unnecessarily heavy for slim-package use (e.g., single-lookup stat).
+All I/O delegates directly to the Rust kernel.
 
 Usage:
     from nexus.fs._facade import SlimNexusFS
@@ -21,7 +19,6 @@ import threading
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
 
@@ -56,7 +53,7 @@ def _make_stat_dict(
     }
 
 
-# Default context for slim-mode (single-user, no auth)
+# Default context for facade operations (single-user, no auth)
 _SLIM_CONTEXT = OperationContext(
     user_id="local",
     groups=[],
@@ -371,24 +368,6 @@ class SlimNexusFS:
         _kstat = self._kernel.sys_stat(normalized, context=self._ctx)
         if _kstat is not None:
             return _kstat
-
-        meta: FileMetadata | None = None
-
-        if meta is not None:
-            is_dir = meta.is_dir or meta.is_mount or meta.mime_type == "inode/directory"
-            return _make_stat_dict(
-                path=meta.path,
-                size=meta.size or (4096 if is_dir else 0),
-                etag=meta.etag,
-                mime_type=meta.mime_type
-                or ("inode/directory" if is_dir else "application/octet-stream"),
-                created_at=meta.created_at.isoformat() if meta.created_at else None,
-                modified_at=meta.modified_at.isoformat() if meta.modified_at else None,
-                is_directory=is_dir,
-                version=meta.version,
-                zone_id=meta.zone_id,
-                entry_type=meta.entry_type,
-            )
 
         # No explicit entry — check if it's an implicit directory.
         # is_implicit_directory is on concrete metastore classes, not the ABC.

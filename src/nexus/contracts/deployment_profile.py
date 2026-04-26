@@ -11,7 +11,7 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    slim ⊂ embedded ⊂ lite ⊂ sandbox ⊂ full ⊆ cloud
+    embedded ⊂ lite ⊂ sandbox ⊂ full ⊆ cloud
 
 CLUSTER and REMOTE are orthogonal tiers — not part of the superset chain:
     cluster  (minimal multi-node — Raft + federation only; disjoint from embedded)
@@ -115,7 +115,6 @@ class DeploymentProfile(StrEnum):
     """Deployment profile controlling which bricks are enabled by default.
 
     Profiles define capability tiers for different deployment targets:
-    - slim: Bare minimum runnable — kernel only, no bricks (Issue #1801)
     - cluster: Minimal multi-node — Raft + federation, no auth/PostgreSQL
     - embedded: MCU / WASM (<1 MB) — eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
@@ -125,7 +124,6 @@ class DeploymentProfile(StrEnum):
     - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
     """
 
-    SLIM = "slim"
     CLUSTER = "cluster"
     EMBEDDED = "embedded"
     LITE = "lite"
@@ -156,16 +154,14 @@ class DeploymentProfile(StrEnum):
 # Profile-to-brick mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 
-_SLIM_BRICKS: frozenset[str] = frozenset()  # kernel only — no optional bricks
-
-_CLUSTER_BRICKS: frozenset[str] = _SLIM_BRICKS | frozenset(
+_CLUSTER_BRICKS: frozenset[str] = frozenset(
     {
         BRICK_IPC,
         BRICK_FEDERATION,
     }
 )
 
-_EMBEDDED_BRICKS: frozenset[str] = _SLIM_BRICKS | frozenset(
+_EMBEDDED_BRICKS: frozenset[str] = frozenset(
     {
         BRICK_EVENTLOG,
     }
@@ -223,7 +219,6 @@ _CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset({BRICK_FEDERATION})
 _REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client model
 
 _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
-    DeploymentProfile.SLIM: _SLIM_BRICKS,
     DeploymentProfile.CLUSTER: _CLUSTER_BRICKS,
     DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
     DeploymentProfile.LITE: _LITE_BRICKS,

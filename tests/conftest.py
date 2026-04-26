@@ -155,7 +155,7 @@ def make_test_nexus(
 
     Uses ``create_nexus_fs()`` — the same boot path as production.
     Defaults: permissions off, no auto-parse, no distributed features,
-    no bricks (SLIM profile).
+    no bricks (kernel-only).
 
     Args:
         tmp_path: pytest tmp_path fixture for backend/metadata storage.
@@ -231,7 +231,7 @@ def make_test_nexus(
         memory=memory,
         distributed=distributed,
         is_admin=is_admin,
-        enabled_bricks=frozenset(),  # SLIM profile for fast tests
+        enabled_bricks=frozenset(),  # kernel-only for fast tests
         init_cred=_init_cred,
     )
 

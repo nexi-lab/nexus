@@ -188,9 +188,17 @@ class TestRecordStoreCreateTables:
         """Default behavior: create_tables=True calls create_all."""
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        with patch("nexus.storage.models.Base") as mock_base:
+        with (
+            patch("nexus.storage.models.Base") as mock_base,
+            # Issue #3897: create_tables=True also seeds zones.root via
+            # ensure_root_zone; mock it out since Base.metadata.create_all
+            # is patched here and the real seed would query a non-existent
+            # zones table.
+            patch("nexus.storage.zone_bootstrap.ensure_root_zone") as mock_seed,
+        ):
             store = SQLAlchemyRecordStore(create_tables=True)
             mock_base.metadata.create_all.assert_called_once()
+            mock_seed.assert_called_once()
             store.close()
 
     def test_create_tables_false_skips_create_all(self):

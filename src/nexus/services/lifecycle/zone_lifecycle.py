@@ -136,10 +136,26 @@ class ZoneLifecycleService:
 
         Returns:
             ZoneDeprovisionResult with completed/pending/failed finalizers.
+
+        Raises:
+            ValueError: If ``zone_id`` is the reserved ROOT_ZONE_ID.
+                The default zone is required by ``api_key_zones`` FK and
+                by the bootstrap invariant in
+                ``nexus.storage.zone_bootstrap.ensure_root_zone`` (#3897);
+                deprovisioning it would block server startup and break
+                root-scoped key creation.
         """
         from datetime import UTC, datetime
 
+        from nexus.contracts.constants import ROOT_ZONE_ID
         from nexus.storage.models import ZoneModel
+
+        if zone_id == ROOT_ZONE_ID:
+            raise ValueError(
+                f"Refusing to deprovision reserved zone {ROOT_ZONE_ID!r}: "
+                "default zone is required by api_key_zones FK and "
+                "server startup (Issue #3897)."
+            )
 
         # Per-zone lock to prevent concurrent races (Decision #11A)
         lock = self._zone_locks.setdefault(zone_id, asyncio.Lock())

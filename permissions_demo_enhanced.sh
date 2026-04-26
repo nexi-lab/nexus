@@ -239,7 +239,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 
@@ -533,7 +533,7 @@ nexus_python << 'PYTHON_PARENTS'
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 rebac.rebac_create_sync(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
@@ -636,7 +636,7 @@ nexus_python << 'PYTHON_LIST'
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=("user", "bob"))
 print(f"Bob has {len(tuples)} permission tuples:")
@@ -665,7 +665,7 @@ nexus_python << 'PYTHON_CYCLE'
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 try:
@@ -766,7 +766,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync()
 
@@ -891,7 +891,7 @@ TUPLE_ID=$(nexus_python << PYTHON_TUPLE_ID
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
 print(tuples[0]['tuple_id'] if tuples else '')
@@ -945,7 +945,7 @@ import sys, os, time, statistics
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 

@@ -30,6 +30,7 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
     """
     bg_tasks: list[asyncio.Task] = []
 
+    _seed_root_zone(svc)  # Issue #3897 — satisfy api_key_zones FK on first key insert
     await _startup_async_rebac(app, svc)
     await _startup_cache_brick(app, svc)
     await _startup_durable_invalidation(app, svc)  # Issue #3396
@@ -44,6 +45,23 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _seed_root_zone(svc: "LifespanServices") -> None:
+    """Re-assert the default-zone invariant at FastAPI startup.
+
+    Delegates to ``nexus.storage.zone_bootstrap.ensure_root_zone`` — the
+    single source of truth shared with ``SQLAlchemyRecordStore.__init__``
+    and the alembic migration. This call is defense in depth for schemas
+    that may have lost the row through manual intervention.
+    """
+    session_factory = svc.session_factory
+    if session_factory is None:
+        return
+
+    from nexus.storage.zone_bootstrap import ensure_root_zone
+
+    ensure_root_zone(session_factory)
 
 
 async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:

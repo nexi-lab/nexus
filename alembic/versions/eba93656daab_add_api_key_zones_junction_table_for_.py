@@ -20,6 +20,60 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Issue #3897: validate the zone-data invariant BEFORE any DDL. SQLite
+    # doesn't roll back CREATE TABLE on transaction abort, so raising after
+    # create_table would wedge the revision in a half-applied state where
+    # the table exists, alembic_version is unchanged, and the operator
+    # can't simply rerun (CREATE TABLE would fail "table exists"). Order
+    # of operations: seed → preflight → DDL → backfill.
+
+    bind = op.get_bind()
+
+    # Seed the documented default ROOT_ZONE_ID="root" so runtime
+    # create_api_key calls (e.g. POST /api/v2/agents/register) succeed on
+    # a fresh install. Any other orphan zone_id on a live key is unknown
+    # tenant state and must be resolved by a human, not silently blessed
+    # as an Active zone (would bypass zone validation/reserved-name
+    # rules).
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO zones (zone_id, name, phase, finalizers, created_at, updated_at)
+            SELECT 'root', 'Root', 'Active', '[]',
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            WHERE NOT EXISTS (SELECT 1 FROM zones WHERE zone_id = 'root')
+            """
+        )
+    )
+
+    # Pre-flight: refuse the upgrade when a live api_key references a
+    # zone not present in zones (other than 'root', just seeded above).
+    # Failing loudly here — before DDL — keeps the schema un-touched so
+    # the operator can fix the data and rerun cleanly.
+    orphans = (
+        bind.execute(
+            sa.text(
+                """
+                SELECT DISTINCT k.zone_id
+                FROM api_keys k
+                WHERE k.revoked = 0
+                  AND k.zone_id IS NOT NULL
+                  AND k.zone_id <> 'root'
+                  AND NOT EXISTS (SELECT 1 FROM zones z WHERE z.zone_id = k.zone_id)
+                ORDER BY k.zone_id
+                """
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if orphans:
+        raise RuntimeError(
+            "eba93656daab: live api_keys reference zone_ids with no matching "
+            "zones row. Create the zones (or revoke the keys) before "
+            f"re-running this migration. Offending zone_ids: {sorted(orphans)}"
+        )
+
     op.create_table(
         "api_key_zones",
         sa.Column("key_id", sa.String(length=36), nullable=False),

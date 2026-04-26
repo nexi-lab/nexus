@@ -65,20 +65,6 @@ _SLIM_CONTEXT = OperationContext(
 )
 
 
-class _LockPoolHolder:
-    """Thin wrapper so a lock stripe pool can live in a WeakValueDictionary.
-
-    Python's WeakValueDictionary doesn't accept tuples as values (they
-    aren't weak-referenceable), but a user-defined class instance is.
-    The pool field stays immutable — replace holders, don't mutate.
-    """
-
-    __slots__ = ("pool", "__weakref__")
-
-    def __init__(self, pool: tuple[threading.Lock, ...]) -> None:
-        self.pool = pool
-
-
 class SlimNexusFS:
     """Slim facade over the NexusFS kernel.
 
@@ -89,54 +75,10 @@ class SlimNexusFS:
         read, write, ls, stat, delete, mkdir, rmdir, rename, exists, copy
     """
 
-    # Stripe count for the slim-mode per-path lock pool.  64 stripes is
-    # plenty to keep same-path writes serialized while avoiding the
-    # unbounded-dict growth a per-path Lock registry would produce in a
-    # long-lived process.  Collisions (two unrelated paths sharing a
-    # stripe) only cost brief contention — never incorrectness, since
-    # same-path writes still serialize on the same stripe.
-    _SLIM_LOCK_STRIPES = 64
-
-    # Shared stripe pools keyed by kernel identity — two SlimNexusFS
-    # wrappers around the same NexusFS must share locks, otherwise
-    # concurrent writers via different wrappers can both read version
-    # N and both persist N+1.  WeakValueDictionary so pools get GC'd
-    # along with their kernel.
-    _shared_lock_pools: "Any" = None  # lazily set below
-    _shared_lock_pools_mutex: "threading.Lock" = threading.Lock()
-
     def __init__(self, kernel: NexusFS) -> None:
         self._kernel = kernel
         self._ctx = _SLIM_CONTEXT
         self._closed = False
-        # Holder kept as an attribute so the WeakValueDictionary entry
-        # survives as long as at least one facade references it.  Once
-        # every facade around this kernel is gone the holder is GC'd
-        # and the shared-pools dict entry drops automatically.
-        self._slim_lock_pool_holder = self._resolve_shared_lock_pool(kernel)
-        self._slim_lock_pool = self._slim_lock_pool_holder.pool
-
-    @classmethod
-    def _resolve_shared_lock_pool(cls, kernel: NexusFS) -> _LockPoolHolder:
-        """Return a stripe pool shared across every facade wrapping ``kernel``.
-
-        Keying on ``id(kernel)`` means two SlimNexusFS instances built
-        on the same NexusFS resolve to the same pool, so writes through
-        either wrapper serialize correctly on the same path's stripe.
-        Pools are stored in a WeakValueDictionary so they release once
-        no facade references them anymore — no long-lived growth.
-        """
-        import weakref
-
-        with cls._shared_lock_pools_mutex:
-            if cls._shared_lock_pools is None:
-                cls._shared_lock_pools = weakref.WeakValueDictionary()
-            holder: _LockPoolHolder | None = cls._shared_lock_pools.get(id(kernel))
-            if holder is None:
-                pool = tuple(threading.Lock() for _ in range(cls._SLIM_LOCK_STRIPES))
-                holder = _LockPoolHolder(pool)
-                cls._shared_lock_pools[id(kernel)] = holder
-            return holder
 
     @property
     def kernel(self) -> NexusFS:
@@ -226,22 +168,6 @@ class SlimNexusFS:
             Dict with path, size, etag, version.
         """
         return self._kernel.write(path, content, context=self._ctx)
-
-    def _slim_path_lock(self, path: str) -> threading.Lock:
-        """Return a striped per-path lock for slim-mode serialization.
-
-        The Rust kernel's VFS lock isn't available in slim mode, so
-        writes/deletes serialize on a ``threading.Lock`` selected by
-        hashing the virtual path into a fixed-size stripe pool.  Same
-        path always maps to the same stripe, so concurrent writers on
-        one path serialize correctly.  Different paths may share a
-        stripe (brief contention) but never incorrectness.  The
-        fixed-size pool avoids the unbounded memory growth a per-path
-        dict would produce in long-lived processes.
-        """
-        # Python's built-in hash() is randomized per-process but stable
-        # within a process, which is exactly the property we need here.
-        return self._slim_lock_pool[hash(path) % self._SLIM_LOCK_STRIPES]
 
     def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
         """Write multiple files atomically in a single transaction.

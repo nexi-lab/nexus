@@ -101,10 +101,11 @@ jobs:
             rust/library
             rust/kernel
             rust/raft
+            rust/cluster
 
       - name: Check Rust formatting
         run: |
-          for crate in tasks library kernel raft; do
+          for crate in tasks library kernel raft cluster; do
             echo "::group::fmt $crate"
             cd rust/$crate && cargo fmt --check && cd ../..
             echo "::endgroup::"
@@ -120,6 +121,9 @@ jobs:
           echo "::group::clippy raft (all-features)"
           cd rust/raft && cargo clippy --all-features -- -D warnings && cd ../..
           echo "::endgroup::"
+          echo "::group::clippy cluster"
+          cd rust/cluster && cargo clippy -- -D warnings && cd ../..
+          echo "::endgroup::"
 
       - name: Run Rust tests
         env:
@@ -132,6 +136,9 @@ jobs:
           done
           echo "::group::test raft (all-features)"
           cd rust/raft && cargo test --all-features && cd ../..
+          echo "::endgroup::"
+          echo "::group::test cluster"
+          cd rust/cluster && cargo test && cd ../..
           echo "::endgroup::"
 
       - name: Verify WASM compilation (library)

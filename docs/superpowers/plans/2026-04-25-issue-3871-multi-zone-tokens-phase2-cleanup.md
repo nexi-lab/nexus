@@ -1331,7 +1331,7 @@ def test_non_admin_key_with_empty_junction_returns_no_zone_perms(session):
     auth = DatabaseAPIKeyAuth(session_factory=lambda: session)
     result = auth.authenticate("nxs_k1_secret")
     # zone_perms must be empty — no fallback to api_key.zone_id.
-    assert result is not None
+    assert result.authenticated is True
     assert tuple(result.zone_perms) == ()
 
 
@@ -1339,37 +1339,69 @@ def test_admin_key_with_empty_junction_authenticates_zonelessly(session):
     _insert_legacy_key(session, key_id="k2", raw_token="nxs_k2_secret", zone_id=None, is_admin=1)
     auth = DatabaseAPIKeyAuth(session_factory=lambda: session)
     result = auth.authenticate("nxs_k2_secret")
-    assert result is not None
+    assert result.authenticated is True
     assert result.is_admin is True
     assert tuple(result.zone_perms) == ()
+
+
+def test_multi_zone_key_uses_junction_primary_for_zone_id(session):
+    """After Task 6, api_key.zone_id is NULL; result.zone_id must come from the junction primary."""
+    from nexus.storage.api_key_ops import create_api_key
+    session.add(ZoneModel(zone_id="ops", name="ops", phase="Active"))
+    session.commit()
+    _key_id, raw = create_api_key(session, user_id="u1", name="multi", zones=["eng", "ops"])
+    auth = DatabaseAPIKeyAuth(session_factory=lambda: session)
+    result = auth.authenticate(raw)
+    assert result.authenticated is True
+    # MIN granted_at picks "eng" (first inserted); zone_set contains both.
+    assert result.zone_id == "eng"
+    assert set(result.zone_set) == {"eng", "ops"}
 ```
 
-(If `DatabaseAPIKeyAuth` constructor / `authenticate` signature differs on develop, adjust — keep the assertions as-is.)
+(`auth.authenticate(...)` returns `AuthResult` which is always non-None — its `authenticated` field is the success flag. Adjust if the develop signature differs.)
 
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/unit/bricks/auth/providers/test_database_key_no_fallback.py -v`
 Expected: `test_non_admin_key_with_empty_junction_returns_no_zone_perms` FAILs because the current fallback returns `zone_perms = (("eng", "rw"),)`.
 
-- [ ] **Step 4: Remove the fallback block**
+- [ ] **Step 4: Remove the fallback block + source `zone_id` from junction**
 
-Edit `src/nexus/bricks/auth/providers/database_key.py`. Delete the block matching:
+Edit `src/nexus/bricks/auth/providers/database_key.py`. The fallback on develop is the ternary at lines 157-161 (variable name is `zone_perm_rows`, not `zone_perms_rows`):
 
 ```python
-if not zone_perms_rows:
-    if api_key.zone_id:
-        zone_perms = ((api_key.zone_id, "rw"),)
-    else:
-        zone_perms = ()
+zone_perms: tuple[tuple[str, str], ...] = (
+    tuple((z, p) for z, p in zone_perm_rows)
+    if zone_perm_rows
+    else (((api_key.zone_id, "rw"),) if api_key.zone_id else ())
+)
 ```
 
 Replace with:
 
 ```python
-zone_perms = tuple(zone_perms_rows)
+zone_perms: tuple[tuple[str, str], ...] = tuple(zone_perm_rows)
 ```
 
-(If `zone_perms` was already assigned earlier in a non-fallback path, just delete the fallback block — the earlier assignment is the new sole path.)
+Also fix the `zone_id` capture on line 148. Currently:
+
+```python
+zone_id = api_key.zone_id
+```
+
+After Task 6 this is always `None` for new keys and the value is passed to `AuthResult.zone_id` (which `__post_init__` does NOT auto-derive from `zone_set`). Replace with a junction-backed primary derivation:
+
+```python
+# Derive primary zone from the junction (zone_perm_rows is ordered by
+# granted_at then zone_id by the model's default ordering); fall back to
+# api_key.zone_id (NULL for post-#3871 keys, populated for legacy admin keys
+# that hit this code via the deprecated column path).
+zone_id = zone_perm_rows[0][0] if zone_perm_rows else api_key.zone_id
+```
+
+Verify the `zone_perm_rows` query (lines 131-135) sorts deterministically. If it doesn't already include `.order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())`, add that order_by clause so the `[0][0]` pick matches the spec's primary-zone definition (`MIN(granted_at)`, tiebreaker on `zone_id ASC`). The order_by is a small, consistent change — keep it in this commit.
+
+(`zone_perm_rows` is the unchanged list — line 131. If it's empty AND `api_key.zone_id` is None, `zone_id` becomes None — correct for zoneless admin keys.)
 
 - [ ] **Step 5: Run test to verify it passes**
 

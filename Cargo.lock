@@ -1537,6 +1537,7 @@ dependencies = [
  "roaring",
  "serde",
  "serde_json",
+ "services",
  "sha2",
  "simdutf8",
  "simsimd",
@@ -2847,8 +2848,11 @@ name = "services"
 version = "0.1.0"
 dependencies = [
  "contracts",
+ "dashmap",
  "parking_lot",
  "redb",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

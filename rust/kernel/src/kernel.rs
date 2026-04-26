@@ -602,12 +602,11 @@ pub struct Kernel {
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // FileWatchRegistry — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatchRegistry>,
-    // Agent registry — DashMap backing store (§10 B1).
-    // Held in an Arc so components like `AgentStatusResolver` can share
-    // ownership without relying on raw pointers / field address stability.
-    // (Develop introduced the Arc wrapping; we take it to avoid silent
-    // revert of that hardening.)
-    pub(crate) agent_registry: Arc<crate::agent_registry::AgentRegistry>,
+    // Agent table — Rust SSOT for agent lifecycle state. Source lives in
+    // the services rlib (rust/services/src/agent_table.rs); the kernel
+    // owns an Arc handle so AgentStatusResolver and other kernel-internal
+    // consumers can share read access without depending on field layout.
+    pub(crate) agent_table: Arc<services::agent_table::AgentTable>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `VFSRouter::entries` as
@@ -735,7 +734,7 @@ impl Kernel {
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatchRegistry::new()),
-            agent_registry: Arc::new(crate::agent_registry::AgentRegistry::new()),
+            agent_table: Arc::new(services::agent_table::AgentTable::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),

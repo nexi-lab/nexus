@@ -2,7 +2,7 @@
 name = "services"
 version = "0.1.0"
 edition = "2021"
-description = "Rust service implementations — observers, audit trail"
+description = "Rust service implementations — agent lifecycle, observers, audit trail"
 
 [lib]
 name = "services"
@@ -11,4 +11,7 @@ crate-type = ["rlib"]
 [dependencies]
 contracts = { workspace = true }
 redb = "2"
+dashmap = "6.1"
 parking_lot = "0.12"
+serde = { workspace = true }
+serde_json = { workspace = true }

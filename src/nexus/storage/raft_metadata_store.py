@@ -12,8 +12,9 @@ Usage:
     store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
 
     # With Raft (mode='federation', via ZoneManager + ZoneHandle):
-    from nexus.raft import ZoneManager
-    mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")
+    import nexus_kernel
+    kernel = nexus_kernel.Kernel()
+    kernel.zone_create("root", ["2@peer:2126"])
     handle = mgr.create_zone("root", ["2@peer:2126"])
     store = RaftMetadataStore(engine=handle, zone_id="root")
 """
@@ -104,11 +105,13 @@ class RaftMetadataStore(MetastoreABC):
         store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         store.put(metadata)
 
-        # With Raft (via ZoneManager + ZoneHandle):
-        from nexus.raft import ZoneManager
-        mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")
-        handle = mgr.create_zone("root", ["2@peer:2126"])
-        store = RaftMetadataStore(engine=handle, zone_id="root")
+        # With Raft (via kernel zone ops + ZoneHandle):
+        import nexus_kernel
+        kernel = nexus_kernel.Kernel()
+        kernel.zone_create("root", ["2@peer:2126"])
+        # Construct via embedded(); the kernel wires the per-zone handle
+        # internally. Direct ZoneHandle construction is internal API.
+        store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         store.put(metadata)  # replicated
     """
 

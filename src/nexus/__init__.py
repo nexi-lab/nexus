@@ -18,7 +18,7 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
 
     from nexus.sdk import connect
 
-    nx = connect(config={"profile": "slim", "data_dir": "./nexus-data"})
+    nx = connect(config={"profile": "embedded", "data_dir": "./nexus-data"})
     nx.sys_write("/workspace/data.txt", b"Hello World")
     content = nx.sys_read("/workspace/data.txt")
 

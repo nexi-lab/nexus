@@ -433,13 +433,13 @@ class NexusConfig(BaseModel):
     def validate_profile(cls, v: str) -> str:
         """Validate deployment profile.
 
-        Valid profiles: slim, cluster, embedded, lite, sandbox, full, cloud, remote, auto
+        Valid profiles: cluster, embedded, lite, sandbox, full, cloud, remote, auto
         """
         allowed = [
-            "slim",
             "cluster",
             "embedded",
             "lite",
+            "sandbox",
             "sandbox",
             "full",
             "cloud",

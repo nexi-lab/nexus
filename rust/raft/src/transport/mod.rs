@@ -42,6 +42,8 @@
 #[cfg(all(feature = "grpc", has_protos))]
 pub(crate) mod certgen;
 #[cfg(all(feature = "grpc", has_protos))]
+pub use certgen::{bootstrap_tls, generate_join_token, generate_zone_ca, BootstrapTls};
+#[cfg(all(feature = "grpc", has_protos))]
 mod client;
 #[cfg(all(feature = "grpc", has_protos))]
 mod server;

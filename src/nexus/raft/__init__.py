@@ -8,11 +8,14 @@ Two access modes:
 2. ZoneManager + ZoneHandle (PyO3 FFI) - Multi-zone Raft consensus (~2-10ms)
 
 REMOTE profile uses RPCTransport → NexusVFSService (see nexus.remote).
-Federation uses NexusFederation (see nexus.raft.federation).
+Federation lives entirely in the Rust kernel now — the cluster
+profile binary (`nexusd-cluster`) owns the orchestrator; Python
+callers reach it through `nexus_kernel.ZoneManager` / `ZoneHandle` or
+the federation_* RPCs in `nexus.server.rpc.services.federation_rpc`.
 
 Architecture:
     Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
-    Consensus:  NexusFS -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
+    Consensus:  NexusFS -> nexus_kernel.ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
     Remote:     NexusFS -> RPCTransport -> NexusVFSService (gRPC) -> server (~50-100ms)
 
 Example (Metastore - embedded mode):
@@ -22,12 +25,13 @@ Example (Metastore - embedded mode):
     store.set_metadata("/path/to/file", metadata_bytes)
     metadata = store.get_metadata("/path/to/file")
 
-Example (ZoneManager - consensus mode):
-    from nexus.raft import ZoneManager
-
-    mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
-    handle = mgr.create_zone("root", ["2@peer:2126"])
-    handle.set_metadata("/path/to/file", metadata_bytes)  # replicated via consensus
+Example (consensus mode — via kernel zone_* methods):
+    import nexus_kernel
+    kernel = nexus_kernel.Kernel()
+    kernel.zone_create("root", ["2@peer:2126"])
+    kernel.zone_mount("root", "/data", "shared-zone")
+    # Read/write through kernel.sys_* like any path; mount routes to the
+    # shared-zone raft group.
 """
 
 import logging
@@ -72,8 +76,12 @@ try:
 except (ImportError, AttributeError):
     pass
 
-# Python wrappers for multi-zone federation
-from nexus.raft.zone_manager import ZoneManager
+# Multi-zone federation: orchestration moved into the cluster binary
+# (rust/cluster/) and the federation_* RPCs in
+# nexus.server.rpc.services.federation_rpc, which delegate to PyKernel
+# `zone_*` methods. There is no Python ZoneManager class anymore —
+# Python callers either go through the RPC service or call kernel
+# methods directly.
 
 
 def require_metastore() -> None:
@@ -96,8 +104,8 @@ def require_metastore() -> None:
 __all__ = [
     # PyO3 FFI: Metastore driver (embedded mode)
     "Metastore",
-    # Multi-zone federation
-    "ZoneManager",
+    # Per-zone Raft node handle (cdylib-loaded if nexus_kernel is built
+    # with the full feature; None otherwise — matches Metastore semantics)
     "ZoneHandle",
     # Lock types
     "LockState",

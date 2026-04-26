@@ -24,7 +24,7 @@ class TestConfigWithoutAuthBrick:
         assert field_info is not None
 
         # Verify we can create a config with oauth=None (no auth brick needed)
-        cfg = NexusConfig(profile="slim")
+        cfg = NexusConfig(profile="embedded")
         assert cfg.oauth is None
 
     def test_config_parses_oauth_dict(self) -> None:
@@ -32,7 +32,7 @@ class TestConfigWithoutAuthBrick:
         from nexus.config import NexusConfig
 
         cfg = NexusConfig(
-            profile="slim",
+            profile="embedded",
             oauth={
                 "providers": [
                     {

@@ -251,11 +251,9 @@ def detect_capabilities() -> DeviceCapabilities:
 # ---------------------------------------------------------------------------
 
 # Profile tier indices for comparison
-# slim=-1: never auto-detected, always explicit user choice (Issue #2194)
 # remote=-2: never auto-detected, always explicit (Issue #844)
 _PROFILE_INDEX: dict[str, int] = {
     "remote": -2,
-    "slim": -1,
     "embedded": 0,
     "lite": 1,
     "full": 2,

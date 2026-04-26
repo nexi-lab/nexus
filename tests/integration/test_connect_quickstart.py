@@ -28,7 +28,7 @@ async def test_local_connect_falls_back_when_full_federation_build_is_unavailabl
 
     nx = await nexus.connect(
         config={
-            "profile": "slim",
+            "profile": "embedded",
             "data_dir": str(tmp_path / "nexus-data"),
         }
     )

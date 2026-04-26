@@ -12,6 +12,7 @@
 
 #![cfg(all(feature = "grpc", has_protos))]
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -183,6 +184,11 @@ pub struct ZoneManager {
     /// kernel installs an impl. Stays empty on slim / no-federation
     /// runtimes (the RPC is still advertised but returns `NotFound`).
     blob_fetcher_slot: crate::blob_fetcher::BlobFetcherSlot,
+    /// Static topology mounts staged by `bootstrap_static`, drained
+    /// incrementally by `apply_topology` as parent + target zones'
+    /// leaders settle. BTreeMap so parent paths process before children.
+    /// Empty when no static topology is configured.
+    pending_mounts: parking_lot::Mutex<BTreeMap<String, String>>,
 }
 
 impl ZoneManager {
@@ -333,6 +339,7 @@ impl ZoneManager {
             use_tls,
             default_peers: peers,
             blob_fetcher_slot,
+            pending_mounts: parking_lot::Mutex::new(BTreeMap::new()),
         }))
     }
 
@@ -445,8 +452,309 @@ impl ZoneManager {
             .map(|node| ZoneHandle::new(node, self.runtime.handle().clone(), zone_id.to_string()))
     }
 
+    /// Static Day-1 cluster formation: idempotently create raft groups
+    /// for every zone in the federation, then stage `mounts` for the
+    /// next `apply_topology()` pass.
+    ///
+    /// All nodes in the cluster call this with identical parameters
+    /// during startup. Each node initializes its own raft state machine
+    /// for every zone (no cross-node consensus required at this stage —
+    /// raft-rs handles election once peers can reach each other).
+    ///
+    /// `mounts` maps a global path to its target zone id (e.g.
+    /// `{"/corp": "corp", "/corp/eng": "corp-eng"}`). Storage is purely
+    /// in-memory; mounts are applied lazily by `apply_topology()` once
+    /// the relevant parent + target leaders are reachable. Calling
+    /// `bootstrap_static` again replaces the pending set.
+    ///
+    /// Mirrors Python `ZoneManager.bootstrap_static`. Idempotent.
+    pub fn bootstrap_static(
+        &self,
+        zones: &[String],
+        peers: Vec<String>,
+        mounts: &BTreeMap<String, String>,
+    ) -> Result<()> {
+        for zone_id in zones {
+            if self.get_zone(zone_id).is_some() {
+                tracing::debug!("Zone '{}' already exists, skipping", zone_id);
+                continue;
+            }
+            self.create_zone(zone_id, peers.clone())?;
+        }
+        let mut pending = self.pending_mounts.lock();
+        pending.clear();
+        for (path, target) in mounts {
+            pending.insert(path.clone(), target.clone());
+        }
+        Ok(())
+    }
+
+    /// Snapshot of mounts staged by `bootstrap_static` that have not
+    /// yet been applied. Empty when topology has converged.
+    pub fn pending_mounts(&self) -> BTreeMap<String, String> {
+        self.pending_mounts.lock().clone()
+    }
+
+    /// Drive Day-1 topology toward convergence. Idempotent and
+    /// crash-safe — every node calls this on a health-check tick;
+    /// each writes only the zones for which it can reach the leader.
+    /// Mirrors Python `ZoneManager._apply_topology` (the trickiest
+    /// piece of the federation orchestrator).
+    ///
+    /// Steps:
+    ///   1. Create the root "/" entry in `root_zone_id` if missing
+    ///      (needs root-zone leader).
+    ///   2. Walk pending mounts in path-depth order (parents first).
+    ///      For each:
+    ///        * Resolve the actual parent zone via longest-prefix
+    ///          match against already-applied mounts (nested mount
+    ///          handling: e.g. `/corp/eng` is owned by `corp`, not
+    ///          root).
+    ///        * Phase A: write DT_DIR + DT_MOUNT in the parent zone.
+    ///          Skipped if a DT_MOUNT to the same target is already
+    ///          present (idempotency).
+    ///        * Phase B: bump the target zone's `i_links_count` to
+    ///          reflect every pending mount referencing it.
+    ///   3. Per-mount errors leave that mount in `pending_mounts` for
+    ///      the next call. Only `Ok(true)` indicates full convergence.
+    pub fn apply_topology(&self, root_zone_id: &str) -> Result<bool> {
+        // Root "/" entry must exist before any mount path resolution.
+        if !self.ensure_root_entry(root_zone_id)? {
+            return Ok(false);
+        }
+
+        let snapshot = self.pending_mounts.lock().clone();
+        if snapshot.is_empty() {
+            return Ok(true);
+        }
+
+        // Sort by path depth so a parent mount lands before its children
+        // (longest-prefix nested mount resolution depends on it).
+        let mut sorted: Vec<(String, String)> = snapshot.into_iter().collect();
+        sorted.sort_by_key(|(path, _)| path.matches('/').count());
+
+        // Per-target expected link counts: every pending mount pointing
+        // at the same zone increments its i_links_count once.
+        let mut expected: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for (_, target) in &sorted {
+            *expected.entry(target.clone()).or_insert(0) += 1;
+        }
+
+        let mut active: BTreeMap<String, String> = BTreeMap::new();
+        let mut remaining: BTreeMap<String, String> = BTreeMap::new();
+
+        for (global_path, target_zone) in &sorted {
+            // Resolve the parent zone via longest-prefix match against
+            // already-applied mounts. Falls back to root.
+            let mut parent_zone = root_zone_id.to_string();
+            let mut local_path = global_path.clone();
+            for (mp, mz) in active.iter().rev() {
+                if global_path.len() > mp.len()
+                    && global_path.starts_with(mp.as_str())
+                    && global_path.as_bytes()[mp.len()] == b'/'
+                {
+                    parent_zone = mz.clone();
+                    local_path = global_path[mp.len()..].to_string();
+                    break;
+                }
+            }
+
+            // Phase A: DT_MOUNT in parent zone.
+            if let Err(err) = self.write_mount_entry(&parent_zone, &local_path, target_zone) {
+                tracing::debug!(
+                    "Phase A deferred for {} (parent={} target={}): {}",
+                    global_path,
+                    parent_zone,
+                    target_zone,
+                    err
+                );
+                remaining.insert(global_path.clone(), target_zone.clone());
+                // Still treat as active so deeper mounts route correctly
+                // once Phase A lands on a later tick.
+                active.insert(global_path.clone(), target_zone.clone());
+                continue;
+            }
+
+            // Phase B: ensure target zone's i_links_count >= expected.
+            let want = expected.get(target_zone).copied().unwrap_or(0);
+            if let Err(err) = self.ensure_links_count(target_zone, want) {
+                tracing::debug!(
+                    "Phase B deferred for {} (target={}): {}",
+                    global_path,
+                    target_zone,
+                    err
+                );
+                remaining.insert(global_path.clone(), target_zone.clone());
+                active.insert(global_path.clone(), target_zone.clone());
+                continue;
+            }
+
+            active.insert(global_path.clone(), target_zone.clone());
+        }
+
+        let total = sorted.len();
+        let pending_after = remaining.len();
+        *self.pending_mounts.lock() = remaining;
+
+        if pending_after == 0 {
+            tracing::info!(
+                "Static topology applied: {} mounts via raft consensus",
+                total
+            );
+            Ok(true)
+        } else {
+            tracing::info!(
+                "Topology progress: {}/{} mounts applied, {} pending",
+                total - pending_after,
+                total,
+                pending_after,
+            );
+            Ok(false)
+        }
+    }
+
+    /// Ensure the root `/` DT_DIR exists in `root_zone_id`. Returns
+    /// `Ok(false)` if this node is not the leader yet (caller should
+    /// retry on the next tick); `Ok(true)` once present.
+    fn ensure_root_entry(&self, root_zone_id: &str) -> Result<bool> {
+        let Some(node) = self.registry.get_node(root_zone_id) else {
+            return Ok(false);
+        };
+        let handle = self.runtime.handle().clone();
+
+        let existing = handle
+            .block_on(node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata("/")))
+            .map_err(|e| RaftError::Raft(format!("get root metadata: {}", e)))?;
+        if existing.is_some() {
+            return Ok(true);
+        }
+
+        // Try to write — propose forwards to leader if we're a follower
+        // and reachable; errors mean leader unreachable / not elected.
+        let bytes = encode_file_metadata("/", "virtual", "", DT_DIR, root_zone_id, "");
+        match propose_set_metadata(&handle, &node, "/", bytes) {
+            Ok(()) => {
+                tracing::info!("Root '/' created in zone '{}'", root_zone_id);
+                Ok(true)
+            }
+            Err(err) => {
+                tracing::debug!("Root '/' creation deferred: {}", err);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Write a DT_MOUNT entry at `local_path` in `parent_zone`. No-op
+    /// if a DT_MOUNT to the same `target_zone` is already present.
+    /// Also auto-creates a DT_DIR placeholder if `local_path` is
+    /// missing (mkdir -p semantics, matches `mount()` behavior).
+    fn write_mount_entry(
+        &self,
+        parent_zone: &str,
+        local_path: &str,
+        target_zone: &str,
+    ) -> Result<()> {
+        let parent_node = self.registry.get_node(parent_zone).ok_or_else(|| {
+            RaftError::InvalidState(format!("Parent zone '{}' not found", parent_zone))
+        })?;
+        let handle = self.runtime.handle().clone();
+
+        let existing = handle
+            .block_on(
+                parent_node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(local_path)),
+            )
+            .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?
+            .map(|bytes| decode_file_metadata(&bytes))
+            .transpose()
+            .map_err(|e| RaftError::Raft(format!("decode existing: {}", e)))?;
+
+        if let Some(ref meta) = existing {
+            if meta.entry_type == DT_MOUNT && meta.target_zone_id == target_zone {
+                return Ok(());
+            }
+        } else {
+            let dir_bytes =
+                encode_file_metadata(local_path, "virtual", "", DT_DIR, parent_zone, "");
+            propose_set_metadata(&handle, &parent_node, local_path, dir_bytes)?;
+        }
+
+        let mount_bytes =
+            encode_file_metadata(local_path, "mount", "", DT_MOUNT, parent_zone, target_zone);
+        propose_set_metadata(&handle, &parent_node, local_path, mount_bytes)
+    }
+
+    /// Bump `target_zone`'s `i_links_count` if it is below `expected`.
+    /// Idempotent: re-reads the counter after each propose so repeated
+    /// calls converge without overshooting.
+    fn ensure_links_count(&self, target_zone: &str, expected: i64) -> Result<()> {
+        let target_node = self.registry.get_node(target_zone).ok_or_else(|| {
+            RaftError::InvalidState(format!("Target zone '{}' not found", target_zone))
+        })?;
+        let handle = self.runtime.handle().clone();
+        let key = I_LINKS_COUNT_KEY.to_string();
+
+        loop {
+            let bytes = handle
+                .block_on({
+                    let key = key.clone();
+                    let node = target_node.clone();
+                    async move {
+                        node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&key))
+                            .await
+                    }
+                })
+                .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?;
+            let current = bytes
+                .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+                .map(i64::from_be_bytes)
+                .unwrap_or(0);
+            if current >= expected {
+                return Ok(());
+            }
+            propose_adjust_counter(&handle, &target_node, I_LINKS_COUNT_KEY, expected - current)?;
+            // Loop re-reads to confirm convergence (counter forwarding
+            // returns Success without the new value, so we can't trust
+            // the propose return).
+        }
+    }
+
+    /// Read a zone's POSIX `i_links_count` (mount references).
+    ///
+    /// Returns `0` for zones that have never been mounted (key absent).
+    /// Returns `Ok(None)` if the zone itself is not registered locally.
+    pub fn get_links_count(&self, zone_id: &str) -> Result<Option<i64>> {
+        let Some(node) = self.registry.get_node(zone_id) else {
+            return Ok(None);
+        };
+        let key = I_LINKS_COUNT_KEY.to_string();
+        let bytes = self.runtime.handle().block_on(async move {
+            node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&key))
+                .await
+        })?;
+        let count = bytes
+            .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+            .map(i64::from_be_bytes)
+            .unwrap_or(0);
+        Ok(Some(count))
+    }
+
     /// Remove a zone — shut down transport loop, delete on-disk dir.
-    pub fn remove_zone(&self, zone_id: &str) -> Result<()> {
+    ///
+    /// POSIX semantics: when `force` is false, refuses removal while
+    /// `i_links_count > 0` (i.e. the zone is still mounted somewhere).
+    /// Mirrors Python `ZoneManager.remove_zone(force=...)`.
+    pub fn remove_zone(&self, zone_id: &str, force: bool) -> Result<()> {
+        if !force {
+            if let Some(count) = self.get_links_count(zone_id)? {
+                if count > 0 {
+                    return Err(RaftError::InvalidState(format!(
+                        "Zone '{}' still has {} reference(s) (i_links_count > 0); \
+                         unmount all references first, or pass force=true.",
+                        zone_id, count
+                    )));
+                }
+            }
+        }
         self.runtime
             .handle()
             .block_on(self.registry.remove_zone(zone_id))

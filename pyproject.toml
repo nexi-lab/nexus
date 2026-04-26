@@ -1020,6 +1020,21 @@ ignore_imports = [
 ]
 unmatched_ignore_imports_alerting = "warn"
 
+# Contract 3: dead Python federation modules — never reintroduce.
+# These were superseded by the Rust cluster binary (rust/cluster/) +
+# the federation_* RPCs in nexus.server.rpc.services.federation_rpc,
+# which delegate to the kernel's PyO3 ZoneManager. Re-importing the
+# old modules would silently revert the federation rewrite.
+[[tool.importlinter.contracts]]
+id = "no-deleted-federation"
+name = "Deleted federation modules must not be reintroduced"
+type = "forbidden"
+source_modules = ["nexus"]
+forbidden_modules = [
+    "nexus.raft.federation",
+    "nexus.raft.zone_manager",
+]
+
 [dependency-groups]
 dev = [
     "freezegun>=1.5.5",

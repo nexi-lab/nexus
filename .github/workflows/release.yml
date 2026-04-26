@@ -640,12 +640,81 @@ jobs:
           SUFFIX="${{ matrix.suffix }}"
           docker buildx imagetools inspect "ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX}"
 
+  # nexusd-cluster: standalone Rust runtime for the cluster profile.
+  # Built per-platform (no cross-compile — raft/transport pull in
+  # platform-specific deps), size-gated on Linux (sudowork target),
+  # uploaded as a release artifact for downstream consumption.
+  build-cluster-binary:
+    name: cluster-binary / ${{ matrix.artifact_name }}
+    needs: [verify-version]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: nexusd-cluster-linux-x86_64
+            binary: nexusd-cluster
+          - os: macos-14
+            artifact_name: nexusd-cluster-macos-arm64
+            binary: nexusd-cluster
+          - os: windows-latest
+            artifact_name: nexusd-cluster-windows-x86_64
+            binary: nexusd-cluster.exe
+    env:
+      MAX_LINUX_BINARY_BYTES: "7340032"  # 7 MiB — sudowork target ~5 MiB + headroom
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cluster-binary-${{ matrix.os }}
+
+      - name: Build release binary
+        run: cargo build --release -p nexus-cluster --bin nexusd-cluster
+
+      - name: Check binary size (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          path="target/release/${{ matrix.binary }}"
+          actual=$(stat -c '%s' "$path")
+          echo "Binary size: $actual bytes (max: ${MAX_LINUX_BINARY_BYTES})"
+          if [ "$actual" -gt "${MAX_LINUX_BINARY_BYTES}" ]; then
+            echo "::error::nexusd-cluster Linux binary exceeds size budget ($actual > ${MAX_LINUX_BINARY_BYTES} bytes)"
+            exit 1
+          fi
+
+      - name: Sanity-check --help
+        shell: bash
+        run: target/release/${{ matrix.binary }} --help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: target/release/${{ matrix.binary }}
+          if-no-files-found: error
+
   # GitHub Release is created ONLY after both PyPI and Docker succeed.
   # This is the user-visible "released" signal — without it, the version
   # doesn't appear on the releases page or trigger notifications.
   create-release:
     name: Create GitHub Release
-    needs: [publish-pypi, publish-rust, publish-nexus-fs, publish-ts-packages, merge-docker-manifests]
+    needs:
+      - publish-pypi
+      - publish-rust
+      - publish-nexus-fs
+      - publish-ts-packages
+      - merge-docker-manifests
+      - build-cluster-binary
     runs-on: ubuntu-latest
 
     steps:
@@ -677,6 +746,13 @@ jobs:
           path: artifacts/nexus-fs
         continue-on-error: true
 
+      - name: Download cluster binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nexusd-cluster-*
+          path: artifacts/cluster
+          merge-multiple: true
+
       - name: Collect release artifacts
         run: |
           mkdir -p dist-release
@@ -684,6 +760,7 @@ jobs:
           cp artifacts/wheel/* dist-release/ 2>/dev/null || true
           cp artifacts/rust-sdist/* dist-release/ 2>/dev/null || true
           cp artifacts/nexus-fs/* dist-release/ 2>/dev/null || true
+          cp artifacts/cluster/* dist-release/ 2>/dev/null || true
           find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-release/ \;
           ls -lh dist-release/
 

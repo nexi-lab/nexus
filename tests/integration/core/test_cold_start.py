@@ -70,7 +70,7 @@ class TestColdStartNexusFSConstruction:
 
         nx = make_test_nexus(tmp_path)
 
-        # ServiceRegistry should be empty (SLIM profile — no bricks)
+        # ServiceRegistry should be empty (kernel-only — no bricks)
         assert nx.service("rebac") is None
         assert nx.service("mount") is None
         assert nx.service("mcp") is None

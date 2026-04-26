@@ -283,6 +283,55 @@ impl StreamManager {
         self.buffers.get(path).map(|r| Arc::clone(r.value()))
     }
 
+    /// Append all entries from `from` (starting at `from_offset`) into `to`.
+    ///
+    /// Analogous to a read-then-write splice between two DT_STREAMs. `to` must
+    /// already exist. Reads `from` with `read_batch` and appends each entry to
+    /// `to` with `push`. Returns `(messages_forwarded, next_from_offset)`.
+    ///
+    /// Non-destructive: `from` is not modified (DT_STREAM reads are always
+    /// offset-based, never consuming).
+    #[allow(dead_code)]
+    pub(crate) fn forward(
+        &self,
+        from: &str,
+        to: &str,
+        from_offset: usize,
+    ) -> Result<(usize, usize), StreamManagerError> {
+        let src = self
+            .buffers
+            .get(from)
+            .ok_or_else(|| StreamManagerError::NotFound(from.to_string()))?;
+        let dst = self
+            .buffers
+            .get(to)
+            .ok_or_else(|| StreamManagerError::NotFound(to.to_string()))?;
+
+        let mut offset = from_offset;
+        let mut forwarded = 0usize;
+
+        loop {
+            match src.read_at(offset) {
+                Ok((data, next)) => {
+                    dst.push(&data).map_err(StreamManagerError::Backend)?;
+                    offset = next;
+                    forwarded += 1;
+                }
+                Err(StreamError::Empty | StreamError::ClosedEmpty) => break,
+                Err(e) => return Err(StreamManagerError::Backend(e)),
+            }
+        }
+
+        if forwarded > 0 {
+            if let Some(notify) = self.notify.get(to) {
+                let _guard = notify.mutex.lock();
+                notify.not_empty.notify_one();
+            }
+        }
+
+        Ok((forwarded, offset))
+    }
+
     /// List all stream paths.
     pub(crate) fn list(&self) -> Vec<String> {
         self.buffers.iter().map(|r| r.key().clone()).collect()

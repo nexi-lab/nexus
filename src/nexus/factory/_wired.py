@@ -114,6 +114,45 @@ def _boot_post_kernel_services(
     else:
         logger.debug("[BOOT:WIRED] MCPService disabled by profile")
 
+    # --- MountManager: VFS-backed mount config persistence ---
+    # Constructed here (post-kernel tier) because the underlying
+    # MetastoreMountStore writes through public VFS syscalls and needs
+    # a live NexusFS handle. Pre-kernel tier (factory/_system.py) used
+    # to instantiate this against the metastore directly — that was the
+    # ABC leak we eliminated.
+    try:
+        from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
+        from nexus.bricks.mount.mount_manager import MountManager
+
+        _mount_store = MetastoreMountStore(nx)
+        services["mount_manager"] = MountManager(_mount_store)
+        logger.debug("[BOOT:WIRED] MountManager created (VFS-backed)")
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] MountManager unavailable: %s", exc)
+
+    # --- ReBAC namespace + version stores: VFS-backed ---
+    # Same story as MountManager — the stores write through public VFS
+    # syscalls so they can only be constructed after NexusFS exists.
+    # ReBACManager (built in tier 1) had ``namespace_store=None`` /
+    # ``version_store=None``; we patch them in here. The manager only
+    # consumes these lazily on first permission/namespace operation,
+    # so this late binding is safe.
+    rebac_manager = services.get("rebac_manager")
+    if rebac_manager is not None:
+        try:
+            from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+                MetastoreNamespaceStore,
+            )
+            from nexus.bricks.rebac.consistency.metastore_version_store import (
+                MetastoreVersionStore,
+            )
+
+            rebac_manager._namespace_store = MetastoreNamespaceStore(nx)
+            rebac_manager._version_store = MetastoreVersionStore(nx)
+            logger.debug("[BOOT:WIRED] ReBAC namespace + version stores wired (VFS-backed)")
+        except Exception as exc:
+            logger.warning("[BOOT:WIRED] ReBAC namespace/version stores wiring failed: %s", exc)
+
     # --- MountPersistService: Mount persistence ---
     # Created with mount_service=None initially; wired after MountService creation below.
     mount_persist_service: Any = None
@@ -654,7 +693,7 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
         # Reconcile on mismatch — legacy deployments may have persisted a
         # stale value (e.g. nx._zone_id) from before this patch.
         try:
-            from nexus.core.metadata import DT_MOUNT
+            from nexus.contracts.metadata import DT_MOUNT
 
             existing = nx.metadata.get("/agents")
             if existing is not None and existing.target_zone_id != _ipc_zone_id:

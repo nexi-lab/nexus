@@ -1,15 +1,19 @@
 """Mount manager for persistent mount configuration.
 
-Provides mount persistence across server restarts by storing mount configurations
-in the Metastore (redb).
+Provides mount persistence across server restarts by storing mount
+configurations as JSON files under ``/__sys__/mounts/`` (the kernel's
+reserved system path namespace).
 
 Supports:
-- Saving mount configurations to metastore
+- Saving mount configurations
 - Restoring mounts on startup
 - Listing all persisted mounts
 - Removing mount configurations
 
 Issue #192: Migrated from SQLAlchemy ORM (MountConfigModel) to MetastoreABC.
+Later refactored to write through public VFS syscalls (sys_write/sys_read)
+instead of the kernel-internal metastore — bricks must not bypass the
+kernel ABI.
 """
 
 import logging

@@ -128,6 +128,16 @@ my-data/
 # ending in -data under the repo root (e.g. nexus-bench-data/, foo-data/) is
 # assumed to be a runtime volume holding admin keys, raft state, and CAS.
 *-data/
+# `data/` is the project-root data dir that ships in the Docker image
+# (default skills live at data/skills/). A developer who runs
+# `nexus serve` from the repo root without setting NEXUS_DATA_DIR drops
+# raft state + redb + CAS into data/, which then bakes into the next
+# `docker compose build` and silently pollutes federation bootstrap.
+# Allow only `data/skills/` to be tracked; everything else under data/
+# is runtime detritus.
+/data/*
+!/data/skills
+!/data/skills/**
 # Runtime state + credentials that can land anywhere `data_dir:` points to.
 .admin-api-key
 .state.json

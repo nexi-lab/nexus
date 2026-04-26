@@ -15,7 +15,7 @@ from sqlalchemy import create_engine
 from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.namespace_manager import NamespaceManager
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -39,7 +39,7 @@ def rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     # Disable InvalidationStream so namespace invalidators fire synchronously.
     # The stream batches events, but these tests expect immediate callback.

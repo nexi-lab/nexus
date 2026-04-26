@@ -223,8 +223,6 @@ mod grpc_cluster {
         use nexus_raft::transport::proto::nexus::core::FileMetadata;
         let metadata = FileMetadata {
             path: "/test/hello.txt".to_string(),
-            backend_name: "local".to_string(),
-            physical_path: "/data/hello.txt".to_string(),
             size: 42,
             mime_type: "text/plain".to_string(),
             version: 1,
@@ -270,7 +268,6 @@ mod grpc_cluster {
 
         let redirect_metadata = FileMetadata {
             path: "/test/redirect.txt".to_string(),
-            backend_name: "local".to_string(),
             size: 10,
             version: 1,
             ..Default::default()
@@ -307,7 +304,6 @@ mod grpc_cluster {
         for i in 0..10 {
             let metadata = FileMetadata {
                 path: format!("/batch/file_{}.txt", i),
-                backend_name: "local".to_string(),
                 size: i as i64 * 100,
                 version: 1,
                 ..Default::default()
@@ -482,8 +478,6 @@ mod grpc_cluster {
         use nexus_raft::transport::proto::nexus::core::FileMetadata;
         let metadata = FileMetadata {
             path: "/docker-test/hello.txt".to_string(),
-            backend_name: "local".to_string(),
-            physical_path: "/data/docker-hello.txt".to_string(),
             size: 123,
             mime_type: "text/plain".to_string(),
             version: 1,
@@ -533,7 +527,6 @@ mod grpc_cluster {
 
         let redirect_metadata = FileMetadata {
             path: "/docker-test/redirect.txt".to_string(),
-            backend_name: "local".to_string(),
             size: 10,
             version: 1,
             ..Default::default()
@@ -566,7 +559,6 @@ mod grpc_cluster {
         for i in 0..10 {
             let metadata = FileMetadata {
                 path: format!("/docker-batch/file_{}.txt", i),
-                backend_name: "local".to_string(),
                 size: i as i64 * 100,
                 version: 1,
                 ..Default::default()

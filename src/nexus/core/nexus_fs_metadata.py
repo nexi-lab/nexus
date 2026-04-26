@@ -801,8 +801,6 @@ class MetadataMixin:
                 )
                 _old_meta = _FM(
                     path=old_path,
-                    backend_name="",
-                    physical_path=_rename_result.old_etag or "",
                     size=_rename_result.old_size or 0,
                     etag=_rename_result.old_etag,
                     version=_rename_result.old_version or 1,
@@ -1288,10 +1286,12 @@ class MetadataMixin:
                 # Check if it's a directory
                 is_dir = self.is_directory(path, context=context)
 
+                # ``backend_name``/``physical_path`` were removed from
+                # FileMetadata — the kernel resolves the physical
+                # location at read time via the mount/route layer, so
+                # batch metadata results no longer surface them.
                 results[path] = {
                     "path": meta.path,
-                    "backend_name": meta.backend_name,
-                    "physical_path": meta.physical_path,
                     "size": meta.size,
                     "etag": meta.etag,
                     "mime_type": meta.mime_type,

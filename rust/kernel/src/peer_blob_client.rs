@@ -164,6 +164,7 @@ impl PeerBlobClient {
             .max_encoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES);
         let mut request = tonic::Request::new(ReadBlobRequest {
             content_hash: content_hash.to_string(),
+            path: String::new(),
         });
         request.set_timeout(self.timeout);
 

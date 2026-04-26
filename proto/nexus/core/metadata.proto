@@ -26,13 +26,9 @@ enum DirEntryType {
 // Timestamps are stored as ISO 8601 strings for cross-language compatibility.
 message FileMetadata {
   // Virtual path in the Nexus filesystem (e.g., "/docs/README.md").
+  // Authoritative key — backends derive any storage-specific key
+  // (relative-to-mount path, hash, etc.) from `path` + the local mount config.
   string path = 1;
-
-  // Storage backend name (e.g., "local", "s3", "gcs").
-  string backend_name = 2;
-
-  // Physical path on the backend storage.
-  string physical_path = 3;
 
   // File size in bytes.
   int64 size = 4;
@@ -73,4 +69,13 @@ message FileMetadata {
   // TTL in seconds for ephemeral content (0 or unset = permanent).
   // Routes to TTL-bucketed volumes for zero-cost expiry (Issue #3405).
   double ttl_seconds = 15;
+
+  // `host:port` of the node that performed the most recent write of this
+  // content (overwritten on every successful write). Pure descriptive
+  // metadata — the kernel does not interpret it. Higher layers (e.g.
+  // federation) compare against the local node address to decide "did I
+  // write this, or did someone else?" and route content fetches
+  // accordingly. Empty / unset on single-node deployments where no node
+  // identity has been published.
+  string last_writer_address = 16;
 }

@@ -36,15 +36,15 @@ class AdminCapability:
 
     # Read capabilities
     READ_ALL = "admin:read:*"  # Read any file
-    READ_SYSTEM = "admin:read:/system/*"  # Read /system paths only
+    READ_SYSTEM = "admin:read:/__sys__/*"  # Read /__sys__ paths only
 
     # Write capabilities
-    WRITE_SYSTEM = "admin:write:/system/*"  # Write to /system
+    WRITE_SYSTEM = "admin:write:/__sys__/*"  # Write to /__sys__
     WRITE_ALL = "admin:write:*"  # Write any file (dangerous)
 
     # Delete capabilities
     DELETE_ANY = "admin:delete:*"  # Delete any file (dangerous)
-    DELETE_SYSTEM = "admin:delete:/system/*"  # Delete /system paths only
+    DELETE_SYSTEM = "admin:delete:/__sys__/*"  # Delete /__sys__ paths only
 
     # ReBAC management
     MANAGE_REBAC = "admin:rebac:*"  # Manage permissions
@@ -64,8 +64,8 @@ class AdminCapability:
             Required capability string
         """
         # System paths require specific capabilities
-        if path.startswith("/system"):
-            return f"admin:{permission}:/system/*"
+        if path.startswith("/__sys__"):
+            return f"admin:{permission}:/__sys__/*"
 
         # Default: require wildcard permission
         return f"admin:{permission}:*"

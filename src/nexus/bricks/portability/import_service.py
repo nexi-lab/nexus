@@ -412,8 +412,6 @@ class ZoneImportService:
 
             metadata = self._file_metadata_class(
                 path=path,
-                backend_name=record.backend_id,
-                physical_path=record.physical_path,
                 size=record.size_bytes,
                 etag=record.content_hash,
                 mime_type=record.file_type,

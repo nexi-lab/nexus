@@ -44,8 +44,6 @@ class TestFilePathModel:
         """Test creating a file path record."""
         file_path = FilePathModel(
             virtual_path="/test/file.txt",
-            backend_id="backend-123",
-            physical_path="/data/file.txt",
             size_bytes=1024,
             content_hash="abc123",
             file_type="text/plain",
@@ -63,8 +61,6 @@ class TestFilePathModel:
         """Test soft delete functionality."""
         file_path = FilePathModel(
             virtual_path="/test/file.txt",
-            backend_id="backend-123",
-            physical_path="/data/file.txt",
             size_bytes=1024,
         )
         session.add(file_path)
@@ -80,8 +76,6 @@ class TestFilePathModel:
         """Test relationship between FilePathModel and FileMetadataModel."""
         file_path = FilePathModel(
             virtual_path="/test/file.txt",
-            backend_id="backend-123",
-            physical_path="/data/file.txt",
             size_bytes=1024,
         )
         session.add(file_path)
@@ -100,8 +94,6 @@ class TestFilePathModel:
         """Test that deleting file path cascades to metadata."""
         file_path = FilePathModel(
             virtual_path="/test/file.txt",
-            backend_id="backend-123",
-            physical_path="/data/file.txt",
             size_bytes=1024,
         )
         session.add(file_path)
@@ -132,8 +124,6 @@ class TestFileMetadataModel:
         # First create a file path
         file_path = FilePathModel(
             virtual_path="/test/file.txt",
-            backend_id="backend-123",
-            physical_path="/data/file.txt",
             size_bytes=1024,
         )
         session.add(file_path)
@@ -162,8 +152,6 @@ class TestFileMetadataModel:
         """Test that a file can have multiple metadata entries."""
         file_path = FilePathModel(
             virtual_path="/test/file.txt",
-            backend_id="backend-123",
-            physical_path="/data/file.txt",
             size_bytes=1024,
         )
         session.add(file_path)
@@ -190,7 +178,6 @@ class TestModelIndexes:
         file_paths_indexes = inspector.get_indexes("file_paths")
         index_names = [idx["name"] for idx in file_paths_indexes]
         # v0.5.0: idx_file_paths_zone_id removed - use ReBAC for multi-zone access control
-        assert "idx_file_paths_backend_id" in index_names
         assert "idx_file_paths_content_hash" in index_names
         assert "idx_file_paths_virtual_path" in index_names
 

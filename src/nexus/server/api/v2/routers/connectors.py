@@ -611,8 +611,6 @@ async def mount_connector(
                                 meta_store.put(
                                     FileMetadata(
                                         path=dir_path,
-                                        backend_name="__skill__",
-                                        physical_path=dir_path,
                                         size=0,
                                         etag=None,
                                         created_at=datetime.now(UTC),

@@ -12,8 +12,11 @@
 
 #![allow(dead_code)]
 
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use pyo3::prelude::*;
+// Brings ``read_unconditional`` / ``read_yielding_to_writer`` into scope
+// — see ``RwLockExt`` in ``kernel.rs`` for the rationale.
+use crate::kernel::RwLockExt;
 use pyo3::types::{PyBytes, PyDict, PyList};
 use std::path::Path;
 use std::sync::Arc;
@@ -231,8 +234,6 @@ fn extract_metadata(
     let _ = py;
     Ok(FileMetadata {
         path: get_str("path")?,
-        backend_name: get_str("backend_name")?,
-        physical_path: get_str("physical_path")?,
         size: obj
             .getattr("size")
             .and_then(|v| v.extract::<u64>())
@@ -250,6 +251,7 @@ fn extract_metadata(
         mime_type: get_opt_str("mime_type")?,
         created_at_ms: extract_opt_datetime_ms(obj, "created_at"),
         modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),
+        last_writer_address: get_opt_str("last_writer_address")?,
     })
 }
 
@@ -280,12 +282,6 @@ fn to_python_metadata<'py>(
         .map_err(err)?;
     let kwargs = PyDict::new(py);
     kwargs.set_item("path", &meta.path).map_err(err)?;
-    kwargs
-        .set_item("backend_name", &meta.backend_name)
-        .map_err(err)?;
-    kwargs
-        .set_item("physical_path", &meta.physical_path)
-        .map_err(err)?;
     kwargs.set_item("size", meta.size).map_err(err)?;
     kwargs.set_item("etag", meta.etag.as_deref()).map_err(err)?;
     kwargs.set_item("version", meta.version).map_err(err)?;
@@ -845,7 +841,17 @@ pub struct PyKernel {
     /// without an extra accessor method that codegen would
     /// have to preserve. Not exposed to Python.
     pub(crate) inner: Arc<Kernel>,
-    hooks: Mutex<HookRegistry>,
+    // RwLock (not Mutex) so a hook callback can re-enter
+    // ``sys_*`` without deadlocking. The recursion is real:
+    // ReBAC's permission_hook reads its own ``/__sys__/rebac/...``
+    // config via ``sys_read`` during a permission check, which
+    // re-enters dispatch_pre_hooks on the same thread. Read sites
+    // call ``read_unconditional`` (the ``RwLockExt`` rename for
+    // parking_lot's ``read_recursive``) so the recursive shared
+    // acquisition always succeeds; writes happen only at hook
+    // register / unregister, never during dispatch, so the writer-
+    // starvation cost does not apply.
+    hooks: RwLock<HookRegistry>,
 }
 
 // Rust-side helpers on PyKernel — NOT exposed to Python (no #[pymethods]).
@@ -865,7 +871,7 @@ impl PyKernel {
     fn new() -> Self {
         Self {
             inner: Arc::new(Kernel::new()),
-            hooks: Mutex::new(HookRegistry::new()),
+            hooks: RwLock::new(HookRegistry::new()),
         }
     }
 
@@ -1195,34 +1201,32 @@ impl PyKernel {
 
     // ── DCache proxy methods ─────────────��─────────────────────────────
 
-    #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]
+    #[pyo3(signature = (path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None, last_writer_address=None))]
     #[allow(clippy::too_many_arguments)]
     fn dcache_put(
         &self,
         path: &str,
-        backend_name: &str,
-        physical_path: &str,
         size: u64,
         entry_type: u8,
         version: u32,
         etag: Option<&str>,
         zone_id: Option<&str>,
         mime_type: Option<&str>,
+        last_writer_address: Option<&str>,
     ) {
         self.inner.dcache_put(
             path,
-            backend_name,
-            physical_path,
             size,
             entry_type,
             version,
             etag,
             zone_id,
             mime_type,
+            last_writer_address,
         );
     }
 
-    fn dcache_get(&self, path: &str) -> Option<(String, String, u8)> {
+    fn dcache_get(&self, path: &str) -> Option<(u8, Option<String>)> {
         self.inner.dcache_get(path)
     }
 
@@ -1230,14 +1234,13 @@ impl PyKernel {
         match self.inner.dcache_get_full(path) {
             Some(e) => {
                 let dict = PyDict::new(py);
-                dict.set_item("backend_name", &e.backend_name)?;
-                dict.set_item("physical_path", &e.physical_path)?;
                 dict.set_item("size", e.size)?;
                 dict.set_item("etag", e.etag.as_deref())?;
                 dict.set_item("version", e.version)?;
                 dict.set_item("entry_type", e.entry_type)?;
                 dict.set_item("zone_id", e.zone_id.as_deref())?;
                 dict.set_item("mime_type", e.mime_type.as_deref())?;
+                dict.set_item("last_writer_address", e.last_writer_address.as_deref())?;
                 Ok(Some(dict.into()))
             }
             None => Ok(None),
@@ -1443,14 +1446,14 @@ impl PyKernel {
             })?;
         let backend = entry.backend.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "llm_start_streaming: mount has no backend: {}",
-                entry.backend_name
+                "llm_start_streaming: mount has no backend at {}",
+                mount_point
             ))
         })?;
         let llm = backend.as_llm_streaming().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "llm_start_streaming: backend {} does not support streaming",
-                entry.backend_name
+                "llm_start_streaming: backend at mount {} does not support streaming",
+                mount_point
             ))
         })?;
         let stream_manager = Arc::clone(&self.inner.stream_manager);
@@ -2019,7 +2022,7 @@ impl PyKernel {
         {
             let adapter = PyInterceptHookAdapter::new(py, hook.clone_ref(py));
             self.hooks
-                .lock()
+                .write()
                 .register(op, Box::new(adapter), hook, has_pre, is_async_post, name);
             Ok(())
         }
@@ -2034,23 +2037,23 @@ impl PyKernel {
     }
 
     fn unregister_hook(&self, py: Python<'_>, op: &str, hook: &Bound<'_, PyAny>) -> bool {
-        self.hooks.lock().unregister(py, op, hook)
+        self.hooks.write().unregister(py, op, hook)
     }
 
     fn get_pre_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
-        self.hooks.lock().get_pre_hooks(py, op)
+        self.hooks.read_unconditional().get_pre_hooks(py, op)
     }
 
     fn get_post_hooks(&self, py: Python<'_>, op: &str) -> (Vec<Py<PyAny>>, Vec<Py<PyAny>>) {
-        self.hooks.lock().get_post_hooks(py, op)
+        self.hooks.read_unconditional().get_post_hooks(py, op)
     }
 
     fn get_all_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
-        self.hooks.lock().get_all_hooks(py, op)
+        self.hooks.read_unconditional().get_all_hooks(py, op)
     }
 
     fn hook_count(&self, op: &str) -> usize {
-        self.hooks.lock().count(op)
+        self.hooks.read_unconditional().count(op)
     }
 
     // ── sys_watch (inotify equivalent) ───────────────────────────────
@@ -2122,7 +2125,7 @@ impl PyKernel {
         if !self.inner.has_hooks(op) {
             return Ok(());
         }
-        let hooks = self.hooks.lock();
+        let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
             match op {
@@ -2162,7 +2165,7 @@ impl PyKernel {
         self.dispatch_post_hooks_sync(op, &hook_ctx);
 
         // 2. Return async hooks for Python to schedule
-        let hooks = self.hooks.lock();
+        let hooks = self.hooks.read_unconditional();
         let (_, async_hooks) = hooks.get_post_hooks(py, op);
         Ok(async_hooks)
     }
@@ -2314,9 +2317,8 @@ impl PyKernel {
             Some(s) => {
                 let dict = PyDict::new(py);
                 dict.set_item("path", &s.path)?;
-                dict.set_item("backend_name", &s.backend_name)?;
-                dict.set_item("physical_path", &s.physical_path)?;
                 dict.set_item("size", s.size)?;
+                dict.set_item("last_writer_address", s.last_writer_address.as_deref())?;
                 dict.set_item("etag", s.etag.as_deref())?;
                 dict.set_item("mime_type", &s.mime_type)?;
                 set_optional_iso_datetime(py, &dict, "created_at", s.created_at_ms)?;
@@ -2974,7 +2976,15 @@ impl PyKernel {
     /// consulting the kernel's reverse index (`cross_zone_mounts`)
     /// so routing stays consistent — reads through a removed
     /// zone's mount path correctly fail post-remove.
-    fn zone_remove(&self, zone_id: &str) -> PyResult<()> {
+    ///
+    /// `force=true` honors the POSIX-style ``unlink while i_links
+    /// > 0`` bypass that ``remove_zone`` already supports — used
+    /// by ``federation_remove_zone(force=true)`` callers when the
+    /// cascade above can't drain references in time (race with
+    /// in-flight raft replication, partial unmount on a follower,
+    /// …) and the caller knows it's safe to drop anyway.
+    #[pyo3(signature = (zone_id, force=false))]
+    fn zone_remove(&self, zone_id: &str, force: bool) -> PyResult<()> {
         let zm = self
             .inner
             .zone_manager_arc()
@@ -2984,7 +2994,7 @@ impl PyKernel {
                 tracing::warn!("cascade unmount {parent_zone}{mount_path} failed: {e}");
             }
         }
-        zm.remove_zone(zone_id, false)
+        zm.remove_zone(zone_id, force)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
@@ -3212,7 +3222,7 @@ impl PyKernel {
 impl PyKernel {
     /// Internal pre-hook dispatch (used by Tier 1 syscalls).
     fn dispatch_pre_hooks_inner(&self, op: &str, hook_ctx: &Py<PyAny>) -> PyResult<()> {
-        let hooks = self.hooks.lock();
+        let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
             match op {
@@ -3238,7 +3248,7 @@ impl PyKernel {
     /// Async hooks are NOT handled here — Python thin wrapper schedules
     /// them via asyncio.gather (codegen or manual).
     fn dispatch_post_hooks_sync(&self, op: &str, hook_ctx: &Py<PyAny>) {
-        let hooks = self.hooks.lock();
+        let hooks = self.hooks.read_unconditional();
         let impls = hooks.get_post_hook_impls(op);
         for hook in impls {
             match op {

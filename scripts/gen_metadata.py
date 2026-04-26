@@ -77,6 +77,7 @@ NULLABLE_STRING_FIELDS: set[str] = {
     "created_by",
     "owner_id",
     "target_zone_id",
+    "last_writer_address",
 }
 
 # Non-default defaults
@@ -89,33 +90,29 @@ FIELD_DEFAULTS: dict[str, str] = {
 # String fields that get interned in CompactFileMetadata
 INTERNED_FIELDS: list[str] = [
     "path",
-    "backend_name",
-    "physical_path",
     "etag",
     "mime_type",
     "zone_id",
     "created_by",
     "owner_id",
     "target_zone_id",
+    "last_writer_address",
 ]
 
 # Compact field name mapping
 COMPACT_FIELD_NAMES: dict[str, str] = {
     "path": "path_id",
-    "backend_name": "backend_name_id",
-    "physical_path": "physical_path_id",
     "etag": "etag_id",
     "mime_type": "mime_type_id",
     "zone_id": "zone_id_intern",
     "created_by": "created_by_id",
     "owner_id": "owner_id_intern",
     "target_zone_id": "target_zone_id_intern",
+    "last_writer_address": "last_writer_address_id",
 }
 
 # from_proto fallback: when a proto field is empty, use another field's value
-FROM_PROTO_FALLBACKS: dict[str, str] = {
-    "physical_path": "proto.path",
-}
+FROM_PROTO_FALLBACKS: dict[str, str] = {}
 
 # Fields stored directly (not interned) in CompactFileMetadata
 DIRECT_COMPACT_FIELDS: dict[str, str] = {
@@ -349,8 +346,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.backend_address import BackendAddress
-
 if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
 {enum_constants_block}
@@ -364,23 +359,6 @@ class FileMetadata:
 
 {fields_block}
 {enum_properties_block}
-    @property
-    def backend_address(self) -> BackendAddress:
-        """Parse backend_name into typed BackendAddress (type + origin nodes).
-
-        Returns:
-            BackendAddress with backend_type and origins tuple.
-
-        Example:
-            >>> meta = FileMetadata(path="/a", backend_name="local@10.0.0.5:50051",
-            ...                     physical_path="abc", size=0)
-            >>> meta.backend_address.backend_type
-            'local'
-            >>> meta.backend_address.origins
-            ('10.0.0.5:50051',)
-        """
-        return BackendAddress.parse(self.backend_name)
-
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict.
 
@@ -411,12 +389,6 @@ class FileMetadata:
         # DT_PIPE/DT_STREAM inodes: in-memory buffers, no backend storage required
         if self.entry_type in (3, 4):  # DT_PIPE, DT_STREAM
             return
-
-        if not self.backend_name:
-            raise ValidationError("backend_name is required", path=self.path)
-
-        if not self.physical_path:
-            raise ValidationError("physical_path is required", path=self.path)
 
         if self.size < 0:
             raise ValidationError(f"size cannot be negative, got {{self.size}}", path=self.path)
@@ -702,7 +674,10 @@ def generate_mapper_py(fields: list[dict[str, str]]) -> str:
     to_json_block = "\n".join(to_json_lines)
 
     # --- Build known field names set ---
-    known_fields = ", ".join(f'"{f["name"]}"' for f in fields)
+    # Multi-line layout matches ruff format output so the generated
+    # file passes `ruff format --check` without a post-codegen pass.
+    known_fields = "\n".join(f'        "{f["name"]}",' for f in fields)
+    known_fields = "\n" + known_fields + "\n    "
 
     return f'''\
 """Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
@@ -725,7 +700,9 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Known FileMetadata field names (generated from proto).
 # Used by from_json() to strip unknown keys from external dicts.
-_KNOWN_FIELDS: frozenset[str] = frozenset({{{known_fields}}})
+_KNOWN_FIELDS: frozenset[str] = frozenset(
+    {{{known_fields}}}
+)
 
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
@@ -753,8 +730,6 @@ def _utcnow_naive() -> datetime:
 
 PROTO_TO_SQL: dict[str, str | None] = {{
     "path": "virtual_path",
-    "backend_name": "backend_id",
-    "physical_path": "physical_path",
     "size": "size_bytes",
     "etag": "content_hash",
     "mime_type": "file_type",
@@ -766,6 +741,7 @@ PROTO_TO_SQL: dict[str, str | None] = {{
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
+    "last_writer_address": None,  # SQL backend (FilePathModel) doesn't currently persist last writer; add a column when needed.
 }}
 
 
@@ -841,8 +817,6 @@ class MetadataMapper:
         """
         values: dict[str, Any] = {{
             "virtual_path": metadata.path,
-            "backend_id": metadata.backend_name or "local",
-            "physical_path": metadata.physical_path or metadata.path,
             "size_bytes": metadata.size or 0,
             "content_hash": metadata.etag,
             "file_type": metadata.mime_type,
@@ -859,8 +833,6 @@ class MetadataMapper:
     def to_file_path_update_values(metadata: FileMetadata) -> dict[str, Any]:
         """Convert FileMetadata to dict for UPDATE operations."""
         return {{
-            "backend_id": metadata.backend_name,
-            "physical_path": metadata.physical_path,
             "size_bytes": metadata.size or 0,
             "content_hash": metadata.etag,
             "file_type": metadata.mime_type,

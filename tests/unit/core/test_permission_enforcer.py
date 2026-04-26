@@ -114,8 +114,8 @@ class TestPermissionEnforcer:
         # Read operations allowed on any path
         assert enforcer.check("/any/path", Permission.READ, ctx) is True
         # Write/execute operations only allowed on /system/* paths
-        assert enforcer.check("/system/any/path", Permission.WRITE, ctx) is True
-        assert enforcer.check("/system/any/path", Permission.EXECUTE, ctx) is True
+        assert enforcer.check("/__sys__/any/path", Permission.WRITE, ctx) is True
+        assert enforcer.check("/__sys__/any/path", Permission.EXECUTE, ctx) is True
 
     def test_no_rebac_manager_denies_all(self):
         """Test that without ReBAC manager, access is denied (secure by default)."""

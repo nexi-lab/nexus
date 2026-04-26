@@ -21,8 +21,6 @@ from nexus.storage.models import FilePathModel
 PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     # Proto field -> FilePathModel column (None = not in SQL, by design)
     "path": "virtual_path",
-    "backend_name": "backend_id",
-    "physical_path": "physical_path",
     "size": "size_bytes",
     "etag": "content_hash",
     "mime_type": "file_type",
@@ -34,6 +32,7 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     "target_zone_id": None,  # DT_MOUNT target, not in SQL
     "owner_id": "posix_uid",
     "ttl_seconds": None,  # Storage-layer TTL routing, not persisted in SQL (#3405)
+    "last_writer_address": None,  # Federation routing hint, not persisted in SQL
 }
 
 # Fields that exist in FilePathModel but NOT in FileMetadata (PG-only concerns)
@@ -128,8 +127,6 @@ class TestRoundtripConsistency:
         now = datetime(2026, 2, 10, 12, 0, 0)
         metadata = FileMetadata(
             path="/zone1/docs/readme.md",
-            backend_name="s3",
-            physical_path="/bucket/abc123",
             size=2048,
             etag="sha256-xyz789",
             mime_type="text/markdown",
@@ -143,8 +140,6 @@ class TestRoundtripConsistency:
         values = self._metadata_to_file_path_values(metadata)
 
         assert values["virtual_path"] == "/zone1/docs/readme.md"
-        assert values["backend_id"] == "s3"
-        assert values["physical_path"] == "/bucket/abc123"
         assert values["size_bytes"] == 2048
         assert values["content_hash"] == "sha256-xyz789"
         assert values["file_type"] == "text/markdown"
@@ -155,8 +150,6 @@ class TestRoundtripConsistency:
         """None optional fields should map to sensible defaults."""
         metadata = FileMetadata(
             path="/test/file.txt",
-            backend_name="",
-            physical_path="",
             size=0,
             etag=None,
             mime_type=None,
@@ -168,23 +161,20 @@ class TestRoundtripConsistency:
 
         values = self._metadata_to_file_path_values(metadata)
 
-        assert values["backend_id"] == "local"  # default
-        assert values["physical_path"] == "/test/file.txt"  # fallback to path
         assert values["content_hash"] is None
         assert values["file_type"] is None
         assert values["zone_id"] == ROOT_ZONE_ID  # default
         assert values["posix_uid"] is None
 
     def test_fields_not_yet_in_sql_are_documented(self) -> None:
-        """entry_type and target_zone_id are in proto but not yet in SQL.
+        """Proto fields that are deliberately not persisted in SQL.
 
-        This test documents the gap and will fail when we add the columns,
-        reminding us to update the mapping.
+        Documents the intentional gap; will fail if a new field appears
+        without an explicit mapping decision.
         """
         none_mapped = {k for k, v in PROTO_TO_SQL_FIELD_MAP.items() if v is None}
-        # These are the expected gaps — update this when columns are added
-        assert none_mapped == {"entry_type", "target_zone_id", "ttl_seconds"}, (
-            f"Expected only entry_type, target_zone_id, and ttl_seconds to be unmapped, "
-            f"but got: {none_mapped}. "
-            f"Did you add a column to FilePathModel? Update PROTO_TO_SQL_FIELD_MAP."
+        expected = {"entry_type", "target_zone_id", "ttl_seconds", "last_writer_address"}
+        assert none_mapped == expected, (
+            f"Expected SQL-excluded fields {expected}, got {none_mapped}. "
+            f"Did you add/remove a proto field? Update PROTO_TO_SQL_FIELD_MAP."
         )

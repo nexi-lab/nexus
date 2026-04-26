@@ -1073,7 +1073,13 @@ impl ZoneApiService for ZoneApiServiceImpl {
         }))
     }
 
-    /// Serve a CAS blob by content hash (R20.18.7).
+    /// Serve a peer's blob fetch (R20.18.7).
+    ///
+    /// Two addressing modes (see `ReadBlobRequest` proto):
+    ///   - `path` set → delegate to `BlobFetcher::read_path`, which
+    ///     drives the local `VFSRouter` exactly like a local sys_read.
+    ///     Used for federation reads against PAS-backed mounts.
+    ///   - `path` empty → CAS lookup by `content_hash` (existing path).
     ///
     /// Delegates to the kernel-installed `BlobFetcher`. The slot is
     /// late-bound: `ZoneManager::new` spawns the server before the
@@ -1095,7 +1101,12 @@ impl ZoneApiService for ZoneApiServiceImpl {
                 error: "blob fetcher not installed".to_string(),
             }));
         };
-        match fetcher.read_blob(&req.content_hash).await {
+        let result = if !req.path.is_empty() {
+            fetcher.read_path(&req.path).await
+        } else {
+            fetcher.read_blob(&req.content_hash).await
+        };
+        match result {
             Ok(bytes) => Ok(Response::new(ReadBlobResponse {
                 content: bytes,
                 error: String::new(),

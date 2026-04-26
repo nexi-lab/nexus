@@ -97,7 +97,7 @@ IS_SYSTEM_OPTION = click.option(
     "--is-system",
     is_flag=True,
     default=False,
-    help="Run operation as system (limited to /system/* paths).",
+    help="Run operation as system (limited to /__sys__/* paths).",
 )
 
 ADMIN_BACKEND_FEATURES_OPTION = click.option(

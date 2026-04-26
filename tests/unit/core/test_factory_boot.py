@@ -214,6 +214,10 @@ class TestBootSystemServices:
             "observability_subsystem",
             "workspace_registry",  # degradable — None with mock session_factory
             "scheduler_service",  # degradable — None if SchedulerService unavailable
+            # MountManager moved to the wired (post-kernel) tier because the
+            # VFS-backed MetastoreMountStore needs a live NexusFS handle —
+            # system tier returns None and _boot_post_kernel_services fills it.
+            "mount_manager",
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:

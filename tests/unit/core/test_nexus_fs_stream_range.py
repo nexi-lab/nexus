@@ -86,7 +86,6 @@ def stub_fs():
     meta_entry = MagicMock()
     meta_entry.etag = "sha256:abc123"
     meta_entry.size = 34
-    meta_entry.physical_path = "sha256:abc123"
     metadata = MagicMock()
     metadata.get.return_value = meta_entry
 

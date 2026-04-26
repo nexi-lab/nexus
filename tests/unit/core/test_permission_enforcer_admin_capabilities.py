@@ -228,7 +228,7 @@ class TestAdminBypassPathAllowlist:
         enforcer = PermissionEnforcer(
             rebac_manager=rebac,
             allow_admin_bypass=True,
-            admin_bypass_paths=["/admin/*", "/system/*"],
+            admin_bypass_paths=["/admin/*", "/__sys__/*"],
         )
 
         ctx = OperationContext(
@@ -240,7 +240,7 @@ class TestAdminBypassPathAllowlist:
 
         # Paths in allowlist should bypass
         assert enforcer.check("/admin/settings.json", Permission.READ, ctx) is True
-        assert enforcer.check("/system/config.yaml", Permission.READ, ctx) is True
+        assert enforcer.check("/__sys__/config.yaml", Permission.READ, ctx) is True
 
         # ReBAC not called (bypassed)
         assert len(rebac.checks) == 0

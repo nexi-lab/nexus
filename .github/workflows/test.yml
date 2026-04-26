@@ -234,7 +234,13 @@ jobs:
 
       - name: Run self-contained e2e tests
         run: |
-          uv run pytest tests/e2e/self_contained/ -v --timeout=120 -o "addopts="
+          # ``-Xfaulthandler`` plus pytest's built-in ``faulthandler_timeout``
+          # ini option dumps a Python + native stack trace from every thread
+          # if a test hangs > 60s — when the suite stalls, the log shows the
+          # exact frame stuck (PR #3890 hunt for an inter-file hang).
+          uv run python -Xfaulthandler -m pytest tests/e2e/self_contained/ -v \
+            --timeout=120 --timeout-method=signal \
+            -o faulthandler_timeout=60 -o addopts=
         timeout-minutes: 20
 
   e2e-postgres:

@@ -28,7 +28,7 @@ from nexus.bricks.rebac.consistency.metastore_namespace_store import (
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 
 def _check_postgres_available():
@@ -90,8 +90,8 @@ def manager(engine, test_zone):
     manager = ReBACManager(
         engine=engine,
         is_postgresql=True,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
-        version_store=MetastoreVersionStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+        version_store=MetastoreVersionStore(InMemoryNexusFS()),
     )
     yield manager
 

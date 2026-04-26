@@ -18,7 +18,7 @@ from typing import Any
 # ownership/permission structures.  Defined once, used by both variants.
 GLOBAL_NAMESPACES: tuple[str, ...] = (
     "/skills/",
-    "/system/",
+    "/__sys__/",
     "/mnt/",
     "/memory/",
     "/objs/",

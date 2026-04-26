@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
-from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
 from nexus.contracts.types import OperationContext, Permission
 
 
@@ -76,8 +76,13 @@ logger = logging.getLogger(__name__)
 SEQUENTIAL_DEPTH_THRESHOLD = 3
 """Paths with depth <= this use sequential ancestor checks; deeper paths use batch."""
 
-SYSTEM_BYPASS_SCOPE = "/system/"
-"""Prefix for system-bypass write/delete operations."""
+SYSTEM_BYPASS_SCOPE = SYSTEM_PATH_PREFIX
+"""Prefix for system-bypass write/delete operations.
+
+Reuses the kernel's ``SYSTEM_PATH_PREFIX`` (contracts/constants.py).
+The legacy ``/system/`` prefix was a separate, parallel admin namespace —
+collapsed into the canonical kernel system path so the codebase has one
+"system stuff lives here" answer."""
 
 SYSTEM_BYPASS_EXTRA_PREFIXES = ("/nexus/pipes/",)
 """Additional prefixes allowed for system write bypass (e.g. audit pipe)."""
@@ -375,7 +380,7 @@ class PermissionEnforcer:
         """Check if user has permission to perform operation on file.
 
         Permission check with scoped admin/system bypass and audit logging (P0-4):
-        1. System bypass (limited scope) - Read: any path, Write/Delete: /system/* only
+        1. System bypass (limited scope) - Read: any path, Write/Delete: /__sys__/* only
         2. Admin bypass (capability-based) - Requires capabilities and optional path allowlist
         3. ReBAC relationship check - Check permission graph
 
@@ -823,7 +828,7 @@ class PermissionEnforcer:
 
         System bypass is limited to:
         - Read operations on any path (for auto-parse indexing)
-        - Read, write, execute, delete operations on /system/* paths only
+        - Read, write, execute, delete operations on /__sys__/* paths only
 
         Args:
             path: File path
@@ -836,8 +841,8 @@ class PermissionEnforcer:
         if permission == "read":
             return True
 
-        # For other operations, only allow /system paths and approved extras
-        # Use strict matching: /system/ or exactly /system (not /systemdata, etc.)
+        # For other operations, only allow /__sys__ paths and approved extras
+        # Use strict matching: /__sys__/ or exactly /__sys__ (not /__sys__data, etc.)
         allowed = (
             path.startswith(SYSTEM_BYPASS_SCOPE)
             or path == SYSTEM_BYPASS_SCOPE.rstrip("/")
@@ -846,7 +851,7 @@ class PermissionEnforcer:
         if not allowed:
             return False
 
-        # Allow common operations on /system paths
+        # Allow common operations on /__sys__ paths
         return permission in ["write", "execute", "delete"]
 
     def _log_bypass(

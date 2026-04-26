@@ -99,8 +99,7 @@ def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: CASLo
 
     assert meta1 is not None
     assert meta2 is not None
-    assert meta1.etag == meta2.etag  # Same content hash
-    assert meta1.physical_path == meta2.physical_path  # Same physical location
+    assert meta1.etag == meta2.etag  # Same content hash → same CAS blob
 
 
 def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
@@ -241,10 +240,8 @@ def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     meta = embedded_cas.metadata.get("/test.txt")
     assert meta is not None
     assert meta.path == "/test.txt"
-    assert meta.backend_name == "local"
     assert meta.size == len(content)
-    assert meta.etag == meta.physical_path  # In CAS, etag = hash = physical path
-    assert len(meta.etag) == 64  # SHA-256 hash length
+    assert len(meta.etag) == 64  # SHA-256 hash length (kernel resolves blob loc)
 
 
 def test_cas_concurrent_deduplication(

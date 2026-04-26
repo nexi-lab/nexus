@@ -43,8 +43,6 @@ def _make_metadata(
     now = datetime(2026, 2, 10, 12, 0, 0)
     return FileMetadata(
         path=path,
-        backend_name=backend_name,
-        physical_path=physical_path,
         size=size,
         etag=etag,
         mime_type=mime_type,

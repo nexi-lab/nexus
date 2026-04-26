@@ -27,8 +27,6 @@ from nexus.storage.dict_metastore import DictMetastore
 def _metadata(path: str) -> FileMetadata:
     return FileMetadata(
         path=path,
-        backend_name="local",
-        physical_path=f"cas:{path}",
         size=1,
     )
 

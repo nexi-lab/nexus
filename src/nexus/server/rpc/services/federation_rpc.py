@@ -141,8 +141,11 @@ class FederationRPCService:
 
     @rpc_expose(admin_only=True)
     def federation_remove_zone(self, zone_id: str, force: bool = False) -> dict[str, Any]:
-        del force  # cascade unmount happens inside kernel apply-cb
-        self._kernel.zone_remove(zone_id)
+        # Kernel cascade-unmounts in zone_remove() before calling remove_zone.
+        # ``force=true`` is the POSIX-style ``unlink while i_links > 0``
+        # bypass for the case where the cascade can't fully drain references
+        # (e.g. raft replication race on a follower).
+        self._kernel.zone_remove(zone_id, force)
         return {"zone_id": zone_id, "removed": True}
 
     @rpc_expose(admin_only=True)

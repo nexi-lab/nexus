@@ -243,12 +243,18 @@ class ZoneExportService:
                     continue
 
                 # Build FileRecord
+                # ``backend_id`` and ``physical_path`` were removed from
+                # FileMetadata — the kernel now resolves the physical
+                # location at read time via the mount/route layer, so
+                # bundles only need to carry the virtual path. We keep
+                # the FileRecord fields (the .nexus 1.0 schema requires
+                # them) but emit empty strings.
                 record = FileRecord(
                     path_id=getattr(file_meta, "path_id", str(idx)),
                     zone_id=zone_id,
                     virtual_path=file_meta.path,
-                    backend_id=file_meta.backend_name,
-                    physical_path=file_meta.physical_path,
+                    backend_id="",
+                    physical_path="",
                     file_type=file_meta.mime_type,
                     size_bytes=file_meta.size,
                     content_hash=file_meta.etag,

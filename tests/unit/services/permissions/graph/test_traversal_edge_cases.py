@@ -34,7 +34,7 @@ from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVers
 from nexus.bricks.rebac.domain import NamespaceConfig
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -54,8 +54,8 @@ def mgr(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
-        version_store=MetastoreVersionStore(DictMetastore()),
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        version_store=MetastoreVersionStore(InMemoryNexusFS()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield m
     m.close()
@@ -68,8 +68,8 @@ def mgr_shallow(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=3,
-        version_store=MetastoreVersionStore(DictMetastore()),
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        version_store=MetastoreVersionStore(InMemoryNexusFS()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
     yield m
     m.close()

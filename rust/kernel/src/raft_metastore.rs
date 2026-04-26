@@ -131,8 +131,6 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, Metast
         .map_err(|e| MetastoreError::IOError(format!("FileMetadata proto decode: {e}")))?;
     Ok(KernelFileMetadata {
         path: proto.path,
-        backend_name: proto.backend_name,
-        physical_path: proto.physical_path,
         size: proto.size as u64,
         etag: if proto.etag.is_empty() {
             None
@@ -153,6 +151,11 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, Metast
         },
         created_at_ms: None,
         modified_at_ms: None,
+        last_writer_address: if proto.last_writer_address.is_empty() {
+            None
+        } else {
+            Some(proto.last_writer_address)
+        },
     })
 }
 
@@ -164,14 +167,13 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
     // ``ZoneMetastore`` are non-mount kinds whose target is always "".
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
-        backend_name: meta.backend_name.clone(),
-        physical_path: meta.physical_path.clone(),
         size: meta.size as i64,
         etag: meta.etag.clone().unwrap_or_default(),
         version: meta.version as i32,
         entry_type: meta.entry_type as i32,
         zone_id: meta.zone_id.clone().unwrap_or_default(),
         mime_type: meta.mime_type.clone().unwrap_or_default(),
+        last_writer_address: meta.last_writer_address.clone().unwrap_or_default(),
         ..Default::default()
     };
     proto.encode_to_vec()
@@ -304,8 +306,6 @@ mod tests {
     fn proto_roundtrip_preserves_kernel_fields() {
         let meta = KernelFileMetadata {
             path: "/docs/readme.md".to_string(),
-            backend_name: "local".to_string(),
-            physical_path: "abc123".to_string(),
             size: 1024,
             etag: Some("hash".to_string()),
             version: 3,
@@ -314,11 +314,10 @@ mod tests {
             mime_type: Some("text/markdown".to_string()),
             created_at_ms: None,
             modified_at_ms: None,
+            last_writer_address: Some("nexus-1:2028".to_string()),
         };
         let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
         assert_eq!(restored.path, meta.path);
-        assert_eq!(restored.backend_name, meta.backend_name);
-        assert_eq!(restored.physical_path, meta.physical_path);
         assert_eq!(restored.size, meta.size);
         assert_eq!(restored.etag, meta.etag);
         assert_eq!(restored.version, meta.version);
@@ -327,6 +326,7 @@ mod tests {
         assert_eq!(restored.mime_type, meta.mime_type);
         assert_eq!(restored.created_at_ms, None);
         assert_eq!(restored.modified_at_ms, None);
+        assert_eq!(restored.last_writer_address, meta.last_writer_address);
     }
 
     /// R20.3: pure-function translation is unit-testable without a

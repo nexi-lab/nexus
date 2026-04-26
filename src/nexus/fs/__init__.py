@@ -312,7 +312,12 @@ def _resolve_entry_type(spec: Any) -> int:
     return DT_MOUNT
 
 
-def _make_mount_entry(path: str, backend_name: str, *, entry_type: int | None = None) -> Any:
+def _make_mount_entry(
+    path: str,
+    backend_name: str,  # noqa: ARG001 - kept for back-compat with test call sites
+    *,
+    entry_type: int | None = None,
+) -> Any:
     """Create a FileMetadata entry for a mount point.
 
     Shared by mount() and tests to avoid repeating the 13-field construction.
@@ -329,8 +334,6 @@ def _make_mount_entry(path: str, backend_name: str, *, entry_type: int | None = 
     now = datetime.now(UTC)
     return FileMetadata(
         path=path,
-        backend_name=backend_name,
-        physical_path=empty_hash,
         size=0,
         etag=empty_hash,
         mime_type="inode/directory",

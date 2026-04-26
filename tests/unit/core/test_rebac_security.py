@@ -668,7 +668,7 @@ class TestBypassAuditLogging:
         enforcer = PermissionEnforcer(audit_store=audit_store)
         ctx = OperationContext(user_id="system", groups=[], is_system=True)
 
-        enforcer.check("/system/config.json", Permission.READ, ctx)
+        enforcer.check("/__sys__/config.json", Permission.READ, ctx)
 
         audit_store.log_bypass.assert_called_once()
         entry = audit_store.log_bypass.call_args[0][0]

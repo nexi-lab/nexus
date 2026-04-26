@@ -57,9 +57,6 @@ pub struct MountEntry {
     /// `ZoneMetastore` here per zone.
     pub metastore: Option<Arc<dyn Metastore>>,
 
-    /// Cosmetic name reported by introspection / logs.
-    pub backend_name: String,
-
     /// True when this mount is an external connector whose reads/writes
     /// must be handled by Python (no Rust fast path available).
     pub is_external: bool,
@@ -84,11 +81,10 @@ impl MountEntry {
     /// Construct a new entry. `metastore` is typically `None` at mount time
     /// and installed later via `VFSRouter::install_metastore` (federation),
     /// or set up-front via `with_metastore` (standalone redb).
-    pub fn new(backend: Option<Arc<dyn ObjectStore>>, backend_name: impl Into<String>) -> Self {
+    pub fn new(backend: Option<Arc<dyn ObjectStore>>) -> Self {
         Self {
             backend,
             metastore: None,
-            backend_name: backend_name.into(),
             is_external: false,
             target_zone_id: None,
             external_transport: None,
@@ -155,8 +151,11 @@ pub struct RouteResult {
     /// True when the routed mount is an external connector — Python must
     /// dispatch the operation through a Python-side backend adapter.
     pub is_external: bool,
-    /// Backend name from the mount entry (e.g. "cas-local", "hn", "cli:gh").
-    pub backend_name: String,
+    /// True when the routed backend is content-addressed (CAS).
+    ///
+    /// Derived from the backend trait's `as_cas()` downcast — single
+    /// source of truth, no string-prefix sniffing on a label.
+    pub is_cas: bool,
 }
 
 /// Legacy alias so kernel/generated code using the pre-migration type name
@@ -213,14 +212,13 @@ impl VFSRouter {
         &self,
         mount_point: &str,
         zone_id: &str,
-        backend_name: &str,
         backend: Option<Arc<dyn ObjectStore>>,
         is_external: bool,
     ) {
         self.add(
             mount_point,
             zone_id,
-            MountEntry::new(backend, backend_name).with_is_external(is_external),
+            MountEntry::new(backend).with_is_external(is_external),
         );
     }
 
@@ -233,7 +231,6 @@ impl VFSRouter {
         &self,
         mount_point: &str,
         zone_id: &str,
-        backend_name: &str,
         backend: Option<Arc<dyn ObjectStore>>,
         target_zone_id: &str,
         is_external: bool,
@@ -241,7 +238,7 @@ impl VFSRouter {
         self.add(
             mount_point,
             zone_id,
-            MountEntry::new(backend, backend_name)
+            MountEntry::new(backend)
                 .with_is_external(is_external)
                 .with_target_zone(target_zone_id),
         );
@@ -266,7 +263,7 @@ impl VFSRouter {
             entry.metastore = Some(metastore);
             return;
         }
-        let mut entry = MountEntry::new(None, "federation");
+        let mut entry = MountEntry::new(None);
         entry.metastore = Some(metastore);
         self.entries.insert(canonical_key.to_string(), entry);
     }
@@ -475,7 +472,14 @@ impl VFSRouter {
                 let mount_point = current.to_string();
                 let backend_path = strip_mount_prefix(&canonical, current);
                 let is_external = entry.is_external;
-                let backend_name = entry.backend_name.clone();
+                // CAS detection via trait downcast — no string sniffing.
+                // Mounts with no Rust backend (Python-side connector) are
+                // not CAS.
+                let is_cas = entry
+                    .backend
+                    .as_ref()
+                    .map(|b| b.as_cas().is_some())
+                    .unwrap_or(false);
                 let resolved_zone = entry
                     .target_zone_id
                     .clone()
@@ -487,7 +491,7 @@ impl VFSRouter {
                     backend_path,
                     zone_id: resolved_zone,
                     is_external,
-                    backend_name,
+                    is_cas,
                 });
             }
 
@@ -709,7 +713,7 @@ mod tests {
     use super::*;
 
     fn entry() -> MountEntry {
-        MountEntry::new(None, "test")
+        MountEntry::new(None)
     }
 
     #[test]
@@ -953,17 +957,17 @@ mod tests {
         table.add(
             "/corp",
             "root",
-            MountEntry::new(None, "backend-corp").with_metastore(corp_a),
+            MountEntry::new(None).with_metastore(corp_a),
         );
         table.add(
             "/family/work",
             "root",
-            MountEntry::new(None, "backend-corp-xlink").with_metastore(corp_b),
+            MountEntry::new(None).with_metastore(corp_b),
         );
         table.add(
             "/family",
             "root",
-            MountEntry::new(None, "backend-family").with_metastore(family),
+            MountEntry::new(None).with_metastore(family),
         );
 
         let mut corp_points = table.mount_points_for_coherence_key(CORP_KEY);

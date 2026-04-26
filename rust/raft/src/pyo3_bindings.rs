@@ -852,17 +852,17 @@ mod mount_helpers_tests {
     /// Mount + dir entries round-trip through encode/decode with the
     /// expected field fidelity: DT_MOUNT keeps ``target_zone_id``,
     /// DT_DIR carries empty ``target_zone_id``, and at a shared path
-    /// the two only differ in ``entry_type`` / ``backend_name`` /
-    /// ``target_zone_id`` (the identifying triplet).
+    /// the two only differ in ``entry_type`` / ``target_zone_id``
+    /// (the identifying pair after the schema cleanup that dropped
+    /// ``backend_name``).
     #[test]
     fn encode_file_metadata_roundtrip_fidelity() {
-        let mount_bytes = encode_file_metadata("/x", "mount", "", DT_MOUNT, "zone-a", "zone-b");
-        let dir_bytes = encode_file_metadata("/x", "virtual", "", DT_DIR, "zone-a", "");
+        let mount_bytes = encode_file_metadata("/x", DT_MOUNT, "zone-a", "zone-b");
+        let dir_bytes = encode_file_metadata("/x", DT_DIR, "zone-a", "");
 
         let m = decode_file_metadata(&mount_bytes).unwrap();
         assert_eq!(m.path, "/x");
         assert_eq!(m.entry_type, DT_MOUNT);
-        assert_eq!(m.backend_name, "mount");
         assert_eq!(m.zone_id, "zone-a");
         assert_eq!(m.target_zone_id, "zone-b");
 
@@ -870,11 +870,10 @@ mod mount_helpers_tests {
         assert_eq!(d.entry_type, DT_DIR);
         assert_eq!(d.target_zone_id, "");
 
-        // Mount + dir at the same path differ only in the identifying triplet.
+        // Mount + dir at the same path differ only in entry_type / target_zone_id.
         assert_eq!(m.path, d.path);
         assert_eq!(m.zone_id, d.zone_id);
         assert_ne!(m.entry_type, d.entry_type);
-        assert_ne!(m.backend_name, d.backend_name);
         assert_ne!(m.target_zone_id, d.target_zone_id);
     }
 

@@ -316,8 +316,6 @@ class WorkspaceManager:
                 # No need to read/write content - it's already in CAS!
                 file_meta = FileMetadata(
                     path=full_path,
-                    backend_name="local",  # Backend name for CAS
-                    physical_path=entry.content_hash,  # CAS uses hash as physical path
                     size=entry.size,
                     etag=entry.content_hash,
                     mime_type=entry.mime_type,

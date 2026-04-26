@@ -98,8 +98,6 @@ class VersionManager:
 
             return FileMetadata(
                 path=file_path.virtual_path,
-                backend_name=file_path.backend_id,
-                physical_path=version_entry.content_hash,  # CAS: hash is the physical path
                 size=version_entry.size_bytes,
                 etag=version_entry.content_hash,
                 mime_type=version_entry.mime_type,

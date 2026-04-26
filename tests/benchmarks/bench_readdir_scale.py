@@ -51,8 +51,6 @@ def _make_entries(n: int, *, prefix: str = "/bigdir/", dirs_every: int = 0) -> l
         entries.append(
             FileMetadata(
                 path=path,
-                backend_name="local",
-                physical_path=f"/data{path}",
                 size=0 if is_dir else 1024,
                 entry_type=1 if is_dir else 0,
                 zone_id=ZONE_ID,

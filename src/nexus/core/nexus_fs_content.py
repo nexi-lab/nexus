@@ -584,8 +584,6 @@ class ContentMixin:
                 )
                 _old_metadata = FileMetadata(
                     path=path,
-                    backend_name="",
-                    physical_path=result.old_etag or "",
                     size=result.old_size or 0,
                     etag=result.old_etag,
                     version=result.old_version or 1,
@@ -596,8 +594,6 @@ class ContentMixin:
             _ctx = context or OperationContext(user_id="anonymous", groups=[])
             _meta_obj = FileMetadata(
                 path=path,
-                backend_name="",
-                physical_path=result.content_id or "",
                 size=result.size,
                 etag=result.content_id,
                 version=result.version,
@@ -751,8 +747,6 @@ class ContentMixin:
                 content_hash=_cid,
                 metadata=FileMetadata(
                     path=path,
-                    backend_name="",
-                    physical_path=_cid,
                     size=result.size,
                     etag=result.content_id,
                     version=result.version,
@@ -1268,8 +1262,6 @@ class ContentMixin:
                 metadata_list.append(
                     FileMetadata(
                         path=path,
-                        backend_name="",
-                        physical_path=r.content_id or "",
                         size=r.size,
                         etag=r.content_id,
                         version=r.version,
@@ -1290,8 +1282,6 @@ class ContentMixin:
                 metadata_list.append(
                     FileMetadata(
                         path=path,
-                        backend_name="",
-                        physical_path=wr.get("etag", ""),
                         size=len(content),
                         etag=wr.get("etag", ""),
                         version=wr.get("version", 1),

@@ -19,7 +19,7 @@ _sym_db = _symbol_database.Default()
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x19nexus/core/metadata.proto\x12\nnexus.core"\xc2\x02\n\x0c\x46ileMetadata\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x14\n\x0c\x62\x61\x63kend_name\x18\x02 \x01(\t\x12\x15\n\rphysical_path\x18\x03 \x01(\t\x12\x0c\n\x04size\x18\x04 \x01(\x03\x12\x0c\n\x04\x65tag\x18\x05 \x01(\t\x12\x11\n\tmime_type\x18\x06 \x01(\t\x12\x12\n\ncreated_at\x18\x07 \x01(\t\x12\x13\n\x0bmodified_at\x18\x08 \x01(\t\x12\x0f\n\x07version\x18\t \x01(\x05\x12\x0f\n\x07zone_id\x18\n \x01(\t\x12\x10\n\x08owner_id\x18\x0c \x01(\t\x12,\n\nentry_type\x18\r \x01(\x0e\x32\x18.nexus.core.DirEntryType\x12\x16\n\x0etarget_zone_id\x18\x0e \x01(\t\x12\x13\n\x0bttl_seconds\x18\x0f \x01(\x01J\x04\x08\x0b\x10\x0cR\ncreated_by*i\n\x0c\x44irEntryType\x12\n\n\x06\x44T_REG\x10\x00\x12\n\n\x06\x44T_DIR\x10\x01\x12\x0c\n\x08\x44T_MOUNT\x10\x02\x12\x0b\n\x07\x44T_PIPE\x10\x03\x12\r\n\tDT_STREAM\x10\x04\x12\x17\n\x13\x44T_EXTERNAL_STORAGE\x10\x05\x62\x06proto3'
+    b'\n\x19nexus/core/metadata.proto\x12\nnexus.core"\xb2\x02\n\x0c\x46ileMetadata\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04size\x18\x04 \x01(\x03\x12\x0c\n\x04\x65tag\x18\x05 \x01(\t\x12\x11\n\tmime_type\x18\x06 \x01(\t\x12\x12\n\ncreated_at\x18\x07 \x01(\t\x12\x13\n\x0bmodified_at\x18\x08 \x01(\t\x12\x0f\n\x07version\x18\t \x01(\x05\x12\x0f\n\x07zone_id\x18\n \x01(\t\x12\x10\n\x08owner_id\x18\x0c \x01(\t\x12,\n\nentry_type\x18\r \x01(\x0e\x32\x18.nexus.core.DirEntryType\x12\x16\n\x0etarget_zone_id\x18\x0e \x01(\t\x12\x13\n\x0bttl_seconds\x18\x0f \x01(\x01\x12\x1b\n\x13last_writer_address\x18\x10 \x01(\tJ\x04\x08\x0b\x10\x0cR\ncreated_by*i\n\x0c\x44irEntryType\x12\n\n\x06\x44T_REG\x10\x00\x12\n\n\x06\x44T_DIR\x10\x01\x12\x0c\n\x08\x44T_MOUNT\x10\x02\x12\x0b\n\x07\x44T_PIPE\x10\x03\x12\r\n\tDT_STREAM\x10\x04\x12\x17\n\x13\x44T_EXTERNAL_STORAGE\x10\x05\x62\x06proto3'
 )
 
 _globals = globals()
@@ -27,8 +27,8 @@ _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "nexus.core.metadata_pb2", _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
     DESCRIPTOR._loaded_options = None
-    _globals["_DIRENTRYTYPE"]._serialized_start = 366
-    _globals["_DIRENTRYTYPE"]._serialized_end = 471
+    _globals["_DIRENTRYTYPE"]._serialized_start = 350
+    _globals["_DIRENTRYTYPE"]._serialized_end = 455
     _globals["_FILEMETADATA"]._serialized_start = 42
-    _globals["_FILEMETADATA"]._serialized_end = 364
+    _globals["_FILEMETADATA"]._serialized_end = 348
 # @@protoc_insertion_point(module_scope)

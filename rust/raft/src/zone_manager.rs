@@ -40,8 +40,6 @@ pub(crate) const I_LINKS_COUNT_KEY: &str = "__i_links_count__";
 /// Encode a minimal `FileMetadata` proto for federation mount writes.
 pub(crate) fn encode_file_metadata(
     path: &str,
-    backend_name: &str,
-    physical_path: &str,
     entry_type: i32,
     zone_id: &str,
     target_zone_id: &str,
@@ -51,8 +49,6 @@ pub(crate) fn encode_file_metadata(
 
     let proto = ProtoFileMetadata {
         path: path.to_string(),
-        backend_name: backend_name.to_string(),
-        physical_path: physical_path.to_string(),
         entry_type,
         zone_id: zone_id.to_string(),
         target_zone_id: target_zone_id.to_string(),
@@ -631,7 +627,7 @@ impl ZoneManager {
 
         // Try to write — propose forwards to leader if we're a follower
         // and reachable; errors mean leader unreachable / not elected.
-        let bytes = encode_file_metadata("/", "virtual", "", DT_DIR, root_zone_id, "");
+        let bytes = encode_file_metadata("/", DT_DIR, root_zone_id, "");
         match propose_set_metadata(&handle, &node, "/", bytes) {
             Ok(()) => {
                 tracing::info!("Root '/' created in zone '{}'", root_zone_id);
@@ -673,13 +669,11 @@ impl ZoneManager {
                 return Ok(());
             }
         } else {
-            let dir_bytes =
-                encode_file_metadata(local_path, "virtual", "", DT_DIR, parent_zone, "");
+            let dir_bytes = encode_file_metadata(local_path, DT_DIR, parent_zone, "");
             propose_set_metadata(&handle, &parent_node, local_path, dir_bytes)?;
         }
 
-        let mount_bytes =
-            encode_file_metadata(local_path, "mount", "", DT_MOUNT, parent_zone, target_zone);
+        let mount_bytes = encode_file_metadata(local_path, DT_MOUNT, parent_zone, target_zone);
         propose_set_metadata(&handle, &parent_node, local_path, mount_bytes)
     }
 
@@ -896,20 +890,13 @@ impl ZoneManager {
             }
         } else {
             // Auto-create DT_DIR (mkdir -p semantics).
-            let dir_bytes =
-                encode_file_metadata(mount_path, "virtual", "", DT_DIR, parent_zone_id, "");
+            let dir_bytes = encode_file_metadata(mount_path, DT_DIR, parent_zone_id, "");
             propose_set_metadata(&handle, &parent_node, mount_path, dir_bytes)?;
         }
 
         // Replace DT_DIR with DT_MOUNT (shadows original contents).
-        let mount_bytes = encode_file_metadata(
-            mount_path,
-            "mount",
-            "",
-            DT_MOUNT,
-            parent_zone_id,
-            target_zone_id,
-        );
+        let mount_bytes =
+            encode_file_metadata(mount_path, DT_MOUNT, parent_zone_id, target_zone_id);
         propose_set_metadata(&handle, &parent_node, mount_path, mount_bytes)?;
 
         if increment_links {
@@ -954,7 +941,7 @@ impl ZoneManager {
         };
 
         // Restore DT_DIR at the mount point.
-        let dir_bytes = encode_file_metadata(mount_path, "virtual", "", DT_DIR, parent_zone_id, "");
+        let dir_bytes = encode_file_metadata(mount_path, DT_DIR, parent_zone_id, "");
         propose_set_metadata(&handle, &parent_node, mount_path, dir_bytes)?;
 
         if let Some(ref target_id) = target_zone_id_opt {
@@ -1067,7 +1054,7 @@ impl ZoneManager {
         }
 
         if !root_written {
-            let root_bytes = encode_file_metadata("/", "virtual", "", DT_DIR, new_zone_id, "");
+            let root_bytes = encode_file_metadata("/", DT_DIR, new_zone_id, "");
             propose_set_metadata(&handle, &new_node, "/", root_bytes)?;
         }
 
@@ -1123,8 +1110,7 @@ impl ZoneManager {
         // Encode as a DT_REG FileMetadata; target_zone_id carries the
         // advertised zone. backend_name is a marker that tells readers
         // "this is a share registry row, not a user inode".
-        let value =
-            encode_file_metadata(&key, "share", "", DT_REG, contracts::ROOT_ZONE_ID, zone_id);
+        let value = encode_file_metadata(&key, DT_REG, contracts::ROOT_ZONE_ID, zone_id);
         let handle = self.runtime.handle().clone();
         propose_set_metadata(&handle, &root, &key, value)
     }

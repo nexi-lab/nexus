@@ -434,8 +434,6 @@ class TestSQLiteMetastore:
 
         fm = FileMetadata(
             path="/test/file.txt",
-            backend_name="local",
-            physical_path="abc123",
             size=42,
             etag="abc123",
             mime_type="text/plain",

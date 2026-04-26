@@ -1738,7 +1738,7 @@ impl ZoneConsensus<super::state_machine::FullStateMachine> {
     /// for the kernel's startup replay (R20.16.4). Uses ``try_read`` so
     /// a contended lock returns an empty Vec rather than blocking —
     /// the kernel's reconcile loop handles "come back later" naturally.
-    pub fn iter_dt_mount_entries(&self) -> super::Result<Vec<(String, String, String)>> {
+    pub fn iter_dt_mount_entries(&self) -> super::Result<Vec<(String, String)>> {
         match self.state_machine.try_read() {
             Ok(sm) => sm.iter_dt_mount_entries(),
             Err(_) => Ok(Vec::new()),

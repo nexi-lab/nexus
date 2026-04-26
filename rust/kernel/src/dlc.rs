@@ -80,12 +80,12 @@ impl DriverLifecycleCoordinator {
         kernel.add_mount(
             mount_point,
             zone_id,
-            backend_name,
             backend,
             metastore,
             raft_backend,
             is_external,
         )?;
+        let _ = backend_name; // accepted for ABI compat; no longer plumbed.
 
         // 2. Write DT_MOUNT metadata entry (best-effort).
         // R20.3: the ZoneMetastore (per-mount) and LocalMetastore (global
@@ -97,8 +97,6 @@ impl DriverLifecycleCoordinator {
         kernel.with_metastore(&canonical, |ms| {
             let meta = crate::metastore::FileMetadata {
                 path: mount_point.to_string(),
-                backend_name: backend_name.to_string(),
-                physical_path: String::new(),
                 size: 0,
                 etag: None,
                 version: 1,
@@ -107,16 +105,20 @@ impl DriverLifecycleCoordinator {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             };
             let _ = ms.put(mount_point, meta);
         });
+        // ``backend_name`` (the legacy parameter to this fn) is kept for
+        // API compatibility with callers but no longer persisted in the
+        // metadata record — each node decides the backend from its own
+        // mount table at read time.
+        let _ = backend_name;
 
         // 3. DCache entry for mount point
         kernel.dcache_put_entry(
             mount_point,
             CachedEntry {
-                backend_name: backend_name.to_string(),
-                physical_path: String::new(),
                 size: 0,
                 etag: None,
                 version: 1,
@@ -125,6 +127,7 @@ impl DriverLifecycleCoordinator {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         );
 

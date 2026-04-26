@@ -56,13 +56,12 @@ impl Metastore for RemoteMetastore {
         let payload = serde_json::json!({
             "path": path,
             "entry_type": metadata.entry_type,
-            "backend_name": metadata.backend_name,
-            "physical_path": metadata.physical_path,
             "size": metadata.size,
             "etag": metadata.etag,
             "version": metadata.version,
             "zone_id": metadata.zone_id,
             "mime_type": metadata.mime_type,
+            "last_writer_address": metadata.last_writer_address,
         });
         let bytes =
             serde_json::to_vec(&payload).map_err(|e| MetastoreError::IOError(e.to_string()))?;
@@ -242,17 +241,6 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        backend_name: obj
-            .get("backend_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        physical_path: obj
-            .get("physical_path")
-            .or_else(|| obj.get("content_id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
         size: obj.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
         etag: obj
             .get("etag")
@@ -271,5 +259,9 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
             .map(|s| s.to_string()),
         created_at_ms: obj.get("created_at_ms").and_then(|v| v.as_i64()),
         modified_at_ms: obj.get("modified_at_ms").and_then(|v| v.as_i64()),
+        last_writer_address: obj
+            .get("last_writer_address")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     })
 }

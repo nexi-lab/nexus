@@ -275,8 +275,6 @@ class TestDTPipeMetadata:
     def test_is_pipe_property(self) -> None:
         meta = FileMetadata(
             path="/nexus/pipes/test",
-            backend_name="pipe",
-            physical_path="mem://",
             size=0,
             entry_type=DT_PIPE,
         )
@@ -285,40 +283,14 @@ class TestDTPipeMetadata:
         assert meta.is_dir is False
         assert meta.is_mount is False
 
-    def test_validate_skips_backend_checks_for_pipe(self) -> None:
-        """DT_PIPE inodes don't need backend_name/physical_path validation."""
-        meta = FileMetadata(
-            path="/nexus/pipes/test",
-            backend_name="",
-            physical_path="",
-            size=0,
-            entry_type=DT_PIPE,
-        )
-        # Should NOT raise -- validate() returns early for DT_PIPE
-        meta.validate()
-
     def test_validate_still_checks_path_for_pipe(self) -> None:
         """DT_PIPE still needs a valid path."""
         meta = FileMetadata(
             path="",
-            backend_name="",
-            physical_path="",
             size=0,
             entry_type=DT_PIPE,
         )
         with pytest.raises(Exception, match="path is required"):
-            meta.validate()
-
-    def test_regular_file_still_validates_backend(self) -> None:
-        """Ensure DT_PIPE skip doesn't break regular file validation."""
-        meta = FileMetadata(
-            path="/regular/file",
-            backend_name="",
-            physical_path="",
-            size=0,
-            entry_type=DT_REG,
-        )
-        with pytest.raises(Exception, match="backend_name is required"):
             meta.validate()
 
 
@@ -334,8 +306,6 @@ class TestSysSetAttrUpsert:
         """sys_setattr on existing inode only updates mutable fields."""
         meta = FileMetadata(
             path="/existing/file",
-            backend_name="local",
-            physical_path="/data/file",
             size=100,
             entry_type=DT_REG,
             mime_type="text/plain",
@@ -350,8 +320,6 @@ class TestSysSetAttrUpsert:
         """entry_type should not change after creation."""
         meta = FileMetadata(
             path="/existing/file",
-            backend_name="local",
-            physical_path="/data/file",
             size=100,
             entry_type=DT_REG,
         )

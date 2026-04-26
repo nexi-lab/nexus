@@ -768,15 +768,15 @@ class CacheWarmer:
                     self._current_stats.content_warmed += 1
                     self._current_stats.bytes_warmed += len(content_bytes)
 
-                    # Also warm L2 disk cache if available
-                    # In CAS storage, physical_path is the content hash
+                    # Also warm L2 disk cache if available.
+                    # ``physical_path`` was removed from FileMetadata; the
+                    # content hash for CAS-backed entries now lives in
+                    # ``etag``, which is the canonical identifier the L2
+                    # cache keys on.
                     if self._local_disk_cache and isinstance(content, bytes):
                         metadata = self._nexus.metadata.get(path)
-                        if metadata and metadata.physical_path:
-                            # Extract hash from physical_path (format: "cas/{hash}")
-                            content_hash = metadata.physical_path
-                            if "/" in content_hash:
-                                content_hash = content_hash.split("/")[-1]
+                        if metadata and metadata.etag:
+                            content_hash = metadata.etag
                             self._local_disk_cache.put(
                                 content_hash,
                                 content,

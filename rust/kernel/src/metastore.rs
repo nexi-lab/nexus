@@ -12,11 +12,22 @@
 /// Metadata record for a single file/directory.
 ///
 /// Mirrors the Python `FileMetadata` fields needed by the Rust kernel.
+///
+/// Schema notes:
+/// - `path` is the authoritative file identifier. Read-side backend dispatch
+///   uses it (minus the local mount prefix) — there is no separate
+///   `physical_path` because for path-addressed backends it is just
+///   `path - mount_prefix`, and for content-addressed backends `etag` is
+///   the key.
+/// - `last_writer_address` records `host:port` of the node that performed
+///   the most recent write (overwritten on every successful write). Pure
+///   descriptive metadata — the kernel does not interpret it. Higher
+///   layers (e.g. federation) compare it against the local node address
+///   to route content fetches. There is no per-record `backend_name`:
+///   each node picks its backend from its own mount table.
 #[derive(Clone, Debug, Default)]
 pub struct FileMetadata {
     pub path: String,
-    pub backend_name: String,
-    pub physical_path: String,
     pub size: u64,
     pub etag: Option<String>,
     pub version: u32,
@@ -30,6 +41,12 @@ pub struct FileMetadata {
     /// Last modification timestamp (Unix epoch milliseconds). Updated on
     /// every write.
     pub modified_at_ms: Option<i64>,
+    /// `host:port` of the node that performed the most recent write
+    /// (overwritten on every successful write). Set by the kernel from
+    /// its self-published address. Higher layers (federation) interpret
+    /// it; the kernel only stores and forwards. `None` on single-node
+    /// deployments without a published address.
+    pub last_writer_address: Option<String>,
 }
 
 /// Error type for Metastore operations.
@@ -590,10 +607,9 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
         }
     }
 
-    buf.push(2); // version tag
+    buf.push(3); // version tag — v3 dropped backend_name/physical_path,
+                 // added last_writer_address as the trailing optional slot.
     write_str(&mut buf, &meta.path);
-    write_str(&mut buf, &meta.backend_name);
-    write_str(&mut buf, &meta.physical_path);
     buf.extend_from_slice(&meta.size.to_le_bytes());
     write_opt_str(&mut buf, &meta.etag);
     buf.extend_from_slice(&meta.version.to_le_bytes());
@@ -602,6 +618,7 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     write_opt_str(&mut buf, &meta.mime_type);
     write_opt_i64(&mut buf, meta.created_at_ms);
     write_opt_i64(&mut buf, meta.modified_at_ms);
+    write_opt_str(&mut buf, &meta.last_writer_address);
 
     buf
 }
@@ -610,14 +627,17 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
     if data.is_empty() {
         return Err(MetastoreError::IOError("empty record".into()));
     }
-    // Detect format version. v2 records start with 0x02 (the version tag).
-    // v1 records start with the path length's low byte (always nonzero for
-    // any real path, but never 0x02 for non-empty paths since 2-byte paths
-    // are extremely rare and would need a path of length exactly 2 — we
-    // accept that ambiguity since v1 is only ever read from pre-F2 redbs
-    // that tests reset on each run).
-    let v2 = data[0] == 2;
-    let mut pos = if v2 { 1 } else { 0 };
+    // Only the current v3 format is recognised. Older v1/v2 records are
+    // intentionally not supported — the schema cleanup that introduced v3
+    // dropped backend_name and physical_path slots and added
+    // last_writer_address, so any pre-cleanup data is wipe-and-rebuild.
+    if data[0] != 3 {
+        return Err(MetastoreError::IOError(format!(
+            "unsupported FileMetadata serialization tag {}; expected 3 (older formats no longer readable — data dir must be wiped post-schema-cleanup)",
+            data[0]
+        )));
+    }
+    let mut pos = 1usize;
 
     fn read_str(data: &[u8], pos: &mut usize) -> Result<String, MetastoreError> {
         if *pos + 4 > data.len() {
@@ -648,8 +668,6 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
     }
 
     let path = read_str(data, &mut pos)?;
-    let backend_name = read_str(data, &mut pos)?;
-    let physical_path = read_str(data, &mut pos)?;
 
     if pos + 8 > data.len() {
         return Err(MetastoreError::IOError("truncated size".into()));
@@ -691,21 +709,15 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
         Ok(Some(n))
     }
 
-    let (created_at_ms, modified_at_ms) = if v2 {
-        (read_opt_i64(data, &mut pos)?, read_opt_i64(data, &mut pos)?)
-    } else {
-        (None, None)
-    };
+    let created_at_ms = read_opt_i64(data, &mut pos)?;
+    let modified_at_ms = read_opt_i64(data, &mut pos)?;
+    // Trailing optional slots may grow over time; missing reads return None.
+    let last_writer_address = read_opt_str(data, &mut pos).ok().flatten();
 
-    // Any remaining bytes belong to retired trailing fields (R16.1a's
-    // ``target_zone_id`` — removed in R20.1). Ignored for forward-compat
-    // with redbs written before the retirement.
     let _ = pos;
 
     Ok(FileMetadata {
         path,
-        backend_name,
-        physical_path,
         size,
         etag,
         version,
@@ -714,6 +726,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetastoreError> {
         mime_type,
         created_at_ms,
         modified_at_ms,
+        last_writer_address,
     })
 }
 
@@ -1097,8 +1110,6 @@ mod tests {
         let cases = [
             FileMetadata {
                 path: "/test/file.txt".to_string(),
-                backend_name: "local".to_string(),
-                physical_path: "abc123".to_string(),
                 size: 1024,
                 etag: Some("hash123".to_string()),
                 version: 3,
@@ -1107,11 +1118,10 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: Some("nexus-1:2028".to_string()),
             },
             FileMetadata {
                 path: "/mnt/peer".to_string(),
-                backend_name: String::new(),
-                physical_path: String::new(),
                 size: 0,
                 etag: None,
                 version: 1,
@@ -1120,27 +1130,25 @@ mod tests {
                 mime_type: None,
                 created_at_ms: None,
                 modified_at_ms: None,
+                last_writer_address: None,
             },
         ];
         for meta in &cases {
             let restored = deserialize_metadata(&serialize_metadata(meta)).unwrap();
             assert_eq!(restored.path, meta.path);
-            assert_eq!(restored.backend_name, meta.backend_name);
-            assert_eq!(restored.physical_path, meta.physical_path);
             assert_eq!(restored.size, meta.size);
             assert_eq!(restored.etag, meta.etag);
             assert_eq!(restored.version, meta.version);
             assert_eq!(restored.entry_type, meta.entry_type);
             assert_eq!(restored.zone_id, meta.zone_id);
             assert_eq!(restored.mime_type, meta.mime_type);
+            assert_eq!(restored.last_writer_address, meta.last_writer_address);
         }
     }
 
     fn mk_meta(path: &str, version: u32) -> FileMetadata {
         FileMetadata {
             path: path.to_string(),
-            backend_name: "mem".to_string(),
-            physical_path: path.to_string(),
             size: 0,
             etag: None,
             version,
@@ -1149,6 +1157,7 @@ mod tests {
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,
+            last_writer_address: None,
         }
     }
 
@@ -1248,8 +1257,6 @@ mod tests {
     fn test_serialize_all_none() {
         let meta = FileMetadata {
             path: "/x".to_string(),
-            backend_name: "".to_string(),
-            physical_path: "".to_string(),
             size: 0,
             etag: None,
             version: 1,
@@ -1258,6 +1265,7 @@ mod tests {
             mime_type: None,
             created_at_ms: None,
             modified_at_ms: None,
+            last_writer_address: None,
         };
         let data = serialize_metadata(&meta);
         let restored = deserialize_metadata(&data).unwrap();

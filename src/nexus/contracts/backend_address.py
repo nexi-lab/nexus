@@ -102,7 +102,7 @@ class BackendAddress:
         return BackendAddress(self.backend_type, (*self.origins, addr))
 
     def __str__(self) -> str:
-        """Serialize to composite string for storage in FileMetadata.backend_name."""
+        """Serialize to a composite string used by routing/wiring layers."""
         if self.origins:
             return f"{self.backend_type}@{','.join(self.origins)}"
         return self.backend_type

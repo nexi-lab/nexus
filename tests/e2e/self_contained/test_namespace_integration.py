@@ -22,7 +22,7 @@ from nexus.bricks.rebac.namespace_manager import NamespaceManager
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import OperationContext, Permission
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -43,7 +43,7 @@ def rebac_manager(engine: "Engine") -> EnhancedReBACManager:
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
-        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
     )
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import SYSTEM_PATH_PREFIX
 from nexus.contracts.types import Permission
 from nexus.core.path_utils import parent_path
 
@@ -110,6 +111,19 @@ class PermissionCheckHook:
         """Extract agent_id from context, or None if unavailable."""
         return getattr(context, "agent_id", None) if context else None
 
+    @staticmethod
+    def _is_system_path(path: str) -> bool:
+        """``True`` for paths under the kernel system namespace ``/__sys__/``.
+
+        Kernel-internal infrastructure (mount table, ReBAC namespace store,
+        ReBAC version store, …) lives under ``SYSTEM_PATH_PREFIX`` and must
+        bypass user-facing permission checks. Without this short-circuit,
+        e.g. a ``check`` call would reload the namespace via ``sys_read``,
+        which would re-enter the same hook, which would re-check, …
+        triggering unbounded recursion (PR #3890 CI hang investigation).
+        """
+        return path.startswith(SYSTEM_PATH_PREFIX)
+
     # ------------------------------------------------------------------
     # PRE hooks — permission gating (raise PermissionError to abort)
     # ------------------------------------------------------------------
@@ -121,6 +135,8 @@ class PermissionCheckHook:
         (path, agent_id) pair, skip the full ReBAC check.
         """
         if not self._enforce_permissions:
+            return
+        if self._is_system_path(ctx.path):
             return
         # stat() for implicit directories uses TRAVERSE — signalled via extra
         if ctx.extra.get("is_implicit_directory"):
@@ -149,6 +165,8 @@ class PermissionCheckHook:
         lease for subsequent writes.
         """
         if not self._enforce_permissions:
+            return
+        if self._is_system_path(ctx.path):
             return
         context = ctx.context or self._default_context
 
@@ -187,6 +205,8 @@ class PermissionCheckHook:
         """
         if not self._enforce_permissions:
             return
+        if self._is_system_path(ctx.path):
+            return
         context = ctx.context or self._default_context
         agent_id = self._extract_agent_id(context)
 
@@ -198,16 +218,21 @@ class PermissionCheckHook:
 
     def on_pre_rename(self, ctx: RenameHookContext) -> None:
         """Check WRITE permission on both source and destination."""
+        if self._is_system_path(ctx.old_path) and self._is_system_path(ctx.new_path):
+            return
         self._checker.check(ctx.old_path, Permission.WRITE, ctx.context)
 
     def on_pre_copy(self, ctx: "CopyHookContext") -> None:
         """Check READ on source, WRITE on destination (Issue #3329)."""
-        self._checker.check(ctx.src_path, Permission.READ, ctx.context)
-        self._checker.check(ctx.dst_path, Permission.WRITE, ctx.context)
+        if not (self._is_system_path(ctx.src_path) and self._is_system_path(ctx.dst_path)):
+            self._checker.check(ctx.src_path, Permission.READ, ctx.context)
+            self._checker.check(ctx.dst_path, Permission.WRITE, ctx.context)
 
     def on_pre_mkdir(self, ctx: MkdirHookContext) -> None:
         """Check WRITE permission on nearest existing ancestor."""
         if not self._enforce_permissions:
+            return
+        if self._is_system_path(ctx.path):
             return
         # Find nearest existing ancestor (kernel populates extra if needed)
         check_path = ctx.extra.get("check_path")
@@ -228,6 +253,8 @@ class PermissionCheckHook:
         """
         if not self._enforce_permissions:
             return
+        if self._is_system_path(ctx.path):
+            return
         context = ctx.context or self._default_context
         agent_id = self._extract_agent_id(context)
 
@@ -245,6 +272,8 @@ class PermissionCheckHook:
         Raises ``PermissionDeniedError`` to deny.
         """
         if not self._enforce_permissions:
+            return
+        if self._is_system_path(ctx.path):
             return
         context = ctx.context or self._default_context
         perm = Permission.TRAVERSE if ctx.permission == "TRAVERSE" else Permission.READ
@@ -286,6 +315,8 @@ class PermissionCheckHook:
         Raises ``PermissionDeniedError`` to deny.
         """
         if not self._enforce_permissions:
+            return
+        if self._is_system_path(ctx.path):
             return
         context = ctx.context or self._default_context
         perm = Permission.TRAVERSE if ctx.permission == "TRAVERSE" else Permission.READ

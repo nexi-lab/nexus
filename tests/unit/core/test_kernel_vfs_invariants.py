@@ -81,7 +81,7 @@ def _make_mount_table_with_mounts() -> tuple[MountTable, CASLocalBackend]:
     _add_mount(table, "/workspace", backend)
     _add_mount(table, "/shared", backend)
     _add_mount(table, "/external", backend)
-    _add_mount(table, "/system", backend)
+    _add_mount(table, "/__sys__", backend)
     _add_mount(table, "/archives", backend)
     return table, backend
 

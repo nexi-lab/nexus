@@ -126,21 +126,15 @@ class ContextualNexusFS:
         *,
         detail: bool,
     ) -> list[str] | list[dict[str, Any]] | None:
-        """Fallback to backend.list_dir() when slim metadata has no children yet."""
-        import asyncio
+        """Fallback to backend.list_dir() when slim metadata has no children yet.
+
+        After §12d Phase 2, Rust readdir merges backend entries for all
+        backends.  This fallback covers the rare slim-mode case where
+        metadata is not yet populated.
+        """
         from datetime import UTC, datetime
 
-        try:
-            _rr = self._kernel._kernel.route(path, self._kernel._zone_id)
-        except Exception:
-            return None
-
-        # All backends are Rust-native — use kernel sys_readdir_backend
-        # for connector-backed directories.
-        if not _rr.is_external:
-            return None
-
-        # Use Rust kernel sys_readdir_backend for listing.
+        # Use Rust kernel sys_readdir_backend for listing (no route() needed).
         try:
             raw_entries = list(
                 self._kernel._kernel.sys_readdir_backend(path, self._kernel._zone_id)

@@ -468,42 +468,31 @@ class SearchService:
                 cursor=cursor,
                 context=context,
             )
-        # Check if path routes to a dynamic API-backed connector
-        if path and path != "/" and self._dlc:
+        # Check if path routes to a dynamic API-backed connector.
+        # Detect via mount root metadata is_external_storage flag (§12d).
+        if path and path != "/":
             try:
                 zone_id, _agent_id, _is_admin = self._get_routing_params(context)
-                resolved = self._dlc.resolve_path(path, zone_id or ROOT_ZONE_ID)
-                if resolved is not None:
-                    backend_name, backend_path, user_mp = resolved
-                    # Use Rust kernel route() to check is_external
-                    _rk = (
-                        getattr(getattr(self._gw, "_fs", None), "_kernel", None)
-                        if self._gw
-                        else None
-                    )
-                    _is_ext = False
-                    if _rk:
-                        try:
-                            _rr = _rk.route(path, zone_id or ROOT_ZONE_ID)
-                            _is_ext = getattr(_rr, "is_external", False)
-                        except Exception:
-                            pass
-                    if _is_ext:
-                        # Build a simple route-like object for _list_dynamic_connector.
-                        # backend is None since all backends are Rust-native now;
-                        # _list_dynamic_connector uses kernel syscalls internally.
-                        class _ExtRoute:
-                            def __init__(
-                                self, backend: Any, backend_path: str, mount_point: str
-                            ) -> None:
-                                self.backend = backend
-                                self.backend_path = backend_path
-                                self.mount_point = mount_point
+                # Derive mount point from first path segments
+                _parts = path.strip("/").split("/")
+                _mp_guess = "/" + "/".join(_parts[:2]) if len(_parts) >= 2 else "/" + _parts[0]
+                _mount_meta = self.metadata.get(_mp_guess) if self.metadata else None
+                _is_ext = getattr(_mount_meta, "is_external_storage", False)
+                if _is_ext:
+                    _bp = path[len(_mp_guess) :].lstrip("/")
 
-                        ext_route = _ExtRoute(None, backend_path, user_mp)
-                        return self._list_dynamic_connector(
-                            path, ext_route, recursive, details, context
-                        )
+                    class _ExtRoute:
+                        def __init__(
+                            self, backend: Any, backend_path: str, mount_point: str
+                        ) -> None:
+                            self.backend = backend
+                            self.backend_path = backend_path
+                            self.mount_point = mount_point
+
+                    ext_route = _ExtRoute(None, _bp, _mp_guess)
+                    return self._list_dynamic_connector(
+                        path, ext_route, recursive, details, context
+                    )
             except PermissionDeniedError:
                 raise
             except Exception as e:

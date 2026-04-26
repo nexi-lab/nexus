@@ -176,11 +176,15 @@ class FederationRPCService:
         self._kernel.zone_join(zone_id)
 
         # Mount the shared zone at `local_path` so VFS routing reaches
-        # it. Derive the local parent zone from the mount LPM; reuse
-        # the federation_mount adapter so Python-DLC mirror + zone-
-        # relative path translation stay DRY.
-        local_route = self._kernel.route(local_path, "root")
-        parent_zone = local_route.zone_id
+        # it. Derive the local parent zone via sys_stat on the parent
+        # directory (§12d: no route() exposure to service tier).
+        _parent_dir = local_path.rsplit("/", 1)[0] or "/"
+        _parent_stat = self._kernel.sys_stat(_parent_dir, "root")
+        parent_zone = (
+            (_parent_stat.get("zone_id") or "root")
+            if _parent_stat and isinstance(_parent_stat, dict)
+            else "root"
+        )
         mount_result = self.federation_mount(
             parent_zone=parent_zone,
             path=local_path,
@@ -298,16 +302,24 @@ class FederationRPCService:
         """
         import uuid
 
-        # RouteResult now carries the mount's target zone (R20.17a) —
-        # `parent_zone_id` is the zone that actually owns the subtree,
-        # not the caller's ambient zone. `backend_path` is the zone-
-        # relative tail; share_subtree_core expects the leading-slash
-        # form, so prepend "/" (empty → "/"). No more `_to_zone_relative`
-        # heuristic (which broke for zones whose id doesn't equal the
-        # mount path, e.g. mount "/corp/eng" target "corp-eng").
-        route = self._kernel.route(local_path, "root")
-        parent_zone_id = route.zone_id
-        prefix = "/" + route.backend_path if route.backend_path else "/"
+        # Derive parent_zone_id and prefix via sys_stat (§12d: no route()
+        # exposure to service tier).  parent_zone_id is the zone that owns
+        # the subtree; prefix is the zone-relative tail.
+        _path_stat = self._kernel.sys_stat(local_path, "root")
+        parent_zone_id = (
+            (_path_stat.get("zone_id") or "root")
+            if _path_stat and isinstance(_path_stat, dict)
+            else "root"
+        )
+        # Find mount point by walking up to nearest DT_MOUNT ancestor.
+        _mp = local_path
+        while _mp != "/":
+            _mp_stat = self._kernel.sys_stat(_mp, "root")
+            if _mp_stat and isinstance(_mp_stat, dict) and _mp_stat.get("entry_type") == 2:
+                break
+            _mp = _mp.rsplit("/", 1)[0] or "/"
+        _tail = local_path[len(_mp) :].lstrip("/") if _mp != local_path else ""
+        prefix = "/" + _tail if _tail else "/"
         new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
         # Ensure the target zone exists BEFORE share_subtree_core runs
         # (it requires both parent and new zones to be loaded).

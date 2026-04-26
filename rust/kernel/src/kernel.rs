@@ -2593,7 +2593,27 @@ impl Kernel {
                         // Re-fetch from dcache (now populated)
                         self.dcache.get_entry(path).unwrap()
                     }
-                    Some(Ok(None)) | Some(Err(_)) | None => return Err(not_found()),
+                    Some(Ok(None)) | Some(Err(_)) | None => {
+                        // Metastore miss → try backend directly (all backend types
+                        // uniformly).  CAS backends return Err for path-based reads
+                        // (hash-addressed).  Path-local/external backends serve the
+                        // file if it exists on disk / via API.  No ABC leak: kernel
+                        // treats every backend the same through ObjectStore trait.
+                        if let Some(data) = self.vfs_router.read_content(
+                            &route.mount_point,
+                            &route.backend_path, // CAS ignores this (not a hash) → Err → None
+                            &route.backend_path,
+                            ctx,
+                        ) {
+                            return Ok(SysReadResult {
+                                data: Some(data),
+                                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                                content_hash: None,
+                                entry_type: DT_REG,
+                            });
+                        }
+                        return Err(not_found());
+                    }
                 }
             }
         };
@@ -4394,6 +4414,27 @@ impl Kernel {
                 }
                 seen.entry(meta.path)
                     .or_insert((meta.entry_type, meta.zone_id));
+            }
+        }
+
+        // Phase 3: Backend list_dir merge (all backend types uniformly).
+        // CAS/S3/GCS return Err(NotSupported) → ignored.  Path-local
+        // returns disk entries, external connectors return API results.
+        // No ABC leak: kernel treats every backend the same.
+        if let Ok(backend_entries) = self
+            .vfs_router
+            .list_dir(&route.mount_point, &route.backend_path)
+        {
+            for name in backend_entries {
+                let is_dir = name.ends_with('/');
+                let clean = name.trim_end_matches('/');
+                if clean.is_empty() {
+                    continue;
+                }
+                let etype = if is_dir { DT_DIR } else { DT_REG };
+                let child_path = format!("{}/{}", parent_for_join, clean);
+                seen.entry(child_path)
+                    .or_insert((etype, Some(route.zone_id.clone())));
             }
         }
 

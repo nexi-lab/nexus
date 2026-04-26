@@ -105,45 +105,6 @@ class TestUnmount:
 
 
 # ---------------------------------------------------------------------------
-# resolve_path()
-# ---------------------------------------------------------------------------
-
-
-class TestResolvePath:
-    def test_resolve_path_delegates_to_kernel_route(self) -> None:
-        """resolve_path delegates to kernel.route() and returns tuple."""
-        kernel, _, coord = _make_coordinator()
-
-        route_result = MagicMock()
-        route_result.backend_name = "cas-local"
-        route_result.backend_path = "/file.txt"
-        route_result.mount_point = "/root/workspace"
-        kernel.route.return_value = route_result
-
-        result = coord.resolve_path("/workspace/file.txt")
-
-        assert result is not None
-        backend_name, backend_path, user_mp = result
-        assert backend_name == "cas-local"
-        assert backend_path == "/file.txt"
-        kernel.route.assert_called_once()
-
-    def test_resolve_path_returns_none_when_no_kernel(self) -> None:
-        """resolve_path returns None when kernel is None."""
-        dispatch = _MockDispatch()
-        coord = DriverLifecycleCoordinator(dispatch, kernel=None)
-
-        assert coord.resolve_path("/workspace/file.txt") is None
-
-    def test_resolve_path_returns_none_on_route_error(self) -> None:
-        """resolve_path returns None when kernel.route raises."""
-        kernel, _, coord = _make_coordinator()
-        kernel.route.side_effect = ValueError("no mount")
-
-        assert coord.resolve_path("/nowhere/file.txt") is None
-
-
-# ---------------------------------------------------------------------------
 # mount_points()
 # ---------------------------------------------------------------------------
 

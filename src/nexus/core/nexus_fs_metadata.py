@@ -21,8 +21,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
-    AccessDeniedError,
-    AuthenticationError,
     BackendError,
     InvalidPathError,
     NexusFileNotFoundError,
@@ -1506,55 +1504,9 @@ class MetadataMixin:
                 return locks
             return [lk["path"] for lk in locks]
 
-        # ── External connector mount listing (S3, GCS, etc.) ──
-        # Only intercept ExternalRouteResult — these are mounts with
-        # is_external_storage metadata set. Plain RouteResult backends
-        # (LocalBackend, CASLocalBackend, etc.) use the normal metastore path.
-        if path and path != "/" and getattr(self, "_kernel", None):
-            try:
-                _rust_route = self._kernel.route(path, self._zone_id)
-                if _rust_route.is_external:
-                    external_entries: list[str] | None = list(
-                        self._kernel.sys_readdir_backend(path, self._zone_id)
-                    )
-                    if external_entries is not None:
-                        if details:
-                            return [
-                                {
-                                    "path": f"{path.rstrip('/')}/{e}"
-                                    if not e.startswith("/")
-                                    else e,
-                                    "name": e.rstrip("/").rsplit("/", 1)[-1],
-                                    "is_directory": e.endswith("/"),
-                                    "size": 0,
-                                }
-                                for e in external_entries
-                            ]
-                        return [
-                            f"{path.rstrip('/')}/{e}" if not e.startswith("/") else e
-                            for e in external_entries
-                        ]
-            except AuthenticationError:
-                # Issue #3822: auth-required must surface so UIs can drive the
-                # OAuth flow.  Silently falling through to the metastore path
-                # returns [] (empty drive) and masks the missing token.
-                raise
-            except AccessDeniedError:
-                # 403 must surface too — the metastore fallback would
-                # hide a permission rejection behind an "empty" listing
-                # and confuse both users and UIs that drive remediation
-                # (share this doc with me / re-grant scope).
-                raise
-            except (BackendError, NexusFileNotFoundError, FileNotFoundError):
-                # Real backend failures (throttling, outage, corruption)
-                # and explicit "this directory does not exist" signals
-                # must NOT be collapsed into "[] (empty directory)" by
-                # falling through to the metastore path.  Connector
-                # mounts have no per-file metadata, so the metastore
-                # fallback returns empty and hides the incident.
-                raise
-            except Exception as exc:
-                logger.debug("sys_readdir connector route failed for %s: %s", path, exc)
+        # §12d Phase 2: Rust readdir merges backend list_dir for all
+        # backends (CAS, path-local, external connectors) uniformly.
+        # No Python-side external connector intercept needed.
 
         # Non-recursive, non-detailed, unbounded listings go through the
         # Rust kernel so they see per-mount metastore entries (F2 C5).

@@ -26,7 +26,7 @@ use crate::hook_registry::HookRegistry;
 use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::metastore::{FileMetadata, MetastoreError};
-use crate::vfs_router::{RouteError, RustRouteResult};
+use crate::vfs_router::RouteError;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Error conversion: KernelError -> PyErr (cached exception classes)
@@ -828,35 +828,6 @@ pub struct PySysCopyResult {
     pub etag: Option<String>,
     pub size: u64,
     pub version: u32,
-}
-
-// ── PyRustRouteResult ───────────────────────────────────────────
-
-/// Python-facing RustRouteResult.
-#[pyclass(name = "RustRouteResult")]
-pub struct PyRustRouteResult {
-    #[pyo3(get)]
-    pub mount_point: String,
-    #[pyo3(get)]
-    pub backend_path: String,
-    #[pyo3(get)]
-    pub zone_id: String,
-    #[pyo3(get)]
-    pub is_external: bool,
-    #[pyo3(get)]
-    pub backend_name: String,
-}
-
-impl From<RustRouteResult> for PyRustRouteResult {
-    fn from(r: RustRouteResult) -> Self {
-        Self {
-            mount_point: r.mount_point,
-            backend_path: r.backend_path,
-            zone_id: r.zone_id,
-            is_external: r.is_external,
-            backend_name: r.backend_name,
-        }
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1871,13 +1842,6 @@ impl PyKernel {
     }
 
     // ── Router proxy methods ───────────────────────────────────────────
-
-    fn route(&self, path: &str, zone_id: &str) -> PyResult<PyRustRouteResult> {
-        self.inner
-            .route(path, zone_id)
-            .map(Into::into)
-            .map_err(Into::into)
-    }
 
     fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
         self.inner.has_mount(mount_point, zone_id)

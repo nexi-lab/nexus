@@ -94,13 +94,9 @@ class VirtualViewResolver(VFSPathResolver):
         # Route and read original file content
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(original_path)
-        resolved = self._dlc.resolve_path(original_path, "root") if self._dlc else None
-        if resolved is None:
-            raise NexusFileNotFoundError(original_path)
-        backend_name, backend_path, _mount_point = resolved
 
-        # Read content via kernel syscall instead of Python backend object.
-        _kernel = getattr(self._dlc, "_kernel", None)
+        # Read content via kernel syscall — sys_read_raw raises on missing path.
+        _kernel = getattr(self._dlc, "_kernel", None) if self._dlc else None
         if _kernel is None:
             raise NexusFileNotFoundError(original_path)
         content: bytes = _kernel.sys_read_raw(original_path, "root")

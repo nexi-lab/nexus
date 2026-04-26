@@ -179,12 +179,12 @@ class TestUndoUnknown:
 
 
 class TestFallbackBackend:
-    def test_uses_fallback_when_dlc_resolve_fails(self) -> None:
+    def test_uses_fallback_when_kernel_read_fails(self) -> None:
         fallback = MagicMock()
         fallback.read_content.return_value = b"fallback-data"
 
         dlc = MagicMock()
-        dlc.resolve_path.side_effect = RuntimeError("resolve failed")
+        dlc._kernel.sys_read_raw.side_effect = RuntimeError("read failed")
 
         svc = OperationUndoService(
             dlc=dlc,
@@ -202,9 +202,9 @@ class TestFallbackBackend:
         fallback.read_content.assert_called_once_with("hash789")
         svc._write.assert_called_once_with("/workspace/test.txt", b"fallback-data")
 
-    def test_raises_when_no_fallback_and_dlc_resolve_fails(self) -> None:
+    def test_raises_when_no_fallback_and_kernel_read_fails(self) -> None:
         dlc = MagicMock()
-        dlc.resolve_path.side_effect = RuntimeError("resolve failed")
+        dlc._kernel.sys_read_raw.side_effect = RuntimeError("read failed")
 
         svc = OperationUndoService(
             dlc=dlc,
@@ -215,5 +215,5 @@ class TestFallbackBackend:
         )
         op = _op("write", snapshot_hash="hash789")
 
-        with pytest.raises(RuntimeError, match="resolve failed"):
+        with pytest.raises(RuntimeError, match="read failed"):
             svc.undo_operation(op)

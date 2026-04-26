@@ -612,8 +612,9 @@ class TestSecureDefaults:
             result = {}
             for check in checks:
                 _subject, _perm, obj = check
-                # Only allow /public.txt
-                result[check] = obj == ("file", "/public.txt")
+                # Only allow /public.txt — match by path part of object tuple
+                _obj_type, obj_id = obj
+                result[check] = obj_id == "/public.txt"
             return result
 
         rebac.rebac_check_bulk.side_effect = bulk_side_effect

@@ -199,13 +199,11 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<semaphore::VFSSemaphore>()?;
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;
-    // Route result (returned from Kernel.route()) — now PyRustRouteResult
     m.add_class::<grpc_server::PyVfsGrpcServerHandle>()?;
     m.add_function(pyo3::wrap_pyfunction!(
         grpc_server::start_vfs_grpc_server,
         m
     )?)?;
-    m.add_class::<generated_pyo3::PyRustRouteResult>()?;
     // Kernel (Issue #1868 — PyKernel wraps pure Rust Kernel)
     m.add_class::<generated_pyo3::PyOperationContext>()?;
     m.add_class::<generated_pyo3::PyKernel>()?;

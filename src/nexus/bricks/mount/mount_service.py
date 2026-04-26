@@ -202,15 +202,6 @@ class MountService:
             if nx is None:
                 return
 
-            # Get backend_name via DLC resolve_path (returns string now)
-            backend_name = None
-            try:
-                if self._dlc:
-                    resolved = self._dlc.resolve_path(mount_point, "root")
-                    backend_name = resolved[0] if resolved else None
-            except Exception:
-                pass
-
             from nexus.contracts.types import OperationContext
 
             admin_ctx = OperationContext(user_id="system", groups=[], is_admin=True, is_system=True)
@@ -220,7 +211,7 @@ class MountService:
             # doesn't store file entries.
             file_paths: list[str] = []
             _rust_kernel = getattr(nx, "_kernel", None)
-            if _rust_kernel is not None and backend_name is not None:
+            if _rust_kernel is not None:
                 from collections import deque
 
                 queue: deque[str] = deque([mount_point])
@@ -1121,8 +1112,8 @@ class MountService:
 
         if not self._dlc:
             raise ValueError(f"Mount not found: {mount_point}")
-        resolved = self._dlc.resolve_path(mount_point, "root")
-        if resolved is None:
+        _kernel = getattr(self._dlc, "_kernel", None)
+        if _kernel is None or not _kernel.has_mount(mount_point, "root"):
             raise ValueError(f"Mount not found: {mount_point}")
 
         # DLC no longer stores skill backends — runtime config updates are
@@ -1195,8 +1186,8 @@ class MountService:
 
         if not self._dlc:
             raise ValueError(f"Mount not found: {mount_point}")
-        resolved = self._dlc.resolve_path(mount_point, "root")
-        if resolved is None:
+        _kernel = getattr(self._dlc, "_kernel", None)
+        if _kernel is None or not _kernel.has_mount(mount_point, "root"):
             raise ValueError(f"Mount not found: {mount_point}")
 
         # DLC no longer stores skill backends — reauth is not available.

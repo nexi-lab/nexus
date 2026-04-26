@@ -553,11 +553,19 @@ class PermissionEnforcer:
 
         object_id = unscope_internal_path(path)  # Strip /zone/{id}/ prefix
 
-        if self.dlc:
+        _kernel = getattr(self.dlc, "_kernel", None) if self.dlc else None
+        if _kernel is not None:
             try:
-                resolved = self.dlc.resolve_path(path, context.zone_id or ROOT_ZONE_ID)
-                if resolved is not None:
-                    backend_name, backend_path, mount_point = resolved
+                _stat = _kernel.sys_stat(path, context.zone_id or ROOT_ZONE_ID)
+                if _stat is not None:
+                    backend_name = (
+                        _stat.get("backend_name", "")
+                        if isinstance(_stat, dict)
+                        else getattr(_stat, "backend_name", "")
+                    )
+                    # Derive backend_path from path + mount_point (first path segment)
+                    _mp = path.strip("/").split("/")[0] if path and path != "/" else ""
+                    backend_path = path[len("/" + _mp) :].lstrip("/") if _mp else path.lstrip("/")
                     from nexus.bricks.rebac.object_type_mapper import ObjectTypeMapper
 
                     mapper = ObjectTypeMapper()

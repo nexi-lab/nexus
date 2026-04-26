@@ -84,7 +84,10 @@ class ContextualNexusFS:
 
     async def stat(self, path: str) -> dict[str, Any] | None:
         try:
-            result = self._kernel.sys_stat(path, context=self._ctx)
+            result = cast(
+                "dict[str, Any] | None",
+                self._kernel.sys_stat(path, context=self._ctx),
+            )
             if result is not None:
                 return result
         except Exception:

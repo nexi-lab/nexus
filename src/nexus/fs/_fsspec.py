@@ -56,9 +56,10 @@ except ImportError:
     ) from None
 
 if TYPE_CHECKING:
-    from nexus.fs._facade import SlimNexusFS
+    from nexus.core.nexus_fs import NexusFS
 
 from nexus.fs._constants import DEFAULT_MAX_FILE_SIZE
+from nexus.fs._helpers import LOCAL_CONTEXT
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +79,9 @@ class NexusFileSystem(AbstractFileSystem):
 
     Supports two usage patterns:
 
-    1. **Explicit:** pass a SlimNexusFS instance directly::
+    1. **Explicit:** pass a NexusFS kernel instance directly::
 
-           fs = NexusFileSystem(nexus_fs=my_facade)
+           fs = NexusFileSystem(nexus_fs=my_kernel)
 
     2. **Auto-discovery:** omit *nexus_fs* and the filesystem will
        auto-discover mounts from ``mounts.json`` (written by
@@ -89,27 +90,27 @@ class NexusFileSystem(AbstractFileSystem):
            pd.read_csv("nexus:///s3/my-bucket/data.csv")
 
     Parameters:
-        nexus_fs: Optional SlimNexusFS facade instance.  When *None*,
+        nexus_fs: Optional ``NexusFS`` kernel instance.  When *None*,
             mounts are auto-discovered from the state directory.
     """
 
     protocol = ("nexus",)
 
-    def __init__(self, nexus_fs: SlimNexusFS | None = None, **kwargs: Any) -> None:
+    def __init__(self, nexus_fs: NexusFS | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         if nexus_fs is not None:
-            self._nexus = nexus_fs
+            self._kernel = nexus_fs
         else:
-            self._nexus = self._auto_discover()
+            self._kernel = self._auto_discover()
 
     # -- Auto-discovery --------------------------------------------------------
 
     @staticmethod
-    def _auto_discover() -> SlimNexusFS:
+    def _auto_discover() -> NexusFS:
         """Auto-discover mounts from ``mounts.json``.
 
         Reads the mount entries persisted by ``mount()`` and boots a
-        SlimNexusFS facade.  This enables ``fsspec.filesystem("nexus")``
+        ``NexusFS`` kernel.  This enables ``fsspec.filesystem("nexus")``
         and ``pd.read_csv("nexus:///...")`` without explicit construction.
 
         Raises:
@@ -138,7 +139,7 @@ class NexusFileSystem(AbstractFileSystem):
         from nexus.fs._sync import run_sync
 
         uris, overrides = build_mount_args(entries)
-        return cast("SlimNexusFS", run_sync(mount(*uris, mount_overrides=overrides or None)))
+        return cast("NexusFS", run_sync(mount(*uris, mount_overrides=overrides or None)))
 
     # -- Protocol handling -----------------------------------------------------
 
@@ -180,11 +181,13 @@ class NexusFileSystem(AbstractFileSystem):
             return [e["name"] for e in cached]
 
         # Verify path exists — fsspec contract requires FileNotFoundError
-        stat = self._nexus.stat(path)
+        stat = self._kernel.sys_stat(path, context=LOCAL_CONTEXT)
         if stat is None:
             raise FileNotFoundError(path)
 
-        entries: Any = self._nexus.ls(path, detail=True, recursive=False)
+        entries: Any = list(
+            self._kernel.sys_readdir(path, recursive=False, details=True, context=LOCAL_CONTEXT)
+        )
 
         result = [
             {
@@ -207,7 +210,7 @@ class NexusFileSystem(AbstractFileSystem):
     def info(self, path: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ARG002
         """Return metadata for a single path."""
         path = self._strip_protocol(path)
-        stat = self._nexus.stat(path)
+        stat = self._kernel.sys_stat(path, context=LOCAL_CONTEXT)
         if stat is None:
             raise FileNotFoundError(path)
         return {
@@ -241,7 +244,7 @@ class NexusFileSystem(AbstractFileSystem):
 
         if start is not None or end is not None:
             # Byte-range read — resolve negative indices, delegate to read_range
-            stat = self._nexus.stat(path)
+            stat = self._kernel.sys_stat(path, context=LOCAL_CONTEXT)
             if stat is None:
                 raise FileNotFoundError(path)
             file_size = stat.get("size", 0)
@@ -252,10 +255,10 @@ class NexusFileSystem(AbstractFileSystem):
                 range_start = max(0, file_size + range_start)
             if range_end < 0:
                 range_end = max(0, file_size + range_end)
-            return self._nexus.read_range(path, range_start, range_end)
+            return self._kernel.read_range(path, range_start, range_end, context=LOCAL_CONTEXT)
 
         # Full read — apply size guard
-        stat = self._nexus.stat(path)
+        stat = self._kernel.sys_stat(path, context=LOCAL_CONTEXT)
         if stat is None:
             raise FileNotFoundError(path)
         if stat.get("size", 0) > MAX_CAT_FILE_SIZE:
@@ -265,7 +268,7 @@ class NexusFileSystem(AbstractFileSystem):
                 f"Use open() for streaming access."
             )
 
-        return self._nexus.read(path)
+        return self._kernel.sys_read(path, context=LOCAL_CONTEXT)
 
     # -- Write -----------------------------------------------------------------
 
@@ -279,7 +282,7 @@ class NexusFileSystem(AbstractFileSystem):
         """Write data to a file."""
         path = self._strip_protocol(path)
         try:
-            self._nexus.write(path, value)
+            self._kernel.write(path, value, context=LOCAL_CONTEXT)
         finally:
             # Mutations invalidate directory listings and metadata cache.
             self.dircache.clear()
@@ -297,11 +300,11 @@ class NexusFileSystem(AbstractFileSystem):
         path = self._strip_protocol(path)
         try:
             # Check if it's a directory — if so, use rmdir
-            stat = self._nexus.stat(path)
+            stat = self._kernel.sys_stat(path, context=LOCAL_CONTEXT)
             if stat and stat.get("is_directory"):
-                self._nexus.rmdir(path, recursive=recursive)
+                self._kernel.rmdir(path, recursive=recursive, context=LOCAL_CONTEXT)
             else:
-                self._nexus.delete(path)
+                self._kernel.sys_unlink(path, context=LOCAL_CONTEXT)
         finally:
             # Mutations invalidate directory listings and metadata cache.
             self.dircache.clear()
@@ -313,7 +316,7 @@ class NexusFileSystem(AbstractFileSystem):
         path1 = self._strip_protocol(path1)
         path2 = self._strip_protocol(path2)
         try:
-            self._nexus.copy(path1, path2)
+            self._kernel.sys_copy(path1, path2, context=LOCAL_CONTEXT)
         finally:
             # Mutations invalidate directory listings and metadata cache.
             self.dircache.clear()
@@ -323,7 +326,7 @@ class NexusFileSystem(AbstractFileSystem):
     def _mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:  # noqa: ARG002
         """Create directory."""
         path = self._strip_protocol(path)
-        self._nexus.mkdir(path, parents=create_parents)
+        self._kernel.mkdir(path, parents=create_parents, exist_ok=True, context=LOCAL_CONTEXT)
 
     def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:  # noqa: ARG002
         """Create directory (public API).
@@ -338,7 +341,7 @@ class NexusFileSystem(AbstractFileSystem):
         """Create directory and parents (public API)."""
         path = self._strip_protocol(path)
         if not exist_ok:
-            stat = self._nexus.stat(path)
+            stat = self._kernel.sys_stat(path, context=LOCAL_CONTEXT)
             if stat is not None and stat.get("is_directory"):
                 raise FileExistsError(path)
         try:
@@ -408,16 +411,16 @@ class NexusFileSystem(AbstractFileSystem):
 
         if "x" in mode:
             # Exclusive create — fail if file exists
-            if self._nexus.stat(path) is not None:
+            if self._kernel.sys_stat(path, context=LOCAL_CONTEXT) is not None:
                 raise FileExistsError(path)
             return NexusWriteFile(
                 fs=self,
                 path=path,
-                nexus_fs=self._nexus,
+                kernel=self._kernel,
             )
 
         if "r" in mode:
-            stat = self._nexus.stat(path)
+            stat = self._kernel.sys_stat(path, context=LOCAL_CONTEXT)
             if stat is None:
                 raise FileNotFoundError(path)
             size = stat.get("size", 0)
@@ -427,13 +430,13 @@ class NexusFileSystem(AbstractFileSystem):
                 mode=mode,
                 size=size,
                 block_size=block_size or 5 * 1024 * 1024,  # 5 MB default
-                nexus_fs=self._nexus,
+                kernel=self._kernel,
             )
         else:
             return NexusWriteFile(
                 fs=self,
                 path=path,
-                nexus_fs=self._nexus,
+                kernel=self._kernel,
             )
 
 
@@ -455,9 +458,9 @@ class NexusBufferedFile(AbstractBufferedFile):
         mode: str,
         size: int,
         block_size: int,
-        nexus_fs: SlimNexusFS,
+        kernel: NexusFS,
     ) -> None:
-        self._nexus = nexus_fs
+        self._kernel = kernel
         # AbstractBufferedFile only accepts binary modes (rb, wb, ab, xb).
         # Normalize "r" → "rb" since our text mode returns bytes anyway.
         abf_mode = mode if mode.endswith("b") else mode + "b"
@@ -476,7 +479,7 @@ class NexusBufferedFile(AbstractBufferedFile):
 
     def _fetch_range(self, start: int, end: int) -> bytes:
         """Fetch byte range from nexus backend via ``read_range()``."""
-        return bytes(self._nexus.read_range(self.path, start, end))
+        return bytes(self._kernel.read_range(self.path, start, end, context=LOCAL_CONTEXT))
 
 
 class NexusWriteFile:
@@ -493,11 +496,11 @@ class NexusWriteFile:
         self,
         fs: NexusFileSystem,
         path: str,
-        nexus_fs: SlimNexusFS,
+        kernel: NexusFS,
     ) -> None:
         self.fs = fs
         self.path = path
-        self._nexus = nexus_fs
+        self._kernel = kernel
         self._buffer = io.BytesIO()
         self._closed = False
         self._bytes_written = 0
@@ -536,7 +539,7 @@ class NexusWriteFile:
             self._closed = True
             self._buffer.seek(0)
             try:
-                self._nexus.write(self.path, self._buffer.read())
+                self._kernel.write(self.path, self._buffer.read(), context=LOCAL_CONTEXT)
             finally:
                 # Keep listings consistent after buffered writes, including
                 # the case where backend write outcome is uncertain.

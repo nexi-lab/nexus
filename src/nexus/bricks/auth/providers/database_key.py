@@ -98,34 +98,8 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 )
                 return AuthResult(authenticated=False)
 
-            # #3784 round 10: zone lifecycle gate at runtime. A token
-            # scoped to a zone that has since been soft-deleted or
-            # marked Terminating must fail closed — otherwise existing
-            # tokens keep working against data operators intended to
-            # isolate/remove.
-            #
-            # Tokens with zone_id=None (pre-hub, admin-only) are
-            # unaffected. Tokens whose zone is absent from the registry
-            # (legacy deployments that scoped by string without ever
-            # populating the zones table) also fall through — we only
-            # fail closed when the zone *exists* and has been actively
-            # retired. `hub token create` enforces zone-must-exist for
-            # new tokens, so the missing-row path is backward-compat
-            # only and cannot introduce *new* unscoped tokens.
-            if api_key.zone_id is not None:
-                zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == api_key.zone_id))
-                if zone is not None and (zone.phase != "Active" or zone.deleted_at is not None):
-                    logger.warning(
-                        "UNAUTHORIZED: API key %s zone %r is not active (phase=%s, deleted_at=%s)",
-                        api_key.key_id,
-                        api_key.zone_id,
-                        zone.phase,
-                        zone.deleted_at,
-                    )
-                    return AuthResult(authenticated=False)
-
             # #3785: load token's zone allow-list (with per-zone perms, F3c)
-            # from api_key_zones junction.
+            # from api_key_zones junction. Authoritative source post-#3871.
             from nexus.storage.models import APIKeyZoneModel
 
             zone_perm_rows = session.execute(
@@ -133,6 +107,32 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 .where(APIKeyZoneModel.key_id == api_key.key_id)
                 .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
             ).all()
+
+            # #3784 round 10 (updated #3871): zone lifecycle gate at runtime. A
+            # token scoped to a zone that has since been soft-deleted or marked
+            # Terminating must fail closed. Check EVERY junction zone (a token
+            # multi-zoned to [eng, ops] must reject if EITHER becomes inactive
+            # — fail closed semantics). Falls through if junction is empty
+            # (zoneless admin keys) or if a zone is absent from the registry
+            # (legacy back-compat per the original #3784 reasoning).
+            #
+            # Pre-#3871 fallback: also check api_key.zone_id if junction is
+            # empty AND the column is set (legacy keys created via the old
+            # SQLAlchemyAPIKeyStore.create_key path before Task 6 ran).
+            lifecycle_zones = [z for z, _ in zone_perm_rows]
+            if not lifecycle_zones and api_key.zone_id is not None:
+                lifecycle_zones = [api_key.zone_id]
+            for zid in lifecycle_zones:
+                zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid))
+                if zone is not None and (zone.phase != "Active" or zone.deleted_at is not None):
+                    logger.warning(
+                        "UNAUTHORIZED: API key %s zone %r is not active (phase=%s, deleted_at=%s)",
+                        api_key.key_id,
+                        zid,
+                        zone.phase,
+                        zone.deleted_at,
+                    )
+                    return AuthResult(authenticated=False)
 
             # Cache all ORM attributes eagerly before session close
             subject_type = (
@@ -259,7 +259,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             key_hash=key_hash,
             user_id=user_id,
             name=name,
-            zone_id=zone_id,
+            zone_id=None,  # #3871 Phase 2: junction is source of truth
             is_admin=int(is_admin),
             expires_at=expires_at,
             subject_type=subject_type,
@@ -268,7 +268,13 @@ class DatabaseAPIKeyAuth(AuthProvider):
         )
 
         session.add(api_key)
-        session.flush()
+        session.flush()  # populate api_key.key_id before junction insert
+
+        if zone_id:  # populate junction so the key is visible to junction-based filters
+            from nexus.storage.models import APIKeyZoneModel
+
+            session.add(APIKeyZoneModel(key_id=api_key.key_id, zone_id=zone_id, permissions="rw"))
+            session.flush()
 
         return (api_key.key_id, raw_key)
 

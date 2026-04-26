@@ -338,7 +338,37 @@ class TestHandleAdminUpdateKey:
             name=None,
             expires_days=None,
         )
-        with pytest.raises(ValidationError, match="last admin key"):
+        with pytest.raises(
+            ValidationError, match="zones \\['zone1'\\] would have no remaining admin"
+        ):
+            handle_admin_update_key(auth_provider, update_params, admin_context)
+
+    def test_partial_overlap_demotion_blocked(self, auth_provider, admin_context):
+        """Multi-zone admin demotion blocked when ANY zone would lose its sole admin (#3871).
+
+        Target admin covers zone1+zone2; another admin covers only zone1. Demoting
+        the target leaves zone2 with zero admins — must raise.
+        """
+        from nexus.contracts.exceptions import ValidationError
+        from nexus.storage.api_key_ops import create_api_key
+
+        with auth_provider.session_factory() as s:
+            target_id, _ = create_api_key(
+                s, user_id="admin_a", name="multi", zones=["zone1", "zone2"], is_admin=True
+            )
+            create_api_key(s, user_id="admin_b", name="zone1-only", zones=["zone1"], is_admin=True)
+            s.commit()
+
+        update_params = FakeParams(
+            key_id=target_id,
+            zone_id=None,
+            is_admin=False,
+            name=None,
+            expires_days=None,
+        )
+        with pytest.raises(
+            ValidationError, match=r"zones \['zone2'\] would have no remaining admin"
+        ):
             handle_admin_update_key(auth_provider, update_params, admin_context)
 
     def test_demotion_allowed_when_other_admins_exist(self, auth_provider, admin_context):

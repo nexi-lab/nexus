@@ -442,37 +442,46 @@ def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> di
         if not api_key:
             raise NexusFileNotFoundError(f"API key not found: {params.key_id}")
 
-        # Self-demotion guard: prevent removing admin from the last admin key
+        # Self-demotion guard: prevent leaving any zone without admin coverage.
+        # Per-zone check (not UNION) — a multi-zone admin in {eng, ops} cannot
+        # be demoted if removing them would leave EITHER zone with zero admins,
+        # even if another admin covers one of those zones (#3871).
         if params.is_admin is False and api_key.is_admin:
             import sqlalchemy as sa
             from sqlalchemy import func
 
             from nexus.storage.api_key_ops import get_zones_for_key
 
-            caller_zones = get_zones_for_key(session, api_key.key_id)
+            target_zones = get_zones_for_key(session, api_key.key_id)
+            base_filters = [
+                APIKeyModel.is_admin == 1,
+                APIKeyModel.revoked == 0,
+                APIKeyModel.key_id != api_key.key_id,
+            ]
 
-            # Base predicates: live admin keys.
-            base_filters = [APIKeyModel.is_admin == 1, APIKeyModel.revoked == 0]
-
-            if caller_zones:
+            if target_zones:
                 from nexus.storage.models import APIKeyZoneModel
 
-                count_stmt = (
-                    select(func.count(sa.distinct(APIKeyModel.key_id)))
+                rows = session.execute(
+                    select(APIKeyZoneModel.zone_id, func.count(sa.distinct(APIKeyModel.key_id)))
                     .select_from(APIKeyModel)
-                    .where(*base_filters)
                     .join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id)
-                    .where(APIKeyZoneModel.zone_id.in_(caller_zones))
-                )
+                    .where(*base_filters, APIKeyZoneModel.zone_id.in_(target_zones))
+                    .group_by(APIKeyZoneModel.zone_id)
+                ).all()
+                counts_by_zone = dict(rows)
+                orphan_zones = sorted(z for z in target_zones if counts_by_zone.get(z, 0) < 1)
+                if orphan_zones:
+                    raise ValidationError(
+                        "Cannot remove admin privileges: "
+                        f"zones {orphan_zones} would have no remaining admin"
+                    )
             else:
-                count_stmt = (
-                    select(func.count(sa.distinct(APIKeyModel.key_id)))
-                    .select_from(APIKeyModel)
-                    .where(*base_filters)
+                other_admins = session.scalar(
+                    select(func.count(sa.distinct(APIKeyModel.key_id))).where(*base_filters)
                 )
-            admin_count = session.scalar(count_stmt)
-            if admin_count is not None and admin_count <= 1:
-                raise ValidationError("Cannot remove admin privileges from the last admin key")
+                if other_admins is None or other_admins < 1:
+                    raise ValidationError("Cannot remove admin privileges from the last admin key")
 
         if params.name is not None:
             api_key.name = params.name

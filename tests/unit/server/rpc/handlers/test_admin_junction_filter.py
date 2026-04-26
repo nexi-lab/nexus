@@ -134,5 +134,5 @@ def test_self_demotion_guard_blocks_last_multi_zone_admin(auth_provider_and_keys
         is_admin=False,
         expires_days=None,
     )
-    with pytest.raises(ValidationError, match="last admin key"):
+    with pytest.raises(ValidationError, match=r"would have no remaining admin"):
         admin.handle_admin_update_key(auth_provider, params, context)

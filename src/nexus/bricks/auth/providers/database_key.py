@@ -145,9 +145,12 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 if hasattr(api_key, "subject_id") and api_key.subject_id
                 else api_key.user_id
             )
-            # After #3871: api_key.zone_id is NULL for keys minted post-Phase 2.
-            # Source primary zone from the junction (MIN granted_at, zone_id ASC tiebreaker).
-            zone_id = zone_perm_rows[0][0] if zone_perm_rows else api_key.zone_id
+            # After #3871 Phase 2: junction is the sole source of zone access.
+            # api_key.zone_id (legacy column) is NOT consulted — empty junction
+            # means no zone access. The tripwire migration (04188c0bbb28)
+            # prevents Phase 3 upgrade until pre-Phase-2 keys are backfilled
+            # to the junction.
+            zone_id = zone_perm_rows[0][0] if zone_perm_rows else None
             is_admin = bool(api_key.is_admin)
             key_id = api_key.key_id
             key_name = api_key.name

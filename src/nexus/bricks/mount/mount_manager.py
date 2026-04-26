@@ -76,6 +76,7 @@ class MountManager:
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
+        replication: str | None = None,
     ) -> str:
         """Save a mount configuration to the metastore.
 
@@ -86,6 +87,7 @@ class MountManager:
             owner_user_id: User ID who owns this mount
             zone_id: Zone ID this mount belongs to
             description: Optional description of the mount
+            replication: Replication policy value (e.g., "all-voters"), or None
 
         Returns:
             mount_id: Unique ID of the saved mount configuration
@@ -102,6 +104,7 @@ class MountManager:
             owner_user_id=owner_user_id,
             zone_id=zone_id,
             description=description,
+            replication=replication,
         )
 
     def update_mount(

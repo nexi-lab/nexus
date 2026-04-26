@@ -631,6 +631,9 @@ def connect(
     # Restore saved mounts (application-layer startup I/O)
     _restore_mounts(nx_fs)
 
+    # Start audit hook if federation is active (requires a loaded Raft zone).
+    _init_audit_hook(nx_fs)
+
     return nx_fs
 
 
@@ -660,6 +663,32 @@ def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: An
     logger.info("Federation transport configured (TLS=%s)", _zone_mgr.tls_config is not None)
 
 
+def _init_audit_hook(nx_fs: "NexusFS") -> None:
+    """Start the AuditHook if federation is active.
+
+    Wires a Rust AuditHook to a WAL-replicated DT_STREAM so every VFS
+    operation is durably recorded. Requires a loaded Raft zone — silently
+    skips if federation is not yet active (standalone / dev-mode deployments).
+
+    The audit stream is readable at ``/audit/traces/`` via sys_read.
+    """
+    kernel = getattr(nx_fs, "_kernel", None)
+    if kernel is None:
+        return
+
+    audit_zone = "root"
+    audit_stream_path = "/audit/traces/"
+
+    try:
+        kernel.start_audit_hook(audit_zone, audit_stream_path)
+        logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
+    except RuntimeError as e:
+        # Federation not active or zone not loaded — expected in dev mode.
+        logger.debug("Audit hook not started (federation inactive): %s", e)
+    except Exception as e:
+        logger.warning("Failed to start audit hook: %s", e)
+
+
 def _restore_mounts(nx_fs: "NexusFS") -> None:
     """Restore saved mounts from database at application startup.
 
@@ -679,6 +708,57 @@ def _restore_mounts(nx_fs: "NexusFS") -> None:
                 logger.error("  Mount error: %s", error)
     except Exception as e:
         logger.warning("Failed to load saved mounts during initialization: %s", e)
+
+    # Start replication scanners for mounts that have a replication policy.
+    # Runs after mount activation so the kernel router is ready.
+    _start_replication_scanners(nx_fs)
+
+
+def _start_replication_scanners(nx_fs: "NexusFS") -> None:
+    """Start background replication scanners for mounts with replication policies.
+
+    Reads the replication field from each saved mount config and calls
+    `kernel.start_replication_scanner()` for zone/mount combos that opt in.
+    """
+    kernel = getattr(nx_fs, "_kernel", None)
+    if kernel is None:
+        return
+
+    mount_persist = nx_fs.service("mount_persist")
+    if mount_persist is None:
+        return
+
+    try:
+        manager = getattr(mount_persist, "_manager", None)
+        if manager is None:
+            return
+        mounts = manager.list_mounts()
+    except Exception as e:
+        logger.warning("_start_replication_scanners: could not list mounts: %s", e)
+        return
+
+    import json as _json
+
+    for mount in mounts:
+        replication = mount.get("replication")
+        if not replication:
+            continue
+        zone_id = mount.get("zone_id") or "root"
+        mount_point = mount.get("mount_point", "")
+        # Build a minimal single-policy JSON for this mount.
+        # Only "all-voters" is supported today; extend here when more targets land.
+        target: dict = {"type": "all_voters"}
+        policies_json = _json.dumps([{"path_prefix": mount_point, "target": target}])
+        try:
+            kernel.start_replication_scanner(zone_id, policies_json, 2000)
+            logger.info(
+                "Started replication scanner: zone=%s mount=%s policy=%s",
+                zone_id,
+                mount_point,
+                replication,
+            )
+        except Exception as e:
+            logger.warning("Failed to start replication scanner for %s: %s", mount_point, e)
 
 
 __all__ = [

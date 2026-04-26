@@ -1,7 +1,7 @@
 """Distributed locks REST API router.
 
 Exposes the kernel's advisory lock syscalls (sys_lock / sys_unlock /
-metastore_list_locks) via REST endpoints for the TUI.
+sys_readdir on /__sys__/locks/) via REST endpoints for the TUI.
 
 Issue #3250: TUI Locks tab.
 """
@@ -121,9 +121,9 @@ def _mgr_extend(mgr: Any, lock_id: str, resource: str, ttl: int) -> Any:
 async def list_locks(request: Request) -> dict[str, Any]:
     """List all active locks."""
     nx = _get_nexus_fs(request)
-    if nx and hasattr(nx, "_kernel") and nx._kernel is not None:
+    if nx and hasattr(nx, "sys_readdir"):
         try:
-            kernel_locks = nx._kernel.metastore_list_locks("/", 1000)
+            kernel_locks = nx.sys_readdir("/__sys__/locks/", details=True)
             locks = [
                 {
                     "lock_id": holder.get("lock_id", ""),

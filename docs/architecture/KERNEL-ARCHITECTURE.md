@@ -94,6 +94,8 @@ One-click contract: implement protocol / `hook_spec()` →
 `ServiceRegistry.enlist()` → kernel handles the rest. `ServiceRegistry`
 (kernel-owned, lifecycle integrated) scans the registry and auto-calls
 the appropriate methods during `NexusFS.bootstrap()` / `NexusFS.close()`.
+Rust `ServiceRegistry` calls `start()/stop()` via `asyncio.run()` (Python
+stdlib only, zero nexus bridge imports).
 
 `swap_service()` supports **all services** (#1452). Unified path:
 refcount drain → unhook old → replace → rehook new.
@@ -290,6 +292,15 @@ OBSERVE always fires after VFS lock release (like Linux inotify after `i_rwsem`)
 
 **Zero-overhead invariant:** Empty callback list = no-op dispatch = zero overhead
 when no services are registered.
+
+**Rust/Python boundary crossing budget:**
+
+| Path | Crossings | Notes |
+|------|-----------|-------|
+| Pillar calls (Metastore, ObjectStore, DCache) | 0 | Pure Rust trait dispatch |
+| Hook dispatch (read/write/unlink/rename/copy/mkdir/rmdir) | 2+N | Context build + per-hook call, GIL held pre-detach |
+| Service lifecycle (enlist auto-start, start_all, stop_all) | 4/service | isinstance + call_method0 + asyncio.wait_for + asyncio.run (stdlib only). Not on syscall hot path |
+| Zero-crossing syscalls | 0 | sys_lock, sys_unlock, sys_watch, sys_stat, sys_setattr, sys_readdir |
 
 ### 2.5 Mediation Principle
 

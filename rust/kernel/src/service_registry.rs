@@ -47,6 +47,14 @@ pub(crate) struct ServiceRegistry {
     insertion_order: Mutex<Vec<String>>,
 }
 
+/// Run a Python coroutine to completion via stdlib asyncio. No nexus imports.
+fn run_coro(py: Python<'_>, coro: &Bound<'_, PyAny>, timeout_secs: f64) -> PyResult<()> {
+    let asyncio = py.import("asyncio")?;
+    let timed = asyncio.call_method1("wait_for", (coro, timeout_secs))?;
+    asyncio.call_method1("run", (&timed,))?;
+    Ok(())
+}
+
 impl ServiceRegistry {
     pub(crate) fn new() -> Self {
         Self {
@@ -105,18 +113,7 @@ impl ServiceRegistry {
             {
                 if instance.is_instance(&bg_cls)? {
                     let coro = instance.call_method0("start")?;
-                    // If it's a coroutine, run synchronously
-                    if let Ok(inspect) = py.import("inspect") {
-                        if let Ok(is_coro) = inspect.call_method1("iscoroutine", (&coro,)) {
-                            if is_coro.is_truthy()? {
-                                let run_sync =
-                                    py.import("nexus.lib.sync_bridge")?.getattr("run_sync")?;
-                                let kwargs = pyo3::types::PyDict::new(py);
-                                kwargs.set_item("timeout", 30.0)?;
-                                run_sync.call((&coro,), Some(&kwargs))?;
-                            }
-                        }
-                    }
+                    run_coro(py, &coro, 30.0)?;
                 }
             }
         }
@@ -259,10 +256,6 @@ impl ServiceRegistry {
         let bg_cls = py
             .import("nexus.contracts.protocols.service_lifecycle")?
             .getattr("BackgroundService")?;
-        let run_sync = py.import("nexus.lib.sync_bridge")?.getattr("run_sync")?;
-        let inspect = py.import("inspect")?;
-        let timeout_kwargs = pyo3::types::PyDict::new(py);
-        timeout_kwargs.set_item("timeout", timeout_secs)?;
 
         let mut started = Vec::new();
         for name in self.names() {
@@ -271,15 +264,9 @@ impl ServiceRegistry {
                 if instance.is_instance(&bg_cls)? {
                     match instance.call_method0("start") {
                         Ok(coro) => {
-                            if let Ok(is_coro) = inspect.call_method1("iscoroutine", (&coro,)) {
-                                if is_coro.is_truthy()? {
-                                    if let Err(e) = run_sync.call((&coro,), Some(&timeout_kwargs)) {
-                                        tracing::error!(
-                                            "[COORDINATOR] failed to start {name:?}: {e}"
-                                        );
-                                        continue;
-                                    }
-                                }
+                            if let Err(e) = run_coro(py, &coro, timeout_secs) {
+                                tracing::error!("[COORDINATOR] failed to start {name:?}: {e}");
+                                continue;
                             }
                             started.push(name);
                         }
@@ -298,10 +285,6 @@ impl ServiceRegistry {
         let bg_cls = py
             .import("nexus.contracts.protocols.service_lifecycle")?
             .getattr("BackgroundService")?;
-        let run_sync = py.import("nexus.lib.sync_bridge")?.getattr("run_sync")?;
-        let inspect = py.import("inspect")?;
-        let timeout_kwargs = pyo3::types::PyDict::new(py);
-        timeout_kwargs.set_item("timeout", timeout_secs)?;
 
         let mut stopped = Vec::new();
         for name in self.names_reversed() {
@@ -310,15 +293,9 @@ impl ServiceRegistry {
                 if instance.is_instance(&bg_cls)? {
                     match instance.call_method0("stop") {
                         Ok(coro) => {
-                            if let Ok(is_coro) = inspect.call_method1("iscoroutine", (&coro,)) {
-                                if is_coro.is_truthy()? {
-                                    if let Err(e) = run_sync.call((&coro,), Some(&timeout_kwargs)) {
-                                        tracing::error!(
-                                            "[COORDINATOR] failed to stop {name:?}: {e}"
-                                        );
-                                        continue;
-                                    }
-                                }
+                            if let Err(e) = run_coro(py, &coro, timeout_secs) {
+                                tracing::error!("[COORDINATOR] failed to stop {name:?}: {e}");
+                                continue;
                             }
                             stopped.push(name);
                         }

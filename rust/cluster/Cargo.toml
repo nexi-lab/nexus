@@ -11,8 +11,10 @@ name = "nexusd-cluster"
 path = "src/main.rs"
 
 [dependencies]
-# raft owns federation orchestration (ZoneManager, bootstrap_tls, etc.)
-raft = { workspace = true }
+# raft owns federation orchestration (ZoneManager, bootstrap_tls, etc.).
+# Only the grpc feature — no python (skipping pyo3 saves ~3 MB on the
+# stripped binary; this crate has no Python boundary).
+raft = { path = "../raft", default-features = false, features = ["grpc"] }
 # Workspace contracts (ROOT_ZONE_ID, etc.)
 contracts = { workspace = true }
 

@@ -51,4 +51,14 @@ opt-level = 2
 lto = "thin"
 codegen-units = 1
 opt-level = 3
-strip = "debuginfo"
+strip = "symbols"
+
+# Cluster binary ships standalone for sudowork; size matters more than
+# raw throughput. opt-level="z" picks the cluster code path that
+# minimizes object size. On Linux x86_64 with workspace-wide
+# strip="symbols", the binary lands around 5-6 MB; on Windows MSVC
+# the .exe is closer to 8 MB (PE headers + import tables don't
+# compress as much as stripped ELF). CI's size gate (Group F) checks
+# the Linux artifact.
+[profile.release.package.nexus-cluster]
+opt-level = "z"

@@ -212,6 +212,24 @@ uv run ruff check src/
 PYTHONPATH=src uv run lint-imports
 ```
 
+### 6.1 Rust/Python Boundary Status (2026-04-26)
+
+Syscall execution crosses Rust→Python at two points:
+
+1. **Hook dispatch** (read/write/unlink/rename/copy/mkdir/rmdir):
+   - `rust_ctx_to_python()`: OperationContext → Python dataclass (1 call/syscall)
+   - Hook context constructor: e.g. `ReadHookContext(path, ctx)` (1 call/syscall)
+   - Per-hook `on_pre_*()` via `PyInterceptHookAdapter` (N calls/syscall)
+   - Budget: 2+N calls, ~1μs each, all GIL-held before `py.detach()`
+
+2. **Service lifecycle** (enlist auto-start, start_all, stop_all):
+   - isinstance check against BackgroundService class (1 import, cached by Python)
+   - `start()/stop()`: call_method0 + `asyncio.run(asyncio.wait_for(coro, timeout))` — stdlib only
+   - Per-service: 4 crossings, 0 nexus imports. Not on syscall hot path.
+
+Zero-crossing syscalls: sys_lock, sys_unlock, sys_watch, sys_stat, sys_setattr, sys_readdir.
+Pillar access (Metastore, ObjectStore, DCache): pure Rust trait dispatch.
+
 ---
 
 ## 7. Long-term Architecture: Collapse to RPC Boundary (decided 2026-04-02)
@@ -392,3 +410,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §8 | 2026-04-10 | Added version history table |
 | §11 | 2026-04-10 | KERNEL-ARCHITECTURE.md §2.4.1: formal 4 dispatch contracts (RESOLVE, INTERCEPT PRE, INTERCEPT POST, OBSERVE) with ordering, error semantics, and zero-overhead invariant. Phase 18 docs. |
 | §7.3, §7.6 | 2026-04-23 | §7 collapse roadmap fully completed: `_backend_read` deleted, sys_write metadata in Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC. All "Remaining" items → Done (#1817, #1960). |
+| §6.1 | 2026-04-26 | Rust/Python boundary status: hook dispatch (2+N crossings), service lifecycle (4 crossings, stdlib-only), zero-crossing syscalls, pure Rust pillar dispatch. |

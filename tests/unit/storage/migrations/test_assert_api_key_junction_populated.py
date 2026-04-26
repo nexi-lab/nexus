@@ -72,7 +72,7 @@ def test_tripwire_raises_on_legacy_zone_scoped_key(engine_with_schema):
     """Non-admin key with legacy zone_id but no junction row must trip."""
     with engine_with_schema.begin() as conn:
         conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('orphan', 'eng')"))
-    with pytest.raises(RuntimeError, match="legacy zone_id with no matching api_key_zones row"):
+    with pytest.raises(RuntimeError, match="would lose access after the upgrade"):
         _run_upgrade_against(engine_with_schema)
 
 
@@ -83,7 +83,7 @@ def test_tripwire_raises_on_legacy_zone_scoped_admin(engine_with_schema):
         conn.execute(
             text("INSERT INTO api_keys (key_id, zone_id, is_admin) VALUES ('zadm', 'eng', 1)")
         )
-    with pytest.raises(RuntimeError, match="legacy zone_id with no matching api_key_zones row"):
+    with pytest.raises(RuntimeError, match="would lose access after the upgrade"):
         _run_upgrade_against(engine_with_schema)
 
 
@@ -108,8 +108,26 @@ def test_tripwire_raises_on_mismatched_backfill(engine_with_schema):
     with engine_with_schema.begin() as conn:
         conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('mismatch', 'eng')"))
         conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('mismatch', 'ops')"))
-    with pytest.raises(RuntimeError, match="no matching api_key_zones row"):
+    with pytest.raises(RuntimeError, match="would lose access after the upgrade"):
         _run_upgrade_against(engine_with_schema)
+
+
+def test_tripwire_raises_on_zoneless_non_admin(engine_with_schema):
+    """Pre-Phase-2 non-admin row with zone_id=NULL and no junction must trip —
+    round 4 made auth fail closed for empty-junction non-admin tokens, so
+    upgrade would otherwise succeed and break the token on first use (#3871)."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id) VALUES ('zless')"))
+    with pytest.raises(RuntimeError, match="would lose access after the upgrade"):
+        _run_upgrade_against(engine_with_schema)
+
+
+def test_tripwire_passes_on_zoneless_non_admin_with_junction(engine_with_schema):
+    """Non-admin with junction zones (and no legacy column) is fine."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id) VALUES ('migrated')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('migrated', 'eng')"))
+    _run_upgrade_against(engine_with_schema)  # must not raise
 
 
 def test_tripwire_passes_on_correct_backfill(engine_with_schema):

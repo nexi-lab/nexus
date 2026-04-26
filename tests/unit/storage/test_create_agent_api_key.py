@@ -15,6 +15,13 @@ def record_store():
 
 @pytest.fixture()
 def session(record_store):
+    """Session pre-seeded with ROOT_ZONE_ID so create_api_key (#3871 round 5
+    zone-existence validation) can mint keys against it."""
+    from nexus.storage.models import ZoneModel
+
+    with record_store.session_factory() as seed:
+        seed.add(ZoneModel(zone_id=ROOT_ZONE_ID, name="root", phase="Active"))
+        seed.commit()
     s = record_store.session_factory()
     yield s
     s.close()

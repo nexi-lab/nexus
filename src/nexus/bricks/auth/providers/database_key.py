@@ -138,22 +138,29 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 )
                 return AuthResult(authenticated=False)
 
-            # #3784 round 10: zone lifecycle gate at runtime. A token scoped
-            # to a zone that has since been soft-deleted or marked Terminating
-            # must fail closed. Check EVERY junction zone (a token multi-zoned
-            # to [eng, ops] must reject if EITHER becomes inactive — fail
-            # closed semantics). Falls through if junction is empty (zoneless
-            # admin keys) or if a zone is absent from the registry (legacy
-            # back-compat per the original #3784 reasoning).
+            # #3784 round 10 + #3871 round 5: zone lifecycle gate at runtime.
+            # A token scoped to a zone that has since been soft-deleted, marked
+            # Terminating, or removed from the registry entirely MUST fail
+            # closed. Check EVERY junction zone (a token multi-zoned to [eng,
+            # ops] must reject if EITHER becomes inactive). Empty junction
+            # (zoneless admin) falls through naturally — no zones to check.
+            #
+            # Round 5: missing ZoneModel also fails closed. Round 5 added
+            # zone-existence validation to all create paths, so a missing
+            # ZoneModel for a junction-listed zone means the registry was
+            # mutated out from under the token (typo, manual delete, or
+            # unmigrated row) — treat it as inactive.
             for zid in [z for z, _ in zone_perm_rows]:
                 zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid))
-                if zone is not None and (zone.phase != "Active" or zone.deleted_at is not None):
+                if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
                     logger.warning(
-                        "UNAUTHORIZED: API key %s zone %r is not active (phase=%s, deleted_at=%s)",
+                        "UNAUTHORIZED: API key %s zone %r is not active "
+                        "(zone_row=%r, phase=%s, deleted_at=%s)",
                         api_key.key_id,
                         zid,
-                        zone.phase,
-                        zone.deleted_at,
+                        zone,
+                        getattr(zone, "phase", None),
+                        getattr(zone, "deleted_at", None),
                     )
                     return AuthResult(authenticated=False)
 

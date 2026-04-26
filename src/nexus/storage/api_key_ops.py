@@ -154,6 +154,29 @@ def create_api_key(
             "(zoneless tokens are reserved for global admins, #3871)"
         )
 
+    # #3871 round 5: validate every requested zone has an active ZoneModel
+    # before inserting the api_key_zones FK. SQLite test harnesses don't
+    # always enforce the FK, so a typo or unregistered zone would otherwise
+    # mint a token whose authoritative zone_set references nothing.
+    if zone_perms:
+        from sqlalchemy import select as sa_select
+
+        from nexus.storage.models import ZoneModel
+
+        requested = {zid for zid, _ in zone_perms}
+        existing = {
+            row[0]
+            for row in session.execute(
+                sa_select(ZoneModel.zone_id).where(ZoneModel.zone_id.in_(requested))
+            )
+        }
+        missing = sorted(requested - existing)
+        if missing:
+            raise ValueError(
+                f"create_api_key: zones {missing} do not exist; "
+                "create them before issuing keys against them"
+            )
+
     final_subject_id = subject_id or user_id
 
     valid_subject_types = ["user", "agent", "service"]

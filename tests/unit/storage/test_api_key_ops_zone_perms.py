@@ -15,9 +15,17 @@ from nexus.storage.models import Base
 
 
 def _make_session():
+    """Build a session factory pre-seeded with the eng/ops zones used by
+    these tests (#3871 round 5 — create_api_key validates ZoneModel exists)."""
+    from nexus.storage.models import ZoneModel
+
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+    with Session() as s:
+        s.add(ZoneModel(zone_id="eng", name="eng", phase="Active"))
+        s.add(ZoneModel(zone_id="ops", name="ops", phase="Active"))
+        s.commit()
     return Session
 
 

@@ -2963,7 +2963,15 @@ impl PyKernel {
     /// consulting the kernel's reverse index (`cross_zone_mounts`)
     /// so routing stays consistent — reads through a removed
     /// zone's mount path correctly fail post-remove.
-    fn zone_remove(&self, zone_id: &str) -> PyResult<()> {
+    ///
+    /// `force=true` honors the POSIX-style ``unlink while i_links
+    /// > 0`` bypass that ``remove_zone`` already supports — used
+    /// by ``federation_remove_zone(force=true)`` callers when the
+    /// cascade above can't drain references in time (race with
+    /// in-flight raft replication, partial unmount on a follower,
+    /// …) and the caller knows it's safe to drop anyway.
+    #[pyo3(signature = (zone_id, force=false))]
+    fn zone_remove(&self, zone_id: &str, force: bool) -> PyResult<()> {
         let zm = self
             .inner
             .zone_manager_arc()
@@ -2973,7 +2981,7 @@ impl PyKernel {
                 tracing::warn!("cascade unmount {parent_zone}{mount_path} failed: {e}");
             }
         }
-        zm.remove_zone(zone_id, false)
+        zm.remove_zone(zone_id, force)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 

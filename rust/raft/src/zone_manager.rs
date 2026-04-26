@@ -627,7 +627,7 @@ impl ZoneManager {
 
         // Try to write — propose forwards to leader if we're a follower
         // and reachable; errors mean leader unreachable / not elected.
-        let bytes = encode_file_metadata("/", "virtual", "", DT_DIR, root_zone_id, "");
+        let bytes = encode_file_metadata("/", DT_DIR, root_zone_id, "");
         match propose_set_metadata(&handle, &node, "/", bytes) {
             Ok(()) => {
                 tracing::info!("Root '/' created in zone '{}'", root_zone_id);
@@ -669,13 +669,11 @@ impl ZoneManager {
                 return Ok(());
             }
         } else {
-            let dir_bytes =
-                encode_file_metadata(local_path, "virtual", "", DT_DIR, parent_zone, "");
+            let dir_bytes = encode_file_metadata(local_path, DT_DIR, parent_zone, "");
             propose_set_metadata(&handle, &parent_node, local_path, dir_bytes)?;
         }
 
-        let mount_bytes =
-            encode_file_metadata(local_path, "mount", "", DT_MOUNT, parent_zone, target_zone);
+        let mount_bytes = encode_file_metadata(local_path, DT_MOUNT, parent_zone, target_zone);
         propose_set_metadata(&handle, &parent_node, local_path, mount_bytes)
     }
 

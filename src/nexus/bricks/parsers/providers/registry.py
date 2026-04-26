@@ -57,9 +57,11 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
         # Store in BaseRegistry (keyed by name)
         super().register(provider.name, provider, allow_overwrite=True)
 
+        existing_providers = tuple(p for p in self._ordered if p.name != provider.name)
+
         # Immutable rebuild: create new sorted tuple
         self._ordered = tuple(
-            sorted([*self._ordered, provider], key=lambda p: p.priority, reverse=True)
+            sorted([*existing_providers, provider], key=lambda p: p.priority, reverse=True)
         )
 
         logger.info(

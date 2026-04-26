@@ -95,6 +95,16 @@ class TestTryRead:
         result = resolver.try_read("/file_parsed.xlsx.md")
         assert result == b"# Parsed markdown"
 
+    def test_uppercase_parseable_extension_returns_parsed_content(
+        self,
+        resolver: VirtualViewResolver,
+        metadata: MagicMock,
+    ) -> None:
+        result = resolver.try_read("/Report_parsed.PDF.md")
+
+        assert result == b"# Parsed markdown"
+        metadata.get.assert_called_with("/Report.PDF")
+
     def test_returns_none_for_non_virtual(self, resolver: VirtualViewResolver) -> None:
         assert resolver.try_read("/normal.txt") is None
 

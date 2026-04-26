@@ -457,12 +457,13 @@ def _byte_end_to_line_exclusive(byte_end: int, byte_start: int, line_offsets: li
 def _parse_python(content: bytes, content_hash: str) -> MarkdownStructureIndex:
     text = content.decode("utf-8", errors="replace")
     md = _get_python_parser()
-    tokens = md.parse(text)
     line_offsets = _build_line_byte_offsets(content)
+    frontmatter = _detect_frontmatter(content)
+    parse_text = _blank_frontmatter_for_parse(text, frontmatter)
+    tokens = md.parse(parse_text)
 
     headings: list[_RawHeading] = []
     blocks: list[BlockInfo] = []
-    frontmatter: FrontmatterInfo | None = None
 
     i = 0
     while i < len(tokens):
@@ -582,6 +583,42 @@ def _parse_python(content: bytes, content_hash: str) -> MarkdownStructureIndex:
         i += 1
 
     return _build_index(headings, blocks, frontmatter, line_offsets, content_hash)
+
+
+def _detect_frontmatter(content: bytes) -> FrontmatterInfo | None:
+    """Detect YAML frontmatter without relying on optional markdown plugins."""
+    lines = content.splitlines(keepends=True)
+    if not lines or lines[0].strip() != b"---":
+        return None
+
+    byte_pos = len(lines[0])
+    for line_index, line in enumerate(lines[1:], start=1):
+        stripped = line.strip()
+        if stripped in {b"---", b"..."}:
+            byte_end = byte_pos + len(line)
+            fm_text = content[:byte_end].decode("utf-8", errors="replace")
+            return FrontmatterInfo(
+                byte_start=0,
+                byte_end=byte_end,
+                line_start=0,
+                line_end=line_index + 1,
+                keys=_extract_yaml_keys(fm_text),
+            )
+        byte_pos += len(line)
+
+    return None
+
+
+def _blank_frontmatter_for_parse(text: str, frontmatter: FrontmatterInfo | None) -> str:
+    """Preserve line positions while hiding frontmatter from markdown parsing."""
+    if frontmatter is None:
+        return text
+
+    lines = text.splitlines(keepends=True)
+    prefix = "".join(
+        "\n" if line.endswith(("\n", "\r")) else "" for line in lines[: frontmatter.line_end]
+    )
+    return prefix + "".join(lines[frontmatter.line_end :])
 
 
 # ---------------------------------------------------------------------------

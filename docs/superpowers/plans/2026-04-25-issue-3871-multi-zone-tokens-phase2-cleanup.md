@@ -1430,12 +1430,17 @@ git commit -m "feat(#3871): remove legacy zone_perms fallback (junction is sole 
 
 ## Task 9: Deprecated `zone` JSON alias → primary
 
-**Purpose:** Three response paths still emit the deprecated singular `zone` field. After Task 6 those are NULL. Re-source them from `get_primary_zone` so single-zone clients see byte-identical output.
+**Purpose:** Three response paths still emit the deprecated singular `zone` field by reading `APIKeyModel.zone_id` directly. After Task 6 that column is `NULL` for new keys. Re-source the alias from the junction's primary zone so single-zone clients see byte-identical output.
+
+**Plan correction (2026-04-25, after develop inspection):** the actual sites and patterns differ from the F4a audit's line numbers:
+1. `src/nexus/cli/commands/hub.py::token_list` — TWO usages: line 271 (`primary = next((r.zone_id for r in rows ...))` — used to order junction zones with primary first); lines 277, 288, 308 (`r.zone_id` reads as the deprecated `zone` field + table column + junction fallback).
+2. `src/nexus/server/rpc/handlers/admin.py::format_api_key_response` line 173 (`"zone_id": api_key.zone_id`) — emitted by `handle_admin_list_keys`, `handle_admin_get_key`, `handle_admin_update_key` via that helper.
+3. `src/nexus/server/api/v2/routers/auth_keys.py::create_key` line 265 (`"zone_id": result.get("zone_id", body.zone_id)`).
 
 **Files:**
-- Modify: `src/nexus/cli/commands/hub.py`
-- Modify: `src/nexus/server/rpc/handlers/admin.py`
-- Modify: `src/nexus/server/api/v2/routers/auth_keys.py`
+- Modify: `src/nexus/cli/commands/hub.py` — `token_list` re-derives primary from junction batch; falls back to `r.zone_id` only if no junction row (covers legacy column-only keys).
+- Modify: `src/nexus/server/rpc/handlers/admin.py` — `format_api_key_response` accepts a `session` param and calls `get_primary_zone(session, api_key.key_id)` (or accepts a precomputed `primary_zone` arg, depending on call-site shape — read the existing signature first).
+- Modify: `src/nexus/server/api/v2/routers/auth_keys.py` — `create_key` response sources `zone` from `get_primary_zone(session, result["key_id"])`.
 - Test: `tests/unit/cli/test_hub_token_list_primary_alias.py`
 - Test: `tests/unit/server/rpc/handlers/test_admin_primary_alias.py`
 - Test: `tests/unit/server/api/v2/routers/test_auth_keys_primary_alias.py`
@@ -1453,12 +1458,12 @@ Expected: ≥3 hits across the three files.
 
 - [ ] **Step 2: Write the CLI failing test**
 
-Existing hub-CLI tests in `tests/unit/cli/test_hub.py` use `monkeypatch.setattr` to replace `nexus.cli.commands.hub.create_api_key` and the session factory with stubs, then drive `click.testing.CliRunner`. Mirror that pattern.
+`hub token list` resolves its session via `get_session_factory()` from `_hub_common.py`, which reads `NEXUS_DATABASE_URL` from the environment. Set that env var to a tmp_path sqlite URL and pre-populate the schema. The CLI then opens its own connections through the same engine.
 
 Create `tests/unit/cli/test_hub_token_list_primary_alias.py`:
 
 ```python
-"""token_list deprecated `zone` field uses get_primary_zone (#3871)."""
+"""token_list deprecated `zone` field equals get_primary_zone (#3871)."""
 from __future__ import annotations
 
 import json
@@ -1466,17 +1471,19 @@ import json
 import pytest
 from click.testing import CliRunner
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
-from nexus.cli.commands.hub import hub  # top-level click group; adjust if renamed
+from nexus.cli.commands.hub import hub
 from nexus.storage.api_key_ops import create_api_key
 from nexus.storage.models._base import Base
 from nexus.storage.models.auth import ZoneModel
 
 
 @pytest.fixture
-def session_factory_with_keys(monkeypatch):
-    engine = create_engine("sqlite:///:memory:")
+def db_with_keys(tmp_path, monkeypatch):
+    db_path = tmp_path / "hub.db"
+    db_url = f"sqlite:///{db_path}"
+    engine = create_engine(db_url)
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     with SessionLocal() as s:
@@ -1484,40 +1491,33 @@ def session_factory_with_keys(monkeypatch):
             s.add(ZoneModel(zone_id=zid, name=zid, phase="Active"))
         s.commit()
         create_api_key(s, user_id="u1", name="alice", zones=["eng", "ops"])
-
-    # Replace the hub command's session source. The exact attribute name lives
-    # at the top of `src/nexus/cli/commands/hub.py` — search for the existing
-    # pattern in tests/unit/cli/test_hub.py to copy the matching monkeypatch
-    # target. Common pattern: `monkeypatch.setattr("nexus.cli.commands.hub._open_session", lambda: SessionLocal())`.
-    from nexus.cli.commands import hub as hub_mod
-    monkeypatch.setattr(hub_mod, "_open_session", SessionLocal)
+        s.commit()
+    monkeypatch.setenv("NEXUS_DATABASE_URL", db_url)
     return SessionLocal
 
 
-def test_token_list_json_zone_field_equals_primary(session_factory_with_keys):
+def test_token_list_json_zone_field_equals_primary(db_with_keys):
     runner = CliRunner()
     result = runner.invoke(hub, ["token", "list", "--json"])
     assert result.exit_code == 0, result.output
-    rows = json.loads(result.output)
-    alice = next(r for r in rows if r["name"] == "alice")
+    payload = json.loads(result.output)
+    alice = next(r for r in payload["tokens"] if r["name"] == "alice")
     assert alice["zone"] == "eng"  # primary by granted_at, NOT None
 
 
-def test_token_list_json_zone_field_is_none_for_zoneless_admin_key(session_factory_with_keys):
+def test_token_list_json_zone_field_is_none_for_zoneless_admin_key(db_with_keys):
     """Zoneless admin keys legitimately have no primary; emit None, not crash."""
-    SessionLocal = session_factory_with_keys
+    SessionLocal = db_with_keys
     with SessionLocal() as s:
-        create_api_key(s, user_id="u1", name="root", is_admin=True)  # zoneless
-
+        create_api_key(s, user_id="u1", name="root", is_admin=True)
+        s.commit()
     runner = CliRunner()
     result = runner.invoke(hub, ["token", "list", "--json"])
     assert result.exit_code == 0, result.output
-    rows = json.loads(result.output)
-    root_row = next(r for r in rows if r["name"] == "root")
+    payload = json.loads(result.output)
+    root_row = next(r for r in payload["tokens"] if r["name"] == "root")
     assert root_row["zone"] is None
 ```
-
-If the actual session-injection attribute on `hub` is not `_open_session`, run `rg -n "session|Session" src/nexus/cli/commands/hub.py | head -20` and copy the pattern from the existing `test_hub.py` monkeypatch calls — the goal is just to make `hub token list` read from the in-memory DB.
 
 - [ ] **Step 3: Write the admin RPC failing test**
 

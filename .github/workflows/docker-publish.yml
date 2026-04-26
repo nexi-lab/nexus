@@ -120,8 +120,8 @@ jobs:
             type=semver,pattern={{version}}
             type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            # For main or develop branch pushes: edge
-            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' }}
+            # For main, develop, or tagged releases: edge (e2e-edge job always pulls :edge)
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v') }}
             # For manual dispatch: custom tag or SHA
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
             type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
@@ -138,7 +138,7 @@ jobs:
           docker buildx imagetools inspect "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
 
   # ---------------------------------------------------------------------------
-  # E2E smoke tests against the edge image (develop only)
+  # E2E smoke tests against the edge image (develop + tagged releases)
   # Starts a Nexus container, runs init, then exercises the permissions demo
   # and build-perf e2e scripts.  Failures block the workflow so issues are
   # caught early.
@@ -146,7 +146,7 @@ jobs:
   e2e-edge:
     name: E2E edge smoke tests
     needs: build-and-push
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -248,7 +248,7 @@ jobs:
             -e NEXUS_PROFILE=remote \
             -e NEXUS_GRPC_PORT=2029 \
             -e NEXUS_GRPC_TLS=false \
-            nexus-e2e nexus demo init --skip-semantic
+            nexus-e2e nexus demo init
 
       - name: Copy test scripts into container
         run: |
@@ -270,6 +270,7 @@ jobs:
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_PROFILE=remote \
             -e NEXUS_GRPC_PORT=2029 \
+            -e NEXUS_GRPC_TLS=false \
             nexus-e2e python3 /tmp/test_build_perf_e2e.py
 
       - name: Collect container logs on failure

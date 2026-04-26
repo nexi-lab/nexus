@@ -300,7 +300,7 @@ when no services are registered.
 | Pillar calls (Metastore, ObjectStore, DCache) | 0 | Pure Rust trait dispatch |
 | Hook dispatch (read/write/unlink/rename/copy/mkdir/rmdir) | 2+N | Context build + per-hook call, GIL held pre-detach |
 | Service lifecycle (enlist auto-start, start_all, stop_all) | 4/service | isinstance + call_method0 + asyncio.wait_for + asyncio.run (stdlib only). Not on syscall hot path |
-| Zero-crossing syscalls | 0 | sys_lock, sys_unlock, sys_watch, sys_stat, sys_setattr, sys_readdir |
+| Zero-crossing syscalls | 0 | sys_lock, sys_unlock, sys_watch, sys_stat (chrono), sys_setattr, sys_readdir, sys_write IPC (DT_PIPE/DT_STREAM) |
 
 ### 2.5 Mediation Principle
 

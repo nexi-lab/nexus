@@ -322,6 +322,7 @@ fn set_optional_datetime(
 }
 
 /// Set a stat-dict entry to a UTC ISO-8601 string built from epoch ms.
+/// Pure Rust (chrono) — no Python crossing.
 fn set_optional_iso_datetime(
     py: Python<'_>,
     dict: &Bound<'_, PyDict>,
@@ -331,13 +332,13 @@ fn set_optional_iso_datetime(
     let Some(ms) = ms else {
         return dict.set_item(key, py.None());
     };
-    let datetime = py.import("datetime")?;
-    let utc = datetime.getattr("timezone")?.getattr("utc")?;
-    let from_ts = datetime.getattr("datetime")?.getattr("fromtimestamp")?;
-    let secs = ms as f64 / 1000.0;
-    let dt = from_ts.call((secs, &utc), None)?;
-    let iso = dt.call_method0("isoformat")?;
-    dict.set_item(key, iso)
+    let secs = ms / 1000;
+    let nsecs = ((ms % 1000) * 1_000_000) as u32;
+    if let Some(dt) = chrono::DateTime::from_timestamp(secs, nsecs) {
+        dict.set_item(key, dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    } else {
+        dict.set_item(key, py.None())
+    }
 }
 
 /// Convert Rust OperationContext -> Python OperationContext.

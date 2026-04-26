@@ -85,9 +85,7 @@ mod anthropic_backend;
 #[cfg(feature = "connectors")]
 pub mod anthropic_streaming;
 pub mod audit_hook;
-mod bitmap;
 mod blob_fetcher;
-mod bloom;
 mod cas_chunking;
 mod cas_engine;
 mod cas_remote;
@@ -99,13 +97,10 @@ mod federation_client;
 mod gcs_backend;
 #[cfg(feature = "connectors")]
 mod gdrive_backend;
-mod glob;
 #[cfg(feature = "connectors")]
 mod gmail_backend;
-mod hash;
 #[cfg(feature = "connectors")]
 mod hn_backend;
-mod io;
 pub mod ipc;
 mod kernel;
 // `generated_kernel_abi_pyo3` (renamed from `generated_pyo3` in Phase C)
@@ -132,22 +127,16 @@ mod openai_backend;
 mod openai_inference;
 #[cfg(feature = "connectors")]
 pub mod openai_streaming;
-mod path_utils;
 mod peer_blob_client;
 mod permission_hook;
-mod prefix;
 mod raft_metastore;
-mod rebac;
 mod remote_backend;
 mod replication;
 mod rpc_transport;
 #[cfg(feature = "connectors")]
 mod s3_backend;
-mod search;
-mod simd;
 #[cfg(feature = "connectors")]
 mod slack_backend;
-mod trigram;
 mod volume_engine;
 mod volume_index;
 #[cfg(feature = "connectors")]
@@ -158,15 +147,14 @@ use pyo3::prelude::*;
 /// Python module definition.
 #[pymodule]
 fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
-    // ReBAC
-    m.add_function(wrap_pyfunction!(rebac::compute_permissions_bulk, m)?)?;
-    m.add_function(wrap_pyfunction!(rebac::compute_permission_single, m)?)?;
-    m.add_function(wrap_pyfunction!(rebac::expand_subjects, m)?)?;
-    m.add_function(wrap_pyfunction!(rebac::list_objects_for_subject, m)?)?;
-    // ReBAC bitmap intersection (§10 C1)
-    m.add_function(wrap_pyfunction!(rebac::check_permission_bitmap, m)?)?;
-    m.add_function(wrap_pyfunction!(rebac::check_permission_bitmap_batch, m)?)?;
-    // OpenAI inference (§10 D3) — GIL-free HTTP calls
+    // Phase H: pure-Rust algorithm wrappers (rebac, search, glob, io,
+    // prefix, simd, trigram, path_utils) all live in `lib::python` now.
+    // Single delegation call replaces ~30 individual `add_function` /
+    // `add_class` lines that used to live here.
+    lib::python::register(m)?;
+    // OpenAI inference (§10 D3) — GIL-free HTTP calls. Stays kernel-side
+    // through Phase D-deferred connector migration; Phase D follow-up PR
+    // moves it to `backends`.
     #[cfg(feature = "connectors")]
     {
         m.add_function(wrap_pyfunction!(
@@ -178,59 +166,8 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
             m
         )?)?;
     }
-    // Search
-    m.add_function(wrap_pyfunction!(search::grep_bulk, m)?)?;
-    m.add_function(wrap_pyfunction!(search::grep_files_mmap, m)?)?;
-    // Glob
-    m.add_function(wrap_pyfunction!(glob::glob_match_bulk, m)?)?;
-    m.add_function(wrap_pyfunction!(glob::filter_paths, m)?)?;
-    // File I/O
-    m.add_function(wrap_pyfunction!(io::read_file, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_files_bulk, m)?)?;
-    // Path prefix matching (Issue #1565)
-    m.add_function(wrap_pyfunction!(prefix::any_path_starts_with, m)?)?;
-    m.add_function(wrap_pyfunction!(prefix::batch_prefix_check, m)?)?;
-    m.add_function(wrap_pyfunction!(prefix::filter_paths_by_prefix, m)?)?;
-    // Tiger Cache Roaring Bitmap
-    m.add_function(wrap_pyfunction!(bitmap::filter_paths_with_tiger_cache, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        bitmap::filter_paths_with_tiger_cache_parallel,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(
-        bitmap::intersect_paths_with_tiger_cache,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(
-        bitmap::any_path_accessible_tiger_cache,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(bitmap::tiger_cache_bitmap_stats, m)?)?;
-    // SIMD vector similarity
-    m.add_function(wrap_pyfunction!(simd::cosine_similarity_f32, m)?)?;
-    m.add_function(wrap_pyfunction!(simd::dot_product_f32, m)?)?;
-    m.add_function(wrap_pyfunction!(simd::euclidean_sq_f32, m)?)?;
-    m.add_function(wrap_pyfunction!(simd::batch_cosine_similarity_f32, m)?)?;
-    m.add_function(wrap_pyfunction!(simd::top_k_similar_f32, m)?)?;
-    m.add_function(wrap_pyfunction!(simd::cosine_similarity_i8, m)?)?;
-    m.add_function(wrap_pyfunction!(simd::batch_cosine_similarity_i8, m)?)?;
-    m.add_function(wrap_pyfunction!(simd::top_k_similar_i8, m)?)?;
-    // Hash
-    m.add_function(wrap_pyfunction!(hash::hash_content_py, m)?)?;
-    m.add_function(wrap_pyfunction!(hash::hash_content_smart_py, m)?)?;
-    m.add_function(wrap_pyfunction!(hash::hash_bytes, m)?)?;
-    // Trigram Index
-    m.add_function(wrap_pyfunction!(trigram::build_trigram_index, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        trigram::build_trigram_index_from_entries,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(trigram::trigram_grep, m)?)?;
-    m.add_function(wrap_pyfunction!(trigram::trigram_search_candidates, m)?)?;
-    m.add_function(wrap_pyfunction!(trigram::trigram_index_stats, m)?)?;
-    m.add_function(wrap_pyfunction!(trigram::invalidate_trigram_cache, m)?)?;
-    // Classes
-    m.add_class::<bloom::BloomFilter>()?;
+    // bitmap / bloom / hash PyO3 wrappers all live in lib::python now
+    // (Phase I — moved alongside the rest of the algorithm wrappers).
     // VFSLockManager deleted — I/O lock is now internal to LockManager,
     // accessed through Kernel syscalls (sys_read/sys_write/sys_copy).
     // MemoryPipeBackend/MemoryStreamBackend are kernel-internal only (no #[pyclass]).
@@ -259,18 +196,7 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
-    // Path utilities (Issue #1817 prerequisite)
-    m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::get_ancestors, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::get_parent_chain, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::parent_path, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::validate_path, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::normalize_path, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::path_matches_pattern, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::unscope_internal_path, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::canonicalize_path, m)?)?;
-    m.add_function(wrap_pyfunction!(path_utils::extract_zone_id, m)?)?;
+    // path_utils PyO3 functions registered via lib::python::register above.
 
     // Federation peer gRPC client (R16.5b).
     m.add_class::<federation_client::PyFederationClient>()?;

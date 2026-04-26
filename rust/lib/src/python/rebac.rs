@@ -17,12 +17,12 @@ use std::num::NonZeroUsize;
 use string_interner::DefaultStringInterner;
 
 // Re-use all domain types and algorithms from lib.
-use lib::rebac::graph::{compute_permission_interned, InternedGraph};
-use lib::rebac::{
+use crate::rebac::graph::{compute_permission_interned, InternedGraph};
+use crate::rebac::{
     collect_candidate_objects_for_subjects, compute_permission, expand_permission,
     find_subject_groups, ReBACGraph, MAX_DEPTH,
 };
-use lib::types::{
+use crate::types::{
     CheckRequest, Entity, InternedEntity, InternedMemoCache, InternedMemoKey,
     InternedNamespaceConfig, InternedRelationConfig, InternedTuple, MemoCache, NamespaceConfig,
     ReBACTuple, Sym,
@@ -211,7 +211,7 @@ fn compute_permission_interned_shared(
                         });
                 }
 
-                // Direct tuples always apply (match lib::rebac::graph).
+                // Direct tuples always apply (match crate::rebac::graph).
                 if !allowed {
                     allowed = check_relation_with_usersets_interned_shared(
                         subject, permission, object, graph, namespaces, memo_cache, visited, depth,

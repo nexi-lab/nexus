@@ -44,6 +44,7 @@ GENERATED_PYO3_PATH = RUST_SRC / "generated_kernel_abi_pyo3.rs"
 # pre-Phase-C names via `pub use core::… as <flat_name>` re-exports.
 # Map the flat name → on-disk file for the codegen scanner.
 FLAT_TO_NESTED_ALIASES: dict[str, str] = {
+    # Phase C: kernel-internal modules nested under core/.
     "lock_manager": "core/lock/mod.rs",
     "locks": "core/lock/locks.rs",
     "semaphore": "core/lock/semaphore.rs",
@@ -70,13 +71,40 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
     "file_watch": "core/file_watch.rs",
 }
 
+# Phase H/I: PyO3 wrappers for the lib algorithms now live in
+# rust/lib/src/python/. The codegen still uses flat module names
+# (rebac, search, glob, io, prefix, simd, trigram, path_utils, bitmap,
+# bloom, hash) in the registration calls; this map locates the actual
+# .rs file for each.
+LIB_PYTHON_DIR = ROOT / "rust" / "lib" / "src" / "python"
+LIB_PYTHON_MODULES: set[str] = {
+    "bitmap",
+    "bloom",
+    "glob",
+    "hash",
+    "io",
+    "path_utils",
+    "prefix",
+    "rebac",
+    "search",
+    "simd",
+    "trigram",
+}
+
 
 def _resolve_module_path(mod_name: str) -> Path | None:
     """Return the on-disk `.rs` file for a flat module name, or None.
 
-    Tries the alias map first (Phase C nested files), then falls back
-    to ``RUST_SRC/<mod>.rs``.
+    Resolution order:
+      1. Phase H/I — `rust/lib/src/python/<mod>.rs` for algorithm wrappers
+         that moved out of kernel.
+      2. Phase C nested file aliases (kernel core/* tree).
+      3. Flat `rust/kernel/src/<mod>.rs` fallback.
     """
+    if mod_name in LIB_PYTHON_MODULES:
+        candidate = LIB_PYTHON_DIR / f"{mod_name}.rs"
+        if candidate.exists():
+            return candidate
     aliased = FLAT_TO_NESTED_ALIASES.get(mod_name)
     if aliased is not None:
         candidate = RUST_SRC / aliased
@@ -5018,8 +5046,17 @@ def collect_all() -> tuple[
 
     Returns (module_functions, classes, class_order, traits, all_export_names).
     """
+    # Phase H/I: kernel/src/lib.rs delegates to `lib::python::register(m)`
+    # for all algorithm wrappers (rebac, search, glob, io, prefix, simd,
+    # trigram, path_utils, bitmap, bloom, hash). Scan both lib.rs files
+    # and merge so the codegen sees the full set of `wrap_pyfunction!` /
+    # `add_class::<…>` registrations.
     lib_text = (RUST_SRC / "lib.rs").read_text()
-    func_exports, class_exports = parse_lib_exports(lib_text)
+    lib_python_text = ""
+    lib_python_mod = ROOT / "rust" / "lib" / "src" / "python" / "mod.rs"
+    if lib_python_mod.exists():
+        lib_python_text = lib_python_mod.read_text()
+    func_exports, class_exports = parse_lib_exports(lib_text + "\n" + lib_python_text)
 
     # Build set of exported function names per module
     exported_names: dict[str, set[str]] = {}

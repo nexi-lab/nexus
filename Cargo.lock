@@ -1615,18 +1615,28 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "blake3",
+ "bloomfilter",
  "crc32fast",
+ "dashmap",
+ "encoding_rs",
  "getrandom 0.3.4",
  "globset",
+ "lru",
  "memchr",
+ "memmap2",
+ "parking_lot",
  "proptest",
  "pyo3",
+ "rayon",
  "regex",
  "regex-syntax",
  "roaring",
  "serde",
  "serde_json",
+ "simdutf8",
+ "simsimd",
  "string-interner",
+ "tempfile",
 ]
 
 [[package]]

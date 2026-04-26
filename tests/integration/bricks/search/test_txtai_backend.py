@@ -297,7 +297,9 @@ class TestTxtaiBackendSearch:
     async def test_search_builds_sql_with_zone_id(self) -> None:
         backend, mock_emb = self._make_backend_with_mock()
         mock_emb.search.return_value = []
-        await backend.search("test query", zone_id="corp", limit=5)
+        # search_type="keyword" so the hybrid over-fetch (Issue #3900) doesn't
+        # mask the limit assertion.
+        await backend.search("test query", zone_id="corp", limit=5, search_type="keyword")
         call_args = mock_emb.search.call_args[0][0]
         assert "zone_id = 'corp'" in call_args
         assert "LIMIT 5" in call_args
@@ -354,6 +356,47 @@ class TestTxtaiBackendSearch:
         results = await backend.search("q", zone_id="z", search_type="hybrid")
         assert [r.path for r in results] == ["/p/demo-1", "/p/demo-2"]
         assert results[0].score == 0.55  # higher of the two demo-1 scores
+
+    @pytest.mark.asyncio
+    async def test_search_hybrid_overfetches_to_avoid_underfill(self) -> None:
+        """Issue #3900: hybrid SQL must over-fetch so dedupe doesn't underfill.
+
+        If we ask txtai for exactly `limit` rows and every row pair is the
+        same id, post-dedupe we'd return < limit unique results when more
+        unique matches existed beyond the SQL LIMIT. The backend should
+        over-fetch in hybrid mode and slice to limit *after* dedupe.
+        """
+        backend, mock_emb = self._make_backend_with_mock()
+
+        # Simulate txtai returning 2*limit rows (the over-fetch), where
+        # ids 1-3 are duplicated by both BM25 and dense scorers and id 4
+        # appears only once. With limit=3 and naive limit-then-dedupe,
+        # we'd see [1, 1, 2] → 2 unique. With over-fetch + dedupe-then-slice,
+        # we should see all three unique ids.
+        mock_emb.search.return_value = [
+            {"id": "1", "path": "/a", "text": "a", "score": 0.90, "zone_id": "z"},
+            {"id": "1", "path": "/a", "text": "a", "score": 0.85, "zone_id": "z"},
+            {"id": "2", "path": "/b", "text": "b", "score": 0.80, "zone_id": "z"},
+            {"id": "2", "path": "/b", "text": "b", "score": 0.75, "zone_id": "z"},
+            {"id": "3", "path": "/c", "text": "c", "score": 0.70, "zone_id": "z"},
+            {"id": "3", "path": "/c", "text": "c", "score": 0.65, "zone_id": "z"},
+        ]
+        results = await backend.search("q", zone_id="z", search_type="hybrid", limit=3)
+        # Backend asked for an over-fetched LIMIT in the SQL.
+        sql = mock_emb.search.call_args[0][0]
+        assert "LIMIT 6" in sql
+        # All three unique ids surface, ordered by score, sliced to limit.
+        assert len(results) == 3
+        assert [r.path for r in results] == ["/a", "/b", "/c"]
+
+    @pytest.mark.asyncio
+    async def test_search_keyword_does_not_overfetch(self) -> None:
+        """Keyword-only search has no dedupe risk and should not over-fetch."""
+        backend, mock_emb = self._make_backend_with_mock()
+        mock_emb.search.return_value = []
+        await backend.search("q", zone_id="z", search_type="keyword", limit=5)
+        sql = mock_emb.search.call_args[0][0]
+        assert "LIMIT 5" in sql
 
 
 # =============================================================================

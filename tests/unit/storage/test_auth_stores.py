@@ -118,12 +118,22 @@ class TestAPIKeyStore:
         # Revoked keys should not be returned by get_by_hash
         assert store.get_by_hash("h1") is None
 
-    def test_revoke_key_with_zone_filter(self, store):
-        dto = store.create_key(key_hash="h1", user_id="u1", name="k", zone_id="zone-a")
+    def test_revoke_key_with_zone_filter(self, store, session_factory):
+        # Keys created via create_api_key with zones properly populate the junction.
+        from nexus.storage.api_key_ops import create_api_key
+        from nexus.storage.models.auth import ZoneModel
+
+        with session_factory() as s:
+            s.add(ZoneModel(zone_id="zone-a", name="Zone A", phase="Active"))
+            s.add(ZoneModel(zone_id="zone-b", name="Zone B", phase="Active"))
+            s.commit()
+            key_id, _ = create_api_key(s, user_id="u1", name="k", zones=["zone-a"])
+            s.commit()
+
         # Wrong zone should fail
-        assert store.revoke_key(dto.key_id, zone_id="zone-b") is False
+        assert store.revoke_key(key_id, zone_id="zone-b") is False
         # Correct zone should succeed
-        assert store.revoke_key(dto.key_id, zone_id="zone-a") is True
+        assert store.revoke_key(key_id, zone_id="zone-a") is True
 
     def test_revoke_nonexistent_returns_false(self, store):
         assert store.revoke_key("nonexistent") is False

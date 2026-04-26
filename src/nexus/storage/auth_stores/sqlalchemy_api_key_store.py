@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from nexus.contracts.auth_store_types import APIKeyDTO
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.storage.models import APIKeyModel
+from nexus.storage.models import APIKeyModel, APIKeyZoneModel
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +90,18 @@ class SQLAlchemyAPIKeyStore:
             return _to_dto(key) if key else None
 
     def revoke_key(self, key_id: str, *, zone_id: str | None = None) -> bool:
+        """Revoke an API key.
+
+        Zone access filter — when provided, only revokes keys that grant access
+        to this zone via the api_key_zones junction (matches multi-zone keys on
+        every granted zone, not only primary). #3871.
+        """
         with self._session_factory() as session:
             stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
             if zone_id is not None:
-                stmt = stmt.where(APIKeyModel.zone_id == zone_id)
+                stmt = stmt.join(
+                    APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id
+                ).where(APIKeyZoneModel.zone_id == zone_id)
             key = session.scalar(stmt)
             if not key:
                 return False

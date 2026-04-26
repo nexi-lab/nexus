@@ -119,10 +119,11 @@ def create_api_key(
 
     Raises:
         ValueError: If ``zones`` is explicitly passed as an empty list, if
-            ``subject_type`` is invalid, or if any per-zone permission
-            string is not one of ``r | w | rw | rwx``. Passing neither
-            ``zones`` nor ``zone_id`` is still allowed (zone-less key,
-            backward compat).
+            ``subject_type`` is invalid, if any per-zone permission string
+            is not one of ``r | w | rw | rwx``, or if neither ``zones`` nor
+            ``zone_id`` is supplied for a non-admin key (zoneless tokens are
+            reserved for explicit global admins, ``is_admin=True``, #3871
+            round 4).
     """
     from nexus.storage.models import APIKeyModel, APIKeyZoneModel
 
@@ -142,6 +143,16 @@ def create_api_key(
             else:
                 zone_perms.append((entry, "rw"))
     primary_zone = zone_perms[0][0] if zone_perms else None
+
+    # #3871 round 4: non-admin keys must have a zone. Otherwise the token
+    # has no zone access at auth time (and downstream routes would coerce
+    # the missing zone to ROOT_ZONE_ID). Zoneless is reserved for explicit
+    # global admins.
+    if not zone_perms and not is_admin:
+        raise ValueError(
+            "create_api_key: non-admin keys must specify zones or zone_id "
+            "(zoneless tokens are reserved for global admins, #3871)"
+        )
 
     final_subject_id = subject_id or user_id
 

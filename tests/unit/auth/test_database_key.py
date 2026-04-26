@@ -255,7 +255,7 @@ class TestUpdateLastUsedBackground:
         """Verify the UPDATE statement (not SELECT+UPDATE) pattern."""
         # Create a key and authenticate to get a valid hash
         with session_factory() as session:
-            _key_id, raw_key = _create_key(session)
+            _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
             session.commit()
 
         token_hash = auth_provider._hash_key(raw_key)
@@ -380,10 +380,11 @@ class TestZoneLifecycleGate:
             _create_key(session, zone_id="unknown_zone")
 
     @pytest.mark.asyncio
-    async def test_null_zone_id_token_unaffected(self, auth_provider, session_factory):
-        """Tokens with zone_id=None (pre-hub / admin-global) bypass the gate."""
+    async def test_zoneless_admin_token_unaffected(self, auth_provider, session_factory):
+        """Zoneless admin tokens (is_admin=True, no zone) bypass the gate.
+        #3871 round 4: zoneless non-admin keys are now rejected at create_key."""
         with session_factory() as session, session.begin():
-            _key_id, raw_key = _create_key(session, zone_id=None)
+            _key_id, raw_key = _create_key(session, zone_id=None, is_admin=True)
 
         result = await auth_provider.authenticate(raw_key)
         assert result.authenticated is True

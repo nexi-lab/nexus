@@ -65,6 +65,13 @@ class SQLAlchemyAPIKeyStore:
             expires_at=expires_at,
             inherit_permissions=int(inherit_permissions),
         )
+        # #3871 round 4: non-admin keys must have a zone (see Phase 2 docs).
+        if not zone_id and not is_admin:
+            raise ValueError(
+                "SQLAlchemyAPIKeyStore.create_key: non-admin keys must specify a zone_id "
+                "(zoneless tokens are reserved for global admins, #3871)"
+            )
+
         with self._session_factory() as session:
             # #3871 round 3: validate zone exists before junction insert (FK
             # api_key_zones.zone_id -> zones.zone_id). Surfaces a controlled

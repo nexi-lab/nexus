@@ -60,6 +60,7 @@ class TestCreateAgentApiKey:
             agent_id="my-unique-agent",
             agent_name="Agent X",
             owner_id="bob",
+            zone_id=ROOT_ZONE_ID,
         )
         session.commit()
 
@@ -81,6 +82,7 @@ class TestCreateAgentApiKey:
             agent_id="permanent-agent",
             agent_name="Permanent",
             owner_id="carol",
+            zone_id=ROOT_ZONE_ID,
             expires_at=None,
         )
         session.commit()
@@ -106,6 +108,7 @@ class TestCreateAgentApiKey:
             agent_id="ttl-agent",
             agent_name="TTL Agent",
             owner_id="dave",
+            zone_id=ROOT_ZONE_ID,
             expires_at=expiry,
         )
         session.commit()
@@ -128,6 +131,7 @@ class TestCreateAgentApiKey:
             agent_id="named-agent",
             agent_name="My Agent",
             owner_id="eve",
+            zone_id=ROOT_ZONE_ID,
         )
         session.commit()
 

@@ -53,6 +53,7 @@ def test_create_key_basic(session_factory) -> None:
             session,
             user_id="alice",
             name="Test Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -185,6 +186,7 @@ async def test_authenticate_expired_key(auth_provider, session_factory) -> None:
             session,
             user_id="alice",
             name="Expired Key",
+            zone_id="org_acme",
             expires_at=expired_time,
         )
         session.commit()
@@ -201,6 +203,7 @@ async def test_authenticate_revoked_key(auth_provider, session_factory) -> None:
             session,
             user_id="alice",
             name="Revoked Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -221,6 +224,7 @@ async def test_authenticate_require_expiry(auth_provider_require_expiry, session
             session,
             user_id="alice",
             name="No Expiry Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -239,6 +243,7 @@ async def test_authenticate_require_expiry_with_valid_expiry(
             session,
             user_id="alice",
             name="Expiry Key",
+            zone_id="org_acme",
             expires_at=future_time,
         )
         session.commit()
@@ -255,6 +260,7 @@ async def test_validate_token(auth_provider, session_factory) -> None:
             session,
             user_id="alice",
             name="Validate Test Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -272,6 +278,7 @@ def test_revoke_key(session_factory) -> None:
             session,
             user_id="alice",
             name="Revoke Test Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -325,6 +332,7 @@ async def test_last_used_at_updated(auth_provider, session_factory) -> None:
             session,
             user_id="alice",
             name="Last Used Key",
+            zone_id="org_acme",
         )
         session.commit()
 

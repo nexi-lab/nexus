@@ -215,6 +215,19 @@ def token_create(
                             "Create it first with `nexus zone create` or use --zones <existing>."
                         )
 
+        # #3871 round 4: bootstrap path — auto-create missing ZoneModel rows
+        # so the api_key_zones FK insert below doesn't fail with IntegrityError.
+        # The validation block above only runs when any_zone is not None; in
+        # the bootstrap escape path (empty zones table) the requested zones
+        # may not exist yet, but create_api_key will still insert junction
+        # rows whose zone_id has a FK to zones.zone_id.
+        if any_zone is None:
+            for entry in zones:
+                zid = entry[0] if isinstance(entry, tuple) else entry
+                if not session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid)):
+                    session.add(ZoneModel(zone_id=zid, name=zid, phase="Active"))
+            session.flush()
+
         key_id, raw_key = create_api_key(
             session,
             user_id=user_id or name,

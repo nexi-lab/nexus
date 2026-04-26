@@ -34,9 +34,11 @@ def test_create_key_writes_null_zone_id_with_zone_arg(store_and_factory):
         assert get_zones_for_key(s, dto.key_id) == ["eng"]  # junction populated
 
 
-def test_create_key_writes_null_zone_id_zoneless(store_and_factory):
+def test_create_key_writes_null_zone_id_zoneless_admin(store_and_factory):
+    """Admin keys may be zoneless (no junction); the deprecated column stays NULL.
+    #3871 round 4: non-admin zoneless keys are now rejected at create_key."""
     store, SessionLocal = store_and_factory
-    dto = store.create_key(key_hash="h2", user_id="u1", name="root")  # no zone_id
+    dto = store.create_key(key_hash="h2", user_id="u1", name="root", is_admin=True)
     with SessionLocal() as s:
         row = s.get(APIKeyModel, dto.key_id)
         assert row.zone_id is None

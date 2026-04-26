@@ -34,12 +34,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # The join matches on BOTH key_id AND zone_id so a backfill that wrote a
+    # junction row for the WRONG zone (e.g. legacy api_keys.zone_id='eng' but
+    # only api_key_zones('ops')) trips the assertion. Otherwise the key would
+    # silently lose 'eng' access after Phase 2 removes the legacy fallback.
     rows = bind.execute(
         text(
             """
-            SELECT k.key_id
+            SELECT k.key_id, k.zone_id
             FROM api_keys k
-            LEFT JOIN api_key_zones z ON z.key_id = k.key_id
+            LEFT JOIN api_key_zones z
+              ON z.key_id = k.key_id AND z.zone_id = k.zone_id
             WHERE k.revoked = 0
               AND k.zone_id IS NOT NULL
               AND z.key_id IS NULL
@@ -47,11 +52,11 @@ def upgrade() -> None:
         )
     ).fetchall()
     if rows:
-        sample = [r[0] for r in rows[:5]]
+        sample = [(r[0], r[1]) for r in rows[:5]]
         raise RuntimeError(
             f"#3871 Phase 2 cleanup blocked: {len(rows)} live keys carry a legacy "
-            f"zone_id with no api_key_zones row. Re-run the #3785 backfill before "
-            f"upgrading. Sample key_ids: {sample}"
+            f"zone_id with no matching api_key_zones row. Re-run the #3785 backfill "
+            f"before upgrading. Sample (key_id, legacy zone_id): {sample}"
         )
 
 

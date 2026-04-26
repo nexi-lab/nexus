@@ -125,6 +125,19 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 )
                 return AuthResult(authenticated=False)
 
+            # #3871 round 4: a non-admin token with no junction zones has no
+            # zone access. Several downstream routes coerce ``zone_id=None``
+            # to ROOT_ZONE_ID (tus_uploads, fastapi_server secrets-audit dep),
+            # which would silently grant root access. Fail closed here so
+            # zoneless tokens are reserved for explicit global admins.
+            if not zone_perm_rows and not api_key.is_admin:
+                logger.warning(
+                    "UNAUTHORIZED: non-admin API key %s has no junction zones; "
+                    "zoneless tokens are reserved for global admins (#3871)",
+                    api_key.key_id,
+                )
+                return AuthResult(authenticated=False)
+
             # #3784 round 10: zone lifecycle gate at runtime. A token scoped
             # to a zone that has since been soft-deleted or marked Terminating
             # must fail closed. Check EVERY junction zone (a token multi-zoned
@@ -267,6 +280,16 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
         raw_key = f"{API_KEY_PREFIX}{zone_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
         key_hash = cls._hash_key(raw_key)
+
+        # #3871 round 4: non-admin keys must have a zone. Otherwise the token
+        # has no zone access at auth time (and downstream routes would coerce
+        # the missing zone to ROOT_ZONE_ID, silently granting root). Zoneless
+        # is reserved for explicit global admins.
+        if not zone_id and not is_admin:
+            raise ValueError(
+                "DatabaseAPIKeyAuth.create_key: non-admin keys must specify a zone_id "
+                "(zoneless tokens are reserved for global admins, #3871)"
+            )
 
         # #3871 round 3: validate zone exists before inserting junction row.
         # Surfaces a controlled ValidationError instead of an opaque

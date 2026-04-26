@@ -72,7 +72,7 @@ def test_tripwire_raises_on_legacy_zone_scoped_key(engine_with_schema):
     """Non-admin key with legacy zone_id but no junction row must trip."""
     with engine_with_schema.begin() as conn:
         conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('orphan', 'eng')"))
-    with pytest.raises(RuntimeError, match="legacy zone_id with no api_key_zones row"):
+    with pytest.raises(RuntimeError, match="legacy zone_id with no matching api_key_zones row"):
         _run_upgrade_against(engine_with_schema)
 
 
@@ -83,7 +83,7 @@ def test_tripwire_raises_on_legacy_zone_scoped_admin(engine_with_schema):
         conn.execute(
             text("INSERT INTO api_keys (key_id, zone_id, is_admin) VALUES ('zadm', 'eng', 1)")
         )
-    with pytest.raises(RuntimeError, match="legacy zone_id with no api_key_zones row"):
+    with pytest.raises(RuntimeError, match="legacy zone_id with no matching api_key_zones row"):
         _run_upgrade_against(engine_with_schema)
 
 
@@ -99,6 +99,25 @@ def test_tripwire_ignores_revoked_keys(engine_with_schema):
         conn.execute(
             text("INSERT INTO api_keys (key_id, zone_id, revoked) VALUES ('dead', 'eng', 1)")
         )
+    _run_upgrade_against(engine_with_schema)  # must not raise
+
+
+def test_tripwire_raises_on_mismatched_backfill(engine_with_schema):
+    """Backfilled junction row for the WRONG zone must trip — otherwise the
+    key silently loses access to its legacy zone after Phase 2 (#3871 round 4)."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('mismatch', 'eng')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('mismatch', 'ops')"))
+    with pytest.raises(RuntimeError, match="no matching api_key_zones row"):
+        _run_upgrade_against(engine_with_schema)
+
+
+def test_tripwire_passes_on_correct_backfill(engine_with_schema):
+    """Backfilled junction row for the legacy zone passes (alongside other zones is fine)."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('multi', 'eng')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('multi', 'eng')"))
+        conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('multi', 'ops')"))
     _run_upgrade_against(engine_with_schema)  # must not raise
 
 

@@ -268,6 +268,21 @@ class DatabaseAPIKeyAuth(AuthProvider):
         raw_key = f"{API_KEY_PREFIX}{zone_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
         key_hash = cls._hash_key(raw_key)
 
+        # #3871 round 3: validate zone exists before inserting junction row.
+        # Surfaces a controlled ValidationError instead of an opaque
+        # IntegrityError from the FK constraint (api_key_zones.zone_id ->
+        # zones.zone_id). Caller (provisioning, OAuth, hub) must create the
+        # ZoneModel up front.
+        if zone_id:
+            from nexus.storage.models import ZoneModel
+
+            zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
+            if zone is None:
+                raise ValueError(
+                    f"DatabaseAPIKeyAuth.create_key: zone {zone_id!r} does not exist; "
+                    "create the zone before issuing keys against it"
+                )
+
         api_key = APIKeyModel(
             key_hash=key_hash,
             user_id=user_id,

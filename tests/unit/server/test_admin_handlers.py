@@ -56,16 +56,16 @@ def db_engine(tmp_path):
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
     # Seed zones required by junction-backed tests (#3871).
-    with engine.begin() as conn:
-        from sqlalchemy import text
+    # All NOT NULL columns must be provided — INSERT OR IGNORE silently drops
+    # the row otherwise (zones requires zone_id, name, phase, finalizers,
+    # created_at, updated_at).
+    from nexus.storage.models.auth import ZoneModel
 
+    SessionLocal = sessionmaker(bind=engine)
+    with SessionLocal() as s:
         for zid in ("zone1", "zone2"):
-            conn.execute(
-                text(
-                    "INSERT OR IGNORE INTO zones (zone_id, name, phase) VALUES (:z, :z, 'Active')"
-                ),
-                {"z": zid},
-            )
+            s.add(ZoneModel(zone_id=zid, name=zid, phase="Active"))
+        s.commit()
     return engine
 
 
@@ -196,7 +196,7 @@ class TestHandleAdminCreateKey:
         """Should create a key and return key details with raw key."""
         params = FakeParams(
             name="test-key",
-            zone_id="zone_alpha",
+            zone_id="zone1",
             user_id="alice",
             is_admin=False,
             expires_days=None,
@@ -209,7 +209,7 @@ class TestHandleAdminCreateKey:
         assert "key_id" in result
         assert "api_key" in result
         assert result["api_key"].startswith("sk-")
-        assert result["zone_id"] == "zone_alpha"
+        assert result["zone_id"] == "zone1"
 
     def test_non_admin_rejected(self, auth_provider, non_admin_context):
         """Non-admin should be rejected."""

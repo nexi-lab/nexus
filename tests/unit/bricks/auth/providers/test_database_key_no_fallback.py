@@ -47,17 +47,17 @@ def _insert_legacy_key(session_factory, *, key_id, raw_token, zone_id, is_admin=
         s.commit()
 
 
-def test_non_admin_key_with_empty_junction_returns_no_zone_perms(session_factory):
+def test_non_admin_legacy_zone_scoped_key_rejected(session_factory):
+    """Legacy non-admin key with zone_id col but no junction MUST fail closed (#3871 round 2)."""
     raw = "sk-legacy_noadmin_k1_abcdefghijklm"
     _insert_legacy_key(session_factory, key_id="kid_k1", raw_token=raw, zone_id="eng")
     auth = _make_auth(session_factory)
     result = asyncio.run(auth.authenticate(raw))
-    # zone_perms must be empty — no fallback to api_key.zone_id.
-    assert result.authenticated is True
-    assert tuple(result.zone_perms) == ()
+    assert result.authenticated is False
 
 
-def test_admin_key_with_empty_junction_authenticates_zonelessly(session_factory):
+def test_admin_key_zoneless_authenticates_with_empty_perms(session_factory):
+    """Truly zoneless admin (zone_id IS NULL, no junction) authenticates as global admin."""
     raw = "sk-legacy_admin_k2_abcdefghijklmno"
     _insert_legacy_key(session_factory, key_id="kid_k2", raw_token=raw, zone_id=None, is_admin=1)
     auth = _make_auth(session_factory)
@@ -65,6 +65,17 @@ def test_admin_key_with_empty_junction_authenticates_zonelessly(session_factory)
     assert result.authenticated is True
     assert result.is_admin is True
     assert tuple(result.zone_perms) == ()
+
+
+def test_legacy_zone_scoped_admin_rejected(session_factory):
+    """Pre-Phase-2 admin with zone_id col but no junction MUST fail closed —
+    otherwise it gets silently reinterpreted as a global/zoneless admin
+    (privilege escalation, #3871 round 2)."""
+    raw = "sk-legacy_zoned_admin_abcdefghijkl"
+    _insert_legacy_key(session_factory, key_id="kid_zadm", raw_token=raw, zone_id="eng", is_admin=1)
+    auth = _make_auth(session_factory)
+    result = asyncio.run(auth.authenticate(raw))
+    assert result.authenticated is False
 
 
 def test_multi_zone_key_uses_junction_primary_for_zone_id(session_factory):

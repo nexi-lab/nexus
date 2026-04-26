@@ -69,8 +69,9 @@ def test_authenticate_default_perms_when_zones_only(session_factory: sessionmake
     assert dict(result.zone_perms) == {"eng": "rw", "ops": "rw"}
 
 
-def test_authenticate_legacy_token_no_fallback(session_factory: sessionmaker) -> None:
-    """Legacy single-zone token (no junction rows) -> zone_perms = () (#3871 Phase 2 removes fallback)."""
+def test_authenticate_legacy_token_rejected(session_factory: sessionmaker) -> None:
+    """Legacy single-zone token (zone_id col set, no junction rows) MUST fail closed
+    (#3871 round 2 — strict junction-only auth; tripwire migration enforces backfill)."""
     raw_key = "sk-legacy_perm_test_abcdefghijklmnop"
     auth = DatabaseAPIKeyAuth(record_store=_record_store(session_factory))
     key_hash = auth._hash_key(raw_key)
@@ -89,8 +90,4 @@ def test_authenticate_legacy_token_no_fallback(session_factory: sessionmaker) ->
         s.commit()
 
     result = asyncio.run(auth.authenticate(raw_key))
-
-    assert result.authenticated is True
-    # Phase 2: junction is sole truth; no junction rows → empty perms (no fallback to zone_id col).
-    assert result.zone_perms == ()
-    assert result.zone_set == ()
+    assert result.authenticated is False

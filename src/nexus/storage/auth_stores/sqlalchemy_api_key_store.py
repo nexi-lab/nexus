@@ -66,6 +66,20 @@ class SQLAlchemyAPIKeyStore:
             inherit_permissions=int(inherit_permissions),
         )
         with self._session_factory() as session:
+            # #3871 round 3: validate zone exists before junction insert (FK
+            # api_key_zones.zone_id -> zones.zone_id). Surfaces a controlled
+            # ValueError instead of an opaque IntegrityError. Caller must
+            # create the ZoneModel up front.
+            if zone_id:
+                from nexus.storage.models import ZoneModel
+
+                zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
+                if zone is None:
+                    raise ValueError(
+                        f"SQLAlchemyAPIKeyStore.create_key: zone {zone_id!r} does not exist; "
+                        "create the zone before issuing keys against it"
+                    )
+
             session.add(key)
             session.flush()  # populate key.key_id before junction insert
             if zone_id:  # non-empty zone_id → populate junction

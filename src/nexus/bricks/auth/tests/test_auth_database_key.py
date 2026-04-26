@@ -24,7 +24,16 @@ def engine(record_store):
 
 @pytest.fixture
 def session_factory(record_store):
-    return record_store.session_factory
+    """Session factory pre-seeded with the org_acme zone (#3871 round 3:
+    DatabaseAPIKeyAuth.create_key now validates the ZoneModel exists before
+    inserting the api_key_zones junction row)."""
+    from nexus.storage.models.auth import ZoneModel
+
+    sf = record_store.session_factory
+    with sf() as s:
+        s.add(ZoneModel(zone_id="org_acme", name="org_acme", phase="Active"))
+        s.commit()
+    return sf
 
 
 @pytest.fixture
@@ -60,7 +69,10 @@ def test_create_key_basic(session_factory) -> None:
 
 
 def test_create_key_with_zone(session_factory) -> None:
-    """Create a key with zone_id and verify the zone is stored."""
+    """Create a key with zone_id; the zone is stored in the api_key_zones
+    junction (not the deprecated APIKeyModel.zone_id column, #3871 Phase 2)."""
+    from nexus.storage.api_key_ops import get_zones_for_key
+
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
             session,
@@ -74,7 +86,8 @@ def test_create_key_with_zone(session_factory) -> None:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
         api_key = session.scalar(stmt)
         assert api_key is not None
-        assert api_key.zone_id == "org_acme"
+        assert api_key.zone_id is None  # column deprecated, NULL by design
+        assert get_zones_for_key(session, key_id) == ["org_acme"]
 
 
 def test_create_key_with_subject(session_factory) -> None:

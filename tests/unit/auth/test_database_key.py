@@ -34,10 +34,21 @@ def _make_mock_record_store(sf: sessionmaker) -> MagicMock:
 
 @pytest.fixture()
 def db_engine(tmp_path):
-    """Create a fresh SQLite database with schema."""
+    """Create a fresh SQLite database with schema, pre-seeded with zone_alpha.
+
+    #3871 round 3: DatabaseAPIKeyAuth.create_key validates ZoneModel exists
+    before inserting the api_key_zones junction row. Tests that issue keys
+    against zone_alpha rely on this seed.
+    """
+    from nexus.storage.models.auth import ZoneModel
+
     db_path = tmp_path / "test_auth.db"
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+    with SessionLocal() as s:
+        s.add(ZoneModel(zone_id="zone_alpha", name="zone_alpha", phase="Active"))
+        s.commit()
     return engine
 
 
@@ -322,10 +333,7 @@ class TestZoneLifecycleGate:
     @pytest.mark.asyncio
     async def test_active_zone_allows_auth(self, auth_provider, session_factory):
         """Token with a zone row in phase='Active' + deleted_at IS NULL → OK."""
-        from nexus.storage.models import ZoneModel
-
         with session_factory() as session, session.begin():
-            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
             _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
 
         result = await auth_provider.authenticate(raw_key)
@@ -338,7 +346,6 @@ class TestZoneLifecycleGate:
         from nexus.storage.models import ZoneModel
 
         with session_factory() as session, session.begin():
-            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
             _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
 
         # Zone lifecycle transitions to Terminating after the token existed.
@@ -355,7 +362,6 @@ class TestZoneLifecycleGate:
         from nexus.storage.models import ZoneModel
 
         with session_factory() as session, session.begin():
-            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
             _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
 
         with session_factory() as session, session.begin():
@@ -366,17 +372,12 @@ class TestZoneLifecycleGate:
         assert result.authenticated is False
 
     @pytest.mark.asyncio
-    async def test_missing_zone_row_falls_through(self, auth_provider, session_factory):
-        """Legacy deployments that scope by zone_id without populating the
-        zones table continue to authenticate — the runtime gate only fires
-        when the zone row *exists and is retired*. `hub token create`
-        enforces zone-must-exist for new tokens, so this path is
-        backward-compat only."""
-        with session_factory() as session, session.begin():
-            _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
-
-        result = await auth_provider.authenticate(raw_key)
-        assert result.authenticated is True
+    async def test_create_key_for_missing_zone_raises(self, auth_provider, session_factory):
+        """#3871 round 3: create_key validates the ZoneModel exists. Issuing a
+        key against an unknown zone surfaces a controlled ValueError instead
+        of an opaque IntegrityError from the api_key_zones FK."""
+        with session_factory() as session, pytest.raises(ValueError, match="does not exist"):
+            _create_key(session, zone_id="unknown_zone")
 
     @pytest.mark.asyncio
     async def test_null_zone_id_token_unaffected(self, auth_provider, session_factory):

@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.bricks.auth.oauth.crypto import OAuthCrypto
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
-from nexus.storage.models import APIKeyModel, Base, OAuthAPIKeyModel, UserModel
+from nexus.storage.models import APIKeyModel, Base, OAuthAPIKeyModel, UserModel, ZoneModel
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def oauth_crypto():
 
 @pytest.fixture
 def test_user(db_session):
-    """Create a test user."""
+    """Create a test user (and seed the zone the OAuth keys reference, #3871)."""
     user = UserModel(
         user_id="test-user-123",
         email="test@example.com",
@@ -52,6 +52,7 @@ def test_user(db_session):
         created_at=datetime.now(UTC),
     )
     db_session.add(user)
+    db_session.add(ZoneModel(zone_id="test-zone", name="test-zone", phase="Active"))
     db_session.commit()
     return user
 

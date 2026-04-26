@@ -522,7 +522,7 @@ def _register_vfs_hooks(
     _proc_table = _proc_ref if _proc_ref is not None else None
     if _proc_table is not None:
         try:
-            from nexus.core.agent_status_resolver import AgentStatusResolver
+            from nexus.services.agents.agent_status_resolver import AgentStatusResolver
 
             _agent_status_resolver = AgentStatusResolver(_proc_table)
             _enlist("agent_status", _agent_status_resolver)

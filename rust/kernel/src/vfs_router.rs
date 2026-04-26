@@ -154,14 +154,8 @@ pub struct RouteResult {
     /// True when the routed backend is content-addressed (CAS).
     ///
     /// Derived from the backend trait's `as_cas()` downcast — single
-    /// source of truth, no string-prefix sniffing. Replaces the prior
-    /// pattern of testing `backend_name.starts_with("cas")`.
+    /// source of truth, no string-prefix sniffing on a label.
     pub is_cas: bool,
-    /// Display label for the routed backend (e.g. "cas-local", "hn",
-    /// "cli:gh"). Surfaced for HTTP/RPC display, CLI-connector detection
-    /// in the connectors router, and logs. **Not** for CAS detection —
-    /// use `is_cas` for that.
-    pub backend_name: String,
 }
 
 /// Legacy alias so kernel/generated code using the pre-migration type name
@@ -486,14 +480,6 @@ impl VFSRouter {
                     .as_ref()
                     .map(|b| b.as_cas().is_some())
                     .unwrap_or(false);
-                // Display label — derived from the backend's own ``name()``.
-                // Empty when no Rust backend (caller can disambiguate via
-                // ``is_external``).
-                let backend_name = entry
-                    .backend
-                    .as_ref()
-                    .map(|b| b.name().to_string())
-                    .unwrap_or_default();
                 let resolved_zone = entry
                     .target_zone_id
                     .clone()
@@ -506,7 +492,6 @@ impl VFSRouter {
                     zone_id: resolved_zone,
                     is_external,
                     is_cas,
-                    backend_name,
                 });
             }
 

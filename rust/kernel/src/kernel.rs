@@ -22,7 +22,7 @@ use crate::vfs_router::{
     canonicalize_mount_path as canonicalize, RouteError, RustRouteResult, VFSRouter,
 };
 use dashmap::DashMap;
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -586,7 +586,15 @@ pub struct Kernel {
     pub(crate) stream_manager: Arc<crate::stream_manager::StreamManager>,
     // Native hook registry — pure Rust hooks dispatched lock-free (§11 Phase 10)
     #[allow(dead_code)]
-    pub(crate) native_hooks: Mutex<NativeHookRegistry>,
+    // RwLock (not Mutex) so concurrent + recursive read-locks are allowed.
+    // Recursion arises when a hook callback (e.g. ReBAC permission_hook)
+    // calls back into ``sys_read`` for ``/__sys__/...`` configuration:
+    // dispatch_pre → Python hook → sys_read → dispatch_native_pre. The
+    // outer dispatch holds the lock for the duration of the Python call,
+    // so a Mutex (non-reentrant) would deadlock; parking_lot::RwLock
+    // allows the inner reader to proceed (registration is write-only and
+    // happens once at startup, so writer starvation is not a concern).
+    pub(crate) native_hooks: RwLock<NativeHookRegistry>,
     // Node advertise address — set in federation mode so sys_write encodes
     // origin in backend_name (e.g. "cas-local@nexus-1:2126"). Enables
     // on-demand remote content fetch on other nodes.
@@ -695,7 +703,7 @@ impl Kernel {
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
-            native_hooks: Mutex::new(NativeHookRegistry::new()),
+            native_hooks: RwLock::new(NativeHookRegistry::new()),
             self_address: parking_lot::RwLock::new(None),
             peer_client,
             chunk_fetcher,
@@ -2222,8 +2230,15 @@ impl Kernel {
     /// Dispatch PRE-INTERCEPT hooks from NativeHookRegistry.
     /// Returns Err(KernelError) if any hook aborts.
     /// No-op when registry is empty (zero-cost lock check).
+    ///
+    /// Uses ``read()`` (not ``write()``) so a hook that re-enters
+    /// ``sys_read`` — typical of ReBAC's permission_hook reading its own
+    /// ``/__sys__/rebac/namespaces/...`` config during a permission check —
+    /// can take its own read-lock recursively. With a Mutex this deadlocked
+    /// at the second ``lock()``; ``parking_lot::RwLock`` allows multiple
+    /// concurrent + recursive readers.
     pub fn dispatch_native_pre(&self, ctx: &HookContext) -> Result<(), KernelError> {
-        let registry = self.native_hooks.lock();
+        let registry = self.native_hooks.read();
         if registry.count() == 0 {
             return Ok(());
         }
@@ -2235,7 +2250,7 @@ impl Kernel {
     /// Dispatch POST-INTERCEPT hooks from NativeHookRegistry (fire-and-forget).
     /// No-op when registry is empty (zero-cost lock check).
     pub fn dispatch_native_post(&self, ctx: &HookContext) {
-        let registry = self.native_hooks.lock();
+        let registry = self.native_hooks.read();
         if registry.count() == 0 {
             return;
         }
@@ -2246,7 +2261,7 @@ impl Kernel {
     /// The hook receives pre/post callbacks for every VFS operation.
     #[allow(dead_code)]
     pub(crate) fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
-        self.native_hooks.lock().register(hook);
+        self.native_hooks.write().register(hook);
     }
 
     /// Wire up an `AuditHook` backed by a WAL-replicated DT_STREAM.

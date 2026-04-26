@@ -52,6 +52,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"],
 tokio-tungstenite = { version = "0.26", optional = true }
 k256 = { version = "0.13", features = ["schnorr"], optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+base64 = "0.22"
 mimalloc = { workspace = true, optional = true }
 
 [features]

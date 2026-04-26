@@ -1432,6 +1432,7 @@ name = "kernel"
 version = "0.9.43"
 dependencies = [
  "ahash",
+ "base64",
  "blake3",
  "bloomfilter",
  "chrono",

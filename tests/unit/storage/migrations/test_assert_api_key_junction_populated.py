@@ -43,6 +43,7 @@ def engine_with_schema():
             text("""
             CREATE TABLE api_keys (
                 key_id TEXT PRIMARY KEY,
+                zone_id TEXT,
                 revoked INTEGER NOT NULL DEFAULT 0,
                 is_admin INTEGER NOT NULL DEFAULT 0
             )
@@ -62,20 +63,32 @@ def engine_with_schema():
 
 def test_tripwire_no_op_on_healthy_db(engine_with_schema):
     with engine_with_schema.begin() as conn:
-        conn.execute(text("INSERT INTO api_keys (key_id) VALUES ('k1')"))
+        conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('k1', 'eng')"))
         conn.execute(text("INSERT INTO api_key_zones (key_id, zone_id) VALUES ('k1', 'eng')"))
     _run_upgrade_against(engine_with_schema)  # must not raise
 
 
-def test_tripwire_raises_on_broken_db(engine_with_schema):
+def test_tripwire_raises_on_legacy_zone_scoped_key(engine_with_schema):
+    """Non-admin key with legacy zone_id but no junction row must trip."""
     with engine_with_schema.begin() as conn:
-        conn.execute(text("INSERT INTO api_keys (key_id) VALUES ('orphan')"))
-    with pytest.raises(RuntimeError, match="lack junction rows"):
+        conn.execute(text("INSERT INTO api_keys (key_id, zone_id) VALUES ('orphan', 'eng')"))
+    with pytest.raises(RuntimeError, match="legacy zone_id with no api_key_zones row"):
         _run_upgrade_against(engine_with_schema)
 
 
-def test_tripwire_ignores_admin_keys(engine_with_schema):
-    """Admin keys may legitimately have empty junction (zoneless)."""
+def test_tripwire_raises_on_legacy_zone_scoped_admin(engine_with_schema):
+    """Admin key with legacy zone_id and no junction must trip — otherwise the
+    new auth path silently reinterprets it as a zoneless/global admin (#3871)."""
+    with engine_with_schema.begin() as conn:
+        conn.execute(
+            text("INSERT INTO api_keys (key_id, zone_id, is_admin) VALUES ('zadm', 'eng', 1)")
+        )
+    with pytest.raises(RuntimeError, match="legacy zone_id with no api_key_zones row"):
+        _run_upgrade_against(engine_with_schema)
+
+
+def test_tripwire_ignores_zoneless_admin(engine_with_schema):
+    """Truly zoneless admin (zone_id IS NULL) is exempt — no privilege to escalate."""
     with engine_with_schema.begin() as conn:
         conn.execute(text("INSERT INTO api_keys (key_id, is_admin) VALUES ('admin', 1)"))
     _run_upgrade_against(engine_with_schema)  # must not raise
@@ -83,7 +96,9 @@ def test_tripwire_ignores_admin_keys(engine_with_schema):
 
 def test_tripwire_ignores_revoked_keys(engine_with_schema):
     with engine_with_schema.begin() as conn:
-        conn.execute(text("INSERT INTO api_keys (key_id, revoked) VALUES ('dead', 1)"))
+        conn.execute(
+            text("INSERT INTO api_keys (key_id, zone_id, revoked) VALUES ('dead', 'eng', 1)")
+        )
     _run_upgrade_against(engine_with_schema)  # must not raise
 
 

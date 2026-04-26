@@ -387,6 +387,33 @@ class TestZoneLifecycleGate:
         result = await auth_provider.authenticate(raw_key)
         assert result.authenticated is True
 
+    @pytest.mark.asyncio
+    async def test_legacy_zone_scoped_admin_without_junction_rejected(
+        self, auth_provider, session_factory
+    ):
+        """Pre-Phase-2 admin key with legacy zone_id and no junction row must
+        fail closed — under junction-only auth it would otherwise be silently
+        reinterpreted as a global/zoneless admin (privilege escalation, #3871)."""
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.storage.models import APIKeyModel
+
+        # Construct a key bypassing the create_key helper so the legacy
+        # column-only state (zone_id set, no junction row) can be reproduced.
+        raw_key = "sk-legacy-zoned-admin-fixture-1234567890abcdef"
+        with session_factory() as session, session.begin():
+            session.add(
+                APIKeyModel(
+                    key_hash=DatabaseAPIKeyAuth._hash_key(raw_key),
+                    user_id="legacy_admin",
+                    name="legacy",
+                    zone_id="zone_alpha",
+                    is_admin=1,
+                )
+            )
+
+        result = await auth_provider.authenticate(raw_key)
+        assert result.authenticated is False
+
 
 # ── #3785: zone_set from junction table ──────────────────────
 
@@ -423,8 +450,15 @@ def test_authenticate_loads_zone_set_from_junction(tmp_path):
     assert sorted(result.zone_set) == ["eng", "ops"]
 
 
-def test_authenticate_legacy_token_no_fallback(tmp_path):
-    """Legacy single-zone token (no junction rows) → zone_set = () (#3871 Phase 2 removes fallback)."""
+def test_authenticate_legacy_token_rejected(tmp_path):
+    """Legacy single-zone token (zone_id col set, no junction rows) → fail closed.
+
+    Round 2 of #3871 hardened auth to reject these outright rather than
+    authenticating them with empty zone_set, because admin keys in that
+    state would otherwise be silently reinterpreted as global/zoneless
+    admins (privilege escalation). The tripwire migration enforces backfill
+    before this code path is ever exercised in production.
+    """
     import asyncio
 
     from sqlalchemy import create_engine
@@ -457,10 +491,7 @@ def test_authenticate_legacy_token_no_fallback(tmp_path):
         s.commit()
 
     result = asyncio.run(auth.authenticate(raw_key))
-
-    assert result.authenticated is True
-    # Phase 2: junction is sole truth; no junction rows → empty zone_set (no fallback to zone_id col).
-    assert result.zone_set == ()
+    assert result.authenticated is False
 
 
 # ── #3785 AC #5: expired token rejected before zone_set resolves ──

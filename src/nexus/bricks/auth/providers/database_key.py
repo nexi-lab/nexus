@@ -108,21 +108,31 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
             ).all()
 
-            # #3784 round 10 (updated #3871): zone lifecycle gate at runtime. A
-            # token scoped to a zone that has since been soft-deleted or marked
-            # Terminating must fail closed. Check EVERY junction zone (a token
-            # multi-zoned to [eng, ops] must reject if EITHER becomes inactive
-            # — fail closed semantics). Falls through if junction is empty
-            # (zoneless admin keys) or if a zone is absent from the registry
-            # (legacy back-compat per the original #3784 reasoning).
-            #
-            # Pre-#3871 fallback: also check api_key.zone_id if junction is
-            # empty AND the column is set (legacy keys created via the old
-            # SQLAlchemyAPIKeyStore.create_key path before Task 6 ran).
-            lifecycle_zones = [z for z, _ in zone_perm_rows]
-            if not lifecycle_zones and api_key.zone_id is not None:
-                lifecycle_zones = [api_key.zone_id]
-            for zid in lifecycle_zones:
+            # #3871 round 2: legacy zone-scoped key without junction row
+            # MUST fail closed. The pre-Task-6 SQLAlchemyAPIKeyStore.create_key
+            # wrote api_key.zone_id without a junction row; under the new
+            # junction-only auth path, an admin row would be silently
+            # reinterpreted as a global/zoneless admin (privilege escalation).
+            # The tripwire migration (04188c0bbb28) blocks the upgrade until
+            # such rows are backfilled, but defense-in-depth here ensures we
+            # never honor an unmigrated legacy row at auth time.
+            if not zone_perm_rows and api_key.zone_id is not None:
+                logger.warning(
+                    "UNAUTHORIZED: API key %s has legacy zone_id=%r but no junction row "
+                    "(pre-#3871 unmigrated key); refusing to authenticate",
+                    api_key.key_id,
+                    api_key.zone_id,
+                )
+                return AuthResult(authenticated=False)
+
+            # #3784 round 10: zone lifecycle gate at runtime. A token scoped
+            # to a zone that has since been soft-deleted or marked Terminating
+            # must fail closed. Check EVERY junction zone (a token multi-zoned
+            # to [eng, ops] must reject if EITHER becomes inactive — fail
+            # closed semantics). Falls through if junction is empty (zoneless
+            # admin keys) or if a zone is absent from the registry (legacy
+            # back-compat per the original #3784 reasoning).
+            for zid in [z for z, _ in zone_perm_rows]:
                 zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid))
                 if zone is not None and (zone.phase != "Active" or zone.deleted_at is not None):
                     logger.warning(

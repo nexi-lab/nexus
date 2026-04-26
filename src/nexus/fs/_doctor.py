@@ -243,16 +243,18 @@ def check_backend_credentials(scheme: str) -> DoctorCheckResult:
 # ---------------------------------------------------------------------------
 
 
-async def check_mount_connectivity(mount_point: str, fs: Any) -> DoctorCheckResult:
+async def check_mount_connectivity(mount_point: str, kernel: Any) -> DoctorCheckResult:
     """Check connectivity to a mounted backend by listing its root.
 
     Args:
         mount_point: The mount point path (e.g., "/s3/my-bucket").
-        fs: A SlimNexusFS instance.
+        kernel: A ``NexusFS`` kernel instance.
     """
+    from nexus.fs._helpers import LOCAL_CONTEXT
+
     start = time.perf_counter()
     try:
-        fs.ls(mount_point)
+        list(kernel.sys_readdir(mount_point, recursive=False, details=False, context=LOCAL_CONTEXT))
         latency_ms = (time.perf_counter() - start) * 1000
         return DoctorCheckResult(
             name=mount_point,
@@ -348,10 +350,12 @@ async def _run_all_checks_inner(
         if inst.status != DoctorStatus.NOT_INSTALLED:
             backends_combined.append(cred)
 
-    # Section 3: Mounts (async, need fs instance)
+    # Section 3: Mounts (async, need kernel instance)
     mount_results: list[DoctorCheckResult] = []
     if fs is not None:
-        mounts = fs.list_mounts()
+        from nexus.fs._helpers import list_mounts as _list_mounts
+
+        mounts = _list_mounts(fs)
         if mounts:
             mount_coros = [
                 _run_with_timeout(
@@ -398,8 +402,8 @@ async def run_all_checks(
     Guarantees completion within ``overall_timeout`` seconds.
 
     Args:
-        fs: Optional SlimNexusFS instance for mount connectivity checks.
-            If None, mount checks are skipped.
+        fs: Optional ``NexusFS`` kernel instance for mount connectivity
+            checks. If None, mount checks are skipped.
         overall_timeout: Maximum wall-clock seconds for the entire run.
 
     Returns:

@@ -83,10 +83,8 @@ class ContextualNexusFS:
         return fallback if fallback is not None else result
 
     async def stat(self, path: str) -> dict[str, Any] | None:
-        from nexus.fs._facade import SlimNexusFS
-
         try:
-            result = SlimNexusFS(self._kernel).stat(path)
+            result = self._kernel.sys_stat(path, context=self._ctx)
             if result is not None:
                 return result
         except Exception:
@@ -412,10 +410,10 @@ class PlaygroundApp(App[None]):
 
         for uri in generic_uris:
             at = overrides.get(uri)
-            facade = await mount_fs(uri, at=at)
+            kernel = await mount_fs(uri, at=at)
             backends.append(
                 ContextualNexusFS(
-                    facade.kernel,
+                    kernel,
                     user_id=await self._resolve_mount_user_id(uri),
                 )
             )

@@ -8,6 +8,7 @@ members = [
     "rust/services",
     "rust/raft",
     "rust/tasks",
+    "rust/cluster",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]

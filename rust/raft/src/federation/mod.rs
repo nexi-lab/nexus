@@ -19,7 +19,10 @@ pub mod topology;
 pub mod tofu;
 
 pub use distributed_locks::DistributedLocks;
-pub use topology::{parse_federation_env, parse_mounts_env, parse_zones_env};
+pub use topology::{
+    parse_federation_env, parse_mounts_env, parse_zones_env, ENV_FEDERATION_MOUNTS,
+    ENV_FEDERATION_ZONES,
+};
 
 #[cfg(feature = "grpc")]
 pub use tofu::{TofuError, TofuResult, TofuTrustStore, TrustedZone};

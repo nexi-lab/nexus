@@ -1,6 +1,6 @@
-//! BLAKE3 content hashing — PyO3 wrappers for library hash functions.
+//! BLAKE3 content hashing — PyO3 wrappers for lib hash functions.
 
-use library::hash::{hash_content, hash_content_smart};
+use lib::hash::{hash_content, hash_content_smart};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 

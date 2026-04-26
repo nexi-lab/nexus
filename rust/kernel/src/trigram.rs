@@ -5,16 +5,16 @@
 //! - PyO3 functions: `build_trigram_index`, `trigram_grep`, `trigram_index_stats`
 //! - Thread-safe index cache for per-zone lazy loading
 
-use library::search::grep::GrepMatch;
-use library::search::{build_search_mode, search_lines};
-use library::trigram::builder::TrigramIndexBuilder;
-use library::trigram::error::TrigramError;
-use library::trigram::format::{
+use lib::search::grep::GrepMatch;
+use lib::search::{build_search_mode, search_lines};
+use lib::trigram::builder::TrigramIndexBuilder;
+use lib::trigram::error::TrigramError;
+use lib::trigram::format::{
     IndexHeader, FILE_ENTRY_SIZE, HEADER_SIZE, TRIGRAM_ENTRY_SIZE, VERSION,
 };
-use library::trigram::posting::{intersect, union, PostingList};
-use library::trigram::query::{build_trigram_query, TrigramQuery};
-use library::trigram::write_index;
+use lib::trigram::posting::{intersect, union, PostingList};
+use lib::trigram::query::{build_trigram_query, TrigramQuery};
+use lib::trigram::write_index;
 use lru::LruCache;
 use memmap2::Mmap;
 use parking_lot::Mutex;
@@ -359,7 +359,7 @@ impl TrigramIndexReader {
 /// Verify a candidate file against the search pattern.
 fn verify_file(
     path: &str,
-    search_mode: &library::search::SearchMode,
+    search_mode: &lib::search::SearchMode,
     max_results: usize,
 ) -> Option<Vec<GrepMatch>> {
     let file = File::open(path).ok()?;

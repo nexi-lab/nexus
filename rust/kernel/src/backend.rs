@@ -406,7 +406,7 @@ impl ObjectStore for PathLocalBackend {
                     let _ = f.sync_all();
                 }
             }
-            let hash = library::hash::hash_content(content);
+            let hash = lib::hash::hash_content(content);
             return Ok(WriteResult {
                 content_id: hash.clone(),
                 version: hash,
@@ -448,7 +448,7 @@ impl ObjectStore for PathLocalBackend {
         // Gated behind offset > 0 so the common full-overwrite path
         // stays at its pre-R20.10 cost.
         let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
-        let hash = library::hash::hash_content(&final_bytes);
+        let hash = lib::hash::hash_content(&final_bytes);
         Ok(WriteResult {
             content_id: hash.clone(),
             version: hash,
@@ -539,7 +539,7 @@ impl ObjectStore for PathLocalBackend {
         }
         let size = fs::copy(&src, &dst).map_err(StorageError::IOError)?;
         let content = fs::read(&dst).map_err(StorageError::IOError)?;
-        let hash = library::hash::hash_content(&content);
+        let hash = lib::hash::hash_content(&content);
         Ok(WriteResult {
             content_id: hash.clone(),
             version: hash,
@@ -679,7 +679,7 @@ impl ObjectStore for LocalConnectorBackend {
                     let _ = f.sync_all();
                 }
             }
-            let hash = library::hash::hash_content(content);
+            let hash = lib::hash::hash_content(content);
             return Ok(WriteResult {
                 content_id: hash.clone(),
                 version: hash,
@@ -710,7 +710,7 @@ impl ObjectStore for LocalConnectorBackend {
         drop(f);
 
         let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
-        let hash = library::hash::hash_content(&final_bytes);
+        let hash = lib::hash::hash_content(&final_bytes);
         Ok(WriteResult {
             content_id: hash.clone(),
             version: hash,
@@ -792,7 +792,7 @@ impl ObjectStore for LocalConnectorBackend {
         }
         let size = fs::copy(&src, &dst).map_err(StorageError::IOError)?;
         let content = fs::read(&dst).map_err(StorageError::IOError)?;
-        let hash = library::hash::hash_content(&content);
+        let hash = lib::hash::hash_content(&content);
         Ok(WriteResult {
             content_id: hash.clone(),
             version: hash,

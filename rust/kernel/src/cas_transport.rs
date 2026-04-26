@@ -124,7 +124,7 @@ impl LocalCASTransport {
     /// `CASEngine::write_content_tracked` to drive the `is_new` bit that
     /// Python's on_write_callback (e.g. Zoekt reindex) keys off.
     pub fn write_blob_tracked(&self, content: &[u8]) -> io::Result<(String, bool)> {
-        let hash = library::hash::hash_content(content);
+        let hash = lib::hash::hash_content(content);
         let key = blob_key(&hash);
         let path = self.resolve(&key);
 
@@ -384,7 +384,7 @@ mod tests {
     fn test_write_blob_with_hash() {
         let (_tmp, transport) = setup();
         let content = b"pre-hashed content";
-        let hash = library::hash::hash_content(content);
+        let hash = lib::hash::hash_content(content);
 
         // First write: actual write
         let written = transport.write_blob_with_hash(content, &hash).unwrap();
@@ -470,12 +470,12 @@ mod tests {
 
     #[test]
     fn test_hash_matches_library() {
-        // Verify our write_blob hash matches library::hash::hash_content directly
+        // Verify our write_blob hash matches lib::hash::hash_content directly
         let (_tmp, transport) = setup();
         let content = b"hash consistency check";
 
         let transport_hash = transport.write_blob(content).unwrap();
-        let direct_hash = library::hash::hash_content(content);
+        let direct_hash = lib::hash::hash_content(content);
         assert_eq!(transport_hash, direct_hash);
     }
 

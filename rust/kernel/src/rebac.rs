@@ -1,6 +1,6 @@
 //! ReBAC engine — PyO3 wrappers with interned graph caching and parallel computation.
 //!
-//! Domain types, graph structures, and core algorithms are imported from `library`.
+//! Domain types, graph structures, and core algorithms are imported from `lib`.
 //! This module provides: thread-local caching, DashMap-based parallel computation,
 //! Python dict parsing, and #[pyfunction] exports.
 
@@ -16,20 +16,20 @@ use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use string_interner::DefaultStringInterner;
 
-// Re-use all domain types and algorithms from library.
-use library::rebac::graph::{compute_permission_interned, InternedGraph};
-use library::rebac::{
+// Re-use all domain types and algorithms from lib.
+use lib::rebac::graph::{compute_permission_interned, InternedGraph};
+use lib::rebac::{
     collect_candidate_objects_for_subjects, compute_permission, expand_permission,
     find_subject_groups, ReBACGraph, MAX_DEPTH,
 };
-use library::types::{
+use lib::types::{
     CheckRequest, Entity, InternedEntity, InternedMemoCache, InternedMemoKey,
     InternedNamespaceConfig, InternedRelationConfig, InternedTuple, MemoCache, NamespaceConfig,
     ReBACTuple, Sym,
 };
 
 // ============================================================================
-// Thread-local caches (PyO3-specific, not in library)
+// Thread-local caches (PyO3-specific, not in lib)
 // ============================================================================
 
 thread_local! {
@@ -211,7 +211,7 @@ fn compute_permission_interned_shared(
                         });
                 }
 
-                // Direct tuples always apply (match library::rebac::graph).
+                // Direct tuples always apply (match lib::rebac::graph).
                 if !allowed {
                     allowed = check_relation_with_usersets_interned_shared(
                         subject, permission, object, graph, namespaces, memo_cache, visited, depth,

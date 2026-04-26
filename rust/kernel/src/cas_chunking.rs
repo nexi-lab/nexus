@@ -130,7 +130,7 @@ pub(crate) fn read_and_verify_chunk(
 ) -> Result<Vec<u8>, CASError> {
     match transport.read_blob(expected_hash) {
         Ok(data) => {
-            let actual = library::hash::hash_content(&data);
+            let actual = lib::hash::hash_content(&data);
             if actual != expected_hash {
                 return Err(CASError::IOError(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -148,7 +148,7 @@ pub(crate) fn read_and_verify_chunk(
             if let Some(f) = fetcher {
                 if !origins.is_empty() {
                     if let Some(bytes) = f.fetch_chunk(expected_hash, origins) {
-                        let actual = library::hash::hash_content(&bytes);
+                        let actual = lib::hash::hash_content(&bytes);
                         if actual != expected_hash {
                             return Err(CASError::IOError(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
@@ -392,7 +392,7 @@ impl ChunkingStrategy for FastCDCStrategy {
             chunk_count += 1;
         }
 
-        let full_content_hash = library::hash::hash_content(content);
+        let full_content_hash = lib::hash::hash_content(content);
         finalize_manifest(
             chunk_entries,
             chunk_count,
@@ -459,7 +459,7 @@ impl ChunkingStrategy for MessageBoundaryStrategy {
         transport: &LocalCASTransport,
     ) -> Result<(String, bool), CASError> {
         let total_size = content.len();
-        let full_content_hash = library::hash::hash_content(content);
+        let full_content_hash = lib::hash::hash_content(content);
 
         let parsed: Value = serde_json::from_slice(content)
             .map_err(|e| CASError::IOError(std::io::Error::other(e)))?;

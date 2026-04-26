@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "rust/contracts",
-    "rust/library",
+    "rust/lib",
     "rust/transport",
     "rust/kernel",
     "rust/services",
@@ -15,7 +15,7 @@ exclude = ["nexus-fuse"]
 
 [workspace.dependencies]
 contracts = { path = "rust/contracts" }
-library = { path = "rust/library" }
+lib = { path = "rust/lib" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
 # F2 C8 (Option A): raft is an rlib inside the nexus_kernel cdylib.

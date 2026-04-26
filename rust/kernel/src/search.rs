@@ -1,8 +1,8 @@
 //! Grep search — PyO3 wrappers with mmap and SIMD-accelerated literal search.
 
-use library::search::extract_original_match;
-use library::search::grep::GrepMatch;
-use library::search::literal::is_literal_pattern;
+use lib::search::extract_original_match;
+use lib::search::grep::GrepMatch;
+use lib::search::literal::is_literal_pattern;
 use memchr::memmem;
 use memmap2::Mmap;
 use pyo3::prelude::*;
@@ -19,7 +19,7 @@ use lru::LruCache;
 use std::hash::{Hash, Hasher};
 
 /// Search mode for PyO3 layer — stores pre-built Finder for SIMD acceleration.
-/// Distinct from `library::search::SearchMode` which stores owned strings
+/// Distinct from `lib::search::SearchMode` which stores owned strings
 /// (suitable for `search_lines()`), while this version holds `memmem::Finder`
 /// references for zero-copy mmap search.
 enum SearchMode<'a> {

@@ -175,7 +175,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         True,  # Method names match (async/sync checked separately)
     ),
     # WatchProtocol removed — watch is now kernel syscall (sys_watch).
-    # LockProtocol removed — consolidated into LockManagerBase (lib/distributed_lock.py).
+    # LockProtocol removed — now Rust kernel primitive (lock_manager.rs).
     # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
     (
         "SnapshotServiceProtocol",

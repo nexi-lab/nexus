@@ -27,7 +27,6 @@ class StartupPhase(StrEnum):
     SEARCH = "search"
     SERVICES = "services"
     UPLOADS = "uploads"
-    IPC = "ipc"
     GRPC = "grpc"
 
 

@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
 from nexus.factory._helpers import _make_gate, _safe_create
 
@@ -393,20 +392,10 @@ def _boot_independent_bricks(
         except Exception as _del_exc:
             logger.debug("[BOOT:BRICK] DelegationService unavailable: %s", _del_exc)
 
-    # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
-    # IPC goes through the kernel VFS (NexusFS) directly.
-    # A LocalConnector is mounted at /agents for actual file storage.
-    # NexusFS reference is injected in _initialize_wired_ipc() after kernel init.
-    ipc_provisioner: Any = None
-    ipc_zone_id: str | None = None
-    if not _on("ipc"):
-        logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
-    else:
-        ipc_zone_id = ctx.zone_id or ROOT_ZONE_ID
-        logger.debug(
-            "[BOOT:BRICK] IPC brick pre-registered (zone=%s, NexusFS pending)",
-            ipc_zone_id,
-        )
+    # IPC brick (`nexus.bricks.ipc`) deleted in Phase M of the
+    # parallel-layers PR — PR #3912 ships the Rust replacement.
+    # ipc_provisioner / ipc_zone_id keys removed from the services dict
+    # below; profile flag `ipc` is now a no-op.
 
     # --- Sandbox Brick: AgentEventLog (Issue #1307) ---
     agent_event_log: Any = None
@@ -494,8 +483,6 @@ def _boot_independent_bricks(
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
-        "ipc_provisioner": ipc_provisioner,
-        "ipc_zone_id": ipc_zone_id,
         "agent_event_log": agent_event_log,
         "delegation_service": delegation_service,
         "version_service": version_service,

@@ -177,26 +177,9 @@ class TestIdentityE2E:
 
 
 # =========================================================================
-# ipc
+# ipc — TestIpcE2E deleted in Phase M of the parallel-layers PR
+# (`nexus.bricks.ipc` removed; PR #3912 ships the Rust replacement).
 # =========================================================================
-
-
-class TestIpcE2E:
-    """nexus ipc commands against a running server."""
-
-    def test_ipc_count_unknown_agent(self, remote_server):
-        result = _run_cli(["ipc", "count", "nonexistent_agent", "--json"], remote_server)
-        envelope = _parse_json_envelope(result)
-        assert "data" in envelope or "error" in envelope
-
-    def test_ipc_inbox_unknown_agent(self, remote_server):
-        result = _run_cli(["ipc", "inbox", "nonexistent_agent", "--json"], remote_server)
-        envelope = _parse_json_envelope(result)
-        assert "data" in envelope or "error" in envelope
-
-    def test_ipc_no_traceback(self, remote_server):
-        result = _run_cli(["ipc", "inbox", "nonexistent_agent"], remote_server)
-        assert "Traceback" not in result.stderr
 
 
 # =========================================================================

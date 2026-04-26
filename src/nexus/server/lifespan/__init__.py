@@ -132,7 +132,6 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     down in reverse order during shutdown.
     """
     from nexus.grpc.server import shutdown_grpc, startup_grpc
-    from nexus.server.lifespan.ipc import shutdown_ipc, startup_ipc
     from nexus.server.lifespan.observability import (
         shutdown_observability,
         startup_observability,
@@ -196,8 +195,9 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     bg_tasks.extend(await startup_uploads(app, svc))
     _done(StartupPhase.UPLOADS)
 
-    bg_tasks.extend(await startup_ipc(app, svc))
-    _done(StartupPhase.IPC)
+    # IPC lifespan hook + StartupPhase.IPC deleted in Phase M of the
+    # parallel-layers PR — `nexus.bricks.ipc` removed; PR #3912 ships
+    # the Rust replacement.
 
     bg_tasks.extend(await startup_grpc(app, svc))
     _done(StartupPhase.GRPC)
@@ -220,7 +220,6 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
     await shutdown_grpc(app, svc)
-    await shutdown_ipc(app, svc)
     await shutdown_services(app, svc)
     await shutdown_realtime(app, svc)
 

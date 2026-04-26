@@ -215,23 +215,9 @@ def _initialize_services(
     IPC adapter bind + mount, VFS hook registration, BLM brick
     registration, bootstrap callback registration for background workers.
     """
-    # --- IPC adapter bind + mount (extracted from _boot_wired_services) ---
-    from nexus.factory._wired import _initialize_wired_ipc
-    from nexus.factory.service_routing import enlist_services
-
-    # Build services dict from ServiceRegistry for IPC initialization
-    _ipc_services: dict[str, Any] = {}
-    _ipc_svc_fn = getattr(nx, "service", None)
-    if _ipc_svc_fn is not None:
-        for _ipc_name in ("ipc_zone_id", "ipc_provisioner"):
-            _ipc_val = _ipc_svc_fn(_ipc_name)
-            if _ipc_val is not None:
-                # service_lookup() returns raw instances — no unwrapping needed.
-                _ipc_services[_ipc_name] = _ipc_val
-    _initialize_wired_ipc(nx, _ipc_services)
-    # _initialize_wired_ipc may have created ipc_provisioner — enlist newly
-    # produced services so /api/v2/ipc/* and lifespan IPC startup can resolve them.
-    enlist_services(nx, _ipc_services)
+    # IPC brick + its `_initialize_wired_ipc` deferred-init hook deleted
+    # in Phase M of the parallel-layers PR (PR #3912 ships the Rust
+    # replacement). No bind / mount step needed here any more.
 
     # --- Register VFS hooks (INTERCEPT + OBSERVE — Issue #900) ---
     # Issue #1610/#1612/#1613/#1616: All hooks declare hook_spec() (duck-typed).

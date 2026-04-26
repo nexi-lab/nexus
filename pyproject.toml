@@ -887,7 +887,6 @@ ignore = [
 "src/nexus/backends/*.py" = ["ARG002"]  # Keep unused context params for API compatibility
 "src/nexus/cache/postgres.py" = ["ARG002"]  # No-op stub implements PermissionCacheProtocol interface
 "src/nexus/bricks/rebac/manager.py" = ["ARG002"]  # No-op cache stubs keep interface for callers
-"src/nexus/bricks/ipc/driver.py" = ["ARG002"]  # Backend ABC override — params required by interface
 "src/nexus/ipc/driver.py" = ["ARG002"]  # Backend ABC override — context params required by interface
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
@@ -927,7 +926,6 @@ modules = [
     "nexus.bricks.discovery",
     "nexus.bricks.governance",
     "nexus.bricks.identity",
-    "nexus.bricks.ipc",
     "nexus.bricks.mcp",
     "nexus.bricks.mount",
     "nexus.bricks.parsers",

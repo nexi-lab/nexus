@@ -230,6 +230,24 @@ Syscall execution crosses Rust→Python at two points:
 Zero-crossing syscalls: sys_lock, sys_unlock, sys_watch, sys_stat, sys_setattr, sys_readdir.
 Pillar access (Metastore, ObjectStore, DCache): pure Rust trait dispatch.
 
+**Eliminated crossings (2026-04-26 audit):**
+
+- **sys_write IPC pre-check**: Previously `metadata.get(path)` in Python detected DT_PIPE/DT_STREAM
+  before calling Rust sys_write. Redundant — Rust dcache already checks entry type inline (~100ns)
+  and dispatches to PipeManager/StreamManager. Deleted: 1 FFI round-trip per IPC write.
+- **sys_stat datetime formatting**: Previously `py.import("datetime")` + `.fromtimestamp()` +
+  `.isoformat()` produced ISO-8601 strings via Python. Replaced with `chrono::DateTime::to_rfc3339_opts()`
+  in pure Rust. Deleted: 1 Rust→Python crossing per stat call.
+
+**Architecturally correct crossings (no change):**
+
+- **Python observer dual path**: OBSERVE phase is service-layer (Python hooks registered by services).
+  Kernel fires the notification; service code runs in Python. This is not a kernel crossing — it's
+  the intended kernel→service boundary.
+- **sys_unlink DT_MOUNT fallback**: Mount lifecycle (federation cleanup, zone membership) is
+  Python-managed service-layer logic. The kernel delegates to Python for DT_MOUNT unlink because
+  the cleanup spans multiple services (federation, auth, event bus).
+
 ---
 
 ## 7. Long-term Architecture: Collapse to RPC Boundary (decided 2026-04-02)
@@ -410,4 +428,4 @@ collapse is a **refactoring** that changes the boundary, not the logic.
 | §8 | 2026-04-10 | Added version history table |
 | §11 | 2026-04-10 | KERNEL-ARCHITECTURE.md §2.4.1: formal 4 dispatch contracts (RESOLVE, INTERCEPT PRE, INTERCEPT POST, OBSERVE) with ordering, error semantics, and zero-overhead invariant. Phase 18 docs. |
 | §7.3, §7.6 | 2026-04-23 | §7 collapse roadmap fully completed: `_backend_read` deleted, sys_write metadata in Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC. All "Remaining" items → Done (#1817, #1960). |
-| §6.1 | 2026-04-26 | Rust/Python boundary status: hook dispatch (2+N crossings), service lifecycle (4 crossings, stdlib-only), zero-crossing syscalls, pure Rust pillar dispatch. |
+| §6.1 | 2026-04-26 | Rust/Python boundary status: hook dispatch (2+N crossings), service lifecycle (4 crossings, stdlib-only), zero-crossing syscalls, pure Rust pillar dispatch. Eliminated: sys_write IPC pre-check (redundant metadata.get), sys_stat py.import("datetime") → chrono. |

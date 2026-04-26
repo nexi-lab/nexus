@@ -38,7 +38,7 @@ def test_single_zone_creates_one_junction_row(session):
     )
     assert [r.zone_id for r in junction] == ["eng"]
     primary = session.get(APIKeyModel, key_id)
-    assert primary.zone_id == "eng"
+    assert primary.zone_id is None  # column no longer written (#3871)
 
 
 def test_multi_zone_creates_one_junction_row_per_zone(session):
@@ -61,7 +61,7 @@ def test_multi_zone_creates_one_junction_row_per_zone(session):
     )
     assert [r.zone_id for r in junction] == ["eng", "ops"]
     primary = session.get(APIKeyModel, key_id)
-    assert primary.zone_id == "eng"  # first in zones list
+    assert primary.zone_id is None  # column no longer written (#3871)
 
 
 def test_zone_id_legacy_kwarg_still_works(session):
@@ -99,7 +99,7 @@ def test_zones_takes_precedence_over_zone_id(session):
     session.commit()
 
     primary = session.get(APIKeyModel, key_id)
-    assert primary.zone_id == "eng"
+    assert primary.zone_id is None  # column no longer written (#3871)
     junction = (
         session.execute(select(APIKeyZoneModel).where(APIKeyZoneModel.key_id == key_id))
         .scalars()

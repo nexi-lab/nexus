@@ -103,13 +103,11 @@ def create_api_key(
         zones: List of zone identifiers for this key (#3785). Each entry is
             either a bare zone_id string (defaulting to ``"rw"`` permissions)
             or a ``(zone_id, perms)`` tuple where perms is one of
-            ``"r" | "w" | "rw" | "rwx"``. The first zone is also written to
-            ``APIKeyModel.zone_id`` as a deprecated backfill alias so legacy
-            ``WHERE zone_id = ?`` filters keep matching the primary; new
-            readers should use the junction (``get_zones_for_key`` /
-            ``get_zone_perms_for_key``). One junction row is written per
-            zone with its perms. Takes precedence over ``zone_id`` when both
-            are supplied.
+            ``"r" | "w" | "rw" | "rwx"``. One junction row is written per
+            zone with its perms. ``APIKeyModel.zone_id`` is always left NULL
+            (#3871 Phase 2); use ``get_zones_for_key`` / ``get_primary_zone``
+            to read zone membership. Takes precedence over ``zone_id`` when
+            both are supplied.
         zone_id: Legacy single-zone identifier. Kept for backward compat;
             prefer ``zones`` for new callers. Ignored when ``zones`` is set.
         is_admin: Whether this key has admin privileges.
@@ -121,10 +119,11 @@ def create_api_key(
 
     Raises:
         ValueError: If ``zones`` is explicitly passed as an empty list, if
-            ``subject_type`` is invalid, or if any per-zone permission
-            string is not one of ``r | w | rw | rwx``. Passing neither
-            ``zones`` nor ``zone_id`` is still allowed (zone-less key,
-            backward compat).
+            ``subject_type`` is invalid, if any per-zone permission string
+            is not one of ``r | w | rw | rwx``, or if neither ``zones`` nor
+            ``zone_id`` is supplied for a non-admin key (zoneless tokens are
+            reserved for explicit global admins, ``is_admin=True``, #3871
+            round 4).
     """
     from nexus.storage.models import APIKeyModel, APIKeyZoneModel
 
@@ -145,6 +144,43 @@ def create_api_key(
                 zone_perms.append((entry, "rw"))
     primary_zone = zone_perms[0][0] if zone_perms else None
 
+    # #3871 round 4: non-admin keys must have a zone. Otherwise the token
+    # has no zone access at auth time (and downstream routes would coerce
+    # the missing zone to ROOT_ZONE_ID). Zoneless is reserved for explicit
+    # global admins.
+    if not zone_perms and not is_admin:
+        raise ValueError(
+            "create_api_key: non-admin keys must specify zones or zone_id "
+            "(zoneless tokens are reserved for global admins, #3871)"
+        )
+
+    # #3871 round 5+6: validate every requested zone is an ACTIVE, non-deleted
+    # ZoneModel before inserting the api_key_zones FK. Round 5 caught
+    # missing/typo'd zones; round 6 also rejects Terminating / soft-deleted
+    # zones — otherwise the token mints successfully but
+    # DatabaseAPIKeyAuth.authenticate immediately rejects it (the raw key was
+    # already returned and persisted/displayed once, so it's unrecoverable).
+    if zone_perms:
+        from sqlalchemy import select as sa_select
+
+        from nexus.storage.models import ZoneModel
+
+        requested = {zid for zid, _ in zone_perms}
+        active_rows = session.execute(
+            sa_select(ZoneModel.zone_id)
+            .where(ZoneModel.zone_id.in_(requested))
+            .where(ZoneModel.phase == "Active")
+            .where(ZoneModel.deleted_at.is_(None))
+        )
+        active = {row[0] for row in active_rows}
+        unusable = sorted(requested - active)
+        if unusable:
+            raise ValueError(
+                f"create_api_key: zones {unusable} are not active "
+                "(missing, Terminating, or soft-deleted); create or restore "
+                "them before issuing keys against them"
+            )
+
     final_subject_id = subject_id or user_id
 
     valid_subject_types = ["user", "agent", "service"]
@@ -163,7 +199,7 @@ def create_api_key(
         key_hash=key_hash,
         user_id=user_id,
         name=name,
-        zone_id=primary_zone,
+        zone_id=None,
         is_admin=int(is_admin),
         expires_at=expires_at,
         subject_type=subject_type,
@@ -271,6 +307,59 @@ def get_zone_perms_for_key(session: "Session", key_id: str) -> list[tuple[str, s
         )
     ).all()
     return [(zid, perms) for zid, perms in rows]
+
+
+def get_primary_zone(session: "Session", key_id: str) -> str | None:
+    """Return the token's primary zone, or None if it has no zones.
+
+    Primary = the row with the smallest granted_at. Ties broken by zone_id ASC
+    so the result is deterministic across snapshots and replays.
+
+    Replaces direct reads of the deprecated APIKeyModel.zone_id column (#3871).
+    """
+    from sqlalchemy import select
+
+    from nexus.storage.models import APIKeyZoneModel
+
+    stmt = (
+        select(APIKeyZoneModel.zone_id)
+        .where(APIKeyZoneModel.key_id == key_id)
+        .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
+        .limit(1)
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def get_primary_zones_for_keys(session: "Session", key_ids: list[str]) -> dict[str, str]:
+    """Batch variant of get_primary_zone for renderers walking many rows.
+
+    Single round-trip via a window function. Returns {key_id: primary_zone};
+    zoneless keys are absent from the dict.
+    """
+    if not key_ids:
+        return {}
+    from sqlalchemy import func, select
+
+    from nexus.storage.models import APIKeyZoneModel
+
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=APIKeyZoneModel.key_id,
+            order_by=(
+                APIKeyZoneModel.granted_at.asc(),
+                APIKeyZoneModel.zone_id.asc(),
+            ),
+        )
+        .label("rn")
+    )
+    inner = (
+        select(APIKeyZoneModel.key_id, APIKeyZoneModel.zone_id, rn)
+        .where(APIKeyZoneModel.key_id.in_(key_ids))
+        .subquery()
+    )
+    stmt = select(inner.c.key_id, inner.c.zone_id).where(inner.c.rn == 1)
+    return {row.key_id: row.zone_id for row in session.execute(stmt)}
 
 
 def add_zone_to_key(session: "Session", key_id: str, zone_id: str, permissions: str = "rw") -> bool:

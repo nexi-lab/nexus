@@ -24,7 +24,16 @@ def engine(record_store):
 
 @pytest.fixture
 def session_factory(record_store):
-    return record_store.session_factory
+    """Session factory pre-seeded with the org_acme zone (#3871 round 3:
+    DatabaseAPIKeyAuth.create_key now validates the ZoneModel exists before
+    inserting the api_key_zones junction row)."""
+    from nexus.storage.models.auth import ZoneModel
+
+    sf = record_store.session_factory
+    with sf() as s:
+        s.add(ZoneModel(zone_id="org_acme", name="org_acme", phase="Active"))
+        s.commit()
+    return sf
 
 
 @pytest.fixture
@@ -44,6 +53,7 @@ def test_create_key_basic(session_factory) -> None:
             session,
             user_id="alice",
             name="Test Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -60,7 +70,10 @@ def test_create_key_basic(session_factory) -> None:
 
 
 def test_create_key_with_zone(session_factory) -> None:
-    """Create a key with zone_id and verify the zone is stored."""
+    """Create a key with zone_id; the zone is stored in the api_key_zones
+    junction (not the deprecated APIKeyModel.zone_id column, #3871 Phase 2)."""
+    from nexus.storage.api_key_ops import get_zones_for_key
+
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
             session,
@@ -74,7 +87,8 @@ def test_create_key_with_zone(session_factory) -> None:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
         api_key = session.scalar(stmt)
         assert api_key is not None
-        assert api_key.zone_id == "org_acme"
+        assert api_key.zone_id is None  # column deprecated, NULL by design
+        assert get_zones_for_key(session, key_id) == ["org_acme"]
 
 
 def test_create_key_with_subject(session_factory) -> None:
@@ -172,6 +186,7 @@ async def test_authenticate_expired_key(auth_provider, session_factory) -> None:
             session,
             user_id="alice",
             name="Expired Key",
+            zone_id="org_acme",
             expires_at=expired_time,
         )
         session.commit()
@@ -188,6 +203,7 @@ async def test_authenticate_revoked_key(auth_provider, session_factory) -> None:
             session,
             user_id="alice",
             name="Revoked Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -208,6 +224,7 @@ async def test_authenticate_require_expiry(auth_provider_require_expiry, session
             session,
             user_id="alice",
             name="No Expiry Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -226,6 +243,7 @@ async def test_authenticate_require_expiry_with_valid_expiry(
             session,
             user_id="alice",
             name="Expiry Key",
+            zone_id="org_acme",
             expires_at=future_time,
         )
         session.commit()
@@ -242,6 +260,7 @@ async def test_validate_token(auth_provider, session_factory) -> None:
             session,
             user_id="alice",
             name="Validate Test Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -259,6 +278,7 @@ def test_revoke_key(session_factory) -> None:
             session,
             user_id="alice",
             name="Revoke Test Key",
+            zone_id="org_acme",
         )
         session.commit()
 
@@ -312,6 +332,7 @@ async def test_last_used_at_updated(auth_provider, session_factory) -> None:
             session,
             user_id="alice",
             name="Last Used Key",
+            zone_id="org_acme",
         )
         session.commit()
 

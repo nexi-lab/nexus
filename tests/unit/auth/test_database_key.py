@@ -34,10 +34,21 @@ def _make_mock_record_store(sf: sessionmaker) -> MagicMock:
 
 @pytest.fixture()
 def db_engine(tmp_path):
-    """Create a fresh SQLite database with schema."""
+    """Create a fresh SQLite database with schema, pre-seeded with zone_alpha.
+
+    #3871 round 3: DatabaseAPIKeyAuth.create_key validates ZoneModel exists
+    before inserting the api_key_zones junction row. Tests that issue keys
+    against zone_alpha rely on this seed.
+    """
+    from nexus.storage.models.auth import ZoneModel
+
     db_path = tmp_path / "test_auth.db"
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+    with SessionLocal() as s:
+        s.add(ZoneModel(zone_id="zone_alpha", name="zone_alpha", phase="Active"))
+        s.commit()
     return engine
 
 
@@ -244,7 +255,7 @@ class TestUpdateLastUsedBackground:
         """Verify the UPDATE statement (not SELECT+UPDATE) pattern."""
         # Create a key and authenticate to get a valid hash
         with session_factory() as session:
-            _key_id, raw_key = _create_key(session)
+            _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
             session.commit()
 
         token_hash = auth_provider._hash_key(raw_key)
@@ -322,10 +333,7 @@ class TestZoneLifecycleGate:
     @pytest.mark.asyncio
     async def test_active_zone_allows_auth(self, auth_provider, session_factory):
         """Token with a zone row in phase='Active' + deleted_at IS NULL → OK."""
-        from nexus.storage.models import ZoneModel
-
         with session_factory() as session, session.begin():
-            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
             _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
 
         result = await auth_provider.authenticate(raw_key)
@@ -338,7 +346,6 @@ class TestZoneLifecycleGate:
         from nexus.storage.models import ZoneModel
 
         with session_factory() as session, session.begin():
-            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
             _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
 
         # Zone lifecycle transitions to Terminating after the token existed.
@@ -355,7 +362,6 @@ class TestZoneLifecycleGate:
         from nexus.storage.models import ZoneModel
 
         with session_factory() as session, session.begin():
-            session.add(ZoneModel(zone_id="zone_alpha", name="alpha", phase="Active"))
             _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
 
         with session_factory() as session, session.begin():
@@ -366,26 +372,49 @@ class TestZoneLifecycleGate:
         assert result.authenticated is False
 
     @pytest.mark.asyncio
-    async def test_missing_zone_row_falls_through(self, auth_provider, session_factory):
-        """Legacy deployments that scope by zone_id without populating the
-        zones table continue to authenticate — the runtime gate only fires
-        when the zone row *exists and is retired*. `hub token create`
-        enforces zone-must-exist for new tokens, so this path is
-        backward-compat only."""
+    async def test_create_key_for_missing_zone_raises(self, auth_provider, session_factory):
+        """#3871 round 3: create_key validates the ZoneModel exists. Issuing a
+        key against an unknown zone surfaces a controlled ValueError instead
+        of an opaque IntegrityError from the api_key_zones FK."""
+        with session_factory() as session, pytest.raises(ValueError, match="is not active"):
+            _create_key(session, zone_id="unknown_zone")
+
+    @pytest.mark.asyncio
+    async def test_zoneless_admin_token_unaffected(self, auth_provider, session_factory):
+        """Zoneless admin tokens (is_admin=True, no zone) bypass the gate.
+        #3871 round 4: zoneless non-admin keys are now rejected at create_key."""
         with session_factory() as session, session.begin():
-            _key_id, raw_key = _create_key(session, zone_id="zone_alpha")
+            _key_id, raw_key = _create_key(session, zone_id=None, is_admin=True)
 
         result = await auth_provider.authenticate(raw_key)
         assert result.authenticated is True
 
     @pytest.mark.asyncio
-    async def test_null_zone_id_token_unaffected(self, auth_provider, session_factory):
-        """Tokens with zone_id=None (pre-hub / admin-global) bypass the gate."""
+    async def test_legacy_zone_scoped_admin_without_junction_rejected(
+        self, auth_provider, session_factory
+    ):
+        """Pre-Phase-2 admin key with legacy zone_id and no junction row must
+        fail closed — under junction-only auth it would otherwise be silently
+        reinterpreted as a global/zoneless admin (privilege escalation, #3871)."""
+        from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.storage.models import APIKeyModel
+
+        # Construct a key bypassing the create_key helper so the legacy
+        # column-only state (zone_id set, no junction row) can be reproduced.
+        raw_key = "sk-legacy-zoned-admin-fixture-1234567890abcdef"
         with session_factory() as session, session.begin():
-            _key_id, raw_key = _create_key(session, zone_id=None)
+            session.add(
+                APIKeyModel(
+                    key_hash=DatabaseAPIKeyAuth._hash_key(raw_key),
+                    user_id="legacy_admin",
+                    name="legacy",
+                    zone_id="zone_alpha",
+                    is_admin=1,
+                )
+            )
 
         result = await auth_provider.authenticate(raw_key)
-        assert result.authenticated is True
+        assert result.authenticated is False
 
 
 # ── #3785: zone_set from junction table ──────────────────────
@@ -423,8 +452,15 @@ def test_authenticate_loads_zone_set_from_junction(tmp_path):
     assert sorted(result.zone_set) == ["eng", "ops"]
 
 
-def test_authenticate_legacy_token_falls_back_to_zone_id(tmp_path):
-    """Legacy single-zone token (no junction rows) → zone_set = (zone_id,)."""
+def test_authenticate_legacy_token_rejected(tmp_path):
+    """Legacy single-zone token (zone_id col set, no junction rows) → fail closed.
+
+    Round 2 of #3871 hardened auth to reject these outright rather than
+    authenticating them with empty zone_set, because admin keys in that
+    state would otherwise be silently reinterpreted as global/zoneless
+    admins (privilege escalation). The tripwire migration enforces backfill
+    before this code path is ever exercised in production.
+    """
     import asyncio
 
     from sqlalchemy import create_engine
@@ -457,9 +493,7 @@ def test_authenticate_legacy_token_falls_back_to_zone_id(tmp_path):
         s.commit()
 
     result = asyncio.run(auth.authenticate(raw_key))
-
-    assert result.authenticated is True
-    assert result.zone_set == ("eng",)
+    assert result.authenticated is False
 
 
 # ── #3785 AC #5: expired token rejected before zone_set resolves ──

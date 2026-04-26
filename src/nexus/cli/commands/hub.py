@@ -22,6 +22,7 @@ from nexus.cli.commands._hub_common import (
 from nexus.storage.api_key_ops import (
     add_zone_to_key,
     create_api_key,
+    get_primary_zones_for_keys,
     get_zone_perms_for_key,
     remove_zone_from_key,
 )
@@ -214,6 +215,19 @@ def token_create(
                             "Create it first with `nexus zone create` or use --zones <existing>."
                         )
 
+        # #3871 round 4: bootstrap path — auto-create missing ZoneModel rows
+        # so the api_key_zones FK insert below doesn't fail with IntegrityError.
+        # The validation block above only runs when any_zone is not None; in
+        # the bootstrap escape path (empty zones table) the requested zones
+        # may not exist yet, but create_api_key will still insert junction
+        # rows whose zone_id has a FK to zones.zone_id.
+        if any_zone is None:
+            for entry in zones:
+                zid = entry[0] if isinstance(entry, tuple) else entry
+                if not session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid)):
+                    session.add(ZoneModel(zone_id=zid, name=zid, phase="Active"))
+            session.flush()
+
         key_id, raw_key = create_api_key(
             session,
             user_id=user_id or name,
@@ -263,18 +277,26 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
                 .all()
             )
 
+        # Batch-fetch primary zones from junction (#3871).
+        primary_by_key: dict[str, str | None] = dict.fromkeys(key_ids)
+        if key_ids:
+            primary_by_key.update(get_primary_zones_for_keys(session, key_ids))
+
     # Build zones_by_key: primary zone first, then sorted others.
     zones_by_key: dict[str, list[str]] = {}
     for jr in junction_rows:
         zones_by_key.setdefault(jr.key_id, []).append(jr.zone_id)
     for kid in zones_by_key:
-        primary = next((r.zone_id for r in rows if r.key_id == kid), None)
+        primary = primary_by_key.get(kid)
         others = sorted(z for z in zones_by_key[kid] if z != primary)
         zones_by_key[kid] = ([primary] if primary else []) + others
 
     def _zones(r: APIKeyModel) -> list[str]:
-        """Return zones list for a token row, falling back to zone_id if no junction rows."""
-        return zones_by_key.get(r.key_id, [r.zone_id] if r.zone_id else [])
+        """Return zones list for a token row, falling back to primary zone if no junction rows."""
+        if r.key_id in zones_by_key:
+            return zones_by_key[r.key_id]
+        fallback = primary_by_key.get(r.key_id)
+        return [fallback] if fallback is not None else []
 
     def _iso(dt: datetime | None) -> str:
         return dt.isoformat() if dt else "-"
@@ -285,7 +307,9 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
                 {
                     "key_id": r.key_id,
                     "name": r.name,
-                    "zone": r.zone_id,  # deprecated: use 'zones' (kept one release for compat)
+                    "zone": primary_by_key.get(
+                        r.key_id
+                    ),  # deprecated: use 'zones' (kept one release for compat)
                     "zones": _zones(r),
                     "admin": bool(r.is_admin),
                     "created": _iso(r.created_at),
@@ -305,7 +329,7 @@ def token_list(show_revoked: bool, as_json: bool) -> None:
             [
                 r.key_id[:12] + "…" if len(r.key_id) > 12 else r.key_id,
                 r.name,
-                r.zone_id or "-",
+                primary_by_key.get(r.key_id) or "-",
                 ",".join(_zones(r)),
                 "yes" if r.is_admin else "no",
                 _iso(r.created_at),

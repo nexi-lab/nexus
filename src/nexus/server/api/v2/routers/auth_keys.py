@@ -254,7 +254,15 @@ async def create_key(
 
     result = handle_admin_create_key(db_provider, params, context)
 
-    # Normalize response keys for test fixture compatibility
+    from nexus.storage.api_key_ops import get_primary_zone
+
+    with db_provider.session_factory() as session:
+        primary_zone = get_primary_zone(session, result["key_id"])
+
+    # Normalize response keys for test fixture compatibility.
+    # zone_id: prefer junction primary (get_primary_zone); fall back to result dict for
+    # keys created via the legacy DatabaseAPIKeyAuth path which writes zone_id to the
+    # column but not to the junction (#3871).
     response: dict[str, Any] = {
         "key_id": result["key_id"],
         "id": result["key_id"],
@@ -262,7 +270,9 @@ async def create_key(
         "raw_key": result["api_key"],
         "user_id": result["user_id"],
         "name": result.get("name", key_name),
-        "zone_id": result.get("zone_id", body.zone_id),
+        "zone_id": primary_zone
+        if primary_zone is not None
+        else result.get("zone_id", body.zone_id),
         "is_admin": result.get("is_admin", body.is_admin),
         "expires_at": result.get("expires_at"),
     }
@@ -377,7 +387,11 @@ async def revoke_key(
     with db_provider.session_factory() as session:
         stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
         if zone_id:
-            stmt = stmt.where(APIKeyModel.zone_id == zone_id)
+            from nexus.storage.models import APIKeyZoneModel
+
+            stmt = stmt.join(APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id).where(
+                APIKeyZoneModel.zone_id == zone_id
+            )
         api_key = session.scalar(stmt)
         if api_key is not None and api_key.grant_tuple_ids:
             try:

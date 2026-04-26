@@ -12,8 +12,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from nexus.contracts.auth_store_types import APIKeyDTO
-from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.storage.models import APIKeyModel
+from nexus.storage.models import APIKeyModel, APIKeyZoneModel
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +60,38 @@ class SQLAlchemyAPIKeyStore:
             name=name,
             subject_type=subject_type,
             subject_id=subject_id or user_id,
-            zone_id=zone_id or ROOT_ZONE_ID,
+            zone_id=None,
             is_admin=int(is_admin),
             expires_at=expires_at,
             inherit_permissions=int(inherit_permissions),
         )
+        # #3871 round 4: non-admin keys must have a zone (see Phase 2 docs).
+        if not zone_id and not is_admin:
+            raise ValueError(
+                "SQLAlchemyAPIKeyStore.create_key: non-admin keys must specify a zone_id "
+                "(zoneless tokens are reserved for global admins, #3871)"
+            )
+
         with self._session_factory() as session:
+            # #3871 round 3+6: validate zone exists, is Active, and not
+            # deleted before junction insert. Round 6 also rejects
+            # Terminating/soft-deleted zones — otherwise the token mints
+            # successfully but the lifecycle gate rejects at first auth.
+            if zone_id:
+                from nexus.storage.models import ZoneModel
+
+                zone = session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zone_id))
+                if zone is None or zone.phase != "Active" or zone.deleted_at is not None:
+                    raise ValueError(
+                        f"SQLAlchemyAPIKeyStore.create_key: zone {zone_id!r} is not active "
+                        "(missing, Terminating, or soft-deleted); create or restore "
+                        "the zone before issuing keys against it"
+                    )
+
             session.add(key)
+            session.flush()  # populate key.key_id before junction insert
+            if zone_id:  # non-empty zone_id → populate junction
+                session.add(APIKeyZoneModel(key_id=key.key_id, zone_id=zone_id, permissions="rw"))
             session.commit()
             session.refresh(key)
             return _to_dto(key)
@@ -90,10 +114,18 @@ class SQLAlchemyAPIKeyStore:
             return _to_dto(key) if key else None
 
     def revoke_key(self, key_id: str, *, zone_id: str | None = None) -> bool:
+        """Revoke an API key.
+
+        Zone access filter — when provided, only revokes keys that grant access
+        to this zone via the api_key_zones junction (matches multi-zone keys on
+        every granted zone, not only primary). #3871.
+        """
         with self._session_factory() as session:
             stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
             if zone_id is not None:
-                stmt = stmt.where(APIKeyModel.zone_id == zone_id)
+                stmt = stmt.join(
+                    APIKeyZoneModel, APIKeyZoneModel.key_id == APIKeyModel.key_id
+                ).where(APIKeyZoneModel.zone_id == zone_id)
             key = session.scalar(stmt)
             if not key:
                 return False

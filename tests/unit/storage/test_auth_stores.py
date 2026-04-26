@@ -95,10 +95,19 @@ class TestUserStore:
 class TestAPIKeyStore:
     @pytest.fixture()
     def store(self, session_factory):
+        # #3871 round 4: keys must have a zone or be admin. Seed a zone for
+        # tests that just want a working key without per-test zone setup.
+        from nexus.storage.models.auth import ZoneModel
+
+        with session_factory() as s:
+            s.add(ZoneModel(zone_id="zone-default", name="default", phase="Active"))
+            s.commit()
         return SQLAlchemyAPIKeyStore(session_factory)
 
     def test_create_and_get_by_hash(self, store):
-        dto = store.create_key(key_hash="hash1", user_id="u1", name="test-key")
+        dto = store.create_key(
+            key_hash="hash1", user_id="u1", name="test-key", zone_id="zone-default"
+        )
         assert isinstance(dto, APIKeyDTO)
         assert dto.key_hash == "hash1"
         assert dto.user_id == "u1"
@@ -112,24 +121,34 @@ class TestAPIKeyStore:
         assert store.get_by_hash("nonexistent") is None
 
     def test_revoke_key(self, store):
-        dto = store.create_key(key_hash="h1", user_id="u1", name="k")
+        dto = store.create_key(key_hash="h1", user_id="u1", name="k", zone_id="zone-default")
         result = store.revoke_key(dto.key_id)
         assert result is True
         # Revoked keys should not be returned by get_by_hash
         assert store.get_by_hash("h1") is None
 
-    def test_revoke_key_with_zone_filter(self, store):
-        dto = store.create_key(key_hash="h1", user_id="u1", name="k", zone_id="zone-a")
+    def test_revoke_key_with_zone_filter(self, store, session_factory):
+        # Keys created via create_api_key with zones properly populate the junction.
+        from nexus.storage.api_key_ops import create_api_key
+        from nexus.storage.models.auth import ZoneModel
+
+        with session_factory() as s:
+            s.add(ZoneModel(zone_id="zone-a", name="Zone A", phase="Active"))
+            s.add(ZoneModel(zone_id="zone-b", name="Zone B", phase="Active"))
+            s.commit()
+            key_id, _ = create_api_key(s, user_id="u1", name="k", zones=["zone-a"])
+            s.commit()
+
         # Wrong zone should fail
-        assert store.revoke_key(dto.key_id, zone_id="zone-b") is False
+        assert store.revoke_key(key_id, zone_id="zone-b") is False
         # Correct zone should succeed
-        assert store.revoke_key(dto.key_id, zone_id="zone-a") is True
+        assert store.revoke_key(key_id, zone_id="zone-a") is True
 
     def test_revoke_nonexistent_returns_false(self, store):
         assert store.revoke_key("nonexistent") is False
 
     def test_update_last_used_no_error(self, store):
-        store.create_key(key_hash="h1", user_id="u1", name="k")
+        store.create_key(key_hash="h1", user_id="u1", name="k", zone_id="zone-default")
         # Should not raise
         store.update_last_used("h1")
         store.update_last_used("nonexistent")  # non-critical, should not raise

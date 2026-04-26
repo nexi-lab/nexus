@@ -165,10 +165,15 @@ def test_token_create_bootstrap_allows_any_zone_when_empty(monkeypatch):
     )
     assert result.exit_code == 0, result.output
     # Token actually got created in the DB.
+    # Post-#3871 Phase 2: APIKeyModel.zone_id is NULL; junction is source of truth.
+    from nexus.storage.models import APIKeyZoneModel
+
     with Session() as s:
         rows = s.execute(_select(APIKeyModel)).scalars().all()
         assert len(rows) == 1
-        assert rows[0].zone_id == "root"
+        assert rows[0].zone_id is None
+        zone_rows = s.execute(_select(APIKeyZoneModel.zone_id)).scalars().all()
+        assert list(zone_rows) == ["root"]
 
 
 def test_token_create_duplicate_filter_ignores_revoked(monkeypatch):

@@ -15,6 +15,13 @@ def record_store():
 
 @pytest.fixture()
 def session(record_store):
+    """Session pre-seeded with ROOT_ZONE_ID so create_api_key (#3871 round 5
+    zone-existence validation) can mint keys against it."""
+    from nexus.storage.models import ZoneModel
+
+    with record_store.session_factory() as seed:
+        seed.add(ZoneModel(zone_id=ROOT_ZONE_ID, name="root", phase="Active"))
+        seed.commit()
     s = record_store.session_factory()
     yield s
     s.close()
@@ -47,7 +54,7 @@ class TestCreateAgentApiKey:
         assert model.subject_type == "agent"
         assert model.subject_id == "test-agent-01"
         assert model.user_id == "alice"
-        assert model.zone_id == ROOT_ZONE_ID
+        assert model.zone_id is None  # column no longer written (#3871)
         assert raw_key.startswith("sk-")
 
     def test_agent_id_passed_as_subject_id(self, session):
@@ -60,6 +67,7 @@ class TestCreateAgentApiKey:
             agent_id="my-unique-agent",
             agent_name="Agent X",
             owner_id="bob",
+            zone_id=ROOT_ZONE_ID,
         )
         session.commit()
 
@@ -81,6 +89,7 @@ class TestCreateAgentApiKey:
             agent_id="permanent-agent",
             agent_name="Permanent",
             owner_id="carol",
+            zone_id=ROOT_ZONE_ID,
             expires_at=None,
         )
         session.commit()
@@ -106,6 +115,7 @@ class TestCreateAgentApiKey:
             agent_id="ttl-agent",
             agent_name="TTL Agent",
             owner_id="dave",
+            zone_id=ROOT_ZONE_ID,
             expires_at=expiry,
         )
         session.commit()
@@ -128,6 +138,7 @@ class TestCreateAgentApiKey:
             agent_id="named-agent",
             agent_name="My Agent",
             owner_id="eve",
+            zone_id=ROOT_ZONE_ID,
         )
         session.commit()
 

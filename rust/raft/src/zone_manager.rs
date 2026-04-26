@@ -12,6 +12,7 @@
 
 #![cfg(all(feature = "grpc", has_protos))]
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -183,6 +184,11 @@ pub struct ZoneManager {
     /// kernel installs an impl. Stays empty on slim / no-federation
     /// runtimes (the RPC is still advertised but returns `NotFound`).
     blob_fetcher_slot: crate::blob_fetcher::BlobFetcherSlot,
+    /// Static topology mounts staged by `bootstrap_static`, drained
+    /// incrementally by `apply_topology` as parent + target zones'
+    /// leaders settle. BTreeMap so parent paths process before children.
+    /// Empty when no static topology is configured.
+    pending_mounts: parking_lot::Mutex<BTreeMap<String, String>>,
 }
 
 impl ZoneManager {
@@ -333,6 +339,7 @@ impl ZoneManager {
             use_tls,
             default_peers: peers,
             blob_fetcher_slot,
+            pending_mounts: parking_lot::Mutex::new(BTreeMap::new()),
         }))
     }
 
@@ -443,6 +450,49 @@ impl ZoneManager {
         self.registry
             .get_node(zone_id)
             .map(|node| ZoneHandle::new(node, self.runtime.handle().clone(), zone_id.to_string()))
+    }
+
+    /// Static Day-1 cluster formation: idempotently create raft groups
+    /// for every zone in the federation, then stage `mounts` for the
+    /// next `apply_topology()` pass.
+    ///
+    /// All nodes in the cluster call this with identical parameters
+    /// during startup. Each node initializes its own raft state machine
+    /// for every zone (no cross-node consensus required at this stage —
+    /// raft-rs handles election once peers can reach each other).
+    ///
+    /// `mounts` maps a global path to its target zone id (e.g.
+    /// `{"/corp": "corp", "/corp/eng": "corp-eng"}`). Storage is purely
+    /// in-memory; mounts are applied lazily by `apply_topology()` once
+    /// the relevant parent + target leaders are reachable. Calling
+    /// `bootstrap_static` again replaces the pending set.
+    ///
+    /// Mirrors Python `ZoneManager.bootstrap_static`. Idempotent.
+    pub fn bootstrap_static(
+        &self,
+        zones: &[String],
+        peers: Vec<String>,
+        mounts: &BTreeMap<String, String>,
+    ) -> Result<()> {
+        for zone_id in zones {
+            if self.get_zone(zone_id).is_some() {
+                tracing::debug!("Zone '{}' already exists, skipping", zone_id);
+                continue;
+            }
+            self.create_zone(zone_id, peers.clone())?;
+        }
+        let mut pending = self.pending_mounts.lock();
+        pending.clear();
+        for (path, target) in mounts {
+            pending.insert(path.clone(), target.clone());
+        }
+        Ok(())
+    }
+
+    /// Snapshot of mounts staged by `bootstrap_static` that have not
+    /// yet been applied. Empty when topology has converged.
+    pub fn pending_mounts(&self) -> BTreeMap<String, String> {
+        self.pending_mounts.lock().clone()
     }
 
     /// Read a zone's POSIX `i_links_count` (mount references).

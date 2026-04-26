@@ -27,22 +27,11 @@ use serde_json::{json, Map, Value};
 use crate::openai_backend::OpenAIBackend;
 use crate::stream_manager::StreamManager;
 
-/// Streaming-capable LLM backend — object-safe trait so `ObjectStore` impls
-/// can opt in to `PyKernel::llm_start_streaming` without every backend
-/// learning every protocol's SSE shape.
-pub trait LlmStreamingBackend: Send + Sync {
-    /// Run a streaming chat completion to completion. Writes token deltas
-    /// into `stream_path`, persists the session via CAS, closes the stream.
-    /// Blocks the calling thread — caller is expected to have released the
-    /// GIL and be running on a worker thread.
-    #[allow(private_interfaces)]
-    fn run_streaming(
-        &self,
-        request_bytes: &[u8],
-        stream_path: &str,
-        stream_manager: &Arc<StreamManager>,
-    ) -> Result<(), String>;
-}
+// Trait declaration moved to `core::traits::llm_streaming` (Phase B/D
+// preparation). Re-exported here so `crate::openai_streaming::LlmStreamingBackend`
+// keeps working for callers (notably the `ObjectStore::as_llm_streaming`
+// trait method) until Phase D moves the openai_* impls into `backends/`.
+pub use crate::core::traits::llm_streaming::LlmStreamingBackend;
 
 impl LlmStreamingBackend for OpenAIBackend {
     #[allow(private_interfaces)]

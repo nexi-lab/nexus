@@ -82,6 +82,11 @@ class Metastore(Protocol):
 
 
 @runtime_checkable
+class LlmStreamingBackend(Protocol):
+    def run_streaming(self, request_bytes: bytes, stream_path: str, stream_manager: Any) -> Any: ...
+
+
+@runtime_checkable
 class ExternalTransport(Protocol):
     def generate_download_url(self, object_key: str, expires_seconds: int) -> Any: ...
 

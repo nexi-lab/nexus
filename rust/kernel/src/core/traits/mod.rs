@@ -11,6 +11,7 @@
 //! live together in a per-pillar file so dependent crates can pull a
 //! single `use` line.
 
+pub mod llm_streaming;
 pub mod object_store;
 pub mod pipe_backend;
 pub mod stream_backend;

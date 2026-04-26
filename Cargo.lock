@@ -219,6 +219,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "backends"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "base64",
+ "blake3",
+ "chrono",
+ "contracts",
+ "crc32fast",
+ "dashmap",
+ "encoding_rs",
+ "fastcdc",
+ "futures",
+ "futures-util",
+ "globset",
+ "hmac",
+ "k256",
+ "kernel",
+ "lib",
+ "libc",
+ "lru",
+ "memchr",
+ "memmap2",
+ "parking_lot",
+ "prost",
+ "pyo3",
+ "rayon",
+ "rcgen",
+ "redb",
+ "regex",
+ "reqwest",
+ "roaring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "simdutf8",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "tonic",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

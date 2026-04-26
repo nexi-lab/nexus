@@ -561,21 +561,7 @@ class ContentMixin:
                 base.update(_result)
             return base
 
-        # IPC write: Rust kernel handles DT_PIPE/DT_STREAM inline.
-        # Rust condvar wakes blocked readers automatically after write.
-        _meta = self.metadata.get(path)
-        if _meta is not None and _meta.is_pipe:
-            n = self._kernel.pipe_write_nowait(path, buf)
-            return {"path": path, "bytes_written": n}
-        if _meta is not None and _meta.is_stream:
-            _off = self._kernel.stream_write_nowait(path, buf)
-            return {"path": path, "bytes_written": len(buf), "offset": _off}
-        if _meta is None:
-            raise NexusFileNotFoundError(
-                path, "sys_write requires existing file — use write() for create-on-write"
-            )
-
-        # ── KERNEL (pure Rust — DT_REG via CAS, zero GIL) ──
+        # ── KERNEL (pure Rust — DT_REG via CAS, DT_PIPE/DT_STREAM via IPC, zero GIL) ──
         _is_admin = (
             getattr(context, "is_admin", False)
             if context is not None and not isinstance(context, dict)
@@ -585,7 +571,7 @@ class ContentMixin:
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
-        if result.hit:
+        if result.hit and result.post_hook_needed:
             # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache.
             # old_metadata fields come from Rust (dcache/metastore snapshot taken
             # before the write) — no Python metadata.get() round-trip needed.

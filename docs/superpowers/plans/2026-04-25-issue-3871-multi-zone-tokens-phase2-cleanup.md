@@ -550,7 +550,9 @@ git commit -m "feat(#3871): REST revoke_key pre-fetch zone filter via junction"
 
 ## Task 4: Migrate admin RPC filters (3 + 1 sites)
 
-**Purpose:** Third filter migration. `server/rpc/handlers/admin.py` has three `WHERE APIKeyModel.zone_id == params.zone_id` statements (list, list_by_zone, revoke) plus one self-zone count query at line ~404 that reads `api_key.zone_id` for the caller's primary zone. All four need the same junction-based fix.
+**Purpose:** Third filter migration. `server/rpc/handlers/admin.py` has three `WHERE APIKeyModel.zone_id == params.zone_id` statements at lines 309 / 348 / 389, inside `handle_admin_list_keys` / `handle_admin_get_key` / `handle_admin_update_key` respectively, plus one self-zone count query at line 404 (also inside `handle_admin_update_key`'s self-demotion guard) that reads `api_key.zone_id` for the caller's primary zone. All four need the same junction-based fix.
+
+(`handle_admin_revoke_key` at line 357 has no direct zone_id filter — it delegates to `DatabaseAPIKeyAuth.revoke_key` which Task 2 already migrated.)
 
 **Plan correction (2026-04-25):** the F4a audit categorized the count site at line 404 as "kept-as-fallback", but after Task 6 stops writing `APIKeyModel.zone_id` the read returns `NULL` for new keys, silently widening the self-demotion guard from per-zone to global. Folding it into Phase 2 prevents the regression. Replacement: read the caller's zone set from the junction via `get_zones_for_key(session, api_key.key_id)`.
 
@@ -564,21 +566,24 @@ Run:
 ```bash
 rg -n "APIKeyModel\.zone_id" src/nexus/server/rpc/handlers/admin.py
 ```
-Expected: 4 hits. Three are `== params.zone_id` (list/list_by_zone/revoke). One is `== api_key.zone_id` (the self-demotion guard count). Note the function each one belongs to.
+Expected: 4 hits. Three are `== params.zone_id` (lines 309 / 348 / 389 — `handle_admin_list_keys`, `handle_admin_get_key`, `handle_admin_update_key`). One is `== api_key.zone_id` (line 404 — `handle_admin_update_key` self-demotion guard).
 
 - [ ] **Step 2: Write the failing test**
+
+The handlers take `(auth_provider, params, context)` where `auth_provider` exposes `.session_factory()`. They call `require_admin(context)` and `require_database_auth(auth_provider)` early. Build a fake `auth_provider` with a `session_factory` that yields the in-memory session.
 
 Create `tests/unit/server/rpc/handlers/test_admin_junction_filter.py`:
 
 ```python
-"""Admin RPC list/list_by_zone/revoke filters route through junction (#3871)."""
+"""Admin RPC handler zone filters route through junction (#3871)."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import sessionmaker
 
 from nexus.server.rpc.handlers import admin
 from nexus.storage.api_key_ops import create_api_key
@@ -587,34 +592,89 @@ from nexus.storage.models.auth import ZoneModel
 
 
 @pytest.fixture
-def session_with_keys():
-    engine = create_engine("sqlite:///:memory:")
+def auth_provider_and_keys(tmp_path):
+    db_path = tmp_path / "test.db"
+    engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
-    with Session(engine) as s:
+    SessionLocal = sessionmaker(bind=engine)
+
+    with SessionLocal() as s:
         for zid in ("eng", "ops"):
             s.add(ZoneModel(zone_id=zid, name=zid, phase="Active"))
         s.commit()
         multi_id, _ = create_api_key(s, user_id="u1", name="multi", zones=["eng", "ops"])
         eng_id, _ = create_api_key(s, user_id="u1", name="eng_only", zones=["eng"])
         s.commit()
-        yield s, multi_id, eng_id
+
+    @contextmanager
+    def _factory():
+        s = SessionLocal()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    # require_database_auth checks for SOMETHING — inspect the function signature
+    # if your fake provider needs additional attrs. Most checks just look for
+    # `session_factory`.
+    auth_provider = SimpleNamespace(session_factory=_factory)
+    context = SimpleNamespace(is_admin=True, user_id="admin")
+    return auth_provider, context, SessionLocal, multi_id, eng_id
 
 
-def test_admin_list_keys_filter_via_junction(session_with_keys):
-    session, multi_id, eng_id = session_with_keys
-    params = SimpleNamespace(zone_id="ops", user_id=None, key_id=None)
-    rows = admin.list_keys(session, params)  # adjust signature to match actual
-    assert {r["key_id"] for r in rows} == {multi_id}
+def test_handle_admin_list_keys_zone_filter_uses_junction(auth_provider_and_keys):
+    """Filter by zone='ops' must return the multi-zone key (its primary is 'eng')."""
+    auth_provider, context, _SessionLocal, multi_id, _eng_id = auth_provider_and_keys
+    params = SimpleNamespace(
+        zone_id="ops", user_id=None, is_admin=None,
+        include_revoked=False, include_expired=False, limit=100, offset=0,
+    )
+    result = admin.handle_admin_list_keys(auth_provider, params, context)
+    keys = result.get("keys", result) if isinstance(result, dict) else result
+    assert {k["key_id"] for k in keys} == {multi_id}
 
 
-def test_admin_list_by_zone_returns_every_member(session_with_keys):
-    session, multi_id, eng_id = session_with_keys
-    params = SimpleNamespace(zone_id="eng")
-    rows = admin.list_keys_by_zone(session, params)  # adjust to actual name
-    assert {r["key_id"] for r in rows} == {multi_id, eng_id}
+def test_handle_admin_get_key_zone_filter_uses_junction(auth_provider_and_keys):
+    """Multi-zone key fetched with zone='ops' must succeed (primary is 'eng')."""
+    auth_provider, context, _SessionLocal, multi_id, _eng_id = auth_provider_and_keys
+    params = SimpleNamespace(key_id=multi_id, zone_id="ops")
+    result = admin.handle_admin_get_key(auth_provider, params, context)
+    assert result["key_id"] == multi_id
+
+
+def test_handle_admin_update_key_zone_filter_uses_junction(auth_provider_and_keys):
+    """Multi-zone key updated with zone='ops' (no field changes) must succeed."""
+    auth_provider, context, _SessionLocal, multi_id, _eng_id = auth_provider_and_keys
+    params = SimpleNamespace(
+        key_id=multi_id, zone_id="ops", name=None, is_admin=None, expires_days=None,
+    )
+    result = admin.handle_admin_update_key(auth_provider, params, context)
+    assert result["key_id"] == multi_id
+
+
+def test_handle_admin_update_key_self_demotion_guard_uses_junction(auth_provider_and_keys):
+    """Self-demotion guard counts admins in the caller's zone-set, not via api_key.zone_id.
+
+    Set up: two admin keys, both in `eng`. Demoting one should be allowed
+    (the other still admins `eng`). Before the migration, the guard reads
+    api_key.zone_id which is the primary; after, it reads the junction
+    via get_zones_for_key.
+    """
+    auth_provider, context, SessionLocal, _multi_id, _eng_id = auth_provider_and_keys
+    with SessionLocal() as s:
+        admin_a, _ = create_api_key(s, user_id="u1", name="admin_a", zones=["eng"], is_admin=True)
+        admin_b, _ = create_api_key(s, user_id="u1", name="admin_b", zones=["eng"], is_admin=True)
+        s.commit()
+
+    params = SimpleNamespace(
+        key_id=admin_a, zone_id=None, name=None, is_admin=False, expires_days=None,
+    )
+    # Should succeed — admin_b is still admin in `eng`.
+    result = admin.handle_admin_update_key(auth_provider, params, context)
+    assert result["key_id"] == admin_a
 ```
 
-(Adjust handler-function names to match the actual exports — the rg above tells you which functions own each filter.)
+(If `require_database_auth` rejects the fake provider, inspect what attrs it expects and add them to the `SimpleNamespace`.)
 
 - [ ] **Step 3: Run test to verify it fails**
 

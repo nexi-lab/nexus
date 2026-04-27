@@ -3987,6 +3987,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '                dict.set_item("mode", s.mode)?;',
             '                dict.set_item("version", s.version)?;',
             '                dict.set_item("zone_id", s.zone_id.as_deref())?;',
+            '                dict.set_item("link_target", s.link_target.as_deref())?;',
             "                match &s.lock {",
             "                    Some(lock) => {",
             "                        let lock_dict = PyDict::new(py);",

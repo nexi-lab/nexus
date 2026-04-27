@@ -655,6 +655,7 @@ impl Kernel {
                                 modified_at_ms: None,
                                 last_writer_address: None,
                                 lock: None,
+                                link_target: None,
                             });
                         }
                         return None;
@@ -696,6 +697,7 @@ impl Kernel {
             modified_at_ms: entry.modified_at_ms,
             last_writer_address: entry.last_writer_address,
             lock,
+            link_target: entry.link_target,
         })
     }
 

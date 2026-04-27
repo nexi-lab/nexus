@@ -363,6 +363,12 @@ pub struct StatResult {
     pub modified_at_ms: Option<i64>,
     pub last_writer_address: Option<String>,
     pub lock: Option<crate::lock_manager::KernelLockInfo>,
+    /// DT_LINK target — `Some` only when `entry_type == DT_LINK`.
+    /// `sys_stat` uses lstat semantics (returns the link's own
+    /// metadata, not the target's), so callers that want to follow
+    /// the link compose with the kernel's transparent-follow paths
+    /// or call sys_stat on `link_target` directly.
+    pub link_target: Option<String>,
 }
 
 // ── ZonesProcfsEntry — R20.18.4 procfs virtual namespace ──────────────
@@ -2225,6 +2231,7 @@ impl Kernel {
                 modified_at_ms: None,
                 last_writer_address: None,
                 lock: None,
+                link_target: None,
             });
         }
         // /__sys__/zones/<id>: synthesise from federation list.
@@ -2249,6 +2256,7 @@ impl Kernel {
             modified_at_ms: None,
             last_writer_address: provider.bind_address(self),
             lock: None,
+            link_target: None,
         })
     }
 

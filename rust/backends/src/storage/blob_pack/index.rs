@@ -84,6 +84,12 @@ pub struct BlobPackIndex {
     volumes: HashMap<u32, std::fs::File>,
 }
 
+impl Default for BlobPackIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BlobPackIndex {
     pub fn new() -> Self {
         Self {
@@ -225,6 +231,12 @@ impl BlobPackIndex {
     #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+
+    /// True when the index has no entries.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 
     /// Estimated memory usage in bytes.

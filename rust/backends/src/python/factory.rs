@@ -45,7 +45,7 @@ impl BackendFactory for DefaultBackendFactory {
                         .join("nexus_llm_spool")
                         .join(backend_name),
                 };
-                let rt = Arc::clone(args.peer_client.runtime());
+                let rt = Arc::clone(args.runtime);
                 let b = crate::transports::api::ai::openai::OpenAIBackend::new(
                     backend_name,
                     base,
@@ -75,7 +75,7 @@ impl BackendFactory for DefaultBackendFactory {
                         .join("nexus_llm_spool")
                         .join(backend_name),
                 };
-                let rt = Arc::clone(args.peer_client.runtime());
+                let rt = Arc::clone(args.runtime);
                 let b = crate::transports::api::ai::anthropic::AnthropicBackend::new(
                     backend_name,
                     base,
@@ -203,7 +203,7 @@ impl BackendFactory for DefaultBackendFactory {
             } else {
                 30.0
             });
-            let rt = Arc::clone(args.peer_client.runtime());
+            let rt = Arc::clone(args.runtime);
             let transport = Arc::new(
                 kernel::rpc_transport::RpcTransport::new(rt, addr, token, tls.as_ref(), timeout)
                     .map_err(|e| e.to_string())?,

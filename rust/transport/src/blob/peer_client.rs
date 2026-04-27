@@ -52,13 +52,13 @@ pub struct PeerBlobClient {
     /// (same cert material that `ZoneManager` uses for raft RPCs — one
     /// trust anchor per cluster). When absent, plaintext HTTP/2 — the
     /// docker federation test intentionally sets `NEXUS_RAFT_TLS=false`.
-    tls: parking_lot::RwLock<Option<transport::TlsConfig>>,
+    tls: parking_lot::RwLock<Option<crate::TlsConfig>>,
 }
 
 #[allow(dead_code)]
 impl PeerBlobClient {
     /// Build a peer-blob client backed by a shared runtime.
-    pub(crate) fn new(runtime: Arc<tokio::runtime::Runtime>) -> Self {
+    pub fn new(runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self {
             runtime,
             channels: DashMap::new(),
@@ -76,7 +76,7 @@ impl PeerBlobClient {
     /// reconnects over TLS. Called from `Kernel::init_federation_from_env`
     /// once the leader / joiner has resolved the cluster CA + node
     /// cert.
-    pub(crate) fn install_tls_config(&self, tls: transport::TlsConfig) {
+    pub fn install_tls_config(&self, tls: crate::TlsConfig) {
         *self.tls.write() = Some(tls);
         self.channels.clear();
     }
@@ -104,11 +104,11 @@ impl PeerBlobClient {
         } else {
             format!("{}://{}", scheme, address)
         };
-        let client_cfg = transport::ClientConfig {
+        let client_cfg = crate::ClientConfig {
             tls,
             ..Default::default()
         };
-        let channel = transport::create_channel(&endpoint, &client_cfg)
+        let channel = crate::create_channel(&endpoint, &client_cfg)
             .await
             .map_err(|e| format!("peer channel {}: {}", address, e))?;
         self.channels
@@ -181,7 +181,7 @@ impl PeerBlobClient {
 
     /// Blocking sync wrapper — drives `fetch_blob_async` via the shared
     /// runtime. Safe to call from any thread.
-    pub(crate) fn fetch_blob(&self, address: &str, content_hash: &str) -> Result<Vec<u8>, String> {
+    pub fn fetch_blob(&self, address: &str, content_hash: &str) -> Result<Vec<u8>, String> {
         let fut = self.fetch_blob_async(address, content_hash);
         self.runtime.block_on(fut)
     }
@@ -212,10 +212,12 @@ impl PeerBlobClient {
 
         let channel = self.channel_for(peer_vfs_addr).await?;
         let mut client =
-            crate::kernel::vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(channel)
-                .max_decoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES)
-                .max_encoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES);
-        let mut request = tonic::Request::new(crate::kernel::vfs_proto::ReadRequest {
+            kernel::kernel::vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(
+                channel,
+            )
+            .max_decoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES)
+            .max_encoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES);
+        let mut request = tonic::Request::new(kernel::kernel::vfs_proto::ReadRequest {
             path: path.to_string(),
             auth_token: String::new(),
             content_id: String::new(),
@@ -238,7 +240,7 @@ impl PeerBlobClient {
     }
 
     /// Blocking sync wrapper for `fetch_path_async`. Safe to call from any thread.
-    pub(crate) fn fetch_path(&self, peer_vfs_addr: &str, path: &str) -> Result<Vec<u8>, String> {
+    pub fn fetch_path(&self, peer_vfs_addr: &str, path: &str) -> Result<Vec<u8>, String> {
         let fut = self.fetch_path_async(peer_vfs_addr, path);
         self.runtime.block_on(fut)
     }
@@ -255,6 +257,59 @@ pub fn build_kernel_runtime() -> Arc<tokio::runtime::Runtime> {
         .build()
         .expect("failed to build kernel tokio runtime");
     Arc::new(rt)
+}
+
+// ── Phase 4 (full) HAL trait wiring ──────────────────────────────────
+//
+// Kernel holds an `Arc<dyn kernel::hal::peer::PeerBlobClient>` (HAL
+// trait declared in kernel since Phase 1).  The concrete impl moved
+// here in Phase 4 (full); the impl block below adapts the inherent
+// `fetch_blob` / `fetch_path` / `install_tls_config` methods to the
+// trait's `fetch_etag` / `fetch_path` / `install_tls` shape.
+
+impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
+    fn fetch_path(&self, addr: &str, path: &str) -> kernel::hal::peer::PeerBlobResult<Vec<u8>> {
+        // Inherent method shadows the trait method — fully-qualify.
+        PeerBlobClient::fetch_path(self, addr, path)
+    }
+
+    fn fetch_etag(&self, addr: &str, etag: &str) -> kernel::hal::peer::PeerBlobResult<Vec<u8>> {
+        PeerBlobClient::fetch_blob(self, addr, etag)
+    }
+
+    fn install_tls(&self, ca_pem: &[u8], cert_pem: Option<&[u8]>, key_pem: Option<&[u8]>) {
+        // Phase 4 (full): mTLS requires *both* a client cert and key — if
+        // either is missing the trait caller is in CA-only / server-auth
+        // mode, which the underlying `transport_primitives::TlsConfig`
+        // does not yet model (its `cert_pem`/`key_pem` are `Vec<u8>`,
+        // not `Option<Vec<u8>>`).  Drop the install in that case so the
+        // peer client stays plaintext rather than constructing an
+        // invalid mTLS bundle with empty client cert/key.
+        let (Some(cert), Some(key)) = (cert_pem, key_pem) else {
+            tracing::warn!(
+                target = "peer_blob_client",
+                "install_tls called without cert_pem+key_pem; staying plaintext (CA-only mTLS not yet supported)",
+            );
+            return;
+        };
+        PeerBlobClient::install_tls_config(
+            self,
+            crate::TlsConfig {
+                ca_pem: ca_pem.to_vec(),
+                cert_pem: cert.to_vec(),
+                key_pem: key.to_vec(),
+            },
+        );
+    }
+}
+
+/// Phase 4 (full) install hook.  Built by `nexus-cdylib`'s `#[pymodule]`
+/// boot — constructs a `PeerBlobClient` on the kernel-owned tokio
+/// runtime and installs it via `Kernel::set_peer_client`, replacing
+/// the `NoopPeerBlobClient` default.
+pub fn install(kernel: &kernel::kernel::Kernel) {
+    let client = Arc::new(PeerBlobClient::new(Arc::clone(kernel.runtime())));
+    kernel.set_peer_client(client as Arc<dyn kernel::hal::peer::PeerBlobClient>);
 }
 
 #[cfg(test)]

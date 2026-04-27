@@ -35,12 +35,6 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // registry by the time `install_audit_hook` accepts a
     // `PyRef<PyKernel>` parameter.
     services::python::register(m)?;
-    // Phase 4 transport-tier PyO3 entry points (PyVfsGrpcServerHandle +
-    // start_vfs_grpc_server + PyFederationClient) registered through
-    // `kernel::python::register` for now — see `kernel/src/transport/`
-    // module's docstring for why those files live in kernel rather
-    // than the transport crate.
-    //
     // Phase 2: backends-tier PyO3 entry points (BlobPackEngine pyclass)
     // **and** the `BackendFactory` registration — `backends::python::
     // register` calls `kernel::hal::backend_factory::set_factory(
@@ -48,5 +42,12 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // construct concrete backends without the kernel ever knowing the
     // concrete types live in the backends crate.
     backends::python::register(m)?;
+    // Phase 4 (full): transport-tier PyO3 surface (gRPC server +
+    // federation client) AND the install function that wires the
+    // kernel-side `peer_client` slot + `pending_blob_fetcher_slot`
+    // to the real concrete impls in transport.  Python's NexusFS
+    // boot calls `nexus_kernel.install_transport_wiring(kernel)`
+    // exactly once after federation env vars are read.
+    transport::python::register(m)?;
     Ok(())
 }

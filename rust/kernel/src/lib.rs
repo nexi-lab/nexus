@@ -108,7 +108,8 @@ pub(crate) use core::stream::wal as wal_stream;
 // Their construction is now invoked through the
 // `kernel::hal::backend_factory::BackendFactory` trait that backends
 // registers at cdylib boot.
-pub mod blob_fetcher;
+// Phase 4 (full): `blob_fetcher` moved to `transport::blob::fetcher`
+// (the new high-level transport peer crate).
 // Phase 2: CAS pillar primitives stay in kernel (`cas_engine`,
 // `cas_chunking`, `cas_remote`, `cas_transport`) — they're the
 // kernel's content-addressed storage primitive (Linux-VFS analogue).
@@ -119,12 +120,10 @@ pub mod cas_chunking;
 pub mod cas_engine;
 pub mod cas_remote;
 pub mod cas_transport;
-// Phase 4: `federation_client` moved to `kernel::transport::federation`
-// (was intended to move to `rust/transport/` crate but parked here
-// pending the transport-primitives crate split — see
-// `kernel::transport::mod` doc).
-// Phase 4: `ipc` moved to `kernel::transport::ipc` (parked in kernel
-// pending the transport-primitives crate split).
+// Phase 4 (full): `federation_client`, `ipc`, `grpc_server` moved out
+// of kernel/src/transport/ entirely into the high-level `transport`
+// crate (`transport::federation`, `transport::ipc`, `transport::grpc`)
+// after the transport-primitives crate split cleared the cycle.
 // `kernel` itself is `pub` (Phase 3 onward) so peer crates
 // (`services::audit`, etc.) can hold `&kernel::Kernel` references and
 // call the kernel's in-tree Rust API (`register_native_hook`,
@@ -147,19 +146,28 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 // `grpc.aio.server` so :2028 is owned by tonic. Read/Write/Delete/Ping
 // are zero-PyO3 fast-paths; Call still uses a PyO3 callback into the
 // Python `dispatch_method` pending the broader 195-service migration.
-// Phase 4: `grpc_server` moved to `kernel::transport::grpc` (parked
-// in kernel pending the transport-primitives crate split).
 // Phase 2: `nostr_relay`, `openai_*`, `s3_backend`, `slack_backend`,
 // `x_backend`, `gdrive_backend`, `gmail_backend`, `hn_backend`,
 // `cli_backend`, `gcs_backend`, `anthropic_*`, `remote_backend`,
 // `volume_engine`, `volume_index` all moved to `rust/backends/`.
 // Their construction goes through
 // `kernel::hal::backend_factory::BackendFactory`.
-pub mod peer_blob_client;
-pub mod transport;
+//
+// Phase 4 (full): `peer_blob_client` moved to
+// `transport::blob::peer_client`; the kernel-side concrete is
+// installed at cdylib boot via `Kernel::set_peer_client`.
+//
+// Phase 5 (partial): `raft_meta_store` and `replication` STAY in kernel.
+// Moving them to `rust/raft/` was attempted but reverted because the
+// kernel ↔ raft cycle is irreducible: kernel already depends on raft
+// (`Kernel` holds a `ZoneManager`), and pushing replication / raft_meta_store
+// into raft would close `kernel → raft → kernel`.  Breaking the cycle would
+// require moving federation wiring out of kernel, which is out of scope
+// for this PR.
+//
 // `permission_hook` moved to `services::permission::hook` (Phase 3).
-mod raft_meta_store;
-mod replication;
+pub mod raft_meta_store;
+pub mod replication;
 pub mod rpc_transport;
 
 // Phase 0 — `#[pymodule] fn nexus_kernel` lives in `rust/nexus-cdylib/`

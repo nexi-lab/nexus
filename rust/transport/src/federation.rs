@@ -28,7 +28,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
-use crate::kernel::vfs_proto;
+use kernel::kernel::vfs_proto;
 use nexus_raft::federation::TofuTrustStore;
 use nexus_raft::transport::proto::nexus::raft::{
     zone_api_service_client::ZoneApiServiceClient, JoinZoneRequest,

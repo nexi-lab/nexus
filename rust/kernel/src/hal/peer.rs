@@ -61,4 +61,31 @@ pub trait PeerBlobClient: Send + Sync {
         let _ = (addr, etag);
         Err("fetch_etag not implemented for this PeerBlobClient".into())
     }
+
+    /// Install TLS config (PEM bundle).  Default impl no-ops so
+    /// non-TLS callers (tests, Noop fallback) don't carry the
+    /// burden.  Production `transport::blob::peer_client::PeerBlobClient`
+    /// overrides.
+    fn install_tls(&self, _ca_pem: &[u8], _cert_pem: Option<&[u8]>, _key_pem: Option<&[u8]>) {}
 }
+
+/// No-op fallback used at `Kernel::new` so the `peer_client` field is
+/// never `None` — non-cdylib Rust tests / WASM builds keep the same
+/// call shape.  Always errors out (no peer available); the cdylib's
+/// `nexus_cdylib::install_transport(&kernel)` boot path replaces this
+/// with the real `transport::blob::peer_client::PeerBlobClient`.
+pub struct NoopPeerBlobClient;
+
+impl PeerBlobClient for NoopPeerBlobClient {
+    fn fetch_path(&self, _addr: &str, _path: &str) -> PeerBlobResult<Vec<u8>> {
+        Err("PeerBlobClient not installed (non-cdylib build)".into())
+    }
+}
+
+impl NoopPeerBlobClient {
+    pub fn arc() -> Arc<dyn PeerBlobClient> {
+        Arc::new(NoopPeerBlobClient)
+    }
+}
+
+use std::sync::Arc;

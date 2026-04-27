@@ -1,38 +1,58 @@
-//! Shared gRPC transport primitives for the Nexus workspace.
+//! `transport` — Phase 4 parallel-layers crate.
 //!
-//! Provides TLS configuration, peer addressing, connection pooling, and
-//! channel creation utilities. Consumed by `nexus_kernel` (ObjectStore gRPC
-//! adapter) and `nexus_raft` (Raft transport).
+//! High-level transport tier — gRPC server, IPC envelope helpers,
+//! federation peer client, peer blob fetcher.  Depends on
+//! `transport-primitives` (low-level TLS / connection-pool primitives;
+//! also consumed by raft) plus the kernel rlib.
 //!
-//! This crate unifies tonic across the workspace (0.13) and eliminates
-//! duplicated transport boilerplate.
+//! Module layout:
 //!
-//! ## Phase 4 note
+//! ```text
+//! transport/
+//!   grpc.rs         — Rust-native VFS gRPC server (was kernel::grpc_server)
+//!   ipc.rs          — IPC message envelope helpers (was kernel::ipc)
+//!   federation.rs   — PyFederationClient + peer JoinZone client
+//!                     (was kernel::federation_client)
+//!   blob/
+//!     peer_client.rs — `PeerBlobClient` (was kernel::peer_blob_client),
+//!                      impls `kernel::hal::peer::PeerBlobClient` trait
+//!     fetcher.rs     — `KernelBlobFetcher` (was kernel::blob_fetcher)
+//!   python/
+//!     mod.rs         — register() — installs PyVfsGrpcServerHandle +
+//!                      start_vfs_grpc_server + PyFederationClient on
+//!                      the cdylib's nexus_kernel module.
+//! ```
 //!
-//! Per `KERNEL-ARCHITECTURE.md`, the kernel-bound high-level transport
-//! modules (gRPC server, IPC envelope, federation client) **were
-//! intended to live here** as `transport::{grpc, ipc, federation}`.
-//! They didn't move out of kernel in this Phase 4 pass because the
-//! pre-existing `raft -> transport` edge plus the planned
-//! `transport -> kernel` edge plus the existing `kernel -> raft` edge
-//! would close a Cargo dependency cycle.  Resolving that cleanly
-//! requires splitting this crate into `transport-primitives` (raft
-//! consumes) + `transport` (kernel-bound) — a follow-up surgery
-//! whose churn would dwarf the rest of Phase 4.
+//! Direction: `transport -> {kernel, transport-primitives, raft}`.
+//! Kernel never depends on transport — peer blob fetch goes through
+//! `kernel::hal::peer::PeerBlobClient` (trait); the concrete impl
+//! lives here in `blob::peer_client`.
 //!
-//! Today the high-level modules live at `kernel::transport::*` (Linux
-//! precedent — networking lives in the kernel).  When the
-//! transport-primitives split lands, those files migrate here without
-//! source changes (only the crate name in their `use` paths).
+//! Cycle break (vs the original Phase 4 attempt that put these files
+//! in the same crate as `transport-primitives`):
+//!
+//!   - `raft → transport-primitives` (low-level only, no kernel dep)
+//!   - `transport → kernel`           (Phase 4 wants this for sys_*)
+//!   - `kernel → raft`                (existing, ZoneManager / federation)
+//!   - `transport → transport-primitives` (composition, no cycle)
+//!
+//! No cycle closes because raft doesn't reach the high-level
+//! `transport` crate at all.
 
-mod channel;
-mod config;
-mod error;
-mod peer;
-mod pool;
+pub mod blob;
+pub mod federation;
+pub mod grpc;
+pub mod ipc;
 
-pub use channel::create_channel;
-pub use config::{ClientConfig, ServerConfig, TlsConfig};
-pub use error::{Result, TransportError};
-pub use peer::{hostname_to_node_id, NodeAddress, PeerAddress};
-pub use pool::ConnectionPool;
+#[cfg(feature = "python")]
+pub mod python;
+
+// Re-export low-level primitive types under the high-level transport
+// crate's namespace.  Existing call sites that pre-Phase-4 used
+// `crate::TlsConfig` / `crate::create_channel` keep working
+// once they're inside this crate.
+pub use transport_primitives::{
+    create_channel, hostname_to_node_id, ClientConfig, ConnectionPool, NodeAddress, PeerAddress,
+    ServerConfig, TlsConfig, TransportError,
+};
+pub type Result<T> = transport_primitives::Result<T>;

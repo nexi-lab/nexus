@@ -55,7 +55,11 @@ lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
-transport = { workspace = true }
+# Phase 4 (full): kernel uses `transport-primitives` (the low-level
+# crate after the split) for TlsConfig / connection-pool / peer
+# addressing; the high-level `transport` crate depends on kernel,
+# so we can't depend on it back without closing the cycle.
+transport-primitives = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros"] }

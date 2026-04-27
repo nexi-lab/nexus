@@ -28,13 +28,13 @@ use pyo3::types::{PyBytes, PyDict, PyString};
 use tokio::sync::oneshot;
 use tonic::{transport::Server, Request, Response, Status};
 
-use crate::kernel::vfs_proto::{
+use crate::TlsConfig;
+use kernel::kernel::vfs_proto::{
     nexus_vfs_service_server::{NexusVfsService, NexusVfsServiceServer},
     CallRequest, CallResponse, DeleteRequest, DeleteResponse, PingRequest, PingResponse,
     ReadRequest, ReadResponse, WriteRequest, WriteResponse,
 };
-use crate::kernel::{Kernel, KernelError, OperationContext};
-use transport::TlsConfig;
+use kernel::kernel::{Kernel, KernelError, OperationContext};
 
 /// Configuration for the VFS gRPC server.
 #[derive(Clone)]
@@ -636,7 +636,7 @@ impl SerializedAuth {
 
 // ── PyO3 binding ─────────────────────────────────────────────────────
 
-use crate::generated_kernel_abi_pyo3::PyKernel;
+use kernel::generated_kernel_abi_pyo3::PyKernel;
 use pyo3::exceptions::PyRuntimeError;
 
 /// Python-facing handle for the running gRPC server. Drop or call

@@ -35,6 +35,11 @@ services = { workspace = true, features = ["python"] }
 # crate that owns the 17-way `BackendFactory::build` switch the
 # kernel calls through `kernel::hal::backend_factory::get_factory()`.
 backends = { workspace = true, features = ["python"] }
+# Phase 4 (full): transport with `python` feature enabled — registers
+# `PyVfsGrpcServerHandle`, `start_vfs_grpc_server`, `PyFederationClient`
+# into nexus_kernel module + installs the kernel-side
+# peer-blob-client + blob-fetcher wiring (DI for the moved files).
+transport = { workspace = true, features = ["python"] }
 # Sole crate that enables `extension-module`. Cargo unifies pyo3
 # features across the workspace, so every transitive pyo3 user
 # (kernel, lib, raft, backends, …) sees the cdylib-correct

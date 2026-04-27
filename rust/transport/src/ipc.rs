@@ -36,8 +36,8 @@ use chrono::SecondsFormat;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::kernel::Kernel;
-use crate::kernel::{KernelError, OperationContext};
+use kernel::kernel::Kernel;
+use kernel::kernel::{KernelError, OperationContext};
 
 // ── Path conventions (mirrors bricks/ipc/conventions.py) ────────────────────
 
@@ -222,7 +222,8 @@ pub fn wait_for_message(
         None => return Ok(None),
     };
 
-    let msg_path = &event.path;
+    let msg_path = event.path().to_string();
+    let msg_path = &msg_path;
 
     // Read the envelope.
     let read_result = kernel.sys_read(msg_path, ctx)?;

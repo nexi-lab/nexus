@@ -65,7 +65,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "
 
 # gRPC (general-purpose, reusable for Raft and webhooks)
 # tls feature enables rustls for mTLS (mutual TLS) transport encryption.
-transport = { workspace = true, optional = true }
+# Phase 4 (full): use the low-level `transport-primitives` split, not
+# the kernel-bound `transport` crate.  Keeps `raft -> transport-primitives`
+# cycle-free.
+transport-primitives = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 
@@ -123,7 +126,7 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
 # Requires `consensus` feature. Not used in production.
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
-grpc = ["tonic", "prost", "transport", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2", "rcgen", "pem", "base64", "gethostname", "rand"]
+grpc = ["tonic", "prost", "transport-primitives", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2", "rcgen", "pem", "base64", "gethostname", "rand"]
 
 # Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]

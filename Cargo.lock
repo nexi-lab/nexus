@@ -1607,7 +1607,7 @@ dependencies = [
  "tonic",
  "tonic-build",
  "tracing",
- "transport",
+ "transport-primitives",
  "uuid",
 ]
 
@@ -1834,6 +1834,7 @@ dependencies = [
  "pyo3",
  "raft 0.1.0",
  "services",
+ "transport",
 ]
 
 [[package]]
@@ -2467,7 +2468,7 @@ dependencies = [
  "tonic-build",
  "tracing",
  "tracing-subscriber",
- "transport",
+ "transport-primitives",
 ]
 
 [[package]]
@@ -3534,6 +3535,32 @@ dependencies = [
 
 [[package]]
 name = "transport"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contracts",
+ "dashmap",
+ "futures",
+ "kernel",
+ "parking_lot",
+ "prost",
+ "pyo3",
+ "raft 0.1.0",
+ "rcgen",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tracing",
+ "transport-primitives",
+ "uuid",
+]
+
+[[package]]
+name = "transport-primitives"
 version = "0.1.0"
 dependencies = [
  "dashmap",

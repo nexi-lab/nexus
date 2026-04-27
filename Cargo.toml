@@ -3,6 +3,12 @@ resolver = "2"
 members = [
     "rust/contracts",
     "rust/lib",
+    # Phase 4 (full): split into low-level (transport-primitives —
+    # no kernel dep, raft consumes) + high-level (transport — gRPC
+    # server, IPC, federation, peer blob; depends on kernel +
+    # transport-primitives).  This split is what breaks the
+    # `raft -> transport -> kernel -> raft` cycle.
+    "rust/transport-primitives",
     "rust/transport",
     "rust/kernel",
     "rust/backends",
@@ -11,8 +17,8 @@ members = [
     "rust/tasks",
     "rust/cluster",
     # Phase 0: thin cdylib that produces `nexus_kernel.so` by composing
-    # `kernel + lib + raft` (and later backends/services/transport)
-    # rlibs. Build artifact only — not an architectural tier; see
+    # `kernel + lib + raft + backends + services + transport` rlibs.
+    # Build artifact only — not an architectural tier; see
     # `docs/architecture/KERNEL-ARCHITECTURE.md` §6.1.
     "rust/nexus-cdylib",
 ]
@@ -22,6 +28,13 @@ exclude = ["nexus-fuse"]
 [workspace.dependencies]
 contracts = { path = "rust/contracts" }
 lib = { path = "rust/lib" }
+# Phase 4 (full): two-tier transport split.
+# `transport-primitives` is the low-level shared crate (TLS / pool /
+# peer addressing) — depended on by raft (for re-export) and kernel
+# (for `peer_blob_client::PeerBlobClient` to construct channels).
+# `transport` is the high-level Phase-4 peer crate — depends on
+# kernel + transport-primitives, never depended on by raft (cycle break).
+transport-primitives = { path = "rust/transport-primitives" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
 # Driver impls (Phase 2). The `python` feature is enabled by the

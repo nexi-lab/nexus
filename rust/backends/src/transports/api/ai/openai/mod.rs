@@ -157,7 +157,13 @@ mod tests {
     }
 
     fn build(tmp: &TempDir) -> OpenAIBackend {
-        let rt = kernel::peer_blob_client::build_kernel_runtime();
+        let rt = std::sync::Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("test tokio runtime"),
+        );
         OpenAIBackend::new(
             "openai_compatible",
             "https://api.openai.com/v1",

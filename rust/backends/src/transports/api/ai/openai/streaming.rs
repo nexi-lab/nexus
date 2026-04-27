@@ -346,7 +346,13 @@ mod tests {
     use tempfile::TempDir;
 
     fn build_backend(tmp: &TempDir, base_url: &str) -> OpenAIBackend {
-        let rt = kernel::peer_blob_client::build_kernel_runtime();
+        let rt = std::sync::Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("test tokio runtime"),
+        );
         OpenAIBackend::new(
             "openai_compatible",
             base_url,

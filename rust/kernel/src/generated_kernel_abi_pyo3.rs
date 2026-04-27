@@ -1555,6 +1555,13 @@ impl PyKernel {
             })?;
         let chunk_fetcher_dyn: Arc<dyn crate::cas_remote::RemoteChunkFetcher> =
             Arc::clone(&self.inner.chunk_fetcher);
+        // Phase 4 (full): peer_client is a `RwLock<Arc<dyn PeerBlobClient>>`
+        // so the cdylib's `install_transport_wiring` can swap the Noop
+        // default for the real concrete impl post-boot.  Lock and clone
+        // the inner `Arc` for the factory call so the read guard does not
+        // outlive this scope.
+        let peer_client_arc: Arc<dyn crate::hal::peer::PeerBlobClient> =
+            Arc::clone(&self.inner.peer_client.read());
         let factory_args = crate::hal::backend_factory::BackendArgs {
             backend_type,
             backend_name,
@@ -1593,8 +1600,9 @@ impl PyKernel {
             remote_cert_pem,
             remote_key_pem,
             remote_timeout,
-            peer_client: &self.inner.peer_client,
+            peer_client: &peer_client_arc,
             chunk_fetcher: chunk_fetcher_dyn,
+            runtime: self.inner.runtime(),
         };
         let backend_result = factory
             .build(&factory_args)

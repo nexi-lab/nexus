@@ -25,8 +25,8 @@ use std::sync::{Arc, OnceLock};
 
 use crate::abc::object_store::ObjectStore;
 use crate::cas_remote::RemoteChunkFetcher;
+use crate::hal::peer::PeerBlobClient;
 use crate::meta_store::MetaStore;
-use crate::peer_blob_client::PeerBlobClient;
 
 /// Bundle of every parameter a backend constructor might consume.
 ///
@@ -75,11 +75,18 @@ pub struct BackendArgs<'a> {
     /// Shared `peer_blob_client::PeerBlobClient` — needed by the LLM
     /// connector backends (anthropic / openai) so streaming SSE
     /// responses can land in the kernel CAS via shared transport.
-    pub peer_client: &'a Arc<PeerBlobClient>,
+    pub peer_client: &'a Arc<dyn PeerBlobClient>,
     /// Shared scatter-gather chunk fetcher.  Pre-wired into the
     /// `CasLocalBackend` constructor so chunk misses on this mount
     /// fall through to peer RPCs against `backend_name.origins`.
     pub chunk_fetcher: Arc<dyn RemoteChunkFetcher>,
+    /// Kernel's tokio runtime — backends that issue async network IO
+    /// (anthropic / openai SSE, RPC transport for remote backends)
+    /// share this runtime instead of building their own.  Phase 4
+    /// (full): the HAL `PeerBlobClient` trait is sync-only, so
+    /// runtime ownership stays with the kernel struct and gets
+    /// threaded through here for the rare async-needing backends.
+    pub runtime: &'a Arc<tokio::runtime::Runtime>,
 }
 
 /// Result of a backend construction.

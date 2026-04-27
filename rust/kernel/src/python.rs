@@ -21,7 +21,6 @@
 //! regex captures exactly two `::`-separated segments, so a 3-segment
 //! `crate::shm_pipe::Foo` would silently drop out of the generated stubs.
 
-use crate::transport::{federation as transport_federation, grpc as transport_grpc};
 use crate::{generated_kernel_abi_pyo3, semaphore};
 #[cfg(unix)]
 use crate::{shm_pipe, shm_stream, stdio_stream};
@@ -29,6 +28,12 @@ use pyo3::prelude::*;
 
 /// Register every kernel-owned PyO3 export into the parent module.
 /// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_kernel`.
+///
+/// Phase 4 (full): `PyVfsGrpcServerHandle` + `start_vfs_grpc_server` +
+/// `PyFederationClient` moved out of this register fn into
+/// `transport::python::register` because the kernel crate no longer
+/// depends on `transport` (the dependency edge inverted: transport →
+/// kernel only).  The cdylib calls both register fns in sequence.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // Phase 2: openai_inference moved to backends (registered through
     // backends::python::register).  CAS Volume Engine (now BlobPackEngine)
@@ -50,21 +55,10 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     #[cfg(unix)]
     m.add_class::<stdio_stream::StdioStreamBackend>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
-    // Phase 4: gRPC server pyclass + entry function moved from
-    // `kernel::grpc_server` to `kernel::transport::grpc`; same
-    // pyclass / pyfunction names, just different submodule path.
-    m.add_class::<transport_grpc::PyVfsGrpcServerHandle>()?;
-    m.add_function(pyo3::wrap_pyfunction!(
-        transport_grpc::start_vfs_grpc_server,
-        m
-    )?)?;
     // Kernel (Issue #1868 — PyKernel wraps pure Rust Kernel).
     m.add_class::<generated_kernel_abi_pyo3::PyOperationContext>()?;
     m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
-    // Phase 4: federation client pyclass moved from
-    // `kernel::federation_client` to `kernel::transport::federation`.
-    m.add_class::<transport_federation::PyFederationClient>()?;
     Ok(())
 }

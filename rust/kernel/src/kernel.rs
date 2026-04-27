@@ -640,13 +640,27 @@ pub struct Kernel {
     // origin in backend_name (e.g. "cas-local@nexus-1:2126"). Enables
     // on-demand remote content fetch on other nodes.
     self_address: parking_lot::RwLock<Option<String>>,
+    /// Kernel-owned tokio runtime — built once at `Kernel::new` and
+    /// shared across every async caller (peer RPC fan-out, federation
+    /// remote reads, LLM connector streaming).  Phase 4 (full) lifted
+    /// this off `peer_blob_client::PeerBlobClient` (which moved to
+    /// the transport crate) so kernel-internal callers keep the same
+    /// shared runtime regardless of whether the cdylib has installed
+    /// the real peer client yet.
+    pub(crate) runtime: Arc<tokio::runtime::Runtime>,
     // Shared tokio runtime — constructed once at Kernel::new and used by
     // every peer RPC (scatter-gather chunk fetch + federation remote
     // reads). Replaces the one-shot `Builder::new_current_thread()` inside
     // `try_remote_fetch` so tokio's workers shut down cleanly on
     // `release_metastores`/Drop (addresses R11 hypothesis #2 — stuck async
     // task blocking `docker stop`).
-    pub(crate) peer_client: Arc<crate::peer_blob_client::PeerBlobClient>,
+    // Phase 4 (full): widened from concrete `Arc<PeerBlobClient>`
+    // (kernel::peer_blob_client) to `Arc<dyn hal::peer::PeerBlobClient>`
+    // because the concrete impl moved to
+    // `transport::blob::peer_client::PeerBlobClient` (Phase 4 ship).
+    // Default at boot is `NoopPeerBlobClient`; nexus-cdylib boot
+    // installs the real transport impl via `Kernel::set_peer_client`.
+    pub(crate) peer_client: parking_lot::RwLock<Arc<dyn crate::hal::peer::PeerBlobClient>>,
     // Scatter-gather fetcher: drives bounded fan-out against
     // `backend_name.origins` whenever a local chunk miss occurs.
     // Installed on every `CASEngine` via `VFSRouter` on mount
@@ -665,6 +679,16 @@ pub struct Kernel {
     /// metastore through ``sys_setattr``'s return value.
     pub(crate) pending_remote_meta_store:
         parking_lot::Mutex<Option<Arc<dyn crate::meta_store::MetaStore>>>,
+
+    /// Phase 4 (full): `init_federation_from_env` used to call
+    /// `wire_blob_fetcher` directly, which constructed a
+    /// `transport::blob::fetcher::KernelBlobFetcher`.  Kernel can no
+    /// longer reference `transport::*` after the Phase-4 crate split,
+    /// so the slot is *stashed* here at federation bootstrap and
+    /// drained by `transport::blob::fetcher::install(&kernel)` —
+    /// invoked from the cdylib boot path once both crates are linked.
+    pub(crate) pending_blob_fetcher_slot:
+        parking_lot::Mutex<Option<nexus_raft::blob_fetcher::BlobFetcherSlot>>,
 
     // ── Federation mount wiring (R20.16.3) ─────────────────────────
     //
@@ -720,15 +744,26 @@ impl Kernel {
     /// than the implicit `Default::default()` shortcut.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let runtime = crate::peer_blob_client::build_kernel_runtime();
-        let peer_client = Arc::new(crate::peer_blob_client::PeerBlobClient::new(Arc::clone(
-            &runtime,
-        )));
-        // Concrete Arc<GrpcChunkFetcher> coerced to the trait object
-        // `Arc<dyn RemoteChunkFetcher>` so backends's `BackendFactory`
-        // can clone + pass it without a cast at every call site.
+        // Phase 4 (full): kernel owns its tokio runtime now (was on
+        // `PeerBlobClient` pre-Phase-4).  Multi-thread, two workers
+        // sized for IO-bound peer RPCs.
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_name("nexus-kernel-peer")
+                .enable_all()
+                .build()
+                .expect("failed to build kernel tokio runtime"),
+        );
+        // Phase 4 (full): peer_blob_client moved to `transport::blob::
+        // peer_client`.  Kernel boots with the no-op fallback; the
+        // cdylib wires the real impl via `Kernel::set_peer_client`
+        // before any federation read fires.
+        let peer_client_dyn: Arc<dyn crate::hal::peer::PeerBlobClient> =
+            crate::hal::peer::NoopPeerBlobClient::arc();
+        // GrpcChunkFetcher takes the trait object directly.
         let chunk_fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher> = Arc::new(
-            crate::cas_remote::GrpcChunkFetcher::new(Arc::clone(&peer_client), None),
+            crate::cas_remote::GrpcChunkFetcher::new(Arc::clone(&peer_client_dyn), None),
         );
         let k = Self {
             dlc: crate::dlc::DriverLifecycleCoordinator::new(),
@@ -764,9 +799,11 @@ impl Kernel {
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
             native_hooks: RwLock::new(NativeHookRegistry::new()),
             self_address: parking_lot::RwLock::new(None),
-            peer_client,
+            runtime,
+            peer_client: parking_lot::RwLock::new(peer_client_dyn),
             chunk_fetcher,
             pending_remote_meta_store: parking_lot::Mutex::new(None),
+            pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
             zone_registry: std::sync::OnceLock::new(),
             zone_runtime: std::sync::OnceLock::new(),
             zone_manager: std::sync::OnceLock::new(),
@@ -2325,6 +2362,30 @@ impl Kernel {
     /// their own hook impls — Phase 3 onwards services own their hook
     /// lifecycle (services::audit, etc.) and call this from their PyO3
     /// entry points.
+    /// Borrow the kernel's shared tokio runtime.  Phase 4 (full):
+    /// kernel owns this Arc directly; peer crates (backends LLM
+    /// connectors, transport gRPC server) clone it for their async
+    /// work.
+    pub fn runtime(&self) -> &Arc<tokio::runtime::Runtime> {
+        &self.runtime
+    }
+
+    /// Replace the kernel's `peer_client` slot with a concrete
+    /// implementation.  Phase 4 (full) DI: kernel boots with
+    /// `NoopPeerBlobClient`; the cdylib boot path calls this with
+    /// the real `transport::blob::peer_client::PeerBlobClient` once
+    /// per kernel.
+    pub fn set_peer_client(&self, client: Arc<dyn crate::hal::peer::PeerBlobClient>) {
+        *self.peer_client.write() = client;
+    }
+
+    /// Borrow the current peer-client trait object — read-locked
+    /// snapshot.  Internal callers use this to issue federation
+    /// reads without holding the lock across `.await`.
+    pub fn peer_client_arc(&self) -> Arc<dyn crate::hal::peer::PeerBlobClient> {
+        Arc::clone(&self.peer_client.read())
+    }
+
     pub fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
         self.native_hooks.write().register(hook);
     }
@@ -2903,9 +2964,13 @@ impl Kernel {
         // lingering if the future hadn't finished draining; see R11
         // hypothesis #2).
         let content_hash = entry.etag.as_deref().filter(|s| !s.is_empty());
+        // Phase 4 (full): peer_client is now `RwLock<Arc<dyn PeerBlobClient>>`.
+        // `peer_client_arc()` clones the Arc out from under the read lock
+        // so the actual fetch happens lock-free.
+        let client = self.peer_client_arc();
         let data = match content_hash {
-            Some(hash) => self.peer_client.fetch_blob(origin, hash),
-            None => self.peer_client.fetch_path(origin, path),
+            Some(hash) => client.fetch_etag(origin, hash),
+            None => client.fetch_path(origin, path),
         }
         .map_err(KernelError::IOError)?;
 
@@ -4978,16 +5043,36 @@ impl Kernel {
         let _ = self.zone_runtime.set(runtime);
     }
 
-    /// R20.18.7: install the kernel-side `BlobFetcher` into the raft
-    /// server's shared slot. Called from `init_federation_from_env`
-    /// once `VFSRouter` has any backends registered. Idempotent —
-    /// writing twice just replaces the previous fetcher Arc.
-    fn wire_blob_fetcher(&self, slot: nexus_raft::blob_fetcher::BlobFetcherSlot) {
-        let fetcher = Arc::new(crate::blob_fetcher::KernelBlobFetcher::new(
-            Arc::clone(&self.vfs_router),
-            Arc::clone(&self.dcache),
-        ));
-        *slot.write() = Some(fetcher as Arc<dyn nexus_raft::blob_fetcher::BlobFetcher>);
+    /// Phase 4 (full): stash the blob-fetcher slot for later install
+    /// by `transport::blob::fetcher::install`.  Pre-Phase-4 this
+    /// constructed `transport::blob::fetcher::KernelBlobFetcher`
+    /// directly, but kernel no longer depends on the high-level
+    /// transport crate (cycle break); the cdylib boot drains the
+    /// slot and installs the fetcher.
+    fn stash_blob_fetcher_slot(&self, slot: nexus_raft::blob_fetcher::BlobFetcherSlot) {
+        *self.pending_blob_fetcher_slot.lock() = Some(slot);
+    }
+
+    /// Drain the stashed blob-fetcher slot (called by
+    /// `transport::blob::fetcher::install`).  Returns `None` after
+    /// the first drain so the cdylib boot can be safely re-invoked.
+    pub fn take_pending_blob_fetcher_slot(
+        &self,
+    ) -> Option<nexus_raft::blob_fetcher::BlobFetcherSlot> {
+        self.pending_blob_fetcher_slot.lock().take()
+    }
+
+    /// Borrow the kernel's `Arc<VFSRouter>` — exposed so peer crates
+    /// (transport blob fetcher) can construct their own fetchers
+    /// pointed at the kernel's mount table.
+    pub fn vfs_router_arc(&self) -> Arc<VFSRouter> {
+        Arc::clone(&self.vfs_router)
+    }
+
+    /// Borrow the kernel's `Arc<DCache>` — exposed for the same
+    /// reason as `vfs_router_arc`.
+    pub fn dcache_arc(&self) -> Arc<DCache> {
+        Arc::clone(&self.dcache)
     }
 
     /// R20.18.2: driven by `Kernel::new()` at startup (post-R20.18.5)
@@ -5160,11 +5245,11 @@ impl Kernel {
                 .map_err(|e| KernelError::Federation(format!("read node.pem: {}", e)))?;
             let key_pem = std::fs::read(&node_key_path)
                 .map_err(|e| KernelError::Federation(format!("read node-key.pem: {}", e)))?;
-            self.peer_client.install_tls_config(transport::TlsConfig {
-                cert_pem,
-                key_pem,
-                ca_pem,
-            });
+            // Phase 4 (full): trait method takes raw PEM bytes — the
+            // concrete impl in transport reconstitutes the
+            // `transport_primitives::TlsConfig` itself.
+            self.peer_client_arc()
+                .install_tls(&ca_pem, Some(&cert_pem), Some(&key_pem));
         }
 
         // TLS config for ZoneManager: present if ca.pem + node.pem +
@@ -5203,7 +5288,7 @@ impl Kernel {
         // the ZoneManager handed back. The gRPC server is already
         // running — once this write lands, every peer `ReadBlob`
         // resolves against the local VFSRouter's backends.
-        self.wire_blob_fetcher(blob_slot);
+        self.stash_blob_fetcher_slot(blob_slot);
 
         // Joiner detection — etcd `--initial-cluster-state=existing` equivalent.
         // Either signal alone is sufficient:

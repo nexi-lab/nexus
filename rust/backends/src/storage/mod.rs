@@ -9,9 +9,9 @@
 //! * `local_connector`  — reference-mode local folder mount
 //! * `remote`           — RPC proxy ObjectStore (`RemoteBackend`)
 //! * `blob_pack/`       — `BlobPackEngine` (was `VolumeEngine`) +
-//!                        `BlobPackIndex` — append-only multi-blob
-//!                        format used by `cas_local` for higher
-//!                        write throughput.
+//!   `BlobPackIndex` — append-only multi-blob
+//!   format used by `cas_local` for higher
+//!   write throughput.
 
 pub mod blob_pack;
 pub mod cas_local;

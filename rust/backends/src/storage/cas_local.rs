@@ -7,9 +7,8 @@
 //! blob layout, exposing the result as an `ObjectStore` impl that
 //! mounts plug into via the `BackendFactory`.
 
-use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
 use kernel::cas_engine::CASEngine;

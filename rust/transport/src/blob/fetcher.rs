@@ -20,18 +20,18 @@ use std::sync::Arc;
 
 use nexus_raft::blob_fetcher::BlobFetcher;
 
-use crate::dcache::DCache;
-use crate::kernel::OperationContext;
-use crate::vfs_router::VFSRouter;
+use kernel::core::dcache::DCache;
+use kernel::kernel::OperationContext;
+use kernel::vfs_router::VFSRouter;
 
 /// Kernel-side `BlobFetcher` — backed by the kernel's `VFSRouter`.
-pub(crate) struct KernelBlobFetcher {
+pub struct KernelBlobFetcher {
     vfs_router: Arc<VFSRouter>,
     dcache: Arc<DCache>,
 }
 
 impl KernelBlobFetcher {
-    pub(crate) fn new(vfs_router: Arc<VFSRouter>, dcache: Arc<DCache>) -> Self {
+    pub fn new(vfs_router: Arc<VFSRouter>, dcache: Arc<DCache>) -> Self {
         Self { vfs_router, dcache }
     }
 }
@@ -82,5 +82,22 @@ impl BlobFetcher for KernelBlobFetcher {
         self.vfs_router
             .read_content(&route.mount_point, &content_id, &route.backend_path, &ctx)
             .ok_or_else(|| format!("read_content({path}): not found"))
+    }
+}
+
+/// Phase 4 (full) install hook.  Called from `nexus-cdylib`'s
+/// `#[pymodule]` boot after `kernel::python::register` so that, by
+/// the time Python starts firing federation reads, the raft server's
+/// `BlobFetcherSlot` already has a kernel-backed fetcher.
+///
+/// No-op if `Kernel::pending_blob_fetcher_slot` is empty (federation
+/// disabled — `NEXUS_HOSTNAME` was unset).
+pub fn install(kernel: &kernel::kernel::Kernel) {
+    if let Some(slot) = kernel.take_pending_blob_fetcher_slot() {
+        let fetcher = Arc::new(KernelBlobFetcher::new(
+            kernel.vfs_router_arc(),
+            kernel.dcache_arc(),
+        ));
+        *slot.write() = Some(fetcher as Arc<dyn BlobFetcher>);
     }
 }

@@ -141,6 +141,13 @@ pub struct FileEvent {
 
 #[allow(dead_code)]
 impl FileEvent {
+    /// Primary path of the event (rename: old path).  Public accessor
+    /// because peer crates (`transport::ipc`) consume `sys_watch`
+    /// results without `crate::` access to the raw field.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
     /// Serialize to compact JSON for DT_STREAM / audit trail.
     ///
     /// Uses `serde_json` so arbitrary control characters in path/new_path

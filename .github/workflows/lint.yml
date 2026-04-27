@@ -101,16 +101,17 @@ jobs:
             rust/lib
             rust/kernel
             rust/raft
-            rust/cluster
+            rust/profiles/cluster
             rust/nexus-cdylib
 
       - name: Check Rust formatting
         run: |
           # Phase 0: nexus-cdylib joins the fmt loop alongside the other
-          # workspace crates.
-          for crate in tasks lib kernel raft cluster nexus-cdylib; do
+          # workspace crates.  Phase 4 (full): cluster moved to
+          # `profiles/cluster` (deployment-profile binary folder).
+          for crate in tasks lib kernel raft profiles/cluster nexus-cdylib; do
             echo "::group::fmt $crate"
-            cd rust/$crate && cargo fmt --check && cd ../..
+            cd rust/$crate && cargo fmt --check && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
           done
 
@@ -118,20 +119,20 @@ jobs:
         run: |
           for crate in tasks lib kernel; do
             echo "::group::clippy $crate"
-            cd rust/$crate && cargo clippy -- -D warnings && cd ../..
+            cd rust/$crate && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
           done
           echo "::group::clippy raft (all-features)"
-          cd rust/raft && cargo clippy --all-features -- -D warnings && cd ../..
+          cd rust/raft && cargo clippy --all-features -- -D warnings && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
           echo "::group::clippy cluster"
-          cd rust/cluster && cargo clippy -- -D warnings && cd ../..
+          cd rust/profiles/cluster && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
           # Phase 0: nexus-cdylib pulls everything together — clippy
           # runs against the full transitive build to catch any
           # extension-module unification surprises.
           echo "::group::clippy nexus-cdylib"
-          cd rust/nexus-cdylib && cargo clippy -- -D warnings && cd ../..
+          cd rust/nexus-cdylib && cargo clippy -- -D warnings && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
 
       - name: Run Rust tests
@@ -140,14 +141,14 @@ jobs:
         run: |
           for crate in tasks lib kernel; do
             echo "::group::test $crate"
-            cd rust/$crate && cargo test && cd ../..
+            cd rust/$crate && cargo test && cd "$GITHUB_WORKSPACE"
             echo "::endgroup::"
           done
           echo "::group::test raft (all-features)"
-          cd rust/raft && cargo test --all-features && cd ../..
+          cd rust/raft && cargo test --all-features && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
           echo "::group::test cluster"
-          cd rust/cluster && cargo test && cd ../..
+          cd rust/profiles/cluster && cargo test && cd "$GITHUB_WORKSPACE"
           echo "::endgroup::"
 
       - name: Verify WASM compilation (lib)

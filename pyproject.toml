@@ -1019,7 +1019,7 @@ ignore_imports = [
 unmatched_ignore_imports_alerting = "warn"
 
 # Contract 3: dead Python federation modules — never reintroduce.
-# These were superseded by the Rust cluster binary (rust/cluster/) +
+# These were superseded by the Rust cluster binary (rust/profiles/cluster/) +
 # the federation_* RPCs in nexus.server.rpc.services.federation_rpc,
 # which delegate to the kernel's PyO3 ZoneManager. Re-importing the
 # old modules would silently revert the federation rewrite.

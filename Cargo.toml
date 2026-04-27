@@ -15,7 +15,14 @@ members = [
     "rust/services",
     "rust/raft",
     "rust/tasks",
-    "rust/cluster",
+    # Phase 4 (full) — deployment profile binaries get their own folder.
+    # Today only `cluster` (Sudowork's `nexusd-cluster` ELF/EXE) lives
+    # under `rust/profiles/`; future profiles (slim / full / embedded /
+    # lite / cloud / remote) each get their own subdirectory there.
+    # See KERNEL-ARCHITECTURE.md §7 for profile semantics.  The cdylib
+    # below stays at workspace top-level because it's a Python-SDK
+    # *artifact*, not a deployment profile.
+    "rust/profiles/cluster",
     # Phase 0: thin cdylib that produces `nexus_kernel.so` by composing
     # `kernel + lib + raft + backends + services + transport` rlibs.
     # Build artifact only — not an architectural tier; see

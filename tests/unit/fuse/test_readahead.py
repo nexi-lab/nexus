@@ -7,6 +7,7 @@ profile-driven windowing variants were dropped with the knob.
 
 from unittest.mock import MagicMock
 
+from nexus.fuse.ops._shared import read_range_from_backend
 from nexus.fuse.readahead import ReadaheadConfig, ReadaheadManager, ReadSession
 
 
@@ -48,3 +49,23 @@ class TestReadaheadManagerOnOpen:
         assert session is not None
         # Uses manager's default config
         assert session.max_window == manager._config.max_window
+
+
+class TestReadRangeFromBackend:
+    """Regression coverage for FUSE readahead range fetches."""
+
+    def test_uses_nexus_read_range_without_full_file_read(self) -> None:
+        ctx = MagicMock()
+        ctx.context = object()
+        ctx.nexus_fs.read_range.return_value = b"chunk"
+
+        result = read_range_from_backend(ctx, "/large.bin", 8, 5)
+
+        assert result == b"chunk"
+        ctx.nexus_fs.read_range.assert_called_once_with(
+            "/large.bin",
+            8,
+            13,
+            context=ctx.context,
+        )
+        ctx.nexus_fs.sys_read.assert_not_called()

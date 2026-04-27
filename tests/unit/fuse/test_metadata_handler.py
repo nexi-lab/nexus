@@ -1,5 +1,6 @@
 """Tests for getattr and readdir metadata operations."""
 
+import asyncio
 import errno
 import stat
 from typing import Any
@@ -9,6 +10,7 @@ import pytest
 from fuse import FuseOSError
 
 from nexus.fuse.cache import FUSECacheManager
+from nexus.fuse.ops._shared import get_metadata, stat_size_fallback
 from nexus.fuse.ops.metadata_handler import (
     _PARSED_SIZE_MULTIPLIER,
     _VIRTUAL_VIEW_DEFAULT_SIZE,
@@ -258,6 +260,30 @@ class TestCacheGetParsedSize:
 
         assert cache.get_parsed_size("/file.xlsx", "md") == 5
         assert cache.get_parsed_size("/file.xlsx", "txt") == 20
+
+
+class TestContextAwareMetadataHelpers:
+    """Metadata helpers preserve the mount operation context."""
+
+    def test_get_metadata_passes_context_to_sys_stat(self) -> None:
+        ctx = MagicMock()
+        ctx.context = object()
+        ctx.nexus_fs.sys_stat.return_value = {"path": "/file.txt", "size": 9}
+
+        result = asyncio.run(get_metadata(ctx, "/file.txt"))
+
+        assert result.size == 9
+        ctx.nexus_fs.sys_stat.assert_called_once_with("/file.txt", context=ctx.context)
+
+    def test_stat_size_fallback_passes_context_to_stat(self) -> None:
+        ctx = MagicMock()
+        ctx.context = object()
+        ctx.nexus_fs.stat.return_value = {"st_size": 123}
+
+        result = stat_size_fallback(ctx, "/file.txt")
+
+        assert result == 123
+        ctx.nexus_fs.stat.assert_called_once_with("/file.txt", context=ctx.context)
 
     def test_returns_none_after_invalidation(self) -> None:
         cache = FUSECacheManager()

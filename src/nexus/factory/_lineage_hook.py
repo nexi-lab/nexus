@@ -95,7 +95,7 @@ def _record_lineage_batch(
                                 {
                                     "path": src_path,
                                     "version": src_metadata.get("version", 0),
-                                    "etag": src_metadata.get("etag", ""),
+                                    "content_id": src_metadata.get("content_id", ""),
                                 }
                             ],
                             agent_id=agent_id,

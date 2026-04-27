@@ -124,7 +124,7 @@ class RecordStoreWriteObserver:
                 "is_new": is_new,
                 "zone_id": zone_id,
                 "agent_id": agent_id,
-                "snapshot_hash": old_metadata.etag if old_metadata else None,
+                "snapshot_hash": old_metadata.content_id if old_metadata else None,
                 "metadata_snapshot": old_metadata.to_dict() if old_metadata else None,
                 "metadata": metadata.to_dict() if hasattr(metadata, "to_dict") else metadata,
             }
@@ -168,7 +168,7 @@ class RecordStoreWriteObserver:
                 "path": path,
                 "zone_id": zone_id,
                 "agent_id": agent_id,
-                "snapshot_hash": metadata.etag if metadata else None,
+                "snapshot_hash": metadata.content_id if metadata else None,
                 "metadata_snapshot": metadata.to_dict()
                 if metadata and hasattr(metadata, "to_dict")
                 else None,
@@ -192,7 +192,7 @@ class RecordStoreWriteObserver:
                 "new_path": new_path,
                 "zone_id": zone_id,
                 "agent_id": agent_id,
-                "snapshot_hash": metadata.etag if metadata else None,
+                "snapshot_hash": metadata.content_id if metadata else None,
                 "metadata_snapshot": metadata.to_dict()
                 if metadata and hasattr(metadata, "to_dict")
                 else None,
@@ -361,7 +361,7 @@ class RecordStoreWriteObserver:
                 "is_new": event.is_new,
                 "zone_id": event.zone_id,
                 "agent_id": event.agent_id,
-                "snapshot_hash": event.old_etag,
+                "snapshot_hash": event.old_content_id,
                 "metadata_snapshot": None,
                 "metadata": event.to_dict(),
             }
@@ -371,7 +371,7 @@ class RecordStoreWriteObserver:
                 "path": event.path,
                 "zone_id": event.zone_id,
                 "agent_id": event.agent_id,
-                "snapshot_hash": event.etag,
+                "snapshot_hash": event.content_id,
                 "metadata_snapshot": None,
             }
         elif etype == FileEventType.FILE_RENAME:
@@ -381,7 +381,7 @@ class RecordStoreWriteObserver:
                 "new_path": event.new_path or event.path,
                 "zone_id": event.zone_id,
                 "agent_id": event.agent_id,
-                "snapshot_hash": event.etag,
+                "snapshot_hash": event.content_id,
                 "metadata_snapshot": None,
             }
         elif etype == FileEventType.DIR_CREATE:

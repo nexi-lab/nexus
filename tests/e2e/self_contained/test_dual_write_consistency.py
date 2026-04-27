@@ -98,7 +98,7 @@ class TestWriteConsistency:
         # Metastore has the file
         meta = nx.metadata.get("/test.txt")
         assert meta is not None
-        assert meta.etag == result["etag"]
+        assert meta.content_id == result["content_id"]
         assert meta.size == len(b"hello world")
 
         # RecordStore has the file
@@ -111,7 +111,7 @@ class TestWriteConsistency:
                 )
                 .one()
             )
-            assert fp.content_hash == result["etag"]
+            assert fp.content_hash == result["content_id"]
             assert fp.size_bytes == len(b"hello world")
             assert fp.current_version == 1
 
@@ -137,7 +137,7 @@ class TestWriteConsistency:
 
             # Field-by-field consistency check
             assert fp.virtual_path == meta.path
-            assert fp.content_hash == meta.etag
+            assert fp.content_hash == meta.content_id
             assert fp.size_bytes == meta.size
             assert fp.current_version == meta.version
 

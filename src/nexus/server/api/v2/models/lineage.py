@@ -10,7 +10,7 @@ class UpstreamEntry(ApiModel):
 
     path: str
     version: int = 0
-    etag: str = ""
+    content_id: str = ""
     access_type: str = "content"
 
 

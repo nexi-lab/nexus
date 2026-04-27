@@ -47,14 +47,14 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 def _make_metadata(
     path: str = "/test.txt",
     *,
-    etag: str = "abc123",
+    content_id: str = "abc123",
     size: int = 100,
     version: int = 1,
 ) -> FileMetadata:
     return FileMetadata(
         path=path,
         size=size,
-        etag=etag,
+        content_id=content_id,
         mime_type="text/plain",
         created_at=datetime.now(UTC),
         modified_at=datetime.now(UTC),
@@ -82,7 +82,7 @@ class TestObserverFlushSync:
         observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
 
         # Manually populate pending events (simulating on_mutation path)
-        metadata = _make_metadata("/prebuf.txt", etag="h1")
+        metadata = _make_metadata("/prebuf.txt", content_id="h1")
         event = {
             "op": "write",
             "path": "/prebuf.txt",
@@ -129,7 +129,7 @@ class TestObserverFlushSync:
         observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
 
         # Write, then update — populate pending directly
-        m1 = _make_metadata("/multi.txt", etag="v1")
+        m1 = _make_metadata("/multi.txt", content_id="v1")
         e1 = {
             "op": "write",
             "path": "/multi.txt",
@@ -142,7 +142,7 @@ class TestObserverFlushSync:
         }
         observer._pending.append(e1)
 
-        m2 = _make_metadata("/multi.txt", etag="v2", version=2)
+        m2 = _make_metadata("/multi.txt", content_id="v2", version=2)
         e2 = {
             "op": "write",
             "path": "/multi.txt",
@@ -175,7 +175,7 @@ class TestObserverFlushMetrics:
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
-        metadata = _make_metadata("/metrics.txt", etag="mh1")
+        metadata = _make_metadata("/metrics.txt", content_id="mh1")
         event = {
             "op": "write",
             "path": "/metrics.txt",
@@ -208,7 +208,7 @@ class TestObserverSQLiteIntegration:
     async def test_write_event_has_entity_urn(self, record_store: SQLAlchemyRecordStore) -> None:
         """Write event must populate entity_urn, aspect_name, change_type."""
         observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
-        metadata = _make_metadata("/urn_test.txt", etag="u1")
+        metadata = _make_metadata("/urn_test.txt", content_id="u1")
         event = {
             "op": "write",
             "path": "/urn_test.txt",
@@ -242,7 +242,7 @@ class TestObserverSQLiteIntegration:
     ) -> None:
         """Delete event must have entity_urn, change_type='delete'."""
         observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
-        metadata = _make_metadata("/del_test.txt", etag="d1")
+        metadata = _make_metadata("/del_test.txt", content_id="d1")
 
         # First write the file so there's something to delete
         write_event = {
@@ -289,7 +289,7 @@ class TestObserverSQLiteIntegration:
     ) -> None:
         """Rename must produce two operation_log rows: DELETE old + UPSERT new."""
         observer = ObserverWriteObserver(record_store, debounce_seconds=10.0)
-        metadata = _make_metadata("/old_name.txt", etag="r1")
+        metadata = _make_metadata("/old_name.txt", content_id="r1")
 
         # Write the file first
         write_event = {
@@ -365,7 +365,7 @@ class TestObserverSQLiteIntegration:
     async def test_batch_flush_records_mcl(self, record_store: SQLAlchemyRecordStore) -> None:
         """Batch flush path (via _flush_batch_sync) should record MCL entries."""
         observer = ObserverWriteObserver(record_store)
-        metadata = _make_metadata("/mcl_test.txt", etag="m1")
+        metadata = _make_metadata("/mcl_test.txt", content_id="m1")
         event = {
             "op": "write",
             "path": "/mcl_test.txt",

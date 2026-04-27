@@ -588,7 +588,7 @@ class TestStatRPC:
             info = nx.stat("/test.txt")
 
             assert info["size"] == len(content)
-            assert info["etag"] is not None
+            assert info["content_id"] is not None
             assert info["version"] is not None
             assert info["is_directory"] is False
         finally:

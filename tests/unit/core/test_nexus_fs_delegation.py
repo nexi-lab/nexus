@@ -82,8 +82,8 @@ class TestSysReaddir:
     @pytest.mark.asyncio
     def test_sys_readdir_uses_metadata(self, mock_fs, context):
         """sys_readdir calls self.metadata.list_iter() — no SearchService delegation."""
-        entry1 = SimpleNamespace(path="/data/a.txt", size=10, etag="e1")
-        entry2 = SimpleNamespace(path="/data/b.txt", size=20, etag="e2")
+        entry1 = SimpleNamespace(path="/data/a.txt", size=10, content_id="e1")
+        entry2 = SimpleNamespace(path="/data/b.txt", size=20, content_id="e2")
         mock_fs.metadata.list_iter = MagicMock(return_value=iter([entry1, entry2]))
 
         result = mock_fs.sys_readdir(path="/data", recursive=False, context=context)
@@ -97,7 +97,7 @@ class TestSysReaddir:
         entry = SimpleNamespace(
             path="/data/a.txt",
             size=42,
-            etag="abc",
+            content_id="abc",
             entry_type=0,
             zone_id=ROOT_ZONE_ID,
             owner_id=None,
@@ -113,7 +113,7 @@ class TestSysReaddir:
             {
                 "path": "/data/a.txt",
                 "size": 42,
-                "etag": "abc",
+                "content_id": "abc",
                 "entry_type": 0,
                 "zone_id": "root",
                 "owner_id": None,

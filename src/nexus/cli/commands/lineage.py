@@ -78,9 +78,9 @@ def lineage_upstream(
     console.print(f"  Upstream inputs ({len(upstream)}):")
     for entry in upstream:
         version = entry.get("version", 0)
-        etag = entry.get("etag", "")[:12]
+        etag = entry.get("content_id", "")[:12]
         access = entry.get("access_type", "content")
-        console.print(f"    {entry['path']}  (v{version}, {access}, etag={etag}...)")
+        console.print(f"    {entry['path']}  (v{version}, {access}, content_id={etag}...)")
 
 
 @lineage.command(name="downstream")
@@ -164,7 +164,7 @@ def lineage_stale(
             if file_version is None:
                 file_version = stat.get("version", 0)
             if etag is None:
-                etag = stat.get("etag", "")
+                etag = stat.get("content_id", "")
         except Exception as exc:
             console.print(
                 "[yellow]Could not auto-detect version/etag. Provide --version and --etag.[/yellow]"

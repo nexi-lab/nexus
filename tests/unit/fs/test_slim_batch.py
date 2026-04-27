@@ -74,7 +74,7 @@ class TestSlimWriteBatch:
         r = results[0]
         assert r["size"] == 5
         assert r["version"] >= 1
-        assert r.get("etag") is not None
+        assert r.get("content_id") is not None
 
     @pytest.mark.asyncio
     async def test_write_multiple_files(self, slim: NexusFS) -> None:
@@ -208,9 +208,9 @@ class TestSlimBatchRoundTrip:
         assert read_results[1]["content"] == b"payload B"
 
         # ETags match
-        if write_results[0].get("etag") and read_results[0].get("etag"):
-            assert read_results[0]["etag"] == write_results[0]["etag"]
-            assert read_results[1]["etag"] == write_results[1]["etag"]
+        if write_results[0].get("content_id") and read_results[0].get("content_id"):
+            assert read_results[0]["content_id"] == write_results[0]["content_id"]
+            assert read_results[1]["content_id"] == write_results[1]["content_id"]
 
     @pytest.mark.asyncio
     async def test_large_batch_50_files(self, slim: NexusFS) -> None:

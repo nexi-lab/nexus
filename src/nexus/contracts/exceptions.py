@@ -480,8 +480,8 @@ class ConflictError(NexusError):
 
         Args:
             path: Virtual file path that had the conflict
-            expected_etag: The etag value that was expected (from if_match)
-            current_etag: The actual current etag value in the database
+            expected_etag: The content_id (if_match) value that was expected
+            current_etag: The actual current content_id value in the database
         """
         self.expected_etag = expected_etag
         self.current_etag = current_etag

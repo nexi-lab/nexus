@@ -335,13 +335,13 @@ async def create_mcp_server(
     # =========================================================================
 
     def _md_get_etag(nx_instance: NexusFS, path: str) -> str:
-        """Get the authoritative file etag from the metastore primary row."""
+        """Get the authoritative file content_id from the metastore primary row."""
         meta = getattr(nx_instance, "metadata", None)
         if meta is None:
             return ""
         try:
             file_meta = meta.get(path)
-            return file_meta.etag if file_meta and file_meta.etag else ""
+            return file_meta.content_id if file_meta and file_meta.content_id else ""
         except Exception:
             return ""
 
@@ -537,7 +537,7 @@ async def create_mcp_server(
             edits: List of {"old_str": "text to find", "new_str": "replacement"}
             fuzzy_threshold: Similarity threshold for fuzzy matching (0.0-1.0, default: 0.85)
             preview: If True, return preview without writing (default: False)
-            if_match: Optional etag for optimistic concurrency control
+            if_match: Optional content_id for optimistic concurrency control
             ctx: FastMCP Context (automatically injected, optional for backward compatibility)
 
         Returns:
@@ -620,7 +620,7 @@ async def create_mcp_server(
               - size: Size in bytes (0 for directories)
               - is_directory: Boolean indicating if this is a directory
               - modified_at: Last modification timestamp
-              - etag: Content hash
+              - content_id: Content hash
               - mime_type: MIME type
             - has_more: Whether more files are available
             - next_offset: Offset for next page (null if no more results)

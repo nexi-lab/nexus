@@ -172,13 +172,13 @@ class VersionRecorder:
         self.session.add(file_path)
         self.session.flush()
 
-        if metadata.etag is not None:
+        if metadata.content_id is not None:
             version_entry = VersionHistoryModel(
                 version_id=str(uuid.uuid4()),
                 resource_type="file",
                 resource_id=file_path.path_id,
                 version_number=1,
-                content_hash=metadata.etag,
+                content_hash=metadata.content_id,
                 size_bytes=metadata.size or 0,
                 mime_type=metadata.mime_type,
                 parent_version_id=None,
@@ -207,7 +207,7 @@ class VersionRecorder:
 
         update_values = MetadataMapper.to_file_path_update_values(metadata)
 
-        if metadata.etag is not None:
+        if metadata.content_id is not None:
             # Get previous version for lineage
             prev_version = self.session.execute(
                 select(VersionHistoryModel)
@@ -236,7 +236,7 @@ class VersionRecorder:
                 resource_type="file",
                 resource_id=existing.path_id,
                 version_number=new_version,
-                content_hash=metadata.etag,
+                content_hash=metadata.content_id,
                 size_bytes=metadata.size or 0,
                 mime_type=metadata.mime_type,
                 parent_version_id=prev_version.version_id if prev_version else None,

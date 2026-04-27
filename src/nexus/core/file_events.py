@@ -68,7 +68,7 @@ class FileEvent:
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     old_path: str | None = None
     size: int | None = None
-    etag: str | None = None
+    content_id: str | None = None
     agent_id: str | None = None
     vector_clock: str | None = None
     sequence_number: int | None = None  # Monotonic ordering within a zone (#2755)
@@ -78,7 +78,9 @@ class FileEvent:
     version: int | None = None  # write-specific: file version counter
     is_new: bool = False  # write-specific: True if file was created (not overwritten)
     new_path: str | None = None  # rename-specific: destination path
-    old_etag: str | None = None  # write-specific: previous content hash (for overwrite detection)
+    old_content_id: str | None = (
+        None  # write-specific: previous content hash (for overwrite detection)
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -95,8 +97,8 @@ class FileEvent:
             result["old_path"] = self.old_path
         if self.size is not None:
             result["size"] = self.size
-        if self.etag is not None:
-            result["etag"] = self.etag
+        if self.content_id is not None:
+            result["content_id"] = self.content_id
         if self.agent_id is not None:
             result["agent_id"] = self.agent_id
         if self.vector_clock is not None:
@@ -111,8 +113,8 @@ class FileEvent:
             result["is_new"] = self.is_new
         if self.new_path is not None:
             result["new_path"] = self.new_path
-        if self.old_etag is not None:
-            result["old_etag"] = self.old_etag
+        if self.old_content_id is not None:
+            result["old_content_id"] = self.old_content_id
         return result
 
     def to_json(self) -> str:
@@ -130,7 +132,7 @@ class FileEvent:
             event_id=data.get("event_id", str(uuid.uuid4())),
             old_path=data.get("old_path"),
             size=data.get("size"),
-            etag=data.get("etag"),
+            content_id=data.get("content_id"),
             agent_id=data.get("agent_id"),
             vector_clock=data.get("vector_clock"),
             sequence_number=data.get("sequence_number"),
@@ -138,7 +140,7 @@ class FileEvent:
             version=data.get("version"),
             is_new=data.get("is_new", False),
             new_path=data.get("new_path"),
-            old_etag=data.get("old_etag"),
+            old_content_id=data.get("old_content_id"),
         )
 
     @classmethod

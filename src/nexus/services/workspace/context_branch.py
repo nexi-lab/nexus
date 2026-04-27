@@ -1009,10 +1009,12 @@ class ContextBranchService:
             files = self._wm.metadata.list_iter(prefix=workspace_prefix)
             file_entries: list[tuple[str, str, int, str | None]] = []
             for file_meta in files:
-                if file_meta.mime_type == "directory" or not file_meta.etag:
+                if file_meta.mime_type == "directory" or not file_meta.content_id:
                     continue
                 rel_path = file_meta.path[len(workspace_prefix) :]
-                file_entries.append((rel_path, file_meta.etag, file_meta.size, file_meta.mime_type))
+                file_entries.append(
+                    (rel_path, file_meta.content_id, file_meta.size, file_meta.mime_type)
+                )
 
             manifest = WorkspaceManifest.from_file_list(file_entries)
             import hashlib

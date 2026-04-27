@@ -104,7 +104,7 @@ class TestLineageE2EFlow:
                 agent_gen,
                 path,
                 version=i + 1,
-                etag=f"etag_{test_id}_{i}",
+                content_id=f"etag_{test_id}_{i}",
                 access_type="content",
             )
 
@@ -194,8 +194,8 @@ class TestLineageE2EFlow:
 
         # Explicit declaration (what PUT /api/v2/lineage/{urn} does)
         upstream = [
-            {"path": f"/e2e-test/{test_id}/source_a.txt", "version": 10, "etag": "eA"},
-            {"path": f"/e2e-test/{test_id}/source_b.txt", "version": 20, "etag": "eB"},
+            {"path": f"/e2e-test/{test_id}/source_a.txt", "version": 10, "content_id": "eA"},
+            {"path": f"/e2e-test/{test_id}/source_b.txt", "version": 20, "content_id": "eB"},
         ]
         lineage = LineageAspect.from_explicit_declaration(
             upstream=upstream,
@@ -233,7 +233,9 @@ class TestLineageE2EFlow:
 
         # First write: reads old_input
         lineage1 = LineageAspect.from_session_reads(
-            reads=[{"path": f"/e2e-test/{test_id}/old_input.csv", "version": 1, "etag": "old"}],
+            reads=[
+                {"path": f"/e2e-test/{test_id}/old_input.csv", "version": 1, "content_id": "old"}
+            ],
             agent_id="agent-upsert",
         )
         svc.record_lineage(entity_urn=output_urn, lineage=lineage1, zone_id=zone_id)
@@ -244,7 +246,9 @@ class TestLineageE2EFlow:
 
         # Second write: reads new_input instead
         lineage2 = LineageAspect.from_session_reads(
-            reads=[{"path": f"/e2e-test/{test_id}/new_input.csv", "version": 5, "etag": "new"}],
+            reads=[
+                {"path": f"/e2e-test/{test_id}/new_input.csv", "version": 5, "content_id": "new"}
+            ],
             agent_id="agent-upsert",
         )
         svc.record_lineage(entity_urn=output_urn, lineage=lineage2, zone_id=zone_id)
@@ -277,7 +281,7 @@ class TestLineageE2EFlow:
         dst_urn = str(NexusURN.for_file(zone_id, dst_path))
 
         lineage = LineageAspect.from_explicit_declaration(
-            upstream=[{"path": src_path, "version": 3, "etag": "src_hash"}],
+            upstream=[{"path": src_path, "version": 3, "content_id": "src_hash"}],
             agent_id=f"copy-agent-{test_id}",
         )
         lineage.operation = "copy"
@@ -322,9 +326,9 @@ class TestLineageE2EFlow:
 
         # --- Task 1: read A, B, C → write output1 ---
         acc.begin_scope(agent_id, agent_gen, "task-1")
-        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/a.csv", version=1, etag="ea")
-        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/b.csv", version=2, etag="eb")
-        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/c.csv", version=3, etag="ec")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/a.csv", version=1, content_id="ea")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/b.csv", version=2, content_id="eb")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/c.csv", version=3, content_id="ec")
 
         output1_path = f"/e2e/{test_id}/output1.json"
         output1_urn = str(NexusURN.for_file(zone_id, output1_path))
@@ -343,8 +347,8 @@ class TestLineageE2EFlow:
 
         # --- Task 2: read D, E → write output2 ---
         acc.begin_scope(agent_id, agent_gen, "task-2")
-        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/d.csv", version=4, etag="ed")
-        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/e.csv", version=5, etag="ee")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/d.csv", version=4, content_id="ed")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/e.csv", version=5, content_id="ee")
 
         output2_path = f"/e2e/{test_id}/output2.json"
         output2_urn = str(NexusURN.for_file(zone_id, output2_path))

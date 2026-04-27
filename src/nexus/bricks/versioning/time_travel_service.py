@@ -278,7 +278,7 @@ class TimeTravelService:
                 metadata_dict = {
                     "size": current_path.size_bytes,
                     "version": current_path.current_version,
-                    "etag": current_path.content_hash,
+                    "content_id": current_path.content_hash,
                     "modified_at": current_path.updated_at.isoformat()
                     if current_path.updated_at
                     else None,

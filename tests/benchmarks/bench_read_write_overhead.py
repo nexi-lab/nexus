@@ -67,7 +67,7 @@ class TestWriteNewFile:
             return result
 
         result = benchmark(write_new)
-        assert "etag" in result
+        assert "content_id" in result
 
 
 @pytest.mark.benchmark_file_ops
@@ -85,7 +85,7 @@ class TestWriteExistingFile:
             return result
 
         result = benchmark(write_existing)
-        assert "etag" in result
+        assert "content_id" in result
 
 
 # =============================================================================
@@ -108,7 +108,7 @@ class TestReadWithMetadata:
         assert isinstance(result, dict)
         assert "content" in result
         assert len(result["content"]) == 1024
-        assert "etag" in result
+        assert "content_id" in result
 
 
 @pytest.mark.benchmark_file_ops
@@ -122,13 +122,13 @@ class TestReadPlusStat:
         def read_plus_stat():
             content = nx.sys_read("/test_small.bin")
             meta = nx.sys_stat("/test_small.bin")
-            return {"content": content, "etag": meta.get("etag") if meta else None}
+            return {"content": content, "content_id": meta.get("content_id") if meta else None}
 
         result = benchmark(read_plus_stat)
         assert isinstance(result, dict)
         assert "content" in result
         assert len(result["content"]) == 1024
-        assert "etag" in result
+        assert "content_id" in result
 
 
 # =============================================================================

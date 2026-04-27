@@ -257,7 +257,7 @@ class ZoneExportService:
                     physical_path="",
                     file_type=file_meta.mime_type,
                     size_bytes=file_meta.size,
-                    content_hash=file_meta.etag,
+                    content_hash=file_meta.content_id,
                     created_at=file_meta.created_at,
                     updated_at=file_meta.modified_at,
                     current_version=getattr(file_meta, "version", 1),
@@ -272,9 +272,9 @@ class ZoneExportService:
                 # (identical content at a different path) are no-ops —
                 # `_export_content_blobs` reads via sys_read(path) once
                 # per unique hash.
-                if file_meta.etag and file_meta.etag not in content_hashes:
-                    content_hashes.add(file_meta.etag)
-                    hash_to_path[file_meta.etag] = file_meta.path
+                if file_meta.content_id and file_meta.content_id not in content_hashes:
+                    content_hashes.add(file_meta.content_id)
+                    hash_to_path[file_meta.content_id] = file_meta.path
 
                 file_count += 1
                 total_size += file_meta.size

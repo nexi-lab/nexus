@@ -73,13 +73,13 @@ class TestFileEvent:
             zone_id="zone1",
             old_path="/inbox/old.txt",
             size=1024,
-            etag="abc123",
+            content_id="abc123",
             agent_id="agent-1",
         )
 
         assert event.old_path == "/inbox/old.txt"
         assert event.size == 1024
-        assert event.etag == "abc123"
+        assert event.content_id == "abc123"
         assert event.agent_id == "agent-1"
 
     def test_to_dict_basic(self):
@@ -113,7 +113,7 @@ class TestFileEvent:
 
         assert data["old_path"] == "/inbox/old.txt"
         assert data["size"] == 1024
-        assert "etag" not in data  # None values not included
+        assert "content_id" not in data  # None values not included
         assert "agent_id" not in data
 
     def test_to_json(self):
@@ -174,7 +174,7 @@ class TestFileEvent:
             zone_id="zone1",
             old_path="/inbox/old.txt",
             size=2048,
-            etag="hash123",
+            content_id="hash123",
         )
 
         json_str = original.to_json()
@@ -185,7 +185,7 @@ class TestFileEvent:
         assert restored.zone_id == original.zone_id
         assert restored.old_path == original.old_path
         assert restored.size == original.size
-        assert restored.etag == original.etag
+        assert restored.content_id == original.content_id
 
     def test_event_with_none_zone_id(self):
         """Test that zone_id can be None (Layer 1 local events)."""

@@ -161,20 +161,20 @@ async def _read_connector_by_physical_path(
 def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
     """Convert a sys_readdir details dict to a FileItemResponse.
 
-    sys_readdir(details=True) returns dicts with path, size, etag, entry_type.
+    sys_readdir(details=True) returns dicts with path, size, content_id, entry_type.
     entry_type: 0=file, 1=directory, 2=mount, 3=pipe, 4=stream.
     """
     raw_path: str = entry.get("path", "")
     # Use entry_type if available: 1=dir, 2=mount (both act as directories).
     # Also treat entries with trailing "/" as directories (legacy fallback).
-    # entry_type 0 with no etag and size 0 is likely an implicit directory
+    # entry_type 0 with no content_id and size 0 is likely an implicit directory
     # (created by writing files underneath it in CAS-based storage).
     et = entry.get("entry_type", 0)
     has_extension = "." in raw_path.rstrip("/").rsplit("/", 1)[-1]
     # Size-zero entries without extensions are directories (mount points, folders).
     # This overrides explicit is_directory=False from the metastore which
     # incorrectly marks mount points as files.
-    looks_like_dir = entry.get("size", 0) == 0 and not entry.get("etag") and not has_extension
+    looks_like_dir = entry.get("size", 0) == 0 and not entry.get("content_id") and not has_extension
     if "is_directory" in entry and not looks_like_dir:
         is_dir = bool(entry["is_directory"])
     else:
@@ -192,7 +192,7 @@ def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
         is_directory=is_dir,
         size=entry.get("size", 0) if not is_dir else 0,
         modified_at=entry.get("modified_at"),
-        etag=entry.get("etag"),
+        content_id=entry.get("content_id"),
         mime_type=None,
         zone_id=entry.get("zone_id"),
         version=entry.get("version"),
@@ -225,7 +225,7 @@ def _to_metadata_response(meta: Any, fallback_path: str) -> "MetadataResponse":
     return MetadataResponse(
         path=_metadata_field(meta, "path", fallback_path),
         size=_metadata_field(meta, "size", 0) or 0,
-        etag=_metadata_field(meta, "etag"),
+        content_id=_metadata_field(meta, "content_id"),
         version=_metadata_field(meta, "version", 1) or 1,
         is_directory=bool(is_directory),
         created_at=_metadata_timestamp(meta, "created_at"),
@@ -251,7 +251,7 @@ class WriteRequest(BaseModel):
 class WriteResponse(BaseModel):
     """Response model for write operation."""
 
-    etag: str
+    content_id: str
     version: int
     size: int
     modified_at: str
@@ -261,7 +261,7 @@ class ReadResponse(BaseModel):
     """Response model for read operation."""
 
     content: str
-    etag: str | None = None
+    content_id: str | None = None
     version: int | None = None
     modified_at: str | None = None
     size: int | None = None
@@ -291,7 +291,7 @@ class FileItemResponse(BaseModel):
     is_directory: bool = Field(default=False, serialization_alias="isDirectory")
     size: int = 0
     modified_at: str | None = Field(None, serialization_alias="modifiedAt")
-    etag: str | None = None
+    content_id: str | None = None
     mime_type: str | None = Field(None, serialization_alias="mimeType")
     version: int | None = None
     owner: str | None = None
@@ -322,7 +322,7 @@ class MetadataResponse(BaseModel):
 
     path: str
     size: int
-    etag: str | None = None
+    content_id: str | None = None
     version: int
     is_directory: bool
     created_at: str | None = None
@@ -412,7 +412,7 @@ class BatchWriteResult(BaseModel):
     """Result for a single file in a batch write response."""
 
     path: str
-    etag: str | None
+    content_id: str | None
     version: int
     modified_at: Any | None
     size: int
@@ -447,7 +447,7 @@ class BatchReadSuccess(BaseModel):
     type: str = Field("success", frozen=True)
     path: str
     content_base64: str
-    etag: str | None
+    content_id: str | None
     version: int
     modified_at: Any | None
     size: int
@@ -659,7 +659,7 @@ def create_async_files_router(
                     try:
                         _orig_meta = fs.metadata.get(_norm_path)
                         if _orig_meta:
-                            _original_hash = _orig_meta.etag
+                            _original_hash = _orig_meta.content_id
                             _original_metadata = {
                                 "size": _orig_meta.size,
                                 "version": _orig_meta.version,
@@ -703,7 +703,7 @@ def create_async_files_router(
                         path=_norm_path,
                         original_hash=_original_hash,
                         original_metadata=_original_metadata,
-                        new_hash=result.get("etag"),
+                        new_hash=result.get("content_id"),
                     )
                     logger.info("txn tracked write: txn=%s path=%s", transaction_id, _norm_path)
                 except Exception as _track_err:
@@ -713,7 +713,7 @@ def create_async_files_router(
             if hasattr(modified, "isoformat"):
                 modified = modified.isoformat()
             response_data = WriteResponse(
-                etag=result["etag"],
+                content_id=result["content_id"],
                 version=result["version"],
                 size=result["size"],
                 modified_at=str(modified),
@@ -750,7 +750,7 @@ def create_async_files_router(
         include_metadata: bool = Query(False, description="Include metadata in response"),
         version: str | None = Query(
             None,
-            description="Content hash (etag) to read a specific historical version from CAS",
+            description="Content hash (content_id) to read a specific historical version from CAS",
         ),
         transaction_id: str | None = Query(
             None,
@@ -778,7 +778,7 @@ def create_async_files_router(
         Returns 304 Not Modified if content hasn't changed.
 
         When `version` is provided it is treated as a content-addressed hash
-        (etag) and the content is fetched directly from CAS via the backend
+        (content_id) and the content is fetched directly from CAS via the backend
         that owns `path`.  `transaction_id` is required alongside `version`
         so the server can validate that the requested hash actually belongs to
         `path` in that transaction, preventing cross-path blob reads.
@@ -787,7 +787,7 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
 
-            # Fast path: content-hash (etag) lookup — used by the diff viewer
+            # Fast path: content-hash (content_id) lookup — used by the diff viewer
             # to retrieve a historical snapshot stored in CAS.
             if version:
                 if not transaction_id:
@@ -850,7 +850,7 @@ def create_async_files_router(
                     raise NexusFileNotFoundError(f"{path} (version {version})")
                 raw: bytes = await asyncio.to_thread(_py_kernel.sys_read_raw, path, "root")
                 text_v = raw.decode("utf-8", errors="replace")
-                resp_v = ReadResponse(content=text_v, etag=version)
+                resp_v = ReadResponse(content=text_v, content_id=version)
                 return Response(
                     content=resp_v.model_dump_json(),
                     media_type="application/json",
@@ -863,12 +863,12 @@ def create_async_files_router(
             # Get metadata first for ETag check
             if if_none_match:
                 meta = fs.sys_stat(path)
-                if meta and meta.etag:
+                if meta and meta.content_id:
                     client_etag = if_none_match.strip('"')
-                    if client_etag == meta.etag:
+                    if client_etag == meta.content_id:
                         return Response(
                             status_code=304,
-                            headers={"ETag": f'"{meta.etag}"'},
+                            headers={"ETag": f'"{meta.content_id}"'},
                         )
 
             # Issue #3266: For connector display paths (/mnt/*), resolve
@@ -902,7 +902,7 @@ def create_async_files_router(
                 if include_metadata:
                     resp = ReadResponse(
                         content=text,
-                        etag=None,
+                        content_id=None,
                         version=None,
                         modified_at=None,
                         size=len(connector_content),
@@ -948,12 +948,12 @@ def create_async_files_router(
 
                 response_data = ReadResponse(
                     content=file_content,
-                    etag=result.get("etag"),
+                    content_id=result.get("content_id"),
                     version=result.get("version"),
                     modified_at=result.get("modified_at"),
                     size=result.get("size"),
                 )
-                etag_val = result.get("etag")
+                etag_val = result.get("content_id")
                 return Response(
                     content=response_data.model_dump_json(),
                     media_type="application/json",
@@ -1040,13 +1040,13 @@ def create_async_files_router(
     # --- Markdown helpers (Issue #3718) ---
 
     def _md_get_etag(fs: Any, path: str) -> str:
-        """Get the authoritative file etag from the metastore primary row."""
+        """Get the authoritative file content_id from the metastore primary row."""
         meta = getattr(fs, "metadata", None)
         if meta is None:
             return ""
         try:
             file_meta = meta.get(path)
-            return file_meta.etag if file_meta and file_meta.etag else ""
+            return file_meta.content_id if file_meta and file_meta.content_id else ""
         except Exception:
             return ""
 
@@ -1125,7 +1125,7 @@ def create_async_files_router(
                     try:
                         _orig_meta = fs.metadata.get(_norm_path)
                         if _orig_meta:
-                            _original_hash = _orig_meta.etag
+                            _original_hash = _orig_meta.content_id
                             _original_metadata = {
                                 "size": _orig_meta.size,
                                 "version": _orig_meta.version,
@@ -1576,7 +1576,7 @@ def create_async_files_router(
                 results=[
                     BatchWriteResult(
                         path=r["path"] if "path" in r else files[i][0],
-                        etag=r.get("etag"),
+                        content_id=r.get("content_id"),
                         version=r.get("version", 0),
                         modified_at=r.get("modified_at"),
                         size=r.get("size", 0),
@@ -1639,7 +1639,7 @@ def create_async_files_router(
                             type="success",
                             path=r["path"],
                             content_base64=base64.b64encode(r["content"]).decode(),
-                            etag=r.get("etag"),
+                            content_id=r.get("content_id"),
                             version=r.get("version", 0),
                             modified_at=r.get("modified_at"),
                             size=r.get("size", 0),
@@ -1713,7 +1713,7 @@ def create_async_files_router(
                 content_generator=_range_generator,
                 full_generator=_full_generator,
                 total_size=meta.size,
-                etag=meta.etag,
+                etag=meta.content_id,
                 content_type=meta.mime_type or "application/octet-stream",
                 filename=path.split("/")[-1],
             )

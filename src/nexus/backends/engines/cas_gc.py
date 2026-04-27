@@ -220,7 +220,7 @@ class CASGarbageCollector:
             return
 
         for entry in all_entries:
-            etag = getattr(entry, "etag", None) or getattr(entry, "content_id", None)
+            etag = getattr(entry, "content_id", None)
             if not etag:
                 continue
             referenced.add(etag)

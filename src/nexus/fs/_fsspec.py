@@ -217,7 +217,7 @@ class NexusFileSystem(AbstractFileSystem):
             "name": stat["path"],
             "size": stat.get("size", 0),
             "type": "directory" if stat.get("is_directory") else "file",
-            "etag": stat.get("etag"),
+            "etag": stat.get("content_id"),
             "created": stat.get("created_at"),
             "modified": stat.get("modified_at"),
         }

@@ -346,7 +346,7 @@ class MountService:
                     meta = FileMetadata(
                         path=dir_path,
                         size=0,
-                        etag=None,
+                        content_id=None,
                         entry_type=entry_type if is_mount_point else DT_DIR,
                         created_at=now,
                         modified_at=now,

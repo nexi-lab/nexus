@@ -37,7 +37,7 @@ def mock_fs() -> MagicMock:
         return_value={
             "path": "/source.txt",
             "size": 1024,
-            "etag": "abc123",
+            "content_id": "abc123",
             "mime_type": "text/plain",
             "is_directory": False,
         }
@@ -49,7 +49,7 @@ def mock_fs() -> MagicMock:
     # write is async, returns metadata dict
     fs.write = AsyncMock(
         return_value={
-            "etag": "def456",
+            "content_id": "def456",
             "version": 1,
             "size": 17,
             "modified_at": "2026-03-16T00:00:00Z",
@@ -59,7 +59,7 @@ def mock_fs() -> MagicMock:
     # stream and write_stream are sync (used via asyncio.to_thread)
     fs.stream.return_value = iter([b"chunk1", b"chunk2"])
     fs.write_stream.return_value = {
-        "etag": "ghi789",
+        "content_id": "ghi789",
         "version": 1,
         "size": 12,
         "modified_at": "2026-03-16T00:00:00Z",

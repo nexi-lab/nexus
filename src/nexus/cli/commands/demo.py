@@ -1351,7 +1351,7 @@ def _seed_lineage(
                         {
                             "path": u["path"],
                             "version": u.get("version", 1),
-                            "etag": u.get("etag", ""),
+                            "content_id": u.get("content_id", ""),
                         }
                         for u in upstream_inputs
                     ],

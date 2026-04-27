@@ -22,7 +22,7 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     # Proto field -> FilePathModel column (None = not in SQL, by design)
     "path": "virtual_path",
     "size": "size_bytes",
-    "etag": "content_hash",
+    "content_id": "content_hash",
     "mime_type": "file_type",
     "created_at": "created_at",
     "modified_at": "updated_at",
@@ -128,7 +128,7 @@ class TestRoundtripConsistency:
         metadata = FileMetadata(
             path="/zone1/docs/readme.md",
             size=2048,
-            etag="sha256-xyz789",
+            content_id="sha256-xyz789",
             mime_type="text/markdown",
             created_at=now,
             modified_at=now,
@@ -151,7 +151,7 @@ class TestRoundtripConsistency:
         metadata = FileMetadata(
             path="/test/file.txt",
             size=0,
-            etag=None,
+            content_id=None,
             mime_type=None,
             created_at=None,
             modified_at=None,

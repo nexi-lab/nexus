@@ -23,7 +23,7 @@ def hook(mock_svc: MagicMock) -> SnapshotWriteHook:
 
 def _make_meta(**overrides: object) -> MagicMock:
     meta = MagicMock()
-    meta.etag = overrides.get("etag", "old-etag")
+    meta.content_id = overrides.get("content_id", "old-etag")
     meta.size = overrides.get("size", 1024)
     meta.version = overrides.get("version", 3)
     meta.modified_at = overrides.get("modified_at", datetime(2026, 1, 1, tzinfo=UTC))

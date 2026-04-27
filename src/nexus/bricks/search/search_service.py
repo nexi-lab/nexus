@@ -952,7 +952,9 @@ class SearchService:
                         if file_meta and hasattr(file_meta, "created_at") and file_meta.created_at
                         else None
                     ),
-                    "etag": file_meta.etag if file_meta and hasattr(file_meta, "etag") else None,
+                    "content_id": file_meta.content_id
+                    if file_meta and hasattr(file_meta, "content_id")
+                    else None,
                     "mime_type": (
                         file_meta.mime_type
                         if file_meta and hasattr(file_meta, "mime_type")
@@ -1030,7 +1032,7 @@ class SearchService:
                             path=entry_path,
                             size=0,
                             created_at=entry.get("created_at"),
-                            etag=None,
+                            content_id=None,
                             mime_type="inode/directory",
                         )
                     )
@@ -1040,7 +1042,7 @@ class SearchService:
                         path=entry_path,
                         size=0,
                         created_at=entry.get("created_at"),
-                        etag=None,
+                        content_id=None,
                         mime_type=None,
                     )
                 )
@@ -1420,7 +1422,7 @@ class SearchService:
                 "size": meta.size,
                 "modified_at": meta.modified_at,
                 "created_at": meta.created_at,
-                "etag": meta.etag,
+                "content_id": meta.content_id,
                 "mime_type": meta.mime_type,
                 "is_directory": False,
             }
@@ -1435,7 +1437,7 @@ class SearchService:
                 "size": 0,
                 "modified_at": None,
                 "created_at": None,
-                "etag": None,
+                "content_id": None,
                 "mime_type": None,
                 "is_directory": True,
             }
@@ -1569,7 +1571,7 @@ class SearchService:
                     "size": meta.size,
                     "modified_at": meta.modified_at,
                     "created_at": meta.created_at,
-                    "etag": meta.etag,
+                    "content_id": meta.content_id,
                     "mime_type": meta.mime_type,
                     "is_directory": meta.is_dir if hasattr(meta, "is_dir") else False,
                 }

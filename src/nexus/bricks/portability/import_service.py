@@ -362,7 +362,11 @@ class ZoneImportService:
                 else:
                     result.files_created += 1
 
-                logger.debug("Imported %s: etag=%s", remapped_path, write_result.get("etag", "N/A"))
+                logger.debug(
+                    "Imported %s: content_id=%s",
+                    remapped_path,
+                    write_result.get("content_id", "N/A"),
+                )
 
             except Exception as e:
                 logger.warning("Failed to write %s: %s", remapped_path, e)
@@ -413,7 +417,7 @@ class ZoneImportService:
             metadata = self._file_metadata_class(
                 path=path,
                 size=record.size_bytes,
-                etag=record.content_hash,
+                content_id=record.content_hash,
                 mime_type=record.file_type,
                 created_at=record.created_at if options.preserve_timestamps else None,
                 modified_at=record.updated_at if options.preserve_timestamps else None,

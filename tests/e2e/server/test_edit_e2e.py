@@ -539,7 +539,11 @@ class TestEditConcurrency:
         assert "result" in write_result, f"Write failed: {write_result}"
         # Write returns dict - format differs between FastAPI and sync server
         result = write_result["result"]
-        etag = result["bytes_written"]["etag"] if "bytes_written" in result else result.get("etag")
+        etag = (
+            result["bytes_written"]["content_id"]
+            if "bytes_written" in result
+            else result.get("content_id")
+        )
 
         # Edit with correct etag
         edit_result = make_rpc_request(
@@ -572,7 +576,9 @@ class TestEditConcurrency:
         # Write returns dict - format differs between FastAPI and sync server
         result = write_result["result"]
         old_etag = (
-            result["bytes_written"]["etag"] if "bytes_written" in result else result.get("etag")
+            result["bytes_written"]["content_id"]
+            if "bytes_written" in result
+            else result.get("content_id")
         )
 
         # Modify file (changes etag)

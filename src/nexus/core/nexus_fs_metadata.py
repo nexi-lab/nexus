@@ -534,7 +534,7 @@ class MetadataMixin:
         """Get content hash for HTTP If-None-Match checks."""
         normalized = self._validate_path(path, allow_root=False)
         stat = self._kernel.sys_stat(normalized, self._zone_id)
-        return stat.get("etag") if stat else None
+        return stat.get("content_id") if stat else None
 
     # ── Tier 2 directory ──────────────────────────────────────────────
 
@@ -753,7 +753,7 @@ class MetadataMixin:
             from nexus.contracts.vfs_hooks import RenameHookContext
 
             # Reconstruct old metadata from Rust result fields for the
-            # audit trail (record_store_write_observer uses .etag + .to_dict()).
+            # audit trail (record_store_write_observer uses .content_id + .to_dict()).
             _old_meta: _FM | None = None
             if _rename_result.old_etag is not None or _rename_result.old_size is not None:
                 from datetime import UTC, datetime
@@ -766,7 +766,7 @@ class MetadataMixin:
                 _old_meta = _FM(
                     path=old_path,
                     size=_rename_result.old_size or 0,
-                    etag=_rename_result.old_etag,
+                    content_id=_rename_result.old_etag,
                     version=_rename_result.old_version or 1,
                     modified_at=_mod_at,
                 )
@@ -808,7 +808,7 @@ class MetadataMixin:
             context: Operation context for permission checks.
 
         Returns:
-            Dict with path, size, etag of the new file.
+            Dict with path, size, content_id of the new file.
 
         Raises:
             NexusFileNotFoundError: If source file doesn't exist.
@@ -848,7 +848,7 @@ class MetadataMixin:
             "src_path": src_path,
             "dst_path": dst_path,
             "size": _copy_result.size,
-            "etag": _copy_result.etag,
+            "content_id": _copy_result.etag,
             "version": _copy_result.version,
         }
 
@@ -869,7 +869,7 @@ class MetadataMixin:
         Returns:
             Dict with file metadata:
                 - size: File size in bytes
-                - etag: Content hash
+                - content_id: Content hash
                 - version: Version number
                 - modified_at: Last modification timestamp
                 - is_directory: Whether path is a directory
@@ -919,7 +919,7 @@ class MetadataMixin:
         if is_implicit_dir:
             return {
                 "size": 0,
-                "etag": None,
+                "content_id": None,
                 "version": None,
                 "modified_at": None,
                 "is_directory": True,
@@ -932,7 +932,7 @@ class MetadataMixin:
 
         # Get size from backend if not in metadata
         size = meta.size
-        if size is None and meta.etag and meta.is_external_storage:
+        if size is None and meta.content_id and meta.is_external_storage:
             # External connectors: try Rust kernel sys_stat for size.
             # CAS backends always have size set in metastore by sys_write.
             try:
@@ -948,7 +948,7 @@ class MetadataMixin:
 
         return {
             "size": size,
-            "etag": meta.etag,
+            "content_id": meta.content_id,
             "version": meta.version,
             "modified_at": modified_at_str,
             "is_directory": False,
@@ -975,7 +975,7 @@ class MetadataMixin:
 
         Returns:
             Dict mapping path -> stat dict (or None if skip_errors=True and stat failed)
-            Each stat dict contains: size, etag, version, modified_at, is_directory
+            Each stat dict contains: size, content_id, version, modified_at, is_directory
 
         Performance:
             - Single RPC call instead of N calls
@@ -1038,7 +1038,7 @@ class MetadataMixin:
                     if self.metadata.is_implicit_directory(path):
                         results[path] = {
                             "size": 0,
-                            "etag": None,
+                            "content_id": None,
                             "version": None,
                             "modified_at": None,
                             "is_directory": True,
@@ -1051,7 +1051,7 @@ class MetadataMixin:
                     modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
                     results[path] = {
                         "size": meta.size,
-                        "etag": meta.etag,
+                        "content_id": meta.content_id,
                         "version": meta.version,
                         "modified_at": modified_at_str,
                         "is_directory": False,
@@ -1141,7 +1141,7 @@ class MetadataMixin:
 
         Returns:
             Dictionary mapping each path to its metadata dict or None if not found.
-            Metadata includes: path, size, etag, mime_type, created_at, modified_at,
+            Metadata includes: path, size, content_id, mime_type, created_at, modified_at,
             version, zone_id, is_directory.
 
         Performance:
@@ -1207,7 +1207,7 @@ class MetadataMixin:
                 results[path] = {
                     "path": meta.path,
                     "size": meta.size,
-                    "etag": meta.etag,
+                    "content_id": meta.content_id,
                     "mime_type": meta.mime_type,
                     "created_at": meta.created_at,
                     "modified_at": meta.modified_at,
@@ -1371,7 +1371,7 @@ class MetadataMixin:
         return {
             "path": entry.path,
             "size": entry.size,
-            "etag": entry.etag,
+            "content_id": entry.content_id,
             "entry_type": 1
             if (
                 not recursive

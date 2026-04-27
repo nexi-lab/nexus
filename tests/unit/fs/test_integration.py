@@ -336,7 +336,7 @@ class TestEditOperations:
     def test_edit_etag_concurrency(self, slim_fs: NexusFS):
         """Optimistic concurrency: edit with correct etag succeeds."""
         write_result = slim_fs.write("/local/etag.txt", b"version 1\n", context=LOCAL_CONTEXT)
-        etag = write_result["etag"]
+        etag = write_result["content_id"]
 
         result = slim_fs.edit(
             "/local/etag.txt",
@@ -352,7 +352,7 @@ class TestEditOperations:
     def test_edit_stale_etag_fails(self, slim_fs: NexusFS):
         """Optimistic concurrency: stale etag is rejected."""
         write_result = slim_fs.write("/local/stale.txt", b"version 1\n", context=LOCAL_CONTEXT)
-        old_etag = write_result["etag"]
+        old_etag = write_result["content_id"]
 
         # Overwrite to change the etag
         slim_fs.write("/local/stale.txt", b"version 2\n", context=LOCAL_CONTEXT)
@@ -449,7 +449,7 @@ class TestSQLiteMetastore:
         fm = FileMetadata(
             path="/test/file.txt",
             size=42,
-            etag="abc123",
+            content_id="abc123",
             mime_type="text/plain",
             created_at=datetime.now(UTC),
             modified_at=datetime.now(UTC),

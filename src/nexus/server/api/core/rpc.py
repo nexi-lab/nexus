@@ -225,8 +225,8 @@ def get_cache_headers(method: str, result: Any) -> dict[str, str]:
             headers["ETag"] = f'"{etag}"'
             headers["Cache-Control"] = "private, max-age=60"
         elif isinstance(result, dict):
-            if "etag" in result:
-                headers["ETag"] = f'"{result["etag"]}"'
+            if "content_id" in result:
+                headers["ETag"] = f'"{result["content_id"]}"'
             elif "content" in result and isinstance(result["content"], bytes):
                 etag = hash_content(result["content"])
                 headers["ETag"] = f'"{etag}"'

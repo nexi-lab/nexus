@@ -2840,16 +2840,16 @@ class TestMultiZoneAtomicWrite:
         # Step 2 — both paths must report the same ETag (CAS dedup).
         s_corp = _grpc_call(grpc1, "sys_stat", {"path": corp_path}, api_key=api_key)
         s_family = _grpc_call(grpc1, "sys_stat", {"path": family_path}, api_key=api_key)
-        etag_corp_v1 = (s_corp.get("result", {}) or {}).get("etag") or (
+        etag_corp_v1 = (s_corp.get("result", {}) or {}).get("content_id") or (
             s_corp.get("result", {}) or {}
-        ).get("metadata", {}).get("etag")
-        etag_family_v1 = (s_family.get("result", {}) or {}).get("etag") or (
+        ).get("metadata", {}).get("content_id")
+        etag_family_v1 = (s_family.get("result", {}) or {}).get("content_id") or (
             s_family.get("result", {}) or {}
-        ).get("metadata", {}).get("etag")
+        ).get("metadata", {}).get("content_id")
 
         if not etag_corp_v1 or not etag_family_v1:
             pytest.skip(
-                f"sys_stat did not expose etag in this build: corp={s_corp}, family={s_family}"
+                f"sys_stat did not expose content_id in this build: corp={s_corp}, family={s_family}"
             )
         assert etag_corp_v1 == etag_family_v1, (
             f"CAS dedup broken: {etag_corp_v1} != {etag_family_v1}"
@@ -2863,12 +2863,12 @@ class TestMultiZoneAtomicWrite:
         # Step 4 — etag on /corp/eng diverges; etag on /family unchanged.
         s_corp2 = _grpc_call(grpc1, "sys_stat", {"path": corp_path}, api_key=api_key)
         s_family2 = _grpc_call(grpc1, "sys_stat", {"path": family_path}, api_key=api_key)
-        etag_corp_v2 = (s_corp2.get("result", {}) or {}).get("etag") or (
+        etag_corp_v2 = (s_corp2.get("result", {}) or {}).get("content_id") or (
             s_corp2.get("result", {}) or {}
-        ).get("metadata", {}).get("etag")
-        etag_family_v2 = (s_family2.get("result", {}) or {}).get("etag") or (
+        ).get("metadata", {}).get("content_id")
+        etag_family_v2 = (s_family2.get("result", {}) or {}).get("content_id") or (
             s_family2.get("result", {}) or {}
-        ).get("metadata", {}).get("etag")
+        ).get("metadata", {}).get("content_id")
 
         assert etag_corp_v2 != etag_corp_v1, f"Mutation did not change corp etag: {etag_corp_v1}"
         assert etag_family_v2 == etag_family_v1, (

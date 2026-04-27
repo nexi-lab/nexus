@@ -225,7 +225,7 @@ def test_write(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     data = resp.json()
     assert data["version"] == 1
     assert data["size"] == len("Hello E2E!")
-    assert "etag" in data
+    assert "content_id" in data
 
 
 def test_read(base_url: str, client: httpx.Client, user_headers: dict) -> None:

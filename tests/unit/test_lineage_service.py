@@ -38,8 +38,18 @@ class TestRecordLineage:
         svc = LineageService(db_session)
         lineage = LineageAspect.from_session_reads(
             reads=[
-                {"path": "/input/a.csv", "version": 3, "etag": "aaa", "access_type": "content"},
-                {"path": "/input/b.csv", "version": 7, "etag": "bbb", "access_type": "content"},
+                {
+                    "path": "/input/a.csv",
+                    "version": 3,
+                    "content_id": "aaa",
+                    "access_type": "content",
+                },
+                {
+                    "path": "/input/b.csv",
+                    "version": 7,
+                    "content_id": "bbb",
+                    "access_type": "content",
+                },
             ],
             agent_id="agent-1",
             agent_generation=1,
@@ -85,7 +95,7 @@ class TestRecordLineage:
 
         # First write: reads a.csv
         lineage1 = LineageAspect.from_session_reads(
-            reads=[{"path": "/a.csv", "version": 1, "etag": "e1"}],
+            reads=[{"path": "/a.csv", "version": 1, "content_id": "e1"}],
             agent_id="agent-1",
         )
         svc.record_lineage(entity_urn=urn, lineage=lineage1, zone_id=ROOT_ZONE_ID)
@@ -94,7 +104,7 @@ class TestRecordLineage:
 
         # Second write: reads b.csv instead
         lineage2 = LineageAspect.from_session_reads(
-            reads=[{"path": "/b.csv", "version": 2, "etag": "e2"}],
+            reads=[{"path": "/b.csv", "version": 2, "content_id": "e2"}],
             agent_id="agent-1",
         )
         svc.record_lineage(entity_urn=urn, lineage=lineage2, zone_id=ROOT_ZONE_ID)
@@ -116,7 +126,9 @@ class TestGetLineage:
     def test_get_returns_full_payload(self, db_session: Session) -> None:
         svc = LineageService(db_session)
         lineage = LineageAspect(
-            upstream=[{"path": "/in.txt", "version": 1, "etag": "e1", "access_type": "content"}],
+            upstream=[
+                {"path": "/in.txt", "version": 1, "content_id": "e1", "access_type": "content"}
+            ],
             agent_id="agent-x",
             agent_generation=5,
             operation="write_batch",
@@ -144,7 +156,7 @@ class TestFindDownstream:
         svc = LineageService(db_session)
         for i in range(3):
             lineage = LineageAspect.from_session_reads(
-                reads=[{"path": "/shared/config.yaml", "version": 1, "etag": "cfg"}],
+                reads=[{"path": "/shared/config.yaml", "version": 1, "content_id": "cfg"}],
                 agent_id=f"agent-{i}",
             )
             svc.record_lineage(
@@ -168,7 +180,7 @@ class TestFindDownstream:
         svc = LineageService(db_session)
         for zone in ["zone-a", "zone-b"]:
             lineage = LineageAspect.from_session_reads(
-                reads=[{"path": "/shared.txt", "version": 1, "etag": "e1"}],
+                reads=[{"path": "/shared.txt", "version": 1, "content_id": "e1"}],
                 agent_id="agent-1",
             )
             svc.record_lineage(
@@ -187,7 +199,7 @@ class TestFindDownstream:
         svc = LineageService(db_session)
         for i in range(10):
             lineage = LineageAspect.from_session_reads(
-                reads=[{"path": "/popular.txt", "version": 1, "etag": "e1"}],
+                reads=[{"path": "/popular.txt", "version": 1, "content_id": "e1"}],
                 agent_id=f"agent-{i}",
             )
             svc.record_lineage(
@@ -214,7 +226,9 @@ class TestStalenessDetection:
     ) -> None:
         svc = LineageService(db_session)
         lineage = LineageAspect.from_session_reads(
-            reads=[{"path": upstream_path, "version": upstream_version, "etag": upstream_etag}],
+            reads=[
+                {"path": upstream_path, "version": upstream_version, "content_id": upstream_etag}
+            ],
             agent_id="agent-test",
         )
         svc.record_lineage(
@@ -270,7 +284,7 @@ class TestStalenessDetection:
         svc = LineageService(db_session)
         # Output A read input at v5
         lineage_a = LineageAspect.from_session_reads(
-            reads=[{"path": "/in.csv", "version": 5, "etag": "e5"}],
+            reads=[{"path": "/in.csv", "version": 5, "content_id": "e5"}],
             agent_id="agent-a",
         )
         svc.record_lineage(
@@ -279,7 +293,7 @@ class TestStalenessDetection:
 
         # Output B read input at v7 (already up to date)
         lineage_b = LineageAspect.from_session_reads(
-            reads=[{"path": "/in.csv", "version": 7, "etag": "e7"}],
+            reads=[{"path": "/in.csv", "version": 7, "content_id": "e7"}],
             agent_id="agent-b",
         )
         svc.record_lineage(
@@ -305,7 +319,7 @@ class TestDeleteLineage:
     def test_delete_removes_aspect_and_reverse_index(self, db_session: Session) -> None:
         svc = LineageService(db_session)
         lineage = LineageAspect.from_session_reads(
-            reads=[{"path": "/in.txt", "version": 1, "etag": "e1"}],
+            reads=[{"path": "/in.txt", "version": 1, "content_id": "e1"}],
             agent_id="agent-1",
         )
         svc.record_lineage(
@@ -342,7 +356,7 @@ class TestAtomicity:
 
         # Record successful lineage first
         lineage = LineageAspect.from_session_reads(
-            reads=[{"path": "/good.txt", "version": 1, "etag": "e1"}],
+            reads=[{"path": "/good.txt", "version": 1, "content_id": "e1"}],
             agent_id="agent-1",
         )
         svc.record_lineage(

@@ -155,13 +155,15 @@ class WorkspaceManager:
             file_entries: list[tuple[str, str, int, str | None]] = []
 
             for file_meta in files:
-                # Skip directories (no content) and files without etag
-                if file_meta.mime_type == "directory" or not file_meta.etag:
+                # Skip directories (no content) and files without content_id
+                if file_meta.mime_type == "directory" or not file_meta.content_id:
                     continue
 
                 # Relative path within workspace
                 rel_path = file_meta.path[len(workspace_prefix) :]
-                file_entries.append((rel_path, file_meta.etag, file_meta.size, file_meta.mime_type))
+                file_entries.append(
+                    (rel_path, file_meta.content_id, file_meta.size, file_meta.mime_type)
+                )
 
             # Build manifest (handles sorting and deterministic JSON)
             manifest = WorkspaceManifest.from_file_list(file_entries)
@@ -282,7 +284,7 @@ class WorkspaceManager:
             current_paths = {
                 f.path[len(workspace_prefix) :]
                 for f in current_files
-                if f.etag  # Only files with content
+                if f.content_id  # Only files with content
             }
 
             # Delete files not in snapshot
@@ -309,7 +311,7 @@ class WorkspaceManager:
 
                 # Check if file exists with same content
                 existing = self.metadata.get(full_path)
-                if existing and existing.etag == entry.content_hash:
+                if existing and existing.content_id == entry.content_hash:
                     continue  # Already up to date
 
                 # Create metadata entry pointing to existing CAS content
@@ -317,7 +319,7 @@ class WorkspaceManager:
                 file_meta = FileMetadata(
                     path=full_path,
                     size=entry.size,
-                    etag=entry.content_hash,
+                    content_id=entry.content_hash,
                     mime_type=entry.mime_type,
                     modified_at=datetime.now(UTC),
                     version=1,  # Will be updated by metadata store  # Track who restored this version

@@ -643,7 +643,7 @@ class ChunkedUploadService:
                 metadata = FileMetadata(
                     path=session.target_path,
                     size=len(content),
-                    etag=content_hash,
+                    content_id=content_hash,
                 )
                 await asyncio.to_thread(self._metadata_store.put, metadata)
 

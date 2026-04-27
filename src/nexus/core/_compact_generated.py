@@ -70,7 +70,7 @@ class CompactFileMetadata:
 
     path_id: int
     size: int
-    etag_id: int
+    content_id_intern: int
     mime_type_id: int
     created_at: str | None
     modified_at: str | None
@@ -87,7 +87,7 @@ class CompactFileMetadata:
         return cls(
             path_id=_intern(m.path),
             size=m.size,
-            etag_id=_intern(m.etag),
+            content_id_intern=_intern(m.content_id),
             mime_type_id=_intern(m.mime_type),
             created_at=m.created_at.isoformat() if m.created_at else None,
             modified_at=m.modified_at.isoformat() if m.modified_at else None,
@@ -106,7 +106,7 @@ class CompactFileMetadata:
         return FileMetadata(
             path=_resolve_required(self.path_id),
             size=self.size,
-            etag=_resolve(self.etag_id),
+            content_id=_resolve(self.content_id_intern),
             mime_type=_resolve(self.mime_type_id),
             created_at=datetime.fromisoformat(self.created_at) if self.created_at else None,
             modified_at=datetime.fromisoformat(self.modified_at) if self.modified_at else None,

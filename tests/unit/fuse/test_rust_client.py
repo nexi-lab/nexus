@@ -100,7 +100,7 @@ class TestDataClasses:
 
     def test_file_metadata_defaults(self) -> None:
         meta = FileMetadata(size=0, is_directory=True)
-        assert meta.etag is None
+        assert meta.content_id is None
         assert meta.modified_at is None
 
 
@@ -170,12 +170,12 @@ class TestList:
 class TestStat:
     def test_stat_returns_metadata(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response(
-            {"size": 100, "is_directory": False, "etag": "abc", "modified_at": "2024-01-01"}
+            {"size": 100, "is_directory": False, "content_id": "abc", "modified_at": "2024-01-01"}
         )
         meta = mock_client.stat("/test.txt")
         assert meta.size == 100
         assert meta.is_directory is False
-        assert meta.etag == "abc"
+        assert meta.content_id == "abc"
         assert meta.modified_at == "2024-01-01"
 
 

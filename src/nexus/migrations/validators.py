@@ -189,7 +189,7 @@ class IntegrityValidator:
             for file_info in files_to_check:
                 if isinstance(file_info, dict):
                     path = file_info.get("path", "")
-                    stored_hash = file_info.get("etag") or file_info.get("content_hash")
+                    stored_hash = file_info.get("content_id") or file_info.get("content_hash")
                 else:
                     continue  # Skip if no details
 
@@ -254,7 +254,7 @@ class IntegrityValidator:
 
             for file_info in files:
                 if isinstance(file_info, dict):
-                    content_hash = file_info.get("etag") or file_info.get("content_hash")
+                    content_hash = file_info.get("content_id") or file_info.get("content_hash")
                     if content_hash:
                         referenced_hashes.add(content_hash)
 

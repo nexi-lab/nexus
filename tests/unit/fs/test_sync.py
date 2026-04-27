@@ -56,12 +56,12 @@ class TestNoEventLoop:
         kernel.sys_read.assert_called_once_with("/s3/bucket/file.txt", context=LOCAL_CONTEXT)
 
     def test_write_returns_metadata(self) -> None:
-        kernel = _make_mock_kernel(write={"etag": "abc123"})
+        kernel = _make_mock_kernel(write={"content_id": "abc123"})
         sync_fs = SyncNexusFS(kernel)
 
         result = sync_fs.write("/s3/bucket/out.bin", b"data")
 
-        assert result == {"etag": "abc123"}
+        assert result == {"content_id": "abc123"}
         kernel.write.assert_called_once_with("/s3/bucket/out.bin", b"data", context=LOCAL_CONTEXT)
 
     def test_ls_passes_detail_kwarg(self) -> None:
@@ -118,12 +118,12 @@ class TestNoEventLoop:
         assert sync_fs.exists("/s3/bucket/file.txt") is True
 
     def test_copy(self) -> None:
-        kernel = _make_mock_kernel(sys_copy={"etag": "new"})
+        kernel = _make_mock_kernel(sys_copy={"content_id": "new"})
         sync_fs = SyncNexusFS(kernel)
 
         result = sync_fs.copy("/src", "/dst")
 
-        assert result == {"etag": "new"}
+        assert result == {"content_id": "new"}
         kernel.sys_copy.assert_called_once_with("/src", "/dst", context=LOCAL_CONTEXT)
 
     def test_close_delegates_via_helper(self) -> None:
@@ -162,7 +162,7 @@ class TestExistingEventLoop:
 
     @pytest.mark.anyio
     async def test_write_from_worker_thread(self) -> None:
-        kernel = _make_mock_kernel(write={"etag": "jup"})
+        kernel = _make_mock_kernel(write={"content_id": "jup"})
         sync_fs = SyncNexusFS(kernel)
 
         def _do_write() -> dict:
@@ -170,7 +170,7 @@ class TestExistingEventLoop:
 
         result = await anyio.to_thread.run_sync(_do_write)
 
-        assert result == {"etag": "jup"}
+        assert result == {"content_id": "jup"}
 
 
 # ---------------------------------------------------------------------------

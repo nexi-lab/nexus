@@ -45,7 +45,7 @@ class _ReadEntry:
 
     path: str
     version: int
-    etag: str
+    content_id: str
     access_type: str
     timestamp: float
 
@@ -76,7 +76,7 @@ class SessionReadAccumulator:
 
     Usage (simple — no scopes, backward compat):
         >>> acc = SessionReadAccumulator()
-        >>> acc.record_read("agent-1", 1, "/data/input.csv", version=5, etag="abc")
+        >>> acc.record_read("agent-1", 1, "/data/input.csv", version=5, content_id="abc")
         >>> reads = acc.consume("agent-1", 1)
         >>> len(reads)
         1
@@ -84,9 +84,9 @@ class SessionReadAccumulator:
     Usage (scoped — per-task isolation):
         >>> acc = SessionReadAccumulator()
         >>> acc.begin_scope("agent-1", 1, "task-A")
-        >>> acc.record_read("agent-1", 1, "/data/a.csv", version=1, etag="ea")
+        >>> acc.record_read("agent-1", 1, "/data/a.csv", version=1, content_id="ea")
         >>> acc.begin_scope("agent-1", 1, "task-B")
-        >>> acc.record_read("agent-1", 1, "/data/b.csv", version=2, etag="eb")
+        >>> acc.record_read("agent-1", 1, "/data/b.csv", version=2, content_id="eb")
         >>> reads_a = acc.consume("agent-1", 1, scope_id="task-A")
         >>> reads_b = acc.consume("agent-1", 1, scope_id="task-B")
         >>> len(reads_a), len(reads_b)
@@ -187,7 +187,7 @@ class SessionReadAccumulator:
         path: str,
         *,
         version: int = 0,
-        etag: str = "",
+        content_id: str = "",
         access_type: str = "content",
         scope_id: str | None = None,
     ) -> bool:
@@ -198,7 +198,7 @@ class SessionReadAccumulator:
             agent_generation: Session generation counter.
             path: Path of the resource read.
             version: Version of the resource at read time.
-            etag: Content hash at read time.
+            content_id: Content hash at read time.
             access_type: Type of access (content, metadata, list, exists).
             scope_id: Explicit scope to record into (overrides active scope).
 
@@ -230,7 +230,7 @@ class SessionReadAccumulator:
                 _ReadEntry(
                     path=path,
                     version=version,
-                    etag=etag,
+                    content_id=content_id,
                     access_type=access_type,
                     timestamp=time.time(),
                 )
@@ -253,7 +253,7 @@ class SessionReadAccumulator:
             scope_id: Scope to consume. If None, consumes the active scope.
 
         Returns:
-            List of read dicts with path, version, etag, access_type.
+            List of read dicts with path, version, content_id, access_type.
             Empty list if scope has no reads or doesn't exist.
         """
         key: SessionKey = (agent_id, agent_generation)
@@ -273,7 +273,7 @@ class SessionReadAccumulator:
                 {
                     "path": e.path,
                     "version": e.version,
-                    "etag": e.etag,
+                    "content_id": e.content_id,
                     "access_type": e.access_type,
                 }
                 for e in entries

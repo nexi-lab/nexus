@@ -66,7 +66,7 @@ def _sync_to_rust(kernel: Any, meta: FileMetadata) -> None:
         meta.size,
         meta.entry_type,
         meta.version,
-        meta.etag,
+        meta.content_id,
         meta.zone_id,
         meta.mime_type,
         meta.last_writer_address,
@@ -85,7 +85,7 @@ class MetastoreABC(ABC):
     that eliminates repeated deserialization overhead.
 
     The Rust DashMap (accessed via ``_kernel.dcache_*``) mirrors the Python
-    dict for hot-path fields only (size, etag, version, entry_type, zone_id,
+    dict for hot-path fields only (size, content_id, version, entry_type, zone_id,
     mime_type, last_writer_address).  It is dual-written on every mutation
     and consumed by Kernel (#1817) for single-FFI sys_read/sys_write.
 
@@ -240,7 +240,7 @@ class MetastoreABC(ABC):
         result: dict[str, str | None] = {}
         for path in paths:
             metadata = self.get(path)
-            result[path] = metadata.etag if metadata else None
+            result[path] = metadata.content_id if metadata else None
         return result
 
     # ── Observability ─────────────────────────────────────────────────

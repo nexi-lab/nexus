@@ -49,14 +49,14 @@ def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreWriteObserver:
 def _make_metadata(
     path: str = "/test.txt",
     *,
-    etag: str = "abc123",
+    content_id: str = "abc123",
     size: int = 100,
     version: int = 1,
 ) -> FileMetadata:
     return FileMetadata(
         path=path,
         size=size,
-        etag=etag,
+        content_id=content_id,
         mime_type="text/plain",
         created_at=datetime.now(UTC),
         modified_at=datetime.now(UTC),
@@ -77,7 +77,7 @@ class TestTransactionalOutboxIntegration:
     ) -> None:
         """Write via syncer -> start worker -> verify delivery."""
         # Step 1: Write file via syncer (transactional)
-        metadata = _make_metadata("/integration.txt", etag="ihash")
+        metadata = _make_metadata("/integration.txt", content_id="ihash")
         syncer.on_write(metadata, is_new=True, path="/integration.txt", zone_id=ROOT_ZONE_ID)
 
         # Verify: delivered=FALSE in operation_log
@@ -130,10 +130,10 @@ class TestTransactionalOutboxIntegration:
     ) -> None:
         """Multiple writes + delete -> all delivered in created_at order."""
         # Create multiple operations
-        m1 = _make_metadata("/a.txt", etag="h1")
+        m1 = _make_metadata("/a.txt", content_id="h1")
         syncer.on_write(m1, is_new=True, path="/a.txt", zone_id=ROOT_ZONE_ID)
 
-        m2 = _make_metadata("/b.txt", etag="h2")
+        m2 = _make_metadata("/b.txt", content_id="h2")
         syncer.on_write(m2, is_new=True, path="/b.txt", zone_id=ROOT_ZONE_ID)
 
         syncer.on_delete(path="/a.txt", zone_id=ROOT_ZONE_ID)
@@ -190,7 +190,7 @@ class TestTransactionalOutboxIntegration:
     ) -> None:
         """Simulate crash: dispatch fails -> restart -> events retried."""
         # Write a file
-        m = _make_metadata("/crash.txt", etag="crash")
+        m = _make_metadata("/crash.txt", content_id="crash")
         syncer.on_write(m, is_new=True, path="/crash.txt", zone_id=ROOT_ZONE_ID)
 
         # First delivery attempt fails (simulating crash mid-dispatch)
@@ -241,7 +241,7 @@ class TestTransactionalOutboxIntegration:
 
         try:
             # Write file while worker is running
-            m = _make_metadata("/bg.txt", etag="bghash")
+            m = _make_metadata("/bg.txt", content_id="bghash")
             syncer.on_write(m, is_new=True, path="/bg.txt", zone_id=ROOT_ZONE_ID)
 
             # Signal the worker
@@ -287,7 +287,7 @@ class TestTransactionalOutboxIntegration:
 
         try:
             # Write file and signal
-            m = _make_metadata("/signal-bg.txt", etag="sighash")
+            m = _make_metadata("/signal-bg.txt", content_id="sighash")
             syncer.on_write(m, is_new=True, path="/signal-bg.txt", zone_id=ROOT_ZONE_ID)
             signal.set()
 

@@ -29,7 +29,7 @@ class OperationState:
     """Snapshot of an operation's state for conflict comparison."""
 
     vector_clock: VectorClock
-    etag: str | None = None
+    content_id: str | None = None
     timestamp: float = 0.0
 
 
@@ -67,7 +67,7 @@ class ConflictDetector:
 
         Resolution strategy:
         1. If vector clocks show causal ordering → no conflict
-        2. If etags match → no conflict (same content)
+        2. If content_ids match → no conflict (same content)
         3. If clocks are concurrent → LWW by timestamp
         4. If timestamps are equal → true conflict (manual resolution needed)
         """
@@ -97,13 +97,17 @@ class ConflictDetector:
                 reason="edge happened-after cloud",
             )
 
-        # CONCURRENT — check etags first
-        if edge.etag is not None and cloud.etag is not None and edge.etag == cloud.etag:
+        # CONCURRENT — check content_ids first
+        if (
+            edge.content_id is not None
+            and cloud.content_id is not None
+            and edge.content_id == cloud.content_id
+        ):
             return ConflictResult(
                 outcome=ConflictOutcome.NO_CONFLICT,
                 edge_state=edge,
                 cloud_state=cloud,
-                reason="concurrent clocks but identical etags",
+                reason="concurrent clocks but identical content_ids",
             )
 
         # CONCURRENT — fall back to LWW by timestamp

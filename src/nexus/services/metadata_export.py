@@ -101,7 +101,7 @@ class MetadataExportService:
                 metadata_dict: dict[str, Any] = {
                     "path": file_meta.path,
                     "size": file_meta.size,
-                    "etag": file_meta.etag,
+                    "content_id": file_meta.content_id,
                     "mime_type": file_meta.mime_type,
                     "created_at": (
                         file_meta.created_at.isoformat() if file_meta.created_at else None
@@ -182,7 +182,7 @@ class MetadataExportService:
                         modified_at = datetime.fromisoformat(metadata_dict["modified_at"])
 
                     existing = self._metadata.get(path)
-                    imported_etag = metadata_dict.get("etag")
+                    imported_etag = metadata_dict.get("content_id")
 
                     if existing:
                         self._handle_collision(
@@ -227,7 +227,7 @@ class MetadataExportService:
         modified_at: datetime | None,
     ) -> None:
         """Handle import collision with existing file."""
-        existing_etag = existing.etag
+        existing_etag = existing.content_id
         is_same_content = existing_etag == imported_etag
 
         if is_same_content:
@@ -238,7 +238,7 @@ class MetadataExportService:
             file_meta = FileMetadata(
                 path=path,
                 size=metadata_dict["size"],
-                etag=imported_etag,
+                content_id=imported_etag,
                 mime_type=metadata_dict.get("mime_type"),
                 created_at=created_at or existing.created_at,
                 modified_at=modified_at or existing.modified_at,
@@ -254,8 +254,8 @@ class MetadataExportService:
             result.collisions.append(
                 CollisionDetail(
                     path=path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_etag,
+                    imported_content_id=imported_etag,
                     resolution="skip",
                     message="Skipped: existing file has different content",
                 )
@@ -314,8 +314,8 @@ class MetadataExportService:
             result.collisions.append(
                 CollisionDetail(
                     path=path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_etag,
+                    imported_content_id=imported_etag,
                     resolution="overwrite",
                     message="Would overwrite with imported content",
                 )
@@ -325,7 +325,7 @@ class MetadataExportService:
         file_meta = FileMetadata(
             path=path,
             size=metadata_dict["size"],
-            etag=imported_etag,
+            content_id=imported_etag,
             mime_type=metadata_dict.get("mime_type"),
             created_at=created_at or existing.created_at,
             modified_at=modified_at,
@@ -337,8 +337,8 @@ class MetadataExportService:
         result.collisions.append(
             CollisionDetail(
                 path=path,
-                existing_etag=existing_etag,
-                imported_etag=imported_etag,
+                existing_content_id=existing_etag,
+                imported_content_id=imported_etag,
                 resolution="overwrite",
                 message="Overwrote with imported content",
             )
@@ -365,8 +365,8 @@ class MetadataExportService:
             result.collisions.append(
                 CollisionDetail(
                     path=original_path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_etag,
+                    imported_content_id=imported_etag,
                     resolution="remap",
                     message=f"Would remap to: {remapped_path}",
                 )
@@ -376,7 +376,7 @@ class MetadataExportService:
         file_meta = FileMetadata(
             path=remapped_path,
             size=metadata_dict["size"],
-            etag=imported_etag,
+            content_id=imported_etag,
             mime_type=metadata_dict.get("mime_type"),
             created_at=created_at,
             modified_at=modified_at,
@@ -388,8 +388,8 @@ class MetadataExportService:
         result.collisions.append(
             CollisionDetail(
                 path=original_path,
-                existing_etag=existing_etag,
-                imported_etag=imported_etag,
+                existing_content_id=existing_etag,
+                imported_content_id=imported_etag,
                 resolution="remap",
                 message=f"Remapped to: {remapped_path}",
             )
@@ -421,8 +421,8 @@ class MetadataExportService:
                 result.collisions.append(
                     CollisionDetail(
                         path=path,
-                        existing_etag=existing_etag,
-                        imported_etag=imported_etag,
+                        existing_content_id=existing_etag,
+                        imported_content_id=imported_etag,
                         resolution="auto_overwrite",
                         message=f"Would overwrite: imported is newer ({imported_time} > {existing_time})",
                     )
@@ -432,7 +432,7 @@ class MetadataExportService:
             file_meta = FileMetadata(
                 path=path,
                 size=metadata_dict["size"],
-                etag=imported_etag,
+                content_id=imported_etag,
                 mime_type=metadata_dict.get("mime_type"),
                 created_at=created_at or existing.created_at,
                 modified_at=modified_at,
@@ -444,8 +444,8 @@ class MetadataExportService:
             result.collisions.append(
                 CollisionDetail(
                     path=path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_etag,
+                    imported_content_id=imported_etag,
                     resolution="auto_overwrite",
                     message=f"Overwrote: imported is newer ({imported_time} > {existing_time})",
                 )
@@ -455,8 +455,8 @@ class MetadataExportService:
             result.collisions.append(
                 CollisionDetail(
                     path=path,
-                    existing_etag=existing_etag,
-                    imported_etag=imported_etag,
+                    existing_content_id=existing_etag,
+                    imported_content_id=imported_etag,
                     resolution="auto_skip",
                     message="Skipped: existing is newer or equal",
                 )
@@ -480,7 +480,7 @@ class MetadataExportService:
         file_meta = FileMetadata(
             path=path,
             size=metadata_dict["size"],
-            etag=imported_etag,
+            content_id=imported_etag,
             mime_type=metadata_dict.get("mime_type"),
             created_at=created_at,
             modified_at=modified_at,

@@ -18,12 +18,12 @@ class TestConflictDetectorNoConflict:
         detector = ConflictDetector(node_id="test-edge")
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 1, "cloud": 2}),
-            etag="abc123",
+            content_id="abc123",
             timestamp=100.0,
         )
         cloud = OperationState(
             vector_clock=VectorClock(counters={"edge": 1, "cloud": 2}),
-            etag="abc123",
+            content_id="abc123",
             timestamp=100.0,
         )
         result = detector.detect(edge, cloud)
@@ -35,17 +35,17 @@ class TestConflictDetectorNoConflict:
         detector = ConflictDetector()
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 2, "cloud": 1}),
-            etag="same-hash",
+            content_id="same-hash",
             timestamp=100.0,
         )
         cloud = OperationState(
             vector_clock=VectorClock(counters={"edge": 1, "cloud": 2}),
-            etag="same-hash",
+            content_id="same-hash",
             timestamp=200.0,
         )
         result = detector.detect(edge, cloud)
         assert result.outcome is ConflictOutcome.NO_CONFLICT
-        assert "etag" in result.reason
+        assert "content_id" in result.reason
 
 
 class TestConflictDetectorEdgeWins:
@@ -71,12 +71,12 @@ class TestConflictDetectorEdgeWins:
         detector = ConflictDetector()
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 2, "cloud": 1}),
-            etag="edge-hash",
+            content_id="edge-hash",
             timestamp=200.0,
         )
         cloud = OperationState(
             vector_clock=VectorClock(counters={"edge": 1, "cloud": 2}),
-            etag="cloud-hash",
+            content_id="cloud-hash",
             timestamp=100.0,
         )
         result = detector.detect(edge, cloud)
@@ -107,12 +107,12 @@ class TestConflictDetectorCloudWins:
         detector = ConflictDetector()
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 2, "cloud": 1}),
-            etag="edge-hash",
+            content_id="edge-hash",
             timestamp=100.0,
         )
         cloud = OperationState(
             vector_clock=VectorClock(counters={"edge": 1, "cloud": 2}),
-            etag="cloud-hash",
+            content_id="cloud-hash",
             timestamp=200.0,
         )
         result = detector.detect(edge, cloud)
@@ -128,12 +128,12 @@ class TestConflictDetectorTrueConflict:
         detector = ConflictDetector()
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 2, "cloud": 1}),
-            etag="edge-hash",
+            content_id="edge-hash",
             timestamp=100.0,
         )
         cloud = OperationState(
             vector_clock=VectorClock(counters={"edge": 1, "cloud": 2}),
-            etag="cloud-hash",
+            content_id="cloud-hash",
             timestamp=100.0,
         )
         result = detector.detect(edge, cloud)
@@ -145,12 +145,12 @@ class TestConflictDetectorTrueConflict:
         detector = ConflictDetector()
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 2}),
-            etag="e",
+            content_id="e",
             timestamp=100.0,
         )
         cloud = OperationState(
             vector_clock=VectorClock(counters={"cloud": 2}),
-            etag="c",
+            content_id="c",
             timestamp=100.0,
         )
         result = detector.detect(edge, cloud)
@@ -165,12 +165,12 @@ class TestConflictDetectorNoneEtag:
         detector = ConflictDetector()
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 2, "cloud": 1}),
-            etag=None,
+            content_id=None,
             timestamp=200.0,
         )
         cloud = OperationState(
             vector_clock=VectorClock(counters={"edge": 1, "cloud": 2}),
-            etag=None,
+            content_id=None,
             timestamp=100.0,
         )
         result = detector.detect(edge, cloud)

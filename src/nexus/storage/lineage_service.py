@@ -91,7 +91,7 @@ class LineageService:
                     downstream_urn=entity_urn,
                     zone_id=zone_id or ROOT_ZONE_ID,
                     upstream_version=upstream.get("version", 0),
-                    upstream_etag=upstream.get("etag", ""),
+                    upstream_etag=upstream.get("content_id", ""),
                     access_type=upstream.get("access_type", "content"),
                     agent_id=lineage.agent_id or "",
                     downstream_path=downstream_path,
@@ -170,7 +170,7 @@ class LineageService:
         A downstream is stale if its recorded upstream_version != current_version
         OR its recorded upstream_etag != current_etag.
 
-        Uses denormalized version/etag in the reverse index for a single query.
+        Uses denormalized version/content_id in the reverse index for a single query.
 
         Args:
             upstream_path: Path of the changed upstream file.

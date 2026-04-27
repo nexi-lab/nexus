@@ -33,8 +33,26 @@ message FileMetadata {
   // File size in bytes.
   int64 size = 4;
 
-  // Content hash / ETag for CAS deduplication.
-  string etag = 5;
+  // Backend-defined opaque content identifier (store-and-forward).
+  //
+  // Whatever string the local backend's ``write_content`` returned at write
+  // time — the kernel stores it verbatim and forwards it back to the same
+  // backend on read. Each backend interprets the string in its own way:
+  //
+  //   - CAS backends (CasLocalBackend, S3 with CAS layout, ...) → SHA-256
+  //     hex digest of the bytes.
+  //   - PAS backends (PathLocalBackend, S3 path-style, ...) → backend-local
+  //     path of the file.
+  //   - Connector backends (OpenAI, Slack, ...) → backend-specific resource
+  //     handle (chat ID, message ID, ...).
+  //
+  // Kernel + record store + RPC must NOT inspect, parse, or compare this
+  // field by content. It is opaque. Renaming from ``etag`` (R20.18.x →
+  // store-and-forward refactor): wire format unchanged (field number 5),
+  // but semantics are no longer "ETag/SHA" — record stores that need a
+  // hash for indexing must use the deprecated ``content_hash`` SQL column
+  // gated on what the backend actually wrote (CAS-only).
+  string content_id = 5;
 
   // MIME type of the file (e.g., "text/plain").
   string mime_type = 6;

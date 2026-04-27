@@ -337,7 +337,7 @@ def _make_mount_entry(
     return FileMetadata(
         path=path,
         size=0,
-        etag=empty_hash,
+        content_id=empty_hash,
         mime_type="inode/directory",
         created_at=now,
         modified_at=now,

@@ -157,7 +157,7 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     else:
         write_result = nexus_fs.write(params.path, content, context=context, offset=offset)
 
-    # write() returns dict with metadata (etag, version, modified_at, size).
+    # write() returns dict with metadata (content_id, version, modified_at, size).
     # Merge bytes_written into the response for backward compatibility.
     result: dict[str, Any] = {"bytes_written": len(content)}
     if isinstance(write_result, dict):

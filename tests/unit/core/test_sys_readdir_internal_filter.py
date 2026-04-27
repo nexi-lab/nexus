@@ -63,7 +63,7 @@ class TestIsInternalPath:
 class _FakeMeta:
     path: str
     size: int = 0
-    etag: str | None = None
+    content_id: str | None = None
     entry_type: int = 0
     zone_id: str | None = None
     owner_id: str | None = None

@@ -41,10 +41,10 @@ class FakeTransactionModel:
 
 
 class FakeMetadata:
-    """Minimal metadata stand-in with etag attribute."""
+    """Minimal metadata stand-in with content_id attribute."""
 
-    def __init__(self, etag: str | None = None) -> None:
-        self.etag = etag
+    def __init__(self, content_id: str | None = None) -> None:
+        self.content_id = content_id
 
 
 class FakeCASStore:
@@ -112,7 +112,7 @@ def _fake_metadata_factory(**kwargs: Any) -> Any:
     """Fake metadata factory that returns a simple object with the given attrs."""
     obj = type("FakeFileMetadata", (), kwargs)()
     obj.path = kwargs.get("path", "")
-    obj.etag = kwargs.get("etag", "")
+    obj.content_id = kwargs.get("content_id", "")
     return obj
 
 
@@ -201,7 +201,7 @@ class TestCommit:
         metadata_store: FakeMetadataStore,
     ) -> None:
         """Commit succeeds when no conflicts exist, releases CAS holds."""
-        metadata_store.data["/f.txt"] = FakeMetadata(etag="hash-new")
+        metadata_store.data["/f.txt"] = FakeMetadata(content_id="hash-new")
 
         txn = FakeTransactionModel(transaction_id="txn-c1", status="active", entry_count=1)
 
@@ -241,7 +241,7 @@ class TestCommit:
         metadata_store: FakeMetadataStore,
     ) -> None:
         """Commit raises TransactionConflictError when file was modified externally."""
-        metadata_store.data["/f.txt"] = FakeMetadata(etag="someone-elses-hash")
+        metadata_store.data["/f.txt"] = FakeMetadata(content_id="someone-elses-hash")
 
         txn = FakeTransactionModel(transaction_id="txn-c2", status="active")
         from nexus.contracts.protocols.snapshot import SnapshotEntry
@@ -400,7 +400,7 @@ class TestRollback:
         """Rollback of a new file (no original) deletes it from metadata."""
         from nexus.contracts.protocols.snapshot import SnapshotEntry
 
-        metadata_store.data["/new-file.txt"] = FakeMetadata(etag="new-hash")
+        metadata_store.data["/new-file.txt"] = FakeMetadata(content_id="new-hash")
 
         entry = SnapshotEntry(
             entry_id="e-rb3",

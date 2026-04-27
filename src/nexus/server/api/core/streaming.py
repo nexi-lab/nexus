@@ -55,7 +55,7 @@ async def stream_file(
         )
 
         meta = await to_thread_with_timeout(nexus_fs.stat, full_path, context=context)
-        content_hash = meta.get("etag") or meta.get("content_hash")
+        content_hash = meta.get("content_id") or meta.get("content_hash")
         if not content_hash:
             raise HTTPException(status_code=500, detail="File has no content hash")
 

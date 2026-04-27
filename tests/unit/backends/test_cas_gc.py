@@ -24,15 +24,15 @@ from nexus.backends.engines.cas_gc import CASGarbageCollector
 @dataclass
 class FakeMetaEntry:
     path: str
-    etag: str | None = None
+    content_id: str | None = None
 
 
 class FakeMetastore:
     def __init__(self, entries: list[FakeMetaEntry] | None = None):
         self._entries = entries or []
 
-    def add(self, path: str, etag: str) -> None:
-        self._entries.append(FakeMetaEntry(path=path, etag=etag))
+    def add(self, path: str, content_id: str) -> None:
+        self._entries.append(FakeMetaEntry(path=path, content_id=content_id))
 
     def list(
         self, prefix: str = "", recursive: bool = True, **kwargs: object

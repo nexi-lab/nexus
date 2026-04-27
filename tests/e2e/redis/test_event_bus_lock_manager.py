@@ -1032,7 +1032,7 @@ class TestDistributedSpecific:
 
     @pytest.mark.asyncio
     async def test_event_metadata_preserved(self, redis_client):
-        """Event metadata (size, etag, agent_id) preserved through pub/sub."""
+        """Event metadata (size, content_id, agent_id) preserved through pub/sub."""
         import uuid
 
         from nexus.services.event_bus.redis import RedisEventBus
@@ -1062,7 +1062,7 @@ class TestDistributedSpecific:
                 path="/meta/file.txt",
                 zone_id=zone_id,
                 size=12345,
-                etag="abc123hash",
+                content_id="abc123hash",
                 agent_id="agent-007",
             )
             await publisher.publish(event)
@@ -1070,7 +1070,7 @@ class TestDistributedSpecific:
             received = await wait_task
             assert received is not None
             assert received.size == 12345
-            assert received.etag == "abc123hash"
+            assert received.content_id == "abc123hash"
             assert received.agent_id == "agent-007"
 
         finally:

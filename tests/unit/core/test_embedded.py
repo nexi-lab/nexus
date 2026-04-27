@@ -111,7 +111,7 @@ def test_write_creates_metadata(embedded: NexusFS) -> None:
     assert meta.path == path
     assert meta.size == len(content)
     assert meta.version == 1
-    assert meta.etag is not None
+    assert meta.content_id is not None
 
 
 @pytest.mark.asyncio
@@ -362,13 +362,13 @@ def test_etag_changes_on_update(embedded: NexusFS) -> None:
     embedded.write(path, b"Content 1")
     meta1 = embedded.metadata.get(path)
     assert meta1 is not None
-    etag1 = meta1.etag
+    etag1 = meta1.content_id
 
     # Update content
     embedded.write(path, b"Content 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
-    etag2 = meta2.etag
+    etag2 = meta2.content_id
 
     # ETags should be different
     assert etag1 != etag2
@@ -390,7 +390,7 @@ def test_etag_same_for_same_content(embedded: NexusFS) -> None:
     meta2 = embedded.metadata.get(path2)
     assert meta1 is not None
     assert meta2 is not None
-    assert meta1.etag == meta2.etag
+    assert meta1.content_id == meta2.content_id
 
 
 @pytest.mark.asyncio
@@ -581,7 +581,7 @@ def test_list_with_details(embedded: NexusFS) -> None:
     # Check file1 — only path/size/etag are returned by sys_readdir
     file1 = next(f for f in files if f["path"] == "/file1.txt")
     assert file1["size"] == 5
-    assert file1["etag"] is not None
+    assert file1["content_id"] is not None
 
     # Check file2
     file2 = next(f for f in files if f["path"] == "/file2.txt")

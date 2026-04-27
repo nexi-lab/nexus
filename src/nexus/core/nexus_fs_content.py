@@ -184,7 +184,7 @@ class ContentMixin:
         Returns:
             Dict mapping path -> content (or None if skip_errors=True and read failed)
             If return_metadata=False: {path: bytes}
-            If return_metadata=True: {path: {content, etag, version, ...}}
+            If return_metadata=True: {path: {content, content_id, version, ...}}
 
         Performance:
             - Single RPC call instead of N calls
@@ -201,7 +201,7 @@ class ContentMixin:
             >>> # With metadata
             >>> results = nx.read_bulk(["/file1.txt"], return_metadata=True)
             >>> print(results["/file1.txt"]["content"])
-            >>> print(results["/file1.txt"]["etag"])
+            >>> print(results["/file1.txt"]["content_id"])
         """
 
         bulk_start = time.time()
@@ -221,7 +221,7 @@ class ContentMixin:
                         meta = self.metadata.get(vpath)
                         results[path] = {
                             "content": content,
-                            "etag": meta.etag if meta else None,
+                            "content_id": meta.content_id if meta else None,
                             "version": meta.version if meta else 0,
                             "modified_at": meta.modified_at if meta else None,
                             "size": len(content),
@@ -314,7 +314,7 @@ class ContentMixin:
                     meta = batch_meta.get(path)
                     results[path] = {
                         "content": bulk_content,
-                        "etag": meta.etag if meta else None,
+                        "content_id": meta.content_id if meta else None,
                         "version": meta.version if meta else 0,
                         "modified_at": meta.modified_at if meta else None,
                         "size": len(bulk_content),
@@ -512,7 +512,7 @@ class ContentMixin:
 
         Returns:
             Dict with metadata about the written file:
-                - etag: Content hash of the written content
+                - content_id: Content hash of the written content
                 - version: New version number
                 - modified_at: Modification timestamp
                 - size: File size in bytes
@@ -595,7 +595,7 @@ class ContentMixin:
                 _old_metadata = FileMetadata(
                     path=path,
                     size=result.old_size or 0,
-                    etag=result.old_etag,
+                    content_id=result.old_etag,
                     version=result.old_version or 1,
                     modified_at=_mod_at,
                 )
@@ -605,7 +605,7 @@ class ContentMixin:
             _meta_obj = FileMetadata(
                 path=path,
                 size=result.size,
-                etag=result.content_id,
+                content_id=result.content_id,
                 version=result.version,
                 zone_id=zone_id,
             )
@@ -662,7 +662,7 @@ class ContentMixin:
         if meta_dict:
             result.update(
                 {
-                    "etag": meta_dict.get("etag"),
+                    "content_id": meta_dict.get("content_id"),
                     "version": meta_dict.get("version"),
                     "modified_at": meta_dict.get("modified_at"),
                     "size": len(content),
@@ -709,7 +709,7 @@ class ContentMixin:
                 picks it up if the mount supports TTL bucketing.
 
         Returns:
-            Dict with metadata (etag, version, modified_at, size).
+            Dict with metadata (content_id, version, modified_at, size).
         """
 
         if isinstance(buf, str):
@@ -772,7 +772,7 @@ class ContentMixin:
                 metadata=FileMetadata(
                     path=path,
                     size=result.size,
-                    etag=result.content_id,
+                    content_id=result.content_id,
                     version=result.version,
                     zone_id=zone_id,
                 ),
@@ -782,7 +782,7 @@ class ContentMixin:
         )
 
         return {
-            "etag": _cid,
+            "content_id": _cid,
             "version": result.version,
             "modified_at": None,
             "size": result.size,
@@ -824,7 +824,7 @@ class ContentMixin:
 
         Returns:
             Dict with metadata about the written file:
-                - etag: Content hash of the new content
+                - content_id: Content hash of the new content
                 - version: New version number
                 - modified_at: Modification timestamp
                 - size: File size in bytes
@@ -890,14 +890,14 @@ class ContentMixin:
             path: Virtual path to append to
             content: Content to append as bytes or str (str will be UTF-8 encoded)
             context: Optional operation context for permission checks (uses default if not provided)
-            if_match: Optional etag for optimistic concurrency control.
-                     If provided, append only succeeds if current file etag matches this value.
+            if_match: Optional content_id for optimistic concurrency control.
+                     If provided, append only succeeds if current file content_id matches this value.
                      Prevents concurrent modification conflicts.
             force: If True, skip version check and append unconditionally (dangerous!)
 
         Returns:
             Dict with metadata about the written file:
-                - etag: Content hash (SHA-256) of the final content (after append)
+                - content_id: Content hash (SHA-256) of the final content (after append)
                 - version: New version number
                 - modified_at: Modification timestamp
                 - size: Final file size in bytes
@@ -907,7 +907,7 @@ class ContentMixin:
             BackendError: If append operation fails
             AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
-            ConflictError: If if_match is provided and doesn't match current etag
+            ConflictError: If if_match is provided and doesn't match current content_id
             NexusFileNotFoundError: If file doesn't exist during read (should not happen in normal flow)
 
         Examples:
@@ -923,7 +923,7 @@ class ContentMixin:
             >>> # Append with optimistic concurrency control
             >>> result = nx.read("/workspace/log.txt", return_metadata=True)
             >>> try:
-            ...     nx.append("/workspace/log.txt", "New entry\\n", if_match=result['etag'])
+            ...     nx.append("/workspace/log.txt", "New entry\\n", if_match=result['content_id'])
             ... except ConflictError:
             ...     print("File was modified by another process!")
 
@@ -946,17 +946,17 @@ class ContentMixin:
 
             existing_content = result["content"]
 
-            # If if_match is provided, verify it matches current etag
+            # If if_match is provided, verify it matches current content_id
             # (the write call will also check, but we check here to fail fast)
             if if_match is not None and not force:
-                current_etag = result.get("etag")
+                current_etag = result.get("content_id")
                 if current_etag != if_match:
                     from nexus.contracts.exceptions import ConflictError
 
                     raise ConflictError(
                         path=path,
                         expected_etag=if_match,
-                        current_etag=current_etag or "(no etag)",
+                        current_etag=current_etag or "(no content_id)",
                     )
         except Exception as e:
             # If file doesn't exist, treat as empty (will create new file)
@@ -1016,7 +1016,7 @@ class ContentMixin:
                          "allow_multiple": bool} - full control
                 - EditOperation: Direct EditOperation instance
             context: Optional operation context for permission checks
-            if_match: Optional etag for optimistic concurrency control.
+            if_match: Optional content_id for optimistic concurrency control.
                 If provided, edit fails if file changed since read.
             fuzzy_threshold: Similarity threshold (0.0-1.0) for fuzzy matching.
                 Default 0.85. Use 1.0 for exact matching only.
@@ -1028,7 +1028,7 @@ class ContentMixin:
                 - diff: str - Unified diff of changes
                 - matches: list[dict] - Info about each match (type, line, similarity)
                 - applied_count: int - Number of edits applied
-                - etag: str - New etag (if not preview)
+                - content_id: str - New content_id (if not preview)
                 - version: int - New version (if not preview)
                 - errors: list[str] - Error messages if any edits failed
 
@@ -1037,7 +1037,7 @@ class ContentMixin:
             InvalidPathError: If path is invalid
             AccessDeniedError: If access is denied
             PermissionError: If path is read-only
-            ConflictError: If if_match doesn't match current etag
+            ConflictError: If if_match doesn't match current content_id
 
         Examples:
             >>> # Simple search/replace
@@ -1052,7 +1052,7 @@ class ContentMixin:
             >>> result = nx.edit(
             ...     "/code/main.py",
             ...     [("old_text", "new_text")],
-            ...     if_match=content['etag']
+            ...     if_match=content['content_id']
             ... )
 
             >>> # Preview without writing
@@ -1075,14 +1075,14 @@ class ContentMixin:
         assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
         content_bytes: bytes = result["content"]
-        current_etag = result.get("etag")
+        current_etag = result.get("content_id")
 
-        # Check etag if provided (optimistic concurrency control)
+        # Check content_id if provided (optimistic concurrency control)
         if if_match is not None and current_etag != if_match:
             raise ConflictError(
                 path=path,
                 expected_etag=if_match,
-                current_etag=current_etag or "(no etag)",
+                current_etag=current_etag or "(no content_id)",
             )
 
         # Decode content to string for editing
@@ -1181,7 +1181,7 @@ class ContentMixin:
             "diff": edit_result.diff,
             "matches": matches_list,
             "applied_count": edit_result.applied_count,
-            "etag": write_result.get("etag"),
+            "content_id": write_result.get("content_id"),
             "version": write_result.get("version"),
             "size": write_result.get("size"),
             "modified_at": write_result.get("modified_at"),
@@ -1210,7 +1210,7 @@ class ContentMixin:
 
         Returns:
             List of metadata dicts for each file (in same order as input):
-                - etag: Content hash (SHA-256) of the written content
+                - content_id: Content hash (SHA-256) of the written content
                 - version: New version number
                 - modified_at: Modification timestamp
                 - size: File size in bytes
@@ -1277,7 +1277,7 @@ class ContentMixin:
             if r.hit:
                 results.append(
                     {
-                        "etag": r.content_id,
+                        "content_id": r.content_id,
                         "version": r.version,
                         "modified_at": now,
                         "size": r.size,
@@ -1287,7 +1287,7 @@ class ContentMixin:
                     FileMetadata(
                         path=path,
                         size=r.size,
-                        etag=r.content_id,
+                        content_id=r.content_id,
                         version=r.version,
                         zone_id=zone_id or ROOT_ZONE_ID,
                     )
@@ -1297,7 +1297,7 @@ class ContentMixin:
                 wr = self.sys_write(path, content, context=context)
                 results.append(
                     {
-                        "etag": wr.get("etag", ""),
+                        "content_id": wr.get("content_id", ""),
                         "version": wr.get("version", 1),
                         "modified_at": now,
                         "size": len(content),
@@ -1307,7 +1307,7 @@ class ContentMixin:
                     FileMetadata(
                         path=path,
                         size=len(content),
-                        etag=wr.get("etag", ""),
+                        content_id=wr.get("content_id", ""),
                         version=wr.get("version", 1),
                         zone_id=zone_id or ROOT_ZONE_ID,
                     )
@@ -1375,16 +1375,16 @@ class ContentMixin:
                 {
                     "path":        str,
                     "content":     bytes,
-                    "etag":        str | None,   # from actual read bytes (r.content_hash)
+                    "content_id":  str | None,   # from actual read bytes (r.content_hash)
                     "version":     int,           # from pre-read metadata snapshot
                     "modified_at": datetime | None,  # from pre-read metadata snapshot
                     "size":        int,
                 }
 
-            **Note on consistency**: ``etag`` reflects the actual bytes returned
+            **Note on consistency**: ``content_id`` reflects the actual bytes returned
             (authoritative). ``version`` and ``modified_at`` come from a metadata
             snapshot taken *before* the reads, so under concurrent writes they
-            may not match the returned content. Use ``etag`` for cache validation
+            may not match the returned content. Use ``content_id`` for cache validation
             or optimistic concurrency; do not rely on ``version``/``modified_at``
             being coherent with the content under concurrent updates.
 
@@ -1503,7 +1503,7 @@ class ContentMixin:
                         {
                             "path": path,
                             "content": content,
-                            "etag": meta.etag if meta else None,
+                            "content_id": meta.content_id if meta else None,
                             "version": meta.version if meta else 0,
                             "modified_at": meta.modified_at if meta else None,
                             "size": len(content),
@@ -1554,16 +1554,16 @@ class ContentMixin:
                 self._kernel.dispatch_post_hooks("read", _read_ctx)
                 content = _read_ctx.content or content
 
-            # Use r.content_hash as the primary etag — it reflects the actual bytes
+            # Use r.content_hash as the primary content_id — it reflects the actual bytes
             # returned by this read, not the pre-read metadata snapshot (which can be
-            # stale under concurrent writes).  Fall back to meta.etag only when the
+            # stale under concurrent writes).  Fall back to meta.content_id only when the
             # Rust result has no content_hash (older backends / degenerate path).
-            _etag = r.content_hash or (meta.etag if meta else None)
+            _etag = r.content_hash or (meta.content_id if meta else None)
             results.append(
                 {
                     "path": path,
                     "content": content,
-                    "etag": _etag,
+                    "content_id": _etag,
                     "version": meta.version if meta else 0,
                     "modified_at": meta.modified_at if meta else None,
                     "size": len(content),

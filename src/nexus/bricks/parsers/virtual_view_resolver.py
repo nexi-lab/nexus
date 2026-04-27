@@ -92,7 +92,7 @@ class VirtualViewResolver(VFSPathResolver):
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
 
         # Route and read original file content
-        if meta is None or meta.etag is None:
+        if meta is None or meta.content_id is None:
             raise NexusFileNotFoundError(original_path)
 
         # Read content via kernel syscall — sys_read_raw raises on missing path.

@@ -612,7 +612,7 @@ async def mount_connector(
                                     FileMetadata(
                                         path=dir_path,
                                         size=0,
-                                        etag=None,
+                                        content_id=None,
                                         created_at=datetime.now(UTC),
                                         modified_at=datetime.now(UTC),
                                         version=1,

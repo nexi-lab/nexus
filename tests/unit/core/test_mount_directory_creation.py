@@ -135,9 +135,9 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     # Find /personal in results
     personal_entry = next((e for e in root_list if e["path"] == "/personal"), None)
     assert personal_entry is not None, f"Expected /personal in {root_list}"
-    # sys_readdir(details=True) returns {"path", "size", "etag"}; verify keys
+    # sys_readdir(details=True) returns {"path", "size", "content_id"}; verify keys
     assert "size" in personal_entry
-    assert "etag" in personal_entry
+    assert "content_id" in personal_entry
     # Confirm the kernel recognises /personal as a directory
     assert nx.is_directory("/personal")
 
@@ -148,7 +148,7 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     alice_entry = next((e for e in personal_list if e["path"] == "/personal/alice"), None)
     assert alice_entry is not None, f"Expected /personal/alice in {personal_list}"
     assert "size" in alice_entry
-    assert "etag" in alice_entry
+    assert "content_id" in alice_entry
     # Confirm the kernel recognises /personal/alice as a directory
     assert nx.is_directory("/personal/alice")
 

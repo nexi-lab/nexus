@@ -45,9 +45,9 @@ class TestWriteBatchHappyPath:
     @pytest.mark.asyncio
     def test_write_batch_returns_etag(self, nx):
         results = nx.write_batch([("/files/a.txt", b"content")])
-        assert "etag" in results[0]
-        assert isinstance(results[0]["etag"], str)
-        assert len(results[0]["etag"]) > 0
+        assert "content_id" in results[0]
+        assert isinstance(results[0]["content_id"], str)
+        assert len(results[0]["content_id"]) > 0
 
     @pytest.mark.asyncio
     def test_write_batch_returns_version(self, nx):
@@ -70,7 +70,7 @@ class TestWriteBatchHappyPath:
                 ("/files/b.txt", content),
             ]
         )
-        assert results[0]["etag"] == results[1]["etag"]
+        assert results[0]["content_id"] == results[1]["content_id"]
 
 
 class TestWriteBatchEmptyInput:

@@ -30,7 +30,9 @@ class TestLineageAspectRegistration:
     def test_validate_payload_accepts_valid(self) -> None:
         registry = AspectRegistry.get()
         payload = {
-            "upstream": [{"path": "/a.txt", "version": 1, "etag": "abc", "access_type": "content"}],
+            "upstream": [
+                {"path": "/a.txt", "version": 1, "content_id": "abc", "access_type": "content"}
+            ],
             "agent_id": "agent-1",
             "operation": "write",
         }
@@ -56,7 +58,7 @@ class TestLineageAspectModel:
         assert aspect.truncated is False
 
     def test_construction_with_data(self) -> None:
-        upstream = [{"path": "/a.txt", "version": 1, "etag": "abc", "access_type": "content"}]
+        upstream = [{"path": "/a.txt", "version": 1, "content_id": "abc", "access_type": "content"}]
         aspect = LineageAspect(
             upstream=upstream,
             agent_id="agent-1",
@@ -73,7 +75,9 @@ class TestLineageAspectModel:
 
     def test_to_dict(self) -> None:
         aspect = LineageAspect(
-            upstream=[{"path": "/x.csv", "version": 2, "etag": "def", "access_type": "content"}],
+            upstream=[
+                {"path": "/x.csv", "version": 2, "content_id": "def", "access_type": "content"}
+            ],
             agent_id="agent-2",
             operation="write",
         )
@@ -85,7 +89,9 @@ class TestLineageAspectModel:
 
     def test_from_dict(self) -> None:
         data = {
-            "upstream": [{"path": "/a.txt", "version": 1, "etag": "abc", "access_type": "content"}],
+            "upstream": [
+                {"path": "/a.txt", "version": 1, "content_id": "abc", "access_type": "content"}
+            ],
             "agent_id": "agent-3",
             "operation": "write",
         }
@@ -95,7 +101,9 @@ class TestLineageAspectModel:
 
     def test_to_dict_roundtrip(self) -> None:
         original = LineageAspect(
-            upstream=[{"path": "/a.txt", "version": 5, "etag": "hash", "access_type": "metadata"}],
+            upstream=[
+                {"path": "/a.txt", "version": 5, "content_id": "hash", "access_type": "metadata"}
+            ],
             agent_id="roundtrip-agent",
             agent_generation=7,
             operation="copy",
@@ -116,8 +124,8 @@ class TestLineageAspectFromSessionReads:
 
     def test_basic_construction(self) -> None:
         reads = [
-            {"path": "/data/a.csv", "version": 3, "etag": "aaa", "access_type": "content"},
-            {"path": "/data/b.csv", "version": 7, "etag": "bbb", "access_type": "content"},
+            {"path": "/data/a.csv", "version": 3, "content_id": "aaa", "access_type": "content"},
+            {"path": "/data/b.csv", "version": 7, "content_id": "bbb", "access_type": "content"},
         ]
         aspect = LineageAspect.from_session_reads(
             reads=reads,
@@ -142,7 +150,12 @@ class TestLineageAspectFromSessionReads:
 
     def test_truncation_at_max_entries(self) -> None:
         reads = [
-            {"path": f"/file_{i}.txt", "version": i, "etag": f"e{i}", "access_type": "content"}
+            {
+                "path": f"/file_{i}.txt",
+                "version": i,
+                "content_id": f"e{i}",
+                "access_type": "content",
+            }
             for i in range(600)
         ]
         aspect = LineageAspect.from_session_reads(reads=reads, agent_id="agent-1")
@@ -150,10 +163,10 @@ class TestLineageAspectFromSessionReads:
         assert aspect.truncated is True
 
     def test_missing_optional_fields_in_reads(self) -> None:
-        reads = [{"path": "/a.txt"}]  # Missing version, etag, access_type
+        reads = [{"path": "/a.txt"}]  # Missing version, content_id, access_type
         aspect = LineageAspect.from_session_reads(reads=reads, agent_id="agent-1")
         assert aspect.upstream[0]["version"] == 0
-        assert aspect.upstream[0]["etag"] == ""
+        assert aspect.upstream[0]["content_id"] == ""
         assert aspect.upstream[0]["access_type"] == "content"
 
 
@@ -162,7 +175,7 @@ class TestLineageAspectFromExplicitDeclaration:
 
     def test_basic_construction(self) -> None:
         upstream = [
-            {"path": "/source/config.yaml", "version": 2, "etag": "cfg"},
+            {"path": "/source/config.yaml", "version": 2, "content_id": "cfg"},
         ]
         aspect = LineageAspect.from_explicit_declaration(
             upstream=upstream,
@@ -175,7 +188,7 @@ class TestLineageAspectFromExplicitDeclaration:
         assert aspect.operation == "explicit"
 
     def test_truncation(self) -> None:
-        upstream = [{"path": f"/f{i}", "version": i, "etag": f"e{i}"} for i in range(600)]
+        upstream = [{"path": f"/f{i}", "version": i, "content_id": f"e{i}"} for i in range(600)]
         aspect = LineageAspect.from_explicit_declaration(upstream=upstream, agent_id="a")
         assert len(aspect.upstream) == LineageAspect.MAX_UPSTREAM_ENTRIES
         assert aspect.truncated is True

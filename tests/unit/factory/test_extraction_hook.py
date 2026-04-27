@@ -64,7 +64,7 @@ class TestExtractionHook:
                 "path": "/data/users.csv",
                 "zone_id": "z1",
                 "metadata": {
-                    "etag": "abc123",
+                    "content_id": "abc123",
                     "size": 100,
                     "mime_type": "text/csv",
                 },
@@ -103,7 +103,7 @@ class TestExtractionHook:
                 "path": "/docs/readme.md",
                 "zone_id": "z1",
                 "metadata": {
-                    "etag": "md123",
+                    "content_id": "md123",
                     "size": 50,
                 },
             }
@@ -135,7 +135,7 @@ class TestExtractionHook:
                 "op": "write",
                 "path": "/code/main.py",
                 "zone_id": "z1",
-                "metadata": {"etag": "py123", "size": 50},
+                "metadata": {"content_id": "py123", "size": 50},
             }
         ]
 
@@ -160,7 +160,7 @@ class TestExtractionHook:
                 "op": "write",
                 "path": "/data/big.csv",
                 "zone_id": "z1",
-                "metadata": {"etag": "big123", "size": 200, "mime_type": "text/csv"},
+                "metadata": {"content_id": "big123", "size": 200, "mime_type": "text/csv"},
             }
         ]
 
@@ -188,7 +188,7 @@ class TestExtractionHook:
         mock_backend.read_content.assert_not_called()
 
     def test_skips_missing_etag(self, db_session_factory) -> None:
-        """Events without etag (content hash) are skipped."""
+        """Events without content_id (content hash) are skipped."""
         mock_backend = MagicMock()
 
         hook = make_extraction_hook(
@@ -226,7 +226,7 @@ class TestExtractionHook:
                 "op": "write",
                 "path": "/data/file.csv",
                 "zone_id": "z1",
-                "metadata": {"etag": "fail123", "size": 50, "mime_type": "text/csv"},
+                "metadata": {"content_id": "fail123", "size": 50, "mime_type": "text/csv"},
             }
         ]
 
@@ -255,13 +255,13 @@ class TestExtractionHook:
                 "op": "write",
                 "path": "/data/bad.csv",
                 "zone_id": "z1",
-                "metadata": {"etag": "bad", "size": 50, "mime_type": "text/csv"},
+                "metadata": {"content_id": "bad", "size": 50, "mime_type": "text/csv"},
             },
             {
                 "op": "write",
                 "path": "/data/good.csv",
                 "zone_id": "z1",
-                "metadata": {"etag": "good", "size": 50, "mime_type": "text/csv"},
+                "metadata": {"content_id": "good", "size": 50, "mime_type": "text/csv"},
             },
         ]
 

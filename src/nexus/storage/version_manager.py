@@ -53,7 +53,7 @@ class VersionManager:
             >>> with store.session_factory() as session:
             ...     metadata = VersionManager.get_version(session, "/workspace/data.txt", version=2)
             ...     if metadata:
-            ...         content_hash = metadata.etag
+            ...         content_hash = metadata.content_id
             ...         # Use content_hash to fetch from CAS
         """
         try:
@@ -99,7 +99,7 @@ class VersionManager:
             return FileMetadata(
                 path=file_path.virtual_path,
                 size=version_entry.size_bytes,
-                etag=version_entry.content_hash,
+                content_id=version_entry.content_hash,
                 mime_type=version_entry.mime_type,
                 created_at=version_entry.created_at,
                 modified_at=version_entry.created_at,

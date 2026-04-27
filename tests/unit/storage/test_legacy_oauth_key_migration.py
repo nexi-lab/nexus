@@ -176,7 +176,7 @@ class _FakeMetastore:
     """Lightweight MetastoreABC stand-in that returns preloaded FileMetadata.
 
     ``MetastoreSettingsStore`` packs settings as JSON ``{"v": <value>}`` in
-    ``FileMetadata.etag`` (post-PR #3890 schema), so the fake mirrors that
+    ``FileMetadata.content_id`` (post-PR #3890 schema), so the fake mirrors that
     shape — otherwise ``get_setting`` reads ``None`` even though the entry
     is present.
     """
@@ -196,7 +196,7 @@ class _FakeMetastore:
         return FileMetadata(
             path=path,
             size=0,
-            etag=json.dumps({"v": value}),
+            content_id=json.dumps({"v": value}),
         )
 
 

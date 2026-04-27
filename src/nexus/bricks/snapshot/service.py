@@ -358,12 +358,12 @@ class TransactionalSnapshotService:
         if txn_model.status != "active":
             raise TransactionNotActiveError(transaction_id, txn_model.status)
 
-        # Conflict detection: compare new_hash vs current metadata etag
+        # Conflict detection: compare new_hash vs current metadata content_id
         conflicts: list[ConflictInfo] = []
         for entry in entries:
             if entry.new_hash is not None:
                 current_meta = self._metadata_store.get(entry.path)
-                current_hash = current_meta.etag if current_meta else None
+                current_hash = current_meta.content_id if current_meta else None
                 if current_hash != entry.new_hash:
                     conflicts.append(
                         ConflictInfo(
@@ -424,7 +424,7 @@ class TransactionalSnapshotService:
         return self._metadata_factory(
             path=path,
             size=meta_dict.get("size", 0),
-            etag=original_hash,
+            content_id=original_hash,
             created_at=datetime.fromisoformat(meta_dict["created_at"])
             if meta_dict.get("created_at")
             else datetime.now(UTC),
@@ -472,7 +472,7 @@ class TransactionalSnapshotService:
                         restored = self._metadata_factory(
                             path=entry.path,
                             size=getattr(current_meta, "size", 0) if current_meta else 0,
-                            etag=entry.original_hash,
+                            content_id=entry.original_hash,
                             created_at=getattr(current_meta, "created_at", None)
                             or datetime.now(UTC),
                             modified_at=datetime.now(UTC),

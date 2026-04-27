@@ -99,7 +99,7 @@ def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: CASLo
 
     assert meta1 is not None
     assert meta2 is not None
-    assert meta1.etag == meta2.etag  # Same content hash → same CAS blob
+    assert meta1.content_id == meta2.content_id  # Same content hash → same CAS blob
 
 
 def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
@@ -115,7 +115,7 @@ def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocalBacken
     embedded_cas.write("/shared1.txt", content)
 
     meta1 = embedded_cas.metadata.get("/shared1.txt")
-    content_hash = meta1.etag
+    content_hash = meta1.content_id
 
     assert local_backend.content_exists(content_hash)
 
@@ -139,12 +139,12 @@ def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalB
     # Write initial content
     embedded_cas.write("/test.txt", content1)
     meta1 = embedded_cas.metadata.get("/test.txt")
-    hash1 = meta1.etag
+    hash1 = meta1.content_id
 
     # Update with new content
     embedded_cas.write("/test.txt", content2)
     meta2 = embedded_cas.metadata.get("/test.txt")
-    hash2 = meta2.etag
+    hash2 = meta2.content_id
 
     # Hash should be different
     assert hash1 != hash2
@@ -171,7 +171,7 @@ def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: CASLocalBa
 
     # Get content hash
     meta = embedded_cas.metadata.get("/file0.txt")
-    content_hash = meta.etag
+    content_hash = meta.content_id
 
     # Content should only be stored once
     assert local_backend.get_content_size(content_hash) == len(content)
@@ -186,7 +186,7 @@ def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
     meta2 = embedded_cas.metadata.get("/file2.txt")
 
     # Different content should have different hashes
-    assert meta1.etag != meta2.etag
+    assert meta1.content_id != meta2.content_id
 
 
 def test_cas_list_files(embedded_cas: NexusFS) -> None:
@@ -241,7 +241,7 @@ def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     assert meta is not None
     assert meta.path == "/test.txt"
     assert meta.size == len(content)
-    assert len(meta.etag) == 64  # SHA-256 hash length (kernel resolves blob loc)
+    assert len(meta.content_id) == 64  # SHA-256 hash length (kernel resolves blob loc)
 
 
 def test_cas_concurrent_deduplication(
@@ -261,7 +261,7 @@ def test_cas_concurrent_deduplication(
 
     # Get content hash
     meta = embedded_cas.metadata.get(paths[0])
-    content_hash = meta.etag
+    content_hash = meta.content_id
 
     # Content should exist (deduplication means single blob)
     assert local_backend.content_exists(content_hash)

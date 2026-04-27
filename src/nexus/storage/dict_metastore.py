@@ -183,7 +183,7 @@ class DictMetastore(MetastoreABC):
         self._flush()
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
-        return {p: (m.etag if (m := self._store.get(p)) else None) for p in paths}
+        return {p: (m.content_id if (m := self._store.get(p)) else None) for p in paths}
 
     def set_file_metadata(self, path: str, key: str, value: Any) -> None:
         if path not in self._file_metadata:

@@ -724,10 +724,24 @@ class ContentMixin:
         _is_admin = getattr(context, "is_admin", False) if context else False
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
-        # Capture old metadata BEFORE write for audit snapshot_hash (old_etag)
-        _old_meta = self.metadata.get(path)
-
         result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+
+        # Reconstruct old_metadata from Rust result (atomic snapshot taken
+        # during write — no TOCTOU gap, no extra PyO3 round-trip).
+        _old_meta: FileMetadata | None = None
+        if not result.is_new:
+            _mod_at = (
+                datetime.fromtimestamp(result.old_modified_at_ms / 1000.0, UTC)
+                if result.old_modified_at_ms is not None
+                else None
+            )
+            _old_meta = FileMetadata(
+                path=path,
+                size=result.old_size or 0,
+                etag=result.old_etag,
+                version=result.old_version or 1,
+                modified_at=_mod_at,
+            )
 
         # POST-INTERCEPT hooks
         zone_id, agent_id, _ = self._get_context_identity(context)
@@ -743,7 +757,7 @@ class ContentMixin:
                 context=_ctx,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                is_new_file=(_old_meta is None),
+                is_new_file=result.is_new,
                 content_hash=_cid,
                 metadata=FileMetadata(
                     path=path,
@@ -1289,9 +1303,8 @@ class ContentMixin:
                     )
                 )
 
-        # Persist metadata for all items via Python metastore
-        # (Rust _write_batch updates Rust DCache but Python metastore needs explicit put)
-        self.metadata.put_batch(metadata_list)
+        # Rust _write_batch already persisted metadata (commit_metadata per-mount
+        # + ms.put_batch for global items) and updated dcache. No Python put needed.
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         items = [

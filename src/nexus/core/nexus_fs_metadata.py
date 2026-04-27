@@ -223,45 +223,23 @@ class MetadataMixin:
     ) -> bool:
         """Internal: check if path is a directory (explicit or implicit).
 
-        Synchronous check used by sys_stat.
-
         Args:
-            _meta: Pre-fetched FileMetadata from caller (avoids duplicate
-                metadata.get). Pass ``None`` to indicate "already looked up,
-                not found". Omit to let this method fetch it.
+            _meta: Pre-fetched FileMetadata from caller (avoids redundant
+                fetch). Pass ``None`` to indicate "already looked up,
+                not found". Omit to let this method use sys_stat.
         """
         try:
             path = self._validate_path(path)
-            ctx = self._resolve_cred(context)
-
-            # Check if it's an implicit directory first (for optimization)
-            is_implicit_dir = self.metadata.is_implicit_directory(path)
-
-            # Permission check via KernelDispatch INTERCEPT hook.
-            from nexus.contracts.exceptions import PermissionDeniedError
-            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
-
-            try:
-                self._kernel.dispatch_pre_hooks(
-                    "stat",
-                    _SHC(
-                        path=path,
-                        context=ctx,
-                        permission="TRAVERSE" if is_implicit_dir else "READ",
-                        extra={"is_implicit_directory": is_implicit_dir},
-                    ),
-                )
-            except PermissionDeniedError:
-                return False
-
-            # Use pre-fetched meta if provided, otherwise fetch
-            meta = self.metadata.get(path) if _meta is _SENTINEL else _meta
-            if meta is not None and (meta.is_dir or meta.is_mount or meta.is_external_storage):
-                return True
-
-            # Metadata check + implicit dir detection covers all cases.
-            # Rust sys_stat handles backend-level directory detection.
-            return is_implicit_dir
+            # Fast-path: use pre-fetched meta if caller provided it
+            if _meta is not _SENTINEL:
+                if _meta is not None and (
+                    _meta.is_dir or _meta.is_mount or _meta.is_external_storage
+                ):
+                    return True
+                return self.metadata.is_implicit_directory(path)
+            # Single Rust round-trip: dcache → metastore → implicit directory
+            stat = self.sys_stat(path, context=context)
+            return stat is not None and stat.get("is_directory", False)
         except (InvalidPathError, NexusFileNotFoundError):
             return False
 
@@ -551,19 +529,12 @@ class MetadataMixin:
     def get_etag(
         self,
         path: str,
-        context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002
     ) -> str | None:
         """Get content hash for HTTP If-None-Match checks."""
-        _ = context  # Reserved for future use
         normalized = self._validate_path(path, allow_root=False)
-
-        # Get file metadata (lightweight - doesn't read content)
-        file_meta = self.metadata.get(normalized)
-        if file_meta is None:
-            return None
-
-        # Return the etag (content_hash) from metadata
-        return file_meta.etag
+        stat = self._kernel.sys_stat(normalized, self._zone_id)
+        return stat.get("etag") if stat else None
 
     # ── Tier 2 directory ──────────────────────────────────────────────
 
@@ -1107,48 +1078,13 @@ class MetadataMixin:
         """Tier 2: check if path explicitly exists and is accessible.
 
         Returns True if path has explicit metadata or is an implicit directory,
-        False otherwise. Unlike sys_stat, does NOT synthesize directory entries.
+        False otherwise. Delegates to sys_stat which handles dcache → metastore
+        → implicit directory detection + permission hooks in one Rust round-trip.
         """
         try:
             path = self._validate_path(path)
-            ctx = self._resolve_cred(context)
-
-            is_implicit_dir = self.metadata.is_implicit_directory(path)
-
-            # Permission check via stat hook (same as _check_is_directory)
-            from nexus.contracts.exceptions import PermissionDeniedError
-            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
-
-            try:
-                self._kernel.dispatch_pre_hooks(
-                    "stat",
-                    _SHC(
-                        path=path,
-                        context=ctx,
-                        permission="TRAVERSE" if is_implicit_dir else "READ",
-                        extra={"is_implicit_directory": is_implicit_dir},
-                    ),
-                )
-            except PermissionDeniedError:
-                return False
-
-            # Rust kernel fast-path: dcache hit → redb metastore fallback
-            if getattr(self, "_kernel", None) is not None and self._kernel.access(
-                path, self._zone_id
-            ):
-                return True
-
-            if self.metadata.exists(path):
-                return True
-            # Fallback: check Rust dcache/metastore (sys_write only updates Rust side)
-            try:
-                _stat = self.sys_stat(path, context=context)
-                if _stat is not None:
-                    return True
-            except Exception:
-                pass
-            # Check implicit directory (path has children but no explicit entry)
-            return bool(is_implicit_dir)
+            stat = self.sys_stat(path, context=context)
+            return stat is not None
         except (InvalidPathError, NexusFileNotFoundError, BackendError):
             return False
 

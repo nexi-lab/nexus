@@ -528,7 +528,7 @@ jobs:
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
           import nexus_kernel
-          from nexus_kernel import Metastore
+          from nexus_kernel import PyKernel
           import txtai
           import pgvector
           import docker

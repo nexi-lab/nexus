@@ -862,7 +862,7 @@ def generate_stubs(
         "bitmap": "Tiger Cache Bitmap (bitmap.rs)",
         "simd": "SIMD vector similarity (simd.rs)",
         "trigram": "Trigram Index (trigram.rs)",
-        "grpc_server": "VFS gRPC server (grpc_server.rs)",
+        "grpc": "VFS gRPC server (rust/transport/src/grpc.rs)",
     }
 
     MODULE_ORDER = [
@@ -876,7 +876,7 @@ def generate_stubs(
         "bitmap",
         "simd",
         "trigram",
-        "grpc_server",
+        "grpc",
     ]
 
     for mod_name in MODULE_ORDER:
@@ -1587,7 +1587,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         ") -> Result<Bound<'py, PyAny>, String> {",
         "    let cls = py",
         '        .import("nexus.contracts.types")',
-        '        .and_then(|m| m.getattr("PyOperationContext"))',
+        '        .and_then(|m| m.getattr("OperationContext"))',
         '        .map_err(|e| format!("import OperationContext: {e}"))?;',
         "    let kwargs = PyDict::new(py);",
         '    let _ = kwargs.set_item("user_id", &ctx.user_id);',
@@ -2448,7 +2448,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             ") -> Result<Bound<'py, PyAny>, String> {",
             "    let cls = py",
             '        .import("nexus.contracts.types")',
-            '        .and_then(|m| m.getattr("PyOperationContext"))',
+            '        .and_then(|m| m.getattr("OperationContext"))',
             '        .map_err(|e| format!("import OperationContext: {e}"))?;',
             "    let kwargs = PyDict::new(py);",
             '    let _ = kwargs.set_item("user_id", &ctx.user_id);',

@@ -120,22 +120,22 @@ class BlobPackLocalTransport:
     ) -> None:
         self._root = Path(root_path).resolve()
         self._volume_available = False
-        self._VolumeEngine: Any = None  # Class reference for lazy creation
+        self._BlobPackEngine: Any = None  # Class reference for lazy creation
 
         # VolumeLocalTransport's entire purpose is volume packing — it has no valid
         # degraded mode.  Fail closed immediately if VolumeEngine is unavailable so
         # callers get a clear error (with rebuild instructions) rather than silently
         # writing blobs to flat-file layout that VolumeEngine will never find (Issue #3712).
-        from nexus._rust_compat import VolumeEngine as _VolumeEngine
+        from nexus._rust_compat import BlobPackEngine as _BlobPackEngine
 
-        if _VolumeEngine is None:
+        if _BlobPackEngine is None:
             raise RuntimeError(
-                "VolumeEngine is unavailable (stale or absent nexus_kernel). "
-                "VolumeLocalTransport requires a working nexus_kernel binary — "
+                "BlobPackEngine is unavailable (stale or absent nexus_kernel). "
+                "BlobPackLocalTransport requires a working nexus_kernel binary — "
                 "there is no safe degraded mode. "
                 "Rebuild the extension: cd rust/kernel && maturin develop --release"
             )
-        self._VolumeEngine = _VolumeEngine
+        self._BlobPackEngine = _BlobPackEngine
         self._volume_available = True
 
         # Permanent engine for non-TTL CAS blobs
@@ -146,7 +146,7 @@ class BlobPackLocalTransport:
 
         if self._volume_available:
             volumes_dir = self._root / "cas_volumes"
-            self._engine = self._VolumeEngine(
+            self._engine = self._BlobPackEngine(
                 str(volumes_dir),
                 target_volume_size,
                 compaction_bytes_per_cycle,
@@ -184,7 +184,7 @@ class BlobPackLocalTransport:
             )
 
         ttl_dir = self._root / "cas_volumes" / f"ttl_{bucket}"
-        engine = self._VolumeEngine(
+        engine = self._BlobPackEngine(
             str(ttl_dir),
             self._target_volume_size,
             self._compaction_bytes_per_cycle,

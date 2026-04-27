@@ -152,9 +152,13 @@ fn open_zone_manager(common: &CommonArgs) -> Result<std::sync::Arc<ZoneManager>>
         tracing::warn!("TLS disabled (--no-tls / NEXUS_NO_TLS); plaintext gRPC");
         None
     } else {
-        let bundle =
-            bootstrap_tls(&common.data_dir, contracts::ROOT_ZONE_ID, &hostname, node_id)
-                .map_err(|e| anyhow::anyhow!("TLS bootstrap failed: {}", e))?;
+        let bundle = bootstrap_tls(
+            &common.data_dir,
+            contracts::ROOT_ZONE_ID,
+            &hostname,
+            node_id,
+        )
+        .map_err(|e| anyhow::anyhow!("TLS bootstrap failed: {}", e))?;
         Some(TlsFiles {
             cert_path: bundle.node_cert_path,
             key_path: bundle.node_key_path,
@@ -174,10 +178,7 @@ fn open_zone_manager(common: &CommonArgs) -> Result<std::sync::Arc<ZoneManager>>
 
     ZoneManager::new(
         &hostname,
-        common
-            .data_dir
-            .to_str()
-            .context("data_dir must be UTF-8")?,
+        common.data_dir.to_str().context("data_dir must be UTF-8")?,
         peers,
         &common.bind_addr,
         tls,
@@ -310,8 +311,9 @@ async fn run_join(
 fn install_tracing() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("nexusd_cluster=info,nexus_raft=info")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("nexusd_cluster=info,nexus_raft=info")
+            }),
         )
         .init();
 }

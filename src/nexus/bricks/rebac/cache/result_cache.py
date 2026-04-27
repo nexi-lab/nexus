@@ -28,6 +28,7 @@ Tiered TTL (Issue #1077):
 - Denial: 60 seconds (security critical)
 """
 
+import itertools
 import logging
 import math
 import random
@@ -370,24 +371,32 @@ class ReBACPermissionCache:
     def _prune_stale_indexes(self) -> None:
         """Remove index entries whose primary cache keys have been TTL/LRU-evicted.
 
-        Budget-limited: examines at most _index_prune_budget key-set members per
-        call to bound lock-hold time on the permission-check hot path.
+        Budget is split evenly across the three indexes so each is guaranteed
+        progress regardless of the others' sizes. Within each index, per-key-set
+        work is capped at per_set_cap keys (via islice) to avoid one large set
+        blocking the rest. Dead keys are removed in-place from the set.
         Must be called under self._lock.
         """
-        remaining = self._index_prune_budget
+        per_index_budget = max(self._index_prune_budget // 3, 16)
+        per_set_cap = max(per_index_budget // 8, 8)
         for index in (self._subject_index, self._object_index, self._path_prefix_index):
-            if remaining <= 0:
-                break
+            remaining = per_index_budget
             for index_key in list(index.keys()):
                 if remaining <= 0:
                     break
                 key_set = index[index_key]
-                remaining -= len(key_set)
-                live = {k for k in key_set if k in self._grant_cache or k in self._denial_cache}
-                if live:
-                    index[index_key] = live
-                else:
+                if not key_set:
                     del index[index_key]
+                    continue
+                sample = set(itertools.islice(key_set, per_set_cap))
+                remaining -= len(sample)
+                dead = {
+                    k for k in sample if k not in self._grant_cache and k not in self._denial_cache
+                }
+                if dead:
+                    key_set -= dead
+                    if not key_set:
+                        del index[index_key]
 
     def _remove_from_indexes(self, key: str) -> None:
         """Remove a cache key from all secondary indexes (Issue #1077).

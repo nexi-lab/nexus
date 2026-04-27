@@ -138,7 +138,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     )
     from nexus.server.lifespan.permissions import startup_permissions
     from nexus.server.lifespan.realtime import shutdown_realtime, startup_realtime
-    from nexus.server.lifespan.search import startup_search
+    from nexus.server.lifespan.search import shutdown_search, startup_search
     from nexus.server.lifespan.services import shutdown_services, startup_services
     from nexus.server.lifespan.uploads import startup_uploads
 
@@ -220,6 +220,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
     await shutdown_grpc(app, svc)
+    await shutdown_search(app, svc)
     await shutdown_services(app, svc)
     await shutdown_realtime(app, svc)
 

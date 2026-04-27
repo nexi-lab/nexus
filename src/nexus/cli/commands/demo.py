@@ -56,11 +56,56 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _call_nfs_rpc(client: Any, method: str, params: dict[str, Any]) -> Any:
+    """Call a /api/nfs/{method} endpoint and raise on JSON-RPC error bodies.
+
+    The HTTP RPC endpoint returns errors as 200 JSON with an ``error`` key.
+    ``NexusApiClient.post()`` only raises on HTTP-level errors; this helper
+    additionally raises for application-level JSON-RPC failures so callers
+    observe server-side errors instead of treating them as empty results.
+    """
+    result = client.post(f"/api/nfs/{method}", json_body=params)
+    if isinstance(result, dict):
+        if "error" in result:
+            raise RuntimeError(f"RPC {method} failed: {result['error']}")
+        if "result" in result:
+            return result["result"]
+    return result
+
+
+_INDEXING_TIMEOUT = 300.0  # semantic indexing of the full corpus can take > 30s
+
+
+class _RestApiSearchProxy:
+    """Proxy for the search service that calls RPCs via the REST API.
+
+    Implements the subset of SearchService used by demo init:
+    - semantic_search_index(path, recursive=True)
+    """
+
+    def __init__(self, base_url: str, api_key: str) -> None:
+        from nexus.cli.api_client import NexusApiClient
+
+        self._client = NexusApiClient(url=base_url, api_key=api_key, timeout=_INDEXING_TIMEOUT)
+
+    def semantic_search_index(self, path: str, recursive: bool = True) -> dict[str, Any]:
+        result = _call_nfs_rpc(
+            self._client,
+            "semantic_search_index",
+            {"path": path, "recursive": recursive},
+        )
+        return result if isinstance(result, dict) else {}
+
+
 class _RestApiNexusClient:
     """Minimal NexusFS-compatible client that writes via REST API.
 
-    Implements: write, mkdir, access, read, sys_readdir, flush_write_observer.
+    Implements: write, mkdir, access, read, sys_read, sys_readdir,
+    flush_write_observer, service("search").
     Used by demo seeding when a running server is detected.
+
+    All methods are synchronous so callers can use them without await
+    (NexusFS.write is also sync — callers are written for the sync contract).
     """
 
     def __init__(self, base_url: str, api_key: str) -> None:
@@ -68,8 +113,9 @@ class _RestApiNexusClient:
 
         self._client = NexusApiClient(url=base_url, api_key=api_key)
         self._base_url = base_url
+        self._api_key = api_key
 
-    async def write(self, path: str, content: bytes) -> None:
+    def write(self, path: str, content: bytes) -> None:
         text = content.decode("utf-8", errors="replace")
         self._client.post("/api/v2/files/write", json_body={"path": path, "content": text})
 
@@ -80,17 +126,20 @@ class _RestApiNexusClient:
             if not exist_ok:
                 raise
 
-    async def access(self, path: str) -> bool:
+    def access(self, path: str) -> bool:
         try:
             self._client.get(f"/api/v2/files/metadata?path={path}")
             return True
         except Exception:
             return False
 
-    async def read(self, path: str) -> bytes:
+    def read(self, path: str) -> bytes:
         result = self._client.get(f"/api/v2/files/read?path={path}")
         content = result.get("content", "") if isinstance(result, dict) else str(result)
         return content.encode("utf-8")
+
+    def sys_read(self, path: str) -> bytes:
+        return self.read(path)
 
     def sys_readdir(self, path: str) -> list[str]:
         try:
@@ -100,8 +149,24 @@ class _RestApiNexusClient:
         except Exception:
             return []
 
+    def service(self, name: str) -> Any:
+        if name == "search":
+            return _RestApiSearchProxy(self._base_url, self._api_key)
+        return None  # unsupported services return None; callers must guard with best-effort
+
+    def sys_unlink(self, path: str, **_: Any) -> None:
+        self._client.delete("/api/v2/files/delete", params={"path": path})
+
+    def rmdir(self, path: str, *, recursive: bool = False, **_: Any) -> None:
+        _call_nfs_rpc(self._client, "rmdir", {"path": path, "recursive": recursive})
+
     def flush_write_observer(self) -> None:
-        pass  # REST writes are synchronous — no buffering
+        try:
+            _call_nfs_rpc(self._client, "flush_write_observer", {})
+        except Exception:
+            logger.debug(
+                "flush_write_observer RPC failed — observer may not be flushed", exc_info=True
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -231,23 +296,37 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
         # Use the scheme from resolve_connection_env (https if TLS)
         url = conn.get("NEXUS_URL", f"http://localhost:{http_port}")
 
+        # Prefer REST API for seeding: REST writes go through Python VFS hooks
+        # which populate the PostgreSQL file_paths table (required for semantic
+        # search indexing). gRPC writes go to the Rust kernel natively and
+        # bypass Python observers, so HERB files end up in Redb only.
+        # Probe an authenticated endpoint so a bad API key fails fast instead of
+        # silently producing a partial seed.
         try:
-            nx = nexus.connect(
-                config={
-                    "profile": "remote",
-                    "url": url,
-                    "api_key": api_key,
-                }
-            )
-            # Verify connectivity with a lightweight read-only call.
-            nx.sys_readdir("/")
-            return nx
-        except Exception as e:
+            import httpx as _httpx
+
+            from nexus.cli.api_client import NexusApiClient
+
+            test_client = NexusApiClient(url=url, api_key=api_key)
+            test_client.get("/api/v2/files/metadata", params={"path": "/"})
+            logger.info("demo preset: server reachable at %s — using REST API for seeding", url)
+            return _RestApiNexusClient(url, api_key)
+        except _httpx.HTTPStatusError:
+            # Server is reachable but returned an error (4xx/5xx).
+            # Don't fall through to gRPC — the server has issues that
+            # gRPC seeding would silently bypass (observers, pg writes).
+            raise
+        except Exception as rest_exc:
+            # HTTP transport failure for shared/demo preset — blocking.
+            # gRPC writes bypass Python observers and skip PostgreSQL
+            # file_paths population, so semantic indexing will not see
+            # seeded files. Surface the failure rather than silently
+            # producing a broken demo state.
             console.print(
-                f"[nexus.error]Error:[/nexus.error] Could not connect to Nexus server: {e}"
+                f"[nexus.error]Error:[/nexus.error] Cannot reach Nexus HTTP server at {url}: {rest_exc}"
             )
             console.print(
-                f"[nexus.warning]Hint:[/nexus.warning] Is `nexus up` running? Expected gRPC on port {grpc_port}."
+                f"[nexus.warning]Hint:[/nexus.warning] Ensure `nexus up` is running and HTTP is available on port {http_port}."
             )
             raise
 

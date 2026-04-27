@@ -272,6 +272,7 @@ jobs:
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist-main
+          skip_existing: true
 
   # ── nexus-fs slim package publish ──────────────────────────────────────
   # Builds and publishes the standalone nexus-fs package alongside nexus-ai-fs.

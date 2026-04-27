@@ -23,6 +23,10 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+import grpc
+
+from nexus.contracts.exceptions import RemoteConnectionError, RemoteTimeoutError
+
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
     from nexus.remote.rpc_transport import RPCTransport
@@ -51,18 +55,35 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         context: Any = None,  # noqa: ARG001
     ) -> bytes:
         # NexusFS methods are sync (Phase 7). transport calls are blocking gRPC.
+        # For partial reads (offset or count) always use JSON RPC — the typed
+        # ReadRequest has no range params.
+        # For full-file reads: try the typed ReadRequest first (raw bytes, no
+        # base64 overhead, supports files >49 MiB without hitting the JSON gRPC
+        # envelope limit). Fall back to JSON RPC if the typed path fails —
+        # this handles Docker NAT environments where the Rust handler falls back
+        # to Python dispatch and app.state.nexus_fs may not be reachable via
+        # the typed path across container boundaries.
         if offset or count is not None:
-            # Range read: use the JSON Call RPC so offset/count are forwarded to
-            # nexus_fs.sys_read() server-side. The typed read_file proto has no
-            # offset/count fields, so it can only do full-file reads.
             params: dict[str, Any] = {"path": path, "offset": offset}
             if count is not None:
                 params["count"] = count
             result = transport.call_rpc("read", params)
+            return result if isinstance(result, bytes) else bytes(result)
+        try:
+            return transport.read_file(path)
+        except (RemoteConnectionError, RemoteTimeoutError):
+            # Docker NAT: typed gRPC path unavailable, fall back to JSON RPC.
+            result = transport.call_rpc("read", {"path": path, "offset": 0})
             # call_rpc + decode_rpc_message already unwraps {"__type__":"bytes","data":...}
             return result if isinstance(result, bytes) else bytes(result)
-        # Full-file read: use the efficient typed ReadRequest proto (no JSON/base64 overhead).
-        return transport.read_file(path)
+        except grpc.RpcError as exc:
+            # Only fall back when the typed Read method is explicitly absent on
+            # this server version. INTERNAL indicates a server bug or backend
+            # failure — retrying via JSON would hide the outage; propagate it.
+            if hasattr(exc, "code") and exc.code() == grpc.StatusCode.UNIMPLEMENTED:
+                result = transport.call_rpc("read", {"path": path, "offset": 0})
+                return result if isinstance(result, bytes) else bytes(result)
+            raise
 
     def _remote_sys_rename(
         _self: Any,
@@ -77,8 +98,43 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         )
         return {}
 
+    def _remote_sys_readdir(
+        _self: Any,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        *,
+        context: Any = None,  # noqa: ARG001
+        limit: int | None = None,
+        cursor: str | None = None,
+        **_: Any,
+    ) -> Any:
+        # The in-memory Redb metastore is empty in REMOTE profile, so
+        # sys_readdir returns [] for all paths. Forward to server via RPC.
+        params: dict[str, Any] = {"path": path, "recursive": recursive, "details": details}
+        if limit is not None:
+            params["limit"] = limit
+        if cursor is not None:
+            params["cursor"] = cursor
+        result: Any = transport.call_rpc("sys_readdir", params)
+        if isinstance(result, dict):
+            if limit is not None:
+                # Paginated call: convert RPC envelope to PaginatedResult so
+                # callers get the same contract as the local kernel.
+                from nexus.core.pagination import PaginatedResult
+
+                return PaginatedResult(
+                    items=result.get("files", []),
+                    next_cursor=result.get("next_cursor"),
+                    has_more=result.get("has_more", False),
+                    total_count=result.get("total_count"),
+                )
+            return result.get("files", [])
+        return result if isinstance(result, list) else []
+
     cast(Any, nfs).sys_read = types.MethodType(_remote_sys_read, nfs)
     cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
+    cast(Any, nfs).sys_readdir = types.MethodType(_remote_sys_readdir, nfs)
 
 
 def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:

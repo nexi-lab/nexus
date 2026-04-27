@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nexus-fs"
-version = "0.4.8"
+version = "0.4.9"
 description = "Unified filesystem abstraction for cloud storage — mount S3, GCS, and local storage with two lines of Python"
 readme = "README.md"
 license = "Apache-2.0"

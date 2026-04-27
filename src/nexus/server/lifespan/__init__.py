@@ -162,7 +162,10 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     # NexusFS lifecycle Phase 3: start async tasks owned by NexusFS
     nx = getattr(app.state, "nexus_fs", None)
     if nx is not None and hasattr(nx, "bootstrap"):
-        nx.bootstrap()
+        # bootstrap() calls asyncio.run() internally via PyO3 run_coro, which
+        # raises RuntimeError if called from within a running event loop (Python
+        # 3.10+). Running in a thread executor gives it a loop-free context.
+        await asyncio.get_event_loop().run_in_executor(None, nx.bootstrap)
 
     await startup_observability(app, svc)
     # Re-extract observability_registry after startup_observability writes it

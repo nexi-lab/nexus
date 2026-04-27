@@ -4,6 +4,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+from nexus.bricks.auth.profile import InMemoryAuthProfileStore
 from nexus.bricks.auth.unified_service import FileSecretCredentialStore, UnifiedAuthService
 from nexus.cli.commands.auth_cli import auth
 
@@ -29,6 +30,7 @@ def _build_service(tmp_path: Path) -> UnifiedAuthService:
     return UnifiedAuthService(
         oauth_service=_FakeOAuthService(),
         secret_store=FileSecretCredentialStore(tmp_path / "credentials.json"),
+        profile_store=InMemoryAuthProfileStore(),
     )
 
 

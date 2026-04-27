@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from click.testing import CliRunner
 
+from nexus.bricks.auth.profile import InMemoryAuthProfileStore
 from nexus.bricks.auth.unified_service import FileSecretCredentialStore, UnifiedAuthService
 from nexus.fs._auth_cli import auth
 from nexus.fs._oauth_support import get_fs_database_url, run_google_oauth_setup
@@ -31,6 +32,7 @@ def _build_service(tmp_path: Path) -> UnifiedAuthService:
     return UnifiedAuthService(
         oauth_service=_FakeOAuthService(),
         secret_store=FileSecretCredentialStore(tmp_path / "credentials.json"),
+        profile_store=InMemoryAuthProfileStore(),
     )
 
 

@@ -197,7 +197,7 @@ class ZoneGraphLoader:
                 self._fix_sql(
                     """
                     SELECT subject_type, subject_id, subject_relation, relation,
-                           object_type, object_id
+                           object_type, object_id, conditions
                     FROM rebac_tuples
                     WHERE zone_id = ?
                       AND (expires_at IS NULL OR expires_at > ?)
@@ -214,6 +214,7 @@ class ZoneGraphLoader:
                     "relation": row["relation"],
                     "object_type": row["object_type"],
                     "object_id": row["object_id"],
+                    "conditions": row["conditions"],
                 }
                 for row in cursor.fetchall()
             ]
@@ -232,7 +233,7 @@ class ZoneGraphLoader:
                 self._fix_sql(
                     f"""
                     SELECT subject_type, subject_id, subject_relation, relation,
-                           object_type, object_id
+                           object_type, object_id, conditions
                     FROM rebac_tuples
                     WHERE relation IN ({placeholders})
                       AND subject_type = ? AND subject_id = ?
@@ -256,6 +257,7 @@ class ZoneGraphLoader:
                     "relation": row["relation"],
                     "object_type": row["object_type"],
                     "object_id": row["object_id"],
+                    "conditions": row["conditions"],
                 }
                 for row in cursor.fetchall()
             ]
@@ -269,7 +271,7 @@ class ZoneGraphLoader:
                 self._fix_sql(
                     """
                     SELECT subject_type, subject_id, subject_relation, relation,
-                           object_type, object_id
+                           object_type, object_id, conditions
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND zone_id != ?
@@ -291,6 +293,7 @@ class ZoneGraphLoader:
                     "relation": row["relation"],
                     "object_type": row["object_type"],
                     "object_id": row["object_id"],
+                    "conditions": row["conditions"],
                 }
                 for row in cursor.fetchall()
             ]

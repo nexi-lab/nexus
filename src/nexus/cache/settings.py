@@ -145,7 +145,7 @@ class CacheSettings:
         default_factory=lambda: os.environ.get("NEXUS_CACHE_ENABLE_L1", "true").lower() == "true"
     )
     l1_cache_size: int = field(
-        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_L1_SIZE", "5000"))
+        default_factory=lambda: max(2, int(os.environ.get("NEXUS_CACHE_L1_SIZE", "5000")))
     )
 
     def should_use_dragonfly(self) -> bool:

@@ -122,6 +122,8 @@ class ReBACPermissionCache:
                 - "targeted": Use secondary indexes for O(1) invalidation (default)
                 - "zone_wide": Legacy O(n) full cache scan
         """
+        if max_size < 2:
+            raise ValueError(f"ReBACPermissionCache max_size must be >= 2, got {max_size}")
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         self._denial_ttl_seconds = denial_ttl_seconds

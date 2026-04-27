@@ -54,6 +54,26 @@ def test_create_api_key_via_record_store_without_lifespan(tmp_path):
     assert raw.startswith("sk-")
 
 
+def test_init_database_script_seeds_root_zone_for_docker_entrypoint(tmp_path, monkeypatch):
+    """Docker init builds schema through scripts/init_database.py, not RecordStore."""
+    from scripts.init_database import init_database
+
+    db = tmp_path / "docker-init.db"
+    database_url = f"sqlite:///{db}"
+    monkeypatch.setenv("NEXUS_DATABASE_URL", database_url)
+
+    init_database(database_url)
+
+    engine = create_engine(database_url)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as session:
+        zone = session.get(ZoneModel, ROOT_ZONE_ID)
+
+    assert zone is not None
+    assert zone.phase == "Active"
+    assert zone.deleted_at is None
+
+
 def test_ensure_root_zone_idempotent_across_calls(tmp_path):
     """Re-running ensure_root_zone on an already-seeded store is a no-op."""
     db = tmp_path / "store.db"

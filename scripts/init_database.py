@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 # Imports after path modification
 from alembic.config import Config  # noqa: E402
 from sqlalchemy import create_engine, inspect, text  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from alembic import command  # noqa: E402
 
@@ -90,6 +91,12 @@ def init_database(database_url: str) -> None:
         command.stamp(alembic_cfg, "heads")
 
         print("✓ Database initialized successfully")
+
+    from nexus.storage.zone_bootstrap import ensure_root_zone
+
+    SessionFactory = sessionmaker(bind=engine, expire_on_commit=False)
+    ensure_root_zone(SessionFactory)
+    print("✓ Root zone ready")
 
     engine.dispose()
 

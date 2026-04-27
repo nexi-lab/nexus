@@ -13,7 +13,6 @@ Issue #2193: Former kernel services moved to system tier.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -94,6 +93,16 @@ def _make_mock_ctx(**overrides: Any) -> Any:
     return _BootContext(**defaults)
 
 
+def _make_mock_system() -> dict[str, Any]:
+    """Build the minimal system tier dict needed by brick-tier tests."""
+    return {
+        "rebac_manager": MagicMock(),
+        "entity_registry": MagicMock(),
+        "acp_service": MagicMock(),
+        "agent_registry": MagicMock(),
+    }
+
+
 # ---------------------------------------------------------------------------
 # TestBootKernelServices
 # ---------------------------------------------------------------------------
@@ -130,13 +139,13 @@ class TestBootKernelServices:
             _boot_kernel_services(ctx)
         assert exc_info.value.tier == "kernel"
 
-    def test_timing_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_timing_logged(self) -> None:
         from nexus.factory import _boot_kernel_services
 
         ctx = _make_mock_ctx()
-        with caplog.at_level(logging.INFO, logger="nexus.factory"):
+        with patch("nexus.factory._kernel.logger.info") as log_info:
             _boot_kernel_services(ctx)
-        assert any("[BOOT:KERNEL]" in r.message for r in caplog.records)
+        assert any("[BOOT:KERNEL]" in str(call.args[0]) for call in log_info.call_args_list)
 
 
 # ---------------------------------------------------------------------------
@@ -196,13 +205,12 @@ class TestBootSystemServices:
             assert "system-critical" in exc_info.value.tier
             assert "db connection failed" in str(exc_info.value)
 
-    def test_degradable_failure_warns_but_continues(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_degradable_failure_warns_but_continues(self) -> None:
         from nexus.factory import _boot_system_services
 
         ctx = _make_mock_ctx()
 
         with (
-            caplog.at_level(logging.WARNING, logger="nexus.factory"),
             patch(
                 "nexus.bricks.rebac.manager.ReBACManager.create_namespace_manager",
                 side_effect=RuntimeError("namespace db error"),
@@ -272,61 +280,75 @@ class TestBootBrickServices:
         }
         assert expected_keys == set(result.keys())
 
-    def test_version_service_degrades_gracefully(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_version_service_degrades_gracefully(self) -> None:
         """Issue #2034 / 10A: VersionService failure should not crash brick boot."""
-        from nexus.factory import _boot_brick_services, _boot_system_services
+        from nexus.factory import _boot_brick_services
 
         ctx = _make_mock_ctx()
-        system = _boot_system_services(ctx)
+        system = _make_mock_system()
 
         with (
-            caplog.at_level(logging.DEBUG, logger="nexus.factory"),
+            patch("nexus.factory._bricks._discover_brick_factories", return_value=[]),
+            patch("nexus.factory._bricks.logger.debug") as log_debug,
             patch(
                 "nexus.bricks.versioning.version_service.VersionService",
                 side_effect=RuntimeError("version db unavailable"),
             ),
         ):
-            result = _boot_brick_services(ctx, system)
+            result = _boot_brick_services(ctx, system, lambda _name: False)
 
         # version_service key exists but is None (graceful degradation)
         assert "version_service" in result
         assert result["version_service"] is None
         # Other brick services are unaffected
         assert "wallet_provisioner" in result
-        assert any("version db unavailable" in r.message for r in caplog.records)
+        assert any(
+            "VersionService unavailable" in str(call.args[0])
+            and "version db unavailable" in str(call.args[1])
+            for call in log_debug.call_args_list
+            if len(call.args) >= 2
+        )
 
-    def test_circuit_breaker_degrades_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_circuit_breaker_degrades_with_warning(self) -> None:
         """Issue #2034 / 14A: Circuit breaker failure logs WARNING, not fatal."""
-        from nexus.factory import _boot_brick_services, _boot_system_services
+        from nexus.factory import _boot_brick_services
 
         ctx = _make_mock_ctx()
-        system = _boot_system_services(ctx)
+        system = _make_mock_system()
 
         with (
-            caplog.at_level(logging.WARNING, logger="nexus.factory"),
+            patch("nexus.factory._bricks._discover_brick_factories", return_value=[]),
+            patch("nexus.factory._bricks.logger.warning") as log_warning,
             patch(
                 "nexus.bricks.rebac.circuit_breaker.AsyncCircuitBreaker",
                 side_effect=RuntimeError("circuit breaker config error"),
             ),
         ):
-            result = _boot_brick_services(ctx, system)
+            result = _boot_brick_services(ctx, system, lambda _name: False)
 
         assert "rebac_circuit_breaker" in result
         assert result["rebac_circuit_breaker"] is None
-        assert any("circuit-breaking protection" in r.message for r in caplog.records)
+        assert any(
+            "circuit-breaking protection" in str(call.args[0])
+            for call in log_warning.call_args_list
+            if call.args
+        )
 
-    def test_failure_logged_at_debug(self, caplog: pytest.LogCaptureFixture) -> None:
-        from nexus.factory import _boot_brick_services, _boot_system_services
+    def test_failure_logged_at_debug(self) -> None:
+        from nexus.factory import _boot_brick_services
 
         ctx = _make_mock_ctx()
-        system = _boot_system_services(ctx)
+        system = _make_mock_system()
 
-        with caplog.at_level(logging.DEBUG, logger="nexus.factory"):
-            result = _boot_brick_services(ctx, system)
+        with (
+            patch("nexus.factory._bricks._discover_brick_factories", return_value=[]),
+            patch("nexus.factory._bricks.logger.info") as log_info,
+        ):
+            result = _boot_brick_services(ctx, system, lambda _name: False)
 
         # Brick services should return keys even if some are None
         assert "wallet_provisioner" in result
-        assert any("[BOOT:BRICK]" in r.message for r in caplog.records)
+        assert any("[BOOT:BRICK]" in str(call.args[0]) for call in log_info.call_args_list)
 
 
 # ---------------------------------------------------------------------------
@@ -352,24 +374,27 @@ class TestSafeCreate:
         result = _safe_create("test_svc", lambda: object(), lambda _: False)
         assert result is None
 
-    def test_debug_severity_returns_none_on_error(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_debug_severity_returns_none_on_error(self) -> None:
         """Default severity (debug) logs at DEBUG and returns None."""
         from nexus.factory import _safe_create
 
-        with caplog.at_level(logging.DEBUG, logger="nexus.factory"):
+        with patch("nexus.factory._helpers.logger.debug") as log_debug:
             result = _safe_create(
                 "broken_svc",
                 lambda: (_ for _ in ()).throw(RuntimeError("boom")),
                 lambda _: True,
             )
         assert result is None
-        assert any("broken_svc" in r.message and r.levelno == logging.DEBUG for r in caplog.records)
+        log_debug.assert_called_once()
+        assert log_debug.call_args.args[0] == "[BOOT:%s] %s unavailable: %s"
+        assert log_debug.call_args.args[1:3] == ("BRICK", "broken_svc")
+        assert str(log_debug.call_args.args[3]) == "boom"
 
-    def test_warning_severity_returns_none_on_error(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_warning_severity_returns_none_on_error(self) -> None:
         """Warning severity logs at WARNING and returns None."""
         from nexus.factory import _safe_create
 
-        with caplog.at_level(logging.WARNING, logger="nexus.factory"):
+        with patch("nexus.factory._helpers.logger.warning") as log_warning:
             result = _safe_create(
                 "degradable_svc",
                 lambda: (_ for _ in ()).throw(RuntimeError("degraded")),
@@ -377,9 +402,10 @@ class TestSafeCreate:
                 severity="warning",
             )
         assert result is None
-        assert any(
-            "degradable_svc" in r.message and r.levelno == logging.WARNING for r in caplog.records
-        )
+        log_warning.assert_called_once()
+        assert log_warning.call_args.args[0] == "[BOOT:%s] %s unavailable: %s"
+        assert log_warning.call_args.args[1:3] == ("BRICK", "degradable_svc")
+        assert str(log_warning.call_args.args[3]) == "degraded"
 
     def test_critical_severity_raises_boot_error(self) -> None:
         """Critical severity raises BootError instead of returning None."""
@@ -517,7 +543,7 @@ class TestCreateNexusServicesIntegration:
                 dlc=MagicMock(),
             )
 
-    def test_boot_tags_in_log_output(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_boot_tags_in_log_output(self) -> None:
         from nexus.factory import create_nexus_services
 
         record_store = MagicMock()
@@ -525,7 +551,11 @@ class TestCreateNexusServicesIntegration:
         record_store.session_factory = MagicMock()
         record_store.database_url = "sqlite:///:memory:"
 
-        with caplog.at_level(logging.DEBUG, logger="nexus.factory"):
+        with (
+            patch("nexus.factory.orchestrator.logger.info") as orchestrator_info,
+            patch("nexus.factory._system.logger.info") as system_info,
+            patch("nexus.factory._bricks.logger.info") as brick_info,
+        ):
             create_nexus_services(
                 record_store=record_store,
                 metadata_store=MagicMock(),
@@ -533,7 +563,8 @@ class TestCreateNexusServicesIntegration:
                 dlc=MagicMock(),
             )
 
-        messages = " ".join(r.message for r in caplog.records)
-        assert "[BOOT:KERNEL]" in messages
-        assert "[BOOT:SYSTEM]" in messages
-        assert "[BOOT:BRICK]" in messages
+        assert any(
+            "[BOOT:KERNEL]" in str(call.args[0]) for call in orchestrator_info.call_args_list
+        )
+        assert any("[BOOT:SYSTEM]" in str(call.args[0]) for call in system_info.call_args_list)
+        assert any("[BOOT:BRICK]" in str(call.args[0]) for call in brick_info.call_args_list)

@@ -32,6 +32,14 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
+        // 1a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // Non-link paths borrow the input; link paths produce an owned
+        // String for the resolved target. The rest of the syscall sees
+        // the resolved path and is otherwise indistinguishable from a
+        // direct read at the target.
+        let resolved = self.resolve_path_through_link(path)?;
+        let path = resolved.as_ref();
+
         // 1b. Trie-resolved virtual paths (§11 Phase 21) — Python's resolve_read
         // should have handled these before reaching us; treat as missing.
         if self.trie.lookup(path).is_some() {
@@ -316,6 +324,13 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
+
+        // 1a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // Same one-hop semantics as sys_read; sys_setattr's link branch
+        // rejects self-loops at write time so the resolver only handles
+        // chain rejection here.
+        let resolved = self.resolve_path_through_link(path)?;
+        let path = resolved.as_ref();
 
         // 1b. Trie-resolved virtual paths (§11 Phase 21)
         if self.trie.lookup(path).is_some() {

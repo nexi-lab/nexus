@@ -1390,6 +1390,40 @@ impl Kernel {
         self.dcache.put(path, entry);
     }
 
+    /// Resolve `path` through DT_LINK indirection for content-touching
+    /// syscalls (`sys_read`, `sys_write`, etc.). Non-link paths and
+    /// missing entries borrow the input — zero allocation on the hot
+    /// path. Link entries follow one hop with cycle detection (see
+    /// `DCache::resolve_link`); chain / self-loop / missing-target
+    /// failures surface as `KernelError::PermissionDenied` so the
+    /// existing kernel-error handling chain doesn't need a new variant.
+    ///
+    /// `sys_stat` deliberately bypasses this helper — `lstat` semantics
+    /// require the raw DT_LINK metadata, not the resolved target.
+    pub(crate) fn resolve_path_through_link<'a>(
+        &self,
+        path: &'a str,
+    ) -> Result<std::borrow::Cow<'a, str>, KernelError> {
+        match self.dcache.resolve_link(path) {
+            Ok(resolved) => {
+                if resolved == path {
+                    Ok(std::borrow::Cow::Borrowed(path))
+                } else {
+                    Ok(std::borrow::Cow::Owned(resolved))
+                }
+            }
+            Err(crate::dcache::LinkResolveError::Chained) => Err(KernelError::PermissionDenied(
+                format!("DT_LINK chain rejected (ELOOP) at {path}"),
+            )),
+            Err(crate::dcache::LinkResolveError::SelfLoop) => Err(
+                KernelError::PermissionDenied(format!("DT_LINK self-loop at {path}")),
+            ),
+            Err(crate::dcache::LinkResolveError::MissingTarget) => Err(
+                KernelError::PermissionDenied(format!("DT_LINK at {path} has no link_target")),
+            ),
+        }
+    }
+
     /// Get hot-path tuple: (entry_type, last_writer_address).
     pub fn dcache_get(&self, path: &str) -> Option<(u8, Option<String>)> {
         self.dcache.get_hot(path)

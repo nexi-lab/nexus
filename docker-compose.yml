@@ -27,6 +27,10 @@ services:
       - NEXUS_OAUTH_ENCRYPTION_KEY=${NEXUS_OAUTH_ENCRYPTION_KEY:-}
       - NEXUS_OAUTH_GOOGLE_CLIENT_ID=${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
       - NEXUS_OAUTH_GOOGLE_CLIENT_SECRET=${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
+      # Federation/Raft — forwarded from host only when set (no = means skip if unset)
+      - NEXUS_PEERS
+      - NEXUS_BIND_ADDR
+      - NEXUS_HOSTNAME
       # Tiger Cache - opt-in until revocation is fail-closed; set to true when Dragonfly is present
       - NEXUS_ENABLE_TIGER_CACHE=${NEXUS_ENABLE_TIGER_CACHE:-false}
       - NEXUS_REDB_CACHE_MB=${NEXUS_REDB_CACHE_MB:-64}

@@ -381,7 +381,7 @@ class ReBACPermissionCache:
         per_set_cap = max(per_index_budget // 8, 8)
         for index in (self._subject_index, self._object_index, self._path_prefix_index):
             remaining = per_index_budget
-            for index_key in list(index.keys()):
+            for index_key in itertools.islice(index, per_index_budget):
                 if remaining <= 0:
                     break
                 key_set = index[index_key]

@@ -3289,11 +3289,13 @@ impl Kernel {
     ///
     /// Returns `hit=true` when Rust completed the full operation. Python only
     /// dispatches event notify + POST hooks.
-    /// Returns `hit=false` for DT_DIR/DT_MOUNT/DT_PIPE/DT_STREAM → Python fallback.
+    /// Returns `hit=false` for DT_EXTERNAL_STORAGE (5) → Python handles connector teardown.
+    /// DT_DIR is handled inline via sys_rmdir (§12e).
     pub fn sys_unlink(
         &self,
         path: &str,
         ctx: &OperationContext,
+        recursive: bool,
     ) -> Result<SysUnlinkResult, KernelError> {
         let miss = |et: u8| {
             Ok(SysUnlinkResult {
@@ -3372,7 +3374,20 @@ impl Kernel {
                     size: entry.size,
                 });
             }
-            DT_DIR => return miss(entry.entry_type),
+            DT_DIR => {
+                // §12e: handle DT_DIR inline instead of returning miss.
+                // Delegates to sys_rmdir which handles recursive delete,
+                // backend rmdir, dcache evict, and observer dispatch.
+                let rmdir_result = self.sys_rmdir(path, ctx, recursive)?;
+                return Ok(SysUnlinkResult {
+                    hit: rmdir_result.hit,
+                    entry_type: DT_DIR,
+                    post_hook_needed: rmdir_result.post_hook_needed,
+                    path: path.to_string(),
+                    etag: entry.etag,
+                    size: entry.size,
+                });
+            }
             // DT_MOUNT (2) → full unmount lifecycle (metastore + dcache + routing
             // table). Returns hit=true so callers don't need a separate
             // Python-side `unmount()` shim — `sys_unlink(mount_path)` is the
@@ -3773,15 +3788,17 @@ impl Kernel {
                     .flatten()
                 {
                     Some(e) => e,
-                    None => return miss(),
+                    None => return Err(KernelError::FileNotFound(src_path.to_string())),
                 }
             }
         };
 
-        // 4. Reject non-regular files
-        match src_meta.entry_type {
-            DT_REG => {}
-            _ => return miss(),
+        // 4. Reject non-regular files (§12e: explicit error, not miss)
+        if src_meta.entry_type != DT_REG {
+            return Err(KernelError::InvalidPath(format!(
+                "sys_copy: source is not a regular file (entry_type={}): {}",
+                src_meta.entry_type, src_path
+            )));
         }
 
         // 5. Check destination doesn't already exist (zone-relative key)
@@ -4484,7 +4501,7 @@ impl Kernel {
         let mut results = Vec::with_capacity(paths.len());
 
         for path in paths {
-            match self.sys_unlink(path, ctx) {
+            match self.sys_unlink(path, ctx, false) {
                 Ok(r) => results.push(r),
                 Err(_) => results.push(SysUnlinkResult {
                     hit: false,
@@ -6604,7 +6621,7 @@ mod tests {
         ms.put("/mnt", mount_meta).unwrap();
 
         let ctx = OperationContext::new("test", zone, true, None, true);
-        let result = k.sys_unlink("/mnt", &ctx).unwrap();
+        let result = k.sys_unlink("/mnt", &ctx, false).unwrap();
 
         assert!(result.hit, "DT_MOUNT unlink should return hit=true");
         assert_eq!(result.entry_type, DT_MOUNT);

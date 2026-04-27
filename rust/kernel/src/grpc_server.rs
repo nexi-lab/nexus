@@ -260,12 +260,7 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_delete(s))),
         };
-        // recursive=true currently maps to the same kernel path
-        // (`sys_unlink`) — Phase 1 doesn't add a separate `rmdir`
-        // syscall. Python servicer behaved the same; if `recursive`
-        // matters in future, we'd thread it through `sys_unlink`.
-        let _ = req.recursive;
-        match self.kernel.sys_unlink(&req.path, &ctx) {
+        match self.kernel.sys_unlink(&req.path, &ctx, req.recursive) {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
                 is_error: false,

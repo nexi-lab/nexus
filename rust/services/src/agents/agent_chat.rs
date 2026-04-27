@@ -80,6 +80,43 @@ pub fn resolve_agent_chat(
     }
 }
 
+/// Enumerate every active pid's `/proc/{pid}/chat-with-me` for an
+/// agent name. The kernel uses this for the multi-instance broadcast
+/// path: when more than one pid is active, the write fans out to every
+/// returned target.
+///
+/// Returns `Ok(None)` when `path` is not an agent-name chat path, so
+/// callers borrow with no allocation in the common case. `Ok(Some(...))`
+/// always carries a non-empty Vec — `0` active pids surfaces as
+/// `Err(NoInstance)` to keep the "agent does not exist" diagnostic
+/// distinct from "multi-pid result with one entry".
+pub fn list_active_pid_chat_paths(
+    table: &AgentTable,
+    path: &str,
+) -> Result<Option<Vec<String>>, AgentChatError> {
+    let Some(agent_name) = parse_agent_chat_path(path) else {
+        return Ok(None);
+    };
+
+    let mut active_pids: Vec<String> = table
+        .list(None, None, None)
+        .into_iter()
+        .filter(|d| d.name == agent_name && is_active(&d.state))
+        .map(|d| d.pid)
+        .collect();
+
+    if active_pids.is_empty() {
+        return Err(AgentChatError::NoInstance(agent_name.to_string()));
+    }
+    active_pids.sort();
+    Ok(Some(
+        active_pids
+            .into_iter()
+            .map(|pid| format!("/proc/{pid}/chat-with-me"))
+            .collect(),
+    ))
+}
+
 fn parse_agent_chat_path(path: &str) -> Option<&str> {
     let rest = path.strip_prefix(AGENTS_PREFIX)?;
     let agent_name = rest.strip_suffix(CHAT_WITH_ME_SUFFIX)?;
@@ -213,5 +250,67 @@ mod tests {
         t.register(descriptor("p2", "scode-fast", AgentState::Ready));
         let r = resolve_agent_chat(&t, "/agents/scode-standard/chat-with-me").unwrap();
         assert_eq!(r.as_deref(), Some("/proc/p1/chat-with-me"));
+    }
+
+    // ── list_active_pid_chat_paths ─────────────────────────────────────
+
+    #[test]
+    fn list_active_returns_none_for_non_agent_path() {
+        let t = make_table();
+        assert_eq!(
+            list_active_pid_chat_paths(&t, "/proc/p1/chat-with-me").unwrap(),
+            None
+        );
+        assert_eq!(
+            list_active_pid_chat_paths(&t, "/agents/scode-standard/config.toml").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn list_active_returns_no_instance_when_empty() {
+        let t = make_table();
+        let err =
+            list_active_pid_chat_paths(&t, "/agents/scode-standard/chat-with-me").unwrap_err();
+        assert_eq!(
+            err,
+            AgentChatError::NoInstance("scode-standard".to_string())
+        );
+    }
+
+    #[test]
+    fn list_active_returns_single_entry_for_one_pid() {
+        let t = make_table();
+        t.register(descriptor("p1", "scode-standard", AgentState::Ready));
+        let r = list_active_pid_chat_paths(&t, "/agents/scode-standard/chat-with-me").unwrap();
+        assert_eq!(r, Some(vec!["/proc/p1/chat-with-me".to_string()]));
+    }
+
+    #[test]
+    fn list_active_returns_all_active_pids_sorted() {
+        let t = make_table();
+        // Mix in different states to exercise the active-state filter.
+        t.register(descriptor("p_b", "scode-standard", AgentState::Ready));
+        t.register(descriptor("p_a", "scode-standard", AgentState::Busy));
+        t.register(descriptor("p_c", "scode-standard", AgentState::WarmingUp));
+        t.register(descriptor(
+            "p_dead",
+            "scode-standard",
+            AgentState::Terminated,
+        ));
+        // Different agent name — must be excluded.
+        t.register(descriptor("p_other", "scode-fast", AgentState::Ready));
+
+        let r = list_active_pid_chat_paths(&t, "/agents/scode-standard/chat-with-me")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            r,
+            vec![
+                "/proc/p_a/chat-with-me".to_string(),
+                "/proc/p_b/chat-with-me".to_string(),
+                "/proc/p_c/chat-with-me".to_string(),
+            ]
+        );
     }
 }

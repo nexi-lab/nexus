@@ -27,11 +27,12 @@ use serde_json::{json, Map, Value};
 use crate::openai_backend::OpenAIBackend;
 use crate::stream_manager::StreamManager;
 
-// Trait declaration moved to `core::traits::llm_streaming` (Phase B/D
-// preparation). Re-exported here so `crate::openai_streaming::LlmStreamingBackend`
+// Trait declaration moved to `crate::hal::llm_streaming` (Phase 1
+// — was `core::traits::llm_streaming` from Phase B/D preparation).
+// Re-exported here so `crate::openai_streaming::LlmStreamingBackend`
 // keeps working for callers (notably the `ObjectStore::as_llm_streaming`
-// trait method) until Phase D moves the openai_* impls into `backends/`.
-pub use crate::core::traits::llm_streaming::LlmStreamingBackend;
+// trait method) until Phase 2 moves the openai_* impls into `backends/`.
+pub use crate::hal::llm_streaming::LlmStreamingBackend;
 
 impl LlmStreamingBackend for OpenAIBackend {
     #[allow(private_interfaces)]

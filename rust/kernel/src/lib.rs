@@ -11,18 +11,28 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// literals.
 pub use contracts::ROOT_ZONE_ID;
 
-// ── §3 / §4 trait + primitive surface (Phase C) ───────────────────────
-// Every kernel-internal pillar nested under `core/` so the kernel
-// file set is self-evident. Driver / service / transport impls move
-// out into parallel crates in Phases D–G.
+// ── §3 / §4 / HAL surface (Phase 1) ───────────────────────────────────
+// Strict 3-way split inside the kernel crate:
+//   * `crate::abc`  — §3 ABC pillars (ObjectStore / MetaStore / CacheStore).
+//                     Three trait files, period.
+//   * `crate::hal`  — kernel-defined extension interfaces that aren't
+//                     §3 pillars (LlmStreamingBackend, PeerBlobClient).
+//   * `crate::core` — §4 kernel primitives (vfs_router, dlc, dcache,
+//                     locks, dispatch, plus in-memory reference impls of
+//                     the §3 pillars).  No traits, no extension ifaces.
+//
+// Driver / service / transport impls move out into parallel crates in
+// Phases 2–5.
+pub mod abc;
 pub mod core;
+pub mod hal;
 
 // Phase B holding pen for ObjectStore impls (CasLocalBackend,
-// PathLocalBackend, LocalConnectorBackend) — Phase D lifts them into
-// `backends/`. `backend` is a flat re-export shim over the trait
-// (in `core::traits::object_store`) plus the impls so the 17 callers
-// using `use crate::backend::{ObjectStore, ...}` keep working through
-// the transition.
+// PathLocalBackend, LocalConnectorBackend) — Phase 2 lifts them into
+// `backends/`.  `backend` is a flat re-export shim over the trait
+// (in `crate::abc::object_store` after Phase 1) plus the impls so the
+// 17 callers using `use crate::backend::{ObjectStore, ...}` keep
+// working through the transition.
 mod _backend_impls;
 pub mod backend;
 

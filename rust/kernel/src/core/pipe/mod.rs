@@ -20,6 +20,7 @@
 //   core/pipe/shm.rs     — SharedMemoryPipe   (was kernel/src/shm_pipe.rs)
 //   core/pipe/stdio.rs   — StdioPipeBackend   (was kernel/src/stdio_pipe.rs)
 //   core/pipe/remote.rs  — RemotePipeBackend  (was kernel/src/remote_pipe.rs)
+pub mod backend;
 pub mod manager;
 pub mod remote;
 #[cfg(unix)]
@@ -64,13 +65,16 @@ unsafe impl Send for MemoryPipeBackend {}
 unsafe impl Sync for MemoryPipeBackend {}
 
 // ---------------------------------------------------------------------------
-// PipeBackend / PipeError now live in `crate::core::traits::pipe_backend`
-// (Phase B). Re-exported here so `crate::pipe::PipeBackend` /
-// `crate::pipe::PipeError` paths used throughout the kernel keep
-// resolving without per-caller churn.
+// PipeBackend / PipeError live in this directory's `backend.rs` sub-file
+// (Phase 1 — moved out of the now-deleted `core/traits/`).  The trait is
+// kernel-internal — not a §3 ABC pillar, just an abstraction for the IPC
+// subsystem — so it sits with its primitive impl rather than under
+// `crate::abc/` or `crate::hal/`.  Re-exported here so
+// `crate::pipe::PipeBackend` / `crate::pipe::PipeError` paths used
+// throughout the kernel keep resolving without per-caller churn.
 // ---------------------------------------------------------------------------
 
-pub(crate) use crate::core::traits::pipe_backend::{PipeBackend, PipeError};
+pub(crate) use backend::{PipeBackend, PipeError};
 
 // ---------------------------------------------------------------------------
 // Internal helpers — pub(crate) for direct Kernel IPC registry access

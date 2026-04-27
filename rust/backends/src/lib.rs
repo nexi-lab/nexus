@@ -2,8 +2,8 @@
 //!
 //! Per `docs/architecture/KERNEL-ARCHITECTURE.md` §1 / §3 the driver
 //! layer sits parallel to the kernel: it implements
-//! `kernel::core::traits::ObjectStore` (and where applicable
-//! `kernel::core::traits::llm_streaming::LlmStreamingBackend`) without
+//! `kernel::abc::object_store::ObjectStore` (and where applicable
+//! `kernel::hal::llm_streaming::LlmStreamingBackend`) without
 //! adding new kernel surface. Concrete backends compose an *addressing*
 //! strategy (CAS, path) with a *transport* (local fs, S3, GCS, HTTP API).
 //!

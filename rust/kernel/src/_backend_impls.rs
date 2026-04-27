@@ -1,7 +1,7 @@
 //! ObjectStore impls — `CasLocalBackend`, `PathLocalBackend`,
 //! `LocalConnectorBackend`. Holding pen until Phase D lifts them into
 //! the parallel `backends/` crate. Trait declarations are now in
-//! `crate::core::traits::object_store`; the `crate::backend` shim
+//! `crate::abc::object_store`; the `crate::backend` shim
 //! re-exports everything so existing `use crate::backend::*` keeps
 //! working through Phase B–C.
 
@@ -9,9 +9,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
 use crate::cas_engine::CASEngine;
 use crate::cas_transport::LocalCASTransport;
-use crate::core::traits::object_store::{ObjectStore, StorageError, WriteResult};
 
 /// CAS + Local transport backend (Rust equivalent of Python CASLocalBackend).
 ///

@@ -3,7 +3,7 @@
 //! Phase B split the ObjectStore trait declaration from its three
 //! kernel-internal impls (`CasLocalBackend`, `PathLocalBackend`,
 //! `LocalConnectorBackend`). The traits + types now live in
-//! `crate::core::traits::object_store`; the impls live in
+//! `crate::abc::object_store`; the impls live in
 //! `crate::_backend_impls` (a holding pen until Phase D lifts them
 //! into the parallel `backends/` crate).
 //!
@@ -17,6 +17,4 @@
 // stay `pub` because Phase D's `backends/` crate will pull them across the
 // crate boundary.
 pub(crate) use crate::_backend_impls::*;
-pub use crate::core::traits::object_store::{
-    ExternalTransport, ObjectStore, StorageError, WriteResult,
-};
+pub use crate::abc::object_store::{ExternalTransport, ObjectStore, StorageError, WriteResult};

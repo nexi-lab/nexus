@@ -5119,26 +5119,45 @@ def collect_all() -> tuple[
         classes[cls_name] = cls
         class_order.append(cls_name)
 
-    # Collect traits from dispatch / hook_registry / metastore (flat) +
-    # core/traits/*.rs (Phase B lifted ObjectStore, ExternalTransport,
-    # StreamBackend, PipeBackend out of the flat backend.rs / stream.rs /
-    # pipe.rs into per-pillar files).
+    # Collect traits.  Phase 1 split kernel/src/ into three sibling
+    # directories — abc/ (§3 ABC pillars), hal/ (kernel-defined extension
+    # interfaces), and core/ (§4 primitives + nested per-pillar trait
+    # files for pipe / stream).  The scanner walks every location that
+    # can host a `pub trait` declaration; pre-Phase-1 fallbacks
+    # (core/traits/, flat dispatch.rs / metastore.rs) are still tried so
+    # this script keeps working on older checkouts.
     traits: list[TraitDef] = []
-    # Phase C nested dispatch / metastore under core/. The trait scan
-    # walks the post-Phase-C locations directly; pre-Phase-C flat files
-    # are still tried as a fallback so this script keeps working on
-    # checkouts that haven't run Phase C yet.
     trait_paths: list[Path] = [
+        # §4 primitives that declare their own internal traits.
         RUST_SRC / "core" / "dispatch" / "mod.rs",
         RUST_SRC / "core" / "dispatch" / "hook_registry.rs",
+        RUST_SRC / "core" / "meta_store" / "mod.rs",
+        # Pre-Phase-1 fallbacks — older checkouts.
         RUST_SRC / "core" / "metastore" / "mod.rs",
         RUST_SRC / "dispatch.rs",
         RUST_SRC / "hook_registry.rs",
         RUST_SRC / "metastore.rs",
+        # Phase 1: pipe / stream internal traits relocated next to their
+        # primitive impls (was core/traits/{pipe,stream}_backend.rs).
+        RUST_SRC / "core" / "pipe" / "backend.rs",
+        RUST_SRC / "core" / "stream" / "backend.rs",
     ]
     for rs_path in trait_paths:
         if rs_path.exists():
             traits.extend(parse_traits(rs_path.read_text()))
+    # Phase 1: §3 ABC pillars + HAL extension interfaces live in
+    # `abc/*.rs` and `hal/*.rs`.  Walk each non-mod.rs file in both
+    # directories — that's where ObjectStore / MetaStore / CacheStore /
+    # LlmStreamingBackend / PeerBlobClient live now.
+    for sub_dir in ("abc", "hal"):
+        dir_path = RUST_SRC / sub_dir
+        if dir_path.is_dir():
+            for trait_path in sorted(dir_path.glob("*.rs")):
+                if trait_path.name == "mod.rs":
+                    continue
+                traits.extend(parse_traits(trait_path.read_text()))
+    # Pre-Phase-1 fallback: legacy core/traits/ directory.  Empty after
+    # Phase 1 lands but tolerated for older checkouts.
     core_traits_dir = RUST_SRC / "core" / "traits"
     if core_traits_dir.is_dir():
         for trait_path in sorted(core_traits_dir.glob("*.rs")):

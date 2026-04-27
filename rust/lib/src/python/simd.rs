@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use simsimd::SpatialSimilarity;
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 
 // ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ fn top_k_by_similarity<T: Sync>(
     }
 
     let mut result: Vec<(usize, f64)> = heap.into_iter().map(|e| (e.index, e.score.0)).collect();
-    result.sort_by(|a, b| TotalF64(b.1).cmp(&TotalF64(a.1)));
+    result.sort_by_key(|b| Reverse(TotalF64(b.1)));
     result
 }
 

@@ -481,7 +481,16 @@ impl BlobPackEngine {
         fs::create_dir_all(&volumes_dir).map_err(io_err)?;
 
         let db_path = volumes_dir.join("volume_index.redb");
-        let db = Database::create(&db_path).map_err(db_err)?;
+        let cache_bytes = std::env::var("NEXUS_REDB_CACHE_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(64)
+            * 1024
+            * 1024;
+        let db = Database::builder()
+            .set_cache_size(cache_bytes)
+            .create(&db_path)
+            .map_err(db_err)?;
 
         // Ensure tables exist
         {

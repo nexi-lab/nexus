@@ -180,7 +180,7 @@ class ReBACManager:
         # Initialize L1 in-memory cache
         self._l1_cache: ReBACPermissionCache | None = None
         self._l1_cache = ReBACPermissionCache(
-            max_size=50000,
+            max_size=max(2, int(os.environ.get("NEXUS_CACHE_L1_SIZE", "5000"))),
             ttl_seconds=cache_ttl_seconds,
             enable_metrics=True,
             enable_adaptive_ttl=False,

@@ -28,6 +28,7 @@ Tiered TTL (Issue #1077):
 - Denial: 60 seconds (security critical)
 """
 
+import itertools
 import logging
 import math
 import random
@@ -42,12 +43,12 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from cachetools import TTLCache
+    from cachetools import LRUCache, TTLCache
 else:
     try:
-        from cachebox import TTLCache
+        from cachebox import LRUCache, TTLCache
     except ImportError:
-        from cachetools import TTLCache
+        from cachetools import LRUCache, TTLCache
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -77,7 +78,7 @@ class ReBACPermissionCache:
 
     def __init__(
         self,
-        max_size: int = 50000,  # Issue #1077: increased from 10k to 50k
+        max_size: int = 5000,
         ttl_seconds: int = 300,
         denial_ttl_seconds: int = 60,
         enable_metrics: bool = True,
@@ -122,6 +123,8 @@ class ReBACPermissionCache:
                 - "targeted": Use secondary indexes for O(1) invalidation (default)
                 - "zone_wide": Legacy O(n) full cache scan
         """
+        if max_size < 2:
+            raise ValueError(f"ReBACPermissionCache max_size must be >= 2, got {max_size}")
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         self._denial_ttl_seconds = denial_ttl_seconds
@@ -147,7 +150,7 @@ class ReBACPermissionCache:
         # An entry cached before the latest cross-zone invalidation is treated as miss.
         self._read_fence: Any = None  # ReadFence | None
         # Per-key fence generation at cache write time: key -> generation
-        self._fence_stamps: dict[str, int] = {}
+        self._fence_stamps: LRUCache = LRUCache(maxsize=max_size)
 
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
@@ -173,7 +176,7 @@ class ReBACPermissionCache:
 
         # Write frequency tracking for adaptive TTL
         # Maps object path -> (write_count, last_reset_time)
-        self._write_frequency: dict[str, tuple[int, float]] = {}
+        self._write_frequency: LRUCache = LRUCache(maxsize=max_size)
         self._write_frequency_window = 300.0  # 5-minute window
 
         # Stampede prevention (Issue #878)
@@ -192,7 +195,7 @@ class ReBACPermissionCache:
         # Maps key -> (created_at, jittered_ttl, delta, revision)
         # delta is the recomputation time in seconds (Issue #718)
         # revision is the zone revision at cache time (Issue #1081)
-        self._entry_metadata: dict[str, tuple[float, float, float, int]] = {}
+        self._entry_metadata: LRUCache = LRUCache(maxsize=max_size)
         # Track keys currently being refreshed in background
         self._refresh_in_progress: set[str] = set()
 
@@ -236,6 +239,12 @@ class ReBACPermissionCache:
         # Metrics for targeted invalidation
         self._targeted_invalidations = 0
         self._index_lookups = 0
+
+        # Counter for periodic stale-index pruning (every max_size//4 inserts)
+        self._index_inserts_since_prune: int = 0
+        self._index_prune_interval: int = max(max_size // 4, 64)
+        # Max entries examined per prune call — bounds lock-hold time on hot path
+        self._index_prune_budget: int = max(max_size // 2, 64)
 
     def _get_jittered_ttl(self, base_ttl: float) -> float:
         """Add random jitter to TTL to prevent thundering herd.
@@ -299,6 +308,12 @@ class ReBACPermissionCache:
         if self._invalidation_mode != "targeted":
             return
 
+        # Periodically prune index entries whose primary cache keys were evicted by TTL/LRU.
+        self._index_inserts_since_prune += 1
+        if self._index_inserts_since_prune >= self._index_prune_interval:
+            self._prune_stale_indexes()
+            self._index_inserts_since_prune = 0
+
         # Subject index
         subject_key = (zone_id, subject_type, subject_id)
         if subject_key not in self._subject_index:
@@ -352,6 +367,42 @@ class ReBACPermissionCache:
                 break
             path = parent
         return prefixes
+
+    def _prune_stale_indexes(self) -> None:
+        """Remove index entries whose primary cache keys have been TTL/LRU-evicted.
+
+        Budget is split evenly across the three indexes. Each call draws a
+        random sample of index buckets so successive calls cover different
+        regions and stale entries near the "end" of any index are not starved.
+        Per-set work is capped at per_set_cap keys via islice. Safe to delete
+        from the index dict because we iterate over the snapshot, not the dict.
+        Must be called under self._lock.
+        """
+        per_index_budget = max(self._index_prune_budget // 3, 16)
+        per_set_cap = max(per_index_budget // 8, 8)
+        for index in (self._subject_index, self._object_index, self._path_prefix_index):
+            n = min(per_index_budget, len(index))
+            if n == 0:
+                continue
+            # Random sample ensures forward progress across repeated prune calls
+            keys_to_check = random.sample(list(index), n)
+            remaining = per_index_budget
+            for index_key in keys_to_check:
+                if remaining <= 0:
+                    break
+                key_set = index.get(index_key)
+                if key_set is None or not key_set:
+                    index.pop(index_key, None)
+                    continue
+                sample = set(itertools.islice(key_set, per_set_cap))
+                remaining -= len(sample)
+                dead = {
+                    k for k in sample if k not in self._grant_cache and k not in self._denial_cache
+                }
+                if dead:
+                    key_set -= dead
+                    if not key_set:
+                        del index[index_key]
 
     def _remove_from_indexes(self, key: str) -> None:
         """Remove a cache key from all secondary indexes (Issue #1077).

@@ -201,6 +201,7 @@ class ReadmeDocMixin:
     """
 
     SKILL_NAME: str = ""
+    SHORT_DESCRIPTION: str = ""  # One-line description for frontmatter discovery
     README_DIR: str = ".readme"  # Directory at mount path
 
     # Subclasses provide these (used for auto-generation)
@@ -255,6 +256,7 @@ class ReadmeDocMixin:
                 error_registry=self.ERROR_REGISTRY,
                 examples=self.EXAMPLES,
                 readme_dir=self.README_DIR,
+                short_description=self.SHORT_DESCRIPTION,
                 nested_examples=self.NESTED_EXAMPLES or None,
                 field_examples=self.FIELD_EXAMPLES or None,
                 write_paths=write_paths or None,

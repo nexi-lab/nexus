@@ -239,7 +239,15 @@ impl LocalMetaStore {
             std::fs::create_dir_all(parent)
                 .map_err(|e| MetaStoreError::IOError(format!("mkdir {}: {e}", parent.display())))?;
         }
-        let db = Database::create(path)
+        let cache_bytes = std::env::var("NEXUS_REDB_CACHE_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(64)
+            * 1024
+            * 1024;
+        let db = Database::builder()
+            .set_cache_size(cache_bytes)
+            .create(path)
             .map_err(|e| MetaStoreError::IOError(format!("redb open {}: {e}", path.display())))?;
 
         // Ensure tables exist (single empty write txn on first open)

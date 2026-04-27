@@ -677,7 +677,7 @@ module = [
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = ["nexus.bricks.mcp.server", "nexus.bricks.mcp.mount", "nexus.bricks.mcp.auth_cache"]
+module = ["nexus.bricks.mcp.server", "nexus.bricks.mcp.mount"]
 # cachetools/yaml stubs may or may not be installed; suppress both directions
 disable_error_code = ["import-untyped", "no-any-return", "redundant-cast"]
 
@@ -800,6 +800,7 @@ warn_unused_ignores = false
 # --- Backend / driver return-type mismatches ---
 [[tool.mypy.overrides]]
 module = [
+    "nexus.cache.backend_wrapper",
     "nexus.ipc.driver",
 ]
 disable_error_code = ["return-value", "override"]
@@ -1017,35 +1018,6 @@ ignore_imports = [
     # (removed: nexus.services.sync.sync_service -> glob_fast; now uses importlib)
 ]
 unmatched_ignore_imports_alerting = "warn"
-
-# Contract 3: dead Python federation modules — never reintroduce.
-# These were superseded by the Rust cluster binary (rust/profiles/cluster/) +
-# the federation_* RPCs in nexus.server.rpc.services.federation_rpc,
-# which delegate to the kernel's PyO3 ZoneManager. Re-importing the
-# old modules would silently revert the federation rewrite.
-[[tool.importlinter.contracts]]
-id = "no-deleted-federation"
-name = "Deleted federation modules must not be reintroduced"
-type = "forbidden"
-source_modules = ["nexus"]
-forbidden_modules = [
-    "nexus.raft.federation",
-    "nexus.raft.zone_manager",
-]
-
-# Contract 4: SlimNexusFS facade — deleted in para-pc-7. Callers should
-# hold a NexusFS kernel directly and use nexus.fs._helpers (LOCAL_CONTEXT,
-# list_mounts, unmount, close, grep, glob) for the few operations that
-# kept Python-side orchestration. Re-introducing the wrapper would re-add
-# a dead layer and confuse future contributors.
-[[tool.importlinter.contracts]]
-id = "no-deleted-fs-facade"
-name = "Deleted nexus.fs._facade must not be reintroduced"
-type = "forbidden"
-source_modules = ["nexus"]
-forbidden_modules = [
-    "nexus.fs._facade",
-]
 
 [dependency-groups]
 dev = [

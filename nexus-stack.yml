@@ -136,7 +136,10 @@ services:
       # Cache
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
-      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-true}
+      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
+      NEXUS_REDB_CACHE_MB: ${NEXUS_REDB_CACHE_MB:-64}
+      OTEL_BSP_MAX_QUEUE_SIZE: ${OTEL_BSP_MAX_QUEUE_SIZE:-512}
+      OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT: ${OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT:-1024}
       # Event bus
       NEXUS_EVENT_BUS_BACKEND: ${NEXUS_EVENT_BUS_BACKEND:-redis}
       NEXUS_NATS_URL: ${NEXUS_NATS_URL:-nats://nats:4222}
@@ -160,6 +163,12 @@ services:
       NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
       NEXUS_GRPC_BIND_ALL: "true"  # Required: Docker port-forwarding needs 0.0.0.0
       NEXUS_GRPC_TLS: "${NEXUS_GRPC_TLS:-false}"  # Disable mTLS for standalone Docker (Issue #3192)
+      # Federation/Raft — forwarded from host only when set (null-value form skips unset vars).
+      # Empty strings override Rust fallbacks, so these are absent in single-node mode.
+      # Single-node: NEXUS_PEERS=127.0.0.1:2126 NEXUS_HOSTNAME=127.0.0.1 nexus up
+      NEXUS_PEERS:
+      NEXUS_BIND_ADDR:
+      NEXUS_HOSTNAME:
       # 0.0.0.0 is a valid bind address but not a valid connect/advertise address.
       # Without an explicit NEXUS_ADVERTISE_ADDR, the node would advertise 0.0.0.0
       # which fails the insecure-channel loopback check in pipe_manager.

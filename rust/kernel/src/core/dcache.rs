@@ -19,6 +19,22 @@ pub(crate) const DT_DIR: u8 = 1;
 pub(crate) const DT_MOUNT: u8 = 2;
 pub(crate) const DT_PIPE: u8 = 3;
 pub(crate) const DT_STREAM: u8 = 4;
+#[allow(dead_code)]
+pub(crate) const DT_EXTERNAL_STORAGE: u8 = 5;
+pub(crate) const DT_LINK: u8 = 6;
+
+/// Errors returned by `DCache::resolve_link` when a DT_LINK lookup violates
+/// the one-hop invariant. Callers translate these into syscall errno values
+/// (`ELOOP`, `EINVAL`) or 4xx gRPC statuses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LinkResolveError {
+    /// `link_target` field absent on a DT_LINK entry — bad metadata write.
+    MissingTarget,
+    /// `link_target` points back at the link itself.
+    SelfLoop,
+    /// `link_target` resolves to another DT_LINK — chained links forbidden.
+    Chained,
+}
 
 /// Hot-path projection of FileMetadata.
 #[derive(Clone, Debug, Default)]
@@ -33,6 +49,8 @@ pub struct CachedEntry {
     pub created_at_ms: Option<i64>,
     pub modified_at_ms: Option<i64>,
     pub last_writer_address: Option<String>,
+    /// DT_LINK target — see `meta_store::FileMetadata::link_target`.
+    pub link_target: Option<String>,
 }
 
 impl From<&crate::meta_store::FileMetadata> for CachedEntry {
@@ -47,6 +65,7 @@ impl From<&crate::meta_store::FileMetadata> for CachedEntry {
             created_at_ms: m.created_at_ms,
             modified_at_ms: m.modified_at_ms,
             last_writer_address: m.last_writer_address.clone(),
+            link_target: m.link_target.clone(),
         }
     }
 }
@@ -144,6 +163,46 @@ impl DCache {
             .collect()
     }
 
+    /// Resolve a path through DT_LINK indirection. Returns the path that
+    /// callers should use for the actual sys_* operation.
+    ///
+    /// Semantics (one hop, matching Linux symlink resolution depth=1):
+    ///   * If `path` has no entry or a non-DT_LINK entry → returns `path` unchanged.
+    ///   * If `path` is a DT_LINK with `link_target` → returns the target.
+    ///   * If the target is itself a DT_LINK → returns `Err(LinkResolveError::Chained)`.
+    ///   * Self-loop (`link_target == path`) is rejected at write time, so this
+    ///     method does not encounter it; defensive ELOOP returned if seen.
+    ///
+    /// Hot-path callers (`sys_read`, `sys_write`) call this after dcache
+    /// lookup detects DT_LINK; non-link paths short-circuit so the cost is
+    /// `~0` for the common case. Wiring into each sys_* call site is the
+    /// next follow-up commit; the helper lives now so the wiring change
+    /// stays small and reviewable.
+    #[allow(dead_code)] // wired into sys_* in the follow-up commit
+    pub(crate) fn resolve_link(&self, path: &str) -> Result<String, LinkResolveError> {
+        let entry = match self.cache.get(path) {
+            Some(e) => e,
+            None => return Ok(path.to_string()),
+        };
+        if entry.entry_type != DT_LINK {
+            return Ok(path.to_string());
+        }
+        let target = entry
+            .link_target
+            .clone()
+            .ok_or(LinkResolveError::MissingTarget)?;
+        drop(entry);
+        if target == path {
+            return Err(LinkResolveError::SelfLoop);
+        }
+        if let Some(next) = self.cache.get(&target) {
+            if next.entry_type == DT_LINK {
+                return Err(LinkResolveError::Chained);
+            }
+        }
+        Ok(target)
+    }
+
     /// Get hot-path tuple: (entry_type, last_writer_address).
     /// Updates hit/miss counters.
     pub(crate) fn get_hot(&self, path: &str) -> Option<(u8, Option<String>)> {
@@ -207,6 +266,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                link_target: None,
             },
         );
 
@@ -241,6 +301,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                link_target: None,
             },
         );
         assert!(dc.contains("/a"));
@@ -262,6 +323,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                link_target: None,
             },
         );
 
@@ -298,6 +360,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                link_target: None,
             },
         );
         assert!(dc.evict("/tmp"));
@@ -322,6 +385,7 @@ mod tests {
                     created_at_ms: None,
                     modified_at_ms: None,
                     last_writer_address: None,
+                    link_target: None,
                 },
             );
         }
@@ -347,6 +411,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                link_target: None,
             },
         );
         let (et, last_writer) = dc.get_hot("/file").unwrap();
@@ -370,6 +435,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                link_target: None,
             },
         );
         dc.get_entry("/a"); // hit
@@ -395,6 +461,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                link_target: None,
             },
         );
         dc.get_entry("/a"); // hit
@@ -403,5 +470,82 @@ mod tests {
         let (hits, misses, _) = dc.stats();
         assert_eq!(hits, 0);
         assert_eq!(misses, 0);
+    }
+
+    fn make_link_entry(target: &str) -> CachedEntry {
+        CachedEntry {
+            size: 0,
+            etag: None,
+            version: 1,
+            entry_type: DT_LINK,
+            zone_id: Some("root".to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: None,
+            link_target: Some(target.to_string()),
+        }
+    }
+
+    fn make_reg_entry() -> CachedEntry {
+        CachedEntry {
+            size: 0,
+            etag: None,
+            version: 1,
+            entry_type: DT_REG,
+            zone_id: Some("root".to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: None,
+            link_target: None,
+        }
+    }
+
+    #[test]
+    fn test_resolve_link_passthrough_for_non_link() {
+        let dc = make_dcache();
+        dc.put("/regular", make_reg_entry());
+        assert_eq!(dc.resolve_link("/regular").unwrap(), "/regular");
+        // Missing path also passes through.
+        assert_eq!(dc.resolve_link("/no/such").unwrap(), "/no/such");
+    }
+
+    #[test]
+    fn test_resolve_link_one_hop() {
+        let dc = make_dcache();
+        dc.put("/proc/p1/agent", make_link_entry("/agents/scode-standard"));
+        dc.put("/agents/scode-standard", make_reg_entry());
+        assert_eq!(
+            dc.resolve_link("/proc/p1/agent").unwrap(),
+            "/agents/scode-standard"
+        );
+    }
+
+    #[test]
+    fn test_resolve_link_chained_rejected() {
+        let dc = make_dcache();
+        dc.put("/a", make_link_entry("/b"));
+        dc.put("/b", make_link_entry("/c"));
+        let err = dc.resolve_link("/a").unwrap_err();
+        assert_eq!(err, LinkResolveError::Chained);
+    }
+
+    #[test]
+    fn test_resolve_link_self_loop_rejected() {
+        let dc = make_dcache();
+        dc.put("/loop", make_link_entry("/loop"));
+        let err = dc.resolve_link("/loop").unwrap_err();
+        assert_eq!(err, LinkResolveError::SelfLoop);
+    }
+
+    #[test]
+    fn test_resolve_link_missing_target_metadata() {
+        let dc = make_dcache();
+        let mut entry = make_link_entry("/x");
+        entry.link_target = None; // bad write — DT_LINK without target
+        dc.put("/broken", entry);
+        let err = dc.resolve_link("/broken").unwrap_err();
+        assert_eq!(err, LinkResolveError::MissingTarget);
     }
 }

@@ -66,6 +66,12 @@ pub struct FileMetadata {
     /// kernel struct rather than reconstructing it from a sibling
     /// channel.  `None` for non-DT_MOUNT entries.
     pub target_zone_id: Option<String>,
+    /// For `entry_type == DT_LINK (6)`: absolute or workspace-relative
+    /// VFS path the link resolves to.  `Some` only when entry_type is
+    /// DT_LINK.  One-hop resolution at `route()` time with self-loop
+    /// rejection at `sys_setattr` write time.  See
+    /// `KERNEL-ARCHITECTURE.md` §4.5.
+    pub link_target: Option<String>,
 }
 
 /// Error type for `MetaStore` operations.

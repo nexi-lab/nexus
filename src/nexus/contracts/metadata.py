@@ -30,6 +30,7 @@ DT_MOUNT = 2
 DT_PIPE = 3
 DT_STREAM = 4
 DT_EXTERNAL_STORAGE = 5
+DT_LINK = 6
 
 
 @dataclass(slots=True)
@@ -52,6 +53,10 @@ class FileMetadata:
     target_zone_id: str | None = None
     ttl_seconds: float = 0.0
     last_writer_address: str | None = None
+    # DT_LINK target — absolute or workspace-relative VFS path the link
+    # resolves to. ``None`` for any other ``entry_type``. See
+    # ``docs/architecture/KERNEL-ARCHITECTURE.md`` §4.5.
+    link_target: str | None = None
 
     @property
     def is_reg(self) -> bool:
@@ -77,6 +82,10 @@ class FileMetadata:
     def is_external_storage(self) -> bool:
         return self.entry_type == 5
 
+    @property
+    def is_link(self) -> bool:
+        return self.entry_type == 6
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict.
 
@@ -97,6 +106,7 @@ class FileMetadata:
             "target_zone_id": self.target_zone_id,
             "ttl_seconds": self.ttl_seconds,
             "last_writer_address": self.last_writer_address,
+            "link_target": self.link_target,
         }
 
     def validate(self) -> None:

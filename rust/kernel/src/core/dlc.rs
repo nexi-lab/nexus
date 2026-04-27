@@ -94,6 +94,8 @@ impl DriverLifecycleCoordinator {
                     last_writer_address: None,
                     // DT_MOUNT routing pointer: the zone this mount points at.
                     target_zone_id: Some(zone_id.to_string()),
+                    // DT_LINK target: only meaningful for DT_LINK entries.
+                    link_target: None,
                 };
                 let _ = ms.put(mount_point, meta);
             });
@@ -135,6 +137,7 @@ impl DriverLifecycleCoordinator {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                link_target: None,
             },
         );
 

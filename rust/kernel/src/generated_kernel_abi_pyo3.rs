@@ -251,6 +251,7 @@ fn extract_metadata(
         modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),
         last_writer_address: get_opt_str("last_writer_address")?,
         target_zone_id: get_opt_str("target_zone_id")?,
+        link_target: get_opt_str("link_target").ok().flatten(),
     })
 }
 
@@ -297,6 +298,9 @@ fn to_python_metadata<'py>(
         .map_err(err)?;
     set_optional_datetime(py, &kwargs, "created_at", meta.created_at_ms).map_err(err)?;
     set_optional_datetime(py, &kwargs, "modified_at", meta.modified_at_ms).map_err(err)?;
+    if let Some(target) = meta.link_target.as_deref() {
+        kwargs.set_item("link_target", target).map_err(err)?;
+    }
     cls.call((), Some(&kwargs)).map_err(err)
 }
 

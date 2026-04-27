@@ -18,6 +18,7 @@ enum DirEntryType {
   DT_PIPE = 3;    // Kernel IPC ring buffer (same-node, SPSC)
   DT_STREAM = 4;  // Append-only log with offset-based non-destructive reads
   DT_EXTERNAL_STORAGE = 5;  // Backend-managed content (OAuth/API/CLI connectors)
+  DT_LINK = 6;    // VFS-internal symlink — route() follows link_target one hop
 }
 
 // FileMetadata represents the metadata for a single file or directory in Nexus.
@@ -96,4 +97,10 @@ message FileMetadata {
   // accordingly. Empty / unset on single-node deployments where no node
   // identity has been published.
   string last_writer_address = 16;
+
+  // DT_LINK target — absolute or workspace-relative VFS path the link
+  // resolves to. Empty for any other entry_type. Resolution is one hop
+  // with self-loop rejection at sys_setattr time and ELOOP at route()
+  // time when target is itself DT_LINK. See KERNEL-ARCHITECTURE.md §4.5.
+  string link_target = 17;
 }

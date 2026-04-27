@@ -1183,6 +1183,16 @@ impl Kernel {
         validate_path_fast(src_path)?;
         validate_path_fast(dst_path)?;
 
+        // 1a. DT_LINK transparent follow on src — copy targets the
+        // content the link points at, not the link's metadata entry.
+        // (`cp -P` style "copy the link itself" is intentionally not
+        // the default; sys_unlink and sys_rename keep operating on the
+        // link entry directly.) dst is never a link follow target —
+        // copying INTO an existing link is a write operation that goes
+        // through sys_write's link follow path separately.
+        let src_resolved = self.resolve_path_through_link(src_path)?;
+        let src_path = src_resolved.as_ref();
+
         // 2. Route both (read access for src, write access for dst)
         let src_route = match self.vfs_router.route(src_path, &ctx.zone_id) {
             Ok(r) => r,

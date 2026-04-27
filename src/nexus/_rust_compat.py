@@ -78,7 +78,7 @@ except ImportError:
         stacklevel=2,
     )
     _CAPABILITY_GROUPS = {
-        "core": ("Kernel",),
+        "core": ("PyKernel",),
     }
     _KERNEL_REQUIRED_METHODS = frozenset()
 
@@ -127,7 +127,7 @@ if RUST_AVAILABLE:
         # Check that the installed Kernel class exposes all expected methods.
         # A stale binary may import fine but be missing recently-added methods.
         # This catches the exact bug from Issue #3712 (close_all_pipes, etc.).
-        _kernel_cls = getattr(_nf, "Kernel", None)
+        _kernel_cls = getattr(_nf, "PyKernel", None)
         if _kernel_cls is not None and _KERNEL_REQUIRED_METHODS:
             _missing_methods = sorted(
                 m for m in _KERNEL_REQUIRED_METHODS if not hasattr(_kernel_cls, m)
@@ -184,13 +184,13 @@ def _get(name: str) -> Any:
 # -- Re-exports (alphabetical) -----------------------------------------------
 # Each symbol is either the real Rust class/function or None.
 
-# Core kernel (Issue #1868 — unified Kernel replaces SyscallEngine+RustDCache+
+# Core kernel (Issue #1868 — unified PyKernel replaces SyscallEngine+RustDCache+
 # RustPathRouter+PathTrie+HookRegistry+ObserverRegistry)
-Kernel = _get("Kernel")
-SysReadResult = _get("SysReadResult")
-SysWriteResult = _get("SysWriteResult")
+PyKernel = _get("PyKernel")
+PySysReadResult = _get("PySysReadResult")
+PySysWriteResult = _get("PySysWriteResult")
 
-# Legacy aliases — None on 0.9.19+ (removed in favor of Kernel)
+# Legacy aliases — None on 0.9.19+ (removed in favor of PyKernel)
 RustDCache = _get("RustDCache")
 HookRegistry = _get("HookRegistry")
 ObserverRegistry = _get("ObserverRegistry")
@@ -201,13 +201,7 @@ BloomFilter = _get("BloomFilter")
 SharedMemoryPipeBackend = _get("SharedMemoryPipeBackend")
 SharedMemoryStreamBackend = _get("SharedMemoryStreamBackend")
 VFSSemaphore = _get("VFSSemaphore")
-VolumeEngine = _get("VolumeEngine")
-# Phase 0.5 / Phase 2: Rust type renamed `VolumeEngine -> BlobPackEngine`,
-# but the PyO3 boundary keeps the historical Python class name
-# `"VolumeEngine"` for ABI compat through Phase 8's deprecation
-# window.  Expose `BlobPackEngine` as an alias so callers that follow
-# the new name resolve to the same pyclass.
-BlobPackEngine = VolumeEngine
+BlobPackEngine = _get("BlobPackEngine")
 
 # Path utilities
 get_ancestors = _get("get_ancestors")

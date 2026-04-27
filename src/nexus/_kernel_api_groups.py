@@ -13,7 +13,7 @@ from __future__ import annotations
 # Sourced from CAPABILITY_GROUP_CONFIG in scripts/codegen_kernel_abi.py.
 MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     "core": (
-        "Kernel",
+        "PyKernel",
         "normalize_path",
         "validate_path",
         "canonicalize_path",
@@ -47,7 +47,7 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     "storage": (
         "BloomFilter",
         "VFSSemaphore",
-        "VolumeEngine",
+        "BlobPackEngine",
     ),
 }
 

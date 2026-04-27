@@ -345,7 +345,7 @@ fn rust_ctx_to_python<'py>(
 ) -> Result<Bound<'py, PyAny>, String> {
     let cls = py
         .import("nexus.contracts.types")
-        .and_then(|m| m.getattr("OperationContext"))
+        .and_then(|m| m.getattr("PyOperationContext"))
         .map_err(|e| format!("import OperationContext: {e}"))?;
     let kwargs = PyDict::new(py);
     let _ = kwargs.set_item("user_id", &ctx.user_id);

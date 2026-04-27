@@ -197,7 +197,7 @@ FEATURE_GATED_EXPORTS: set[str] = {
 # Groups: "core" failure disables all Rust; others disable only their feature.
 CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     "core": (
-        "Kernel",  # PyKernel exposed to Python as "Kernel" via #[pyclass(name = "Kernel")]
+        "PyKernel",
         "normalize_path",
         "validate_path",
         "canonicalize_path",
@@ -221,7 +221,7 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     "storage": (
         "BloomFilter",
         "VFSSemaphore",
-        "VolumeEngine",
+        "BlobPackEngine",
     ),
 }
 
@@ -1587,7 +1587,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         ") -> Result<Bound<'py, PyAny>, String> {",
         "    let cls = py",
         '        .import("nexus.contracts.types")',
-        '        .and_then(|m| m.getattr("OperationContext"))',
+        '        .and_then(|m| m.getattr("PyOperationContext"))',
         '        .map_err(|e| format!("import OperationContext: {e}"))?;',
         "    let kwargs = PyDict::new(py);",
         '    let _ = kwargs.set_item("user_id", &ctx.user_id);',
@@ -2448,7 +2448,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             ") -> Result<Bound<'py, PyAny>, String> {",
             "    let cls = py",
             '        .import("nexus.contracts.types")',
-            '        .and_then(|m| m.getattr("OperationContext"))',
+            '        .and_then(|m| m.getattr("PyOperationContext"))',
             '        .map_err(|e| format!("import OperationContext: {e}"))?;',
             "    let kwargs = PyDict::new(py);",
             '    let _ = kwargs.set_item("user_id", &ctx.user_id);',

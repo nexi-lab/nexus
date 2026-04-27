@@ -160,7 +160,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "set_metastore_path",
         "set_self_address",
         "set_vfs_lock_timeout",
-        "start_audit_hook",
         "start_replication_scanner",
         "stream_collect_all",
         "stream_read_at",

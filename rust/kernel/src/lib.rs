@@ -98,12 +98,18 @@ pub(crate) use core::stream::wal as wal_stream;
 //     glob, io, path_utils, prefix, rebac, search, simd, trigram.
 //   * Phase E — agent_status_resolver (services/agents).
 
-mod agent_status_resolver;
+// Phase 3: `agent_status_resolver` moved to `services::agents::status_resolver`.
+// Phase 3: `audit_hook` moved to `services::audit`.
+// Phase 3: `permission_hook` moved to `services::permission::hook`.
+// All three were `mod *_hook;` / `mod agent_status_resolver;` declarations
+// here; their concrete impls now live in the services peer crate, and
+// kernel reaches them only through the in-tree Rust API surface
+// (`Kernel::register_native_hook`, `PathResolver` impls).  The cdylib
+// composes both crates via `services::python::register(m)`.
 #[cfg(feature = "connectors")]
 mod anthropic_backend;
 #[cfg(feature = "connectors")]
 pub mod anthropic_streaming;
-pub mod audit_hook;
 mod blob_fetcher;
 mod cas_chunking;
 mod cas_engine;
@@ -121,7 +127,13 @@ mod gmail_backend;
 #[cfg(feature = "connectors")]
 mod hn_backend;
 pub mod ipc;
-mod kernel;
+// `kernel` itself is `pub` (Phase 3 onward) so peer crates
+// (`services::audit`, etc.) can hold `&kernel::Kernel` references and
+// call the kernel's in-tree Rust API (`register_native_hook`,
+// `prepare_audit_stream`, `sys_*` direct).  PyKernel surfaces those
+// methods to Python through `generated_kernel_abi_pyo3`; peer crates
+// bypass PyO3 and call the Rust methods directly.
+pub mod kernel;
 // `generated_kernel_abi_pyo3` (renamed from `generated_pyo3` in Phase C)
 // kept public so other crates (e.g. `rust/raft`) can reference `PyKernel`
 // via cross-crate PyO3 borrows — needed for
@@ -147,7 +159,7 @@ mod openai_inference;
 #[cfg(feature = "connectors")]
 pub mod openai_streaming;
 mod peer_blob_client;
-mod permission_hook;
+// `permission_hook` moved to `services::permission::hook` (Phase 3).
 mod raft_meta_store;
 mod remote_backend;
 mod replication;

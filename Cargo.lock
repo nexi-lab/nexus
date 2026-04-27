@@ -1597,7 +1597,6 @@ dependencies = [
  "roaring",
  "serde",
  "serde_json",
- "services",
  "sha2",
  "simdutf8",
  "simsimd",
@@ -1833,6 +1832,7 @@ dependencies = [
  "lib",
  "pyo3",
  "raft 0.1.0",
+ "services",
 ]
 
 [[package]]
@@ -2921,12 +2921,16 @@ dependencies = [
 name = "services"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "contracts",
  "dashmap",
+ "kernel",
  "parking_lot",
+ "pyo3",
  "redb",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

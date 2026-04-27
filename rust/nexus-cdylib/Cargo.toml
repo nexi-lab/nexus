@@ -25,6 +25,10 @@ lib = { workspace = true, features = ["python"] }
 # `raft` already enters the workspace dep map with
 # `features = ["python", "grpc"]` — nothing to add.
 raft = { workspace = true }
+# Phase 3: services with the `python` feature enabled so its PyO3
+# entry points (currently `install_audit_hook`) compose into the
+# single `nexus_kernel.so` cdylib.
+services = { workspace = true, features = ["python"] }
 # Sole crate that enables `extension-module`. Cargo unifies pyo3
 # features across the workspace, so every transitive pyo3 user
 # (kernel, lib, raft, backends, …) sees the cdylib-correct

@@ -198,12 +198,7 @@ impl AgentTable {
     }
 
     /// Update agent state with exit code.
-    pub fn update_state_with_exit(
-        &self,
-        pid: &str,
-        new_state: AgentState,
-        exit_code: i32,
-    ) -> bool {
+    pub fn update_state_with_exit(&self, pid: &str, new_state: AgentState, exit_code: i32) -> bool {
         if let Some(mut entry) = self.agents.get_mut(pid) {
             entry.state = new_state;
             entry.exit_code = Some(exit_code);

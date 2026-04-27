@@ -30,5 +30,10 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     kernel::python::register(m)?;
     // Raft / federation — ZoneManager / ZoneHandle / MetaStore.
     nexus_raft::pyo3_bindings::register_python_classes(m)?;
+    // Phase 3: services-tier PyO3 entry points (install_audit_hook, …).
+    // Registered after `kernel` so PyKernel is in the module's type
+    // registry by the time `install_audit_hook` accepts a
+    // `PyRef<PyKernel>` parameter.
+    services::python::register(m)?;
     Ok(())
 }

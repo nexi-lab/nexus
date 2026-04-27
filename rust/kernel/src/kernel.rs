@@ -606,7 +606,7 @@ pub struct Kernel {
     // the services rlib (rust/services/src/agent_table.rs); the kernel
     // owns an Arc handle so AgentStatusResolver and other kernel-internal
     // consumers can share read access without depending on field layout.
-    pub(crate) agent_table: Arc<services::agent_table::AgentTable>,
+    pub(crate) agent_table: Arc<crate::core::agents::table::AgentTable>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `VFSRouter::entries` as
@@ -697,6 +697,15 @@ impl Kernel {
     // ── Constructor ────────────────────────────────────────────────────
 
     /// Create an empty kernel. Components wired by wrapper after construction.
+    ///
+    /// Phase 3 bumped \`mod kernel\` to \`pub mod kernel\` so peer crates
+    /// can reach \`Kernel::register_native_hook\` etc. — that surfaced
+    /// `clippy::new_without_default` on this constructor.  Suppressed
+    /// rather than auto-impl'd because `new()` does heavy wiring
+    /// (runtime, peer client, dispatch hook registry, mount tables);
+    /// callers should opt in explicitly via `Kernel::new()` rather
+    /// than the implicit `Default::default()` shortcut.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let runtime = crate::peer_blob_client::build_kernel_runtime();
         let peer_client = Arc::new(crate::peer_blob_client::PeerBlobClient::new(Arc::clone(
@@ -734,7 +743,7 @@ impl Kernel {
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatchRegistry::new()),
-            agent_table: Arc::new(services::agent_table::AgentTable::new()),
+            agent_table: Arc::new(crate::core::agents::table::AgentTable::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),
@@ -2293,33 +2302,48 @@ impl Kernel {
         registry.dispatch_post(ctx);
     }
 
-    /// Register a native Rust hook (e.g. AuditHook) with the kernel.
-    /// The hook receives pre/post callbacks for every VFS operation.
-    #[allow(dead_code)]
-    pub(crate) fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
+    /// Register a native Rust hook (e.g. `services::audit::AuditHook`)
+    /// with the kernel.  The hook receives pre/post callbacks for every
+    /// VFS operation.
+    ///
+    /// Visibility is `pub` (not `pub(crate)`) so peer crates can install
+    /// their own hook impls — Phase 3 onwards services own their hook
+    /// lifecycle (services::audit, etc.) and call this from their PyO3
+    /// entry points.
+    pub fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
         self.native_hooks.write().register(hook);
     }
 
-    /// Wire up an `AuditHook` backed by a WAL-replicated DT_STREAM.
+    /// Prepare a WAL-replicated DT_STREAM for audit / observer use.
     ///
-    /// Creates a `WalStreamCore` for `stream_path` using the Raft consensus of
-    /// `zone_id`, registers the stream with `StreamManager` (so Python can read
-    /// audit records via `sys_read`), writes the DT_STREAM inode to DCache and
-    /// metastore, and installs the hook into the kernel's native hook registry.
+    /// Creates a `WalStreamCore` for `stream_path` using the Raft
+    /// consensus of `zone_id`, registers the stream with
+    /// `StreamManager` (so Python can read audit records via
+    /// `sys_read`), and seeds the DT_STREAM inode in DCache + metastore.
+    /// Returns the concrete `Arc<WalStreamCore>` so the caller
+    /// (typically `services::audit::install`) can build its own hook
+    /// impl from the WAL non-blocking write API (`write_nowait`).
     ///
-    /// Safe to call after `init_federation_from_env` has loaded the zone.
-    /// The `stream_manager.register` is idempotent — a second call with the
-    /// same path is silently ignored so the hook is not double-installed.
-    pub(crate) fn start_audit_hook(
+    /// Phase 3 split this out of the old `Kernel::start_audit_hook`
+    /// (now lives in `services::audit`).  The kernel half owns only
+    /// the stream-lifecycle work (kernel concern); the hook
+    /// construction + registration belong to the service.
+    ///
+    /// Safe to call after `init_federation_from_env` has loaded the
+    /// zone.  The `stream_manager.register` step is idempotent — a
+    /// second call with the same path is silently ignored.
+    pub fn prepare_audit_stream(
         &self,
         zone_id: &str,
         stream_path: &str,
-    ) -> Result<(), KernelError> {
+    ) -> Result<Arc<crate::wal_stream::WalStreamCore>, KernelError> {
         let zm = self.zone_manager_arc().ok_or_else(|| {
-            KernelError::IOError("start_audit_hook: federation not active (set NEXUS_PEERS)".into())
+            KernelError::IOError(
+                "prepare_audit_stream: federation not active (set NEXUS_PEERS)".into(),
+            )
         })?;
         let consensus = zm.registry().get_node(zone_id).ok_or_else(|| {
-            KernelError::IOError(format!("start_audit_hook: zone {zone_id} not loaded"))
+            KernelError::IOError(format!("prepare_audit_stream: zone {zone_id} not loaded"))
         })?;
         let runtime = zm.runtime_handle();
         let wal_consensus: Arc<dyn crate::wal_stream::WalConsensus> =
@@ -2335,9 +2359,7 @@ impl Kernel {
         );
         // Seed DCache + metastore inode so sys_read can locate the stream.
         let _ = self.write_stream_inode(stream_path, 0);
-        let hook = crate::audit_hook::AuditHook::new(wal_stream);
-        self.register_native_hook(Box::new(hook));
-        Ok(())
+        Ok(wal_stream)
     }
 
     // ── Zone revision counter (§10 A2) ────────────────────────────────

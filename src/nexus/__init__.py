@@ -671,9 +671,13 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     recorded. Only meaningful in federation mode — the call requires a
     loaded Raft zone and silently skips otherwise.
 
-    Non-root zones are wired by ``kernel.zone_create(zone_id, audit=True)``
-    / ``kernel.zone_join(zone_id, as_learner, audit=True)`` directly from
-    Rust, so they do not pass through this function.
+    Phase 3 (refactor/rust-workspace-parallel-layers): the audit hook
+    moved out of the kernel crate into ``services::audit`` per the
+    parallel-layers split. The Python entry point is now a free function
+    on the ``nexus_kernel`` module — ``install_audit_hook(kernel, zone,
+    stream)`` — instead of a method on the Kernel pyclass. Service-tier
+    owns hook lifecycle; kernel only exposes the stream-prep half via
+    ``Kernel::prepare_audit_stream`` (Rust API).
     """
     kernel = getattr(nx_fs, "_kernel", None)
     if kernel is None:
@@ -683,7 +687,9 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     audit_stream_path = "/audit/traces/"
 
     try:
-        kernel.start_audit_hook(audit_zone, audit_stream_path)
+        import nexus_kernel
+
+        nexus_kernel.install_audit_hook(kernel, audit_zone, audit_stream_path)
         logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
     except RuntimeError as e:
         # Federation not active or zone not loaded — expected in standalone mode.

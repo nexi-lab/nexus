@@ -18,6 +18,9 @@
 //! via `pub use core::… as <flat>` shims, so callers do not churn;
 //! later phases retire the shims as impls migrate to parallel crates.
 
+// §4.0 — agent table SSOT (Phase 3 moved here from services/).
+pub mod agents;
+
 // §4.1 — VFS routing + dcache + DLC mount lifecycle.
 pub mod dcache;
 pub mod dlc;

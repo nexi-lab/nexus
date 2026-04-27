@@ -1,13 +1,26 @@
-//! AuditHook — native Rust NativeInterceptHook that records VFS operations
+//! AuditHook — native Rust [`NativeInterceptHook`] that records VFS operations
 //! to a WAL-backed DT_STREAM audit log.
 //!
 //! Hot-path cost: AuditRecord struct construction + mpsc::SyncSender::try_send
 //! (~100–300 ns). JSON serialization and WalStreamCore::write_nowait happen in
 //! a background thread, entirely off the VFS dispatch critical path.
 //!
-//! Registration:
-//!   let hook = AuditHook::new(Arc::clone(&wal_stream));
-//!   kernel.register_native_hook(Box::new(hook));
+//! Phase 3 moved this from `kernel/src/audit_hook.rs` into the services
+//! crate per the architecture's `services` ⊥ `backends` ⊥ `transport` ⊥
+//! `raft` peer-crate split.  Construction + registration is owned by the
+//! service tier (this module's [`install`] function); the kernel only
+//! exposes [`Kernel::prepare_audit_stream`] and the
+//! [`Kernel::register_native_hook`] in-tree API.
+//!
+//! ## Boot wiring (Linux LSM analogue)
+//!
+//! ```ignore
+//! // From Python (or any cdylib caller):
+//! services::audit::install(&kernel, "root", "/audit/traces/")?;
+//! // 1. kernel.prepare_audit_stream(...) — kernel concern (stream lifecycle)
+//! // 2. AuditHook::new(stream)           — service concern (hook impl)
+//! // 3. kernel.register_native_hook(...) — kernel API (LSM-style EXPORT_SYMBOL)
+//! ```
 
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -15,8 +28,9 @@ use std::sync::Arc;
 use chrono::SecondsFormat;
 use serde::Serialize;
 
-use crate::dispatch::{HookContext, NativeInterceptHook};
-use crate::wal_stream::WalStreamCore;
+use kernel::core::dispatch::{HookContext, NativeInterceptHook};
+use kernel::core::stream::wal::WalStreamCore;
+use kernel::kernel::{Kernel, KernelError};
 
 /// A single VFS operation record, serialised to JSON and appended to the
 /// audit WAL stream.
@@ -129,12 +143,38 @@ impl NativeInterceptHook for AuditHook {
     }
 }
 
+/// Boot-time DI entry point — install an `AuditHook` for `zone_id`.
+///
+/// Service-tier responsibility (this whole module) — kernel only owns
+/// the stream lifecycle.  Three steps, each crossing a clean tier
+/// boundary:
+///
+/// 1. `kernel.prepare_audit_stream(zone_id, stream_path)` — kernel
+///    creates the `WalStreamCore`, registers it with the stream
+///    manager, seeds the inode.
+/// 2. `AuditHook::new(stream)` — local services concern: build the
+///    hook impl from the WAL stream handle.
+/// 3. `kernel.register_native_hook(Box::new(hook))` — kernel API
+///    (LSM-style); kernel records the hook in its native dispatch
+///    registry without ever knowing the concrete type.
+///
+/// Idempotent: prepare_audit_stream's underlying StreamManager.register
+/// is idempotent on duplicate paths, but the `register_native_hook`
+/// side is not — calling `install` twice for the same zone would
+/// double-register the hook.  Callers (typically `nexus.__init__`
+/// boot path) call this exactly once per zone.
+pub fn install(kernel: &Kernel, zone_id: &str, stream_path: &str) -> Result<(), KernelError> {
+    let stream = kernel.prepare_audit_stream(zone_id, stream_path)?;
+    let hook = AuditHook::new(stream);
+    kernel.register_native_hook(Box::new(hook));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dispatch::{HookIdentity, WriteHookCtx};
-    use crate::wal_stream::WalConsensus;
-    use crate::wal_stream::WalStreamCore;
+    use kernel::core::dispatch::{HookIdentity, WriteHookCtx};
+    use kernel::core::stream::wal::{WalConsensus, WalStreamCore};
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
@@ -198,7 +238,7 @@ mod tests {
 
     #[test]
     fn on_post_delete_records_delete_op() {
-        use crate::dispatch::{DeleteHookCtx, HookIdentity};
+        use kernel::core::dispatch::{DeleteHookCtx, HookIdentity};
         let stream = Arc::new(WalStreamCore::new(MemConsensus::new(), "audit-del".into()));
         let hook = AuditHook::new(Arc::clone(&stream));
 

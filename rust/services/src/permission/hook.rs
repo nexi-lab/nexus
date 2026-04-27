@@ -10,9 +10,15 @@
 //!
 //! This mirrors the Python PermissionCheckHook (permission_hook.py) but
 //! moves the hot-path lease check into pure Rust — no GIL for cache hits.
+//!
+//! Phase 3: moved from `kernel/src/permission_hook.rs` into the services
+//! crate.  Currently scaffolding only — `register_native_permission_hook`
+//! wiring on PyKernel was never implemented, so this is dead code today.
+//! Lives here because conceptually it's a service-tier hook (same tier
+//! as `services::audit::AuditHook`) and §11 Phase 11 will wire it up.
 
-use crate::dispatch::{HookContext, NativeInterceptHook};
 use dashmap::DashMap;
+use kernel::core::dispatch::{HookContext, NativeInterceptHook};
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};

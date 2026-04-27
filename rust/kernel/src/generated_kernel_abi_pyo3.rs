@@ -861,6 +861,16 @@ impl PyKernel {
     pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {
         Kernel::canonical_mount_key(mount_point, zone_id)
     }
+
+    /// Borrow the inner `&Kernel`.  Phase 3: peer crates
+    /// (services, future transport / raft glue) reach the
+    /// kernel's in-tree Rust API surface
+    /// (`register_native_hook`, `prepare_audit_stream`,
+    /// `sys_*` direct) through this accessor instead of the
+    /// `pub(crate) inner` field, which other crates can't see.
+    pub fn kernel_ref(&self) -> &Kernel {
+        &self.inner
+    }
 }
 
 #[pymethods]
@@ -2724,7 +2734,7 @@ impl PyKernel {
         parent_pid: Option<&str>,
         connection_id: Option<&str>,
     ) -> bool {
-        use services::agent_table::{AgentDescriptor, AgentKind, AgentState};
+        use crate::core::agents::table::{AgentDescriptor, AgentKind, AgentState};
         let kind = AgentKind::from_str(kind).unwrap_or(AgentKind::Worker);
         self.inner.agent_table.register(AgentDescriptor {
             pid: pid.to_string(),
@@ -2770,7 +2780,7 @@ impl PyKernel {
 
     /// Update agent state. Returns true if found.
     fn agent_update_state(&self, pid: &str, new_state: &str) -> bool {
-        use services::agent_table::AgentState;
+        use crate::core::agents::table::AgentState;
         match AgentState::from_str(new_state) {
             Some(state) => self.inner.agent_table.update_state(pid, state),
             None => false,
@@ -2786,7 +2796,7 @@ impl PyKernel {
         state: Option<&str>,
         kind: Option<&str>,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
-        use services::agent_table::{AgentKind, AgentState};
+        use crate::core::agents::table::{AgentKind, AgentState};
         let state_filter = state.and_then(AgentState::from_str);
         let kind_filter = kind.and_then(AgentKind::from_str);
         let agents =
@@ -2829,7 +2839,7 @@ impl PyKernel {
         target_state: &str,
         timeout_ms: u64,
     ) -> PyResult<String> {
-        use services::agent_table::AgentState;
+        use crate::core::agents::table::AgentState;
         let target = AgentState::from_str(target_state).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("unknown agent state: {target_state}"))
         })?;
@@ -2975,10 +2985,14 @@ impl PyKernel {
     // tracked as a post-merge follow-up.
 
     /// Create a raft zone on this node. Idempotent when the zone
-    /// already exists (returns the existing zone id). When `audit`
-    /// is true, wires an AuditHook backed by a WAL DT_STREAM at
-    /// `/{zone_id}/audit/traces/` immediately after zone setup.
-    fn zone_create(&self, zone_id: &str, audit: bool) -> PyResult<String> {
+    /// already exists (returns the existing zone id).
+    ///
+    /// Phase 3: the optional audit-hook auto-wiring branch was
+    /// removed — the audit hook is a service concern and lives in
+    /// `services::audit`.  Callers that want audit on a zone call
+    /// `nexus_kernel.install_audit_hook(kernel, zone_id, stream_path)`
+    /// after this method returns.
+    fn zone_create(&self, zone_id: &str) -> PyResult<String> {
         let zm = self.inner.zone_manager_arc().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
                 "federation not active — set NEXUS_PEERS to enable",
@@ -2994,12 +3008,6 @@ impl PyKernel {
         if let Some(consensus) = zm.registry().get_node(zone_id) {
             self.inner
                 .install_federation_mount_coherence(zone_id, consensus);
-        }
-        if audit {
-            let stream_path = format!("/{zone_id}/audit/traces/");
-            self.inner
-                .start_audit_hook(zone_id, &stream_path)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
         }
         Ok(zone_id.to_string())
     }
@@ -3128,9 +3136,14 @@ impl PyKernel {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// Join an existing zone as a new Voter or Learner. When `audit`
-    /// is true, wires an AuditHook after the zone is set up.
-    fn zone_join(&self, zone_id: &str, as_learner: bool, audit: bool) -> PyResult<String> {
+    /// Join an existing zone as a new Voter or Learner.
+    ///
+    /// Phase 3: the optional audit-hook auto-wiring branch was
+    /// removed — see `zone_create` for rationale.  Callers wanting
+    /// audit on the joined zone call
+    /// `nexus_kernel.install_audit_hook(kernel, zone_id, stream_path)`
+    /// after this method returns.
+    fn zone_join(&self, zone_id: &str, as_learner: bool) -> PyResult<String> {
         let zm = self
             .inner
             .zone_manager_arc()
@@ -3143,12 +3156,6 @@ impl PyKernel {
         if let Some(consensus) = zm.registry().get_node(zone_id) {
             self.inner
                 .install_federation_mount_coherence(zone_id, consensus);
-        }
-        if audit {
-            let stream_path = format!("/{zone_id}/audit/traces/");
-            self.inner
-                .start_audit_hook(zone_id, &stream_path)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
         }
         Ok(zone_id.to_string())
     }
@@ -3243,18 +3250,12 @@ impl PyKernel {
         Ok(true)
     }
 
-    // ── Audit hook ─────────────────────────────────────────────────────
-
-    /// Install an AuditHook backed by a WAL DT_STREAM at `stream_path`.
-    ///
-    /// The zone identified by `zone_id` must already be loaded and have an
-    /// active Raft consensus node.  Raises `RuntimeError` if the zone is not
-    /// found or federation is not active.
-    fn start_audit_hook(&self, zone_id: &str, stream_path: &str) -> PyResult<()> {
-        self.inner
-            .start_audit_hook(zone_id, stream_path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))
-    }
+    // Phase 3: `start_audit_hook` PyO3 method removed from PyKernel —
+    // hook construction is service responsibility now.  Python entry
+    // point lives at `nexus_kernel.install_audit_hook(kernel, zone_id,
+    // stream_path)` and is registered by `services::python::register`.
+    // Kernel side keeps `prepare_audit_stream` (stream lifecycle is a
+    // kernel concern); services build + register the AuditHook on top.
 }
 
 // ── Private: hook dispatch (wrapper-only) ───────────────────────────────

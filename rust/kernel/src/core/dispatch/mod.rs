@@ -244,8 +244,13 @@ fn now_iso8601() -> String {
 ///
 /// Rust equivalent of Python `VFSPathResolver`.
 /// Returns Some(content) to claim the path, None to pass through.
+///
+/// Phase 3: visibility bumped from `pub(crate)` to `pub` so peer
+/// crates (e.g. `services::agents::status_resolver`) can impl this
+/// trait.  Same in-tree Rust API model as `NativeInterceptHook` —
+/// not an ABI, just a kernel API surface for in-tree services.
 #[allow(dead_code)]
-pub(crate) trait PathResolver: Send + Sync {
+pub trait PathResolver: Send + Sync {
     fn try_read(&self, path: &str) -> Option<Vec<u8>>;
     fn try_write(&self, path: &str, content: &[u8]) -> Option<()>;
     fn try_delete(&self, path: &str) -> Option<()>;
@@ -450,8 +455,15 @@ impl HookContext {
 /// Post-hooks are fire-and-forget (errors logged, never abort).
 ///
 /// Default implementation: no-op for all operations.
+///
+/// Phase 3: visibility bumped from `pub(crate)` to `pub` so peer
+/// crates (services::audit, services::permission, …) can impl this
+/// trait and register their concrete hooks via
+/// [`Kernel::register_native_hook`].  Same in-tree Rust API model as
+/// Linux LSM's `security_add_hooks` — not an ABI, just a kernel API
+/// surface for in-tree kernel modules.
 #[allow(dead_code)]
-pub(crate) trait NativeInterceptHook: Send + Sync {
+pub trait NativeInterceptHook: Send + Sync {
     fn name(&self) -> &str;
 
     /// Pre-intercept: return Err(message) to abort the operation.

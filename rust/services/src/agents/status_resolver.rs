@@ -2,22 +2,27 @@
 //! AgentStatusResolver — procfs view over the AgentTable SSOT.
 //!
 //! Implements the kernel `PathResolver` trait for `/{zone}/proc/{pid}/status`.
-//! Reads from the services-tier `AgentTable`; the resolver itself stays in
-//! the kernel crate because `PathResolver` is a kernel-internal trait.
-//! Ownership is shared via `Arc`, so the resolver remains valid for as long
-//! as any caller holds it, independent of the Kernel's lifetime or field
-//! layout.
+//! Reads from the [`kernel::core::agents::table::AgentTable`] SSOT; ownership is
+//! shared via `Arc`, so the resolver remains valid for as long as any caller
+//! holds it, independent of the Kernel's lifetime or field layout.
+//!
+//! Phase 3: moved from `kernel/src/agent_status_resolver.rs` into the
+//! services crate.  The resolver IS service-tier (it serves a virtual
+//! procfs view); the trait it impls (`PathResolver`) is the kernel's
+//! in-tree Rust API for that virtual-path mechanism, accessible via
+//! `kernel::core::dispatch::PathResolver` after Phase 1's hal/core
+//! visibility bump.
 
-use crate::dispatch::PathResolver;
-use services::agent_table::AgentTable;
+use kernel::core::agents::table::AgentTable;
+use kernel::core::dispatch::PathResolver;
 use std::sync::Arc;
 
-pub(crate) struct AgentStatusResolver {
+pub struct AgentStatusResolver {
     table: Arc<AgentTable>,
 }
 
 impl AgentStatusResolver {
-    pub(crate) fn new(table: Arc<AgentTable>) -> Self {
+    pub fn new(table: Arc<AgentTable>) -> Self {
         Self { table }
     }
 
@@ -67,7 +72,7 @@ impl PathResolver for AgentStatusResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use services::agent_table::{AgentDescriptor, AgentKind, AgentState};
+    use kernel::core::agents::table::{AgentDescriptor, AgentKind, AgentState};
 
     fn make_desc(pid: &str, name: &str) -> AgentDescriptor {
         AgentDescriptor {

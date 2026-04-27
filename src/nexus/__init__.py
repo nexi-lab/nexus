@@ -176,6 +176,16 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         from nexus_kernel import PyKernel as _Kernel
 
         kernel = _Kernel()
+        # Phase 4 (full): drain the federation init's blob-fetcher slot
+        # + install the real `PeerBlobClient` (replaces the kernel's
+        # boot-time Noop default).  Idempotent — no-op if the slot
+        # was never stashed (federation disabled).
+        try:
+            import nexus_kernel as _nk
+
+            _nk.install_transport_wiring(kernel)
+        except Exception:
+            pass
 
     from nexus.core.metastore import RustMetastoreProxy
 
@@ -498,10 +508,16 @@ def connect(
     _early_kernel = None
     try:
         from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
-        from nexus._rust_compat import Kernel as _Kernel
+        from nexus._rust_compat import PyKernel as _Kernel
 
         if _RUST_AVAILABLE and _Kernel is not None:
             _early_kernel = _Kernel()
+            try:
+                import nexus_kernel as _nk
+
+                _nk.install_transport_wiring(_early_kernel)
+            except Exception:
+                pass
     except Exception:
         pass
 

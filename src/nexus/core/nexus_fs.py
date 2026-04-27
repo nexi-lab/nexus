@@ -225,6 +225,14 @@ class NexusFS(  # type: ignore[misc]
                     from nexus_kernel import PyKernel as _Kernel
 
                     self._kernel = _Kernel()
+                    # Phase 4 (full): drain federation's blob-fetcher
+                    # slot + install real `PeerBlobClient` (idempotent).
+                    try:
+                        import nexus_kernel as _nk
+
+                        _nk.install_transport_wiring(self._kernel)
+                    except Exception:
+                        pass
                     metadata_store._kernel = self._kernel
                     # Wire redb metastore — ALL reads and writes go through Rust redb.
                     # RustMetastoreProxy wraps the kernel's redb so all 35+ Python

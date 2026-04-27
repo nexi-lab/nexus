@@ -327,11 +327,33 @@ ObjectStoreABC directly by etag, bypassing path resolution and metadata lookup.
 NexusFS abstracts storage by **Capability** (access pattern + consistency guarantee),
 not by domain or implementation.
 
-| Pillar | ABC | Capability | Kernel Role | Package |
-|--------|-----|------------|-------------|---------|
-| **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param | `core.metastore` |
-| **ObjectStore** | `ObjectStoreABC` (= `Backend`) | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted via `nx.mount()` | `core.object_store` |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — defaults to `NullCacheStore` | `contracts.cache_store` |
+| Pillar | ABC (Python) | Trait (Rust) | Capability | Kernel Role | Package |
+|--------|-----|------|------------|-------------|---------|
+| **Metastore** | `MetastoreABC` | `MetaStore` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param | `core.metastore` / `kernel/src/abc/metastore.rs` |
+| **ObjectStore** | `ObjectStoreABC` (= `Backend`) | `ObjectStore` | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted via `nx.mount()` | `core.object_store` / `kernel/src/abc/object_store.rs` |
+| **CacheStore** | `CacheStoreABC` | `CacheStore` | Ephemeral KV, Pub/Sub, TTL | **Optional** — defaults to `NullCacheStore` | `contracts.cache_store` / `kernel/src/abc/cache_store.rs` |
+
+**Rust naming note:** the Rust trait `MetaStore` (two-word PascalCase)
+matches `ObjectStore` / `CacheStore` for visual symmetry across the
+three ABC pillars.  Phase 0.5 of
+`refactor/rust-workspace-parallel-layers` renamed the Rust trait from
+`Metastore` (one word) to `MetaStore` (two words); the Python ABC
+stays `MetastoreABC` because the Python tier is on a sunset path and
+not worth ripple-renaming.  The cross-language asymmetry is anchored
+at exactly one PyO3 boundary
+(`raft/src/pyo3_bindings.rs`'s `#[pyclass(name = "Metastore")]`),
+which disappears wholesale when the Rust-ification of every
+Metastore caller (Phase J / `kernel.sys_*` syscalls) retires the
+last Python `MetastoreABC` reference.
+
+**Rust-side strict layout:** `kernel/src/abc/` contains **exactly the
+3 §3 ABC pillar trait files**, period — no extension interfaces, no
+helper traits.  Kernel-defined extension interfaces that aren't §3
+pillars (LSM-style hooks like `LlmStreamingBackend`,
+`PeerBlobClient`) live in `kernel/src/hal/`.  Kernel primitives (§4)
+live in `kernel/src/core/` and never declare traits.  The
+3-way split is enforced by directory layout — anything inside
+`abc/` is a §3 pillar, anything else isn't.
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars =
 interchangeable drivers (deployment-time config). See `data-storage-matrix.md`.
@@ -610,9 +632,87 @@ jumping between the two trees finds the same module in the same place.
 `rust/lib/` is WASM-clean by default; PyO3 wrappers for the algorithms
 live behind the optional `python` feature in `rust/lib/src/python/*.rs`
 (rebac, search, trigram, glob, io, prefix, simd, path_utils, bitmap,
-bloom, hash). The kernel cdylib enables that feature so
+bloom, hash). The cdylib (see §6.1) enables that feature so
 `nexus_kernel`'s `#[pymodule]` delegates the algorithm-wrapper
 registration to a single `lib::python::register(m)` call.
+
+### 6.1 `nexus-cdylib` — Build Artifact, Not an Architectural Tier
+
+The Linux kernel has `make bzImage`: it bundles `vmlinuz` + the
+statically-linked drivers + initrd into a single bootable image.
+The image is a **build artifact**, not a tier — booting from it
+gives you the same kernel/driver split you wrote in the source
+tree.
+
+Nexus has the same shape. `rust/nexus-cdylib/` is the workspace's
+sole `crate-type = ["cdylib"]` crate; its `[lib] name =
+"nexus_kernel"` produces the `nexus_kernel.so` (Linux) /
+`nexus_kernel.pyd` (Windows) Python imports as `import nexus_kernel`.
+**Every other crate is `rlib`-only** — including `kernel` itself,
+which used to be the cdylib until Phase 0 of
+`refactor/rust-workspace-parallel-layers` factored the cdylib out
+into its own crate.
+
+#### Why a separate cdylib crate
+
+Cargo refuses cyclic packages.  Pre-Phase-0, the kernel cdylib
+needed to register `#[pyclass]` types from peer crates
+(`backends::*::*Backend`, `services::audit::AuditHook`, etc.) inside
+its `#[pymodule] fn nexus_kernel`.  But peer crates already depended
+on `kernel` for trait declarations (`abc::ObjectStore`, etc.) — adding
+the reverse `kernel → <peer>` edge for the cdylib registration closed
+a cycle.
+
+`nexus-cdylib`'s sole job is being the package that depends on
+**all** the peer rlibs at once and aggregates their PyO3 surfaces:
+
+```rust
+// rust/nexus-cdylib/src/lib.rs (~10 lines)
+#[pymodule]
+fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
+    lib::python::register(m)?;            // algorithms
+    kernel::python::register(m)?;         // §3 / §4 surface
+    nexus_raft::pyo3_bindings::register_python_classes(m)?;
+    services::python::register(m)?;       // audit / agents (Phase 3)
+    // backends::python::register(m)?;    // (Phase 2 — pending)
+    Ok(())
+}
+```
+
+#### Dependency direction
+
+```text
+              contracts                       (zero deps)
+                  ↑
+                 lib                          (depends on contracts only)
+                  ↑
+               kernel                         (depends on contracts + lib + raft)
+          ↑    ↑      ↑    ↑
+          │    │      │    │
+  backends services transport raft            (peers — depend on kernel,
+          ↑    ↑      ↑    ↑                  not on each other)
+          │    │      │    │
+          └────┴──────┴────┴──── nexus-cdylib   (sink — no other crate
+                                                  depends on it; it just
+                                                  composes the wheel)
+```
+
+Hard invariants:
+
+- `services ⊥ backends ⊥ transport ⊥ raft` — peer crates have no
+  cross-dependencies.
+- `lib` cannot depend on `kernel` (one-way: kernel → lib only) —
+  preserves WASM-clean lib.
+- `nexus-cdylib` is a sink — no other workspace crate depends on it.
+
+#### Cdylib is not an architectural tier
+
+The §1 layered diagram has `Kernel → Services → Drivers`.
+`nexus-cdylib` does **not** appear in that diagram because it isn't
+a tier — it's the package that turns the rlibs from those tiers into
+a single loadable shared object.  Architecturally it's the
+equivalent of the linker step that produces `vmlinuz` from
+`fs/built-in.a`, `kernel/built-in.a`, etc.
 
 ### Placement Decision Tree
 

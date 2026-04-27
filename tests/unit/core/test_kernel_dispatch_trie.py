@@ -13,9 +13,9 @@ from nexus.core.nexus_fs_dispatch import DispatchMixin
 
 class _TestDispatch(DispatchMixin):
     def __init__(self):
-        from nexus_kernel import Kernel
+        from nexus_kernel import PyKernel
 
-        self._kernel = Kernel()
+        self._kernel = PyKernel()
         self._init_dispatch()
 
 
@@ -35,17 +35,17 @@ def dispatch() -> _TestDispatch:
     return _TestDispatch()
 
 
-# ── PathTrie via Kernel proxy methods (standalone) ──────────────────────
+# ── PathTrie via PyKernel proxy methods (standalone) ──────────────────────
 
 
 class TestPathTrieViaKernel:
-    """Direct tests on the Kernel trie proxy methods (skip if extension not built)."""
+    """Direct tests on the PyKernel trie proxy methods (skip if extension not built)."""
 
     @pytest.fixture()
     def kernel(self):
-        from nexus_kernel import Kernel
+        from nexus_kernel import PyKernel
 
-        return Kernel()
+        return PyKernel()
 
     def test_register_and_lookup(self, kernel) -> None:
         kernel.trie_register("/{}/proc/{}/status", 0)

@@ -27,7 +27,7 @@ def make_hash(seed: int) -> str:
 
 
 def run_benchmark(count: int = 10000, read_iterations: int = 500) -> None:
-    from nexus_kernel import VolumeEngine
+    from nexus_kernel import BlobPackEngine
 
     with tempfile.TemporaryDirectory() as d:
         vol_dir = os.path.join(d, "volumes")
@@ -40,7 +40,7 @@ def run_benchmark(count: int = 10000, read_iterations: int = 500) -> None:
         print()
 
         # ── Phase 1: Populate ─────────────────────────────────────────────
-        engine = VolumeEngine(vol_dir, target_volume_size=64 * 1024 * 1024)
+        engine = BlobPackEngine(vol_dir, target_volume_size=64 * 1024 * 1024)
 
         t0 = time.perf_counter()
         for i in range(count):
@@ -68,7 +68,7 @@ def run_benchmark(count: int = 10000, read_iterations: int = 500) -> None:
         del engine
 
         t0 = time.perf_counter()
-        engine = VolumeEngine(vol_dir, target_volume_size=64 * 1024 * 1024)
+        engine = BlobPackEngine(vol_dir, target_volume_size=64 * 1024 * 1024)
         startup_time = time.perf_counter() - t0
 
         stats2 = engine.stats()

@@ -647,7 +647,7 @@ use pyo3::exceptions::PyRuntimeError;
 // `Send + Sync`. `unsendable` was overly conservative — Python tests
 // pass the handle around between threads (FastAPI lifespan + sync
 // shutdown helper) and that's safe.
-#[pyclass(name = "VfsGrpcServerHandle")]
+#[pyclass]
 pub struct PyVfsGrpcServerHandle {
     inner: Option<VfsGrpcHandle>,
 }

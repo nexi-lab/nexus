@@ -60,7 +60,7 @@ class InternalMixin:
             if cached is not None and cached[0] == is_admin:
                 return cached[1]
 
-        from nexus_kernel import OperationContext as _RustCtx
+        from nexus_kernel import PyOperationContext as _RustCtx
 
         rust_ctx = _RustCtx(
             user_id=context.user_id if context else "anonymous",

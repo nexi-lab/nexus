@@ -16,14 +16,14 @@ import gc
 import pytest
 
 try:
-    from nexus_kernel import VolumeEngine
+    from nexus_kernel import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
     HAS_VOLUME_ENGINE = False
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.VolumeEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
 )
 
 
@@ -45,7 +45,7 @@ class TestCrashRecoveryDeletesTmpFiles:
         assert tmp_file.exists()
 
         # Creating engine should delete .tmp
-        engine = VolumeEngine(str(vol_dir))
+        engine = BlobPackEngine(str(vol_dir))
         assert not tmp_file.exists()
         engine.close()
 
@@ -59,7 +59,7 @@ class TestCrashRecoveryDeletesTmpFiles:
             f.write_bytes(b"incomplete")
             tmps.append(f)
 
-        engine = VolumeEngine(str(vol_dir))
+        engine = BlobPackEngine(str(vol_dir))
         for f in tmps:
             assert not f.exists()
         engine.close()
@@ -72,7 +72,7 @@ class TestCrashRecoveryRebuildsFromVol:
         vol_dir = tmp_path / "volumes"
 
         # Phase 1: Create engine, write data, seal, close
-        engine = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         h = make_hash(42)
         engine.put(h, b"important data")
         engine.seal_active()
@@ -89,7 +89,7 @@ class TestCrashRecoveryRebuildsFromVol:
         assert index_path.exists()
         index_path.unlink()
 
-        engine2 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         assert engine2.exists(h)
         data = engine2.get(h)
         assert bytes(data) == b"important data"
@@ -99,7 +99,7 @@ class TestCrashRecoveryRebuildsFromVol:
         vol_dir = tmp_path / "volumes"
 
         # Write enough data to fill multiple volumes (small target)
-        engine = VolumeEngine(str(vol_dir), target_volume_size=256)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=256)
         hashes = []
         for i in range(20):
             h = make_hash(i)
@@ -114,7 +114,7 @@ class TestCrashRecoveryRebuildsFromVol:
         (vol_dir / "volume_index.redb").unlink()
 
         # Rebuild
-        engine2 = VolumeEngine(str(vol_dir), target_volume_size=256)
+        engine2 = BlobPackEngine(str(vol_dir), target_volume_size=256)
         for h in hashes:
             assert engine2.exists(h), f"Hash {h[:16]}... not found after rebuild"
         engine2.close()
@@ -127,7 +127,7 @@ class TestStaleIndexEntries:
         vol_dir = tmp_path / "volumes"
 
         # Create data and seal
-        engine = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         h = make_hash(1)
         engine.put(h, b"will be orphaned")
         engine.seal_active()
@@ -141,7 +141,7 @@ class TestStaleIndexEntries:
             f.unlink()
 
         # Reopen — engine should detect stale entries and clean them
-        engine2 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         assert not engine2.exists(h), "Stale entry should be removed"
         engine2.close()
 
@@ -158,7 +158,7 @@ class TestCorruptedVolumes:
         corrupt.write_bytes(b"too short")
 
         # Engine should log warning and skip
-        engine = VolumeEngine(str(vol_dir))
+        engine = BlobPackEngine(str(vol_dir))
         assert engine.len() == 0
         engine.close()
 
@@ -172,7 +172,7 @@ class TestCorruptedVolumes:
         data[0:4] = b"BAAD"  # Wrong magic
         corrupt.write_bytes(bytes(data))
 
-        engine = VolumeEngine(str(vol_dir))
+        engine = BlobPackEngine(str(vol_dir))
         assert engine.len() == 0
         engine.close()
 
@@ -180,7 +180,7 @@ class TestCorruptedVolumes:
         vol_dir = tmp_path / "volumes"
 
         # First create a valid volume
-        engine = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         engine.put(make_hash(1), b"valid data")
         engine.seal_active()
         engine.close()
@@ -196,7 +196,7 @@ class TestCorruptedVolumes:
 
         # Delete index and recreate — should skip corrupted volume
         (vol_dir / "volume_index.redb").unlink()
-        engine2 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         assert engine2.len() == 0, "Corrupted volume should be skipped"
         engine2.close()
 
@@ -206,7 +206,7 @@ class TestGracefulRecovery:
 
     def test_empty_directory(self, tmp_path):
         vol_dir = tmp_path / "volumes"
-        engine = VolumeEngine(str(vol_dir))
+        engine = BlobPackEngine(str(vol_dir))
         assert engine.len() == 0
         assert engine.total_bytes() == 0
         engine.close()
@@ -216,7 +216,7 @@ class TestGracefulRecovery:
         vol_dir = tmp_path / "volumes"
 
         # Write data across multiple volumes
-        engine = VolumeEngine(str(vol_dir), target_volume_size=512)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=512)
         expected = {}
         for i in range(30):
             h = make_hash(i)
@@ -233,7 +233,7 @@ class TestGracefulRecovery:
         (vol_dir / "volume_index.redb").unlink()
 
         # Recover
-        engine2 = VolumeEngine(str(vol_dir), target_volume_size=512)
+        engine2 = BlobPackEngine(str(vol_dir), target_volume_size=512)
 
         # Verify all data
         for h, expected_data in expected.items():
@@ -247,14 +247,14 @@ class TestGracefulRecovery:
         """Opening the same volume directory twice should not corrupt data."""
         vol_dir = tmp_path / "volumes"
 
-        engine1 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine1 = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         engine1.put(make_hash(1), b"from engine 1")
         engine1.seal_active()
         engine1.close()
         del engine1
         gc.collect()
 
-        engine2 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         assert engine2.exists(make_hash(1))
         assert bytes(engine2.get(make_hash(1))) == b"from engine 1"
         engine2.close()
@@ -268,7 +268,7 @@ class TestGracefulRecovery:
         """
         vol_dir = tmp_path / "volumes"
 
-        engine = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         engine.put(make_hash(1), b"keep me")
         engine.put(make_hash(2), b"delete me")
 
@@ -282,7 +282,7 @@ class TestGracefulRecovery:
         gc.collect()
 
         # Reopen — deleted blob must NOT reappear
-        engine2 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
         assert engine2.exists(make_hash(1)), "Kept blob should survive restart"
         assert not engine2.exists(make_hash(2)), "Deleted blob must not be resurrected"
         engine2.close()

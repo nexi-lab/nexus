@@ -266,7 +266,7 @@ fn build_ca_bundle_pem(
 /// plus the TLS identity. Discover / join RPCs block on the runtime so
 /// Python callers can use plain sync ``asyncio.to_thread`` if they
 /// need to await alongside other async work.
-#[pyclass(name = "FederationClient")]
+#[pyclass]
 pub struct PyFederationClient {
     inner: Arc<FederationClient>,
 }

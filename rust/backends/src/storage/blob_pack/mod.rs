@@ -400,15 +400,7 @@ fn pread_blob(path: &Path, offset: u64, size: u32) -> io::Result<Vec<u8>> {
 ///
 /// Manages append-only volume files and a redb index mapping
 /// content hashes to (volume_id, offset, size).
-//
-// Phase 0.5 / Phase 2: Rust type renamed `VolumeEngine -> BlobPackEngine`
-// for clarity, but the Python-visible class name stays `"VolumeEngine"`
-// for ABI compat through Phase 8 (~5 callers in
-// `nexus.backends.storage.cas_local` + the rust-compat shim).  The
-// pyclass anchor is dropped wholesale once Phase 8 retires the last
-// `VolumeLocalTransport` caller — the Rust type keeps its new name
-// regardless.
-#[pyclass(name = "VolumeEngine")]
+#[pyclass]
 pub struct BlobPackEngine {
     /// Root directory for volume storage
     volumes_dir: PathBuf,

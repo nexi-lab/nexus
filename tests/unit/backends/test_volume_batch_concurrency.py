@@ -13,14 +13,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytest
 
 try:
-    from nexus_kernel import VolumeEngine
+    from nexus_kernel import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
     HAS_VOLUME_ENGINE = False
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.VolumeEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
 )
 
 
@@ -42,20 +42,20 @@ class TestBatchPreallocation:
 
     def test_preallocate_returns_reservation_id(self, tmp_path):
         """preallocate(sizes=[100, 200, 300]) returns a positive u64 reservation ID."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
         res_id = engine.preallocate([100, 200, 300])
         assert isinstance(res_id, int), "reservation_id should be an integer"
         assert res_id > 0, "reservation_id should be positive"
 
     def test_preallocate_empty_raises(self, tmp_path):
         """preallocate([]) raises ValueError because zero slots is invalid."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
         with pytest.raises(ValueError, match="zero slots"):
             engine.preallocate([])
 
     def test_write_slot_and_commit(self, tmp_path):
         """Full roundtrip: preallocate -> write_slot x N -> commit_batch -> read_content."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         sizes = [100, 200, 300]
         hashes = [make_hash(i) for i in range(len(sizes))]
@@ -76,7 +76,7 @@ class TestBatchPreallocation:
 
     def test_filter_known_excludes_existing(self, tmp_path):
         """filter_known returns only hashes NOT already in the index."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         # Put some hashes via the regular put() path
         known_hashes = [make_hash(i) for i in range(5)]
@@ -97,7 +97,7 @@ class TestBatchPreallocation:
 
     def test_commit_batch_dedup(self, tmp_path):
         """If a hash is put() between preallocate and commit_batch, the duplicate is skipped."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         h = make_hash(42)
         data_batch = make_data(42, 100)
@@ -122,7 +122,7 @@ class TestBatchPreallocation:
 
     def test_write_slot_wrong_size_raises(self, tmp_path):
         """write_slot with data size mismatching the reserved size raises ValueError."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         res_id = engine.preallocate([100])
         h = make_hash(0)
@@ -132,7 +132,7 @@ class TestBatchPreallocation:
 
     def test_write_slot_double_write_raises(self, tmp_path):
         """Writing to the same slot twice raises ValueError."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         res_id = engine.preallocate([100])
         h = make_hash(0)
@@ -145,7 +145,7 @@ class TestBatchPreallocation:
 
     def test_commit_batch_with_unwritten_slot_raises(self, tmp_path):
         """commit_batch with slots that were never written raises ValueError."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         res_id = engine.preallocate([100, 200, 300])
 
@@ -157,7 +157,7 @@ class TestBatchPreallocation:
 
     def test_invalid_reservation_id_raises(self, tmp_path):
         """write_slot and commit_batch with a non-existent reservation ID raise ValueError."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         bad_id = 999999
 
@@ -176,7 +176,7 @@ class TestParallelWriteSlots:
 
     def test_parallel_write_slots(self, tmp_path):
         """4 threads writing 20 slots concurrently, then commit and verify all readable."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         slot_count = 20
         data_size = 100
@@ -207,7 +207,7 @@ class TestParallelWriteSlots:
 
     def test_parallel_write_slots_large_batch(self, tmp_path):
         """100 slots across 8 workers — verify all readable with correct content."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         slot_count = 100
         data_size = 200
@@ -240,7 +240,7 @@ class TestParallelWriteSlots:
 
     def test_parallel_batch_and_single_put(self, tmp_path):
         """Batch write_slot and single put() run concurrently on disjoint hashes."""
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         # Batch: seeds 0..9
         batch_count = 10
@@ -301,7 +301,7 @@ class TestExpiredReservations:
         Since RESERVATION_TIMEOUT_SECS is 60s and we cannot control it from
         Python, we verify that a freshly created reservation is NOT expired.
         """
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         res_id = engine.preallocate([100, 200])
 
@@ -325,7 +325,7 @@ class TestExpiredReservations:
         not count it (it was already removed). Creating multiple reservations
         and committing some verifies the cleanup path.
         """
-        engine = VolumeEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "volumes"), target_volume_size=64 * 1024)
 
         # Create and commit reservation 1
         res_id1 = engine.preallocate([100])

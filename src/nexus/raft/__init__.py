@@ -27,7 +27,7 @@ Example (Metastore - embedded mode):
 
 Example (consensus mode — via kernel zone_* methods):
     import nexus_kernel
-    kernel = nexus_kernel.Kernel()
+    kernel = nexus_kernel.PyKernel()
     kernel.zone_create("root", ["2@peer:2126"])
     kernel.zone_mount("root", "/data", "shared-zone")
     # Read/write through kernel.sys_* like any path; mount routes to the

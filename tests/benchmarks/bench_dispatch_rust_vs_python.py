@@ -7,7 +7,7 @@ Measures the performance of the §7 kernel boundary collapse:
 
 Run: python -m pytest tests/benchmarks/bench_dispatch_rust_vs_python.py -v --benchmark-only
 
-Issue #1868: Kernel Boundary Collapse.
+Issue #1868: PyKernel Boundary Collapse.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from nexus.contracts.vfs_hooks import ReadHookContext, WriteHookContext
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 
 try:
-    from nexus_kernel import Kernel
+    from nexus_kernel import PyKernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -32,10 +32,10 @@ except ImportError:
 
 
 class _BenchDispatch(DispatchMixin):
-    """Minimal DispatchMixin with Rust Kernel for benchmarking."""
+    """Minimal DispatchMixin with Rust PyKernel for benchmarking."""
 
     def __init__(self):
-        self._kernel = Kernel()
+        self._kernel = PyKernel()
         self._init_dispatch()
 
 
@@ -216,9 +216,9 @@ class TestSyscallOverhead:
     @pytest.mark.benchmark_ci
     def test_sys_write_no_hooks(self, benchmark, mounted_dispatch):
         """sys_write 1KB, no hooks."""
-        from nexus_kernel import OperationContext
+        from nexus_kernel import PyOperationContext
 
-        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
+        ctx = PyOperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         content = b"x" * 1024
 
         def _write():
@@ -230,9 +230,9 @@ class TestSyscallOverhead:
     @pytest.mark.benchmark_ci
     def test_sys_read_no_hooks(self, benchmark, mounted_dispatch):
         """sys_read 1KB, no hooks (after write)."""
-        from nexus_kernel import OperationContext
+        from nexus_kernel import PyOperationContext
 
-        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
+        ctx = PyOperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         mounted_dispatch._kernel.sys_write("/bench/read_target.txt", ctx, b"y" * 1024)
 
         def _read():
@@ -243,12 +243,12 @@ class TestSyscallOverhead:
     @pytest.mark.benchmark(group="syscall")
     def test_sys_write_with_hooks(self, benchmark, mounted_dispatch):
         """sys_write 1KB with 3 hooks (pre + post)."""
-        from nexus_kernel import OperationContext
+        from nexus_kernel import PyOperationContext
 
         for i in range(3):
             mounted_dispatch.register_intercept_write(_make_hook(f"h{i}"))
 
-        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
+        ctx = PyOperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         content = b"x" * 1024
 
         def _write():
@@ -259,12 +259,12 @@ class TestSyscallOverhead:
     @pytest.mark.benchmark(group="syscall")
     def test_sys_read_with_hooks(self, benchmark, mounted_dispatch):
         """sys_read 1KB with 3 hooks (pre only for read)."""
-        from nexus_kernel import OperationContext
+        from nexus_kernel import PyOperationContext
 
         for i in range(3):
             mounted_dispatch.register_intercept_read(_make_hook(f"h{i}"))
 
-        ctx = OperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
+        ctx = PyOperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         mounted_dispatch._kernel.sys_write("/bench/hooked_read.txt", ctx, b"z" * 1024)
 
         def _read():

@@ -1,6 +1,6 @@
 """Volume-packed local Transport — append-only volume files for CAS.
 
-Wraps the Rust VolumeEngine (nexus_kernel.VolumeEngine) and implements the
+Wraps the Rust VolumeEngine (nexus_kernel.BlobPackEngine) and implements the
 Transport protocol. Routes CAS blob keys (cas/...) to the volume engine
 and delegates directory operations (dirs/...) to an internal LocalTransport.
 

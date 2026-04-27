@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
-    from nexus_kernel import VolumeEngine
+    from nexus_kernel import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
@@ -26,7 +26,7 @@ except ImportError:
 from nexus.backends.engines.cas_gc import CASGarbageCollector
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.VolumeEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
 )
 
 
@@ -124,7 +124,7 @@ class TestCompaction:
 
     def test_compaction_reclaims_space(self, tmp_path):
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,  # Large enough for all entries in one volume
             compaction_sparsity_threshold=0.3,
@@ -158,7 +158,7 @@ class TestCompaction:
 
     def test_compaction_noop_when_not_sparse(self, tmp_path):
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_sparsity_threshold=0.4,
@@ -177,7 +177,7 @@ class TestCompaction:
 
     def test_compaction_fully_dead_volume(self, tmp_path):
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024,
             compaction_sparsity_threshold=0.3,
@@ -202,7 +202,7 @@ class TestCompaction:
 
     def test_compaction_preserves_timestamps(self, tmp_path):
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=512,
             compaction_sparsity_threshold=0.3,
@@ -239,7 +239,7 @@ class TestCompactionCrashRecovery:
         """If crash happens after new volume is sealed but before index commit,
         startup reconciliation should pick up the new volume's entries."""
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_sparsity_threshold=0.3,
@@ -273,7 +273,7 @@ class TestCompactionCrashRecovery:
         import gc
 
         gc.collect()
-        engine2 = VolumeEngine(
+        engine2 = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_sparsity_threshold=0.3,
@@ -295,7 +295,7 @@ class TestCompactionCrashRecovery:
         """If both old and new .vol files exist (simulating crash between
         index commit and old volume deletion), reads should still work."""
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_sparsity_threshold=0.3,
@@ -321,7 +321,7 @@ class TestCompactionCrashRecovery:
         """If compaction crashes while writing a new .tmp volume,
         startup should delete the .tmp and preserve old data."""
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_sparsity_threshold=0.3,
@@ -342,7 +342,7 @@ class TestCompactionCrashRecovery:
         gc.collect()
 
         # Re-open — should delete .tmp, recover from .vol files
-        engine2 = VolumeEngine(
+        engine2 = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_sparsity_threshold=0.3,
@@ -370,7 +370,7 @@ class TestCompactionPreadError:
         """If a blob can't be read during compaction, the old volume
         should be preserved (not deleted)."""
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_sparsity_threshold=0.3,
@@ -419,7 +419,7 @@ class TestCompactionBytesPerCycle:
     def test_partial_compaction_preserves_old_volume(self, tmp_path):
         """When bytes_per_cycle is exhausted, old volume should NOT be deleted."""
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_bytes_per_cycle=100,  # Very small budget
@@ -449,7 +449,7 @@ class TestCompactionBytesPerCycle:
     def test_unlimited_budget_compacts_everything(self, tmp_path):
         """When bytes_per_cycle=0 (unlimited), all candidates are processed."""
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_bytes_per_cycle=0,  # Unlimited
@@ -484,7 +484,7 @@ class TestCompactionStats:
 
     def test_stats_include_compaction_counters(self, tmp_path):
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(vol_dir),
             target_volume_size=1024 * 1024,
             compaction_sparsity_threshold=0.3,
@@ -517,7 +517,7 @@ class TestCompactionStats:
 class TestVolumeLifecycle:
     def test_auto_seal_on_full(self, tmp_path):
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(str(vol_dir), target_volume_size=256)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=256)
 
         for i in range(20):
             engine.put(make_hash(i), bytes([i] * 100))
@@ -529,7 +529,7 @@ class TestVolumeLifecycle:
 
     def test_dedup_across_volumes(self, tmp_path):
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(str(vol_dir), target_volume_size=256)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=256)
 
         h = make_hash(1)
         assert engine.put(h, b"unique data")  # new
@@ -541,7 +541,7 @@ class TestVolumeLifecycle:
 
     def test_stats(self, tmp_path):
         vol_dir = tmp_path / "vol"
-        engine = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(vol_dir), target_volume_size=1024 * 1024)
 
         engine.put(make_hash(1), b"data1")
         engine.put(make_hash(2), b"data2")

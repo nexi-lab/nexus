@@ -22,7 +22,7 @@ def _build_kernel_metastore(db_path) -> tuple[object, RustMetastoreProxy]:
     directly bypassed the kernel's metastore wiring and hit empty
     dcache/metastore after F2 C4 delegated writes to ``kernel.sys_write``.
     """
-    from nexus_kernel import Kernel as _Kernel
+    from nexus_kernel import PyKernel as _Kernel
 
     redb_path = str(db_path).replace(".db", "") + ".redb"
     kernel = _Kernel()

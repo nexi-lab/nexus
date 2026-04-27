@@ -134,7 +134,7 @@ if RUST_AVAILABLE:
             )
             if _missing_methods:
                 _log.warning(
-                    "nexus_kernel.Kernel is stale — binary missing %d method(s): %s. Rebuild: %s",
+                    "nexus_kernel.PyKernel is stale — binary missing %d method(s): %s. Rebuild: %s",
                     len(_missing_methods),
                     _missing_methods,
                     _REBUILD_CMD,

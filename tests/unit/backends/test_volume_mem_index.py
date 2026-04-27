@@ -16,14 +16,14 @@ from __future__ import annotations
 import pytest
 
 try:
-    from nexus_kernel import VolumeEngine
+    from nexus_kernel import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
     HAS_VOLUME_ENGINE = False
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.VolumeEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
 )
 
 
@@ -36,7 +36,7 @@ class TestMemIndexReadContent:
 
     def test_read_content_after_put(self, tmp_path):
         """read_content works immediately after put (active volume fallback)."""
-        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
         h = make_hash(1)
         engine.put(h, b"hello from active volume")
         data = engine.read_content(h)
@@ -44,7 +44,7 @@ class TestMemIndexReadContent:
 
     def test_read_content_after_seal(self, tmp_path):
         """read_content uses cached FD after seal (pread fast path)."""
-        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
         h = make_hash(1)
         engine.put(h, b"hello from sealed volume")
         engine.seal_active()
@@ -58,12 +58,12 @@ class TestMemIndexReadContent:
 
     def test_read_content_not_found(self, tmp_path):
         """read_content returns None for missing hash."""
-        engine = VolumeEngine(str(tmp_path / "vol"))
+        engine = BlobPackEngine(str(tmp_path / "vol"))
         assert engine.read_content(make_hash(999)) is None
 
     def test_read_content_multiple_volumes(self, tmp_path):
         """read_content works across multiple sealed volumes."""
-        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=256)
+        engine = BlobPackEngine(str(tmp_path / "vol"), target_volume_size=256)
         data_map = {}
 
         for i in range(20):
@@ -82,7 +82,7 @@ class TestMemIndexReadContent:
 
     def test_read_content_large_blobs(self, tmp_path):
         """read_content handles blobs of various sizes."""
-        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
 
         sizes = [0, 1, 100, 4096, 65536]
         for i, size in enumerate(sizes):
@@ -104,7 +104,7 @@ class TestMemIndexConsistency:
 
     def test_exists_uses_mem_index(self, tmp_path):
         """exists() returns O(1) via mem_index."""
-        engine = VolumeEngine(str(tmp_path / "vol"))
+        engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
 
         assert not engine.exists(h)
@@ -115,7 +115,7 @@ class TestMemIndexConsistency:
 
     def test_get_size_uses_mem_index(self, tmp_path):
         """get_size() returns O(1) via mem_index."""
-        engine = VolumeEngine(str(tmp_path / "vol"))
+        engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
         data = b"exactly 17 bytes!"
 
@@ -125,7 +125,7 @@ class TestMemIndexConsistency:
 
     def test_dedup_via_mem_index(self, tmp_path):
         """put() dedup check uses mem_index (skips redb)."""
-        engine = VolumeEngine(str(tmp_path / "vol"))
+        engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
 
         assert engine.put(h, b"first") is True  # new
@@ -133,7 +133,7 @@ class TestMemIndexConsistency:
 
     def test_delete_removes_from_mem_index(self, tmp_path):
         """delete() removes from mem_index so subsequent reads return None."""
-        engine = VolumeEngine(str(tmp_path / "vol"))
+        engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
 
         engine.put(h, b"to delete")
@@ -146,7 +146,7 @@ class TestMemIndexConsistency:
 
     def test_batch_get_uses_mem_index(self, tmp_path):
         """batch_get uses mem_index for O(1) lookups."""
-        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
         hashes = [make_hash(i) for i in range(10)]
 
         for h in hashes:
@@ -167,7 +167,7 @@ class TestMemIndexStartupLoad:
         vol_dir = str(tmp_path / "vol")
 
         # Create and populate
-        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine1 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         hashes = [make_hash(i) for i in range(50)]
         for h in hashes:
             engine1.put(h, f"startup_{h[:8]}".encode())
@@ -176,7 +176,7 @@ class TestMemIndexStartupLoad:
         del engine1  # Release redb lock
 
         # Re-open — should load index from redb
-        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         stats = engine2.stats()
         assert stats["mem_index_entries"] == 50
         assert stats["mem_index_volumes"] >= 1
@@ -192,7 +192,7 @@ class TestMemIndexStartupLoad:
         """Startup caches FDs for sealed volumes."""
         vol_dir = str(tmp_path / "vol")
 
-        engine1 = VolumeEngine(vol_dir, target_volume_size=256)
+        engine1 = BlobPackEngine(vol_dir, target_volume_size=256)
         for i in range(20):
             engine1.put(make_hash(i), b"x" * 100)
         engine1.seal_active()
@@ -200,7 +200,7 @@ class TestMemIndexStartupLoad:
         engine1.close()
         del engine1  # Release redb lock
 
-        engine2 = VolumeEngine(vol_dir, target_volume_size=256)
+        engine2 = BlobPackEngine(vol_dir, target_volume_size=256)
         assert engine2.stats()["mem_index_volumes"] == sealed_count
 
 
@@ -209,7 +209,7 @@ class TestMemIndexMemory:
 
     def test_memory_bytes_grows(self, tmp_path):
         """index_memory_bytes grows with entries."""
-        engine = VolumeEngine(str(tmp_path / "vol"))
+        engine = BlobPackEngine(str(tmp_path / "vol"))
         base = engine.index_memory_bytes()
 
         for i in range(1000):
@@ -224,7 +224,7 @@ class TestMemIndexMemory:
 
     def test_stats_include_mem_index(self, tmp_path):
         """stats() includes mem_index info."""
-        engine = VolumeEngine(str(tmp_path / "vol"))
+        engine = BlobPackEngine(str(tmp_path / "vol"))
         engine.put(make_hash(1), b"data")
         stats = engine.stats()
 
@@ -247,7 +247,7 @@ class TestSnapshotSidecar:
         import os
 
         vol_dir = str(tmp_path / "vol")
-        engine = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         for i in range(10):
             engine.put(make_hash(i), f"data_{i}".encode())
         engine.seal_active()
@@ -262,7 +262,7 @@ class TestSnapshotSidecar:
         """Second startup loads from snapshot (fast path)."""
         vol_dir = str(tmp_path / "vol")
 
-        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine1 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         for i in range(20):
             engine1.put(make_hash(i), f"snap_{i}".encode())
         engine1.seal_active()
@@ -270,7 +270,7 @@ class TestSnapshotSidecar:
         del engine1
 
         # Re-open — should use snapshot
-        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         assert engine2.stats()["mem_index_entries"] == 20
 
         # All data readable
@@ -286,7 +286,7 @@ class TestSnapshotSidecar:
 
         vol_dir = str(tmp_path / "vol")
 
-        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine1 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         for i in range(10):
             engine1.put(make_hash(i), b"crash_test")
         engine1.seal_active()
@@ -302,7 +302,7 @@ class TestSnapshotSidecar:
             f.write("crash artifact")
 
         # Re-open — should detect .tmp, delete snapshot, fall back to redb
-        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         # .tmp should be cleaned up
         assert not os.path.exists(tmp_file)
         # Data should still be correct (loaded from redb)
@@ -316,7 +316,7 @@ class TestSnapshotSidecar:
 
         vol_dir = str(tmp_path / "vol")
 
-        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine1 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         for i in range(10):
             engine1.put(make_hash(i), b"mismatch_test")
         engine1.seal_active()
@@ -329,7 +329,7 @@ class TestSnapshotSidecar:
             f.truncate(16 + 5 * 48)  # Only 5 entries instead of 10
 
         # Re-open — should reject snapshot, fall back to redb
-        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         assert engine2.stats()["mem_index_entries"] == 10
         for i in range(10):
             assert engine2.exists(make_hash(i))
@@ -341,7 +341,7 @@ class TestSnapshotSidecar:
 
         vol_dir = str(tmp_path / "vol")
 
-        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine1 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         for i in range(5):
             engine1.put(make_hash(i), b"vol_delete_test")
         engine1.seal_active()
@@ -354,7 +354,7 @@ class TestSnapshotSidecar:
                 os.remove(os.path.join(vol_dir, f))
 
         # Re-open — snapshot references missing volumes, should reject
-        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         # Stale entries should be removed
         assert engine2.stats()["mem_index_entries"] == 0
         engine2.close()
@@ -363,7 +363,7 @@ class TestSnapshotSidecar:
         """First boot without snapshot falls back to redb scan."""
         vol_dir = str(tmp_path / "vol")
 
-        engine = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         for i in range(5):
             engine.put(make_hash(i), b"first_boot")
         engine.seal_active()
@@ -371,7 +371,7 @@ class TestSnapshotSidecar:
         # No close() → no snapshot written. Reopen via del + new.
         del engine
 
-        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         # Should load from redb (no snapshot)
         assert engine2.stats()["mem_index_entries"] == 5
         for i in range(5):
@@ -383,7 +383,7 @@ class TestSnapshotSidecar:
 
         vol_dir = str(tmp_path / "vol")
 
-        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine1 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         engine1.put(make_hash(0), b"magic_test")
         engine1.seal_active()
         engine1.close()
@@ -394,7 +394,7 @@ class TestSnapshotSidecar:
         with open(snap, "r+b") as f:
             f.write(b"XXXX")
 
-        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine2 = BlobPackEngine(vol_dir, target_volume_size=1024 * 1024)
         assert engine2.stats()["mem_index_entries"] == 1
         assert engine2.exists(make_hash(0))
         engine2.close()
@@ -405,7 +405,7 @@ class TestMemIndexCompaction:
 
     def test_compaction_updates_mem_index(self, tmp_path):
         """After compaction, entries point to new volumes and are still readable."""
-        engine = VolumeEngine(
+        engine = BlobPackEngine(
             str(tmp_path / "vol"),
             target_volume_size=512,
             compaction_bytes_per_cycle=0,

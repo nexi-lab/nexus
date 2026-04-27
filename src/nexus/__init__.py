@@ -173,7 +173,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
     _redb_path = Path(metadata_path).with_suffix(".redb")
 
     if kernel is None:
-        from nexus_kernel import Kernel as _Kernel
+        from nexus_kernel import PyKernel as _Kernel
 
         kernel = _Kernel()
 

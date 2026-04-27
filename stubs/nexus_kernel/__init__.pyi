@@ -233,7 +233,7 @@ class VFSSemaphore:
     @property
     def active_semaphores(self) -> int: ...
 
-class OperationContext:
+class PyOperationContext:
     def __init__(
         self,
         user_id: str,
@@ -249,7 +249,7 @@ class OperationContext:
         context_zone_id: str | None,
     ) -> None: ...
 
-class Kernel:
+class PyKernel:
     def __init__(self) -> None: ...
     def set_vfs_lock_timeout(self, timeout_ms: int) -> None: ...
     def set_self_address(self, addr: str) -> None: ...
@@ -520,8 +520,23 @@ class Kernel:
         self, zone_id: str, policies_json: str, interval_ms: int
     ) -> bool: ...
 
-class SysReadResult: ...
-class SysWriteResult: ...
+class PySysReadResult:
+    data: bytes | None
+    post_hook_needed: bool
+    content_hash: str | None
+    entry_type: int
+
+class PySysWriteResult:
+    hit: bool
+    content_id: str | None
+    post_hook_needed: bool
+    version: int
+    size: int
+    is_new: bool
+    old_etag: str | None
+    old_size: int | None
+    old_version: int | None
+    old_modified_at_ms: int | None
 
 class BloomFilter:
     def __init__(self, expected_items: int = 100000, fp_rate: float = 0.01) -> None: ...
@@ -537,11 +552,11 @@ class BloomFilter:
     @property
     def memory_bytes(self) -> int: ...
 
-class VfsGrpcServerHandle:
+class PyVfsGrpcServerHandle:
     def shutdown(self) -> None: ...
     def __repr__(self) -> str: ...
 
-class FederationClient:
+class PyFederationClient:
     def __init__(
         self,
         local_ca_pem: bytes | None = None,
@@ -559,7 +574,7 @@ class FederationClient:
 # (rust/raft/src/federation/tofu.rs, rust/raft/src/pyo3_bindings.rs)
 # ---------------------------------------------------------------------------
 
-class TrustedZone:
+class PyTrustedZone:
     zone_id: str
     ca_fingerprint: str
     ca_pem: str
@@ -567,12 +582,12 @@ class TrustedZone:
     last_verified: str
     peer_addresses: list[str]
 
-class TofuTrustStore:
+class PyTofuTrustStore:
     def __init__(self, path: str) -> None: ...
     def verify_or_trust(self, zone_id: str, ca_pem: bytes, peer_address: str) -> str: ...
     def remove(self, zone_id: str) -> bool: ...
     def get_ca_pem(self, zone_id: str) -> bytes | None: ...
-    def list_trusted(self) -> list[TrustedZone]: ...
+    def list_trusted(self) -> list[PyTrustedZone]: ...
     def build_ca_bundle(self, local_ca_path: str) -> str: ...
     def path(self) -> str: ...
 

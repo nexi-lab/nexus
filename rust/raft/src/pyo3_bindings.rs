@@ -87,7 +87,7 @@ fn lock_mode_str(mode: crate::prelude::LockMode) -> &'static str {
 }
 
 /// Python-compatible holder info.
-#[pyclass(name = "HolderInfo")]
+#[pyclass]
 #[derive(Clone)]
 pub struct PyHolderInfo {
     #[pyo3(get)]
@@ -119,7 +119,7 @@ impl From<RustHolderInfo> for PyHolderInfo {
 }
 
 /// Python-compatible lock state result.
-#[pyclass(name = "LockState")]
+#[pyclass]
 #[derive(Clone)]
 pub struct PyLockState {
     #[pyo3(get)]
@@ -144,7 +144,7 @@ impl From<RustLockAcquireResult> for PyLockState {
 }
 
 /// Python-compatible lock info.
-#[pyclass(name = "LockInfo")]
+#[pyclass]
 #[derive(Clone)]
 pub struct PyLockInfo {
     #[pyo3(get)]
@@ -171,18 +171,7 @@ impl From<RustLockInfo> for PyLockInfo {
 /// Used for embedded mode and as the base layer for EC mode (future).
 ///
 /// Performance: ~5μs per operation.
-//
-// Phase 0.5 — Python-visible class name is intentionally pinned to the
-// historical `"Metastore"` so existing Python `RustMetastoreProxy`
-// callers (and ~200 `from nexus_kernel import Metastore` import
-// sites) keep working unchanged through the Rust-side
-// `Metastore` → `MetaStore` rename. This pyclass + the surrounding
-// `PyMetaStore` Rust struct will be dropped wholesale once the full
-// Rust-ification effort (Phase J / `kernel.sys_*` syscalls) gives every
-// `MetaStore` caller a Rust-only path; at that point the Python tier
-// has no surviving `MetastoreABC` reference and the cross-language
-// asymmetry vanishes for free.
-#[pyclass(name = "Metastore")]
+#[pyclass]
 pub struct PyMetaStore {
     store: RedbStore,
     sm: FullStateMachine,

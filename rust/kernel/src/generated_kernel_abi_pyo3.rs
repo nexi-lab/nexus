@@ -667,7 +667,7 @@ impl PathResolver for PyPathResolverAdapter {
 // ── PyOperationContext ──────────────────────────────────────────
 
 /// Python-facing OperationContext (wraps pure Rust OperationContext).
-#[pyclass(name = "OperationContext", get_all)]
+#[pyclass(get_all)]
 #[derive(Clone, Debug)]
 pub struct PyOperationContext {
     pub user_id: String,
@@ -739,7 +739,7 @@ impl PyOperationContext {
 // ── PySysReadResult ─────────────────────────────────────────────
 
 /// Python-facing SysReadResult (data is PyBytes, not Vec<u8>).
-#[pyclass(name = "SysReadResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysReadResult {
     pub data: Option<Py<PyBytes>>,
     pub post_hook_needed: bool,
@@ -750,7 +750,7 @@ pub struct PySysReadResult {
 // ── PySysWriteResult ────────────────────────────────────────────
 
 /// Python-facing SysWriteResult.
-#[pyclass(name = "SysWriteResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysWriteResult {
     pub hit: bool,
     pub content_id: Option<String>,
@@ -767,7 +767,7 @@ pub struct PySysWriteResult {
 // ── PySysUnlinkResult ───────────────────────────────────────────
 
 /// Python-facing SysUnlinkResult.
-#[pyclass(name = "SysUnlinkResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysUnlinkResult {
     pub hit: bool,
     pub entry_type: u8,
@@ -780,7 +780,7 @@ pub struct PySysUnlinkResult {
 // ── PySysRenameResult ───────────────────────────────────────────
 
 /// Python-facing SysRenameResult.
-#[pyclass(name = "SysRenameResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysRenameResult {
     pub hit: bool,
     pub success: bool,
@@ -795,7 +795,7 @@ pub struct PySysRenameResult {
 // ── PySysMkdirResult ────────────────────────────────────────────
 
 /// Python-facing SysMkdirResult.
-#[pyclass(name = "SysMkdirResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysMkdirResult {
     pub hit: bool,
     pub post_hook_needed: bool,
@@ -804,7 +804,7 @@ pub struct PySysMkdirResult {
 // ── PySysRmdirResult ────────────────────────────────────────────
 
 /// Python-facing SysRmdirResult.
-#[pyclass(name = "SysRmdirResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysRmdirResult {
     pub hit: bool,
     pub post_hook_needed: bool,
@@ -814,7 +814,7 @@ pub struct PySysRmdirResult {
 // ── PySysCopyResult ─────────────────────────────────────────────
 
 /// Python-facing SysCopyResult.
-#[pyclass(name = "SysCopyResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysCopyResult {
     pub hit: bool,
     pub post_hook_needed: bool,
@@ -832,7 +832,7 @@ pub struct PySysCopyResult {
 ///   - Hook registry (PyO3-specific, stored here not in Rust Kernel)
 ///   - PRE-INTERCEPT dispatch (requires GIL for Python hook contexts)
 ///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)
-#[pyclass(name = "Kernel")]
+#[pyclass]
 pub struct PyKernel {
     /// Crate-visible so `grpc_server.rs` (and any other
     /// kernel-internal task spawner) can clone the Arc

@@ -954,7 +954,7 @@ def generate_stubs(
     lines.append("# (rust/raft/src/federation/tofu.rs, rust/raft/src/pyo3_bindings.rs)")
     lines.append("# " + "-" * 75)
     lines.append("")
-    lines.append("class TrustedZone:")
+    lines.append("class PyTrustedZone:")
     lines.append("    zone_id: str")
     lines.append("    ca_fingerprint: str")
     lines.append("    ca_pem: str")
@@ -962,14 +962,14 @@ def generate_stubs(
     lines.append("    last_verified: str")
     lines.append("    peer_addresses: list[str]")
     lines.append("")
-    lines.append("class TofuTrustStore:")
+    lines.append("class PyTofuTrustStore:")
     lines.append("    def __init__(self, path: str) -> None: ...")
     lines.append(
         "    def verify_or_trust(self, zone_id: str, ca_pem: bytes, peer_address: str) -> str: ..."
     )
     lines.append("    def remove(self, zone_id: str) -> bool: ...")
     lines.append("    def get_ca_pem(self, zone_id: str) -> bytes | None: ...")
-    lines.append("    def list_trusted(self) -> list[TrustedZone]: ...")
+    lines.append("    def list_trusted(self) -> list[PyTrustedZone]: ...")
     lines.append("    def build_ca_bundle(self, local_ca_path: str) -> str: ...")
     lines.append("    def path(self) -> str: ...")
     lines.append("")
@@ -2522,7 +2522,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PyOperationContext ──────────────────────────────────────────",
             "",
             "/// Python-facing OperationContext (wraps pure Rust OperationContext).",
-            '#[pyclass(name = "OperationContext", get_all)]',
+            "#[pyclass(get_all)]",
             "#[derive(Clone, Debug)]",
             "pub struct PyOperationContext {",
             "    pub user_id: String,",
@@ -2594,7 +2594,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysReadResult ─────────────────────────────────────────────",
             "",
             "/// Python-facing SysReadResult (data is PyBytes, not Vec<u8>).",
-            '#[pyclass(name = "SysReadResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysReadResult {",
             "    pub data: Option<Py<PyBytes>>,",
             "    pub post_hook_needed: bool,",
@@ -2605,7 +2605,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysWriteResult ────────────────────────────────────────────",
             "",
             "/// Python-facing SysWriteResult.",
-            '#[pyclass(name = "SysWriteResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysWriteResult {",
             "    pub hit: bool,",
             "    pub content_id: Option<String>,",
@@ -2622,7 +2622,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysUnlinkResult ───────────────────────────────────────────",
             "",
             "/// Python-facing SysUnlinkResult.",
-            '#[pyclass(name = "SysUnlinkResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysUnlinkResult {",
             "    pub hit: bool,",
             "    pub entry_type: u8,",
@@ -2635,7 +2635,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysRenameResult ───────────────────────────────────────────",
             "",
             "/// Python-facing SysRenameResult.",
-            '#[pyclass(name = "SysRenameResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysRenameResult {",
             "    pub hit: bool,",
             "    pub success: bool,",
@@ -2650,7 +2650,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysMkdirResult ────────────────────────────────────────────",
             "",
             "/// Python-facing SysMkdirResult.",
-            '#[pyclass(name = "SysMkdirResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysMkdirResult {",
             "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
@@ -2659,7 +2659,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysRmdirResult ────────────────────────────────────────────",
             "",
             "/// Python-facing SysRmdirResult.",
-            '#[pyclass(name = "SysRmdirResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysRmdirResult {",
             "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
@@ -2669,7 +2669,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysCopyResult ─────────────────────────────────────────────",
             "",
             "/// Python-facing SysCopyResult.",
-            '#[pyclass(name = "SysCopyResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysCopyResult {",
             "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
@@ -2693,7 +2693,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "///   - Hook registry (PyO3-specific, stored here not in Rust Kernel)",
             "///   - PRE-INTERCEPT dispatch (requires GIL for Python hook contexts)",
             "///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)",
-            '#[pyclass(name = "Kernel")]',
+            "#[pyclass]",
             "pub struct PyKernel {",
             "    /// Crate-visible so `grpc_server.rs` (and any other",
             "    /// kernel-internal task spawner) can clone the Arc",

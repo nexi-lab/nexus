@@ -56,8 +56,8 @@ def migrate_legacy_oauth_key(
         sql_settings_store: The SQL-backed settings store to write the key into.
         existing_metastore: An already-open ``MetastoreABC`` (typically the main
             Kernel's ``RustMetastoreProxy``).  When provided the key is read
-            through this connection, avoiding a second ``Kernel()`` that would
-            hit the redb exclusive-file-lock held by the main Kernel.
+            through this connection, avoiding a second ``PyKernel()`` that would
+            hit the redb exclusive-file-lock held by the main PyKernel.
 
     Returns:
         True if a migration actually happened this call; False if the SQL
@@ -107,12 +107,12 @@ def _read_oauth_key_from_redb(
     """Read the OAuth encryption key from a legacy metastore file.
 
     When *existing_metastore* is provided (a ``RustMetastoreProxy`` backed
-    by the main Kernel), the key is read through that connection — avoiding
-    a second ``Kernel()`` that would hit the redb exclusive-file-lock.
+    by the main PyKernel), the key is read through that connection — avoiding
+    a second ``PyKernel()`` that would hit the redb exclusive-file-lock.
 
     For the pre-redb ``~/.nexus/metastore`` path (Python RaftMetadataStore
     format) the main Kernel's ``LocalMetastore`` cannot read it, but neither
-    could the old standalone ``Kernel()`` approach (``Database::create``
+    could the old standalone ``PyKernel()`` approach (``Database::create``
     fails on a non-redb file).  Returns ``None`` with a log line in that case.
 
     Returns ``None`` when the file can't be opened, when the Rust kernel
@@ -146,10 +146,10 @@ def _read_oauth_key_from_redb(
             )
             return None
 
-    # Slow path (original): open the redb file with a standalone Kernel().
-    # This will fail with "Database already open" if the main Kernel
+    # Slow path (original): open the redb file with a standalone PyKernel().
+    # This will fail with "Database already open" if the main PyKernel
     # already holds the lock — acceptable for CLI / test callers that
-    # don't have a main Kernel.
+    # don't have a main PyKernel.
     try:
         from nexus.core.metastore import RustMetastoreProxy
         from nexus.storage.auth_stores.metastore_settings_store import (
@@ -164,7 +164,7 @@ def _read_oauth_key_from_redb(
         return None
 
     try:
-        from nexus_kernel import Kernel
+        from nexus_kernel import PyKernel
     except ImportError as exc:
         logger.warning(
             "Legacy OAuth key migration skipped — nexus_kernel unavailable (%s): %s",
@@ -174,7 +174,7 @@ def _read_oauth_key_from_redb(
         return None
 
     try:
-        proxy = RustMetastoreProxy(Kernel(), str(path))
+        proxy = RustMetastoreProxy(PyKernel(), str(path))
         store = MetastoreSettingsStore(proxy)
         dto = store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
         if dto is None:

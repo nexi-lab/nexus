@@ -222,7 +222,7 @@ class NexusFS(  # type: ignore[misc]
                     self._kernel = metadata_store._rust_kernel
                     metadata_store._kernel = self._kernel
                 else:
-                    from nexus_kernel import Kernel as _Kernel
+                    from nexus_kernel import PyKernel as _Kernel
 
                     self._kernel = _Kernel()
                     metadata_store._kernel = self._kernel

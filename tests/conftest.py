@@ -198,7 +198,7 @@ def make_test_nexus(
         # kernel + redb file under tmp_path. ``use_raft`` is now redundant
         # but kept for API compatibility.
         del use_raft
-        from nexus_kernel import Kernel as _Kernel
+        from nexus_kernel import PyKernel as _Kernel
 
         from nexus.core.metastore import RustMetastoreProxy
 

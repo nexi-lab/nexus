@@ -661,6 +661,15 @@ pub struct Kernel {
     // Default at boot is `NoopPeerBlobClient`; nexus-cdylib boot
     // installs the real transport impl via `Kernel::set_peer_client`.
     pub(crate) peer_client: parking_lot::RwLock<Arc<dyn crate::hal::peer::PeerBlobClient>>,
+    // Federation HAL slot (Phase 5).  `Arc<dyn FederationProvider>` so
+    // the kernel's federation surface (init from env, zone listing,
+    // distributed-lock / WAL-stream / Raft-MetaStore construction, mount
+    // wiring, replication scanner) is reachable through a trait boundary
+    // rather than direct `nexus_raft::*` types.  Default at boot is
+    // `NoopFederationProvider`; nexus-cdylib boot installs the real
+    // raft-side impl via `Kernel::set_federation`.  Mirrors the Phase-4
+    // PeerBlobClient DI pattern.
+    pub(crate) federation: parking_lot::RwLock<Arc<dyn crate::hal::federation::FederationProvider>>,
     // Scatter-gather fetcher: drives bounded fan-out against
     // `backend_name.origins` whenever a local chunk miss occurs.
     // Installed on every `CASEngine` via `VFSRouter` on mount
@@ -801,6 +810,9 @@ impl Kernel {
             self_address: parking_lot::RwLock::new(None),
             runtime,
             peer_client: parking_lot::RwLock::new(peer_client_dyn),
+            federation: parking_lot::RwLock::new(
+                crate::hal::federation::NoopFederationProvider::arc(),
+            ),
             chunk_fetcher,
             pending_remote_meta_store: parking_lot::Mutex::new(None),
             pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
@@ -2384,6 +2396,24 @@ impl Kernel {
     /// reads without holding the lock across `.await`.
     pub fn peer_client_arc(&self) -> Arc<dyn crate::hal::peer::PeerBlobClient> {
         Arc::clone(&self.peer_client.read())
+    }
+
+    /// Replace the kernel's `federation` slot with a concrete
+    /// `FederationProvider` impl.  Phase 5 DI: kernel boots with
+    /// `NoopFederationProvider`; the cdylib boot path calls this with
+    /// the real `nexus_raft::federation_provider` impl once per
+    /// kernel.  Mirrors `set_peer_client`.
+    pub fn set_federation(&self, fed: Arc<dyn crate::hal::federation::FederationProvider>) {
+        *self.federation.write() = fed;
+    }
+
+    /// Borrow the current federation provider — read-locked snapshot.
+    /// Internal callers use this to issue federation calls without
+    /// holding the lock across `.await`.  After `set_federation` runs
+    /// (cdylib boot), this returns the real raft-backed impl; before
+    /// then, a `NoopFederationProvider` that errors on every call.
+    pub fn federation_arc(&self) -> Arc<dyn crate::hal::federation::FederationProvider> {
+        Arc::clone(&self.federation.read())
     }
 
     pub fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {

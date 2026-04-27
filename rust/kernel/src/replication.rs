@@ -154,7 +154,7 @@ impl ReplicationScanner {
                     let peer_client = Arc::clone(&kernel.peer_client.read());
                     let fetched: Option<Vec<u8>> = addrs
                         .iter()
-                        .find_map(|addr| peer_client.fetch_path(addr, &entry.path).ok());
+                        .find_map(|addr| peer_client.fetch(addr, &entry.path).ok());
                     match fetched {
                         Some(content) => match kernel.sys_write(&entry.path, &ctx, &content, 0) {
                             Ok(r) if r.hit => replicated += 1,

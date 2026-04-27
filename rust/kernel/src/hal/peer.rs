@@ -13,8 +13,16 @@
 //! Consumers (`crate::replication`, `crate::kernel::Kernel`,
 //! `crate::raft_meta_store`) reach the implementor through this
 //! trait object exclusively.
+//!
+//! Store-and-forward: the trait carries a single ``fetch`` method
+//! taking an opaque ``content_id`` string. The kernel does not
+//! pre-classify whether ``content_id`` is a VFS path, a CAS hash, or
+//! some backend-specific handle — it forwards the bytes to the peer,
+//! whose own VFSRouter / CAS pillar decides how to resolve them. The
+//! previous `fetch_path` / `fetch_etag` split was the dispatch surface
+//! we just collapsed.
 
-/// Result type used by every peer-blob fetch method.
+/// Result type used by the peer-blob fetch method.
 ///
 /// String errors carry gRPC status messages and timeout descriptions
 /// verbatim from the underlying tonic client.
@@ -23,8 +31,8 @@ pub type PeerBlobResult<T> = Result<T, String>;
 /// Abstract peer-blob fetch surface.
 ///
 /// Implementor: `transport::blob::peer_client::PeerBlobClient` —
-/// speaks gRPC to remote nodes and returns the bytes for a path-keyed
-/// or content-keyed blob.
+/// speaks gRPC to remote nodes and returns the bytes for an opaque
+/// ``content_id``.
 ///
 /// `Send + Sync` so the `Arc<dyn PeerBlobClient>` can travel between
 /// the kernel's tokio worker pool and the raft replication apply
@@ -34,25 +42,16 @@ pub type PeerBlobResult<T> = Result<T, String>;
 /// `Bytes` or `&[u8]`) so impls can either own the buffer (most
 /// common) or arrange ownership through a copy.
 pub trait PeerBlobClient: Send + Sync {
-    /// Fetch a blob keyed by path from a remote peer (`addr` is
-    /// `host:port`, the same string stored in
-    /// `FileMetadata.last_writer_address`).
+    /// Fetch a blob from a remote peer (`addr` is `host:port`, the
+    /// same string stored in `FileMetadata.last_writer_address`).
     ///
-    /// Returns the blob bytes or an error string. Backed by
-    /// `NexusVFSService.Read` on the remote node today.
-    fn fetch_path(&self, addr: &str, path: &str) -> PeerBlobResult<Vec<u8>>;
-
-    /// Fetch a CAS-addressed blob from a remote peer. `etag` is the
-    /// content hash the remote stores under its CAS pillar.
+    /// `content_id` is opaque to the kernel — VFS path for
+    /// federation reads, CAS hash for chunk-dedup pulls, or a
+    /// backend-specific handle. The peer's own data-plane resolves
+    /// it (see `transport::blob::fetcher::KernelBlobFetcher::read`).
     ///
-    /// Returns the blob bytes or an error string. Default impl returns
-    /// an error — concrete impls override; the default exists so
-    /// trait objects can omit the method until the Phase 4 transport
-    /// crate lands.
-    fn fetch_etag(&self, addr: &str, etag: &str) -> PeerBlobResult<Vec<u8>> {
-        let _ = (addr, etag);
-        Err("fetch_etag not implemented for this PeerBlobClient".into())
-    }
+    /// Returns the blob bytes or an error string.
+    fn fetch(&self, addr: &str, content_id: &str) -> PeerBlobResult<Vec<u8>>;
 
     /// Install TLS config (PEM bundle).  Default impl no-ops so
     /// non-TLS callers (tests, Noop fallback) don't carry the
@@ -69,7 +68,7 @@ pub trait PeerBlobClient: Send + Sync {
 pub struct NoopPeerBlobClient;
 
 impl PeerBlobClient for NoopPeerBlobClient {
-    fn fetch_path(&self, _addr: &str, _path: &str) -> PeerBlobResult<Vec<u8>> {
+    fn fetch(&self, _addr: &str, _content_id: &str) -> PeerBlobResult<Vec<u8>> {
         Err("PeerBlobClient not installed (non-cdylib build)".into())
     }
 }

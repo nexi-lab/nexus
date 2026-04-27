@@ -93,8 +93,8 @@ impl RemoteChunkFetcher for GrpcChunkFetcher {
             return None;
         }
 
-        // Phase 4 (full): the HAL trait `PeerBlobClient` exposes only sync
-        // methods (`fetch_etag`) — its concrete impl in
+        // Phase 4 (full): the HAL trait `PeerBlobClient` exposes only a
+        // sync `fetch` — its concrete impl in
         // `transport::blob::peer_client` does the runtime block_on
         // internally.  Fan-out is therefore done with OS threads here:
         //   * ≤5 candidate origins (bounded by replication factor)
@@ -119,7 +119,7 @@ impl RemoteChunkFetcher for GrpcChunkFetcher {
                     if cancelled.load(Ordering::Acquire) {
                         return;
                     }
-                    match client.fetch_etag(&addr_owned, &hash_owned) {
+                    match client.fetch(&addr_owned, &hash_owned) {
                         Ok(bytes) => {
                             let actual = lib::hash::hash_content(&bytes);
                             if actual != hash_owned {

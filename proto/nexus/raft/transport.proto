@@ -297,12 +297,21 @@ message ReplicateEntriesResponse {
 // Internal RPC; authentication is the transport's mTLS (client cert signed
 // by the cluster CA), so no explicit auth field is carried in the body.
 message ReadBlobRequest {
-  // Content address (e.g. SHA-256 hex). Used when `path` is empty.
-  string content_hash = 1;
-  // Global VFS path on the peer. Used for PAS-backed federation reads;
-  // the peer routes through its own VFSRouter the same way `sys_read`
-  // would.
-  string path = 2;
+  // Reserved: pre-store-and-forward dual-mode shape (content_hash + path).
+  // Removed in favor of a single ``content_id`` so the kernel never has to
+  // pick CAS-vs-PAS dispatch — peer self-routes through its own
+  // ``VFSRouter`` just like a local ``sys_read``.
+  reserved 1, 2;
+  reserved "content_hash", "path";
+
+  // Backend-defined opaque content identifier — the same string the peer
+  // would have stored in its local ``FileMetadata.content_id`` slot at
+  // write time. For federation reads this carries a global VFS path
+  // (``/<zone>/<...>``); the peer's ``BlobFetcher::read`` impl drives its
+  // local kernel through the standard read path so each backend interprets
+  // ``content_id`` in its own way (CAS=hash, PAS=backend_path, etc.).
+  // The caller's kernel never inspects this field.
+  string content_id = 3;
 }
 
 // ReadBlobResponse returns either the blob bytes or a non-empty `error`.

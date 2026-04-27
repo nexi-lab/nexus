@@ -2957,27 +2957,25 @@ impl Kernel {
         }
     }
 
-    /// Federation on-demand content fetch.
+    /// Federation on-demand content fetch (store-and-forward).
     ///
-    /// When local CAS has no blob but metadata does, `last_writer_address`
-    /// names the node that wrote it. The kernel pulls bytes via the
-    /// driver-to-driver `ReadBlob` RPC on that peer:
+    /// When local read of a Raft-replicated entry misses,
+    /// ``last_writer_address`` names the node that wrote it. We send
+    /// the *virtual path* over to that peer's ``ReadBlob`` RPC; the
+    /// peer's ``BlobFetcher::read`` self-routes through its own
+    /// ``VFSRouter`` exactly like a local ``sys_read`` and lets each
+    /// backend interpret the locally-stored ``content_id`` (CAS hash
+    /// or PAS backend_path) however it likes. The kernel performs no
+    /// CAS-vs-PAS dispatch — the peer's mount table answers that.
     ///
-    /// - Entry carries a content hash (CAS backends, S3 etag, …) →
-    ///   peer dedup-fetches by hash.
-    /// - Entry has no content hash (path-addressed mount) → peer reads
-    ///   the file by path through its own `VFSRouter`. Lets PAS-backed
-    ///   federation reads succeed even though the reader has no content
-    ///   to dedup against.
-    ///
-    /// Returns `Err(FileNotFound)` when `last_writer_address` is unset,
-    /// equals `self_address`, or the remote call fails.
+    /// Returns ``Err(FileNotFound)`` when ``last_writer_address`` is
+    /// unset, equals ``self_address``, or the remote call fails.
     fn try_remote_fetch(
         &self,
         path: &str,
         entry: &CachedEntry,
-        mount_point: &str,
-        ctx: &OperationContext,
+        _mount_point: &str,
+        _ctx: &OperationContext,
     ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
@@ -2993,33 +2991,28 @@ impl Kernel {
             }
         }
 
-        // Drive the RPC on the kernel-owned shared runtime — reusing the
-        // pooled tonic Channel from `peer_client`. No more one-shot
-        // `new_current_thread()` per call (that pattern left the runtime
-        // lingering if the future hadn't finished draining; see R11
-        // hypothesis #2).
-        let content_hash = entry.etag.as_deref().filter(|s| !s.is_empty());
-        // Phase 4 (full): peer_client is now `RwLock<Arc<dyn PeerBlobClient>>`.
-        // `peer_client_arc()` clones the Arc out from under the read lock
-        // so the actual fetch happens lock-free.
+        // Drive the RPC on the kernel-owned shared runtime — reusing
+        // the pooled tonic Channel from ``peer_client``. No more one-
+        // shot ``new_current_thread()`` per call (that pattern left
+        // the runtime lingering if the future hadn't finished
+        // draining; see R11 hypothesis #2).
+        //
+        // Single transparent forward — kernel does not interpret what
+        // ``path`` means to the remote backend. Caching the fetched
+        // blob locally is intentionally NOT done here: that would
+        // require kernel-side knowledge of the local mount's
+        // addressing scheme (CAS hash → write_content; PAS → which
+        // backend_path slot), exactly the thing this refactor moved
+        // out. If a follow-up wants opportunistic local caching it
+        // belongs in the local backend's ``write_content`` callable
+        // from the BlobFetcher impl, not here.
+        //
+        // Phase 4 (full): peer_client is now
+        // ``RwLock<Arc<dyn PeerBlobClient>>``. ``peer_client_arc()``
+        // clones the Arc out from under the read lock so the actual
+        // fetch happens lock-free.
         let client = self.peer_client_arc();
-        let data = match content_hash {
-            Some(hash) => client.fetch_etag(origin, hash),
-            None => client.fetch_path(origin, path),
-        }
-        .map_err(KernelError::IOError)?;
-
-        // Cache the remote-fetched blob into the local mount backend so
-        // subsequent reads hit locally. Critical for failover: once the
-        // origin goes down, re-fetch would fail but the blob must still
-        // be readable. write_content is idempotent for CAS backends; for
-        // PAS we skip the cache write because the local mount root may
-        // not have the path-addressed slot wired.
-        if let Some(hash) = content_hash {
-            let _ = self
-                .vfs_router
-                .write_content(mount_point, &data, hash, ctx, 0);
-        }
+        let data = client.fetch(origin, path).map_err(KernelError::IOError)?;
 
         Ok(SysReadResult {
             data: Some(data),

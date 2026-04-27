@@ -132,10 +132,14 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetaSt
     Ok(KernelFileMetadata {
         path: proto.path,
         size: proto.size as u64,
-        etag: if proto.etag.is_empty() {
+        // Proto field ``content_id`` mapped onto the Rust struct's
+        // ``etag`` slot — the Rust struct rename is deferred to the
+        // post-PR-3921 commit (see PR description). Behaviorally
+        // identical: same bytes carried under both names.
+        etag: if proto.content_id.is_empty() {
             None
         } else {
-            Some(proto.etag)
+            Some(proto.content_id)
         },
         version: proto.version as u32,
         entry_type: proto.entry_type as u8,
@@ -168,7 +172,7 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
         size: meta.size as i64,
-        etag: meta.etag.clone().unwrap_or_default(),
+        content_id: meta.etag.clone().unwrap_or_default(),
         version: meta.version as i32,
         entry_type: meta.entry_type as i32,
         zone_id: meta.zone_id.clone().unwrap_or_default(),

@@ -38,6 +38,7 @@
 
 pub mod agents;
 pub mod audit;
+pub mod mailbox_stamping;
 // `tasks` was previously a standalone `_nexus_tasks.so` cdylib.  Phase
 // 3 restructure plan #6 folded it in here so the runtime ships a
 // single Python wheel; `services::python::register` exposes the

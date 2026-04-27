@@ -755,6 +755,7 @@ fn wire_mount_core(
             created_at_ms: None,
             modified_at_ms: None,
             last_writer_address: None,
+            link_target: None,
         },
     );
 

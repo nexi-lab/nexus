@@ -371,18 +371,23 @@ class ReBACPermissionCache:
     def _prune_stale_indexes(self) -> None:
         """Remove index entries whose primary cache keys have been TTL/LRU-evicted.
 
-        Budget is split evenly across the three indexes so each is guaranteed
-        progress regardless of the others' sizes. Within each index, per-key-set
-        work is capped at per_set_cap keys (via islice) to avoid one large set
-        blocking the rest. Dead keys are removed in-place from the set.
+        Budget is split evenly across the three indexes. Each call draws a
+        random sample of index buckets so successive calls cover different
+        regions and stale entries near the "end" of any index are not starved.
+        Per-set work is capped at per_set_cap keys via islice. Safe to delete
+        from the index dict because we iterate over the snapshot, not the dict.
         Must be called under self._lock.
         """
         per_index_budget = max(self._index_prune_budget // 3, 16)
         per_set_cap = max(per_index_budget // 8, 8)
         for index in (self._subject_index, self._object_index, self._path_prefix_index):
+            n = min(per_index_budget, len(index))
+            if n == 0:
+                continue
+            # Random sample ensures forward progress across repeated prune calls
+            keys_to_check = random.sample(list(index), n)
             remaining = per_index_budget
-            # Bounded snapshot: O(per_index_budget), safe to delete from index during loop
-            for index_key in list(itertools.islice(index, per_index_budget)):
+            for index_key in keys_to_check:
                 if remaining <= 0:
                     break
                 key_set = index.get(index_key)

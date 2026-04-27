@@ -242,6 +242,8 @@ class ReBACPermissionCache:
         # Counter for periodic stale-index pruning (every max_size//4 inserts)
         self._index_inserts_since_prune: int = 0
         self._index_prune_interval: int = max(max_size // 4, 64)
+        # Max entries examined per prune call — bounds lock-hold time on hot path
+        self._index_prune_budget: int = max(max_size // 2, 64)
 
     def _get_jittered_ttl(self, base_ttl: float) -> float:
         """Add random jitter to TTL to prevent thundering herd.
@@ -357,7 +359,8 @@ class ReBACPermissionCache:
         """
         prefixes: list[str] = []
         path = object_id
-        while path and path != "/":
+        max_depth = 8  # cap prefix fan-out to bound secondary index cardinality
+        while path and path != "/" and len(prefixes) < max_depth:
             parent = path.rsplit("/", 1)[0] or "/"
             prefixes.append(parent)
             if parent == "/":
@@ -368,15 +371,20 @@ class ReBACPermissionCache:
     def _prune_stale_indexes(self) -> None:
         """Remove index entries whose primary cache keys have been TTL/LRU-evicted.
 
-        Called periodically from _add_to_indexes to keep secondary indexes
-        bounded when the primary grant/denial caches evict entries silently.
+        Budget-limited: examines at most _index_prune_budget key-set members per
+        call to bound lock-hold time on the permission-check hot path.
         Must be called under self._lock.
         """
+        remaining = self._index_prune_budget
         for index in (self._subject_index, self._object_index, self._path_prefix_index):
+            if remaining <= 0:
+                break
             for index_key in list(index.keys()):
-                live = {
-                    k for k in index[index_key] if k in self._grant_cache or k in self._denial_cache
-                }
+                if remaining <= 0:
+                    break
+                key_set = index[index_key]
+                remaining -= len(key_set)
+                live = {k for k in key_set if k in self._grant_cache or k in self._denial_cache}
                 if live:
                     index[index_key] = live
                 else:

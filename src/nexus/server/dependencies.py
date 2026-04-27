@@ -68,6 +68,39 @@ async def _reset_auth_cache(cache_store: "CacheStoreABC | None") -> None:
     await cache_store.delete_by_pattern("auth:cache:*")
 
 
+def _zone_override_allowed(auth_result: dict[str, Any], requested_zone: str) -> bool:
+    """Return whether an authenticated result may operate as requested_zone."""
+    if auth_result.get("is_admin", False):
+        return True
+    if auth_result.get("zone_id") == requested_zone:
+        return True
+    if requested_zone in set(auth_result.get("zone_set") or ()):
+        return True
+    for zone_perm in auth_result.get("zone_perms") or ():
+        if isinstance(zone_perm, (list, tuple)) and zone_perm and zone_perm[0] == requested_zone:
+            return True
+    return False
+
+
+def _apply_zone_override(
+    auth_result: dict[str, Any],
+    requested_zone: str | None,
+) -> dict[str, Any] | None:
+    """Apply X-Nexus-Zone-ID only when the token is authorized for that zone."""
+    result = dict(auth_result)
+    if not requested_zone:
+        return result
+    if _zone_override_allowed(result, requested_zone):
+        result["zone_id"] = requested_zone
+        return result
+    logger.warning(
+        "[AUTH] Rejected unauthorized zone override subject=%s requested_zone=%s",
+        result.get("subject_id"),
+        requested_zone,
+    )
+    return None
+
+
 # NEXUS_STATIC_ADMINS: comma-separated subject IDs that get admin privileges
 # in open access mode (no api_key, no auth_provider). Parsed once at import.
 # WARNING: In open access mode, identity comes from unauthenticated headers.
@@ -198,21 +231,22 @@ async def resolve_auth(
         if cached_result and cached_result.get("authenticated"):
             # Update per-request fields (zone header, agent ID, timing)
             # Safe: cached_result is already a copy from _get_cached_auth
-            if x_nexus_zone_id:
-                cached_result["zone_id"] = x_nexus_zone_id
-            cached_result["x_agent_id"] = x_agent_id
-            cached_result["_auth_time_ms"] = 0.0  # Cache hit = no auth time
-            cached_result["_auth_cached"] = True
-            return cached_result
+            request_result = _apply_zone_override(cached_result, x_nexus_zone_id)
+            if request_result is None:
+                return None
+            request_result["x_agent_id"] = x_agent_id
+            request_result["_auth_time_ms"] = 0.0  # Cache hit = no auth time
+            request_result["_auth_cached"] = True
+            return request_result
 
         # Singleflight: deduplicate concurrent provider calls (Issue #15)
         _flight_key = _auth_cache_key(token)
         if _flight_key in _auth_inflight:
             base = await _auth_inflight[_flight_key]
             if base is not None:
-                coalesced = dict(base)
-                if x_nexus_zone_id:
-                    coalesced["zone_id"] = x_nexus_zone_id
+                coalesced = _apply_zone_override(base, x_nexus_zone_id)
+                if coalesced is None:
+                    return None
                 coalesced["x_agent_id"] = x_agent_id
                 coalesced["_auth_time_ms"] = 0.0
                 coalesced["_auth_cached"] = True
@@ -242,7 +276,7 @@ async def resolve_auth(
                     "is_admin": result.is_admin,
                     "subject_type": result.subject_type,
                     "subject_id": result.subject_id,
-                    "zone_id": x_nexus_zone_id or result.zone_id,
+                    "zone_id": result.zone_id,
                     "zone_set": list(getattr(result, "zone_set", ()) or ()),
                     "zone_perms": [list(t) for t in getattr(result, "zone_perms", ()) or ()],
                     "inherit_permissions": result.inherit_permissions
@@ -262,7 +296,7 @@ async def resolve_auth(
                 }
                 await _set_cached_auth(_auth_cache, token, cache_entry)
                 _fut.set_result(cache_entry)
-                return auth_result
+                return _apply_zone_override(auth_result, x_nexus_zone_id)
         except BaseException as exc:
             _fut.set_exception(exc)
             raise

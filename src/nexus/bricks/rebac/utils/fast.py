@@ -13,9 +13,11 @@ The module automatically falls back to Python implementation if Rust is unavaila
 """
 
 import logging
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 # RUST_FALLBACK: rebac — compute_permissions_bulk, etc. from nexus_kernel
+_rust_module: ModuleType | None
 try:
     import nexus_kernel as _rust_module
 except ImportError as e:

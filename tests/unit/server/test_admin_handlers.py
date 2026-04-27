@@ -15,7 +15,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.server.auth.factory import _ChainedAPIKeyAuth
 from nexus.server.rpc.handlers.admin import (
     format_api_key_response,
     handle_admin_create_key,
@@ -227,6 +230,31 @@ class TestHandleAdminCreateKey:
 
         with pytest.raises(NexusPermissionError):
             handle_admin_create_key(auth_provider, params, non_admin_context)
+
+    def test_creates_key_with_chained_static_database_auth(self, session_factory, admin_context):
+        """Daemon static+database auth wrapper must support admin key creation."""
+        record_store = SimpleNamespace(session_factory=session_factory)
+        static_provider = StaticAPIKeyAuth(
+            {"sk-" + "a" * 32: {"subject_id": "admin", "is_admin": True}}
+        )
+        db_provider = DatabaseAPIKeyAuth(record_store, require_expiry=False)
+        auth_provider = _ChainedAPIKeyAuth(static_provider, db_provider)
+
+        params = FakeParams(
+            name="demo-user",
+            zone_id="zone1",
+            user_id="demo",
+            is_admin=False,
+            expires_days=None,
+            subject_type="user",
+            subject_id=None,
+        )
+
+        result = handle_admin_create_key(auth_provider, params, admin_context)
+
+        assert result["api_key"].startswith("sk-")
+        assert result["user_id"] == "demo"
+        assert result["zone_id"] == "zone1"
 
 
 # ── handle_admin_list_keys Tests ──────────────────────────

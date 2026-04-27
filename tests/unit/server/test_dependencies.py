@@ -326,6 +326,78 @@ class TestGetAuthResultAuthProvider:
         assert result["zone_set"] == ["eng", "ops"]
         assert result["zone_perms"] == [["eng", "rw"], ["ops", "r"]]
 
+    async def test_provider_zone_header_can_select_authorized_zone(self):
+        """X-Nexus-Zone-ID may select a zone explicitly granted to the token."""
+        cache = InMemoryCacheStore()
+        provider = AsyncMock()
+        provider.authenticate = AsyncMock(
+            return_value=self._make_auth_result_obj(
+                zone_id="eng",
+                zone_set=("eng", "ops"),
+                zone_perms=(("ops", "r"),),
+            )
+        )
+        request = _make_mock_request(auth_provider=provider, auth_cache_store=cache)
+
+        result = await _call_get_auth_result(
+            request=request,
+            authorization="Bearer multi-zone",
+            x_nexus_zone_id="ops",
+        )
+
+        assert result is not None
+        assert result["zone_id"] == "ops"
+
+    async def test_provider_zone_header_rejects_unauthorized_zone(self):
+        """X-Nexus-Zone-ID must not let a non-admin provider token pivot zones."""
+        cache = InMemoryCacheStore()
+        provider = AsyncMock()
+        provider.authenticate = AsyncMock(
+            return_value=self._make_auth_result_obj(
+                zone_id="eng",
+                zone_set=("eng",),
+                zone_perms=(("eng", "rw"),),
+            )
+        )
+        request = _make_mock_request(auth_provider=provider, auth_cache_store=cache)
+
+        result = await _call_get_auth_result(
+            request=request,
+            authorization="Bearer eng-only",
+            x_nexus_zone_id="default",
+        )
+
+        assert result is None
+
+    async def test_provider_cache_keeps_zone_header_request_scoped(self):
+        """A valid zone header on one request must not rewrite the cached base zone."""
+        cache = InMemoryCacheStore()
+        provider = AsyncMock()
+        provider.authenticate = AsyncMock(
+            return_value=self._make_auth_result_obj(
+                zone_id="eng",
+                zone_set=("eng", "ops"),
+                zone_perms=(("eng", "rw"), ("ops", "r")),
+            )
+        )
+        request = _make_mock_request(auth_provider=provider, auth_cache_store=cache)
+
+        first = await _call_get_auth_result(
+            request=request,
+            authorization="Bearer multi-zone-cache",
+            x_nexus_zone_id="ops",
+        )
+        second = await _call_get_auth_result(
+            request=request,
+            authorization="Bearer multi-zone-cache",
+        )
+
+        assert first is not None
+        assert first["zone_id"] == "ops"
+        assert second is not None
+        assert second["_auth_cached"] is True
+        assert second["zone_id"] == "eng"
+
     async def test_provider_success_returns_result(self):
         """Successful provider auth should return structured result."""
         cache = InMemoryCacheStore()

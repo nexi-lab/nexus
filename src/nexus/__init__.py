@@ -184,8 +184,14 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
             import nexus_kernel as _nk
 
             _nk.install_transport_wiring(kernel)
-        except Exception:
-            pass
+        except Exception as _wiring_exc:
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "install_transport_wiring failed (federation peer-blob "
+                "fetch will fall back to Noop): %s",
+                _wiring_exc,
+            )
 
     from nexus.core.metastore import RustMetastoreProxy
 
@@ -516,10 +522,20 @@ def connect(
                 import nexus_kernel as _nk
 
                 _nk.install_transport_wiring(_early_kernel)
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as _wiring_exc:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "install_transport_wiring failed (federation peer-blob "
+                    "fetch will fall back to Noop): %s",
+                    _wiring_exc,
+                )
+    except Exception as _early_kernel_exc:
+        import logging as _logging
+
+        _logging.getLogger(__name__).debug(
+            "early kernel construction failed: %s", _early_kernel_exc
+        )
 
     # Create metadata store — kernel owns federation bootstrap since
     # R20.18.5. When federation env vars are set (NEXUS_HOSTNAME /

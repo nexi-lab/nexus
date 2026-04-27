@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.fs._helpers import LOCAL_CONTEXT, close, glob, grep, list_mounts, unmount
+from nexus.fs._helpers import LOCAL_CONTEXT, close, list_mounts, unmount
 
 
 def test_local_context_is_admin_local():
@@ -111,31 +111,10 @@ def test_close_swallows_metastore_close_errors():
     close(kernel)  # must not raise
 
 
-def test_grep_invalid_regex_raises_valueerror():
-    kernel = MagicMock()
-    with pytest.raises(ValueError, match="Invalid regex"):
-        grep(kernel, pattern="[unclosed")
-
-
-def test_grep_python_fallback_when_no_rust():
-    kernel = MagicMock()
-    kernel.sys_readdir.return_value = [
-        {"path": "/a.txt", "is_directory": False},
-    ]
-    kernel.sys_read.return_value = b"hello world\nfoobar\n"
-
-    with patch.dict("sys.modules", {"nexus_kernel": None}):
-        # Force ImportError on `from nexus_kernel import grep_bulk`
-        results = grep(kernel, "foo")
-    assert any(r["match"] == "foo" for r in results)
-
-
-def test_glob_python_fallback():
-    kernel = MagicMock()
-    kernel.sys_readdir.return_value = ["/a.py", "/b.txt", "/sub/c.py"]
-
-    with patch.dict("sys.modules", {"nexus_kernel": None}):
-        results = glob(kernel, "*.py")
-    # Python fnmatch on full paths — only top-level /a.py matches *.py
-    assert "/a.py" in results
-    assert "/b.txt" not in results
+# Phase 6/7 (sys_grep / sys_glob landed in PR #3921): the Python
+# fallback path for grep/glob is gone — `nexus.fs._helpers.grep` and
+# `glob` are now 1-line wrappers around `kernel.sys_grep` and
+# `kernel.sys_glob`.  Tests that exercised the pre-Phase-6 Python
+# `re.search` / `fnmatch` fallback are obsolete; the kernel-syscall
+# path is exercised through `tests/unit/kernel/test_syscalls.py`
+# (and the Rust-side `cargo test -p kernel sys_grep / sys_glob`).

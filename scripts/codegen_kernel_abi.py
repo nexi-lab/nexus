@@ -104,10 +104,13 @@ def _resolve_module_path(mod_name: str) -> Path | None:
     """Return the on-disk `.rs` file for a flat module name, or None.
 
     Resolution order:
-      1. Phase H/I — `rust/lib/src/python/<mod>.rs` for algorithm wrappers
-         that moved out of kernel.
-      2. Phase C nested file aliases (kernel core/* tree).
-      3. Flat `rust/kernel/src/<mod>.rs` fallback.
+      1. `rust/lib/src/python/<mod>.rs` for algorithm wrappers under lib.
+      2. Nested file aliases in the kernel `core/*` tree.
+      3. Flat `rust/kernel/src/<mod>.rs`.
+      4. Peer crates' `src/<mod>.rs` — `transport::python::register` adds
+         `add_class::<grpc::PyVfsGrpcServerHandle>` etc.; the `grpc` segment
+         resolves to `rust/transport/src/grpc.rs`.  Same shape for
+         `federation`, `backends/`, `services/`.
     """
     if mod_name in LIB_PYTHON_MODULES:
         candidate = LIB_PYTHON_DIR / f"{mod_name}.rs"
@@ -119,7 +122,17 @@ def _resolve_module_path(mod_name: str) -> Path | None:
         if candidate.exists():
             return candidate
     flat = RUST_SRC / f"{mod_name}.rs"
-    return flat if flat.exists() else None
+    if flat.exists():
+        return flat
+    for peer in ("transport", "backends", "services"):
+        peer_root = ROOT / "rust" / peer / "src"
+        peer_flat = peer_root / f"{mod_name}.rs"
+        if peer_flat.exists():
+            return peer_flat
+        peer_nested = peer_root / mod_name / "mod.rs"
+        if peer_nested.exists():
+            return peer_nested
+    return None
 
 
 KERNEL_RPC_HANDLERS_PATH = (

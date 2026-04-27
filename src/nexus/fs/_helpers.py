@@ -183,7 +183,7 @@ def grep(
     pattern.  Returns a list of `{file, line, content, match}` dicts —
     same shape as before so existing callers keep working unchanged.
     """
-    inner = getattr(kernel, "_kernel", kernel)
+    inner: Any = getattr(kernel, "_kernel", kernel)
     return list(
         inner.sys_grep(
             pattern,
@@ -203,7 +203,7 @@ def glob(kernel: NexusFS, pattern: str, path: str = "/") -> list[str]:
     metastore-recursive listing + ``lib::glob::glob_match`` happen in
     pure Rust.
     """
-    inner = getattr(kernel, "_kernel", kernel)
+    inner: Any = getattr(kernel, "_kernel", kernel)
     return list(inner.sys_glob(pattern, path, LOCAL_CONTEXT.zone_id or ROOT_ZONE_ID))
 
 

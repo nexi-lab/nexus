@@ -134,9 +134,9 @@ class TestBootKernelServices:
         from nexus.factory import _boot_kernel_services
 
         ctx = _make_mock_ctx()
-        with caplog.at_level(logging.INFO, logger="nexus.factory"):
+        with caplog.at_level(logging.INFO, logger="nexus.factory._kernel"):
             _boot_kernel_services(ctx)
-        assert any("[BOOT:KERNEL]" in r.message for r in caplog.records)
+        assert any("[BOOT:KERNEL]" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

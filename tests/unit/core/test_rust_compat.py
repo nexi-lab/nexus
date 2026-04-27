@@ -57,7 +57,7 @@ def _make_fake_kernel(missing_methods: list[str] | None = None) -> type:
         if missing_methods and method in missing_methods:
             continue
         attrs[method] = MagicMock(return_value=None)
-    return type("Kernel", (), attrs)
+    return type("PyKernel", (), attrs)
 
 
 def _make_fake_module(
@@ -83,8 +83,8 @@ def _make_fake_module(
         setattr(mod, sym, MagicMock())
 
     # Install the Kernel class (may have missing methods)
-    if not missing_module_symbols or "Kernel" not in missing_module_symbols:
-        mod.Kernel = _make_fake_kernel(kernel_missing_methods)
+    if not missing_module_symbols or "PyKernel" not in missing_module_symbols:
+        mod.PyKernel = _make_fake_kernel(kernel_missing_methods)
 
     return mod
 
@@ -126,7 +126,7 @@ class TestModuleNotInstalled:
 
     def test_kernel_symbol_is_none(self) -> None:
         compat = _reload_rust_compat(None)
-        assert compat.Kernel is None
+        assert compat.PyKernel is None
 
     def test_hash_available_false(self) -> None:
         compat = _reload_rust_compat(None)
@@ -172,14 +172,14 @@ class TestCoreMissing:
     """When core symbols are missing, all Rust is disabled."""
 
     def test_rust_available_false_when_kernel_missing(self) -> None:
-        mod = _make_fake_module(missing_module_symbols=["Kernel"])
+        mod = _make_fake_module(missing_module_symbols=["PyKernel"])
         compat = _reload_rust_compat(mod)
         assert compat.RUST_AVAILABLE is False
 
     def test_kernel_symbol_none_when_core_disabled(self) -> None:
-        mod = _make_fake_module(missing_module_symbols=["Kernel"])
+        mod = _make_fake_module(missing_module_symbols=["PyKernel"])
         compat = _reload_rust_compat(mod)
-        assert compat.Kernel is None
+        assert compat.PyKernel is None
 
     def test_normalize_path_none_when_core_missing(self) -> None:
         mod = _make_fake_module(missing_module_symbols=["normalize_path"])
@@ -187,7 +187,7 @@ class TestCoreMissing:
         assert compat.normalize_path is None
 
     def test_hash_available_false_when_core_disabled(self) -> None:
-        mod = _make_fake_module(missing_module_symbols=["Kernel"])
+        mod = _make_fake_module(missing_module_symbols=["PyKernel"])
         compat = _reload_rust_compat(mod)
         # Hash group itself may be intact, but core being disabled sets RUST_AVAILABLE=False
         # The hash flag tracks the hash group, not RUST_AVAILABLE
@@ -279,15 +279,15 @@ class TestStaleBinaryKernelMethods:
         """Stale Kernel class must not be returned as a usable symbol."""
         mod = _make_fake_module(kernel_missing_methods=["close_all_pipes"])
         compat = _reload_rust_compat(mod)
-        assert compat.Kernel is None
+        assert compat.PyKernel is None
 
     def test_no_attribute_error_escapes_on_stale_binary(self) -> None:
         """The original bug: AttributeError on missing method must not propagate."""
         mod = _make_fake_module(kernel_missing_methods=["close_all_pipes"])
         # Must not raise — shim must absorb it
         compat = _reload_rust_compat(mod)
-        # Calling close_all_pipes via compat.Kernel must not be possible
-        assert compat.Kernel is None
+        # Calling close_all_pipes via compat.PyKernel must not be possible
+        assert compat.PyKernel is None
 
 
 class TestFullyStaleBinaryWarning:
@@ -331,4 +331,4 @@ class TestFullyCurrentBinary:
     def test_kernel_symbol_is_class(self) -> None:
         mod = _make_fake_module()
         compat = _reload_rust_compat(mod)
-        assert compat.Kernel is not None
+        assert compat.PyKernel is not None

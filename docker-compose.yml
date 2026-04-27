@@ -27,8 +27,11 @@ services:
       - NEXUS_OAUTH_ENCRYPTION_KEY=${NEXUS_OAUTH_ENCRYPTION_KEY:-}
       - NEXUS_OAUTH_GOOGLE_CLIENT_ID=${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
       - NEXUS_OAUTH_GOOGLE_CLIENT_SECRET=${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
-      # Tiger Cache - disabled by default for simpler debugging
-      - NEXUS_ENABLE_TIGER_CACHE=${NEXUS_ENABLE_TIGER_CACHE:-false}
+      # Tiger Cache - enabled; requires Dragonfly sidecar
+      - NEXUS_ENABLE_TIGER_CACHE=${NEXUS_ENABLE_TIGER_CACHE:-true}
+      - NEXUS_REDB_CACHE_MB=${NEXUS_REDB_CACHE_MB:-64}
+      - OTEL_BSP_MAX_QUEUE_SIZE=${OTEL_BSP_MAX_QUEUE_SIZE:-512}
+      - OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT=${OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT:-1024}
     volumes:
       # Persistent data directory - use bind mount to match dockerfiles/compose.yaml
       - ./nexus-data:/app/data

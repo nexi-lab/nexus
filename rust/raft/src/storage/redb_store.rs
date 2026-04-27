@@ -115,7 +115,15 @@ impl RedbStore {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(redb::StorageError::Io)?;
         }
-        let db = Database::create(path)?;
+        let cache_bytes = std::env::var("NEXUS_REDB_CACHE_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(64)
+            * 1024
+            * 1024;
+        let db = Database::builder()
+            .set_cache_size(cache_bytes)
+            .create(path)?;
         Ok(Self {
             db: Arc::new(db),
             next_id: Arc::new(AtomicU64::new(0)),
@@ -128,7 +136,9 @@ impl RedbStore {
     pub fn open_temporary() -> Result<Self> {
         let tmpfile = tempfile::NamedTempFile::new()
             .map_err(|e| StorageError::Storage(redb::StorageError::Io(e)))?;
-        let db = Database::create(tmpfile.path())?;
+        let db = Database::builder()
+            .set_cache_size(16 * 1024 * 1024)
+            .create(tmpfile.path())?;
         // Keep the tempfile alive by leaking it (redb owns the file handle)
         // The OS will reclaim when the process exits
         std::mem::forget(tmpfile);

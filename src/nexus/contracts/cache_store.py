@@ -235,7 +235,7 @@ class InMemoryCacheStore(CacheStoreABC):
     Thread Safety: Uses asyncio.Lock for cooperative async safety (Issue #3063).
     """
 
-    def __init__(self, max_size: int = 0) -> None:
+    def __init__(self, max_size: int = 10_000) -> None:
         # key -> (value, expire_at_monotonic | None)
         self._store: OrderedDict[str, tuple[bytes, float | None]] = OrderedDict()
         # channel -> list of subscriber queues

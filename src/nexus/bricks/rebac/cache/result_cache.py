@@ -42,12 +42,12 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from cachetools import TTLCache
+    from cachetools import LRUCache, TTLCache
 else:
     try:
-        from cachebox import TTLCache
+        from cachebox import LRUCache, TTLCache
     except ImportError:
-        from cachetools import TTLCache
+        from cachetools import LRUCache, TTLCache
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -77,7 +77,7 @@ class ReBACPermissionCache:
 
     def __init__(
         self,
-        max_size: int = 50000,  # Issue #1077: increased from 10k to 50k
+        max_size: int = 5000,
         ttl_seconds: int = 300,
         denial_ttl_seconds: int = 60,
         enable_metrics: bool = True,
@@ -147,7 +147,7 @@ class ReBACPermissionCache:
         # An entry cached before the latest cross-zone invalidation is treated as miss.
         self._read_fence: Any = None  # ReadFence | None
         # Per-key fence generation at cache write time: key -> generation
-        self._fence_stamps: dict[str, int] = {}
+        self._fence_stamps: LRUCache = LRUCache(maxsize=max_size)
 
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
@@ -173,7 +173,7 @@ class ReBACPermissionCache:
 
         # Write frequency tracking for adaptive TTL
         # Maps object path -> (write_count, last_reset_time)
-        self._write_frequency: dict[str, tuple[int, float]] = {}
+        self._write_frequency: LRUCache = LRUCache(maxsize=max_size)
         self._write_frequency_window = 300.0  # 5-minute window
 
         # Stampede prevention (Issue #878)
@@ -192,7 +192,7 @@ class ReBACPermissionCache:
         # Maps key -> (created_at, jittered_ttl, delta, revision)
         # delta is the recomputation time in seconds (Issue #718)
         # revision is the zone revision at cache time (Issue #1081)
-        self._entry_metadata: dict[str, tuple[float, float, float, int]] = {}
+        self._entry_metadata: LRUCache = LRUCache(maxsize=max_size)
         # Track keys currently being refreshed in background
         self._refresh_in_progress: set[str] = set()
 

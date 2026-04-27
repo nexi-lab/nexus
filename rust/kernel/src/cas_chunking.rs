@@ -302,11 +302,7 @@ pub(crate) fn finalize_manifest(
     full_content_hash: String,
     transport: &LocalCASTransport,
 ) -> Result<(String, bool), CASError> {
-    let avg_chunk_size = if chunk_count > 0 {
-        total_size / chunk_count
-    } else {
-        0
-    };
+    let avg_chunk_size = total_size.checked_div(chunk_count).unwrap_or(0);
 
     let manifest = json!({
         "type": "chunked_manifest",

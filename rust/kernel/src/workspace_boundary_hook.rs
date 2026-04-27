@@ -30,13 +30,8 @@ const WORKSPACE_SEGMENT: &str = "/workspace/";
 /// Stateless — the hook reads the workspace owner from the path and the
 /// caller from the dispatch context, so a single instance covers every
 /// workspace in the kernel.
-///
-/// Registration happens at Kernel boot in a follow-up commit; the type
-/// and tests are in now so the registration change stays one-line.
-#[allow(dead_code)]
 pub(crate) struct WorkspaceBoundaryHook;
 
-#[allow(dead_code)]
 impl WorkspaceBoundaryHook {
     pub(crate) fn new() -> Self {
         Self

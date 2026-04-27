@@ -15,7 +15,7 @@
 
 #[cfg(test)]
 use crate::dcache::DT_REG;
-use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM};
+use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
 use crate::dispatch::{MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
@@ -802,6 +802,15 @@ impl Kernel {
         // this seam so non-cdylib callers (Rust tests, embedded) don't
         // pay the federation init cost unless they explicitly install
         // the provider.
+        // Pre-write workspace boundary teaching hook — rejects writes
+        // into /proc/{pid}/workspace/ from non-owner agents with the
+        // structured chat-with-me redirect payload. Stateless, scoped
+        // at on_pre by path prefix so non-workspace writes pay zero
+        // cost. Hook lives kernel-side in this rebase commit; later
+        // commits move it to services/src/managed_agent/.
+        k.register_native_hook(Box::new(
+            crate::workspace_boundary_hook::WorkspaceBoundaryHook::new(),
+        ));
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
@@ -1510,6 +1519,8 @@ impl Kernel {
         // -- UPDATE params (entry_type == 0) --
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        // -- DT_LINK params (entry_type == 6) --
+        link_target: Option<&str>,
     ) -> Result<SysSetAttrResult, KernelError> {
         match entry_type {
             2 => {
@@ -1584,10 +1595,110 @@ impl Kernel {
                 // UPDATE or IDEMPOTENT OPEN
                 self.setattr_update(path, mime_type, modified_at_ms)
             }
+            6 => {
+                // DT_LINK — VFS-internal symlink (KERNEL-ARCHITECTURE.md §4.5).
+                let target = link_target.ok_or_else(|| {
+                    KernelError::PermissionDenied(
+                        "sys_setattr(DT_LINK): link_target is required".to_string(),
+                    )
+                })?;
+                self.setattr_create_link(path, zone_id, target)
+            }
             _ => Err(KernelError::PermissionDenied(format!(
                 "sys_setattr: unsupported entry_type={entry_type}"
             ))),
         }
+    }
+
+    /// DT_LINK: create a VFS-internal symlink whose `link_target`
+    /// resolves at `route()` time (one hop, with cycle detection — see
+    /// `DCache::resolve_link`). Self-loops (`link_target == path`) are
+    /// rejected here so the resolver never has to handle them at lookup
+    /// time. Idempotent for an existing DT_LINK at the same path with
+    /// the same target.
+    fn setattr_create_link(
+        &self,
+        path: &str,
+        zone_id: &str,
+        link_target: &str,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        // Reject self-loops at write time; resolver assumes none ever land.
+        if link_target == path {
+            return Err(KernelError::PermissionDenied(format!(
+                "sys_setattr(DT_LINK): self-loop rejected ({path:?})"
+            )));
+        }
+        // Reject relative targets — DT_LINK semantics require absolute
+        // paths so the resolver can route() without a contextual base.
+        if !link_target.starts_with('/') {
+            return Err(KernelError::PermissionDenied(format!(
+                "sys_setattr(DT_LINK): link_target must be absolute, got {link_target:?}"
+            )));
+        }
+        // Idempotent open: existing DT_LINK with the same target is OK.
+        if let Some(existing) = self.metastore_get(path).ok().flatten() {
+            if existing.entry_type == DT_LINK
+                && existing.link_target.as_deref() == Some(link_target)
+            {
+                return Ok(SysSetAttrResult {
+                    path: path.to_string(),
+                    created: false,
+                    entry_type: DT_LINK as i32,
+                    backend_name: None,
+                    capacity: None,
+                    updated: Vec::new(),
+                    shm_path: None,
+                    data_rd_fd: None,
+                    space_rd_fd: None,
+                });
+            }
+            // Existing DT_LINK with a different target — reject so writes
+            // don't silently re-target. Caller must sys_unlink first.
+            if existing.entry_type == DT_LINK {
+                return Err(KernelError::PermissionDenied(format!(
+                    "sys_setattr(DT_LINK): {path:?} already a DT_LINK with different target"
+                )));
+            }
+        }
+        let meta = crate::meta_store::FileMetadata {
+            path: path.to_string(),
+            size: 0,
+            content_id: None,
+            version: 1,
+            entry_type: DT_LINK,
+            zone_id: Some(zone_id.to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: self.self_address.read().clone(),
+            target_zone_id: None,
+            link_target: Some(link_target.to_string()),
+        };
+        self.metastore_put(path, meta)?;
+        let entry = CachedEntry {
+            size: 0,
+            content_id: None,
+            version: 1,
+            entry_type: DT_LINK,
+            zone_id: Some(zone_id.to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: None,
+            link_target: Some(link_target.to_string()),
+        };
+        self.dcache_put_entry(path, entry);
+        Ok(SysSetAttrResult {
+            path: path.to_string(),
+            created: true,
+            entry_type: DT_LINK as i32,
+            backend_name: None,
+            capacity: None,
+            updated: Vec::new(),
+            shm_path: None,
+            data_rd_fd: None,
+            space_rd_fd: None,
+        })
     }
 
     /// DT_PIPE: create pipe buffer, or idempotent-open if it already exists.

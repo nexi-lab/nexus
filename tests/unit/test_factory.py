@@ -274,19 +274,25 @@ class TestBootBrickServices:
 
     def test_version_service_degrades_gracefully(self) -> None:
         """Issue #2034 / 10A: VersionService failure should not crash brick boot."""
-        from nexus.factory import _boot_brick_services, _boot_system_services
+        from nexus.factory import _boot_brick_services
 
         ctx = _make_mock_ctx()
-        system = _boot_system_services(ctx)
+        system = {
+            "rebac_manager": MagicMock(),
+            "entity_registry": MagicMock(),
+            "acp_service": MagicMock(),
+            "agent_registry": MagicMock(),
+        }
 
         with (
+            patch("nexus.factory._bricks._discover_brick_factories", return_value=[]),
             patch("nexus.factory._bricks.logger.debug") as log_debug,
             patch(
                 "nexus.bricks.versioning.version_service.VersionService",
                 side_effect=RuntimeError("version db unavailable"),
             ),
         ):
-            result = _boot_brick_services(ctx, system)
+            result = _boot_brick_services(ctx, system, lambda _name: False)
 
         # version_service key exists but is None (graceful degradation)
         assert "version_service" in result
@@ -302,19 +308,25 @@ class TestBootBrickServices:
 
     def test_circuit_breaker_degrades_with_warning(self) -> None:
         """Issue #2034 / 14A: Circuit breaker failure logs WARNING, not fatal."""
-        from nexus.factory import _boot_brick_services, _boot_system_services
+        from nexus.factory import _boot_brick_services
 
         ctx = _make_mock_ctx()
-        system = _boot_system_services(ctx)
+        system = {
+            "rebac_manager": MagicMock(),
+            "entity_registry": MagicMock(),
+            "acp_service": MagicMock(),
+            "agent_registry": MagicMock(),
+        }
 
         with (
+            patch("nexus.factory._bricks._discover_brick_factories", return_value=[]),
             patch("nexus.factory._bricks.logger.warning") as log_warning,
             patch(
                 "nexus.bricks.rebac.circuit_breaker.AsyncCircuitBreaker",
                 side_effect=RuntimeError("circuit breaker config error"),
             ),
         ):
-            result = _boot_brick_services(ctx, system)
+            result = _boot_brick_services(ctx, system, lambda _name: False)
 
         assert "rebac_circuit_breaker" in result
         assert result["rebac_circuit_breaker"] is None
@@ -361,26 +373,27 @@ class TestSafeCreate:
         result = _safe_create("test_svc", lambda: object(), lambda _: False)
         assert result is None
 
-    def test_debug_severity_returns_none_on_error(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_debug_severity_returns_none_on_error(self) -> None:
         """Default severity (debug) logs at DEBUG and returns None."""
         from nexus.factory import _safe_create
 
-        with caplog.at_level(logging.DEBUG, logger="nexus.factory._helpers"):
+        with patch("nexus.factory._helpers.logger.debug") as log_debug:
             result = _safe_create(
                 "broken_svc",
                 lambda: (_ for _ in ()).throw(RuntimeError("boom")),
                 lambda _: True,
             )
         assert result is None
-        assert any(
-            "broken_svc" in r.getMessage() and r.levelno == logging.DEBUG for r in caplog.records
-        )
+        log_debug.assert_called_once()
+        assert log_debug.call_args.args[0] == "[BOOT:%s] %s unavailable: %s"
+        assert log_debug.call_args.args[1:3] == ("BRICK", "broken_svc")
+        assert str(log_debug.call_args.args[3]) == "boom"
 
-    def test_warning_severity_returns_none_on_error(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_warning_severity_returns_none_on_error(self) -> None:
         """Warning severity logs at WARNING and returns None."""
         from nexus.factory import _safe_create
 
-        with caplog.at_level(logging.WARNING, logger="nexus.factory"):
+        with patch("nexus.factory._helpers.logger.warning") as log_warning:
             result = _safe_create(
                 "degradable_svc",
                 lambda: (_ for _ in ()).throw(RuntimeError("degraded")),
@@ -388,9 +401,10 @@ class TestSafeCreate:
                 severity="warning",
             )
         assert result is None
-        assert any(
-            "degradable_svc" in r.message and r.levelno == logging.WARNING for r in caplog.records
-        )
+        log_warning.assert_called_once()
+        assert log_warning.call_args.args[0] == "[BOOT:%s] %s unavailable: %s"
+        assert log_warning.call_args.args[1:3] == ("BRICK", "degradable_svc")
+        assert str(log_warning.call_args.args[3]) == "degraded"
 
     def test_critical_severity_raises_boot_error(self) -> None:
         """Critical severity raises BootError instead of returning None."""

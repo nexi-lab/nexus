@@ -1,10 +1,10 @@
 """CAS + Local transport backend — full-featured local storage.
 
-Composes CASAddressingEngine (addressing) + VolumeLocalTransport (I/O) +
+Composes CASAddressingEngine (addressing) + BlobPackLocalTransport (I/O) +
 MultipartUpload (resumable uploads) using Feature DI for content cache,
 VFSSemaphore, and CDCEngine (chunking).
 
-    CASLocalBackend = CASAddressingEngine(VolumeLocalTransport)
+    CASLocalBackend = CASAddressingEngine(BlobPackLocalTransport)
                     + MultipartUpload     (resumable uploads, ABC)
                     + Feature DI          (cache, VFSSemaphore, CDC)
 
@@ -12,7 +12,7 @@ Bloom filter was dropped in R10f — Rust stat() is fast enough that the Bloom
 seeding cost on startup doesn't pay back. Tracked under #3799 if benchmarks
 later justify reintroducing it.
 
-VolumeLocalTransport packs CAS blobs into append-only volume files with a
+BlobPackLocalTransport packs CAS blobs into append-only volume files with a
 redb index, reducing inode overhead and enabling batched fsync. Falls back
 to LocalTransport if the Rust VolumeEngine is unavailable.
 
@@ -40,8 +40,8 @@ from nexus.backends.base.registry import ArgType, ConnectionArg, register_connec
 from nexus.backends.engines.cas_gc import CASGarbageCollector
 from nexus.backends.engines.cdc import CDCEngine
 from nexus.backends.engines.multipart import MultipartUpload
+from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 from nexus.backends.transports.local_transport import LocalTransport
-from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
 from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -98,16 +98,16 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         self.cas_root.mkdir(parents=True, exist_ok=True)
         self.dir_root.mkdir(parents=True, exist_ok=True)
 
-        # Build transport — VolumeLocalTransport with fallback to LocalTransport
-        # VolumeLocalTransport packs CAS blobs into volumes; falls back internally
+        # Build transport — BlobPackLocalTransport with fallback to LocalTransport
+        # BlobPackLocalTransport packs CAS blobs into volumes; falls back internally
         # if VolumeEngine is unavailable (Issue #3403).
-        # Both VolumeLocalTransport and LocalTransport implement Transport
-        # structurally (Protocol), but mypy can't verify VolumeLocalTransport against
+        # Both BlobPackLocalTransport and LocalTransport implement Transport
+        # structurally (Protocol), but mypy can't verify BlobPackLocalTransport against
         # the Protocol since it uses dynamic PyO3 dispatch. Using Transport annotation
-        # directly would fail for VolumeLocalTransport.
+        # directly would fail for BlobPackLocalTransport.
         transport: Any
         if use_volume_packing:
-            transport = VolumeLocalTransport(root_path=self.root_path, fsync=True)
+            transport = BlobPackLocalTransport(root_path=self.root_path, fsync=True)
         else:
             transport = LocalTransport(root_path=self.root_path, fsync=True)
 
@@ -133,25 +133,25 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         self._gc = CASGarbageCollector(self)
 
         # Volume compaction (Issue #3408): background scheduler.
-        # Requires volume packing (VolumeLocalTransport).
+        # Requires volume packing (BlobPackLocalTransport).
         self._compactor: Any | None = None
-        if isinstance(transport, VolumeLocalTransport):
+        if isinstance(transport, BlobPackLocalTransport):
             from nexus.services.volume_compactor import VolumeCompactor
 
             self._compactor = VolumeCompactor(transport)
 
         # Cold tiering (Issue #3406): wire VolumeTieringService if enabled.
-        # Requires volume packing (VolumeLocalTransport).
+        # Requires volume packing (BlobPackLocalTransport).
         self._tiering_service: Any | None = None
         if (
             tiering_config is not None
             and tiering_config.enabled
-            and isinstance(transport, VolumeLocalTransport)
+            and isinstance(transport, BlobPackLocalTransport)
         ):
             self._tiering_service = self._init_tiering(transport, tiering_config)
 
     @staticmethod
-    def _init_tiering(transport: VolumeLocalTransport, config: Any) -> Any:
+    def _init_tiering(transport: BlobPackLocalTransport, config: Any) -> Any:
         """Create and wire VolumeTieringService into the transport.
 
         Creates the appropriate cloud transport (S3 or GCS) based on config,

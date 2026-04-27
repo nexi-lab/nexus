@@ -69,7 +69,7 @@ def _retry_on_busy(fn: F) -> F:
     return cast(F, wrapper)
 
 
-# Process-local cache: redb file → shared Kernel. ``redb`` enforces
+# Process-local cache: redb file → shared PyKernel. ``redb`` enforces
 # exclusive-file access within a process, so every SQLiteMetastore call
 # targeting the same path must funnel through one kernel. Per-proxy
 # kernels (the old behaviour) deadlocked multi-threaded tests and CLI
@@ -92,9 +92,9 @@ def _get_or_open_kernel(redb_path: str) -> Any:
         existing = _KERNEL_CACHE.get(redb_path)
         if existing is not None:
             return existing
-        from nexus_kernel import Kernel
+        from nexus_kernel import PyKernel
 
-        kernel = Kernel()
+        kernel = PyKernel()
         kernel.set_metastore_path(redb_path)
         _KERNEL_CACHE[redb_path] = kernel
         return kernel

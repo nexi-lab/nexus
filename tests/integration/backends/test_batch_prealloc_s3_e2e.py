@@ -31,9 +31,9 @@ try:
 except Exception:
     HAS_S3 = False
 
-# Skip if Rust VolumeEngine unavailable
+# Skip if Rust BlobPackEngine unavailable
 try:
-    from nexus_kernel import VolumeEngine
+    from nexus_kernel import BlobPackEngine
 
     HAS_ENGINE = True
 except ImportError:
@@ -41,7 +41,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
     not (HAS_S3 and HAS_ENGINE),
-    reason="Requires S3 credentials and nexus_kernel.VolumeEngine",
+    reason="Requires S3 credentials and nexus_kernel.BlobPackEngine",
 )
 
 TEST_BUCKET = os.environ.get("NEXUS_TEST_S3_BUCKET", "nexus-888")
@@ -87,7 +87,7 @@ class TestBatchWriteTierS3:
         from nexus.services.volume_tiering import VolumeTieringService
 
         # Write 50 items via batch_put
-        engine = VolumeEngine(str(tmp_path / "cas_volumes"))
+        engine = BlobPackEngine(str(tmp_path / "cas_volumes"))
         items = make_test_items(50, size=500)
         written = engine.batch_put(items)
         assert written == 50
@@ -158,7 +158,7 @@ class TestBatchWriteTierS3:
         from nexus.services.volume_tiering import VolumeTieringService, parse_volume_toc
 
         # Write items
-        engine = VolumeEngine(str(tmp_path / "cas_volumes"))
+        engine = BlobPackEngine(str(tmp_path / "cas_volumes"))
         items = make_test_items(10, size=300)
         engine.batch_put(items)
         engine.seal_active()
@@ -232,7 +232,7 @@ class TestBatchCrashRecovery:
         isolation.
         """
         volumes_dir = tmp_path / "cas_volumes"
-        engine = VolumeEngine(str(volumes_dir))
+        engine = BlobPackEngine(str(volumes_dir))
         items = make_test_items(20, size=100)
         engine.batch_put(items)
 
@@ -241,7 +241,7 @@ class TestBatchCrashRecovery:
         gc.collect()
 
         # Reopen — sealed .vol should be recovered
-        engine2 = VolumeEngine(str(volumes_dir))
+        engine2 = BlobPackEngine(str(volumes_dir))
         assert engine2.stats()["sealed_volume_count"] >= 1
 
         # Data survives because Drop sealed the volume
@@ -254,7 +254,7 @@ class TestBatchCrashRecovery:
     def test_crash_after_seal_data_survives(self, tmp_path):
         """batch_put → seal → crash → restart: data survives in .vol."""
         volumes_dir = tmp_path / "cas_volumes"
-        engine = VolumeEngine(str(volumes_dir))
+        engine = BlobPackEngine(str(volumes_dir))
         items = make_test_items(30, size=200)
         engine.batch_put(items)
         engine.seal_active()
@@ -266,7 +266,7 @@ class TestBatchCrashRecovery:
         gc.collect()
 
         # Reopen — .vol files should be intact
-        engine2 = VolumeEngine(str(volumes_dir))
+        engine2 = BlobPackEngine(str(volumes_dir))
         assert engine2.stats()["sealed_volume_count"] >= 1
 
         for h, data in items:
@@ -278,7 +278,7 @@ class TestBatchCrashRecovery:
     def test_crash_recovery_with_mixed_batch_and_single(self, tmp_path):
         """Mix of batch_put and single put — both survive after seal + crash."""
         volumes_dir = tmp_path / "cas_volumes"
-        engine = VolumeEngine(str(volumes_dir))
+        engine = BlobPackEngine(str(volumes_dir))
 
         # Single puts
         single_items = make_test_items(10, size=150)
@@ -304,7 +304,7 @@ class TestBatchCrashRecovery:
         gc.collect()
 
         # Recover
-        engine2 = VolumeEngine(str(volumes_dir))
+        engine2 = BlobPackEngine(str(volumes_dir))
 
         for h, data in single_items:
             assert engine2.exists(h), f"Single-put hash {h[:16]}... missing"
@@ -323,7 +323,7 @@ class TestBatchCrashRecovery:
         Two-phase visibility ensures no phantom reads.
         """
         volumes_dir = tmp_path / "cas_volumes"
-        engine = VolumeEngine(str(volumes_dir))
+        engine = BlobPackEngine(str(volumes_dir))
 
         items = make_test_items(5, size=100)
         sizes = [len(d) for _, d in items]
@@ -340,7 +340,7 @@ class TestBatchCrashRecovery:
         gc.collect()
 
         # Recover
-        engine2 = VolumeEngine(str(volumes_dir))
+        engine2 = BlobPackEngine(str(volumes_dir))
         for h, _d in items:
             assert not engine2.exists(h), f"Hash {h[:16]}... should not exist after crash"
         engine2.close()

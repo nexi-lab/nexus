@@ -29,11 +29,26 @@ use crate::cas_transport::LocalCASTransport;
 
 /// Error type for CAS operations.
 #[derive(Debug)]
-pub(crate) enum CASError {
+pub enum CASError {
     /// Content hash not found in storage.
     NotFound(String),
     /// Underlying I/O error.
     IOError(io::Error),
+}
+
+/// `From<CASError> for StorageError` — Phase 2 moved this out of
+/// `kernel/src/abc/object_store.rs` (where it lived alongside
+/// `StorageError`) into the file that owns `CASError`.  Both types
+/// are kernel-local so the impl satisfies orphan rules; the move
+/// keeps `abc/object_store.rs` free of `cas_engine` references and
+/// puts the conversion next to the canonical `CASError` site.
+impl From<CASError> for crate::abc::object_store::StorageError {
+    fn from(e: CASError) -> Self {
+        match e {
+            CASError::NotFound(s) => crate::abc::object_store::StorageError::NotFound(s),
+            CASError::IOError(e) => crate::abc::object_store::StorageError::IOError(e),
+        }
+    }
 }
 
 impl std::fmt::Display for CASError {
@@ -64,7 +79,7 @@ impl From<io::Error> for CASError {
 ///
 /// Thread-safe: all mutable state is in `LocalCASTransport` (which uses Mutex).
 #[allow(dead_code)]
-pub(crate) struct CASEngine {
+pub struct CASEngine {
     transport: LocalCASTransport,
     chunk_assembler: Option<Arc<dyn crate::cas_chunking::ChunkAssembler>>,
     chunking_strategy: Option<Arc<dyn crate::cas_chunking::ChunkingStrategy>>,

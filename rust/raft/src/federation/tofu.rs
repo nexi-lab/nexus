@@ -322,7 +322,7 @@ impl TofuTrustStore {
 
 #[cfg(feature = "python")]
 /// Read-only view of a trusted zone entry exposed to Python.
-#[pyclass(name = "TrustedZone", get_all)]
+#[pyclass(get_all)]
 #[derive(Debug, Clone)]
 pub struct PyTrustedZone {
     pub zone_id: String,
@@ -351,7 +351,7 @@ impl From<TrustedZone> for PyTrustedZone {
 /// writes through an internal ``Mutex`` so callers can hand the same
 /// instance to multiple threads without guarding it themselves.
 #[cfg(feature = "python")]
-#[pyclass(name = "TofuTrustStore")]
+#[pyclass]
 pub struct PyTofuTrustStore {
     inner: Mutex<TofuTrustStore>,
 }

@@ -22,7 +22,7 @@ def make_hash(seed: int) -> str:
 
 
 def run_benchmark(count: int = 100_000) -> None:
-    from nexus_kernel import VolumeEngine
+    from nexus_kernel import BlobPackEngine
 
     with tempfile.TemporaryDirectory() as d:
         vol_dir = f"{d}/volumes"
@@ -32,7 +32,7 @@ def run_benchmark(count: int = 100_000) -> None:
         print(f"{'=' * 60}\n")
 
         # ── Phase 1: Populate with expired entries ────────────────────
-        engine = VolumeEngine(vol_dir, target_volume_size=64 * 1024 * 1024)
+        engine = BlobPackEngine(vol_dir, target_volume_size=64 * 1024 * 1024)
 
         past_expiry = time.time() - 1.0  # already expired
         t0 = time.perf_counter()

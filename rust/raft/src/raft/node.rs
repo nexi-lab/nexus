@@ -811,7 +811,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// to the allocation and stable for its lifetime).
     ///
     /// Used by the kernel as the ``coherence_key`` of every
-    /// ``ZoneMetastore`` wrapping this consensus, so apply-side
+    /// ``ZoneMetaStore`` wrapping this consensus, so apply-side
     /// dcache invalidation can fan out across every crosslink mount
     /// of the same zone.
     pub fn coherence_id(&self) -> usize {
@@ -863,7 +863,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// heartbeat round-trip (no log write, no disk fsync) — about
     /// 5–10× cheaper than a `propose`-based read fallback.
     ///
-    /// Used by `ZoneMetastore::get_lock` / `list_locks` so that
+    /// Used by `ZoneMetaStore::get_lock` / `list_locks` so that
     /// `Kernel::lock_get` matches the industry-standard etcd
     /// contract ("reads are linearizable by default") without
     /// paying the full propose round-trip.

@@ -50,8 +50,16 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
     "semaphore": "core/lock/semaphore.rs",
     "dispatch": "core/dispatch/mod.rs",
     "hook_registry": "core/dispatch/hook_registry.rs",
-    "metastore": "core/metastore/mod.rs",
-    "remote_metastore": "core/metastore/remote.rs",
+    # Phase 0.5 — Rust trait Metastore renamed MetaStore for §3 pillar
+    # symmetry with `ObjectStore` / `CacheStore`. Directory renamed
+    # `core/metastore/` → `core/meta_store/`. Flat alias keys keep their
+    # historical `metastore` / `remote_metastore` names because lib.rs's
+    # compat re-exports still surface the modules under those Rust paths
+    # for callers that haven't migrated yet.
+    "metastore": "core/meta_store/mod.rs",
+    "remote_metastore": "core/meta_store/remote.rs",
+    "meta_store": "core/meta_store/mod.rs",
+    "remote_meta_store": "core/meta_store/remote.rs",
     "pipe": "core/pipe/mod.rs",
     "pipe_manager": "core/pipe/manager.rs",
     "shm_pipe": "core/pipe/shm.rs",
@@ -96,10 +104,13 @@ def _resolve_module_path(mod_name: str) -> Path | None:
     """Return the on-disk `.rs` file for a flat module name, or None.
 
     Resolution order:
-      1. Phase H/I — `rust/lib/src/python/<mod>.rs` for algorithm wrappers
-         that moved out of kernel.
-      2. Phase C nested file aliases (kernel core/* tree).
-      3. Flat `rust/kernel/src/<mod>.rs` fallback.
+      1. `rust/lib/src/python/<mod>.rs` for algorithm wrappers under lib.
+      2. Nested file aliases in the kernel `core/*` tree.
+      3. Flat `rust/kernel/src/<mod>.rs`.
+      4. Peer crates' `src/<mod>.rs` — `transport::python::register` adds
+         `add_class::<grpc::PyVfsGrpcServerHandle>` etc.; the `grpc` segment
+         resolves to `rust/transport/src/grpc.rs`.  Same shape for
+         `federation`, `backends/`, `services/`.
     """
     if mod_name in LIB_PYTHON_MODULES:
         candidate = LIB_PYTHON_DIR / f"{mod_name}.rs"
@@ -111,7 +122,17 @@ def _resolve_module_path(mod_name: str) -> Path | None:
         if candidate.exists():
             return candidate
     flat = RUST_SRC / f"{mod_name}.rs"
-    return flat if flat.exists() else None
+    if flat.exists():
+        return flat
+    for peer in ("transport", "backends", "services"):
+        peer_root = ROOT / "rust" / peer / "src"
+        peer_flat = peer_root / f"{mod_name}.rs"
+        if peer_flat.exists():
+            return peer_flat
+        peer_nested = peer_root / mod_name / "mod.rs"
+        if peer_nested.exists():
+            return peer_nested
+    return None
 
 
 KERNEL_RPC_HANDLERS_PATH = (
@@ -176,7 +197,7 @@ FEATURE_GATED_EXPORTS: set[str] = {
 # Groups: "core" failure disables all Rust; others disable only their feature.
 CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     "core": (
-        "Kernel",  # PyKernel exposed to Python as "Kernel" via #[pyclass(name = "Kernel")]
+        "PyKernel",
         "normalize_path",
         "validate_path",
         "canonicalize_path",
@@ -200,7 +221,7 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     "storage": (
         "BloomFilter",
         "VFSSemaphore",
-        "VolumeEngine",
+        "BlobPackEngine",
     ),
 }
 
@@ -707,7 +728,7 @@ def parse_traits(text: str) -> list[TraitDef]:
     """Extract trait definitions with their method signatures."""
     results = []
     # Match both `pub(crate) trait Foo` and `pub trait Foo` — kernel
-    # traits that external crates (e.g. rust/raft::ZoneMetastore) impl
+    # traits that external crates (e.g. rust/raft::ZoneMetaStore) impl
     # are `pub`; internal-only traits stay `pub(crate)`.
     for m in re.finditer(r"pub(?:\(crate\))?\s+trait\s+(\w+)\s*(?::\s*[^{]*)?\s*\{", text):
         trait_name = m.group(1)
@@ -841,7 +862,7 @@ def generate_stubs(
         "bitmap": "Tiger Cache Bitmap (bitmap.rs)",
         "simd": "SIMD vector similarity (simd.rs)",
         "trigram": "Trigram Index (trigram.rs)",
-        "grpc_server": "VFS gRPC server (grpc_server.rs)",
+        "grpc": "VFS gRPC server (rust/transport/src/grpc.rs)",
     }
 
     MODULE_ORDER = [
@@ -855,7 +876,7 @@ def generate_stubs(
         "bitmap",
         "simd",
         "trigram",
-        "grpc_server",
+        "grpc",
     ]
 
     for mod_name in MODULE_ORDER:
@@ -933,7 +954,7 @@ def generate_stubs(
     lines.append("# (rust/raft/src/federation/tofu.rs, rust/raft/src/pyo3_bindings.rs)")
     lines.append("# " + "-" * 75)
     lines.append("")
-    lines.append("class TrustedZone:")
+    lines.append("class PyTrustedZone:")
     lines.append("    zone_id: str")
     lines.append("    ca_fingerprint: str")
     lines.append("    ca_pem: str")
@@ -941,14 +962,14 @@ def generate_stubs(
     lines.append("    last_verified: str")
     lines.append("    peer_addresses: list[str]")
     lines.append("")
-    lines.append("class TofuTrustStore:")
+    lines.append("class PyTofuTrustStore:")
     lines.append("    def __init__(self, path: str) -> None: ...")
     lines.append(
         "    def verify_or_trust(self, zone_id: str, ca_pem: bytes, peer_address: str) -> str: ..."
     )
     lines.append("    def remove(self, zone_id: str) -> bool: ...")
     lines.append("    def get_ca_pem(self, zone_id: str) -> bytes | None: ...")
-    lines.append("    def list_trusted(self) -> list[TrustedZone]: ...")
+    lines.append("    def list_trusted(self) -> list[PyTrustedZone]: ...")
     lines.append("    def build_ca_bundle(self, local_ca_path: str) -> str: ...")
     lines.append("    def path(self) -> str: ...")
     lines.append("")
@@ -1131,20 +1152,20 @@ PILLAR_ADAPTERS: dict[str, dict[str, str]] = {
     # PyObjectStoreAdapter removed — all connectors now have Rust-native backends
     # (Crossing 1 elimination, Phase 5D). No Python fallback needed.
     # "ObjectStore": { ... },
-    # PyMetastoreAdapter removed (Phase 9) — Rust kernel uses LocalMetastore directly.
-    # "Metastore": { ... },
+    # PyMetaStoreAdapter removed (Phase 9) — Rust kernel uses LocalMetaStore directly.
+    # "MetaStore": { ... },
 }
 
 # Methods that need special handling beyond simple call_method1 + extract.
 # Key: "TraitName.method_name", value: override tag.
 ADAPTER_METHOD_OVERRIDES: dict[str, str] = {
     # ObjectStore overrides removed — PyObjectStoreAdapter deleted (Phase 5D).
-    # Metastore.get() → check None + extract_metadata
-    "Metastore.get": "OPTION_FILE_METADATA",
-    # Metastore.put() → to_python_metadata for FileMetadata param
-    "Metastore.put": "PUT_FILE_METADATA",
-    # Metastore.list() → iterate + extract_metadata
-    "Metastore.list": "VEC_FILE_METADATA",
+    # MetaStore.get() → check None + extract_metadata
+    "MetaStore.get": "OPTION_FILE_METADATA",
+    # MetaStore.put() → to_python_metadata for FileMetadata param
+    "MetaStore.put": "PUT_FILE_METADATA",
+    # MetaStore.list() → iterate + extract_metadata
+    "MetaStore.list": "VEC_FILE_METADATA",
 }
 
 
@@ -1155,7 +1176,7 @@ def _rust_err_map(config: dict[str, str], method_name: str, first_param: str) ->
     else:
         # Use :? for slice params (e.g. paths: &[String]) since &[T] doesn't impl Display
         fmt_spec = ":?" if first_param in ("paths", "items") else ""
-        return f'MetastoreError::IOError(format!("metastore.{method_name}({{{first_param}{fmt_spec}}}): {{e}}"))'
+        return f'MetaStoreError::IOError(format!("metastore.{method_name}({{{first_param}{fmt_spec}}}): {{e}}"))'
 
 
 def _generate_adapter_method(
@@ -1338,13 +1359,13 @@ def _generate_adapter_method(
         lines.append("            let iter = result")
         lines.append("                .try_iter()")
         lines.append(
-            f'                .map_err(|e| MetastoreError::IOError(format!("metastore.{method.name} iter: {{e}}")))?;'
+            f'                .map_err(|e| MetaStoreError::IOError(format!("metastore.{method.name} iter: {{e}}")))?;'
         )
         lines.append("            let mut items = Vec::new();")
         lines.append("            for item in iter {")
         lines.append("                let item =")
         lines.append(
-            f'                    item.map_err(|e| MetastoreError::IOError(format!("metastore.{method.name} item: {{e}}")))?;'
+            f'                    item.map_err(|e| MetaStoreError::IOError(format!("metastore.{method.name} item: {{e}}")))?;'
         )
         lines.append("                items.push(extract_metadata(py, &item)?);")
         lines.append("            }")
@@ -1424,8 +1445,8 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "use pyo3::types::PyDict;",
         "use std::io;",
         "",
-        "use crate::backend::{ObjectStore, StorageError};",
-        "use crate::metastore::{FileMetadata, MetastoreError};",
+        "use crate::abc::object_store::{ObjectStore, StorageError};",
+        "use crate::meta_store::{FileMetadata, MetaStoreError};",
         "",
         "// ── FileMetadata conversion helpers (PyO3-specific) ──────────────────────",
         "",
@@ -1433,20 +1454,20 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "fn extract_metadata(",
         "    py: Python<'_>,",
         "    obj: &Bound<'_, PyAny>,",
-        ") -> Result<FileMetadata, MetastoreError> {",
-        "    let get_str = |name: &str| -> Result<String, MetastoreError> {",
+        ") -> Result<FileMetadata, MetaStoreError> {",
+        "    let get_str = |name: &str| -> Result<String, MetaStoreError> {",
         "        obj.getattr(name)",
         "            .and_then(|v| v.extract::<String>())",
-        '            .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}")))',
+        '            .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}")))',
         "    };",
-        "    let get_opt_str = |name: &str| -> Result<Option<String>, MetastoreError> {",
+        "    let get_opt_str = |name: &str| -> Result<Option<String>, MetaStoreError> {",
         "        match obj.getattr(name) {",
         "            Ok(v) if v.is_none() => Ok(None),",
         "            Ok(v) => v",
         "                .extract::<String>()",
         "                .map(Some)",
-        '                .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}"))),',
-        '            Err(e) => Err(MetastoreError::IOError(format!("field {name}: {e}"))),',
+        '                .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}"))),',
+        '            Err(e) => Err(MetaStoreError::IOError(format!("field {name}: {e}"))),',
         "        }",
         "    };",
         "",
@@ -1456,16 +1477,16 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "        size: obj",
         '            .getattr("size")',
         "            .and_then(|v| v.extract::<u64>())",
-        '            .map_err(|e| MetastoreError::IOError(format!("field size: {e}")))?,',
+        '            .map_err(|e| MetaStoreError::IOError(format!("field size: {e}")))?,',
         '        etag: get_opt_str("etag")?,',
         "        version: obj",
         '            .getattr("version")',
         "            .and_then(|v| v.extract::<u32>())",
-        '            .map_err(|e| MetastoreError::IOError(format!("field version: {e}")))?,',
+        '            .map_err(|e| MetaStoreError::IOError(format!("field version: {e}")))?,',
         "        entry_type: obj",
         '            .getattr("entry_type")',
         "            .and_then(|v| v.extract::<u8>())",
-        '            .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,',
+        '            .map_err(|e| MetaStoreError::IOError(format!("field entry_type: {e}")))?,',
         '        zone_id: get_opt_str("zone_id")?,',
         '        mime_type: get_opt_str("mime_type")?,',
         '        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),',
@@ -1490,9 +1511,9 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "fn to_python_metadata<'py>(",
         "    py: Python<'py>,",
         "    meta: &FileMetadata,",
-        ") -> Result<Bound<'py, PyAny>, MetastoreError> {",
-        "    fn err(e: PyErr) -> MetastoreError {",
-        '        MetastoreError::IOError(format!("to_python_metadata: {e}"))',
+        ") -> Result<Bound<'py, PyAny>, MetaStoreError> {",
+        "    fn err(e: PyErr) -> MetaStoreError {",
+        '        MetaStoreError::IOError(format!("to_python_metadata: {e}"))',
         "    }",
         "    let cls = py",
         '        .import("nexus.contracts.metadata")',
@@ -2108,19 +2129,15 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// — see ``RwLockExt`` in ``kernel.rs`` for the rationale.",
             "use crate::kernel::RwLockExt;",
             "use pyo3::types::{PyBytes, PyDict, PyList};",
-            "use std::path::Path;",
             "use std::sync::Arc;",
             "",
-            "use crate::backend::{",
-            "    CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend,",
-            "};",
             '#[cfg(feature = "py-hook-adapters")]',
             "use crate::dispatch::PathResolver;",
             "use crate::hook_registry::HookRegistry;",
             '#[cfg(feature = "py-hook-adapters")]',
             "use crate::hook_registry::InterceptHook;",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
-            "use crate::metastore::{FileMetadata, MetastoreError};",
+            "use crate::meta_store::{FileMetadata, MetaStoreError};",
             "use crate::vfs_router::RouteError;",
         ]
     )
@@ -2298,20 +2315,20 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "fn extract_metadata(",
             "    py: Python<'_>,",
             "    obj: &Bound<'_, PyAny>,",
-            ") -> Result<FileMetadata, MetastoreError> {",
-            "    let get_str = |name: &str| -> Result<String, MetastoreError> {",
+            ") -> Result<FileMetadata, MetaStoreError> {",
+            "    let get_str = |name: &str| -> Result<String, MetaStoreError> {",
             "        obj.getattr(name)",
             "            .and_then(|v| v.extract::<String>())",
-            '            .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}")))',
+            '            .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}")))',
             "    };",
-            "    let get_opt_str = |name: &str| -> Result<Option<String>, MetastoreError> {",
+            "    let get_opt_str = |name: &str| -> Result<Option<String>, MetaStoreError> {",
             "        match obj.getattr(name) {",
             "            Ok(v) if v.is_none() => Ok(None),",
             "            Ok(v) => v",
             "                .extract::<String>()",
             "                .map(Some)",
-            '                .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}"))),',
-            '            Err(e) => Err(MetastoreError::IOError(format!("field {name}: {e}"))),',
+            '                .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}"))),',
+            '            Err(e) => Err(MetaStoreError::IOError(format!("field {name}: {e}"))),',
             "        }",
             "    };",
             "",
@@ -2321,16 +2338,16 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        size: obj",
             '            .getattr("size")',
             "            .and_then(|v| v.extract::<u64>())",
-            '            .map_err(|e| MetastoreError::IOError(format!("field size: {e}")))?,',
+            '            .map_err(|e| MetaStoreError::IOError(format!("field size: {e}")))?,',
             '        etag: get_opt_str("etag")?,',
             "        version: obj",
             '            .getattr("version")',
             "            .and_then(|v| v.extract::<u32>())",
-            '            .map_err(|e| MetastoreError::IOError(format!("field version: {e}")))?,',
+            '            .map_err(|e| MetaStoreError::IOError(format!("field version: {e}")))?,',
             "        entry_type: obj",
             '            .getattr("entry_type")',
             "            .and_then(|v| v.extract::<u8>())",
-            '            .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,',
+            '            .map_err(|e| MetaStoreError::IOError(format!("field entry_type: {e}")))?,',
             '        zone_id: get_opt_str("zone_id")?,',
             '        mime_type: get_opt_str("mime_type")?,',
             '        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),',
@@ -2355,9 +2372,9 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "fn to_python_metadata<'py>(",
             "    py: Python<'py>,",
             "    meta: &FileMetadata,",
-            ") -> Result<Bound<'py, PyAny>, MetastoreError> {",
-            "    fn err(e: PyErr) -> MetastoreError {",
-            '        MetastoreError::IOError(format!("to_python_metadata: {e}"))',
+            ") -> Result<Bound<'py, PyAny>, MetaStoreError> {",
+            "    fn err(e: PyErr) -> MetaStoreError {",
+            '        MetaStoreError::IOError(format!("to_python_metadata: {e}"))',
             "    }",
             "    let cls = py",
             '        .import("nexus.contracts.metadata")',
@@ -2505,7 +2522,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PyOperationContext ──────────────────────────────────────────",
             "",
             "/// Python-facing OperationContext (wraps pure Rust OperationContext).",
-            '#[pyclass(name = "OperationContext", get_all)]',
+            "#[pyclass(get_all)]",
             "#[derive(Clone, Debug)]",
             "pub struct PyOperationContext {",
             "    pub user_id: String,",
@@ -2577,7 +2594,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysReadResult ─────────────────────────────────────────────",
             "",
             "/// Python-facing SysReadResult (data is PyBytes, not Vec<u8>).",
-            '#[pyclass(name = "SysReadResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysReadResult {",
             "    pub data: Option<Py<PyBytes>>,",
             "    pub post_hook_needed: bool,",
@@ -2588,7 +2605,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysWriteResult ────────────────────────────────────────────",
             "",
             "/// Python-facing SysWriteResult.",
-            '#[pyclass(name = "SysWriteResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysWriteResult {",
             "    pub hit: bool,",
             "    pub content_id: Option<String>,",
@@ -2605,7 +2622,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysUnlinkResult ───────────────────────────────────────────",
             "",
             "/// Python-facing SysUnlinkResult.",
-            '#[pyclass(name = "SysUnlinkResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysUnlinkResult {",
             "    pub hit: bool,",
             "    pub entry_type: u8,",
@@ -2618,7 +2635,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysRenameResult ───────────────────────────────────────────",
             "",
             "/// Python-facing SysRenameResult.",
-            '#[pyclass(name = "SysRenameResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysRenameResult {",
             "    pub hit: bool,",
             "    pub success: bool,",
@@ -2633,7 +2650,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysMkdirResult ────────────────────────────────────────────",
             "",
             "/// Python-facing SysMkdirResult.",
-            '#[pyclass(name = "SysMkdirResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysMkdirResult {",
             "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
@@ -2642,7 +2659,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysRmdirResult ────────────────────────────────────────────",
             "",
             "/// Python-facing SysRmdirResult.",
-            '#[pyclass(name = "SysRmdirResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysRmdirResult {",
             "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
@@ -2652,7 +2669,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "// ── PySysCopyResult ─────────────────────────────────────────────",
             "",
             "/// Python-facing SysCopyResult.",
-            '#[pyclass(name = "SysCopyResult", get_all)]',
+            "#[pyclass(get_all)]",
             "pub struct PySysCopyResult {",
             "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
@@ -2676,7 +2693,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "///   - Hook registry (PyO3-specific, stored here not in Rust Kernel)",
             "///   - PRE-INTERCEPT dispatch (requires GIL for Python hook contexts)",
             "///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)",
-            '#[pyclass(name = "Kernel")]',
+            "#[pyclass]",
             "pub struct PyKernel {",
             "    /// Crate-visible so `grpc_server.rs` (and any other",
             "    /// kernel-internal task spawner) can clone the Arc",
@@ -2703,6 +2720,25 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {",
             "        Kernel::canonical_mount_key(mount_point, zone_id)",
             "    }",
+            "",
+            "    /// Borrow the inner `&Kernel`.  Phase 3: peer crates",
+            "    /// (services, future transport / raft glue) reach the",
+            "    /// kernel's in-tree Rust API surface",
+            "    /// (`register_native_hook`, `prepare_audit_stream`,",
+            "    /// `sys_*` direct) through this accessor instead of the",
+            "    /// `pub(crate) inner` field, which other crates can't see.",
+            "    pub fn kernel_ref(&self) -> &Kernel {",
+            "        &self.inner",
+            "    }",
+            "",
+            "    /// Clone the inner `Arc<Kernel>`.  Same Phase 3 motivation",
+            "    /// as [`Self::kernel_ref`] but returns an owned `Arc<Kernel>`",
+            "    /// for callers that need to spawn tasks holding the kernel",
+            "    /// (e.g. `transport::grpc::start_vfs_grpc_server` clones the",
+            "    /// Arc into a tonic worker task).",
+            "    pub fn kernel_arc(&self) -> Arc<Kernel> {",
+            "        Arc::clone(&self.inner)",
+            "    }",
             "}",
             "",
             "#[pymethods]",
@@ -2728,9 +2764,9 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.inner.set_self_address(addr);",
             "    }",
             "",
-            "    // ── Metastore wiring ──────────────────────────────────────────────",
+            "    // ── MetaStore wiring ──────────────────────────────────────────────",
             "",
-            "    /// Wire LocalMetastore by path — Rust kernel opens redb directly.",
+            "    /// Wire LocalMetaStore by path — Rust kernel opens redb directly.",
             "    /// Eliminates GIL crossing on every metastore.get/put.",
             "    fn set_metastore_path(&self, path: &str) -> PyResult<()> {",
             "        self.inner.set_metastore_path(path).map_err(Into::into)",
@@ -2743,7 +2779,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.inner.release_metastores()",
             "    }",
             "",
-            "    // ── Metastore proxy methods (for RustMetastoreProxy) ──────────────",
+            "    // ── MetaStore proxy methods (for RustMetastoreProxy) ──────────────",
             "",
             "    fn metastore_get(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {",
             "        match self",
@@ -3368,219 +3404,61 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        remote_key_pem: Option<&[u8]>,",
             "        remote_timeout: f64,",
             "    ) -> PyResult<Py<PyAny>> {",
-            "        // Backend resolution (moved from old add_mount)",
-            '        let backend: Option<Arc<dyn ObjectStore>> = if backend_type == "openai" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let base = openai_base_url.unwrap_or("https://api.openai.com/v1");',
-            '                let key = openai_api_key.unwrap_or("");',
-            '                let model = openai_model.unwrap_or("gpt-4o");',
-            "                // Spool dir — caller-supplied, or a per-backend scratch",
-            "                // under std::env::temp_dir (LLM conversations are small; the",
-            "                // real value of durability is cross-request prefix dedup).",
-            "                let blob_root = match openai_blob_root {",
-            "                    Some(p) => std::path::PathBuf::from(p),",
-            "                    None => std::env::temp_dir()",
-            '                        .join("nexus_llm_spool")',
-            "                        .join(backend_name),",
-            "                };",
-            "                let rt = Arc::clone(self.inner.peer_client.runtime());",
-            "                let b = crate::openai_backend::OpenAIBackend::new(backend_name, base, key, model, &blob_root, rt)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "anthropic" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let base = anthropic_base_url.unwrap_or("https://api.anthropic.com");',
-            '                let key = anthropic_api_key.unwrap_or("");',
-            '                let model = anthropic_model.unwrap_or("claude-sonnet-4-20250514");',
-            "                let blob_root = match anthropic_blob_root {",
-            "                    Some(p) => std::path::PathBuf::from(p),",
-            "                    None => std::env::temp_dir()",
-            '                        .join("nexus_llm_spool")',
-            "                        .join(backend_name),",
-            "                };",
-            "                let rt = Arc::clone(self.inner.peer_client.runtime());",
-            "                let b = crate::anthropic_backend::AnthropicBackend::new(backend_name, base, key, model, &blob_root, rt)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "s3" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let bucket = s3_bucket.unwrap_or("");',
-            '                let prefix = s3_prefix.unwrap_or("");',
-            '                let region = aws_region.unwrap_or("us-east-1");',
-            '                let ak = aws_access_key.unwrap_or("");',
-            '                let sk = aws_secret_key.unwrap_or("");',
-            "                let b = crate::s3_backend::S3Backend::new(backend_name, bucket, prefix, region, ak, sk, s3_endpoint)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "gcs" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let bucket = gcs_bucket.unwrap_or("");',
-            '                let prefix = gcs_prefix.unwrap_or("");',
-            '                let token = access_token.unwrap_or("");',
-            "                let b = crate::gcs_backend::GcsBackend::new(backend_name, bucket, prefix, token)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "gdrive" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let token = access_token.unwrap_or("");',
-            '                let folder = root_folder_id.unwrap_or("root");',
-            "                let b = crate::gdrive_backend::GDriveBackend::new(backend_name, token, folder)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "gmail" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let token = access_token.unwrap_or("");',
-            "                let b = crate::gmail_backend::GmailBackend::new(backend_name, token)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "slack" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let token = bot_token.unwrap_or("");',
-            '                let channel = default_channel.unwrap_or("");',
-            "                let b = crate::slack_backend::SlackBackend::new(backend_name, token, channel)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "remote" {',
-            "            // Remote backend — always available (core capability, not connector feature)",
-            "            let addr = server_address.ok_or_else(|| {",
-            "                pyo3::exceptions::PyValueError::new_err(\"backend_type='remote' requires server_address\")",
+            "        // Phase 2: 17-way backend-type construction moved to",
+            "        // `backends::python::factory::DefaultBackendFactory`.  Kernel",
+            "        // can no longer reference concrete backend types directly",
+            "        // (they live in `backends/` after Phase 2); the global",
+            "        // `BackendFactory` is installed by `nexus-cdylib` at module init.",
+            "        let factory = crate::hal::backend_factory::get_factory()",
+            "            .ok_or_else(|| {",
+            "                pyo3::exceptions::PyRuntimeError::new_err(",
+            '                    "sys_setattr: BackendFactory not registered — non-cdylib build needs to call kernel::hal::backend_factory::set_factory at boot",',
+            "                )",
             "            })?;",
-            '            let token = remote_auth_token.unwrap_or("");',
-            "            let tls = remote_ca_pem.map(|ca| crate::rpc_transport::TlsConfig {",
-            "                ca_pem: ca.to_vec(),",
-            "                cert_pem: remote_cert_pem.map(|b| b.to_vec()),",
-            "                key_pem: remote_key_pem.map(|b| b.to_vec()),",
-            "            });",
-            "            let timeout = std::time::Duration::from_secs_f64(",
-            "                if remote_timeout > 0.0 { remote_timeout } else { 30.0 }",
-            "            );",
-            "            let rt = Arc::clone(self.inner.peer_client.runtime());",
-            "            let transport = std::sync::Arc::new(",
-            "                crate::rpc_transport::RpcTransport::new(rt, addr, token, tls.as_ref(), timeout)",
-            "                    .map_err(pyo3::exceptions::PyRuntimeError::new_err)?",
-            "            );",
-            "            let remote_ms = std::sync::Arc::new(",
-            "                crate::remote_metastore::RemoteMetastore::new(Arc::clone(&transport))",
-            "            ) as Arc<dyn crate::metastore::Metastore>;",
-            "            self.inner.pending_remote_metastore.lock().replace(remote_ms);",
-            "            let b = crate::remote_backend::RemoteBackend::new(transport);",
-            "            Some(Arc::new(b) as Arc<dyn ObjectStore>)",
-            '        } else if backend_type == "hn" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            "                let stories = hn_stories_per_feed.unwrap_or(10);",
-            "                let comments = hn_include_comments.unwrap_or(true);",
-            "                let b = crate::hn_backend::HNBackend::new(backend_name, stories, comments)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "cli" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let cmd = cli_command.unwrap_or("");',
-            '                let svc = cli_service.unwrap_or("");',
-            '                let auth = cli_auth_env_json.unwrap_or("");',
-            "                let b = crate::cli_backend::CLIBackend::new(backend_name, cmd, svc, auth)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            '        } else if backend_type == "x" {',
-            '            #[cfg(feature = "connectors")]',
-            "            {",
-            '                let token = x_bearer_token.unwrap_or("");',
-            "                let b = crate::x_backend::XBackend::new(backend_name, token)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            '            #[cfg(not(feature = "connectors"))]',
-            "            {",
-            '                return Err(pyo3::exceptions::PyRuntimeError::new_err("connectors feature not enabled"));',
-            "            }",
-            "        } else if let Some(root) = local_root {",
-            '            if backend_type == "local_connector" {',
-            "                let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            '            } else if backend_type == "path_local" {',
-            "                let b = PathLocalBackend::new(Path::new(root), fsync)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            } else {",
-            "                // Inject the kernel-owned scatter-gather fetcher so local",
-            "                // chunk misses on this mount can fall through to peer RPCs",
-            "                // against the file's `backend_name.origins`.",
-            "                let fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher> =",
-            "                    Arc::clone(&self.inner.chunk_fetcher)",
-            "                        as Arc<dyn crate::cas_remote::RemoteChunkFetcher>;",
-            "                let b = CasLocalBackend::new_with_fetcher(Path::new(root), fsync, fetcher)",
-            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "                Some(Arc::new(b))",
-            "            }",
-            "        } else {",
-            "            None",
+            "        let chunk_fetcher_dyn: Arc<dyn crate::cas_remote::RemoteChunkFetcher> =",
+            "            Arc::clone(&self.inner.chunk_fetcher);",
+            "        // Phase 4 (full): peer_client is a `RwLock<Arc<dyn PeerBlobClient>>`",
+            "        // so the cdylib's `install_transport_wiring` can swap the Noop",
+            "        // default for the real concrete impl post-boot.  Lock and clone",
+            "        // the inner `Arc` for the factory call so the read guard does not",
+            "        // outlive this scope.",
+            "        let peer_client_arc: Arc<dyn crate::hal::peer::PeerBlobClient> =",
+            "            Arc::clone(&self.inner.peer_client.read());",
+            "        let factory_args = crate::hal::backend_factory::BackendArgs {",
+            "            backend_type, backend_name,",
+            "            local_root, fsync, follow_symlinks,",
+            "            openai_base_url, openai_api_key, openai_model, openai_blob_root,",
+            "            anthropic_base_url, anthropic_api_key, anthropic_model, anthropic_blob_root,",
+            "            s3_bucket, s3_prefix, aws_region, aws_access_key, aws_secret_key, s3_endpoint,",
+            "            gcs_bucket, gcs_prefix,",
+            "            access_token, root_folder_id, bot_token, default_channel,",
+            "            hn_stories_per_feed, hn_include_comments,",
+            "            cli_command, cli_service, cli_auth_env_json,",
+            "            x_bearer_token,",
+            "            server_address, remote_auth_token,",
+            "            remote_ca_pem, remote_cert_pem, remote_key_pem, remote_timeout,",
+            "            peer_client: &peer_client_arc,",
+            "            chunk_fetcher: chunk_fetcher_dyn,",
+            "            runtime: self.inner.runtime(),",
             "        };",
+            "        let backend_result = factory.build(&factory_args)",
+            "            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;",
+            "        let backend = backend_result.backend;",
+            "        if let Some(remote_ms) = backend_result.pending_remote_meta_store {",
+            "            self.inner.pending_remote_meta_store.lock().replace(remote_ms);",
+            "        }",
             "",
-            "        // Metastore resolution: metastore_path -> LocalMetastore.",
+            "        // MetaStore resolution: metastore_path -> LocalMetaStore.",
             "        // Federation DT_MOUNT auto-resolves its raft backing via",
             "        // `resolve_federation_mount_backing` inside Kernel::sys_setattr",
             "        // (R20.18.3), so Python always passes `None` for raft_backend.",
-            "        let metastore: Option<Arc<dyn crate::metastore::Metastore>> =",
+            "        let metastore: Option<Arc<dyn crate::meta_store::MetaStore>> =",
             "            if let Some(ms_path) = metastore_path {",
-            "                let ms = crate::metastore::LocalMetastore::open(",
+            "                let ms = crate::meta_store::LocalMetaStore::open(",
             "                    std::path::Path::new(ms_path),",
             "                )",
-            '                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("LocalMetastore: {e:?}")))?;',
-            "                Some(Arc::new(ms) as Arc<dyn crate::metastore::Metastore>)",
+            '                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("LocalMetaStore: {e:?}")))?;',
+            "                Some(Arc::new(ms) as Arc<dyn crate::meta_store::MetaStore>)",
             "            } else {",
             "                None",
             "            };",
@@ -3605,7 +3483,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "            .map_err::<PyErr, _>(Into::into)?;",
             "",
             "        // Install remote metastore on the mount entry (if pending from remote backend setup)",
-            "        if let Some(remote_ms) = self.inner.pending_remote_metastore.lock().take() {",
+            "        if let Some(remote_ms) = self.inner.pending_remote_meta_store.lock().take() {",
             '            let canonical_key = format!("/{zone_id}{path}");',
             "            self.inner.vfs_router.install_metastore(&canonical_key, remote_ms);",
             "        }",
@@ -4288,6 +4166,54 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.inner.sys_readdir_backend(path, zone_id)",
             "    }",
             "",
+            "    /// Phase 6: glob match against the metastore-recursive listing of",
+            "    /// `prefix`.  Replaces `nexus.fs._helpers.glob` — pure Rust, no",
+            "    /// Python fallback (`lib::glob::glob_match` covers the same",
+            "    /// `globset` syntax the Python `fnmatch` fallback used).",
+            '    #[pyo3(signature = (pattern, prefix="/", zone_id="root"))]',
+            "    fn sys_glob(",
+            "        &self,",
+            "        pattern: &str,",
+            "        prefix: &str,",
+            "        zone_id: &str,",
+            "    ) -> PyResult<Vec<String>> {",
+            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
+            "        self.inner",
+            "            .sys_glob(pattern, prefix, &ctx)",
+            '            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_glob: {:?}", e)))',
+            "    }",
+            "",
+            "    /// Phase 6: grep recursive — walk every regular file under",
+            "    /// `prefix`, scan content via `lib::search::search_lines`, return",
+            "    /// up to `max_results` matches.  Replaces `nexus.fs._helpers.grep`.",
+            "    /// Each match comes back as a `dict` matching the historical",
+            "    /// shape: `{file, line, content, match}`.",
+            '    #[pyo3(signature = (pattern, prefix="/", ignore_case=false, max_results=1000, zone_id="root"))]',
+            "    fn sys_grep<'py>(",
+            "        &self,",
+            "        py: Python<'py>,",
+            "        pattern: &str,",
+            "        prefix: &str,",
+            "        ignore_case: bool,",
+            "        max_results: usize,",
+            "        zone_id: &str,",
+            "    ) -> PyResult<Bound<'py, PyList>> {",
+            '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
+            "        let matches = self.inner",
+            "            .sys_grep(pattern, prefix, ignore_case, max_results, &ctx)",
+            '            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_grep: {:?}", e)))?;',
+            "        let out = PyList::empty(py);",
+            "        for m in matches {",
+            "            let d = PyDict::new(py);",
+            '            d.set_item("file", m.file)?;',
+            '            d.set_item("line", m.line)?;',
+            '            d.set_item("content", m.content)?;',
+            '            d.set_item("match", m.match_text)?;',
+            "            out.append(d)?;",
+            "        }",
+            "        Ok(out)",
+            "    }",
+            "",
             "    /// Simplified sys_read that takes (path, zone_id) — creates a minimal",
             "    /// OperationContext internally.  Used by service-tier callers that don't",
             "    /// have a full OperationContext handy.",
@@ -4441,7 +4367,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        parent_pid: Option<&str>,",
             "        connection_id: Option<&str>,",
             "    ) -> bool {",
-            "        use services::agent_table::{AgentDescriptor, AgentKind, AgentState};",
+            "        use crate::core::agents::table::{AgentDescriptor, AgentKind, AgentState};",
             "        let kind = AgentKind::from_str(kind).unwrap_or(AgentKind::Worker);",
             "        self.inner.agent_table.register(AgentDescriptor {",
             "            pid: pid.to_string(),",
@@ -4487,7 +4413,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    /// Update agent state. Returns true if found.",
             "    fn agent_update_state(&self, pid: &str, new_state: &str) -> bool {",
-            "        use services::agent_table::AgentState;",
+            "        use crate::core::agents::table::AgentState;",
             "        match AgentState::from_str(new_state) {",
             "            Some(state) => self.inner.agent_table.update_state(pid, state),",
             "            None => false,",
@@ -4503,7 +4429,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        state: Option<&str>,",
             "        kind: Option<&str>,",
             "    ) -> PyResult<Vec<Bound<'py, PyDict>>> {",
-            "        use services::agent_table::{AgentKind, AgentState};",
+            "        use crate::core::agents::table::{AgentKind, AgentState};",
             "        let state_filter = state.and_then(AgentState::from_str);",
             "        let kind_filter = kind.and_then(AgentKind::from_str);",
             "        let agents = self.inner.agent_table.list(",
@@ -4541,7 +4467,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    /// Returns the state string on success. Raises `RuntimeError` on",
             '    /// timeout ("timeout") or unknown pid ("not_found").',
             "    fn agent_wait(&self, py: Python<'_>, pid: &str, target_state: &str, timeout_ms: u64) -> PyResult<String> {",
-            "        use services::agent_table::AgentState;",
+            "        use crate::core::agents::table::AgentState;",
             "        let target = AgentState::from_str(target_state).ok_or_else(|| {",
             "            pyo3::exceptions::PyValueError::new_err(",
             '                format!("unknown agent state: {target_state}"),',
@@ -4692,10 +4618,14 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    // tracked as a post-merge follow-up.",
             "",
             "    /// Create a raft zone on this node. Idempotent when the zone",
-            "    /// already exists (returns the existing zone id). When `audit`",
-            "    /// is true, wires an AuditHook backed by a WAL DT_STREAM at",
-            "    /// `/{zone_id}/audit/traces/` immediately after zone setup.",
-            "    fn zone_create(&self, zone_id: &str, audit: bool) -> PyResult<String> {",
+            "    /// already exists (returns the existing zone id).",
+            "    ///",
+            "    /// Phase 3: the optional audit-hook auto-wiring branch was",
+            "    /// removed — the audit hook is a service concern and lives in",
+            "    /// `services::audit`.  Callers that want audit on a zone call",
+            "    /// `nexus_kernel.install_audit_hook(kernel, zone_id, stream_path)`",
+            "    /// after this method returns.",
+            "    fn zone_create(&self, zone_id: &str) -> PyResult<String> {",
             "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
             "            pyo3::exceptions::PyRuntimeError::new_err(",
             '                "federation not active — set NEXUS_PEERS to enable",',
@@ -4710,11 +4640,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        // up on the leader.",
             "        if let Some(consensus) = zm.registry().get_node(zone_id) {",
             "            self.inner.install_federation_mount_coherence(zone_id, consensus);",
-            "        }",
-            "        if audit {",
-            '            let stream_path = format!("/{zone_id}/audit/traces/");',
-            "            self.inner.start_audit_hook(zone_id, &stream_path)",
-            '                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;',
             "        }",
             "        Ok(zone_id.to_string())",
             "    }",
@@ -4847,9 +4772,14 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))",
             "    }",
             "",
-            "    /// Join an existing zone as a new Voter or Learner. When `audit`",
-            "    /// is true, wires an AuditHook after the zone is set up.",
-            "    fn zone_join(&self, zone_id: &str, as_learner: bool, audit: bool) -> PyResult<String> {",
+            "    /// Join an existing zone as a new Voter or Learner.",
+            "    ///",
+            "    /// Phase 3: the optional audit-hook auto-wiring branch was",
+            "    /// removed — see `zone_create` for rationale.  Callers wanting",
+            "    /// audit on the joined zone call",
+            "    /// `nexus_kernel.install_audit_hook(kernel, zone_id, stream_path)`",
+            "    /// after this method returns.",
+            "    fn zone_join(&self, zone_id: &str, as_learner: bool) -> PyResult<String> {",
             "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
             '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
             "        })?;",
@@ -4860,11 +4790,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        // DT_MOUNT events replicated from the leader propagate here.",
             "        if let Some(consensus) = zm.registry().get_node(zone_id) {",
             "            self.inner.install_federation_mount_coherence(zone_id, consensus);",
-            "        }",
-            "        if audit {",
-            '            let stream_path = format!("/{zone_id}/audit/traces/");',
-            "            self.inner.start_audit_hook(zone_id, &stream_path)",
-            '                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;',
             "        }",
             "        Ok(zone_id.to_string())",
             "    }",
@@ -4961,18 +4886,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        Ok(true)",
             "    }",
             "",
-            "    // ── Audit hook ─────────────────────────────────────────────────────",
-            "",
-            "    /// Install an AuditHook backed by a WAL DT_STREAM at `stream_path`.",
-            "    ///",
-            "    /// The zone identified by `zone_id` must already be loaded and have an",
-            "    /// active Raft consensus node.  Raises `RuntimeError` if the zone is not",
-            "    /// found or federation is not active.",
-            "    fn start_audit_hook(&self, zone_id: &str, stream_path: &str) -> PyResult<()> {",
-            "        self.inner",
-            "            .start_audit_hook(zone_id, stream_path)",
-            '            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))',
-            "    }",
+            "    // Phase 3: `start_audit_hook` PyO3 method removed from PyKernel —",
+            "    // hook construction is service responsibility now.  Python entry",
+            "    // point lives at `nexus_kernel.install_audit_hook(kernel, zone_id,",
+            "    // stream_path)` and is registered by `services::python::register`.",
+            "    // Kernel side keeps `prepare_audit_stream` (stream lifecycle is a",
+            "    // kernel concern); services build + register the AuditHook on top.",
             "}",
         ]
     )
@@ -5047,17 +4966,47 @@ def collect_all() -> tuple[
 
     Returns (module_functions, classes, class_order, traits, all_export_names).
     """
-    # Phase H/I: kernel/src/lib.rs delegates to `lib::python::register(m)`
-    # for all algorithm wrappers (rebac, search, glob, io, prefix, simd,
-    # trigram, path_utils, bitmap, bloom, hash). Scan both lib.rs files
-    # and merge so the codegen sees the full set of `wrap_pyfunction!` /
-    # `add_class::<…>` registrations.
+    # Phase 0: kernel/src/lib.rs's `#[pymodule] fn nexus_kernel` body
+    # moved to kernel/src/python.rs (`pub fn register`). The cdylib
+    # itself now lives in rust/nexus-cdylib/src/lib.rs and just delegates
+    # into per-crate `python::register` fns.
+    # Phase H/I: lib::python::register holds all algorithm wrappers
+    # (rebac, search, glob, io, prefix, simd, trigram, path_utils,
+    # bitmap, bloom, hash). Scan all three files and merge so the
+    # codegen sees the full set of `wrap_pyfunction!` / `add_class::<…>`
+    # registrations.
     lib_text = (RUST_SRC / "lib.rs").read_text()
+    kernel_python_text = ""
+    kernel_python_path = RUST_SRC / "python.rs"
+    if kernel_python_path.exists():
+        kernel_python_text = kernel_python_path.read_text()
     lib_python_text = ""
     lib_python_mod = ROOT / "rust" / "lib" / "src" / "python" / "mod.rs"
     if lib_python_mod.exists():
         lib_python_text = lib_python_mod.read_text()
-    func_exports, class_exports = parse_lib_exports(lib_text + "\n" + lib_python_text)
+    # Phase 4 (full): peer-crate `python::register` fns also expose
+    # pyclasses / pyfunctions into the same `nexus_kernel` Python
+    # module (the cdylib calls `kernel::python::register`,
+    # `lib::python::register`, AND e.g. `transport::python::register`,
+    # `backends::python::register`, `services::python::register`).
+    # Scan each peer's mod.rs so codegen sees the full export set —
+    # without this, `start_vfs_grpc_server` / `PyVfsGrpcServerHandle`
+    # / `PyFederationClient` (moved to `transport::python::register`
+    # in Phase 4) drop out of the generated stubs / kernel_exports.
+    peer_python_texts: list[str] = []
+    for peer in ("transport", "backends", "services"):
+        peer_mod = ROOT / "rust" / peer / "src" / "python" / "mod.rs"
+        if peer_mod.exists():
+            peer_python_texts.append(peer_mod.read_text())
+    func_exports, class_exports = parse_lib_exports(
+        lib_text
+        + "\n"
+        + kernel_python_text
+        + "\n"
+        + lib_python_text
+        + "\n"
+        + "\n".join(peer_python_texts)
+    )
 
     # Build set of exported function names per module
     exported_names: dict[str, set[str]] = {}
@@ -5101,26 +5050,45 @@ def collect_all() -> tuple[
         classes[cls_name] = cls
         class_order.append(cls_name)
 
-    # Collect traits from dispatch / hook_registry / metastore (flat) +
-    # core/traits/*.rs (Phase B lifted ObjectStore, ExternalTransport,
-    # StreamBackend, PipeBackend out of the flat backend.rs / stream.rs /
-    # pipe.rs into per-pillar files).
+    # Collect traits.  Phase 1 split kernel/src/ into three sibling
+    # directories — abc/ (§3 ABC pillars), hal/ (kernel-defined extension
+    # interfaces), and core/ (§4 primitives + nested per-pillar trait
+    # files for pipe / stream).  The scanner walks every location that
+    # can host a `pub trait` declaration; pre-Phase-1 fallbacks
+    # (core/traits/, flat dispatch.rs / metastore.rs) are still tried so
+    # this script keeps working on older checkouts.
     traits: list[TraitDef] = []
-    # Phase C nested dispatch / metastore under core/. The trait scan
-    # walks the post-Phase-C locations directly; pre-Phase-C flat files
-    # are still tried as a fallback so this script keeps working on
-    # checkouts that haven't run Phase C yet.
     trait_paths: list[Path] = [
+        # §4 primitives that declare their own internal traits.
         RUST_SRC / "core" / "dispatch" / "mod.rs",
         RUST_SRC / "core" / "dispatch" / "hook_registry.rs",
+        RUST_SRC / "core" / "meta_store" / "mod.rs",
+        # Pre-Phase-1 fallbacks — older checkouts.
         RUST_SRC / "core" / "metastore" / "mod.rs",
         RUST_SRC / "dispatch.rs",
         RUST_SRC / "hook_registry.rs",
         RUST_SRC / "metastore.rs",
+        # Phase 1: pipe / stream internal traits relocated next to their
+        # primitive impls (was core/traits/{pipe,stream}_backend.rs).
+        RUST_SRC / "core" / "pipe" / "backend.rs",
+        RUST_SRC / "core" / "stream" / "backend.rs",
     ]
     for rs_path in trait_paths:
         if rs_path.exists():
             traits.extend(parse_traits(rs_path.read_text()))
+    # Phase 1: §3 ABC pillars + HAL extension interfaces live in
+    # `abc/*.rs` and `hal/*.rs`.  Walk each non-mod.rs file in both
+    # directories — that's where ObjectStore / MetaStore / CacheStore /
+    # LlmStreamingBackend / PeerBlobClient live now.
+    for sub_dir in ("abc", "hal"):
+        dir_path = RUST_SRC / sub_dir
+        if dir_path.is_dir():
+            for trait_path in sorted(dir_path.glob("*.rs")):
+                if trait_path.name == "mod.rs":
+                    continue
+                traits.extend(parse_traits(trait_path.read_text()))
+    # Pre-Phase-1 fallback: legacy core/traits/ directory.  Empty after
+    # Phase 1 lands but tolerated for older checkouts.
     core_traits_dir = RUST_SRC / "core" / "traits"
     if core_traits_dir.is_dir():
         for trait_path in sorted(core_traits_dir.glob("*.rs")):

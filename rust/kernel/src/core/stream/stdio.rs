@@ -271,7 +271,7 @@ impl Default for StdioStreamCore {
 /// `read_at` / `read_batch` from `asyncio.to_thread(...)` — writes via
 /// `write_nowait` are already non-blocking.
 #[cfg(unix)]
-#[pyclass(name = "StdioStreamBackend")]
+#[pyclass]
 pub struct StdioStreamBackend {
     core: Arc<StdioStreamCore>,
     write_fd: i32,

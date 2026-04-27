@@ -4,18 +4,33 @@ version = "0.10.0"
 edition = "2021"
 
 [lib]
-name = "nexus_kernel"
-crate-type = ["cdylib", "rlib"]  # cdylib for Python, rlib for Rust deps (e.g. raft::zone_metastore)
+# Phase 0 — kernel is rlib-only. The Python cdylib (`nexus_kernel.so`)
+# now lives in `rust/nexus-cdylib/`, which depends on this rlib plus
+# its peers (lib, raft, …) and owns the `#[pymodule]` envelope. This
+# cycle-breaks `<peer-crate> → kernel` (compile dep) ↔ `kernel →
+# <peer-crate>` (cdylib registration) — the latter is now wholly
+# inside `nexus-cdylib`. Lib name matches the package name (was
+# `nexus_kernel` while kernel was the cdylib; that name belongs to
+# the cdylib build artifact now).
+name = "kernel"
+crate-type = ["rlib"]
 
 [dependencies]
 contracts = { workspace = true }
 lib = { workspace = true, features = ["python"] }
-services = { workspace = true }
-# F2 C8 (Option A): raft rlib pulled in so kernel can impl Metastore over
+# Phase 3: kernel does NOT depend on `services` — direction is one-way
+# `services -> kernel`.  The pre-Phase-3 dep was an artefact of
+# AgentTable being miscategorised as service-tier; it moved to
+# `crate::core::agents::table` (kernel SSOT) so the cycle clears.
+# F2 C8 (Option A): raft rlib pulled in so kernel can impl MetaStore over
 # raft's ZoneConsensus directly, no cross-cdylib Rust trait object
-# dispatch. See rust/kernel/src/raft_metastore.rs.
+# dispatch. See rust/kernel/src/raft_meta_store.rs.
 raft = { workspace = true }
-pyo3 = { version = "0.27.2", features = ["extension-module", "hashbrown"] }
+# `extension-module` lives on the `nexus-cdylib` pyo3 dep only — Cargo
+# unifies pyo3 features at link time, so all transitive users see the
+# cdylib-correct linkage. rlibs must NOT enable it themselves (would
+# break `cargo test` on the rlib alone, and pollutes other consumers).
+pyo3 = { version = "0.27.2", features = ["hashbrown"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ahash = { workspace = true }
@@ -40,7 +55,11 @@ lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
-transport = { workspace = true }
+# Phase 4 (full): kernel uses `transport-primitives` (the low-level
+# crate after the split) for TlsConfig / connection-pool / peer
+# addressing; the high-level `transport` crate depends on kernel,
+# so we can't depend on it back without closing the cycle.
+transport-primitives = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros"] }

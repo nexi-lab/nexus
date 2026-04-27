@@ -147,10 +147,14 @@ impl ReplicationScanner {
                 }
 
                 ReplicationTarget::Nodes(addrs) => {
-                    // Pull from the first peer that responds, store locally.
-                    let fetched = addrs
+                    // Phase 4 (full): peer_client is now a
+                    // `RwLock<Arc<dyn PeerBlobClient>>`.  Clone the trait
+                    // object out so the lock is dropped before issuing
+                    // network calls inside `find_map`.
+                    let peer_client = Arc::clone(&kernel.peer_client.read());
+                    let fetched: Option<Vec<u8>> = addrs
                         .iter()
-                        .find_map(|addr| kernel.peer_client.fetch_path(addr, &entry.path).ok());
+                        .find_map(|addr| peer_client.fetch_path(addr, &entry.path).ok());
                     match fetched {
                         Some(content) => match kernel.sys_write(&entry.path, &ctx, &content, 0) {
                             Ok(r) if r.hit => replicated += 1,

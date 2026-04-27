@@ -24,11 +24,12 @@
 //! owns connections and semaphores, the fetcher owns the scatter-gather
 //! policy.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
+use std::thread;
 
-use futures::stream::{FuturesUnordered, StreamExt};
-
-use crate::peer_blob_client::PeerBlobClient;
+use crate::hal::peer::PeerBlobClient;
 
 /// Trait implemented by `GrpcChunkFetcher` (prod) and mocks (tests).
 ///
@@ -36,7 +37,7 @@ use crate::peer_blob_client::PeerBlobClient;
 /// typically parsed from `backend_name = "cas-local@host1:port,host2:port"`.
 /// Empty = local-only (caller should not even construct this, but we return
 /// `None` defensively).
-pub(crate) trait RemoteChunkFetcher: Send + Sync {
+pub trait RemoteChunkFetcher: Send + Sync {
     /// Fetch a chunk by hash. Returns `Some(bytes)` on success, `None` when
     /// no origin has the chunk (caller maps to `CASError::NotFound`).
     ///
@@ -47,14 +48,14 @@ pub(crate) trait RemoteChunkFetcher: Send + Sync {
 
 /// Production fetcher — gRPC `ReadBlob` scatter-gather over a shared
 /// `PeerBlobClient` channel pool.
-pub(crate) struct GrpcChunkFetcher {
-    client: Arc<PeerBlobClient>,
+pub struct GrpcChunkFetcher {
+    client: Arc<dyn PeerBlobClient>,
     self_address: Option<String>,
 }
 
 #[allow(dead_code)]
 impl GrpcChunkFetcher {
-    pub(crate) fn new(client: Arc<PeerBlobClient>, self_address: Option<String>) -> Self {
+    pub(crate) fn new(client: Arc<dyn PeerBlobClient>, self_address: Option<String>) -> Self {
         Self {
             client,
             self_address,
@@ -92,50 +93,67 @@ impl RemoteChunkFetcher for GrpcChunkFetcher {
             return None;
         }
 
-        let hash_owned = chunk_hash.to_string();
-        let client = Arc::clone(&self.client);
-        let runtime = Arc::clone(client.runtime());
+        // Phase 4 (full): the HAL trait `PeerBlobClient` exposes only sync
+        // methods (`fetch_etag`) — its concrete impl in
+        // `transport::blob::peer_client` does the runtime block_on
+        // internally.  Fan-out is therefore done with OS threads here:
+        //   * ≤5 candidate origins (bounded by replication factor)
+        //   * first-success-wins via mpsc channel + abandon flag
+        //   * losing threads short-circuit on `cancelled` before issuing
+        //     their (potentially slow) network call so wasted work is bounded
+        //
+        // Tokio's multi-thread runtime is happy with N concurrent block_ons
+        // from worker threads — IO drives on its own worker pool, the
+        // calling thread just parks until its future completes.
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let cancelled = Arc::new(AtomicBool::new(false));
 
-        runtime.block_on(async move {
-            let mut futs = FuturesUnordered::new();
-            for addr in candidates {
-                let c = Arc::clone(&client);
-                let h = hash_owned.clone();
-                let a = addr.clone();
-                futs.push(async move {
-                    let r = c.fetch_blob_async(&a, &h).await;
-                    (a, r)
+        thread::scope(|scope| {
+            for addr in &candidates {
+                let client = Arc::clone(&self.client);
+                let hash_owned = chunk_hash.to_string();
+                let addr_owned = addr.clone();
+                let tx = tx.clone();
+                let cancelled = Arc::clone(&cancelled);
+                scope.spawn(move || {
+                    if cancelled.load(Ordering::Acquire) {
+                        return;
+                    }
+                    match client.fetch_etag(&addr_owned, &hash_owned) {
+                        Ok(bytes) => {
+                            let actual = lib::hash::hash_content(&bytes);
+                            if actual != hash_owned {
+                                tracing::warn!(
+                                    target = "cas_remote",
+                                    origin = %addr_owned,
+                                    expected = %hash_owned,
+                                    got = %actual,
+                                    "peer returned chunk with bad hash; discarding",
+                                );
+                                return;
+                            }
+                            // Mark cancelled before send so other workers
+                            // short-circuit if they haven't started yet.
+                            cancelled.store(true, Ordering::Release);
+                            let _ = tx.send(bytes);
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                target = "cas_remote",
+                                origin = %addr_owned,
+                                hash = %hash_owned,
+                                error = %e,
+                                "peer returned error; trying next origin",
+                            );
+                        }
+                    }
                 });
             }
-
-            while let Some((addr, result)) = futs.next().await {
-                match result {
-                    Ok(bytes) => {
-                        let actual = lib::hash::hash_content(&bytes);
-                        if actual != hash_owned {
-                            tracing::warn!(
-                                target = "cas_remote",
-                                origin = %addr,
-                                expected = %hash_owned,
-                                got = %actual,
-                                "peer returned chunk with bad hash; discarding",
-                            );
-                            continue;
-                        }
-                        return Some(bytes);
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            target = "cas_remote",
-                            origin = %addr,
-                            hash = %hash_owned,
-                            error = %e,
-                            "peer returned error; trying next origin",
-                        );
-                    }
-                }
-            }
-            None
+            // Drop our handle so `recv` returns Err once all workers exit.
+            drop(tx);
+            // First success on the channel wins; remaining workers either
+            // see `cancelled` or fail trying to send on a closed channel.
+            rx.recv().ok()
         })
     }
 }
@@ -218,8 +236,8 @@ mod tests {
 
     #[test]
     fn test_candidate_origins_filters_self() {
-        let rt = crate::peer_blob_client::build_kernel_runtime();
-        let client = Arc::new(PeerBlobClient::new(rt));
+        // Phase 4: peer_blob_client moved to transport — Noop sufficient for unit test
+        let client = crate::hal::peer::NoopPeerBlobClient::arc();
         let fetcher = GrpcChunkFetcher::new(client, Some("nexus-self:2126".into()));
         let filtered = fetcher.candidate_origins(&[
             "nexus-self:2126".into(),
@@ -232,8 +250,8 @@ mod tests {
 
     #[test]
     fn test_grpc_fetcher_returns_none_for_empty_candidates() {
-        let rt = crate::peer_blob_client::build_kernel_runtime();
-        let client = Arc::new(PeerBlobClient::new(rt));
+        // Phase 4: peer_blob_client moved to transport — Noop sufficient for unit test
+        let client = crate::hal::peer::NoopPeerBlobClient::arc();
         let fetcher = GrpcChunkFetcher::new(client, Some("nexus-self:2126".into()));
         // Only candidate is self — filtered out.
         let out = fetcher.fetch_chunk(

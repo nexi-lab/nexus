@@ -21,7 +21,7 @@ pub const ROOT_ZONE_ID: &str = "root";
 ///
 /// Use this constant at semantic sites (mount-point comparisons,
 /// zone-key root detection, translation boundary in
-/// ``ZoneMetastore``). The literal ``"/"`` is still fine for
+/// ``ZoneMetaStore``). The literal ``"/"`` is still fine for
 /// unambiguous string-splitting / delimiter uses where readers
 /// aren't asked to disambiguate "which root?".
 pub const VFS_ROOT: &str = "/";

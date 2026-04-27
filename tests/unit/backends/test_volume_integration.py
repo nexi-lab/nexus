@@ -15,14 +15,14 @@ from __future__ import annotations
 import pytest
 
 try:
-    from nexus_kernel import VolumeEngine
+    from nexus_kernel import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
     HAS_VOLUME_ENGINE = False
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.VolumeEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
 )
 
 
@@ -30,14 +30,14 @@ def make_hash(seed: int) -> str:
     return f"{seed:064x}"
 
 
-# ─── VolumeEngine Core Integration ──────────────────────────────────────────
+# ─── BlobPackEngine Core Integration ──────────────────────────────────────────
 
 
 class TestVolumeEngineIntegration:
-    """Direct VolumeEngine tests — read/write/seal/compact end-to-end."""
+    """Direct BlobPackEngine tests — read/write/seal/compact end-to-end."""
 
     def test_write_seal_read_roundtrip(self, tmp_path):
-        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
 
         data_map = {}
         for i in range(10):
@@ -55,7 +55,7 @@ class TestVolumeEngineIntegration:
         engine.close()
 
     def test_batch_get_across_volumes(self, tmp_path):
-        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=256)
+        engine = BlobPackEngine(str(tmp_path / "vol"), target_volume_size=256)
 
         hashes = []
         for i in range(20):
@@ -74,7 +74,7 @@ class TestVolumeEngineIntegration:
         engine.close()
 
     def test_list_content_hashes(self, tmp_path):
-        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
+        engine = BlobPackEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
 
         written = set()
         for i in range(5):
@@ -94,7 +94,7 @@ class TestVolumeEngineIntegration:
 
 
 class TestVolumeLocalTransportIntegration:
-    """VolumeLocalTransport wrapping VolumeEngine."""
+    """VolumeLocalTransport wrapping BlobPackEngine."""
 
     def _make_transport(self, tmp_path):
         from nexus.backends.transports.volume_local_transport import VolumeLocalTransport

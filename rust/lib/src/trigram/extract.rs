@@ -80,9 +80,9 @@ mod tests {
         let trigrams = extract_trigrams(b"hello");
         // "hello" → ["hel", "ell", "llo"]
         assert_eq!(trigrams.len(), 3);
-        assert!(trigrams.contains(&[b'h', b'e', b'l']));
-        assert!(trigrams.contains(&[b'e', b'l', b'l']));
-        assert!(trigrams.contains(&[b'l', b'l', b'o']));
+        assert!(trigrams.contains(b"hel"));
+        assert!(trigrams.contains(b"ell"));
+        assert!(trigrams.contains(b"llo"));
     }
 
     #[test]
@@ -120,14 +120,14 @@ mod tests {
         // "aaa" has only one unique trigram: [a, a, a]
         let trigrams = extract_trigrams(b"aaaa");
         assert_eq!(trigrams.len(), 1);
-        assert!(trigrams.contains(&[b'a', b'a', b'a']));
+        assert!(trigrams.contains(b"aaa"));
     }
 
     #[test]
     fn test_extract_trigrams_for_query() {
         let trigrams = extract_trigrams_for_query("hello");
         assert_eq!(trigrams.len(), 3);
-        assert!(trigrams.contains(&[b'h', b'e', b'l']));
+        assert!(trigrams.contains(b"hel"));
     }
 
     #[test]

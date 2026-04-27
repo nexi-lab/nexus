@@ -13,7 +13,7 @@ from __future__ import annotations
 # Sourced from CAPABILITY_GROUP_CONFIG in scripts/codegen_kernel_abi.py.
 MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     "core": (
-        "Kernel",
+        "PyKernel",
         "normalize_path",
         "validate_path",
         "canonicalize_path",
@@ -47,7 +47,7 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     "storage": (
         "BloomFilter",
         "VFSSemaphore",
-        "VolumeEngine",
+        "BlobPackEngine",
     ),
 }
 
@@ -160,13 +160,14 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "set_metastore_path",
         "set_self_address",
         "set_vfs_lock_timeout",
-        "start_audit_hook",
         "start_replication_scanner",
         "stream_collect_all",
         "stream_read_at",
         "stream_read_batch",
         "stream_write_nowait",
         "sys_copy",
+        "sys_glob",
+        "sys_grep",
         "sys_lock",
         "sys_mkdir",
         "sys_read",

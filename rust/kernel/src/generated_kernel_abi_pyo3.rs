@@ -18,17 +18,15 @@ use pyo3::prelude::*;
 // — see ``RwLockExt`` in ``kernel.rs`` for the rationale.
 use crate::kernel::RwLockExt;
 use pyo3::types::{PyBytes, PyDict, PyList};
-use std::path::Path;
 use std::sync::Arc;
 
-use crate::backend::{CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend};
 #[cfg(feature = "py-hook-adapters")]
 use crate::dispatch::PathResolver;
 use crate::hook_registry::HookRegistry;
 #[cfg(feature = "py-hook-adapters")]
 use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
-use crate::metastore::{FileMetadata, MetastoreError};
+use crate::meta_store::{FileMetadata, MetaStoreError};
 use crate::vfs_router::RouteError;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -214,20 +212,20 @@ fn get_hook_ctx_cache(py: Python<'_>) -> Option<&'static HookContextCache> {
 fn extract_metadata(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-) -> Result<FileMetadata, MetastoreError> {
-    let get_str = |name: &str| -> Result<String, MetastoreError> {
+) -> Result<FileMetadata, MetaStoreError> {
+    let get_str = |name: &str| -> Result<String, MetaStoreError> {
         obj.getattr(name)
             .and_then(|v| v.extract::<String>())
-            .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}")))
+            .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}")))
     };
-    let get_opt_str = |name: &str| -> Result<Option<String>, MetastoreError> {
+    let get_opt_str = |name: &str| -> Result<Option<String>, MetaStoreError> {
         match obj.getattr(name) {
             Ok(v) if v.is_none() => Ok(None),
             Ok(v) => v
                 .extract::<String>()
                 .map(Some)
-                .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}"))),
-            Err(e) => Err(MetastoreError::IOError(format!("field {name}: {e}"))),
+                .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}"))),
+            Err(e) => Err(MetaStoreError::IOError(format!("field {name}: {e}"))),
         }
     };
 
@@ -237,16 +235,16 @@ fn extract_metadata(
         size: obj
             .getattr("size")
             .and_then(|v| v.extract::<u64>())
-            .map_err(|e| MetastoreError::IOError(format!("field size: {e}")))?,
+            .map_err(|e| MetaStoreError::IOError(format!("field size: {e}")))?,
         etag: get_opt_str("etag")?,
         version: obj
             .getattr("version")
             .and_then(|v| v.extract::<u32>())
-            .map_err(|e| MetastoreError::IOError(format!("field version: {e}")))?,
+            .map_err(|e| MetaStoreError::IOError(format!("field version: {e}")))?,
         entry_type: obj
             .getattr("entry_type")
             .and_then(|v| v.extract::<u8>())
-            .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,
+            .map_err(|e| MetaStoreError::IOError(format!("field entry_type: {e}")))?,
         zone_id: get_opt_str("zone_id")?,
         mime_type: get_opt_str("mime_type")?,
         created_at_ms: extract_opt_datetime_ms(obj, "created_at"),
@@ -271,9 +269,9 @@ fn extract_opt_datetime_ms(obj: &Bound<'_, PyAny>, name: &str) -> Option<i64> {
 fn to_python_metadata<'py>(
     py: Python<'py>,
     meta: &FileMetadata,
-) -> Result<Bound<'py, PyAny>, MetastoreError> {
-    fn err(e: PyErr) -> MetastoreError {
-        MetastoreError::IOError(format!("to_python_metadata: {e}"))
+) -> Result<Bound<'py, PyAny>, MetaStoreError> {
+    fn err(e: PyErr) -> MetaStoreError {
+        MetaStoreError::IOError(format!("to_python_metadata: {e}"))
     }
     let cls = py
         .import("nexus.contracts.metadata")
@@ -669,7 +667,7 @@ impl PathResolver for PyPathResolverAdapter {
 // ── PyOperationContext ──────────────────────────────────────────
 
 /// Python-facing OperationContext (wraps pure Rust OperationContext).
-#[pyclass(name = "OperationContext", get_all)]
+#[pyclass(get_all)]
 #[derive(Clone, Debug)]
 pub struct PyOperationContext {
     pub user_id: String,
@@ -741,7 +739,7 @@ impl PyOperationContext {
 // ── PySysReadResult ─────────────────────────────────────────────
 
 /// Python-facing SysReadResult (data is PyBytes, not Vec<u8>).
-#[pyclass(name = "SysReadResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysReadResult {
     pub data: Option<Py<PyBytes>>,
     pub post_hook_needed: bool,
@@ -752,7 +750,7 @@ pub struct PySysReadResult {
 // ── PySysWriteResult ────────────────────────────────────────────
 
 /// Python-facing SysWriteResult.
-#[pyclass(name = "SysWriteResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysWriteResult {
     pub hit: bool,
     pub content_id: Option<String>,
@@ -769,7 +767,7 @@ pub struct PySysWriteResult {
 // ── PySysUnlinkResult ───────────────────────────────────────────
 
 /// Python-facing SysUnlinkResult.
-#[pyclass(name = "SysUnlinkResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysUnlinkResult {
     pub hit: bool,
     pub entry_type: u8,
@@ -782,7 +780,7 @@ pub struct PySysUnlinkResult {
 // ── PySysRenameResult ───────────────────────────────────────────
 
 /// Python-facing SysRenameResult.
-#[pyclass(name = "SysRenameResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysRenameResult {
     pub hit: bool,
     pub success: bool,
@@ -797,7 +795,7 @@ pub struct PySysRenameResult {
 // ── PySysMkdirResult ────────────────────────────────────────────
 
 /// Python-facing SysMkdirResult.
-#[pyclass(name = "SysMkdirResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysMkdirResult {
     pub hit: bool,
     pub post_hook_needed: bool,
@@ -806,7 +804,7 @@ pub struct PySysMkdirResult {
 // ── PySysRmdirResult ────────────────────────────────────────────
 
 /// Python-facing SysRmdirResult.
-#[pyclass(name = "SysRmdirResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysRmdirResult {
     pub hit: bool,
     pub post_hook_needed: bool,
@@ -816,7 +814,7 @@ pub struct PySysRmdirResult {
 // ── PySysCopyResult ─────────────────────────────────────────────
 
 /// Python-facing SysCopyResult.
-#[pyclass(name = "SysCopyResult", get_all)]
+#[pyclass(get_all)]
 pub struct PySysCopyResult {
     pub hit: bool,
     pub post_hook_needed: bool,
@@ -834,7 +832,7 @@ pub struct PySysCopyResult {
 ///   - Hook registry (PyO3-specific, stored here not in Rust Kernel)
 ///   - PRE-INTERCEPT dispatch (requires GIL for Python hook contexts)
 ///   - Type conversion (Vec<u8> -> PyBytes, StatResult -> PyDict, etc.)
-#[pyclass(name = "Kernel")]
+#[pyclass]
 pub struct PyKernel {
     /// Crate-visible so `grpc_server.rs` (and any other
     /// kernel-internal task spawner) can clone the Arc
@@ -861,6 +859,25 @@ impl PyKernel {
     pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {
         Kernel::canonical_mount_key(mount_point, zone_id)
     }
+
+    /// Borrow the inner `&Kernel`.  Phase 3: peer crates
+    /// (services, future transport / raft glue) reach the
+    /// kernel's in-tree Rust API surface
+    /// (`register_native_hook`, `prepare_audit_stream`,
+    /// `sys_*` direct) through this accessor instead of the
+    /// `pub(crate) inner` field, which other crates can't see.
+    pub fn kernel_ref(&self) -> &Kernel {
+        &self.inner
+    }
+
+    /// Clone the inner `Arc<Kernel>`.  Same Phase 3 motivation
+    /// as [`Self::kernel_ref`] but returns an owned `Arc<Kernel>`
+    /// for callers that need to spawn tasks holding the kernel
+    /// (e.g. `transport::grpc::start_vfs_grpc_server` clones the
+    /// Arc into a tonic worker task).
+    pub fn kernel_arc(&self) -> Arc<Kernel> {
+        Arc::clone(&self.inner)
+    }
 }
 
 #[pymethods]
@@ -886,9 +903,9 @@ impl PyKernel {
         self.inner.set_self_address(addr);
     }
 
-    // ── Metastore wiring ──────────────────────────────────────────────
+    // ── MetaStore wiring ──────────────────────────────────────────────
 
-    /// Wire LocalMetastore by path — Rust kernel opens redb directly.
+    /// Wire LocalMetaStore by path — Rust kernel opens redb directly.
     /// Eliminates GIL crossing on every metastore.get/put.
     fn set_metastore_path(&self, path: &str) -> PyResult<()> {
         self.inner.set_metastore_path(path).map_err(Into::into)
@@ -901,7 +918,7 @@ impl PyKernel {
         self.inner.release_metastores()
     }
 
-    // ── Metastore proxy methods (for RustMetastoreProxy) ──────────────
+    // ── MetaStore proxy methods (for RustMetastoreProxy) ──────────────
 
     fn metastore_get(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {
         match self
@@ -1525,268 +1542,90 @@ impl PyKernel {
         remote_key_pem: Option<&[u8]>,
         remote_timeout: f64,
     ) -> PyResult<Py<PyAny>> {
-        // Backend resolution (moved from old add_mount)
-        let backend: Option<Arc<dyn ObjectStore>> = if backend_type == "openai" {
-            #[cfg(feature = "connectors")]
-            {
-                let base = openai_base_url.unwrap_or("https://api.openai.com/v1");
-                let key = openai_api_key.unwrap_or("");
-                let model = openai_model.unwrap_or("gpt-4o");
-                // Spool dir — caller-supplied, or a per-backend scratch
-                // under std::env::temp_dir (LLM conversations are small; the
-                // real value of durability is cross-request prefix dedup).
-                let blob_root = match openai_blob_root {
-                    Some(p) => std::path::PathBuf::from(p),
-                    None => std::env::temp_dir()
-                        .join("nexus_llm_spool")
-                        .join(backend_name),
-                };
-                let rt = Arc::clone(self.inner.peer_client.runtime());
-                let b = crate::openai_backend::OpenAIBackend::new(
-                    backend_name,
-                    base,
-                    key,
-                    model,
-                    &blob_root,
-                    rt,
-                )
-                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "anthropic" {
-            #[cfg(feature = "connectors")]
-            {
-                let base = anthropic_base_url.unwrap_or("https://api.anthropic.com");
-                let key = anthropic_api_key.unwrap_or("");
-                let model = anthropic_model.unwrap_or("claude-sonnet-4-20250514");
-                let blob_root = match anthropic_blob_root {
-                    Some(p) => std::path::PathBuf::from(p),
-                    None => std::env::temp_dir()
-                        .join("nexus_llm_spool")
-                        .join(backend_name),
-                };
-                let rt = Arc::clone(self.inner.peer_client.runtime());
-                let b = crate::anthropic_backend::AnthropicBackend::new(
-                    backend_name,
-                    base,
-                    key,
-                    model,
-                    &blob_root,
-                    rt,
-                )
-                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "s3" {
-            #[cfg(feature = "connectors")]
-            {
-                let bucket = s3_bucket.unwrap_or("");
-                let prefix = s3_prefix.unwrap_or("");
-                let region = aws_region.unwrap_or("us-east-1");
-                let ak = aws_access_key.unwrap_or("");
-                let sk = aws_secret_key.unwrap_or("");
-                let b = crate::s3_backend::S3Backend::new(
-                    backend_name,
-                    bucket,
-                    prefix,
-                    region,
-                    ak,
-                    sk,
-                    s3_endpoint,
-                )
-                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "gcs" {
-            #[cfg(feature = "connectors")]
-            {
-                let bucket = gcs_bucket.unwrap_or("");
-                let prefix = gcs_prefix.unwrap_or("");
-                let token = access_token.unwrap_or("");
-                let b = crate::gcs_backend::GcsBackend::new(backend_name, bucket, prefix, token)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "gdrive" {
-            #[cfg(feature = "connectors")]
-            {
-                let token = access_token.unwrap_or("");
-                let folder = root_folder_id.unwrap_or("root");
-                let b = crate::gdrive_backend::GDriveBackend::new(backend_name, token, folder)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "gmail" {
-            #[cfg(feature = "connectors")]
-            {
-                let token = access_token.unwrap_or("");
-                let b = crate::gmail_backend::GmailBackend::new(backend_name, token)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "slack" {
-            #[cfg(feature = "connectors")]
-            {
-                let token = bot_token.unwrap_or("");
-                let channel = default_channel.unwrap_or("");
-                let b = crate::slack_backend::SlackBackend::new(backend_name, token, channel)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "remote" {
-            // Remote backend — always available (core capability, not connector feature)
-            let addr = server_address.ok_or_else(|| {
-                pyo3::exceptions::PyValueError::new_err(
-                    "backend_type='remote' requires server_address",
+        // Phase 2: 17-way backend-type construction moved to
+        // `backends::python::factory::DefaultBackendFactory`.  Kernel
+        // can no longer reference concrete backend types directly
+        // (they live in `backends/` after Phase 2); the global
+        // `BackendFactory` is installed by `nexus-cdylib` at module init.
+        let factory = crate::hal::backend_factory::get_factory()
+            .ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "sys_setattr: BackendFactory not registered — non-cdylib build needs to call kernel::hal::backend_factory::set_factory at boot",
                 )
             })?;
-            let token = remote_auth_token.unwrap_or("");
-            let tls = remote_ca_pem.map(|ca| crate::rpc_transport::TlsConfig {
-                ca_pem: ca.to_vec(),
-                cert_pem: remote_cert_pem.map(|b| b.to_vec()),
-                key_pem: remote_key_pem.map(|b| b.to_vec()),
-            });
-            let timeout = std::time::Duration::from_secs_f64(if remote_timeout > 0.0 {
-                remote_timeout
-            } else {
-                30.0
-            });
-            let rt = Arc::clone(self.inner.peer_client.runtime());
-            let transport = std::sync::Arc::new(
-                crate::rpc_transport::RpcTransport::new(rt, addr, token, tls.as_ref(), timeout)
-                    .map_err(pyo3::exceptions::PyRuntimeError::new_err)?,
-            );
-            let remote_ms = std::sync::Arc::new(crate::remote_metastore::RemoteMetastore::new(
-                Arc::clone(&transport),
-            )) as Arc<dyn crate::metastore::Metastore>;
+        let chunk_fetcher_dyn: Arc<dyn crate::cas_remote::RemoteChunkFetcher> =
+            Arc::clone(&self.inner.chunk_fetcher);
+        // Phase 4 (full): peer_client is a `RwLock<Arc<dyn PeerBlobClient>>`
+        // so the cdylib's `install_transport_wiring` can swap the Noop
+        // default for the real concrete impl post-boot.  Lock and clone
+        // the inner `Arc` for the factory call so the read guard does not
+        // outlive this scope.
+        let peer_client_arc: Arc<dyn crate::hal::peer::PeerBlobClient> =
+            Arc::clone(&self.inner.peer_client.read());
+        let factory_args = crate::hal::backend_factory::BackendArgs {
+            backend_type,
+            backend_name,
+            local_root,
+            fsync,
+            follow_symlinks,
+            openai_base_url,
+            openai_api_key,
+            openai_model,
+            openai_blob_root,
+            anthropic_base_url,
+            anthropic_api_key,
+            anthropic_model,
+            anthropic_blob_root,
+            s3_bucket,
+            s3_prefix,
+            aws_region,
+            aws_access_key,
+            aws_secret_key,
+            s3_endpoint,
+            gcs_bucket,
+            gcs_prefix,
+            access_token,
+            root_folder_id,
+            bot_token,
+            default_channel,
+            hn_stories_per_feed,
+            hn_include_comments,
+            cli_command,
+            cli_service,
+            cli_auth_env_json,
+            x_bearer_token,
+            server_address,
+            remote_auth_token,
+            remote_ca_pem,
+            remote_cert_pem,
+            remote_key_pem,
+            remote_timeout,
+            peer_client: &peer_client_arc,
+            chunk_fetcher: chunk_fetcher_dyn,
+            runtime: self.inner.runtime(),
+        };
+        let backend_result = factory
+            .build(&factory_args)
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        let backend = backend_result.backend;
+        if let Some(remote_ms) = backend_result.pending_remote_meta_store {
             self.inner
-                .pending_remote_metastore
+                .pending_remote_meta_store
                 .lock()
                 .replace(remote_ms);
-            let b = crate::remote_backend::RemoteBackend::new(transport);
-            Some(Arc::new(b) as Arc<dyn ObjectStore>)
-        } else if backend_type == "hn" {
-            #[cfg(feature = "connectors")]
-            {
-                let stories = hn_stories_per_feed.unwrap_or(10);
-                let comments = hn_include_comments.unwrap_or(true);
-                let b = crate::hn_backend::HNBackend::new(backend_name, stories, comments)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "cli" {
-            #[cfg(feature = "connectors")]
-            {
-                let cmd = cli_command.unwrap_or("");
-                let svc = cli_service.unwrap_or("");
-                let auth = cli_auth_env_json.unwrap_or("");
-                let b = crate::cli_backend::CLIBackend::new(backend_name, cmd, svc, auth)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if backend_type == "x" {
-            #[cfg(feature = "connectors")]
-            {
-                let token = x_bearer_token.unwrap_or("");
-                let b = crate::x_backend::XBackend::new(backend_name, token)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-            #[cfg(not(feature = "connectors"))]
-            {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "connectors feature not enabled",
-                ));
-            }
-        } else if let Some(root) = local_root {
-            if backend_type == "local_connector" {
-                let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            } else if backend_type == "path_local" {
-                let b = PathLocalBackend::new(Path::new(root), fsync)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            } else {
-                // Inject the kernel-owned scatter-gather fetcher so local
-                // chunk misses on this mount can fall through to peer RPCs
-                // against the file's `backend_name.origins`.
-                let fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher> =
-                    Arc::clone(&self.inner.chunk_fetcher)
-                        as Arc<dyn crate::cas_remote::RemoteChunkFetcher>;
-                let b = CasLocalBackend::new_with_fetcher(Path::new(root), fsync, fetcher)
-                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-                Some(Arc::new(b))
-            }
-        } else {
-            None
-        };
+        }
 
-        // Metastore resolution: metastore_path -> LocalMetastore.
+        // MetaStore resolution: metastore_path -> LocalMetaStore.
         // Federation DT_MOUNT auto-resolves its raft backing via
         // `resolve_federation_mount_backing` inside Kernel::sys_setattr
         // (R20.18.3), so Python always passes `None` for raft_backend.
-        let metastore: Option<Arc<dyn crate::metastore::Metastore>> =
+        let metastore: Option<Arc<dyn crate::meta_store::MetaStore>> =
             if let Some(ms_path) = metastore_path {
-                let ms = crate::metastore::LocalMetastore::open(std::path::Path::new(ms_path))
+                let ms = crate::meta_store::LocalMetaStore::open(std::path::Path::new(ms_path))
                     .map_err(|e| {
-                        pyo3::exceptions::PyIOError::new_err(format!("LocalMetastore: {e:?}"))
+                        pyo3::exceptions::PyIOError::new_err(format!("LocalMetaStore: {e:?}"))
                     })?;
-                Some(Arc::new(ms) as Arc<dyn crate::metastore::Metastore>)
+                Some(Arc::new(ms) as Arc<dyn crate::meta_store::MetaStore>)
             } else {
                 None
             };
@@ -1812,7 +1651,7 @@ impl PyKernel {
             .map_err::<PyErr, _>(Into::into)?;
 
         // Install remote metastore on the mount entry (if pending from remote backend setup)
-        if let Some(remote_ms) = self.inner.pending_remote_metastore.lock().take() {
+        if let Some(remote_ms) = self.inner.pending_remote_meta_store.lock().take() {
             let canonical_key = format!("/{zone_id}{path}");
             self.inner
                 .vfs_router
@@ -2561,6 +2400,50 @@ impl PyKernel {
         self.inner.sys_readdir_backend(path, zone_id)
     }
 
+    /// Phase 6: glob match against the metastore-recursive listing of
+    /// `prefix`.  Replaces `nexus.fs._helpers.glob` — pure Rust, no
+    /// Python fallback (`lib::glob::glob_match` covers the same
+    /// `globset` syntax the Python `fnmatch` fallback used).
+    #[pyo3(signature = (pattern, prefix="/", zone_id="root"))]
+    fn sys_glob(&self, pattern: &str, prefix: &str, zone_id: &str) -> PyResult<Vec<String>> {
+        let ctx = OperationContext::new("system", zone_id, true, None, true);
+        self.inner
+            .sys_glob(pattern, prefix, &ctx)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_glob: {:?}", e)))
+    }
+
+    /// Phase 6: grep recursive — walk every regular file under
+    /// `prefix`, scan content via `lib::search::search_lines`, return
+    /// up to `max_results` matches.  Replaces `nexus.fs._helpers.grep`.
+    /// Each match comes back as a `dict` matching the historical
+    /// shape: `{file, line, content, match}`.
+    #[pyo3(signature = (pattern, prefix="/", ignore_case=false, max_results=1000, zone_id="root"))]
+    fn sys_grep<'py>(
+        &self,
+        py: Python<'py>,
+        pattern: &str,
+        prefix: &str,
+        ignore_case: bool,
+        max_results: usize,
+        zone_id: &str,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let ctx = OperationContext::new("system", zone_id, true, None, true);
+        let matches = self
+            .inner
+            .sys_grep(pattern, prefix, ignore_case, max_results, &ctx)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_grep: {:?}", e)))?;
+        let out = PyList::empty(py);
+        for m in matches {
+            let d = PyDict::new(py);
+            d.set_item("file", m.file)?;
+            d.set_item("line", m.line)?;
+            d.set_item("content", m.content)?;
+            d.set_item("match", m.match_text)?;
+            out.append(d)?;
+        }
+        Ok(out)
+    }
+
     /// Simplified sys_read that takes (path, zone_id) — creates a minimal
     /// OperationContext internally.  Used by service-tier callers that don't
     /// have a full OperationContext handy.
@@ -2724,7 +2607,7 @@ impl PyKernel {
         parent_pid: Option<&str>,
         connection_id: Option<&str>,
     ) -> bool {
-        use services::agent_table::{AgentDescriptor, AgentKind, AgentState};
+        use crate::core::agents::table::{AgentDescriptor, AgentKind, AgentState};
         let kind = AgentKind::from_str(kind).unwrap_or(AgentKind::Worker);
         self.inner.agent_table.register(AgentDescriptor {
             pid: pid.to_string(),
@@ -2770,7 +2653,7 @@ impl PyKernel {
 
     /// Update agent state. Returns true if found.
     fn agent_update_state(&self, pid: &str, new_state: &str) -> bool {
-        use services::agent_table::AgentState;
+        use crate::core::agents::table::AgentState;
         match AgentState::from_str(new_state) {
             Some(state) => self.inner.agent_table.update_state(pid, state),
             None => false,
@@ -2786,7 +2669,7 @@ impl PyKernel {
         state: Option<&str>,
         kind: Option<&str>,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
-        use services::agent_table::{AgentKind, AgentState};
+        use crate::core::agents::table::{AgentKind, AgentState};
         let state_filter = state.and_then(AgentState::from_str);
         let kind_filter = kind.and_then(AgentKind::from_str);
         let agents =
@@ -2829,7 +2712,7 @@ impl PyKernel {
         target_state: &str,
         timeout_ms: u64,
     ) -> PyResult<String> {
-        use services::agent_table::AgentState;
+        use crate::core::agents::table::AgentState;
         let target = AgentState::from_str(target_state).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("unknown agent state: {target_state}"))
         })?;
@@ -2975,10 +2858,14 @@ impl PyKernel {
     // tracked as a post-merge follow-up.
 
     /// Create a raft zone on this node. Idempotent when the zone
-    /// already exists (returns the existing zone id). When `audit`
-    /// is true, wires an AuditHook backed by a WAL DT_STREAM at
-    /// `/{zone_id}/audit/traces/` immediately after zone setup.
-    fn zone_create(&self, zone_id: &str, audit: bool) -> PyResult<String> {
+    /// already exists (returns the existing zone id).
+    ///
+    /// Phase 3: the optional audit-hook auto-wiring branch was
+    /// removed — the audit hook is a service concern and lives in
+    /// `services::audit`.  Callers that want audit on a zone call
+    /// `nexus_kernel.install_audit_hook(kernel, zone_id, stream_path)`
+    /// after this method returns.
+    fn zone_create(&self, zone_id: &str) -> PyResult<String> {
         let zm = self.inner.zone_manager_arc().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
                 "federation not active — set NEXUS_PEERS to enable",
@@ -2994,12 +2881,6 @@ impl PyKernel {
         if let Some(consensus) = zm.registry().get_node(zone_id) {
             self.inner
                 .install_federation_mount_coherence(zone_id, consensus);
-        }
-        if audit {
-            let stream_path = format!("/{zone_id}/audit/traces/");
-            self.inner
-                .start_audit_hook(zone_id, &stream_path)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
         }
         Ok(zone_id.to_string())
     }
@@ -3128,9 +3009,14 @@ impl PyKernel {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
-    /// Join an existing zone as a new Voter or Learner. When `audit`
-    /// is true, wires an AuditHook after the zone is set up.
-    fn zone_join(&self, zone_id: &str, as_learner: bool, audit: bool) -> PyResult<String> {
+    /// Join an existing zone as a new Voter or Learner.
+    ///
+    /// Phase 3: the optional audit-hook auto-wiring branch was
+    /// removed — see `zone_create` for rationale.  Callers wanting
+    /// audit on the joined zone call
+    /// `nexus_kernel.install_audit_hook(kernel, zone_id, stream_path)`
+    /// after this method returns.
+    fn zone_join(&self, zone_id: &str, as_learner: bool) -> PyResult<String> {
         let zm = self
             .inner
             .zone_manager_arc()
@@ -3143,12 +3029,6 @@ impl PyKernel {
         if let Some(consensus) = zm.registry().get_node(zone_id) {
             self.inner
                 .install_federation_mount_coherence(zone_id, consensus);
-        }
-        if audit {
-            let stream_path = format!("/{zone_id}/audit/traces/");
-            self.inner
-                .start_audit_hook(zone_id, &stream_path)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
         }
         Ok(zone_id.to_string())
     }
@@ -3243,18 +3123,12 @@ impl PyKernel {
         Ok(true)
     }
 
-    // ── Audit hook ─────────────────────────────────────────────────────
-
-    /// Install an AuditHook backed by a WAL DT_STREAM at `stream_path`.
-    ///
-    /// The zone identified by `zone_id` must already be loaded and have an
-    /// active Raft consensus node.  Raises `RuntimeError` if the zone is not
-    /// found or federation is not active.
-    fn start_audit_hook(&self, zone_id: &str, stream_path: &str) -> PyResult<()> {
-        self.inner
-            .start_audit_hook(zone_id, stream_path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))
-    }
+    // Phase 3: `start_audit_hook` PyO3 method removed from PyKernel —
+    // hook construction is service responsibility now.  Python entry
+    // point lives at `nexus_kernel.install_audit_hook(kernel, zone_id,
+    // stream_path)` and is registered by `services::python::register`.
+    // Kernel side keeps `prepare_audit_stream` (stream lifecycle is a
+    // kernel concern); services build + register the AuditHook on top.
 }
 
 // ── Private: hook dispatch (wrapper-only) ───────────────────────────────

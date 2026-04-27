@@ -16,7 +16,7 @@ import time
 import pytest
 
 nf = pytest.importorskip("nexus_kernel")
-VolumeEngine = nf.VolumeEngine
+VolumeEngine = nf.BlobPackEngine
 
 ITERATIONS = 3
 

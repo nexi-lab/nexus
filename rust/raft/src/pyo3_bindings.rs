@@ -2,20 +2,20 @@
 // clippy flags as useless. This is a known PyO3 + clippy interaction.
 #![allow(clippy::useless_conversion)]
 
-//! PyO3 Python bindings for Nexus Metastore (sled state machine).
+//! PyO3 Python bindings for Nexus MetaStore (sled state machine).
 //!
 //! Three drivers are exposed:
-//! - `Metastore`: Direct redb access for embedded mode (~5μs per op).
+//! - `MetaStore`: Direct redb access for embedded mode (~5μs per op).
 //! - `ZoneManager`: Multi-zone Raft registry owner (creates/manages zones).
 //! - `ZoneHandle`: Per-zone Raft node handle (metadata/lock operations).
 //!
 //! # Python Usage
 //!
 //! ```python
-//! from _nexus_raft import Metastore
+//! from _nexus_raft import MetaStore
 //!
 //! # Direct redb access (embedded mode)
-//! store = Metastore("/var/lib/nexus/metadata")
+//! store = MetaStore("/var/lib/nexus/metadata")
 //! store.set_metadata("/path/to/file", metadata_bytes)
 //! metadata = store.get_metadata("/path/to/file")
 //!
@@ -87,7 +87,7 @@ fn lock_mode_str(mode: crate::prelude::LockMode) -> &'static str {
 }
 
 /// Python-compatible holder info.
-#[pyclass(name = "HolderInfo")]
+#[pyclass]
 #[derive(Clone)]
 pub struct PyHolderInfo {
     #[pyo3(get)]
@@ -119,7 +119,7 @@ impl From<RustHolderInfo> for PyHolderInfo {
 }
 
 /// Python-compatible lock state result.
-#[pyclass(name = "LockState")]
+#[pyclass]
 #[derive(Clone)]
 pub struct PyLockState {
     #[pyo3(get)]
@@ -144,7 +144,7 @@ impl From<RustLockAcquireResult> for PyLockState {
 }
 
 /// Python-compatible lock info.
-#[pyclass(name = "LockInfo")]
+#[pyclass]
 #[derive(Clone)]
 pub struct PyLockInfo {
     #[pyo3(get)]
@@ -171,22 +171,22 @@ impl From<RustLockInfo> for PyLockInfo {
 /// Used for embedded mode and as the base layer for EC mode (future).
 ///
 /// Performance: ~5μs per operation.
-#[pyclass(name = "Metastore")]
-pub struct PyMetastore {
+#[pyclass]
+pub struct PyMetaStore {
     store: RedbStore,
     sm: FullStateMachine,
     next_index: u64,
 }
 
 #[pymethods]
-impl PyMetastore {
-    /// Create a new Metastore instance.
+impl PyMetaStore {
+    /// Create a new MetaStore instance.
     ///
     /// Args:
     ///     path: Path to the redb database directory.
     ///
     /// Returns:
-    ///     Metastore instance.
+    ///     MetaStore instance.
     ///
     /// Raises:
     ///     RuntimeError: If the database cannot be opened.
@@ -642,7 +642,7 @@ impl PyMetastore {
     }
 }
 
-impl PyMetastore {
+impl PyMetaStore {
     /// Apply a command and return success/failure.
     fn apply_command(&mut self, cmd: Command) -> PyResult<bool> {
         let result = self.apply_command_raw(cmd)?;
@@ -807,12 +807,12 @@ fn hostname_to_node_id(hostname: &str) -> u64 {
 ///
 /// F2 C8 (Option A): raft is an rlib inside the ``nexus_kernel`` cdylib
 /// now — the old ``#[pymodule] fn _nexus_raft`` is gone. Kernel's own
-/// ``#[pymodule]`` calls this function to expose ``Metastore`` /
+/// ``#[pymodule]`` calls this function to expose ``MetaStore`` /
 /// ``ZoneManager`` / ``ZoneHandle`` from the single ``nexus_kernel``
 /// Python module. Kept ``pub`` so ``kernel::lib::nexus_kernel`` can
 /// reach it via the ``nexus_raft_lib::register_python_classes`` path.
 pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyMetastore>()?;
+    m.add_class::<PyMetaStore>()?;
     m.add_class::<PyLockState>()?;
     m.add_class::<PyLockInfo>()?;
     m.add_class::<PyHolderInfo>()?;

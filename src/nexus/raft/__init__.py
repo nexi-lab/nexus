@@ -27,7 +27,7 @@ Example (Metastore - embedded mode):
 
 Example (consensus mode — via kernel zone_* methods):
     import nexus_kernel
-    kernel = nexus_kernel.Kernel()
+    kernel = nexus_kernel.PyKernel()
     kernel.zone_create("root", ["2@peer:2126"])
     kernel.zone_mount("root", "/data", "shared-zone")
     # Read/write through kernel.sys_* like any path; mount routes to the
@@ -57,13 +57,15 @@ try:
     # while a locally-installed wheel lags behind.
     import nexus_kernel as _pyo3_mod
 
-    Metastore = getattr(_pyo3_mod, "Metastore", None)
-    LockState = getattr(_pyo3_mod, "LockState", None)
-    LockInfo = getattr(_pyo3_mod, "LockInfo", None)
-    HolderInfo = getattr(_pyo3_mod, "HolderInfo", None)
+    Metastore = getattr(_pyo3_mod, "PyMetaStore", None)
+    LockState = getattr(_pyo3_mod, "PyLockState", None)
+    LockInfo = getattr(_pyo3_mod, "PyLockInfo", None)
+    HolderInfo = getattr(_pyo3_mod, "PyHolderInfo", None)
     _HAS_METASTORE = Metastore is not None
 except ImportError:
-    logger.debug("Metastore not available. Install with: maturin develop -m rust/kernel/Cargo.toml")
+    logger.debug(
+        "Metastore not available. Install with: maturin develop -m rust/nexus-cdylib/Cargo.toml"
+    )
 
 # =========================================================================
 # ZoneHandle: Per-zone Raft node handle (requires --features full)
@@ -95,7 +97,7 @@ def require_metastore() -> None:
     if not _HAS_METASTORE:
         raise RuntimeError(
             "Metastore is not available. Build with:\n"
-            "  maturin develop -m rust/kernel/Cargo.toml\n"
+            "  maturin develop -m rust/nexus-cdylib/Cargo.toml\n"
             "Or install the pre-built wheel:\n"
             "  pip install nexus-ai-fs"
         )

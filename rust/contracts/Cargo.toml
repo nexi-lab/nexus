@@ -2,7 +2,7 @@
 name = "contracts"
 version = "0.1.0"
 edition = "2021"
-description = "Shared Rust traits and types — MutationObserver, FileEvent, Metastore"
+description = "Shared Rust traits and types — MutationObserver, FileEvent, MetaStore"
 
 [lib]
 name = "contracts"

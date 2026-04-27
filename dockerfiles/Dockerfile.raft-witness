@@ -35,16 +35,24 @@ COPY proto/ ./proto/
 COPY rust/raft/ ./rust/raft/
 COPY rust/transport/ ./rust/transport/
 COPY rust/contracts/ ./rust/contracts/
+# Copy transport-primitives — raft depends on it directly (Phase 4 split).
+COPY rust/transport-primitives/ ./rust/transport-primitives/
 # Stub out workspace members raft does not depend on at build time.
-# Phase A renamed `library` → `lib`; Phase D added `backends` as a new
-# workspace member. Both must appear in this stub list so Cargo can
-# resolve the workspace manifest from inside the slim witness image
-# (which only ships rust/raft + rust/transport + rust/contracts).
-RUN for d in lib kernel services tasks cluster backends; do \
+# Phase 0 added `nexus-cdylib` as the dedicated cdylib build artifact
+# (alongside Phase A's lib rename and Phase D's backends addition);
+# Phase 4 (full) reorg moved `cluster` to `profiles/cluster` (deployment
+# profile binaries get their own folder).  Every workspace member must
+# appear here so Cargo can resolve the workspace manifest from inside
+# the slim witness image (which only ships rust/raft + rust/transport
+# + rust/transport-primitives + rust/contracts).
+RUN for d in lib kernel services tasks backends nexus-cdylib; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \
-    done
+    done && \
+    mkdir -p rust/profiles/cluster/src && \
+    printf '[package]\nname = "nexus-cluster"\nversion = "0.1.0"\nedition = "2021"\n\n[[bin]]\nname = "nexusd-cluster"\npath = "src/main.rs"\n' > rust/profiles/cluster/Cargo.toml && \
+    echo 'fn main() {}' > rust/profiles/cluster/src/main.rs
 
 # Build the witness binary
 WORKDIR /build/rust/raft

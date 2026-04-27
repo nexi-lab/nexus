@@ -33,7 +33,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 if TYPE_CHECKING:
-    from nexus_kernel import Kernel
+    from nexus_kernel import PyKernel
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class DedupWorkQueue(Generic[T]):
     holds a ``PyKernel`` handle directly rather than going through the
     ``NexusFS`` facade. It is a kernel-level primitive (a tight polling
     loop over a sequence-token pipe with no business logic), conceptually
-    the same tier as ``Kernel.create_pipe`` itself, so the
+    the same tier as ``PyKernel.create_pipe`` itself, so the
     ``self._kernel.pipe_*`` calls in this file are NOT abstraction
     violations — ``_kernel`` is the construction-time injected dependency,
     not a reach-in through a service abstraction.
@@ -73,8 +73,8 @@ class DedupWorkQueue(Generic[T]):
 
     Usage::
 
-        from nexus_kernel import Kernel
-        kernel = Kernel(...)
+        from nexus_kernel import PyKernel
+        kernel = PyKernel(...)
         q: DedupWorkQueue[str] = DedupWorkQueue(kernel=kernel)
 
         # Producer side — events coalesce by key
@@ -94,7 +94,7 @@ class DedupWorkQueue(Generic[T]):
     def __init__(
         self,
         *,
-        kernel: Kernel,
+        kernel: PyKernel,
         pipe_path: str | None = None,
         capacity: int = 65_536,
     ) -> None:

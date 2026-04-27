@@ -1,6 +1,6 @@
 """Tests for DT_STREAM — kernel IPC stream operations.
 
-All stream operations go through the Rust Kernel class.
+All stream operations go through the Rust PyKernel class.
 Covers: write/read roundtrip, replay, multi-reader, batch reads,
 capacity limits, close semantics, and stream lifecycle management.
 """
@@ -8,7 +8,7 @@ capacity limits, close semantics, and stream lifecycle management.
 import pytest
 
 try:
-    from nexus_kernel import Kernel
+    from nexus_kernel import PyKernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -20,12 +20,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _make_kernel() -> "Kernel":
-    return Kernel()
+def _make_kernel() -> "PyKernel":
+    return PyKernel()
 
 
 # ---------------------------------------------------------------------------
-# Kernel IPC Stream — basic write / read_at
+# PyKernel IPC Stream — basic write / read_at
 # ---------------------------------------------------------------------------
 
 
@@ -92,7 +92,7 @@ class TestKernelStreamBasic:
 
 
 # ---------------------------------------------------------------------------
-# Kernel IPC Stream — replay / multi-reader
+# PyKernel IPC Stream — replay / multi-reader
 # ---------------------------------------------------------------------------
 
 
@@ -158,7 +158,7 @@ class TestKernelStreamMultiReader:
 
 
 # ---------------------------------------------------------------------------
-# Kernel IPC Stream — batch reads
+# PyKernel IPC Stream — batch reads
 # ---------------------------------------------------------------------------
 
 
@@ -209,7 +209,7 @@ class TestKernelStreamBatch:
 
 
 # ---------------------------------------------------------------------------
-# Kernel IPC Stream — capacity and errors
+# PyKernel IPC Stream — capacity and errors
 # ---------------------------------------------------------------------------
 
 
@@ -239,7 +239,7 @@ class TestKernelStreamCapacity:
 
 
 # ---------------------------------------------------------------------------
-# Kernel IPC Stream — close semantics
+# PyKernel IPC Stream — close semantics
 # ---------------------------------------------------------------------------
 
 
@@ -267,7 +267,7 @@ class TestKernelStreamClose:
 
 
 # ---------------------------------------------------------------------------
-# Kernel IPC Stream — lifecycle management
+# PyKernel IPC Stream — lifecycle management
 # ---------------------------------------------------------------------------
 
 

@@ -255,7 +255,7 @@ pub(crate) fn default_chunk_assembler() -> Arc<dyn ChunkAssembler> {
 /// Name matches the Python `ChunkingStrategy` Protocol so the two sides stay
 /// aligned even though the Rust trait is write-only (reads share the single
 /// `ChunkAssembler` above since every strategy emits the same manifest format).
-pub(crate) trait ChunkingStrategy: Send + Sync {
+pub trait ChunkingStrategy: Send + Sync {
     fn should_chunk(&self, content: &[u8]) -> bool;
 
     /// Chunked write. Returns `(manifest_hash, is_new)` where `is_new`
@@ -432,7 +432,7 @@ impl ChunkingStrategy for FastCDCStrategy {
 /// Mirrors Python
 /// `nexus.backends.compute.message_chunking.MessageBoundaryStrategy`.
 #[allow(dead_code)]
-pub(crate) struct MessageBoundaryStrategy;
+pub struct MessageBoundaryStrategy;
 
 impl ChunkingStrategy for MessageBoundaryStrategy {
     fn should_chunk(&self, content: &[u8]) -> bool {

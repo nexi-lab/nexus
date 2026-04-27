@@ -1,7 +1,7 @@
 """Integration test: full write → read → expire → 404 path (Issue #3405).
 
 Tests the complete TTL lifecycle through CASAddressingEngine → VolumeLocalTransport
-→ VolumeEngine with real Rust engines (no mocks).
+→ BlobPackEngine with real Rust engines (no mocks).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import pytest
 
 def _vol_engine_available() -> bool:
     try:
-        from nexus_kernel import VolumeEngine  # noqa: F401
+        from nexus_kernel import BlobPackEngine  # noqa: F401
 
         return True
     except ImportError:
@@ -21,13 +21,13 @@ def _vol_engine_available() -> bool:
 
 
 needs_vol_engine = pytest.mark.skipif(
-    not _vol_engine_available(), reason="nexus_kernel.VolumeEngine not available"
+    not _vol_engine_available(), reason="nexus_kernel.BlobPackEngine not available"
 )
 
 
 @needs_vol_engine
 class TestTTLFullPathIntegration:
-    """End-to-end: CASAddressingEngine → VolumeLocalTransport → VolumeEngine."""
+    """End-to-end: CASAddressingEngine → VolumeLocalTransport → BlobPackEngine."""
 
     def _make_engine(self, tmp_path):
         """Create a CASAddressingEngine backed by VolumeLocalTransport."""

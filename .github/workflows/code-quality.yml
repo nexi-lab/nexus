@@ -10,6 +10,7 @@ on:
       - 'src/**/*.py'
       - 'tests/**/*.py'
       - 'rust/kernel/src/**/*.rs'
+      - 'rust/nexus-cdylib/src/**/*.rs'
       - 'scripts/codegen_kernel_abi.py'
       - 'stubs/**/*.pyi'
 

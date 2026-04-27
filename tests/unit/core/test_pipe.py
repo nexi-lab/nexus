@@ -1,6 +1,6 @@
 """Unit tests for DT_PIPE kernel IPC primitive.
 
-Tests Rust Kernel IPC pipe operations (create, read, write, close, destroy)
+Tests Rust PyKernel IPC pipe operations (create, read, write, close, destroy)
 and DT_PIPE metadata integration.
 See: rust/kernel/src/pipe.rs, rust/kernel/src/kernel.rs,
      KERNEL-ARCHITECTURE.md §6.
@@ -21,7 +21,7 @@ from nexus.core.pipe import (
 )
 
 try:
-    from nexus_kernel import Kernel
+    from nexus_kernel import PyKernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -30,12 +30,12 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not built")
 
 
-def _make_kernel() -> "Kernel":
-    return Kernel()
+def _make_kernel() -> "PyKernel":
+    return PyKernel()
 
 
 # ======================================================================
-# Kernel IPC Pipe — basic operations
+# PyKernel IPC Pipe — basic operations
 # ======================================================================
 
 
@@ -90,7 +90,7 @@ class TestKernelPipeBasic:
 
 
 # ======================================================================
-# Kernel IPC Pipe — capacity limits
+# PyKernel IPC Pipe — capacity limits
 # ======================================================================
 
 
@@ -123,7 +123,7 @@ class TestKernelPipeCapacity:
 
 
 # ======================================================================
-# Kernel IPC Pipe — close semantics
+# PyKernel IPC Pipe — close semantics
 # ======================================================================
 
 
@@ -157,7 +157,7 @@ class TestKernelPipeClose:
 
 
 # ======================================================================
-# Kernel IPC Pipe — lifecycle (create, destroy, list, close_all)
+# PyKernel IPC Pipe — lifecycle (create, destroy, list, close_all)
 # ======================================================================
 
 
@@ -232,7 +232,7 @@ class TestKernelPipeLifecycle:
 
 
 # ======================================================================
-# Kernel IPC Pipe — write/read on nonexistent pipe
+# PyKernel IPC Pipe — write/read on nonexistent pipe
 # ======================================================================
 
 
@@ -249,13 +249,13 @@ class TestKernelPipeNotFound:
 
 
 # ======================================================================
-# Kernel IPC Pipe — isolation between kernels
+# PyKernel IPC Pipe — isolation between kernels
 # ======================================================================
 
 
 class TestKernelPipeIsolation:
     def test_separate_kernels_isolated(self) -> None:
-        """Each Kernel instance has its own IPC registry."""
+        """Each PyKernel instance has its own IPC registry."""
         k1 = _make_kernel()
         k2 = _make_kernel()
         k1.create_pipe("/pipes/iso", 1024)

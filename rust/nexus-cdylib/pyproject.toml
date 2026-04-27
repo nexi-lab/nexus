@@ -1,0 +1,16 @@
+[build-system]
+requires = ["maturin>=1.7,<3.0"]
+build-backend = "maturin"
+
+[project]
+name = "nexus-kernel"
+version = "0.10.0"
+description = "Nexus Python entry-point cdylib (kernel + lib + raft composed into nexus_kernel.so)"
+requires-python = ">=3.14"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+module-name = "nexus_kernel"

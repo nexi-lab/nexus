@@ -13,7 +13,7 @@ Usage:
 
     # With Raft (mode='federation', via ZoneManager + ZoneHandle):
     import nexus_kernel
-    kernel = nexus_kernel.Kernel()
+    kernel = nexus_kernel.PyKernel()
     kernel.zone_create("root", ["2@peer:2126"])
     handle = mgr.create_zone("root", ["2@peer:2126"])
     store = RaftMetadataStore(engine=handle, zone_id="root")
@@ -107,7 +107,7 @@ class RaftMetadataStore(MetastoreABC):
 
         # With Raft (via kernel zone ops + ZoneHandle):
         import nexus_kernel
-        kernel = nexus_kernel.Kernel()
+        kernel = nexus_kernel.PyKernel()
         kernel.zone_create("root", ["2@peer:2126"])
         # Construct via embedded(); the kernel wires the per-zone handle
         # internally. Direct ZoneHandle construction is internal API.

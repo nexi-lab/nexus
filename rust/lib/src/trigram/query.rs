@@ -189,9 +189,9 @@ mod tests {
         match query {
             TrigramQuery::And(trigrams) => {
                 assert_eq!(trigrams.len(), 3);
-                assert!(trigrams.contains(&[b'h', b'e', b'l']));
-                assert!(trigrams.contains(&[b'e', b'l', b'l']));
-                assert!(trigrams.contains(&[b'l', b'l', b'o']));
+                assert!(trigrams.contains(b"hel"));
+                assert!(trigrams.contains(b"ell"));
+                assert!(trigrams.contains(b"llo"));
             }
             _ => panic!("Expected And query"),
         }
@@ -203,8 +203,8 @@ mod tests {
         let query = build_trigram_query("foo.*bar");
         match query {
             TrigramQuery::And(trigrams) => {
-                assert!(trigrams.contains(&[b'f', b'o', b'o']));
-                assert!(trigrams.contains(&[b'b', b'a', b'r']));
+                assert!(trigrams.contains(b"foo"));
+                assert!(trigrams.contains(b"bar"));
             }
             _ => panic!("Expected And query, got {:?}", query),
         }

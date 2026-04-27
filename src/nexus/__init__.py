@@ -173,9 +173,25 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
     _redb_path = Path(metadata_path).with_suffix(".redb")
 
     if kernel is None:
-        from nexus_kernel import Kernel as _Kernel
+        from nexus_kernel import PyKernel as _Kernel
 
         kernel = _Kernel()
+        # Phase 4 (full): drain the federation init's blob-fetcher slot
+        # + install the real `PeerBlobClient` (replaces the kernel's
+        # boot-time Noop default).  Idempotent — no-op if the slot
+        # was never stashed (federation disabled).
+        try:
+            import nexus_kernel as _nk
+
+            _nk.install_transport_wiring(kernel)
+        except Exception as _wiring_exc:
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "install_transport_wiring failed (federation peer-blob "
+                "fetch will fall back to Noop): %s",
+                _wiring_exc,
+            )
 
     from nexus.core.metastore import RustMetastoreProxy
 
@@ -498,12 +514,28 @@ def connect(
     _early_kernel = None
     try:
         from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
-        from nexus._rust_compat import Kernel as _Kernel
+        from nexus._rust_compat import PyKernel as _Kernel
 
         if _RUST_AVAILABLE and _Kernel is not None:
             _early_kernel = _Kernel()
-    except Exception:
-        pass
+            try:
+                import nexus_kernel as _nk
+
+                _nk.install_transport_wiring(_early_kernel)
+            except Exception as _wiring_exc:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "install_transport_wiring failed (federation peer-blob "
+                    "fetch will fall back to Noop): %s",
+                    _wiring_exc,
+                )
+    except Exception as _early_kernel_exc:
+        import logging as _logging
+
+        _logging.getLogger(__name__).debug(
+            "early kernel construction failed: %s", _early_kernel_exc
+        )
 
     # Create metadata store — kernel owns federation bootstrap since
     # R20.18.5. When federation env vars are set (NEXUS_HOSTNAME /
@@ -671,9 +703,13 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     recorded. Only meaningful in federation mode — the call requires a
     loaded Raft zone and silently skips otherwise.
 
-    Non-root zones are wired by ``kernel.zone_create(zone_id, audit=True)``
-    / ``kernel.zone_join(zone_id, as_learner, audit=True)`` directly from
-    Rust, so they do not pass through this function.
+    Phase 3 (refactor/rust-workspace-parallel-layers): the audit hook
+    moved out of the kernel crate into ``services::audit`` per the
+    parallel-layers split. The Python entry point is now a free function
+    on the ``nexus_kernel`` module — ``install_audit_hook(kernel, zone,
+    stream)`` — instead of a method on the Kernel pyclass. Service-tier
+    owns hook lifecycle; kernel only exposes the stream-prep half via
+    ``Kernel::prepare_audit_stream`` (Rust API).
     """
     kernel = getattr(nx_fs, "_kernel", None)
     if kernel is None:
@@ -683,7 +719,9 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     audit_stream_path = "/audit/traces/"
 
     try:
-        kernel.start_audit_hook(audit_zone, audit_stream_path)
+        import nexus_kernel
+
+        nexus_kernel.install_audit_hook(kernel, audit_zone, audit_stream_path)
         logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
     except RuntimeError as e:
         # Federation not active or zone not loaded — expected in standalone mode.

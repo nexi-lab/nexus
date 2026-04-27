@@ -32,8 +32,12 @@ def test_root_package_does_not_advertise_unpublished_nexus_kernel_extra() -> Non
 def test_rust_package_versions_match_main_package() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     root_payload = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+    # Phase 0 (refactor/rust-workspace-parallel-layers): the wheel-producing
+    # crate moved from `rust/kernel/` to `rust/nexus-cdylib/`. Cargo
+    # version stays sourced from kernel/Cargo.toml since both crates
+    # ship the same version in lock-step.
     rust_payload = tomllib.loads(
-        (repo_root / "rust" / "kernel" / "pyproject.toml").read_text(encoding="utf-8")
+        (repo_root / "rust" / "nexus-cdylib" / "pyproject.toml").read_text(encoding="utf-8")
     )
 
     cargo_version = None
@@ -57,7 +61,7 @@ def test_release_workflow_builds_and_publishes_nexus_kernel() -> None:
     assert "build-rust-sdist:" in workflow
     assert "publish-rust:" in workflow
     assert (
-        "maturin build --release --compatibility off --manifest-path rust/kernel/Cargo.toml"
+        "maturin build --release --compatibility off --manifest-path rust/nexus-cdylib/Cargo.toml"
         in workflow
     )
-    assert "maturin sdist --manifest-path rust/kernel/Cargo.toml --out dist" in workflow
+    assert "maturin sdist --manifest-path rust/nexus-cdylib/Cargo.toml --out dist" in workflow

@@ -486,9 +486,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.6.0"
+version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1110bd8a634a1ab8cb04345d8d878267d57c3cf1b38d91b71af6686408bbca6a"
+checksum = "f2ce8604710f6733aa641a2b3731eaa1e8b3d9973d5e3565da11800813f997a9"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1597,7 +1597,6 @@ dependencies = [
  "roaring",
  "serde",
  "serde_json",
- "services",
  "sha2",
  "simdutf8",
  "simsimd",
@@ -1608,7 +1607,7 @@ dependencies = [
  "tonic",
  "tonic-build",
  "tracing",
- "transport",
+ "transport-primitives",
  "uuid",
 ]
 
@@ -1824,6 +1823,19 @@ name = "multimap"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
+
+[[package]]
+name = "nexus-cdylib"
+version = "0.10.0"
+dependencies = [
+ "backends",
+ "kernel",
+ "lib",
+ "pyo3",
+ "raft 0.1.0",
+ "services",
+ "transport",
+]
 
 [[package]]
 name = "nexus-cluster"
@@ -2440,7 +2452,7 @@ dependencies = [
  "protoc-bin-vendored",
  "pyo3",
  "raft 0.7.0",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rcgen",
  "redb",
  "serde",
@@ -2456,7 +2468,7 @@ dependencies = [
  "tonic-build",
  "tracing",
  "tracing-subscriber",
- "transport",
+ "transport-primitives",
 ]
 
 [[package]]
@@ -2911,12 +2923,16 @@ dependencies = [
 name = "services"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "contracts",
  "dashmap",
+ "kernel",
  "parking_lot",
+ "pyo3",
  "redb",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -3519,6 +3535,32 @@ dependencies = [
 
 [[package]]
 name = "transport"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contracts",
+ "dashmap",
+ "futures",
+ "kernel",
+ "parking_lot",
+ "prost",
+ "pyo3",
+ "raft 0.1.0",
+ "rcgen",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tracing",
+ "transport-primitives",
+ "uuid",
+]
+
+[[package]]
+name = "transport-primitives"
 version = "0.1.0"
 dependencies = [
  "dashmap",

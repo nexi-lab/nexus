@@ -10,7 +10,7 @@
 # Run after: git clone, git pull, or switching branches with Rust changes.
 setup:
     @echo "Building all Rust crates..."
-    uv run maturin develop --release -m rust/kernel/Cargo.toml
+    uv run maturin develop --release -m rust/nexus-cdylib/Cargo.toml
     uv run maturin develop --release -m rust/raft/Cargo.toml
     uv run maturin develop --release -m rust/tasks/Cargo.toml
     @echo "Done. Run 'just doctor' to verify."
@@ -53,7 +53,7 @@ print(f'OK — {len(MODULE_CAPABILITY_GROUPS)} capability groups, {len(KERNEL_RE
 
 # Rebuild only kernel (fastest for Kernel-only changes).
 build-kernel:
-    uv run maturin develop --release -m rust/kernel/Cargo.toml
+    uv run maturin develop --release -m rust/nexus-cdylib/Cargo.toml
 
 # Verify generated files (stubs, kernel_exports.py, _kernel_api_groups.py) are up-to-date.
 codegen-check:

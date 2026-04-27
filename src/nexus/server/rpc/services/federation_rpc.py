@@ -109,7 +109,7 @@ class FederationRPCService:
         # with the same args.
         if target_zone:
             try:
-                self._kernel.zone_create(target_zone, False)
+                self._kernel.zone_create(target_zone)
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     raise
@@ -136,7 +136,7 @@ class FederationRPCService:
 
     @rpc_expose(admin_only=True)
     def federation_create_zone(self, zone_id: str) -> dict[str, Any]:
-        created = self._kernel.zone_create(zone_id, False)
+        created = self._kernel.zone_create(zone_id)
         return {"zone_id": created}
 
     @rpc_expose(admin_only=True)
@@ -176,7 +176,7 @@ class FederationRPCService:
 
         # Join the zone's raft group locally (snapshot install happens
         # inside the kernel apply-cb wired by `install_federation_mount_coherence`).
-        self._kernel.zone_join(zone_id, False, False)
+        self._kernel.zone_join(zone_id, False)
 
         # Mount the shared zone at `local_path` so VFS routing reaches
         # it. Derive the local parent zone via sys_stat on the parent
@@ -326,7 +326,7 @@ class FederationRPCService:
         new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
         # Ensure the target zone exists BEFORE share_subtree_core runs
         # (it requires both parent and new zones to be loaded).
-        self._kernel.zone_create(new_zone_id, False)
+        self._kernel.zone_create(new_zone_id)
         copied = self._kernel.zone_share(parent_zone_id, prefix, new_zone_id)
         # Publish to the raft-replicated share registry so peers can
         # resolve `local_path → zone_id` without a separate RPC.

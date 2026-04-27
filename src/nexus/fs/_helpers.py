@@ -174,7 +174,48 @@ def grep(
     ignore_case: bool = False,
     max_results: int = 1000,
 ) -> list[dict[str, Any]]:
-    """Search file contents for *pattern* using Rust grep_bulk + Python fallback."""
+    """Search file contents for *pattern* via the Rust ``sys_grep`` syscall.
+
+    Phase 6 / Phase 7: the entire batched-trigram-fallback flow this
+    helper used to host (~80 lines) is now a single Rust syscall.
+    `kernel.sys_grep` walks the metastore-recursive listing, reads each
+    regular file, and runs `lib::search::search_lines` against the
+    pattern.  Returns a list of `{file, line, content, match}` dicts —
+    same shape as before so existing callers keep working unchanged.
+    """
+    inner: Any = getattr(kernel, "_kernel", kernel)
+    return list(
+        inner.sys_grep(
+            pattern,
+            path,
+            ignore_case,
+            max_results,
+            LOCAL_CONTEXT.zone_id or ROOT_ZONE_ID,
+        )
+    )
+
+
+def glob(kernel: NexusFS, pattern: str, path: str = "/") -> list[str]:
+    """Find files matching *pattern* via the Rust ``sys_glob`` syscall.
+
+    Phase 6 / Phase 7: replaces the Python ``glob_match_bulk`` +
+    ``fnmatch`` fallback with a single ``kernel.sys_glob`` call —
+    metastore-recursive listing + ``lib::glob::glob_match`` happen in
+    pure Rust.
+    """
+    inner: Any = getattr(kernel, "_kernel", kernel)
+    return list(inner.sys_glob(pattern, path, LOCAL_CONTEXT.zone_id or ROOT_ZONE_ID))
+
+
+def _LEGACY_grep(
+    kernel: NexusFS,
+    pattern: str,
+    path: str = "/",
+    *,
+    ignore_case: bool = False,
+    max_results: int = 1000,
+) -> list[dict[str, Any]]:
+    """Legacy Python-side grep — retained as a fallback only."""
     import re
 
     flags = re.IGNORECASE if ignore_case else 0
@@ -188,81 +229,33 @@ def grep(
         e["path"] for e in entries if isinstance(e, dict) and not e.get("is_directory", False)
     ]
 
-    file_paths = all_files
-    index_path = _ensure_trigram_index(kernel, all_files, LOCAL_CONTEXT.zone_id or ROOT_ZONE_ID)
-    if index_path is not None:
-        narrowed = _trigram_candidates(index_path, pattern, path, ignore_case)
-        if narrowed is not None:
-            file_paths = narrowed
-
     matches: list[dict[str, Any]] = []
-    _BATCH_SIZE = 64
-    _rust_grep: Any = None
-    _has_rust_grep = False
-    try:
-        from nexus_kernel import grep_bulk
-
-        _rust_grep = grep_bulk
-        _has_rust_grep = True
-    except (ImportError, OSError):
-        pass
-
-    for batch_start in range(0, len(file_paths), _BATCH_SIZE):
+    for fp in all_files:
         if len(matches) >= max_results:
             break
-        batch = file_paths[batch_start : batch_start + _BATCH_SIZE]
-        batch_contents: dict[str, bytes] = {}
-        for fp in batch:
-            try:
-                batch_contents[fp] = kernel.sys_read(fp, context=LOCAL_CONTEXT)
-            except Exception:
-                continue
-
-        if not batch_contents:
+        try:
+            content = kernel.sys_read(fp, context=LOCAL_CONTEXT)
+        except Exception:
             continue
-
-        remaining = max_results - len(matches)
-
-        if _has_rust_grep:
-            try:
-                batch_results = _rust_grep(pattern, batch_contents, ignore_case, remaining)
-                if batch_results is not None:
-                    matches.extend(batch_results)
-                    continue
-            except (ValueError, RuntimeError):
-                pass
-
-        for fp, content in batch_contents.items():
-            try:
-                text = content.decode("utf-8", errors="replace")
-            except Exception:
-                continue
-            for line_no, line in enumerate(text.splitlines(), 1):
-                m = compiled.search(line)
-                if m:
-                    matches.append(
-                        {"file": fp, "line": line_no, "content": line, "match": m.group(0)}
-                    )
-                    if len(matches) >= max_results:
-                        return matches
+        try:
+            text = content.decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        for line_no, line in enumerate(text.splitlines(), 1):
+            m = compiled.search(line)
+            if m:
+                matches.append({"file": fp, "line": line_no, "content": line, "match": m.group(0)})
+                if len(matches) >= max_results:
+                    return matches
     return matches
 
 
-def glob(kernel: NexusFS, pattern: str, path: str = "/") -> list[str]:
-    """Find files matching *pattern* using Rust glob_match_bulk with Python fallback."""
+def _LEGACY_glob(kernel: NexusFS, pattern: str, path: str = "/") -> list[str]:
+    """Legacy Python-side glob — retained as a fallback only."""
     entries = kernel.sys_readdir(path, recursive=True, details=False, context=LOCAL_CONTEXT)
     all_paths = [e for e in entries if isinstance(e, str)]
     if not all_paths:
         return []
-
-    try:
-        from nexus_kernel import glob_match_bulk as _rust_glob
-
-        results = _rust_glob([pattern], all_paths)
-        if results is not None:
-            return list(results)
-    except (ImportError, OSError, ValueError, RuntimeError):
-        pass
 
     import fnmatch
 

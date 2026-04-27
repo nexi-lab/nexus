@@ -327,11 +327,33 @@ ObjectStoreABC directly by etag, bypassing path resolution and metadata lookup.
 NexusFS abstracts storage by **Capability** (access pattern + consistency guarantee),
 not by domain or implementation.
 
-| Pillar | ABC | Capability | Kernel Role | Package |
-|--------|-----|------------|-------------|---------|
-| **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param | `core.metastore` |
-| **ObjectStore** | `ObjectStoreABC` (= `Backend`) | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted via `nx.mount()` | `core.object_store` |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — defaults to `NullCacheStore` | `contracts.cache_store` |
+| Pillar | ABC (Python) | Trait (Rust) | Capability | Kernel Role | Package |
+|--------|-----|------|------------|-------------|---------|
+| **Metastore** | `MetastoreABC` | `MetaStore` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param | `core.metastore` / `kernel/src/abc/metastore.rs` |
+| **ObjectStore** | `ObjectStoreABC` (= `Backend`) | `ObjectStore` | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted via `nx.mount()` | `core.object_store` / `kernel/src/abc/object_store.rs` |
+| **CacheStore** | `CacheStoreABC` | `CacheStore` | Ephemeral KV, Pub/Sub, TTL | **Optional** — defaults to `NullCacheStore` | `contracts.cache_store` / `kernel/src/abc/cache_store.rs` |
+
+**Rust naming note:** the Rust trait `MetaStore` (two-word PascalCase)
+matches `ObjectStore` / `CacheStore` for visual symmetry across the
+three ABC pillars.  Phase 0.5 of
+`refactor/rust-workspace-parallel-layers` renamed the Rust trait from
+`Metastore` (one word) to `MetaStore` (two words); the Python ABC
+stays `MetastoreABC` because the Python tier is on a sunset path and
+not worth ripple-renaming.  The cross-language asymmetry is anchored
+at exactly one PyO3 boundary
+(`raft/src/pyo3_bindings.rs`'s `#[pyclass(name = "Metastore")]`),
+which disappears wholesale when the Rust-ification of every
+Metastore caller (Phase J / `kernel.sys_*` syscalls) retires the
+last Python `MetastoreABC` reference.
+
+**Rust-side strict layout:** `kernel/src/abc/` contains **exactly the
+3 §3 ABC pillar trait files**, period — no extension interfaces, no
+helper traits.  Kernel-defined extension interfaces that aren't §3
+pillars (LSM-style hooks like `LlmStreamingBackend`,
+`PeerBlobClient`) live in `kernel/src/hal/`.  Kernel primitives (§4)
+live in `kernel/src/core/` and never declare traits.  The
+3-way split is enforced by directory layout — anything inside
+`abc/` is a §3 pillar, anything else isn't.
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars =
 interchangeable drivers (deployment-time config). See `data-storage-matrix.md`.
@@ -599,20 +621,96 @@ Any layer may import from them; they must **not** import from `nexus.core`,
 
 ### Python ↔ Rust Crate Mapping
 
-Both tier-neutral packages have a Rust mirror. Names match so a reader
+Both tier-neutral packages have a Rust mirror.  Names match so a reader
 jumping between the two trees finds the same module in the same place.
 
-| Tier-neutral package | Python                | Rust crate (workspace member)             |
-|----------------------|-----------------------|-------------------------------------------|
-| `contracts`          | `src/nexus/contracts` | `rust/contracts/`                         |
-| `lib`                | `src/nexus/lib`       | `rust/lib/` (Phase A — formerly `library/`) |
+| Tier-neutral package | Python                | Rust crate         |
+|----------------------|-----------------------|--------------------|
+| `contracts`          | `src/nexus/contracts` | `rust/contracts/`  |
+| `lib`                | `src/nexus/lib`       | `rust/lib/`        |
 
-`rust/lib/` is WASM-clean by default; PyO3 wrappers for the algorithms
-live behind the optional `python` feature in `rust/lib/src/python/*.rs`
-(rebac, search, trigram, glob, io, prefix, simd, path_utils, bitmap,
-bloom, hash). The kernel cdylib enables that feature so
-`nexus_kernel`'s `#[pymodule]` delegates the algorithm-wrapper
-registration to a single `lib::python::register(m)` call.
+`rust/lib/` builds against `wasm32-unknown-unknown` with default features.
+PyO3 wrappers for the algorithms (rebac, search, trigram, glob, io,
+prefix, simd, path_utils, bitmap, bloom, hash) live behind the optional
+`python` feature in `rust/lib/src/python/*.rs`.  `rust/nexus-cdylib`
+enables that feature so the wheel registers them through a single
+`lib::python::register(m)` call.
+
+### 6.1 Workspace composition
+
+The Rust workspace splits into three roles:
+
+| Role            | Cargo type   | Purpose                                                                  |
+|-----------------|--------------|--------------------------------------------------------------------------|
+| Library crates  | `rlib`       | Compose into Python wheel + standalone binaries.                         |
+| Wheel artifact  | `cdylib`     | `rust/nexus-cdylib/` — produces `nexus_kernel.so` / `.pyd` for Python.   |
+| Profile binary  | binary       | `rust/profiles/<name>/` — standalone deployment binaries (see §7.1).     |
+
+The Linux analogue is `make bzImage`: rlibs compile into one of two
+final artifacts (Python wheel or deployment binary) the same way
+`fs/built-in.a` and `kernel/built-in.a` link into `vmlinuz`.
+
+#### Wheel composition
+
+`rust/nexus-cdylib/src/lib.rs` is the sole `#[pymodule] fn
+nexus_kernel`; it aggregates each peer's PyO3 surface through that
+peer's `python::register` entry:
+
+```rust
+#[pymodule]
+fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
+    lib::python::register(m)?;
+    kernel::python::register(m)?;
+    nexus_raft::pyo3_bindings::register_python_classes(m)?;
+    services::python::register(m)?;
+    backends::python::register(m)?;
+    transport::python::register(m)?;
+    Ok(())
+}
+```
+
+This split lets each peer crate depend on `kernel` (for trait
+declarations: `abc::ObjectStore`, `hal::peer::PeerBlobClient`, …)
+while the wheel-side dependency `nexus-cdylib → {kernel, peers}`
+flows in only one direction.
+
+#### Dependency direction
+
+```text
+              contracts                       (zero deps)
+                  ↑
+                 lib                          (depends on contracts)
+                  ↑
+        transport-primitives                  (low-level TLS / pool /
+                  ↑                            addressing; depends on
+                  │                            contracts)
+               kernel                         (depends on contracts + lib +
+                  ↑                            transport-primitives + raft)
+          ↑    ↑    ↑    ↑
+          │    │    │    │
+  backends services transport raft            (peers — depend on kernel +
+          ↑    ↑    ↑    ↑                    transport-primitives)
+          │    │    │    │
+          └────┴────┴────┴──── nexus-cdylib   (Python wheel sink)
+
+                                  raft         (used by profile binaries)
+                                   ↑
+                          rust/profiles/cluster (deployment binary sink)
+```
+
+Edge invariants:
+
+| Edge                                | Direction                                  |
+|-------------------------------------|--------------------------------------------|
+| `services` / `backends` / `transport` / `raft` | siblings; no cross-edges               |
+| `kernel ↔ lib`                      | one-way: `kernel → lib`                    |
+| `raft ↔ transport`                  | one-way: `raft → transport-primitives`     |
+| `nexus-cdylib`                      | sink (Python wheel)                        |
+| `rust/profiles/<name>`              | sink (deployment binary)                   |
+
+The first edge keeps lib WASM-clean.  The second is the cycle-break
+that lets transport own kernel-bound code while raft keeps a
+kernel-free dependency footprint.
 
 ### Placement Decision Tree
 
@@ -657,6 +755,24 @@ REMOTE is orthogonal — stateless proxy, all operations via gRPC to server.
 
 Same kernel binary, different driver injection. See §1 `connect()`.
 **Source of truth:** `src/nexus/contracts/deployment_profile.py`.
+
+### 7.1 Profile binaries (`rust/profiles/`)
+
+A profile that runs as its own OS process lives under `rust/profiles/<name>/`
+and produces a standalone deployment binary `nexusd-<name>`:
+
+| Profile  | Crate                       | Binary             |
+|----------|-----------------------------|--------------------|
+| cluster  | `rust/profiles/cluster/`    | `nexusd-cluster`   |
+
+The crate composes the rlibs needed for that profile (e.g. `cluster`
+links `raft + contracts` only — no kernel, no Python interpreter), so
+each binary lands at the size floor for the features it ships.
+
+`rust/nexus-cdylib/` lives at workspace top level rather than under
+`profiles/` because the Python wheel is a different artifact category:
+it loads into an external Python process, where profile binaries each
+run as their own process.
 
 ---
 

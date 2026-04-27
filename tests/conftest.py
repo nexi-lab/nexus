@@ -198,11 +198,24 @@ def make_test_nexus(
         # kernel + redb file under tmp_path. ``use_raft`` is now redundant
         # but kept for API compatibility.
         del use_raft
-        from nexus_kernel import Kernel as _Kernel
+        from nexus_kernel import PyKernel as _Kernel
 
         from nexus.core.metastore import RustMetastoreProxy
 
         _kernel = _Kernel()
+        # Phase 4 (full): drain federation's blob-fetcher slot + install
+        # the real `PeerBlobClient` so cross-node fetches work even
+        # inside test fixtures that exercise federation.
+        try:
+            import nexus_kernel as _nk
+
+            _nk.install_transport_wiring(_kernel)
+        except Exception as _wiring_exc:
+            import logging as _logging
+
+            _logging.getLogger(__name__).debug(
+                "install_transport_wiring failed in test fixture: %s", _wiring_exc
+            )
         metadata_store = RustMetastoreProxy(_kernel, str(tmp_path / "metastore.redb"))
 
     if backend is None:

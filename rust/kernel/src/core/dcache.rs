@@ -23,20 +23,20 @@ pub(crate) const DT_STREAM: u8 = 4;
 /// Hot-path projection of FileMetadata.
 #[derive(Clone, Debug, Default)]
 #[allow(dead_code)]
-pub(crate) struct CachedEntry {
-    pub(crate) size: u64,
-    pub(crate) etag: Option<String>,
-    pub(crate) version: u32,
-    pub(crate) entry_type: u8,
-    pub(crate) zone_id: Option<String>,
-    pub(crate) mime_type: Option<String>,
-    pub(crate) created_at_ms: Option<i64>,
-    pub(crate) modified_at_ms: Option<i64>,
-    pub(crate) last_writer_address: Option<String>,
+pub struct CachedEntry {
+    pub size: u64,
+    pub etag: Option<String>,
+    pub version: u32,
+    pub entry_type: u8,
+    pub zone_id: Option<String>,
+    pub mime_type: Option<String>,
+    pub created_at_ms: Option<i64>,
+    pub modified_at_ms: Option<i64>,
+    pub last_writer_address: Option<String>,
 }
 
-impl From<&crate::metastore::FileMetadata> for CachedEntry {
-    fn from(m: &crate::metastore::FileMetadata) -> Self {
+impl From<&crate::meta_store::FileMetadata> for CachedEntry {
+    fn from(m: &crate::meta_store::FileMetadata) -> Self {
         Self {
             size: m.size,
             etag: m.etag.clone(),
@@ -54,7 +54,7 @@ impl From<&crate::metastore::FileMetadata> for CachedEntry {
 /// Dentry cache — owned directly by Kernel.
 ///
 /// All methods take `&self` (DashMap provides interior mutability).
-pub(crate) struct DCache {
+pub struct DCache {
     cache: DashMap<String, CachedEntry>,
     hits: AtomicU64,
     misses: AtomicU64,
@@ -72,7 +72,7 @@ impl DCache {
     // ── Read methods (used by Kernel plan_*/sys_*) ────────────────────────
 
     /// Get a full CachedEntry clone (updates hit/miss counters).
-    pub(crate) fn get_entry(&self, path: &str) -> Option<CachedEntry> {
+    pub fn get_entry(&self, path: &str) -> Option<CachedEntry> {
         match self.cache.get(path) {
             Some(entry) => {
                 self.hits.fetch_add(1, Ordering::Relaxed);

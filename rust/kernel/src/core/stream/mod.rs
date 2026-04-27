@@ -18,6 +18,7 @@
 //   core/stream/stdio.rs    — StdioStreamBackend  (was kernel/src/stdio_stream.rs)
 //   core/stream/remote.rs   — RemoteStreamBackend (was kernel/src/remote_stream.rs)
 //   core/stream/wal.rs      — WalStreamCore       (was kernel/src/wal_stream.rs)
+pub mod backend;
 pub mod manager;
 pub mod observer;
 pub mod remote;
@@ -61,13 +62,16 @@ unsafe impl Send for MemoryStreamBackend {}
 unsafe impl Sync for MemoryStreamBackend {}
 
 // ---------------------------------------------------------------------------
-// StreamBackend / StreamError now live in `crate::core::traits::stream_backend`
-// (Phase B). Re-exported here so `crate::stream::StreamBackend` /
-// `crate::stream::StreamError` paths used throughout the kernel keep
-// resolving without per-caller churn.
+// StreamBackend / StreamError live in this directory's `backend.rs` sub-file
+// (Phase 1 — moved out of the now-deleted `core/traits/`).  The trait is
+// kernel-internal — not a §3 ABC pillar, just an abstraction for the IPC
+// subsystem — so it sits with its primitive impl rather than under
+// `crate::abc/` or `crate::hal/`.  Re-exported here so
+// `crate::stream::StreamBackend` / `crate::stream::StreamError` paths used
+// throughout the kernel keep resolving without per-caller churn.
 // ---------------------------------------------------------------------------
 
-pub(crate) use crate::core::traits::stream_backend::{StreamBackend, StreamError};
+pub(crate) use backend::{StreamBackend, StreamError};
 
 // ---------------------------------------------------------------------------
 // StreamBackend impl for MemoryStreamBackend

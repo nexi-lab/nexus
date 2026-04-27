@@ -35,13 +35,19 @@ impl StreamNotify {
 // ---------------------------------------------------------------------------
 
 /// Registry of active DT_STREAM buffers with blocking wait support.
-pub(crate) struct StreamManager {
+pub struct StreamManager {
     buffers: DashMap<String, Arc<dyn StreamBackend>>,
     notify: DashMap<String, Arc<StreamNotify>>,
 }
 
+impl Default for StreamManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamManager {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             buffers: DashMap::new(),
             notify: DashMap::new(),
@@ -49,7 +55,7 @@ impl StreamManager {
     }
 
     /// Create a new in-memory stream backend and register it.
-    pub(crate) fn create(&self, path: &str, capacity: usize) -> Result<(), StreamManagerError> {
+    pub fn create(&self, path: &str, capacity: usize) -> Result<(), StreamManagerError> {
         if self.buffers.contains_key(path) {
             return Err(StreamManagerError::Exists(path.to_string()));
         }
@@ -62,7 +68,7 @@ impl StreamManager {
 
     /// Register an external backend (SHM, gRPC, etc.).
     #[allow(dead_code)]
-    pub(crate) fn register(
+    pub fn register(
         &self,
         path: &str,
         backend: Arc<dyn StreamBackend>,
@@ -77,7 +83,7 @@ impl StreamManager {
     }
 
     /// Destroy a stream — close, notify waiters, and remove from registry.
-    pub(crate) fn destroy(&self, path: &str) -> Result<(), StreamManagerError> {
+    pub fn destroy(&self, path: &str) -> Result<(), StreamManagerError> {
         match self.buffers.remove(path) {
             Some((_, buf)) => {
                 buf.close();
@@ -92,7 +98,7 @@ impl StreamManager {
     }
 
     /// Signal close (keep in registry for drain).
-    pub(crate) fn close(&self, path: &str) -> Result<(), StreamManagerError> {
+    pub fn close(&self, path: &str) -> Result<(), StreamManagerError> {
         match self.buffers.get(path) {
             Some(buf) => {
                 buf.close();
@@ -107,16 +113,12 @@ impl StreamManager {
     }
 
     /// Check if a stream exists.
-    pub(crate) fn has(&self, path: &str) -> bool {
+    pub fn has(&self, path: &str) -> bool {
         self.buffers.contains_key(path)
     }
 
     /// Non-blocking write. Returns byte offset.
-    pub(crate) fn write_nowait(
-        &self,
-        path: &str,
-        data: &[u8],
-    ) -> Result<usize, StreamManagerError> {
+    pub fn write_nowait(&self, path: &str, data: &[u8]) -> Result<usize, StreamManagerError> {
         let buf = self
             .buffers
             .get(path)
@@ -145,7 +147,7 @@ impl StreamManager {
     }
 
     /// Read one message at byte offset. Returns (data, next_offset) or None if empty.
-    pub(crate) fn read_at(
+    pub fn read_at(
         &self,
         path: &str,
         offset: usize,
@@ -166,7 +168,7 @@ impl StreamManager {
     ///
     /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
     #[allow(dead_code)]
-    pub(crate) fn read_at_blocking(
+    pub fn read_at_blocking(
         &self,
         path: &str,
         offset: usize,
@@ -233,7 +235,7 @@ impl StreamManager {
     }
 
     /// Read up to `count` messages starting from byte offset.
-    pub(crate) fn read_batch(
+    pub fn read_batch(
         &self,
         path: &str,
         offset: usize,
@@ -257,7 +259,7 @@ impl StreamManager {
     /// Returns empty Vec if the stream has no data. Used by Python LLM
     /// backends for `collect_all + CAS persist` pattern after the producer
     /// finishes pumping tokens.
-    pub(crate) fn collect_all_payloads(&self, path: &str) -> Result<Vec<u8>, StreamManagerError> {
+    pub fn collect_all_payloads(&self, path: &str) -> Result<Vec<u8>, StreamManagerError> {
         let buf = self
             .buffers
             .get(path)
@@ -279,7 +281,7 @@ impl StreamManager {
     }
 
     /// Get a backend reference (for sys_read/sys_write fast-path).
-    pub(crate) fn get(&self, path: &str) -> Option<Arc<dyn StreamBackend>> {
+    pub fn get(&self, path: &str) -> Option<Arc<dyn StreamBackend>> {
         self.buffers.get(path).map(|r| Arc::clone(r.value()))
     }
 
@@ -292,7 +294,7 @@ impl StreamManager {
     /// Non-destructive: `from` is not modified (DT_STREAM reads are always
     /// offset-based, never consuming).
     #[allow(dead_code)]
-    pub(crate) fn forward(
+    pub fn forward(
         &self,
         from: &str,
         to: &str,
@@ -333,12 +335,12 @@ impl StreamManager {
     }
 
     /// List all stream paths.
-    pub(crate) fn list(&self) -> Vec<String> {
+    pub fn list(&self) -> Vec<String> {
         self.buffers.iter().map(|r| r.key().clone()).collect()
     }
 
     /// Close all streams (shutdown).
-    pub(crate) fn close_all(&self) {
+    pub fn close_all(&self) {
         for entry in self.buffers.iter() {
             entry.value().close();
         }
@@ -355,7 +357,7 @@ impl StreamManager {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub(crate) enum StreamManagerError {
+pub enum StreamManagerError {
     Exists(String),
     NotFound(String),
     Closed(String),

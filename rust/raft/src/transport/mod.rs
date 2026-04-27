@@ -198,9 +198,11 @@ fn proto_result_to_command_result(
 // so `transport` is always available here.
 // ---------------------------------------------------------------------------
 #[cfg(feature = "grpc")]
-pub use transport::{hostname_to_node_id, NodeAddress, PeerAddress, TlsConfig, TransportError};
+pub use transport_primitives::{
+    hostname_to_node_id, NodeAddress, PeerAddress, TlsConfig, TransportError,
+};
 #[cfg(feature = "grpc")]
-pub type Result<T> = transport::Result<T>;
+pub type Result<T> = transport_primitives::Result<T>;
 
 /// Shared peer map that can be updated at runtime (e.g., when new nodes join via ConfChange).
 ///

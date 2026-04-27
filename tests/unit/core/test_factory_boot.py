@@ -36,7 +36,7 @@ from nexus.lib.performance_tuning import resolve_profile_tuning
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Issue #2193: Kernel returns empty dict (validation only)
+# Issue #2193: PyKernel returns empty dict (validation only)
 EXPECTED_KERNEL_KEYS: frozenset[str] = frozenset()
 
 # Issue #2193: System tier now has former-kernel + original system keys
@@ -401,10 +401,10 @@ class TestBrickServicesFieldCompleteness:
         record_store.database_url = "sqlite://"
         record_store.async_session_factory = MagicMock()
 
-        from nexus_kernel import Kernel
+        from nexus_kernel import PyKernel
 
         metadata_store = MagicMock()
-        metadata_store._kernel = Kernel()
+        metadata_store._kernel = PyKernel()
 
         backend = MagicMock()
         backend.root_path = "/tmp/test"
@@ -453,10 +453,10 @@ class TestBrickServicesFieldCompleteness:
         record_store.database_url = "sqlite://"
         record_store.async_session_factory = MagicMock()
 
-        from nexus_kernel import Kernel
+        from nexus_kernel import PyKernel
 
         metadata_store = MagicMock()
-        metadata_store._kernel = Kernel()
+        metadata_store._kernel = PyKernel()
 
         backend = MagicMock()
         backend.root_path = "/tmp/test"

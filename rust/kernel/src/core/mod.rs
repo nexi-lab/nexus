@@ -1,17 +1,25 @@
-//! Kernel `core/` — primitives + HAL trait declarations.
+//! Kernel `core/` — kernel primitives only (§4 of
+//! `docs/architecture/KERNEL-ARCHITECTURE.md`).
 //!
-//! Per `docs/architecture/KERNEL-ARCHITECTURE.md` §3 / §4, the kernel
-//! crate hosts both kernel primitives (vfs_router, dlc, dcache,
-//! service_registry, file_watch, lock manager, dispatch) and the HAL
-//! trait declarations that the parallel `backends/`, `services/`,
-//! `transport/`, `raft/` crates implement.
+//! Phase 1 enforced a strict 3-way split inside `kernel/src/`:
 //!
-//! Phase C nested every kernel-internal pillar under this module so
-//! the kernel-only file set is unambiguous. The `lib.rs` crate root
-//! still exposes the pre-Phase-C flat names (`crate::vfs_router::*`,
-//! `crate::pipe::*`, `crate::stream::*`, …) via `pub use core::… as
-//! <flat>` shims, so callers do not churn during Phase C–G; later
-//! phases retire the shims as impls migrate to parallel crates.
+//! * `crate::abc::*` — §3 ABC pillars (`ObjectStore`, `MetaStore`,
+//!   `CacheStore`).  Three trait files, period.
+//! * `crate::hal::*` — kernel-defined extension interfaces that aren't
+//!   §3 pillars (`LlmStreamingBackend`, `PeerBlobClient`).
+//! * `crate::core::*` — §4 kernel primitives (this module).  No traits,
+//!   no extension interfaces — only the runtime mechanisms the syscall
+//!   layer needs (vfs_router, dlc, dcache, locks, dispatch, plus the
+//!   in-memory reference impls of the §3 pillars that are too small to
+//!   justify their own crate).
+//!
+//! The `lib.rs` crate root still exposes the pre-Phase-C flat names
+//! (`crate::vfs_router::*`, `crate::pipe::*`, `crate::stream::*`, …)
+//! via `pub use core::… as <flat>` shims, so callers do not churn;
+//! later phases retire the shims as impls migrate to parallel crates.
+
+// §4.0 — agent table SSOT (Phase 3 moved here from services/).
+pub mod agents;
 
 // §4.1 — VFS routing + dcache + DLC mount lifecycle.
 pub mod dcache;
@@ -28,12 +36,12 @@ pub mod lock;
 // §4.5 — dispatch + hook / observer registry.
 pub mod dispatch;
 
-// §4.6 — metastore pillar (trait + memory + remote proxy).
-pub mod metastore;
+// §4.6 — metastore primitive impls (MemoryMetaStore + LocalMetaStore +
+// remote proxy).  The trait declaration itself lives in
+// `crate::abc::meta_store` after Phase 1; this module only holds the
+// kernel-internal concrete impls.
+pub mod meta_store;
 
 // §4.2 — DT_PIPE / DT_STREAM IPC pillars.
 pub mod pipe;
 pub mod stream;
-
-// §3 — HAL trait declarations consumed by parallel crates.
-pub mod traits;

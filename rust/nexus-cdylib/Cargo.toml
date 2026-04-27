@@ -1,0 +1,53 @@
+[package]
+name = "nexus-cdylib"
+version = "0.10.0"
+edition = "2021"
+description = "Python entry-point cdylib (produces nexus_kernel.so / nexus_kernel.pyd). Composes the kernel + lib + raft (and later backends/services/transport) rlibs into the single shared object Python imports as `nexus_kernel`. Build artifact only — not an architectural tier; see KERNEL-ARCHITECTURE.md §6.1."
+
+[lib]
+# Wheel module name stays `nexus_kernel` so existing
+# `from nexus_kernel import …` imports keep working unchanged.
+name = "nexus_kernel"
+crate-type = ["cdylib"]
+
+[dependencies]
+# kernel sits behind workspace `default-features = false` (so
+# `backends`, `services`, etc. depending on the rlib do not pull
+# kernel runtime defaults like the global mimalloc allocator).
+# nexus-cdylib re-enables those defaults explicitly — this is the
+# only build artifact that owns the `nexus_kernel` runtime.
+kernel = { workspace = true, features = [
+    "mimalloc",
+    "connectors",
+    "py-hook-adapters",
+] }
+lib = { workspace = true, features = ["python"] }
+# `raft` already enters the workspace dep map with
+# `features = ["python", "grpc"]` — nothing to add.
+raft = { workspace = true }
+# Phase 3: services with the `python` feature enabled so its PyO3
+# entry points (currently `install_audit_hook`) compose into the
+# single `nexus_kernel.so` cdylib.
+services = { workspace = true, features = ["python"] }
+# Phase 2: backends with the `python` feature enabled so the
+# `BlobPackEngine` pyclass + `DefaultBackendFactory` registration
+# compose into the single `nexus_kernel.so` cdylib.  This is the
+# crate that owns the 17-way `BackendFactory::build` switch the
+# kernel calls through `kernel::hal::backend_factory::get_factory()`.
+backends = { workspace = true, features = ["python"] }
+# Phase 4 (full): transport with `python` feature enabled — registers
+# `PyVfsGrpcServerHandle`, `start_vfs_grpc_server`, `PyFederationClient`
+# into nexus_kernel module + installs the kernel-side
+# peer-blob-client + blob-fetcher wiring (DI for the moved files).
+transport = { workspace = true, features = ["python"] }
+# Sole crate that enables `extension-module`. Cargo unifies pyo3
+# features across the workspace, so every transitive pyo3 user
+# (kernel, lib, raft, backends, …) sees the cdylib-correct
+# linkage shape: pyo3 does NOT link libpython itself; the .so is
+# loaded by the running Python which provides the symbols.
+pyo3 = { version = "0.27.2", features = ["extension-module"] }
+
+[features]
+# Pass-through for the optional `nostr` backend so Docker / CI
+# `--features nostr` flags keep working at the new entry point.
+nostr = ["kernel/nostr"]

@@ -14,16 +14,16 @@ from __future__ import annotations
 import pytest
 
 # ======================================================================
-# Kernel IPC pipe read/write (replaces PipeManager tests)
+# PyKernel IPC pipe read/write (replaces PipeManager tests)
 # ======================================================================
 
 
 class TestKernelPipeReadWrite:
     def _make_kernel(self):
-        """Create a Rust Kernel instance for IPC testing."""
-        from nexus_kernel import Kernel
+        """Create a Rust PyKernel instance for IPC testing."""
+        from nexus_kernel import PyKernel
 
-        return Kernel()
+        return PyKernel()
 
     def test_pipe_write_then_read(self) -> None:
         kernel = self._make_kernel()

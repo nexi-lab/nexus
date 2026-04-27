@@ -18,11 +18,11 @@ _PIPE_PRIMITIVES = {m for m in KERNEL_REQUIRED_METHODS if "pipe" in m}
 class TestPipeTierPlacement:
     """pipe.py (PipeBackend protocol + exceptions) is a kernel VFS primitive — stays in core/.
     PipeManager (fs/pipe.c equivalent) is now a Rust-native kernel primitive exposed via
-    nexus_kernel.Kernel — no Python module for it.
+    nexus_kernel.PyKernel — no Python module for it.
 
     Issue #2366: PipeManager is a kernel primitive per KERNEL-ARCHITECTURE.md.
     Post IPC-Rust-ification (2026-04-07): PipeManager lives in the Rust kernel binary,
-    accessed through nexus_kernel.Kernel.{create_pipe, destroy_pipe, pipe_read_nowait,
+    accessed through nexus_kernel.PyKernel.{create_pipe, destroy_pipe, pipe_read_nowait,
     pipe_write_nowait, ...}.
     """
 
@@ -31,16 +31,16 @@ class TestPipeTierPlacement:
         assert hasattr(mod, "PipeBackend")
 
     def test_pipe_manager_in_rust_kernel(self) -> None:
-        """All pipe primitives in KERNEL_REQUIRED_METHODS must exist on nexus_kernel.Kernel.
+        """All pipe primitives in KERNEL_REQUIRED_METHODS must exist on nexus_kernel.PyKernel.
 
         Method list is sourced from _kernel_api_groups.py (auto-generated),
         so this test and the runtime check in _rust_compat.py stay in sync.
         """
         nexus_kernel = importlib.import_module("nexus_kernel")
-        kernel_cls = nexus_kernel.Kernel
+        kernel_cls = nexus_kernel.PyKernel
         for method in _PIPE_PRIMITIVES:
             assert hasattr(kernel_cls, method), (
-                f"nexus_kernel.Kernel missing pipe primitive: {method}"
+                f"nexus_kernel.PyKernel missing pipe primitive: {method}"
             )
 
 

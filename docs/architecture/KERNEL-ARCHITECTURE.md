@@ -621,110 +621,96 @@ Any layer may import from them; they must **not** import from `nexus.core`,
 
 ### Python ↔ Rust Crate Mapping
 
-Both tier-neutral packages have a Rust mirror. Names match so a reader
+Both tier-neutral packages have a Rust mirror.  Names match so a reader
 jumping between the two trees finds the same module in the same place.
 
-| Tier-neutral package | Python                | Rust crate (workspace member)             |
-|----------------------|-----------------------|-------------------------------------------|
-| `contracts`          | `src/nexus/contracts` | `rust/contracts/`                         |
-| `lib`                | `src/nexus/lib`       | `rust/lib/` (Phase A — formerly `library/`) |
+| Tier-neutral package | Python                | Rust crate         |
+|----------------------|-----------------------|--------------------|
+| `contracts`          | `src/nexus/contracts` | `rust/contracts/`  |
+| `lib`                | `src/nexus/lib`       | `rust/lib/`        |
 
-`rust/lib/` is WASM-clean by default; PyO3 wrappers for the algorithms
-live behind the optional `python` feature in `rust/lib/src/python/*.rs`
-(rebac, search, trigram, glob, io, prefix, simd, path_utils, bitmap,
-bloom, hash). The cdylib (see §6.1) enables that feature so
-`nexus_kernel`'s `#[pymodule]` delegates the algorithm-wrapper
-registration to a single `lib::python::register(m)` call.
+`rust/lib/` builds against `wasm32-unknown-unknown` with default features.
+PyO3 wrappers for the algorithms (rebac, search, trigram, glob, io,
+prefix, simd, path_utils, bitmap, bloom, hash) live behind the optional
+`python` feature in `rust/lib/src/python/*.rs`.  `rust/nexus-cdylib`
+enables that feature so the wheel registers them through a single
+`lib::python::register(m)` call.
 
-### 6.1 `nexus-cdylib` — Build Artifact, Not an Architectural Tier
+### 6.1 Workspace composition
 
-The Linux kernel has `make bzImage`: it bundles `vmlinuz` + the
-statically-linked drivers + initrd into a single bootable image.
-The image is a **build artifact**, not a tier — booting from it
-gives you the same kernel/driver split you wrote in the source
-tree.
+The Rust workspace splits into three roles:
 
-Nexus has the same shape. `rust/nexus-cdylib/` is the workspace's
-sole `crate-type = ["cdylib"]` crate; its `[lib] name =
-"nexus_kernel"` produces the `nexus_kernel.so` (Linux) /
-`nexus_kernel.pyd` (Windows) Python imports as `import nexus_kernel`.
-**Every other crate is `rlib`-only** — including `kernel` itself,
-which used to be the cdylib until Phase 0 of
-`refactor/rust-workspace-parallel-layers` factored the cdylib out
-into its own crate.
+| Role            | Cargo type   | Purpose                                                                  |
+|-----------------|--------------|--------------------------------------------------------------------------|
+| Library crates  | `rlib`       | Compose into Python wheel + standalone binaries.                         |
+| Wheel artifact  | `cdylib`     | `rust/nexus-cdylib/` — produces `nexus_kernel.so` / `.pyd` for Python.   |
+| Profile binary  | binary       | `rust/profiles/<name>/` — standalone deployment binaries (see §7.1).     |
 
-#### Why a separate cdylib crate
+The Linux analogue is `make bzImage`: rlibs compile into one of two
+final artifacts (Python wheel or deployment binary) the same way
+`fs/built-in.a` and `kernel/built-in.a` link into `vmlinuz`.
 
-Cargo refuses cyclic packages.  Pre-Phase-0, the kernel cdylib
-needed to register `#[pyclass]` types from peer crates
-(`backends::*::*Backend`, `services::audit::AuditHook`, etc.) inside
-its `#[pymodule] fn nexus_kernel`.  But peer crates already depended
-on `kernel` for trait declarations (`abc::ObjectStore`, etc.) — adding
-the reverse `kernel → <peer>` edge for the cdylib registration closed
-a cycle.
+#### Wheel composition
 
-`nexus-cdylib`'s sole job is being the package that depends on
-**all** the peer rlibs at once and aggregates their PyO3 surfaces:
+`rust/nexus-cdylib/src/lib.rs` is the sole `#[pymodule] fn
+nexus_kernel`; it aggregates each peer's PyO3 surface through that
+peer's `python::register` entry:
 
 ```rust
-// rust/nexus-cdylib/src/lib.rs (~10 lines)
 #[pymodule]
 fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
-    lib::python::register(m)?;            // algorithms
-    kernel::python::register(m)?;         // §3 / §4 surface
+    lib::python::register(m)?;
+    kernel::python::register(m)?;
     nexus_raft::pyo3_bindings::register_python_classes(m)?;
-    services::python::register(m)?;       // audit / agents (Phase 3)
-    // backends::python::register(m)?;    // (Phase 2 — pending)
+    services::python::register(m)?;
+    backends::python::register(m)?;
+    transport::python::register(m)?;
     Ok(())
 }
 ```
+
+This split lets each peer crate depend on `kernel` (for trait
+declarations: `abc::ObjectStore`, `hal::peer::PeerBlobClient`, …)
+while the wheel-side dependency `nexus-cdylib → {kernel, peers}`
+flows in only one direction.
 
 #### Dependency direction
 
 ```text
               contracts                       (zero deps)
                   ↑
-                 lib                          (depends on contracts only)
+                 lib                          (depends on contracts)
                   ↑
-        transport-primitives                  (low-level TLS / pool / addressing;
-                  ↑                            depends only on contracts)
-                  │
+        transport-primitives                  (low-level TLS / pool /
+                  ↑                            addressing; depends on
+                  │                            contracts)
                kernel                         (depends on contracts + lib +
                   ↑                            transport-primitives + raft)
           ↑    ↑    ↑    ↑
           │    │    │    │
   backends services transport raft            (peers — depend on kernel +
-          ↑    ↑    ↑    ↑                    transport-primitives;
-          │    │    │    │                    no cross-edges among peers)
-          └────┴────┴────┴──── nexus-cdylib   (sink — no other crate
-                                                depends on it; it just
-                                                composes the wheel)
+          ↑    ↑    ↑    ↑                    transport-primitives)
+          │    │    │    │
+          └────┴────┴────┴──── nexus-cdylib   (Python wheel sink)
 
-  rust/profiles/cluster                       (standalone binary — depends
-                                                on raft + contracts only;
-                                                no kernel, no Python.)
+                                  raft         (used by profile binaries)
+                                   ↑
+                          rust/profiles/cluster (deployment binary sink)
 ```
 
-Hard invariants:
+Edge invariants:
 
-- `services ⊥ backends ⊥ transport ⊥ raft` — peer crates have no
-  cross-dependencies.
-- `raft → transport-primitives` only; raft never depends on `transport`.
-  This is the cycle-break that landed in Phase 4 (full).
-- `lib` cannot depend on `kernel` (one-way: kernel → lib only) —
-  preserves WASM-clean lib.
-- `nexus-cdylib` is a sink — no other workspace crate depends on it.
-- `rust/profiles/*` are sinks — they produce standalone binaries, no
-  other workspace crate depends on them.
+| Edge                                | Direction                                  |
+|-------------------------------------|--------------------------------------------|
+| `services` / `backends` / `transport` / `raft` | siblings; no cross-edges               |
+| `kernel ↔ lib`                      | one-way: `kernel → lib`                    |
+| `raft ↔ transport`                  | one-way: `raft → transport-primitives`     |
+| `nexus-cdylib`                      | sink (Python wheel)                        |
+| `rust/profiles/<name>`              | sink (deployment binary)                   |
 
-#### Cdylib is not an architectural tier
-
-The §1 layered diagram has `Kernel → Services → Drivers`.
-`nexus-cdylib` does **not** appear in that diagram because it isn't
-a tier — it's the package that turns the rlibs from those tiers into
-a single loadable shared object.  Architecturally it's the
-equivalent of the linker step that produces `vmlinuz` from
-`fs/built-in.a`, `kernel/built-in.a`, etc.
+The first edge keeps lib WASM-clean.  The second is the cycle-break
+that lets transport own kernel-bound code while raft keeps a
+kernel-free dependency footprint.
 
 ### Placement Decision Tree
 
@@ -772,28 +758,21 @@ Same kernel binary, different driver injection. See §1 `connect()`.
 
 ### 7.1 Profile binaries (`rust/profiles/`)
 
-Profile crates produce **standalone deployment binaries** — different
-artifact type from the rlib peer crates and the `nexus-cdylib` Python
-wheel.  Each profile that runs as its own process gets a subdirectory
-under `rust/profiles/`:
+A profile that runs as its own OS process lives under `rust/profiles/<name>/`
+and produces a standalone deployment binary `nexusd-<name>`:
 
-| Profile | Crate | Artifact | Status |
-|---------|-------|----------|--------|
-| cluster | `rust/profiles/cluster/` | `nexusd-cluster` (~8 MB ELF/EXE) | shipped |
-| slim | `rust/profiles/slim/` | `nexusd-slim` | future |
-| full | `rust/profiles/full/` | `nexusd-full` | future |
-| embedded | `rust/profiles/embedded/` | `nexusd-embedded` | future |
-| lite | `rust/profiles/lite/` | `nexusd-lite` | future |
-| cloud | `rust/profiles/cloud/` | `nexusd-cloud` | future |
-| remote | `rust/profiles/remote/` | `nexusd-remote` | future |
+| Profile  | Crate                       | Binary             |
+|----------|-----------------------------|--------------------|
+| cluster  | `rust/profiles/cluster/`    | `nexusd-cluster`   |
 
-YAGNI principle: only `cluster/` exists today (Sudowork's deployment
-binary).  Other profile binaries are added to `rust/profiles/` as they
-become real deliverables — no premature scaffolding.
+The crate composes the rlibs needed for that profile (e.g. `cluster`
+links `raft + contracts` only — no kernel, no Python interpreter), so
+each binary lands at the size floor for the features it ships.
 
-**`nexus-cdylib` is not a profile.**  It is the Python SDK *artifact*
-(loaded into an external Python process), not a deployment binary —
-hence its location at workspace top-level rather than under `profiles/`.
+`rust/nexus-cdylib/` lives at workspace top level rather than under
+`profiles/` because the Python wheel is a different artifact category:
+it loads into an external Python process, where profile binaries each
+run as their own process.
 
 ---
 

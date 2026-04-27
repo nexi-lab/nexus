@@ -11,35 +11,28 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// literals.
 pub use contracts::ROOT_ZONE_ID;
 
-// ── §3 / §4 / HAL surface (Phase 1) ───────────────────────────────────
-// Strict 3-way split inside the kernel crate:
-//   * `crate::abc`  — §3 ABC pillars (ObjectStore / MetaStore / CacheStore).
-//                     Three trait files, period.
-//   * `crate::hal`  — kernel-defined extension interfaces that aren't
-//                     §3 pillars (LlmStreamingBackend, PeerBlobClient).
+// ── §3 / §4 / HAL surface ────────────────────────────────────────────
+// Three-way split inside the kernel crate (see
+// `docs/architecture/KERNEL-ARCHITECTURE.md` §3 / §4 / §6.1):
+//   * `crate::abc`  — §3 ABC pillars (ObjectStore / MetaStore /
+//                     CacheStore). Trait declarations only.
+//   * `crate::hal`  — kernel-defined extension interfaces alongside
+//                     the §3 pillars (LlmStreamingBackend,
+//                     PeerBlobClient, BackendFactory).
 //   * `crate::core` — §4 kernel primitives (vfs_router, dlc, dcache,
-//                     locks, dispatch, plus in-memory reference impls of
-//                     the §3 pillars).  No traits, no extension ifaces.
-//
-// Driver / service / transport impls move out into parallel crates in
-// Phases 2–5.
+//                     locks, dispatch, in-memory reference impls of
+//                     the §3 pillars).
 pub mod abc;
 pub mod core;
 pub mod hal;
 
-// Phase 2: `_backend_impls` (CasLocalBackend / PathLocalBackend /
-// LocalConnectorBackend) and the `backend` re-export shim were
-// retired here.  Concrete impls now live in `rust/backends/storage/`;
-// every `use crate::backend::{ObjectStore, ...}` callsite migrated
-// to `use crate::abc::object_store::*`.
-
-// ── Phase C compat shims ─────────────────────────────────────────────
-// Pre-Phase-C kernel modules are re-exported from `core::*` under
-// their flat names so callers do not churn. These shims retire as
-// callers migrate to canonical `crate::core::*` paths in Phases D–G.
-//
-// Visibility mirrors the original (`pub mod` stays `pub use`,
-// private `mod` stays `pub(crate) use`).
+// ── Flat re-exports of `core::*` ─────────────────────────────────────
+// `pyclass` registrations in `python.rs` use `m.add_class::<MOD::Name>()`
+// where the codegen `add_class::<MOD::Name>` regex captures exactly two
+// `::`-separated segments, so each pyclass-bearing submodule is re-
+// exported under a single-segment name here.  Visibility tracks the
+// original module (`pub mod` stays `pub use`, private `mod` stays
+// `pub(crate) use`).
 pub(crate) use core::dcache;
 pub(crate) use core::dispatch;
 pub(crate) use core::dispatch::hook_registry;
@@ -74,100 +67,44 @@ pub(crate) use core::stream::shm as shm_stream;
 #[cfg(unix)]
 pub(crate) use core::stream::stdio as stdio_stream;
 pub(crate) use core::stream::wal as wal_stream;
-// Note: core::lock::semaphore, core::pipe::remote, core::stream::observer,
-// core::stream::remote — not re-exported under flat names; their
-// pre-Phase-C flat aliases were dead. Reach them through
-// `crate::core::*` directly going forward.
 
-// ── Modules that have not moved yet ──────────────────────────────────
-// These stay flat through Phase C; later phases relocate them:
-//   * Phase D — `_backend_impls`, anthropic / openai / s3 / gcs /
-//     gdrive / gmail / slack / hn / x / cli / nostr_relay /
-//     remote_backend / volume_engine / volume_index, plus the four
-//     CAS pillar files (cas_engine / cas_chunking / cas_remote /
-//     cas_transport).
-//   * Phase E — audit_hook, permission_hook.
-//   * Phase F — federation_client, peer_blob_client, blob_fetcher,
-//     grpc_server, rpc_transport, ipc.
-//   * Phase G — raft_meta_store, replication.
-//   * Phase H — bitmap, bloom, hash (delete duplicates with lib),
-//     glob, io, path_utils, prefix, rebac, search, simd, trigram.
-//   * Phase E — agent_status_resolver (services/agents).
-
-// Phase 3: `agent_status_resolver` moved to `services::agents::status_resolver`.
-// Phase 3: `audit_hook` moved to `services::audit`.
-// Phase 3: `permission_hook` moved to `services::permission::hook`.
-// All three were `mod *_hook;` / `mod agent_status_resolver;` declarations
-// here; their concrete impls now live in the services peer crate, and
-// kernel reaches them only through the in-tree Rust API surface
-// (`Kernel::register_native_hook`, `PathResolver` impls).  The cdylib
-// composes both crates via `services::python::register(m)`.
-// Phase 2: connector backends (anthropic / openai / gdrive / gmail /
-// slack / x / hn / nostr / cli / s3 / gcs) moved to
-// `backends::transports::api::*` and `backends::transports::blob::*`.
-// Their construction is now invoked through the
-// `kernel::hal::backend_factory::BackendFactory` trait that backends
-// registers at cdylib boot.
-// Phase 4 (full): `blob_fetcher` moved to `transport::blob::fetcher`
-// (the new high-level transport peer crate).
-// Phase 2: CAS pillar primitives stay in kernel (`cas_engine`,
-// `cas_chunking`, `cas_remote`, `cas_transport`) — they're the
-// kernel's content-addressed storage primitive (Linux-VFS analogue).
-// `pub` so backends can construct backend impls (e.g. `CasLocalBackend`)
-// that wrap a `kernel::cas_engine::CASEngine`.  See
-// `kernel/src/hal/mod.rs` doc for the architectural rationale.
+// ── Kernel-owned primitives ──────────────────────────────────────────
+// CAS (content-addressed storage) — the kernel's storage primitive
+// (Linux-VFS analogue).  `pub` so `backends::storage::cas_local` can
+// wrap a `CASEngine` inside its `ObjectStore` impl; see
+// `docs/architecture/KERNEL-ARCHITECTURE.md` §4 for the rationale.
 pub mod cas_chunking;
 pub mod cas_engine;
 pub mod cas_remote;
 pub mod cas_transport;
-// Phase 4 (full): `federation_client`, `ipc`, `grpc_server` moved out
-// of kernel/src/transport/ entirely into the high-level `transport`
-// crate (`transport::federation`, `transport::ipc`, `transport::grpc`)
-// after the transport-primitives crate split cleared the cycle.
-// `kernel` itself is `pub` (Phase 3 onward) so peer crates
-// (`services::audit`, etc.) can hold `&kernel::Kernel` references and
-// call the kernel's in-tree Rust API (`register_native_hook`,
-// `prepare_audit_stream`, `sys_*` direct).  PyKernel surfaces those
-// methods to Python through `generated_kernel_abi_pyo3`; peer crates
-// bypass PyO3 and call the Rust methods directly.
+
+// Kernel struct + syscalls.  `pub` so peer crates (`services`,
+// `transport`, `backends`) hold `&kernel::Kernel` and call the
+// in-tree Rust API directly (`register_native_hook`,
+// `prepare_audit_stream`, `sys_*`).  PyKernel mirrors the surface
+// to Python through `generated_kernel_abi_pyo3`.
 pub mod kernel;
-// `generated_kernel_abi_pyo3` (renamed from `generated_pyo3` in Phase C)
-// kept public so other crates (e.g. `rust/raft`) can reference `PyKernel`
-// via cross-crate PyO3 borrows — needed for
-// `PyZoneHandle::attach_to_kernel_mount()` which wires a Raft-backed
-// `MetaStore` into `Kernel::mount_metastores` without surfacing a
-// separate `KernelMetaStore` Python class.
+
+// PyO3 surface generated from `kernel.rs` syscalls by
+// `scripts/codegen_kernel_abi.py`.  Other rlibs (`raft`,
+// `transport`) reference `PyKernel` here for cross-crate PyO3
+// borrows used by install-hook pyfunctions.
 pub mod generated_kernel_abi_pyo3;
-// Compat alias so any out-of-tree consumer pinned to the pre-Phase-C
-// path keeps working through one release. Removable once downstream
-// confirmed migrated.
 pub use generated_kernel_abi_pyo3 as generated_pyo3;
-// Rust-native gRPC server for NexusVFSService — replaces the Python
-// `grpc.aio.server` so :2028 is owned by tonic. Read/Write/Delete/Ping
-// are zero-PyO3 fast-paths; Call still uses a PyO3 callback into the
-// Python `dispatch_method` pending the broader 195-service migration.
-// Phase 2: `nostr_relay`, `openai_*`, `s3_backend`, `slack_backend`,
-// `x_backend`, `gdrive_backend`, `gmail_backend`, `hn_backend`,
-// `cli_backend`, `gcs_backend`, `anthropic_*`, `remote_backend`,
-// `volume_engine`, `volume_index` all moved to `rust/backends/`.
-// Their construction goes through
-// `kernel::hal::backend_factory::BackendFactory`.
-//
-// Phase 4 (full): `peer_blob_client` moved to
-// `transport::blob::peer_client`; the kernel-side concrete is
-// installed at cdylib boot via `Kernel::set_peer_client`.
-//
-// Phase 5 (partial): `raft_meta_store` and `replication` STAY in kernel.
-// Moving them to `rust/raft/` was attempted but reverted because the
-// kernel ↔ raft cycle is irreducible: kernel already depends on raft
-// (`Kernel` holds a `ZoneManager`), and pushing replication / raft_meta_store
-// into raft would close `kernel → raft → kernel`.  Breaking the cycle would
-// require moving federation wiring out of kernel, which is out of scope
-// for this PR.
-//
-// `permission_hook` moved to `services::permission::hook` (Phase 3).
+
+// Raft-backed MetaStore + EC replication scanner.  Both reach into
+// `nexus_raft::ZoneManager` for the per-zone Raft cluster and the
+// `Arc<dyn hal::peer::PeerBlobClient>` slot for cross-node fetch,
+// so they live alongside `kernel::Kernel` (which already owns the
+// ZoneManager) inside the kernel rlib.
 pub mod raft_meta_store;
 pub mod replication;
+
+// Client-side RPC transport for `RemoteBackend` (the
+// `backends::storage::remote::RemoteBackend` ObjectStore impl that
+// proxies all syscalls over gRPC to a remote `nexusd`).  `pub` so
+// the `BackendFactory` impl in `backends/` can construct
+// `RpcTransport` for the `"remote"` backend type.
 pub mod rpc_transport;
 
 // Phase 0 — `#[pymodule] fn nexus_kernel` lives in `rust/nexus-cdylib/`

@@ -696,8 +696,13 @@ pub struct Kernel {
     /// so the slot is *stashed* here at federation bootstrap and
     /// drained by `transport::blob::fetcher::install(&kernel)` —
     /// invoked from the cdylib boot path once both crates are linked.
+    /// Phase 4 (full): blob-fetcher slot stashed by federation init for
+    /// the cdylib's transport-tier install hook to drain.
+    /// Phase 5: typed as `Box<dyn Any + Send + Sync>` so kernel does not
+    /// name the raft-side `BlobFetcherSlot` type — `transport::blob::
+    /// fetcher::install` downcasts to the concrete type at drain time.
     pub(crate) pending_blob_fetcher_slot:
-        parking_lot::Mutex<Option<nexus_raft::blob_fetcher::BlobFetcherSlot>>,
+        parking_lot::Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>,
 
     // ── Federation mount wiring (R20.16.3) ─────────────────────────
     //
@@ -5079,16 +5084,14 @@ impl Kernel {
     /// directly, but kernel no longer depends on the high-level
     /// transport crate (cycle break); the cdylib boot drains the
     /// slot and installs the fetcher.
-    fn stash_blob_fetcher_slot(&self, slot: nexus_raft::blob_fetcher::BlobFetcherSlot) {
+    fn stash_blob_fetcher_slot(&self, slot: Box<dyn std::any::Any + Send + Sync>) {
         *self.pending_blob_fetcher_slot.lock() = Some(slot);
     }
 
     /// Drain the stashed blob-fetcher slot (called by
     /// `transport::blob::fetcher::install`).  Returns `None` after
     /// the first drain so the cdylib boot can be safely re-invoked.
-    pub fn take_pending_blob_fetcher_slot(
-        &self,
-    ) -> Option<nexus_raft::blob_fetcher::BlobFetcherSlot> {
+    pub fn take_pending_blob_fetcher_slot(&self) -> Option<Box<dyn std::any::Any + Send + Sync>> {
         self.pending_blob_fetcher_slot.lock().take()
     }
 
@@ -5318,7 +5321,7 @@ impl Kernel {
         // the ZoneManager handed back. The gRPC server is already
         // running — once this write lands, every peer `ReadBlob`
         // resolves against the local VFSRouter's backends.
-        self.stash_blob_fetcher_slot(blob_slot);
+        self.stash_blob_fetcher_slot(Box::new(blob_slot));
 
         // Joiner detection — etcd `--initial-cluster-state=existing` equivalent.
         // Either signal alone is sufficient:

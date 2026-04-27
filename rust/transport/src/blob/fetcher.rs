@@ -92,12 +92,28 @@ impl BlobFetcher for KernelBlobFetcher {
 ///
 /// No-op if `Kernel::pending_blob_fetcher_slot` is empty (federation
 /// disabled — `NEXUS_HOSTNAME` was unset).
+///
+/// Phase 5: kernel hands back the slot as `Box<dyn Any + Send + Sync>`
+/// — transport downcasts to the concrete `BlobFetcherSlot` type
+/// here because transport already depends on raft (the kernel side
+/// no longer does).
 pub fn install(kernel: &kernel::kernel::Kernel) {
-    if let Some(slot) = kernel.take_pending_blob_fetcher_slot() {
-        let fetcher = Arc::new(KernelBlobFetcher::new(
-            kernel.vfs_router_arc(),
-            kernel.dcache_arc(),
-        ));
-        *slot.write() = Some(fetcher as Arc<dyn BlobFetcher>);
-    }
+    let Some(any_slot) = kernel.take_pending_blob_fetcher_slot() else {
+        return;
+    };
+    let slot = match any_slot.downcast::<nexus_raft::blob_fetcher::BlobFetcherSlot>() {
+        Ok(boxed) => *boxed,
+        Err(_) => {
+            tracing::error!(
+                "transport::blob::fetcher::install: pending slot type mismatch \
+                 (expected nexus_raft::blob_fetcher::BlobFetcherSlot)"
+            );
+            return;
+        }
+    };
+    let fetcher = Arc::new(KernelBlobFetcher::new(
+        kernel.vfs_router_arc(),
+        kernel.dcache_arc(),
+    ));
+    *slot.write() = Some(fetcher as Arc<dyn BlobFetcher>);
 }

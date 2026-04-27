@@ -10,6 +10,11 @@ members = [
     "rust/raft",
     "rust/tasks",
     "rust/cluster",
+    # Phase 0: thin cdylib that produces `nexus_kernel.so` by composing
+    # `kernel + lib + raft` (and later backends/services/transport)
+    # rlibs. Build artifact only — not an architectural tier; see
+    # `docs/architecture/KERNEL-ARCHITECTURE.md` §6.1.
+    "rust/nexus-cdylib",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
 exclude = ["nexus-fuse"]
@@ -19,20 +24,23 @@ contracts = { path = "rust/contracts" }
 lib = { path = "rust/lib" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
-# Driver impls (Phase D). Optional `python` feature pulled by kernel cdylib
-# so its `#[pymodule]` can expose backends `#[pyclass]` types alongside
-# the kernel's own.
+# Driver impls (Phase 2). The `python` feature is enabled by the
+# `nexus-cdylib` build-artifact crate so its `#[pymodule]` can expose
+# backends' `#[pyclass]` types alongside the kernel's own.
 backends = { path = "rust/backends" }
-# `kernel` is the cdylib crate but it also exposes an rlib (see
-# rust/kernel/Cargo.toml `crate-type = ["cdylib", "rlib"]`) — `backends`
-# depends on the rlib half for `kernel::core::traits::ObjectStore`.
-# Keep `default-features = false` so `extension-module` does not leak
-# into rlib builds; kernel cdylib supplies that on its own dep.
+# `kernel` is rlib-only after Phase 0 — the Python entry-point cdylib
+# `nexus_kernel.so` lives in `rust/nexus-cdylib/`. `default-features =
+# false` keeps the kernel runtime defaults (mimalloc allocator, HTTP
+# connector stack, py-hook adapters) off in transitive consumers
+# (backends / services / transport rlibs); `nexus-cdylib` opts back in
+# explicitly. This is the cycle break that lets `<peer-crate> -> kernel`
+# coexist with cdylib registration of peer-crate `#[pyclass]`es.
 kernel = { path = "rust/kernel", default-features = false }
-# F2 C8 (Option A): raft is an rlib inside the nexus_kernel cdylib.
-# kernel pulls it in as a Rust dependency to reach ZoneConsensus /
-# FullStateMachine for federation metastore wiring. Direction is
-# kernel -> raft only (no cycle).
+# raft is an rlib pulled into the `nexus_kernel.so` cdylib via the
+# nexus-cdylib build artifact (alongside kernel). Direction is
+# `nexus-cdylib -> {kernel, raft}` only — no cycle. Other crates
+# (kernel, etc.) use raft as a workspace dep too; the `python` +
+# `grpc` feature flags here apply uniformly.
 raft = { path = "rust/raft", default-features = false, features = ["python", "grpc"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

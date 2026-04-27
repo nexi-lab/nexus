@@ -5047,17 +5047,27 @@ def collect_all() -> tuple[
 
     Returns (module_functions, classes, class_order, traits, all_export_names).
     """
-    # Phase H/I: kernel/src/lib.rs delegates to `lib::python::register(m)`
-    # for all algorithm wrappers (rebac, search, glob, io, prefix, simd,
-    # trigram, path_utils, bitmap, bloom, hash). Scan both lib.rs files
-    # and merge so the codegen sees the full set of `wrap_pyfunction!` /
-    # `add_class::<…>` registrations.
+    # Phase 0: kernel/src/lib.rs's `#[pymodule] fn nexus_kernel` body
+    # moved to kernel/src/python.rs (`pub fn register`). The cdylib
+    # itself now lives in rust/nexus-cdylib/src/lib.rs and just delegates
+    # into per-crate `python::register` fns.
+    # Phase H/I: lib::python::register holds all algorithm wrappers
+    # (rebac, search, glob, io, prefix, simd, trigram, path_utils,
+    # bitmap, bloom, hash). Scan all three files and merge so the
+    # codegen sees the full set of `wrap_pyfunction!` / `add_class::<…>`
+    # registrations.
     lib_text = (RUST_SRC / "lib.rs").read_text()
+    kernel_python_text = ""
+    kernel_python_path = RUST_SRC / "python.rs"
+    if kernel_python_path.exists():
+        kernel_python_text = kernel_python_path.read_text()
     lib_python_text = ""
     lib_python_mod = ROOT / "rust" / "lib" / "src" / "python" / "mod.rs"
     if lib_python_mod.exists():
         lib_python_text = lib_python_mod.read_text()
-    func_exports, class_exports = parse_lib_exports(lib_text + "\n" + lib_python_text)
+    func_exports, class_exports = parse_lib_exports(
+        lib_text + "\n" + kernel_python_text + "\n" + lib_python_text
+    )
 
     # Build set of exported function names per module
     exported_names: dict[str, set[str]] = {}

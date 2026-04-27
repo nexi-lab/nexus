@@ -151,68 +151,10 @@ mod volume_index;
 #[cfg(feature = "connectors")]
 mod x_backend;
 
-use pyo3::prelude::*;
-
-/// Python module definition.
-#[pymodule]
-fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
-    // Phase H: pure-Rust algorithm wrappers (rebac, search, glob, io,
-    // prefix, simd, trigram, path_utils) all live in `lib::python` now.
-    // Single delegation call replaces ~30 individual `add_function` /
-    // `add_class` lines that used to live here.
-    lib::python::register(m)?;
-    // OpenAI inference (§10 D3) — GIL-free HTTP calls. Stays kernel-side
-    // through Phase D-deferred connector migration; Phase D follow-up PR
-    // moves it to `backends`.
-    #[cfg(feature = "connectors")]
-    {
-        m.add_function(wrap_pyfunction!(
-            openai_inference::openai_chat_completion,
-            m
-        )?)?;
-        m.add_function(wrap_pyfunction!(
-            openai_inference::openai_chat_completion_stream,
-            m
-        )?)?;
-    }
-    // bitmap / bloom / hash PyO3 wrappers all live in lib::python now
-    // (Phase I — moved alongside the rest of the algorithm wrappers).
-    // VFSLockManager deleted — I/O lock is now internal to LockManager,
-    // accessed through Kernel syscalls (sys_read/sys_write/sys_copy).
-    // MemoryPipeBackend/MemoryStreamBackend are kernel-internal only (no #[pyclass]).
-    // Python accesses IPC buffers through kernel.create_pipe/create_stream.
-    #[cfg(unix)]
-    m.add_class::<shm_pipe::SharedMemoryPipeBackend>()?;
-    #[cfg(unix)]
-    m.add_class::<shm_stream::SharedMemoryStreamBackend>()?;
-    // R20.18.6: `WalStreamBackend` pyclass removed. Users reach the
-    // raft-backed stream through `sys_setattr(DT_STREAM, io_profile="wal")`;
-    // `WalStreamCore` now impls `StreamBackend` and registers with
-    // `stream_manager` alongside the other backends.
-    // Subprocess-stdio accumulation stream (Unix raw-fd pump).
-    #[cfg(unix)]
-    m.add_class::<stdio_stream::StdioStreamBackend>()?;
-    m.add_class::<semaphore::VFSSemaphore>()?;
-    // CAS Volume Engine (Issue #3403)
-    m.add_class::<volume_engine::VolumeEngine>()?;
-    m.add_class::<grpc_server::PyVfsGrpcServerHandle>()?;
-    m.add_function(pyo3::wrap_pyfunction!(
-        grpc_server::start_vfs_grpc_server,
-        m
-    )?)?;
-    // Kernel (Issue #1868 — PyKernel wraps pure Rust Kernel)
-    m.add_class::<generated_kernel_abi_pyo3::PyOperationContext>()?;
-    m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
-    m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
-    m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
-    // path_utils PyO3 functions registered via lib::python::register above.
-
-    // Federation peer gRPC client (R16.5b).
-    m.add_class::<federation_client::PyFederationClient>()?;
-
-    // Register raft's PyO3 classes (ZoneManager, ZoneHandle, …) so
-    // Python sees them under ``nexus_kernel`` alongside ``Kernel``.
-    nexus_raft::pyo3_bindings::register_python_classes(m)?;
-
-    Ok(())
-}
+// Phase 0 — `#[pymodule] fn nexus_kernel` lives in `rust/nexus-cdylib/`
+// now (the dedicated cdylib build artifact). Kernel's pyclass /
+// pyfunction surface is registered through `kernel::python::register`,
+// called by the cdylib alongside `lib::python::register`,
+// `nexus_raft::pyo3_bindings::register_python_classes`, and (post-
+// Phase-2/3/4) the parallel-crate registers.
+pub mod python;

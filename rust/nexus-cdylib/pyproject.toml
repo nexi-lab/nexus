@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "nexus-kernel"
 version = "0.10.0"
-description = "Fast Rust-based ReBAC permission computation for Nexus"
+description = "Nexus Python entry-point cdylib (kernel + lib + raft composed into nexus_kernel.so)"
 requires-python = ">=3.14"
 classifiers = [
     "Programming Language :: Rust",

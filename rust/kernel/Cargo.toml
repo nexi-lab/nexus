@@ -4,8 +4,16 @@ version = "0.10.0"
 edition = "2021"
 
 [lib]
-name = "nexus_kernel"
-crate-type = ["cdylib", "rlib"]  # cdylib for Python, rlib for Rust deps (e.g. raft::zone_metastore)
+# Phase 0 — kernel is rlib-only. The Python cdylib (`nexus_kernel.so`)
+# now lives in `rust/nexus-cdylib/`, which depends on this rlib plus
+# its peers (lib, raft, …) and owns the `#[pymodule]` envelope. This
+# cycle-breaks `<peer-crate> → kernel` (compile dep) ↔ `kernel →
+# <peer-crate>` (cdylib registration) — the latter is now wholly
+# inside `nexus-cdylib`. Lib name matches the package name (was
+# `nexus_kernel` while kernel was the cdylib; that name belongs to
+# the cdylib build artifact now).
+name = "kernel"
+crate-type = ["rlib"]
 
 [dependencies]
 contracts = { workspace = true }
@@ -15,7 +23,11 @@ services = { workspace = true }
 # raft's ZoneConsensus directly, no cross-cdylib Rust trait object
 # dispatch. See rust/kernel/src/raft_metastore.rs.
 raft = { workspace = true }
-pyo3 = { version = "0.27.2", features = ["extension-module", "hashbrown"] }
+# `extension-module` lives on the `nexus-cdylib` pyo3 dep only — Cargo
+# unifies pyo3 features at link time, so all transitive users see the
+# cdylib-correct linkage. rlibs must NOT enable it themselves (would
+# break `cargo test` on the rlib alone, and pollutes other consumers).
+pyo3 = { version = "0.27.2", features = ["hashbrown"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 ahash = { workspace = true }

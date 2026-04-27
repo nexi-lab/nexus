@@ -2,7 +2,7 @@
 """Database initialization script for Nexus.
 
 Handles both fresh and existing databases:
-- Fresh databases: Creates schema via SQLAlchemy, stamps with latest migration
+- Fresh databases: Runs Alembic migrations to the latest schema
 - Existing databases: Runs pending migrations via Alembic
 
 This replaces the old ORM auto-creation approach with proper migration-based setup.
@@ -23,9 +23,14 @@ from sqlalchemy import create_engine, inspect, text  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from alembic import command  # noqa: E402
+from nexus.storage.schema_invariants import ensure_postgres_schema_invariants  # noqa: E402
 
 # Path to alembic.ini (located in alembic/ directory)
 ALEMBIC_INI_PATH = PROJECT_ROOT / "alembic" / "alembic.ini"
+
+
+def _alembic_config() -> Config:
+    return Config(str(ALEMBIC_INI_PATH))
 
 
 def init_database(database_url: str) -> None:
@@ -58,8 +63,7 @@ def init_database(database_url: str) -> None:
         print("✓ Database has migration history")
         print("🔄 Running pending migrations...")
 
-        alembic_cfg = Config(str(ALEMBIC_INI_PATH))
-        command.upgrade(alembic_cfg, "heads")
+        command.upgrade(_alembic_config(), "heads")
 
         print("✓ Database migrations up to date")
 
@@ -69,28 +73,19 @@ def init_database(database_url: str) -> None:
         print("⚠️  Database has tables but no migration history")
         print("📌 Stamping database with latest migration version...")
 
-        alembic_cfg = Config(str(ALEMBIC_INI_PATH))
-        command.stamp(alembic_cfg, "heads")
+        command.stamp(_alembic_config(), "heads")
 
         print("✓ Database stamped with current schema version")
         print("ℹ️  Future schema changes will be applied via migrations")
 
     else:
-        # Fresh database - create schema from models
-        print("📊 Fresh database detected - creating schema...")
+        # Fresh database - run migrations from the baseline to the latest schema.
+        print("📊 Fresh database detected - running migrations...")
 
-        from nexus.storage.models import Base
-
-        # Create all tables
-        Base.metadata.create_all(engine)
-
-        print("✓ Database schema created")
-        print("📌 Stamping with latest migration version...")
-
-        alembic_cfg = Config(str(ALEMBIC_INI_PATH))
-        command.stamp(alembic_cfg, "heads")
-
+        command.upgrade(_alembic_config(), "heads")
         print("✓ Database initialized successfully")
+
+    ensure_postgres_schema_invariants(engine)
 
     from nexus.storage.zone_bootstrap import ensure_root_zone
 

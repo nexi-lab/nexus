@@ -27,6 +27,8 @@ import logging
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.types import OperationContext
+
 if TYPE_CHECKING:
     from nexus.bricks.search.skeleton_indexer import SkeletonIndexer
 
@@ -64,6 +66,7 @@ class SkeletonPipeConsumer:
         self._fallback_loop = fallback_loop
 
         self._nx: Any | None = None
+        self._pipe_context = OperationContext(user_id="system", groups=[], is_system=True)
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
         self._flush_task: asyncio.Task[None] | None = None
@@ -149,8 +152,19 @@ class SkeletonPipeConsumer:
         if self._nx is None:
             return  # CLI mode — no pipe infrastructure
 
-        # pipe_create is idempotent: creates on first run, no-ops if already exists.
-        self._nx.pipe_create(_SKELETON_PIPE_PATH, capacity=_SKELETON_PIPE_CAPACITY)
+        from nexus.contracts.metadata import DT_PIPE
+
+        # Create a VFS-visible DT_PIPE inode. ``pipe_create()`` only creates the
+        # in-memory kernel registry entry; ``sys_write()`` needs the inode so
+        # Rust can route writes to the pipe instead of treating the path as a
+        # missing regular file.
+        self._nx.sys_setattr(
+            _SKELETON_PIPE_PATH,
+            entry_type=DT_PIPE,
+            capacity=_SKELETON_PIPE_CAPACITY,
+            owner_id="kernel",
+            context=self._pipe_context,
+        )
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())
         self._flush_task = asyncio.create_task(self._flush_loop())
@@ -189,11 +203,13 @@ class SkeletonPipeConsumer:
             while self._write_buffer:
                 data = self._write_buffer.popleft()
                 try:
-                    # sys_write routes to Rust dcache for DT_PIPE — no Python
-                    # metastore entry needed (Rust handles inline).
-                    nx.sys_write(_SKELETON_PIPE_PATH, data)
-                except Exception:
-                    logger.warning("[SKELETON] pipe write failed, dropping event")
+                    # sys_write routes the VFS DT_PIPE inode to the Rust pipe
+                    # buffer; the system context keeps this internal path out
+                    # of user ReBAC checks.
+                    nx.sys_write(_SKELETON_PIPE_PATH, data, context=self._pipe_context)
+                except Exception as exc:
+                    logger.warning("[SKELETON] pipe write failed, dropping event: %s", exc)
+                    await asyncio.sleep(0.05)
             await asyncio.sleep(0.01)  # 10ms poll
 
     # ------------------------------------------------------------------
@@ -216,7 +232,7 @@ class SkeletonPipeConsumer:
             if not pending:
                 while True:
                     try:
-                        data = nx.sys_read(_SKELETON_PIPE_PATH)
+                        data = nx.sys_read(_SKELETON_PIPE_PATH, context=self._pipe_context)
                     except NexusFileNotFoundError:
                         logger.debug("[SKELETON] pipe closed, consumer exiting")
                         return
@@ -234,7 +250,7 @@ class SkeletonPipeConsumer:
                 if remaining <= 0:
                     break
                 try:
-                    data = nx.sys_read(_SKELETON_PIPE_PATH)
+                    data = nx.sys_read(_SKELETON_PIPE_PATH, context=self._pipe_context)
                 except NexusFileNotFoundError:
                     break
                 except Exception:

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 
 if TYPE_CHECKING:
@@ -63,21 +64,39 @@ class VersionRecorder:
         else:
             self._record_update(metadata, created_by=created_by)
 
-    def record_rename(self, old_path: str, new_path: str) -> None:
+    def record_rename(self, old_path: str, new_path: str, *, zone_id: str | None = None) -> None:
         """Record a file rename (update virtual_path in FilePathModel).
 
         Args:
             old_path: Previous virtual path.
             new_path: New virtual path after rename.
+            zone_id: Zone containing the path. Defaults to the root zone.
         """
+        resolved_zone_id = zone_id or ROOT_ZONE_ID
         existing = self.session.execute(
             select(FilePathModel).where(
+                FilePathModel.zone_id == resolved_zone_id,
                 FilePathModel.virtual_path == old_path,
                 FilePathModel.deleted_at.is_(None),
             )
         ).scalar_one_or_none()
 
         if existing:
+            destination = self.session.execute(
+                select(FilePathModel).where(
+                    FilePathModel.zone_id == resolved_zone_id,
+                    FilePathModel.virtual_path == new_path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            if destination is not None and destination.path_id != existing.path_id:
+                self.session.execute(
+                    update(FilePathModel)
+                    .where(FilePathModel.path_id == existing.path_id)
+                    .values(deleted_at=_utcnow_naive(), updated_at=_utcnow_naive())
+                )
+                return
+
             self.session.execute(
                 update(FilePathModel)
                 .where(FilePathModel.path_id == existing.path_id)
@@ -106,9 +125,37 @@ class VersionRecorder:
 
     def _record_create(self, metadata: "FileMetadata", *, created_by: str | None = None) -> None:
         """Insert new FilePathModel + initial VersionHistoryModel."""
+        zone_id = metadata.zone_id or ROOT_ZONE_ID
+
+        existing = self.session.execute(
+            select(FilePathModel).where(
+                FilePathModel.zone_id == zone_id,
+                FilePathModel.virtual_path == metadata.path,
+                FilePathModel.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            # OBSERVE-phase delivery can lag behind the authoritative metastore
+            # and occasionally report a create for a path already present in the
+            # RecordStore. Keep the recorder idempotent instead of failing the
+            # whole flush on the unique (zone_id, virtual_path) constraint.
+            if metadata.etag is not None and existing.content_hash == metadata.etag:
+                from nexus.storage._metadata_mapper_generated import MetadataMapper
+
+                self.session.execute(
+                    update(FilePathModel)
+                    .where(FilePathModel.path_id == existing.path_id)
+                    .values(**MetadataMapper.to_file_path_update_values(metadata))
+                )
+                return
+
+            self._record_update(metadata, created_by=created_by)
+            return
+
         # Remove any soft-deleted entries at this path (single statement, no SELECT)
         self.session.execute(
             delete(FilePathModel).where(
+                FilePathModel.zone_id == zone_id,
                 FilePathModel.virtual_path == metadata.path,
                 FilePathModel.deleted_at.is_not(None),
             )
@@ -145,6 +192,7 @@ class VersionRecorder:
         """Update existing FilePathModel + append VersionHistoryModel."""
         existing = self.session.execute(
             select(FilePathModel).where(
+                FilePathModel.zone_id == (metadata.zone_id or ROOT_ZONE_ID),
                 FilePathModel.virtual_path == metadata.path,
                 FilePathModel.deleted_at.is_(None),
             )
@@ -152,7 +200,7 @@ class VersionRecorder:
 
         if not existing:
             # File not in RecordStore yet — create it
-            self._record_create(metadata)
+            self._record_create(metadata, created_by=created_by)
             return
 
         from nexus.storage._metadata_mapper_generated import MetadataMapper

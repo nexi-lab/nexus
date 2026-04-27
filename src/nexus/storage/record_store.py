@@ -336,9 +336,11 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         # Create tables (skip in production when Alembic is SSOT)
         if create_tables:
             from nexus.storage.models import Base
+            from nexus.storage.schema_invariants import ensure_postgres_schema_invariants
             from nexus.storage.zone_bootstrap import ensure_root_zone
 
             Base.metadata.create_all(self._engine)
+            ensure_postgres_schema_invariants(self._engine)
             # Issue #3897: every install must contain zones.root before
             # the first create_api_key call (writes api_key_zones with
             # FK to zones). Alembic's migration handles persistent

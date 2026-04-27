@@ -97,6 +97,13 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 // `Arc<dyn hal::peer::PeerBlobClient>` slot for cross-node fetch,
 // so they live alongside `kernel::Kernel` (which already owns the
 // ZoneManager) inside the kernel rlib.
+//
+// Phase 5 in flight: the `kernel::hal::federation::FederationProvider`
+// trait (committed alongside this module) is the abstraction that
+// will let these two files plus `core/stream/wal.rs` move out into
+// the raft crate.  The migration unblocks the `kernel -> raft` Cargo
+// edge inversion needed for the file moves; until then, both modules
+// keep their direct `nexus_raft::*` references.
 pub mod raft_meta_store;
 pub mod replication;
 

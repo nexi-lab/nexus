@@ -205,3 +205,15 @@ class TestStreamRange:
         chunks = list(stub_fs.stream_range("/test/file.txt", 7, 11))
         combined = b"".join(chunks)
         assert combined == b"World"
+
+    def test_negative_start_raises_value_error(self, stub_fs):
+        with pytest.raises(ValueError, match="start must be non-negative"):
+            list(stub_fs.stream_range("/test/file.txt", -1, 10))
+
+    def test_end_less_than_start_raises_value_error(self, stub_fs):
+        with pytest.raises(ValueError, match="end.*must be >= start"):
+            list(stub_fs.stream_range("/test/file.txt", 10, 5))
+
+    def test_non_positive_chunk_size_raises_value_error(self, stub_fs):
+        with pytest.raises(ValueError, match="chunk_size must be positive"):
+            list(stub_fs.stream_range("/test/file.txt", 0, 10, chunk_size=0))

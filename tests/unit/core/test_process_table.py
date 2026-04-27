@@ -72,6 +72,13 @@ class TestSpawn:
         with pytest.raises(AgentNotFoundError):
             pt.spawn("child", OWNER, ZONE, parent_pid="nonexistent")
 
+    def test_spawn_rejects_duplicate_explicit_pid(self) -> None:
+        pt = _make_table()
+        first = pt.spawn("agent-1", OWNER, ZONE, pid="pid-1")
+        with pytest.raises(AgentError, match="already exists"):
+            pt.spawn("agent-2", OWNER, ZONE, pid=first.pid)
+        assert pt.get(first.pid) == first
+
     def test_spawn_with_labels(self) -> None:
         pt = _make_table()
         desc = pt.spawn("agent", OWNER, ZONE, labels={"model": "claude"})
@@ -416,6 +423,13 @@ class TestExternalProcesses:
         assert desc.external_info is not None
         assert desc.external_info.connection_id == "conn-1"
         assert desc.external_info.host_pid == 12345
+
+    def test_register_external_rejects_duplicate_connection_id(self) -> None:
+        pt = _make_table()
+        first = pt.register_external("agent-1", OWNER, ZONE, connection_id="conn-1")
+        with pytest.raises(AgentError, match="already exists"):
+            pt.register_external("agent-2", OWNER, ZONE, connection_id=first.pid)
+        assert pt.get(first.pid) == first
 
     def test_heartbeat(self) -> None:
         pt = _make_table()

@@ -164,7 +164,11 @@ class AgentRegistry:
 
     def _alloc_pid(self) -> str:
         """Allocate a unique PID (UUID4 hex prefix)."""
-        return uuid.uuid4().hex[:12]
+        for _ in range(100):
+            pid = uuid.uuid4().hex[:12]
+            if pid not in self._processes:
+                return pid
+        raise AgentError("failed to allocate a unique process id")
 
     # ------------------------------------------------------------------
     # State machine
@@ -219,7 +223,11 @@ class AgentRegistry:
             if parent is None:
                 raise AgentNotFoundError(f"parent not found: {parent_pid}")
 
-        pid = pid or self._alloc_pid()
+        if pid is None:
+            pid = self._alloc_pid()
+        elif pid in self._processes:
+            raise AgentError(f"process already exists: {pid}")
+
         now = datetime.now(UTC)
 
         desc = AgentDescriptor(

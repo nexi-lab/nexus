@@ -155,6 +155,14 @@ class TestRustValidatePath(unittest.TestCase):
         with self.assertRaises(ValueError):
             rust_validate_path("/a/../b", False)
 
+    def test_reject_dot_path_component(self) -> None:
+        with self.assertRaises(ValueError):
+            rust_validate_path("/a/./b", False)
+
+    def test_allows_dotdot_inside_filename_components(self) -> None:
+        assert rust_validate_path("/a/file..txt", False) == "/a/file..txt"
+        assert rust_validate_path("/a/..hidden/file", False) == "/a/..hidden/file"
+
     def test_reject_component_whitespace(self) -> None:
         with self.assertRaises(ValueError):
             rust_validate_path("/ a/b", False)

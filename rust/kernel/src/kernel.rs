@@ -66,7 +66,13 @@ impl<T: ?Sized> RwLockExt<T> for RwLock<T> {
 /// the origin node when metadata has been Raft-replicated but the CAS
 /// blob lives on a remote peer. Generated from `proto/nexus/grpc/vfs/vfs.proto`
 /// (see `build.rs`).
-pub(crate) mod vfs_proto {
+///
+/// Phase 4 bumped to `pub` so peer crates (`transport::grpc`,
+/// `transport::federation`) can use the same generated client / server
+/// stubs without re-generating them — proto definitions stay
+/// kernel-owned (the build.rs that compiles `vfs.proto` lives in
+/// kernel) but the generated module surface is shared.
+pub mod vfs_proto {
     tonic::include_proto!("nexus.grpc.vfs");
 }
 

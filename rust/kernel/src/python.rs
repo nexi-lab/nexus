@@ -23,7 +23,8 @@
 
 #[cfg(feature = "connectors")]
 use crate::openai_inference;
-use crate::{federation_client, generated_kernel_abi_pyo3, grpc_server, semaphore, volume_engine};
+use crate::transport::{federation as transport_federation, grpc as transport_grpc};
+use crate::{generated_kernel_abi_pyo3, semaphore, volume_engine};
 #[cfg(unix)]
 use crate::{shm_pipe, shm_stream, stdio_stream};
 use pyo3::prelude::*;
@@ -66,9 +67,12 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // `BlobPackEngine` (kept `#[pyclass(name = "VolumeEngine")]` alias
     // for one release for Python compat).
     m.add_class::<volume_engine::VolumeEngine>()?;
-    m.add_class::<grpc_server::PyVfsGrpcServerHandle>()?;
+    // Phase 4: gRPC server pyclass + entry function moved from
+    // `kernel::grpc_server` to `kernel::transport::grpc`; same
+    // pyclass / pyfunction names, just different submodule path.
+    m.add_class::<transport_grpc::PyVfsGrpcServerHandle>()?;
     m.add_function(pyo3::wrap_pyfunction!(
-        grpc_server::start_vfs_grpc_server,
+        transport_grpc::start_vfs_grpc_server,
         m
     )?)?;
     // Kernel (Issue #1868 — PyKernel wraps pure Rust Kernel).
@@ -76,8 +80,8 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
-    // Federation peer gRPC client (R16.5b). Phase 4 moves the Rust impl
-    // into `transport::federation` and this `add_class` line follows.
-    m.add_class::<federation_client::PyFederationClient>()?;
+    // Phase 4: federation client pyclass moved from
+    // `kernel::federation_client` to `kernel::transport::federation`.
+    m.add_class::<transport_federation::PyFederationClient>()?;
     Ok(())
 }

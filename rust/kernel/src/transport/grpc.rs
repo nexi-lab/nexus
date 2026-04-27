@@ -636,7 +636,7 @@ impl SerializedAuth {
 
 // ── PyO3 binding ─────────────────────────────────────────────────────
 
-use crate::generated_pyo3::PyKernel;
+use crate::generated_kernel_abi_pyo3::PyKernel;
 use pyo3::exceptions::PyRuntimeError;
 
 /// Python-facing handle for the running gRPC server. Drop or call
@@ -747,10 +747,12 @@ pub fn start_vfs_grpc_server(
         dispatch_call,
     };
 
-    // `inner` is `pub(crate)` (see `generated_pyo3.rs::PyKernel` field
-    // doc); cloning the Arc here is the SSOT route — no extra accessor
-    // method that codegen would have to remember to emit.
-    let kernel_arc = Arc::clone(&kernel.borrow().inner);
+    // Phase 4: file moved from `kernel/src/grpc_server.rs` into
+    // `transport/src/grpc.rs`; `kernel.inner` is `pub(crate)` so the
+    // pre-Phase-4 direct field access broke at the crate boundary.
+    // Replaced with the `kernel_arc()` accessor (codegen-emitted on
+    // PyKernel) — same Arc clone, just goes through a `pub fn`.
+    let kernel_arc = kernel.borrow().kernel_arc();
     let handle = spawn(kernel_arc, cfg, bridge).map_err(PyRuntimeError::new_err)?;
 
     Ok(PyVfsGrpcServerHandle {

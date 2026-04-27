@@ -117,7 +117,10 @@ mod cas_remote;
 mod cas_transport;
 #[cfg(feature = "connectors")]
 mod cli_backend;
-mod federation_client;
+// Phase 4: `federation_client` moved to `kernel::transport::federation`
+// (was intended to move to `rust/transport/` crate but parked here
+// pending the transport-primitives crate split — see
+// `kernel::transport::mod` doc).
 #[cfg(feature = "connectors")]
 mod gcs_backend;
 #[cfg(feature = "connectors")]
@@ -126,7 +129,8 @@ mod gdrive_backend;
 mod gmail_backend;
 #[cfg(feature = "connectors")]
 mod hn_backend;
-pub mod ipc;
+// Phase 4: `ipc` moved to `kernel::transport::ipc` (parked in kernel
+// pending the transport-primitives crate split).
 // `kernel` itself is `pub` (Phase 3 onward) so peer crates
 // (`services::audit`, etc.) can hold `&kernel::Kernel` references and
 // call the kernel's in-tree Rust API (`register_native_hook`,
@@ -149,7 +153,8 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 // `grpc.aio.server` so :2028 is owned by tonic. Read/Write/Delete/Ping
 // are zero-PyO3 fast-paths; Call still uses a PyO3 callback into the
 // Python `dispatch_method` pending the broader 195-service migration.
-pub mod grpc_server;
+// Phase 4: `grpc_server` moved to `kernel::transport::grpc` (parked
+// in kernel pending the transport-primitives crate split).
 #[cfg(feature = "nostr")]
 pub mod nostr_relay;
 #[cfg(feature = "connectors")]
@@ -159,6 +164,7 @@ mod openai_inference;
 #[cfg(feature = "connectors")]
 pub mod openai_streaming;
 mod peer_blob_client;
+pub mod transport;
 // `permission_hook` moved to `services::permission::hook` (Phase 3).
 mod raft_meta_store;
 mod remote_backend;

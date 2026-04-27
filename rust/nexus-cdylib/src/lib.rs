@@ -35,5 +35,10 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // registry by the time `install_audit_hook` accepts a
     // `PyRef<PyKernel>` parameter.
     services::python::register(m)?;
+    // Phase 4 transport-tier PyO3 entry points (PyVfsGrpcServerHandle +
+    // start_vfs_grpc_server + PyFederationClient) registered through
+    // `kernel::python::register` for now — see `kernel/src/transport/`
+    // module's docstring for why those files live in kernel rather
+    // than the transport crate.
     Ok(())
 }

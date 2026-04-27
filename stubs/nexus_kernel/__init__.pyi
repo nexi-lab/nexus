@@ -152,22 +152,6 @@ def trigram_index_stats(index_path: str) -> dict[str, Any]: ...
 def invalidate_trigram_cache(index_path: str) -> None: ...
 
 # ---------------------------------------------------------------------------
-# VFS gRPC server (grpc_server.rs)
-# ---------------------------------------------------------------------------
-
-def start_vfs_grpc_server(
-    kernel: Any,
-    bind_addr: str,
-    api_key: str | None,
-    tls_cert_pem: bytes | None,
-    tls_key_pem: bytes | None,
-    tls_ca_pem: bytes | None,
-    server_version: str,
-    authenticate: Any,
-    dispatch_call: Any,
-) -> Any: ...
-
-# ---------------------------------------------------------------------------
 # Classes
 # ---------------------------------------------------------------------------
 
@@ -293,10 +277,6 @@ class VolumeEngine:
     def commit_batch(self, reservation_id: int, expiry: float = 0.0) -> None: ...
     def batch_put(self, items: list[tuple[str, bytes]]) -> int: ...
     def expire_reservations(self) -> int: ...
-
-class VfsGrpcServerHandle:
-    def shutdown(self) -> None: ...
-    def __repr__(self) -> str: ...
 
 class OperationContext:
     def __init__(
@@ -578,19 +558,6 @@ class Kernel:
 
 class SysReadResult: ...
 class SysWriteResult: ...
-
-class FederationClient:
-    def __init__(
-        self,
-        local_ca_pem: bytes | None = None,
-        node_cert_pem: bytes | None = None,
-        node_key_pem: bytes | None = None,
-        tofu_store_path: str | None = None,
-    ) -> None: ...
-    def discover_mount(self, peer_addr: str, path: str) -> dict[str, Any]: ...
-    def request_join_zone(
-        self, peer_addr: str, zone_id: str, node_id: int, node_address: str, as_learner: bool
-    ) -> None: ...
 
 class BloomFilter:
     def __init__(self, expected_items: int = 100000, fp_rate: float = 0.01) -> None: ...

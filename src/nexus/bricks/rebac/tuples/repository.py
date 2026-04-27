@@ -492,7 +492,12 @@ class TupleRepository:
                 for row in cursor.fetchall()
             ]
 
-    def find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
+    def find_related_objects(
+        self,
+        obj: Entity,
+        relation: str,
+        context: dict[str, Any] | None = None,
+    ) -> list[Entity]:
         """Find all objects related to obj via relation.
 
         For tupleToUserset traversal: finds tuples where (obj, relation, object).
@@ -518,7 +523,7 @@ class TupleRepository:
             cursor.execute(
                 self.fix_sql_placeholders(
                     """
-                    SELECT object_type, object_id
+                    SELECT object_type, object_id, conditions
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND relation = ?
@@ -530,6 +535,8 @@ class TupleRepository:
 
             results = []
             for row in cursor.fetchall():
+                if not self._conditions_allow(row["conditions"], context):
+                    continue
                 entity = Entity(row["object_type"], row["object_id"])
                 results.append(entity)
 
@@ -538,7 +545,12 @@ class TupleRepository:
 
             return results
 
-    def find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
+    def find_subjects_with_relation(
+        self,
+        obj: Entity,
+        relation: str,
+        context: dict[str, Any] | None = None,
+    ) -> list[Entity]:
         """Find all subjects that have a relation to obj.
 
         Reverse of find_related_objects: finds tuples where (subject, relation, obj).
@@ -564,7 +576,7 @@ class TupleRepository:
             cursor.execute(
                 self.fix_sql_placeholders(
                     """
-                    SELECT subject_type, subject_id
+                    SELECT subject_type, subject_id, conditions
                     FROM rebac_tuples
                     WHERE object_type = ? AND object_id = ?
                       AND relation = ?
@@ -576,6 +588,8 @@ class TupleRepository:
 
             results = []
             for row in cursor.fetchall():
+                if not self._conditions_allow(row["conditions"], context):
+                    continue
                 entity = Entity(row["subject_type"], row["subject_id"])
                 results.append(entity)
 
@@ -693,6 +707,21 @@ class TupleRepository:
     # ------------------------------------------------------------------
     # ABAC condition evaluation
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _conditions_allow(conditions_json: Any, context: dict[str, Any] | None) -> bool:
+        """Return True when tuple conditions are empty or satisfied."""
+        if not conditions_json:
+            return True
+
+        try:
+            conditions = (
+                json.loads(conditions_json) if isinstance(conditions_json, str) else conditions_json
+            )
+        except (json.JSONDecodeError, TypeError):
+            return True
+
+        return TupleRepository.evaluate_conditions(conditions, context)
 
     @staticmethod
     def evaluate_conditions(

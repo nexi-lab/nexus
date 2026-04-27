@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from nexus.bricks.rebac.cache.read_fence import ReadFence
 from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
 
 
@@ -349,6 +350,53 @@ class TestRevisionQuantization:
         stats = cache.get_stats()
         assert stats["revision_quantization_window"] == 15
         assert stats["enable_revision_quantization"] is True
+
+
+class TestReadFenceIntegration:
+    """Test read-fence freshness across cache read variants."""
+
+    def test_get_with_revision_check_respects_read_fence(self):
+        """Revision-aware reads must not return entries invalidated by the read fence."""
+        fence = ReadFence()
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+        cache._read_fence = fence
+        cache.set_revision_fetcher(lambda _zone_id: 7)
+
+        cache.set(
+            "agent",
+            "alice",
+            "read",
+            "file",
+            "/doc.txt",
+            True,
+            zone_id="zone-a",
+        )
+
+        result, revision = cache.get_with_revision_check(
+            "agent",
+            "alice",
+            "read",
+            "file",
+            "/doc.txt",
+            zone_id="zone-a",
+            min_revision=7,
+        )
+        assert result is True
+        assert revision == 7
+
+        fence.advance("zone-a")
+
+        result, revision = cache.get_with_revision_check(
+            "agent",
+            "alice",
+            "read",
+            "file",
+            "/doc.txt",
+            zone_id="zone-a",
+            min_revision=7,
+        )
+        assert result is None
+        assert revision == 7
 
 
 class TestXFetchAlgorithm:

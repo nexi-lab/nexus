@@ -399,6 +399,15 @@ class ReBACPermissionCache:
                     break
                 path = parent
 
+    def _evict_key_unlocked(self, key: str) -> None:
+        """Remove a key and all companion metadata while holding ``_lock``."""
+        self._grant_cache.pop(key, None)
+        self._denial_cache.pop(key, None)
+        self._fence_stamps.pop(key, None)
+        self._entry_metadata.pop(key, None)
+        self._refresh_in_progress.discard(key)
+        self._remove_from_indexes(key)
+
     def _get_keys_for_subject(self, zone_id: str, subject_type: str, subject_id: str) -> set[str]:
         """Get all cache keys for a subject using secondary index (Issue #1077).
 
@@ -662,9 +671,7 @@ class ReBACPermissionCache:
                 zone_part = zone_id if zone_id else ROOT_ZONE_ID
                 entry_gen = self._fence_stamps.get(key, 0)
                 if self._read_fence.is_stale(zone_part, entry_gen):
-                    self._grant_cache.pop(key, None)
-                    self._denial_cache.pop(key, None)
-                    self._fence_stamps.pop(key, None)
+                    self._evict_key_unlocked(key)
                     result = None
                     is_grant_hit = False
 
@@ -751,6 +758,15 @@ class ReBACPermissionCache:
 
             if result is None:
                 result = self._denial_cache.get(key)
+
+            # Issue #3396: Read fence staleness check (same as get()).
+            if result is not None and self._read_fence is not None:
+                zone_part = zone_id if zone_id else ROOT_ZONE_ID
+                entry_gen = self._fence_stamps.get(key, 0)
+                if self._read_fence.is_stale(zone_part, entry_gen):
+                    self._evict_key_unlocked(key)
+                    result = None
+                    is_grant_hit = False
 
             # Track metrics
             if self._enable_metrics:
@@ -1152,9 +1168,7 @@ class ReBACPermissionCache:
                 zone_part = zone_id if zone_id else ROOT_ZONE_ID
                 entry_gen = self._fence_stamps.get(key, 0)
                 if self._read_fence.is_stale(zone_part, entry_gen):
-                    self._grant_cache.pop(key, None)
-                    self._denial_cache.pop(key, None)
-                    self._fence_stamps.pop(key, None)
+                    self._evict_key_unlocked(key)
                     result = None
                     is_grant_hit = False
 
@@ -1225,6 +1239,8 @@ class ReBACPermissionCache:
                 count += 1
             # Issue #3396: clean up fence stamps to prevent memory leak
             self._fence_stamps.pop(key, None)
+            self._entry_metadata.pop(key, None)
+            self._refresh_in_progress.discard(key)
         return count
 
     def _collect_matching_keys(

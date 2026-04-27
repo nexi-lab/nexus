@@ -62,6 +62,21 @@ def mgr(engine):
 
 
 @pytest.fixture
+def mgr_zone_isolated(engine):
+    """Zone-aware ReBACManager with max_depth=10 and 5-min cache."""
+    m = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        enforce_zone_isolation=True,
+        version_store=MetastoreVersionStore(InMemoryNexusFS()),
+        namespace_store=MetastoreNamespaceStore(InMemoryNexusFS()),
+    )
+    yield m
+    m.close()
+
+
+@pytest.fixture
 def mgr_shallow(engine):
     """ReBACManager with max_depth=3 for depth limit testing."""
     m = ReBACManager(
@@ -984,6 +999,443 @@ class TestConditionEvaluation:
                 context={"arbitrary": "value"},
             )
             is True
+        )
+
+    @pytest.mark.parametrize("manager_fixture", ["mgr", "mgr_zone_isolated"])
+    def test_wildcard_condition_not_satisfied_denies_access(self, request, manager_fixture):
+        """Wildcard grants must still enforce their tuple conditions."""
+        mgr = request.getfixturevalue(manager_fixture)
+        _register_file_ns(mgr)
+
+        doc = ("file", f"conditional-public-{manager_fixture}")
+
+        mgr.rebac_write(
+            subject=("*", "*"),
+            relation="direct_viewer",
+            object=doc,
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="read",
+                object=doc,
+                context={"ip": "192.168.1.1"},
+            )
+            is False
+        )
+
+    @pytest.mark.parametrize("manager_fixture", ["mgr", "mgr_zone_isolated"])
+    def test_wildcard_condition_failure_falls_through_to_other_grant(
+        self, request, manager_fixture
+    ):
+        """One failing wildcard condition must not block another wildcard grant."""
+        mgr = request.getfixturevalue(manager_fixture)
+        _register_file_ns(mgr)
+
+        doc = ("file", f"conditional-public-fallback-{manager_fixture}")
+
+        mgr.rebac_write(
+            subject=("*", "*"),
+            relation="direct_viewer",
+            object=doc,
+            zone_id="zone-a",
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+        mgr.rebac_write(
+            subject=("*", "*"),
+            relation="direct_viewer",
+            object=doc,
+            zone_id="zone-b",
+        )
+
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="read",
+                object=doc,
+                zone_id="zone-a",
+                context={"ip": "192.168.1.1"},
+            )
+            is True
+        )
+
+    @pytest.mark.parametrize("manager_fixture", ["mgr", "mgr_zone_isolated"])
+    def test_userset_condition_not_satisfied_denies_access(self, request, manager_fixture):
+        """Userset-as-subject grants must enforce their own conditions."""
+        mgr = request.getfixturevalue(manager_fixture)
+        _register_file_ns(mgr)
+        _register_group_ns(mgr)
+
+        alice = ("agent", "alice")
+        team = ("group", f"team-{manager_fixture}")
+        doc = ("file", f"conditional-userset-{manager_fixture}")
+
+        mgr.rebac_write(subject=alice, relation="member-of", object=team)
+        mgr.rebac_write(
+            subject=("group", team[1], "member-of"),
+            relation="direct_viewer",
+            object=doc,
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                context={"ip": "192.168.1.1"},
+            )
+            is False
+        )
+
+    def test_boundary_cache_does_not_bypass_conditions(self, mgr):
+        """Inherited conditional grants must not be reused across contexts."""
+        mgr.create_namespace(
+            NamespaceConfig(
+                namespace_id="file-ns",
+                object_type="file",
+                config={
+                    "relations": {
+                        "direct_viewer": {},
+                        "parent": {},
+                        "inherited_viewer": {
+                            "tupleToUserset": {
+                                "tupleset": "parent",
+                                "computedUserset": "direct_viewer",
+                            }
+                        },
+                    },
+                    "permissions": {
+                        "read": ["direct_viewer", "inherited_viewer"],
+                    },
+                },
+            )
+        )
+
+        alice = ("agent", "alice")
+        parent = ("file", "/secure")
+        child = ("file", "/secure/report.txt")
+
+        mgr.rebac_write(
+            subject=alice,
+            relation="direct_viewer",
+            object=parent,
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+        mgr.rebac_write(subject=child, relation="parent", object=parent)
+
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=child,
+                context={"ip": "10.1.2.3"},
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=child,
+                context={"ip": "192.168.1.1"},
+            )
+            is False
+        )
+
+    def test_tiger_cache_does_not_bypass_conditions(self, mgr, monkeypatch):
+        """Tiger bitmap cache must not reuse conditional decisions."""
+        _register_file_ns(mgr)
+
+        class FakeTigerCache:
+            allowed = False
+
+            def check_access(self, **kwargs):
+                return True if self.allowed else None
+
+        tiger_cache = FakeTigerCache()
+        mgr._tiger_cache = tiger_cache
+        monkeypatch.setattr(
+            mgr,
+            "tiger_check_access",
+            lambda **kwargs: True if tiger_cache.allowed else None,
+        )
+
+        def fake_write_through(*args, **kwargs):
+            tiger_cache.allowed = True
+
+        monkeypatch.setattr(mgr, "_tiger_write_through_single", fake_write_through)
+
+        alice = ("agent", "alice")
+        doc = ("file", "conditional-tiger-cache")
+
+        mgr.rebac_write(
+            subject=alice,
+            relation="direct_viewer",
+            object=doc,
+            zone_id="root",
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                zone_id="root",
+                context={"ip": "10.1.2.3"},
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                zone_id="root",
+                context={"ip": "192.168.1.1"},
+            )
+            is False
+        )
+
+    def test_tiger_write_through_skips_conditional_tuples(self, mgr, monkeypatch):
+        """Conditional writes must not pre-materialize unconditional Tiger grants."""
+        _register_file_ns(mgr)
+
+        class FakeTigerCache:
+            allowed = False
+
+        tiger_cache = FakeTigerCache()
+        mgr._tiger_cache = tiger_cache
+        monkeypatch.setattr(
+            mgr,
+            "tiger_check_access",
+            lambda **kwargs: True if tiger_cache.allowed else None,
+        )
+
+        def fake_persist_grant(*args, **kwargs):
+            tiger_cache.allowed = True
+            return True
+
+        monkeypatch.setattr(mgr, "tiger_persist_grant", fake_persist_grant)
+
+        alice = ("agent", "alice")
+        doc = ("file", "conditional-tiger-write-through")
+
+        mgr.rebac_write(
+            subject=alice,
+            relation="direct_viewer",
+            object=doc,
+            zone_id="root",
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                zone_id="root",
+                context=None,
+            )
+            is False
+        )
+
+    def test_tiger_batch_write_through_skips_conditional_tuples(self, mgr, monkeypatch):
+        """Conditional batch writes must not pre-materialize Tiger grants."""
+        _register_file_ns(mgr)
+
+        class FakeTigerCache:
+            allowed = False
+
+        tiger_cache = FakeTigerCache()
+        mgr._tiger_cache = tiger_cache
+        monkeypatch.setattr(
+            mgr,
+            "tiger_check_access",
+            lambda **kwargs: True if tiger_cache.allowed else None,
+        )
+
+        def fake_persist_grant(*args, **kwargs):
+            tiger_cache.allowed = True
+            return True
+
+        monkeypatch.setattr(mgr, "tiger_persist_grant", fake_persist_grant)
+
+        alice = ("agent", "alice")
+        doc = ("file", "conditional-tiger-batch-write-through")
+
+        mgr.rebac_write_batch(
+            [
+                {
+                    "subject": alice,
+                    "relation": "direct_viewer",
+                    "object": doc,
+                    "zone_id": "root",
+                    "conditions": {"allowed_ips": ["10.0.0.0/8"]},
+                }
+            ]
+        )
+
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                zone_id="root",
+                context=None,
+            )
+            is False
+        )
+
+    def test_bulk_check_denies_conditional_tuple_without_context(self, mgr):
+        """Bulk checks have no ABAC context, so conditional tuples fail closed."""
+        _register_file_ns(mgr)
+
+        alice = ("agent", "alice")
+        doc = ("file", "conditional-bulk-doc")
+        check = (alice, "read", doc)
+
+        mgr.rebac_write(
+            subject=alice,
+            relation="direct_viewer",
+            object=doc,
+            zone_id="root",
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+
+        result = mgr.rebac_check_bulk([check], zone_id="root")
+
+        assert result[check] is False
+
+    @pytest.mark.parametrize("manager_fixture", ["mgr", "mgr_zone_isolated"])
+    def test_tuple_to_userset_parent_edge_conditions_are_enforced(self, request, manager_fixture):
+        """Conditional tuple-to-userset parent edges must be fail-closed."""
+        mgr = request.getfixturevalue(manager_fixture)
+        mgr.create_namespace(
+            NamespaceConfig(
+                namespace_id="folder-ns",
+                object_type="folder",
+                config={
+                    "relations": {
+                        "direct_viewer": {},
+                        "parent": {},
+                        "inherited_viewer": {
+                            "tupleToUserset": {
+                                "tupleset": "parent",
+                                "computedUserset": "direct_viewer",
+                            }
+                        },
+                    },
+                    "permissions": {"read": ["direct_viewer", "inherited_viewer"]},
+                },
+            )
+        )
+
+        alice = ("agent", "alice")
+        parent = ("folder", f"conditional-parent-{manager_fixture}")
+        child = ("folder", f"conditional-child-{manager_fixture}")
+
+        mgr.rebac_write(subject=alice, relation="direct_viewer", object=parent)
+        mgr.rebac_write(
+            subject=child,
+            relation="parent",
+            object=parent,
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=child,
+                context={"ip": "10.1.2.3"},
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=child,
+                context={"ip": "192.168.1.1"},
+            )
+            is False
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=child,
+                context=None,
+            )
+            is False
+        )
+
+    @pytest.mark.parametrize("manager_fixture", ["mgr", "mgr_zone_isolated"])
+    def test_tuple_to_userset_group_edge_conditions_are_enforced(self, request, manager_fixture):
+        """Conditional group-style tuple-to-userset edges must be fail-closed."""
+        mgr = request.getfixturevalue(manager_fixture)
+        mgr.create_namespace(
+            NamespaceConfig(
+                namespace_id="folder-ns",
+                object_type="folder",
+                config={
+                    "relations": {
+                        "direct_viewer": {},
+                        "delegate": {},
+                        "delegated_viewer": {
+                            "tupleToUserset": {
+                                "tupleset": "delegate",
+                                "computedUserset": "direct_viewer",
+                            }
+                        },
+                    },
+                    "permissions": {"read": ["delegated_viewer"]},
+                },
+            )
+        )
+
+        alice = ("agent", "alice")
+        delegate = ("folder", f"conditional-delegate-{manager_fixture}")
+        doc = ("folder", f"conditional-delegated-doc-{manager_fixture}")
+
+        mgr.rebac_write(subject=alice, relation="direct_viewer", object=delegate)
+        mgr.rebac_write(
+            subject=delegate,
+            relation="delegate",
+            object=doc,
+            conditions={"allowed_ips": ["10.0.0.0/8"]},
+        )
+
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                context={"ip": "10.1.2.3"},
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                context={"ip": "192.168.1.1"},
+            )
+            is False
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                context=None,
+            )
+            is False
         )
 
 

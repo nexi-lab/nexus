@@ -14,6 +14,7 @@ Related: Issue #1459 Phase 15+, Performance optimization
 import logging
 import threading
 import time as time_module
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import NamespaceConfig
 
 logger = logging.getLogger(__name__)
+
+SQLITE_ENTITY_CHUNK_SIZE = 400
 
 
 class BulkPermissionChecker:
@@ -394,14 +397,30 @@ class BulkPermissionChecker:
         zone_id: str,
         now_iso: str,
     ) -> list[dict[str, Any]]:
-        """Fetch ALL tuples for entities in ONE query using UNNEST (PostgreSQL) or VALUES (SQLite)."""
+        """Fetch all tuples for entities using UNNEST or chunked SQLite VALUES."""
         if not entities:
             return []
 
+        is_postgresql = self._engine.dialect.name == "postgresql"
+        if not is_postgresql and len(entities) > SQLITE_ENTITY_CHUNK_SIZE:
+            rows: list[dict[str, Any]] = []
+            seen: set[tuple[str, ...]] = set()
+            for entity_chunk in self._chunked(entities, SQLITE_ENTITY_CHUNK_SIZE):
+                chunk_rows = self._fetch_all_tuples_single_query(
+                    conn,
+                    entity_chunk,
+                    zone_id,
+                    now_iso,
+                )
+                for row in chunk_rows:
+                    row_key = self._tuple_row_key(row)
+                    if row_key not in seen:
+                        seen.add(row_key)
+                        rows.append(row)
+            return rows
+
         entity_types = [e[0] for e in entities]
         entity_ids = [e[1] for e in entities]
-
-        is_postgresql = self._engine.dialect.name == "postgresql"
 
         if is_postgresql:
             if self._enforce_zone_isolation:
@@ -493,19 +512,7 @@ class BulkPermissionChecker:
                 """)
 
         result = conn.execute(stmt, params)
-        return [
-            {
-                "subject_type": row.subject_type,
-                "subject_id": row.subject_id,
-                "subject_relation": row.subject_relation,
-                "relation": row.relation,
-                "object_type": row.object_type,
-                "object_id": row.object_id,
-                "conditions": row.conditions,
-                "expires_at": row.expires_at,
-            }
-            for row in result
-        ]
+        return [self._row_to_tuple_dict(row) for row in result]
 
     def _fetch_cross_zone_tuples(
         self,
@@ -517,6 +524,17 @@ class BulkPermissionChecker:
         """Fetch cross-zone share tuples and append to tuples_graph. Returns count added."""
         cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
         is_postgresql = self._engine.dialect.name == "postgresql"
+
+        if not is_postgresql and len(all_subjects_list) > SQLITE_ENTITY_CHUNK_SIZE:
+            cross_zone_count = 0
+            for subject_chunk in self._chunked(all_subjects_list, SQLITE_ENTITY_CHUNK_SIZE):
+                cross_zone_count += self._fetch_cross_zone_tuples(
+                    conn,
+                    subject_chunk,
+                    tuples_graph,
+                    now_iso,
+                )
+            return cross_zone_count
 
         subject_types = [s[0] for s in all_subjects_list]
         subject_ids = [s[1] for s in all_subjects_list]
@@ -579,21 +597,42 @@ class BulkPermissionChecker:
         result = conn.execute(stmt, cross_zone_params)
         cross_zone_count = 0
         for row in result:
-            tuples_graph.append(
-                {
-                    "subject_type": row.subject_type,
-                    "subject_id": row.subject_id,
-                    "subject_relation": row.subject_relation,
-                    "relation": row.relation,
-                    "object_type": row.object_type,
-                    "object_id": row.object_id,
-                    "conditions": row.conditions,
-                    "expires_at": row.expires_at,
-                }
-            )
+            tuples_graph.append(self._row_to_tuple_dict(row))
             cross_zone_count += 1
 
         return cross_zone_count
+
+    @staticmethod
+    def _chunked(items: list[tuple[str, str]], chunk_size: int) -> Iterator[list[tuple[str, str]]]:
+        """Yield fixed-size chunks sized for SQLite parameter limits."""
+        for start in range(0, len(items), chunk_size):
+            yield items[start : start + chunk_size]
+
+    @staticmethod
+    def _row_to_tuple_dict(row: Any) -> dict[str, Any]:
+        return {
+            "subject_type": row.subject_type,
+            "subject_id": row.subject_id,
+            "subject_relation": row.subject_relation,
+            "relation": row.relation,
+            "object_type": row.object_type,
+            "object_id": row.object_id,
+            "conditions": row.conditions,
+            "expires_at": row.expires_at,
+        }
+
+    @staticmethod
+    def _tuple_row_key(row: dict[str, Any]) -> tuple[str, ...]:
+        return (
+            repr(row.get("subject_type")),
+            repr(row.get("subject_id")),
+            repr(row.get("subject_relation")),
+            repr(row.get("relation")),
+            repr(row.get("object_type")),
+            repr(row.get("object_id")),
+            repr(row.get("conditions")),
+            repr(row.get("expires_at")),
+        )
 
     def _compute_parent_tuples(
         self,
@@ -660,6 +699,10 @@ class BulkPermissionChecker:
             rust_available,
             len(tuples_graph),
         )
+
+        if any(t.get("conditions") for t in tuples_graph):
+            logger.debug("[BULK] Skipping Rust acceleration for conditioned tuples")
+            return False
 
         if not (rust_available and len(cache_misses) >= 1):
             return False

@@ -573,6 +573,7 @@ class ReBACManager:
             object_type == "file"
             and permission in ("read", "write", "execute")
             and self._boundary_cache
+            and context is None
         ):
             boundary = self._boundary_cache.get_boundary(
                 effective_zone, subject_type, subject_id, permission, object_id
@@ -597,7 +598,7 @@ class ReBACManager:
 
         # OPTIMIZATION 2: Try Tiger Cache (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
-        if self._tiger_cache and zone_id:
+        if self._tiger_cache and zone_id and context is None:
             tiger_result = self.tiger_check_access(
                 subject=subject,
                 permission=permission,
@@ -619,11 +620,11 @@ class ReBACManager:
             result = self._rebac_check_base(subject, permission, object, context, zone_id)
 
             # Write-through to Tiger Cache (Issue #935)
-            if result and self._tiger_cache and zone_id:
+            if result and self._tiger_cache and zone_id and context is None:
                 self._tiger_write_through_single(subject, permission, object, zone_id, logger)
 
             # Issue #922: Cache boundary if permission was granted via parent
-            if result and object_type == "file" and self._boundary_cache:
+            if result and object_type == "file" and self._boundary_cache and context is None:
                 self._cache_boundary_if_inherited(subject, permission, object, zone_id, logger)
 
             return result
@@ -635,11 +636,16 @@ class ReBACManager:
         )
 
         # Write-through to Tiger Cache (Issue #935)
-        if detailed_result.allowed and self._tiger_cache and zone_id:
+        if detailed_result.allowed and self._tiger_cache and zone_id and context is None:
             self._tiger_write_through_single(subject, permission, object, zone_id, logger)
 
         # Issue #922: Cache boundary if permission was granted via parent
-        if detailed_result.allowed and object_type == "file" and self._boundary_cache:
+        if (
+            detailed_result.allowed
+            and object_type == "file"
+            and self._boundary_cache
+            and context is None
+        ):
             self._cache_boundary_if_inherited(subject, permission, object, zone_id, logger)
 
         return detailed_result.allowed
@@ -1321,7 +1327,7 @@ class ReBACManager:
 
         # Tiger Cache: Write-through - persist grant immediately
         # This is the fast path (~1-5ms) vs queue processing (~20-40s)
-        if self._tiger_cache:
+        if self._tiger_cache and not conditions:
             subject_tuple = (subject[0], subject[1])
             object_type = object[0]
             object_id = object[1]
@@ -1430,6 +1436,9 @@ class ReBACManager:
             # Tiger Cache: Write-through for bulk operations
             if self._tiger_cache:
                 for t in tuples:
+                    if t.get("conditions"):
+                        continue
+
                     subject = t["subject"]
                     obj = t["object"]
                     relation = t.get("relation", "")

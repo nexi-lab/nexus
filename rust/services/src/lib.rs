@@ -36,6 +36,7 @@
 //!                          +--- backends     (peer; never crosses to services)
 //! ```
 
+pub mod agent_chat;
 pub mod agents;
 pub mod audit;
 pub mod mailbox_stamping;

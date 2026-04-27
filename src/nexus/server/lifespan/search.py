@@ -170,14 +170,10 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Embeddings are now handled by txtai backend (Issue #2663).
         # The old nexus.bricks.search.embeddings module has been deleted.
 
-        nx = svc.nexus_fs if hasattr(svc, "nexus_fs") else svc
-        if hasattr(nx, "sys_setattr"):
-            nx.sys_setattr(
-                "/__sys__/services/search_daemon",
-                service=app.state.search_daemon,
-            )
-        else:
-            await app.state.search_daemon.startup()
+        # Do NOT register via sys_setattr — the Rust service_start_all() calls
+        # startup() via asyncio.run(), which raises RuntimeError inside FastAPI's
+        # running event loop. Start the daemon directly instead.
+        await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True
 
         # Issue #1520: Set FileReaderProtocol for index refresh
@@ -294,6 +290,20 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         app.state.search_daemon_enabled = False
 
     return []
+
+
+async def shutdown_search(app: "FastAPI", svc: "LifespanServices") -> None:  # noqa: ARG001
+    """Shut down the search daemon and release its resources."""
+    daemon = getattr(app.state, "search_daemon", None)
+    if daemon is None:
+        return
+    try:
+        await daemon.shutdown()
+        app.state.search_daemon_enabled = False
+        logger.info("Search Daemon stopped")
+    except Exception:
+        app.state.search_daemon_enabled = False
+        logger.warning("Search Daemon shutdown encountered errors", exc_info=True)
 
 
 def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:

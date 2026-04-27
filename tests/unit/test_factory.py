@@ -280,7 +280,7 @@ class TestBootBrickServices:
         system = _boot_system_services(ctx)
 
         with (
-            caplog.at_level(logging.DEBUG, logger="nexus.factory"),
+            caplog.at_level(logging.DEBUG, logger="nexus.factory._bricks"),
             patch(
                 "nexus.bricks.versioning.version_service.VersionService",
                 side_effect=RuntimeError("version db unavailable"),
@@ -293,7 +293,7 @@ class TestBootBrickServices:
         assert result["version_service"] is None
         # Other brick services are unaffected
         assert "wallet_provisioner" in result
-        assert any("version db unavailable" in r.message for r in caplog.records)
+        assert any("version db unavailable" in r.getMessage() for r in caplog.records)
 
     def test_circuit_breaker_degrades_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         """Issue #2034 / 14A: Circuit breaker failure logs WARNING, not fatal."""
@@ -356,14 +356,16 @@ class TestSafeCreate:
         """Default severity (debug) logs at DEBUG and returns None."""
         from nexus.factory import _safe_create
 
-        with caplog.at_level(logging.DEBUG, logger="nexus.factory"):
+        with caplog.at_level(logging.DEBUG, logger="nexus.factory._helpers"):
             result = _safe_create(
                 "broken_svc",
                 lambda: (_ for _ in ()).throw(RuntimeError("boom")),
                 lambda _: True,
             )
         assert result is None
-        assert any("broken_svc" in r.message and r.levelno == logging.DEBUG for r in caplog.records)
+        assert any(
+            "broken_svc" in r.getMessage() and r.levelno == logging.DEBUG for r in caplog.records
+        )
 
     def test_warning_severity_returns_none_on_error(self, caplog: pytest.LogCaptureFixture) -> None:
         """Warning severity logs at WARNING and returns None."""

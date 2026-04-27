@@ -2561,7 +2561,7 @@ wheels = [
 
 [[package]]
 name = "nexus-ai-fs"
-version = "0.9.34"
+version = "0.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

@@ -125,7 +125,7 @@ class CacheFactory:
         if self._settings.cache_backend == "inmem":
             from nexus.contracts.cache_store import InMemoryCacheStore
 
-            self._cache_store = InMemoryCacheStore()
+            self._cache_store = InMemoryCacheStore(max_size=10_000)
             self._has_cache_store = True
             self._initialized = True
             logger.info("Cache factory initialized with InMemoryCacheStore (SANDBOX)")

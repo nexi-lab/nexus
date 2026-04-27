@@ -1,3 +1,9 @@
+---
+name: hn
+description: Read-only access to Hacker News stories and comments. Use when the user mentions Hacker News, HN, tech news, or asks for top/new/best stories.
+operations: []
+---
+
 # Hacker News Connector
 
 ## Mount Path

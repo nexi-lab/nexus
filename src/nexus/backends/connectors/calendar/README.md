@@ -1,3 +1,9 @@
+---
+name: gcalendar
+description: Read/create/update/delete calendar events via the Google Calendar API. Use when the user mentions calendar, meeting, event, schedule, or appointment.
+operations: [create_event, update_event, delete_event]
+---
+
 # Google Calendar Connector
 
 ## Mount Path

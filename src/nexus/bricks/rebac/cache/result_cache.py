@@ -359,8 +359,7 @@ class ReBACPermissionCache:
         """
         prefixes: list[str] = []
         path = object_id
-        max_depth = 8  # cap prefix fan-out to bound secondary index cardinality
-        while path and path != "/" and len(prefixes) < max_depth:
+        while path and path != "/":
             parent = path.rsplit("/", 1)[0] or "/"
             prefixes.append(parent)
             if parent == "/":

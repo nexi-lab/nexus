@@ -1,12 +1,12 @@
-//! Kernel ``Metastore`` impl backed by a Raft ``ZoneConsensus``.
+//! Kernel ``MetaStore`` impl backed by a Raft ``ZoneConsensus``.
 //!
-//! Federation mounts install a ``ZoneMetastore`` on the kernel's per-mount
+//! Federation mounts install a ``ZoneMetaStore`` on the kernel's per-mount
 //! metastore slot so ``Kernel::with_metastore(mount_point)`` hits the
 //! zone's Raft state machine on cold-dcache lookups. Writes go through
 //! ``propose`` (Raft consensus); reads hit the local state machine
 //! directly.
 //!
-//! R20.3: ``ZoneMetastore`` owns the full↔zone-relative path
+//! R20.3: ``ZoneMetaStore`` owns the full↔zone-relative path
 //! translation. The trait boundary always sees full global paths; the
 //! state machine always sees zone-relative keys. This keeps
 //! ``FileMetadata.path`` consistent with callers' worldview while
@@ -29,9 +29,9 @@ use nexus_raft::prelude::{Command, FullStateMachine, ZoneConsensus};
 use nexus_raft::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
 use prost::Message;
 
-use crate::metastore::{FileMetadata as KernelFileMetadata, Metastore, MetastoreError};
+use crate::meta_store::{FileMetadata as KernelFileMetadata, MetaStore, MetaStoreError};
 
-/// ``kernel::Metastore`` impl backed by a single ``ZoneConsensus``.
+/// ``kernel::MetaStore`` impl backed by a single ``ZoneConsensus``.
 ///
 /// The ``mount_point`` field is the VFS-global prefix this zone is
 /// exposed under (e.g. ``/corp``). It is used to translate between
@@ -44,14 +44,14 @@ use crate::metastore::{FileMetadata as KernelFileMetadata, Metastore, MetastoreE
 /// the SAME ``coherence_id``, which is how
 /// ``VFSRouter::mount_points_for_coherence_key`` fans out apply-side
 /// dcache invalidation across all surfaces of the zone (R20.6 option B).
-pub struct ZoneMetastore {
+pub struct ZoneMetaStore {
     node: ZoneConsensus<FullStateMachine>,
     runtime: tokio::runtime::Handle,
     mount_point: String,
     coherence_id: usize,
 }
 
-impl ZoneMetastore {
+impl ZoneMetaStore {
     /// Construct from a running ``ZoneConsensus`` + its tokio runtime
     /// + the VFS mount point this zone surfaces under.
     ///
@@ -74,13 +74,13 @@ impl ZoneMetastore {
         }
     }
 
-    /// Return an ``Arc<dyn Metastore>`` ready to install into a
+    /// Return an ``Arc<dyn MetaStore>`` ready to install into a
     /// kernel mount entry.
     pub fn new_arc(
         node: ZoneConsensus<FullStateMachine>,
         runtime: tokio::runtime::Handle,
         mount_point: String,
-    ) -> Arc<dyn Metastore> {
+    ) -> Arc<dyn MetaStore> {
         Arc::new(Self::new(node, runtime, mount_point))
     }
 
@@ -107,7 +107,7 @@ impl ZoneMetastore {
         }
         debug_assert!(
             false,
-            "ZoneMetastore({}): path {} does not sit under mount point",
+            "ZoneMetaStore({}): path {} does not sit under mount point",
             self.mount_point, full_path
         );
         full_path.to_string()
@@ -126,9 +126,9 @@ impl ZoneMetastore {
     }
 }
 
-pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetastoreError> {
+pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetaStoreError> {
     let proto = ProtoFileMetadata::decode(bytes)
-        .map_err(|e| MetastoreError::IOError(format!("FileMetadata proto decode: {e}")))?;
+        .map_err(|e| MetaStoreError::IOError(format!("FileMetadata proto decode: {e}")))?;
     Ok(KernelFileMetadata {
         path: proto.path,
         size: proto.size as u64,
@@ -164,7 +164,7 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
     // — the kernel struct does not carry it. DT_MOUNT writes that need
     // a target come from federation (``rust/raft/src/pyo3_bindings.rs``
     // constructs the proto directly); entries written through
-    // ``ZoneMetastore`` are non-mount kinds whose target is always "".
+    // ``ZoneMetaStore`` are non-mount kinds whose target is always "".
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
         size: meta.size as i64,
@@ -179,8 +179,8 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
     proto.encode_to_vec()
 }
 
-impl Metastore for ZoneMetastore {
-    fn get(&self, path: &str) -> Result<Option<KernelFileMetadata>, MetastoreError> {
+impl MetaStore for ZoneMetaStore {
+    fn get(&self, path: &str) -> Result<Option<KernelFileMetadata>, MetaStoreError> {
         let zone_key = self.to_zone_key(path);
         let key = zone_key.clone();
         let fut = self
@@ -189,7 +189,7 @@ impl Metastore for ZoneMetastore {
         let bytes_opt = self
             .runtime
             .block_on(fut)
-            .map_err(|e| MetastoreError::IOError(format!("ZoneMetastore.get({path}): {e}")))?;
+            .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.get({path}): {e}")))?;
         match bytes_opt {
             Some(bytes) => {
                 let mut kmeta = proto_to_kernel(&bytes)?;
@@ -202,7 +202,7 @@ impl Metastore for ZoneMetastore {
         }
     }
 
-    fn put(&self, path: &str, mut metadata: KernelFileMetadata) -> Result<(), MetastoreError> {
+    fn put(&self, path: &str, mut metadata: KernelFileMetadata) -> Result<(), MetaStoreError> {
         let zone_key = self.to_zone_key(path);
         // Rewrite the proto's path field to match the stored key so
         // later reads (which translate back to full) produce a
@@ -219,12 +219,12 @@ impl Metastore for ZoneMetastore {
         let result = self
             .runtime
             .block_on(self.node.propose(cmd))
-            .map_err(|e| MetastoreError::IOError(format!("ZoneMetastore.put({path}): {e}")))?;
+            .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.put({path}): {e}")))?;
         match result {
             nexus_raft::prelude::CommandResult::Success => {}
             nexus_raft::prelude::CommandResult::Error(e) => {
-                return Err(MetastoreError::IOError(format!(
-                    "ZoneMetastore.put({path}) rejected: {e}"
+                return Err(MetaStoreError::IOError(format!(
+                    "ZoneMetaStore.put({path}) rejected: {e}"
                 )));
             }
             _ => {}
@@ -250,20 +250,20 @@ impl Metastore for ZoneMetastore {
         Ok(())
     }
 
-    fn delete(&self, path: &str) -> Result<bool, MetastoreError> {
+    fn delete(&self, path: &str) -> Result<bool, MetaStoreError> {
         let zone_key = self.to_zone_key(path);
         let cmd = Command::DeleteMetadata { key: zone_key };
         let result = self
             .runtime
             .block_on(self.node.propose(cmd))
-            .map_err(|e| MetastoreError::IOError(format!("ZoneMetastore.delete({path}): {e}")))?;
+            .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.delete({path}): {e}")))?;
         Ok(matches!(
             result,
             nexus_raft::prelude::CommandResult::Success
         ))
     }
 
-    fn list(&self, prefix: &str) -> Result<Vec<KernelFileMetadata>, MetastoreError> {
+    fn list(&self, prefix: &str) -> Result<Vec<KernelFileMetadata>, MetaStoreError> {
         let zone_prefix = self.to_zone_key(prefix);
         let key = zone_prefix.clone();
         let fut = self
@@ -272,7 +272,7 @@ impl Metastore for ZoneMetastore {
         let entries = self
             .runtime
             .block_on(fut)
-            .map_err(|e| MetastoreError::IOError(format!("ZoneMetastore.list({prefix}): {e}")))?;
+            .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.list({prefix}): {e}")))?;
         let mut out: Vec<KernelFileMetadata> = Vec::with_capacity(entries.len());
         for entry in entries {
             let (_k, bytes): (String, Vec<u8>) = entry;
@@ -283,7 +283,7 @@ impl Metastore for ZoneMetastore {
         Ok(out)
     }
 
-    fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
+    fn exists(&self, path: &str) -> Result<bool, MetaStoreError> {
         self.get(path).map(|m| m.is_some())
     }
 
@@ -336,7 +336,7 @@ mod tests {
     /// by decomposition: any path whose translation is independent
     /// of consensus can be covered here.)
     fn translate_roundtrip(mount_point: &str, full: &str) -> String {
-        // Mirror ZoneMetastore::to_zone_key / to_global_path without
+        // Mirror ZoneMetaStore::to_zone_key / to_global_path without
         // constructing a live node.
         let zone_key = if mount_point == "/" || mount_point.is_empty() {
             full.to_string()

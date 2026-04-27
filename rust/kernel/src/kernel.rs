@@ -2,14 +2,14 @@
 //!
 //! Zero PyO3 dependency. All Python bridging lives in generated_pyo3.rs.
 //!
-//! Owns DCache, PathRouter, Trie, VFS Lock, Metastore.
+//! Owns DCache, PathRouter, Trie, VFS Lock, MetaStore.
 //! Hook/Observer registries live in generated_pyo3::PyKernel (wrapper-only).
 //!
 //! Architecture:
 //!   - Created empty via Kernel::new(), then components are wired by wrapper.
 //!   - DCache/Router/Trie use interior mutability (&self methods).
 //!   - VFS Lock is optionally Arc-shared with VFSLockManager (blocking acquire).
-//!   - Metastore (Box<dyn Metastore>) wraps any impl (Python adapter, redb, gRPC).
+//!   - MetaStore (Box<dyn MetaStore>) wraps any impl (Python adapter, redb, gRPC).
 //!
 //! Issue #1868: Phase H — kernel boundary collapse.
 
@@ -17,7 +17,7 @@ use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_S
 use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::{LockManager, LockMode};
-use crate::metastore::LocalMetastore;
+use crate::meta_store::LocalMetaStore;
 use crate::vfs_router::{
     canonicalize_mount_path as canonicalize, RouteError, RustRouteResult, VFSRouter,
 };
@@ -551,11 +551,11 @@ pub struct Kernel {
     trie: Trie,
     // Unified lock manager: I/O lock + advisory lock + optional Raft.
     lock_manager: Arc<LockManager>,
-    // Metastore (Box<dyn Metastore>), behind parking_lot::RwLock so
+    // MetaStore (Box<dyn MetaStore>), behind parking_lot::RwLock so
     // the setter paths (``set_metastore_path`` / ``release_metastores``)
     // don't need ``&mut self`` — lets ``PyKernel`` hold an ``Arc<Kernel>``
     // for the apply-side federation-mount callback (R20.16.3).
-    metastore: parking_lot::RwLock<Option<Box<dyn crate::metastore::Metastore>>>,
+    metastore: parking_lot::RwLock<Option<Box<dyn crate::meta_store::MetaStore>>>,
     // VFS lock timeout for blocking acquire (ms) — ``AtomicU64`` so
     // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
     vfs_lock_timeout_ms: AtomicU64,
@@ -610,7 +610,7 @@ pub struct Kernel {
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `VFSRouter::entries` as
-    // `MountEntry::metastore: Option<Arc<dyn Metastore>>` (our v20
+    // `MountEntry::metastore: Option<Arc<dyn MetaStore>>` (our v20
     // SSOT cleanup — kept against develop's legacy split map).
     // Federation installs them via `VFSRouter::install_metastore`
     // after the mount is registered; standalone mode sets them during
@@ -648,10 +648,10 @@ pub struct Kernel {
     pub(crate) chunk_fetcher: Arc<crate::cas_remote::GrpcChunkFetcher>,
     /// Pending remote metastore — set by ``sys_setattr(backend_type="remote")``
     /// and consumed immediately after mount registration to install the
-    /// ``RemoteMetastore`` on the mount entry. This avoids threading the
+    /// ``RemoteMetaStore`` on the mount entry. This avoids threading the
     /// metastore through ``sys_setattr``'s return value.
-    pub(crate) pending_remote_metastore:
-        parking_lot::Mutex<Option<Arc<dyn crate::metastore::Metastore>>>,
+    pub(crate) pending_remote_meta_store:
+        parking_lot::Mutex<Option<Arc<dyn crate::meta_store::MetaStore>>>,
 
     // ── Federation mount wiring (R20.16.3) ─────────────────────────
     //
@@ -661,7 +661,7 @@ pub struct Kernel {
     //
     //   FullStateMachine::apply(DT_MOUNT) — mount_apply_cb
     //     → Kernel::wire_federation_mount(parent, path, target, backend)
-    //       → VFSRouter.add_mount + install_metastore(ZoneMetastore)
+    //       → VFSRouter.add_mount + install_metastore(ZoneMetaStore)
     //       → DCache.put (seed DT_MOUNT entry so sys_stat sees it)
     //       → install_federation_dcache_coherence on target consensus
     //       → cross_zone_mounts.entry(target).push((parent, path, global))
@@ -716,9 +716,9 @@ impl Kernel {
             // quickstarts and minimal-mode boots have a working SSOT
             // without explicit wiring. `set_metastore_path` swaps it
             // for a redb-backed one on demand; federation installs a
-            // per-mount `ZoneMetastore` via `install_mount_metastore`.
+            // per-mount `ZoneMetaStore` via `install_mount_metastore`.
             metastore: parking_lot::RwLock::new(Some(Box::new(
-                crate::metastore::MemoryMetastore::new(),
+                crate::meta_store::MemoryMetaStore::new(),
             ))),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
             read_hook_count: AtomicU64::new(0),
@@ -742,7 +742,7 @@ impl Kernel {
             self_address: parking_lot::RwLock::new(None),
             peer_client,
             chunk_fetcher,
-            pending_remote_metastore: parking_lot::Mutex::new(None),
+            pending_remote_meta_store: parking_lot::Mutex::new(None),
             zone_registry: std::sync::OnceLock::new(),
             zone_runtime: std::sync::OnceLock::new(),
             zone_manager: std::sync::OnceLock::new(),
@@ -790,13 +790,13 @@ impl Kernel {
         *self.self_address.write() = Some(addr.to_string());
     }
 
-    // ── Metastore wiring ──────────────────────────────────────────────
+    // ── MetaStore wiring ──────────────────────────────────────────────
 
-    /// Wire LocalMetastore by path — Rust kernel opens redb directly.
-    /// Only metastore wiring method (PyMetastoreAdapter removed in Phase 9).
+    /// Wire LocalMetaStore by path — Rust kernel opens redb directly.
+    /// Only metastore wiring method (PyMetaStoreAdapter removed in Phase 9).
     pub fn set_metastore_path(&self, path: &str) -> Result<(), KernelError> {
-        let ms = LocalMetastore::open(std::path::Path::new(path))
-            .map_err(|e| KernelError::IOError(format!("LocalMetastore: {e:?}")))?;
+        let ms = LocalMetaStore::open(std::path::Path::new(path))
+            .map_err(|e| KernelError::IOError(format!("LocalMetaStore: {e:?}")))?;
         *self.metastore.write() = Some(Box::new(ms));
         Ok(())
     }
@@ -828,13 +828,13 @@ impl Kernel {
     /// regression — see PR #3890 for the full diagnostic).
     ///
     /// Architecture:
-    ///   - Metastore is the SSOT. dcache is a downstream cache.
-    ///   - For federation mounts (`ZoneMetastore`), `put` blocks
+    ///   - MetaStore is the SSOT. dcache is a downstream cache.
+    ///   - For federation mounts (`ZoneMetaStore`), `put` blocks
     ///     until raft commits the entry on quorum. If the propose
     ///     times out (e.g., quorum unreachable), this returns Err
     ///     and the dcache stays consistent with the state machine
     ///     (i.e., file does NOT appear in subsequent reads).
-    ///   - For standalone mounts (`LocalMetastore`), `put` is a
+    ///   - For standalone mounts (`LocalMetaStore`), `put` is a
     ///     synchronous redb write — same atomicity story, smaller
     ///     latency budget.
     ///
@@ -849,7 +849,7 @@ impl Kernel {
         &self,
         path: &str,
         mount_point: &str,
-        meta: crate::metastore::FileMetadata,
+        meta: crate::meta_store::FileMetadata,
     ) -> Result<(), KernelError> {
         let cache_entry: CachedEntry = (&meta).into();
         let put_result = self
@@ -892,10 +892,10 @@ impl Kernel {
     /// `mount_point` must be the zone-canonical key from `vfs_router.route()`.
     pub(crate) fn with_metastore<F, R>(&self, mount_point: &str, f: F) -> Option<R>
     where
-        F: FnOnce(&dyn crate::metastore::Metastore) -> R,
+        F: FnOnce(&dyn crate::meta_store::MetaStore) -> R,
     {
         // Hold the DashMap read guard only long enough to snapshot the
-        // `Arc<dyn Metastore>`, then release it before running the closure
+        // `Arc<dyn MetaStore>`, then release it before running the closure
         // — avoids pinning the shard for the duration of a Raft propose.
         if let Some(entry) = self.vfs_router.get_canonical(mount_point) {
             if let Some(ms) = entry.metastore.as_ref() {
@@ -907,12 +907,12 @@ impl Kernel {
         self.metastore.read().as_ref().map(|ms| f(ms.as_ref()))
     }
 
-    // ── Metastore routing ────────────────────────────────────────────
+    // ── MetaStore routing ────────────────────────────────────────────
     //
     // R20.3: the metastore abstraction owns key translation. Callers
-    // pass full global paths; per-mount ``ZoneMetastore`` impls translate
+    // pass full global paths; per-mount ``ZoneMetaStore`` impls translate
     // to their zone-relative storage on the way in and back on the way
-    // out. The global fallback ``LocalMetastore`` stores full paths
+    // out. The global fallback ``LocalMetaStore`` stores full paths
     // directly. There is no longer a kernel-side "is per-mount"
     // branch — we just resolve the right metastore and forward.
 
@@ -952,8 +952,8 @@ impl Kernel {
         mime_type: Option<String>,
         created_at_ms: Option<i64>,
         modified_at_ms: Option<i64>,
-    ) -> crate::metastore::FileMetadata {
-        crate::metastore::FileMetadata {
+    ) -> crate::meta_store::FileMetadata {
+        crate::meta_store::FileMetadata {
             path: path.to_string(),
             size,
             etag,
@@ -980,11 +980,11 @@ impl Kernel {
         }
     }
 
-    // ── Metastore proxy methods (for Python RustMetastoreProxy) ────────
+    // ── MetaStore proxy methods (for Python RustMetastoreProxy) ────────
     //
     // F2 C8: these route via ``vfs_router.route(path, ROOT_ZONE_ID, ...)`` so a
     // lookup under a federation mount (e.g. ``/corp/eng/foo.txt``) lands on
-    // the corresponding per-mount ``ZoneMetastore`` installed by
+    // the corresponding per-mount ``ZoneMetaStore`` installed by
     // ``attach_raft_zone_to_kernel``. Without this, every Python-side
     // RustMetastoreProxy call went to the global kernel metastore and
     // federation data was invisible on follower nodes.
@@ -995,7 +995,7 @@ impl Kernel {
     pub fn metastore_get(
         &self,
         path: &str,
-    ) -> Result<Option<crate::metastore::FileMetadata>, KernelError> {
+    ) -> Result<Option<crate::meta_store::FileMetadata>, KernelError> {
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         match self.with_metastore(&mount_point, |ms| ms.get(path)) {
             Some(result) => {
@@ -1008,7 +1008,7 @@ impl Kernel {
     pub fn metastore_put(
         &self,
         path: &str,
-        mut metadata: crate::metastore::FileMetadata,
+        mut metadata: crate::meta_store::FileMetadata,
     ) -> Result<(), KernelError> {
         let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         metadata.path = path.to_string();
@@ -1033,7 +1033,7 @@ impl Kernel {
     pub fn metastore_list(
         &self,
         prefix: &str,
-    ) -> Result<Vec<crate::metastore::FileMetadata>, KernelError> {
+    ) -> Result<Vec<crate::meta_store::FileMetadata>, KernelError> {
         let route_path = if prefix.is_empty() {
             contracts::VFS_ROOT
         } else {
@@ -1046,7 +1046,7 @@ impl Kernel {
         };
         let routed_mount = self.resolve_mount_point(route_path, contracts::ROOT_ZONE_ID);
 
-        let mut results: Vec<crate::metastore::FileMetadata> = match self
+        let mut results: Vec<crate::meta_store::FileMetadata> = match self
             .with_metastore(&routed_mount, |ms| ms.list(&global_prefix))
         {
             Some(result) => result
@@ -1120,7 +1120,7 @@ impl Kernel {
     pub fn metastore_get_batch(
         &self,
         paths: &[String],
-    ) -> Result<Vec<Option<crate::metastore::FileMetadata>>, KernelError> {
+    ) -> Result<Vec<Option<crate::meta_store::FileMetadata>>, KernelError> {
         match self.metastore.read().as_ref() {
             Some(ms) => ms
                 .get_batch(paths)
@@ -1142,7 +1142,7 @@ impl Kernel {
 
     pub fn metastore_put_batch(
         &self,
-        items: &[(String, crate::metastore::FileMetadata)],
+        items: &[(String, crate::meta_store::FileMetadata)],
     ) -> Result<(), KernelError> {
         match self.metastore.read().as_ref() {
             Some(ms) => ms
@@ -1152,15 +1152,15 @@ impl Kernel {
         }
     }
 
-    /// OCC put. See `Metastore::put_if_version`.
+    /// OCC put. See `MetaStore::put_if_version`.
     pub fn metastore_put_if_version(
         &self,
-        mut metadata: crate::metastore::FileMetadata,
+        mut metadata: crate::meta_store::FileMetadata,
         expected_version: u32,
-    ) -> Result<crate::metastore::PutIfVersionResult, KernelError> {
+    ) -> Result<crate::meta_store::PutIfVersionResult, KernelError> {
         let path = metadata.path.clone();
         let mount_point = self.resolve_mount_point(&path, contracts::ROOT_ZONE_ID);
-        // Metadata.path stays at the full global path — ZoneMetastore
+        // Metadata.path stays at the full global path — ZoneMetaStore
         // translates internally now.
         metadata.path = path.clone();
         match self.with_metastore(&mount_point, move |ms| {
@@ -1174,7 +1174,7 @@ impl Kernel {
     }
 
     /// Rename `old_path` → `new_path` (and prefix children). See
-    /// `Metastore::rename_path`.
+    /// `MetaStore::rename_path`.
     pub fn metastore_rename_path(&self, old_path: &str, new_path: &str) -> Result<(), KernelError> {
         let old_mp = self.resolve_mount_point(old_path, contracts::ROOT_ZONE_ID);
         match self.with_metastore(&old_mp, |ms| ms.rename_path(old_path, new_path)) {
@@ -1222,7 +1222,7 @@ impl Kernel {
         &self,
         paths: &[String],
         key: &str,
-    ) -> Result<Vec<crate::metastore::PathValueStr>, KernelError> {
+    ) -> Result<Vec<crate::meta_store::PathValueStr>, KernelError> {
         // Bulk: fan out to the global metastore. Mixed-mount bulk reads
         // go through the Python wrapper.
         match self.metastore.read().as_ref() {
@@ -1249,7 +1249,7 @@ impl Kernel {
         recursive: bool,
         limit: usize,
         cursor: Option<&str>,
-    ) -> Result<crate::metastore::PaginatedList, KernelError> {
+    ) -> Result<crate::meta_store::PaginatedList, KernelError> {
         let route_path = if prefix.is_empty() {
             contracts::VFS_ROOT
         } else {
@@ -1275,7 +1275,7 @@ impl Kernel {
     pub fn metastore_batch_get_content_ids(
         &self,
         paths: &[String],
-    ) -> Result<Vec<crate::metastore::PathEtag>, KernelError> {
+    ) -> Result<Vec<crate::meta_store::PathEtag>, KernelError> {
         match self.metastore.read().as_ref() {
             Some(ms) => ms.batch_get_content_ids(paths).map_err(|e| {
                 KernelError::IOError(format!("metastore_batch_get_content_ids: {e:?}"))
@@ -1491,8 +1491,8 @@ impl Kernel {
     ///   - `backend` provided → uses it directly.
     ///   - `backend` is None → no backend (sys_read returns miss).
     ///
-    /// Caller provides an optional pre-built `Metastore` impl (e.g.
-    /// `LocalMetastore` for standalone, `ZoneMetastore` for federation).
+    /// Caller provides an optional pre-built `MetaStore` impl (e.g.
+    /// `LocalMetaStore` for standalone, `ZoneMetaStore` for federation).
     /// Kernel just installs it — it doesn't know or care which impl.
     ///
     /// When `raft_backend` is `Some` **and** `zone_id` is the root zone,
@@ -1509,7 +1509,7 @@ impl Kernel {
         mount_point: &str,
         zone_id: &str,
         backend: Option<Arc<dyn crate::backend::ObjectStore>>,
-        metastore: Option<Arc<dyn crate::metastore::Metastore>>,
+        metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
             tokio::runtime::Handle,
@@ -1573,12 +1573,12 @@ impl Kernel {
         self.vfs_router.remove(mount_point, zone_id)
     }
 
-    /// Wire a per-mount `Metastore` impl into the kernel's mount table.
+    /// Wire a per-mount `MetaStore` impl into the kernel's mount table.
     ///
-    /// Used by code that constructs a `Metastore` *outside* the kernel and
+    /// Used by code that constructs a `MetaStore` *outside* the kernel and
     /// wants the kernel's syscall fallback path to delegate to it for
     /// dcache misses on this mount. The canonical example is `rust/raft`'s
-    /// `ZoneMetastore`, which wraps a `ZoneConsensus` state machine and is
+    /// `ZoneMetaStore`, which wraps a `ZoneConsensus` state machine and is
     /// constructed by the raft crate, then handed to the kernel via this
     /// method (see `PyZoneHandle::attach_to_kernel_mount`).
     ///
@@ -1590,7 +1590,7 @@ impl Kernel {
     pub fn install_mount_metastore(
         &self,
         canonical_key: String,
-        ms: Arc<dyn crate::metastore::Metastore>,
+        ms: Arc<dyn crate::meta_store::MetaStore>,
     ) {
         self.vfs_router.install_metastore(&canonical_key, ms);
     }
@@ -1634,7 +1634,7 @@ impl Kernel {
     /// new state — a textbook distributed-cache-coherence hole.
     ///
     /// Why coherence_key and not Arc identity: R20.3 gave every
-    /// crosslink its own ``ZoneMetastore`` Arc (different
+    /// crosslink its own ``ZoneMetaStore`` Arc (different
     /// ``mount_point``), so Arc::ptr_eq groups just one surface per
     /// zone. ``coherence_key`` is the state-machine Arc's pointer
     /// (same value across every crosslink), so a single invalidate
@@ -1671,7 +1671,7 @@ impl Kernel {
         // -- DT_MOUNT params (entry_type == 2) --
         backend_name: &str,
         backend: Option<Arc<dyn crate::backend::ObjectStore>>,
-        metastore: Option<Arc<dyn crate::metastore::Metastore>>,
+        metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
             tokio::runtime::Handle,
@@ -1697,7 +1697,7 @@ impl Kernel {
                 // consumed by ``dlc.mount`` so we can install the
                 // apply-side dcache coherence callback after routing is
                 // wired. Install is keyed on the state machine's
-                // ``coherence_id``, not on the per-mount Metastore Arc,
+                // ``coherence_id``, not on the per-mount MetaStore Arc,
                 // so crosslinks of the same zone share one callback
                 // that fans out across every surface via VFSRouter's
                 // reverse lookup.
@@ -1708,7 +1708,7 @@ impl Kernel {
                 // is active (zone_manager installed by
                 // `init_federation_from_env`), auto-resolve: ensure the
                 // zone's raft group exists on this node, then build a
-                // ZoneMetastore over it. This replaces the Python
+                // ZoneMetaStore over it. This replaces the Python
                 // `_mount_via_kernel` chain — every DT_MOUNT becomes a
                 // federation-wired mount when federation is active,
                 // without any Python-side ZoneManager orchestration.
@@ -2704,7 +2704,7 @@ impl Kernel {
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => {
-                // Metastore fallback (per-mount first, then global) — full path
+                // MetaStore fallback (per-mount first, then global) — full path
                 match self.with_metastore(&route.mount_point, |ms| ms.get(path)) {
                     Some(Ok(Some(meta))) => {
                         // Populate dcache from metastore result
@@ -2713,7 +2713,7 @@ impl Kernel {
                         self.dcache.get_entry(path).unwrap()
                     }
                     Some(Ok(None)) | Some(Err(_)) | None => {
-                        // Metastore miss → try backend directly (all backend types
+                        // MetaStore miss → try backend directly (all backend types
                         // uniformly).  CAS backends return Err for path-based reads
                         // (hash-addressed).  Path-local/external backends serve the
                         // file if it exists on disk / via API.  No ABC leak: kernel
@@ -3095,7 +3095,7 @@ impl Kernel {
                     .and_then(|e| e.created_at_ms)
                     .or(Some(now_ms));
                 // R20.3: always pass the full global path. Per-mount
-                // ZoneMetastore translates at its boundary; the global
+                // ZoneMetaStore translates at its boundary; the global
                 // fallback stores full paths directly.
                 let meta = self.build_metadata(
                     path,
@@ -4288,7 +4288,7 @@ impl Kernel {
 
         // 4. Write each item — collect metadata for batch put
         // Tuple: (mount_point, path, FileMetadata) for per-mount metastore support
-        let mut batch_meta: Vec<(String, String, crate::metastore::FileMetadata)> = Vec::new();
+        let mut batch_meta: Vec<(String, String, crate::meta_store::FileMetadata)> = Vec::new();
 
         for (i, ((path, content), route_opt)) in items.iter().zip(routes.iter()).enumerate() {
             let route = match route_opt {
@@ -4399,13 +4399,13 @@ impl Kernel {
         // 4b. Atomic per-item commit. Per-mount items go through
         // commit_metadata (raft propose, ms.put then dcache). Global
         // items (no per-mount metastore) collect into a batch put
-        // since the global LocalMetastore can do that as one redb
+        // since the global LocalMetaStore can do that as one redb
         // txn — but we still update dcache only after the txn lands.
         // Failures flip the corresponding result entry from
         // hit=true → hit=false so the caller learns which items
         // actually committed.
         if !batch_meta.is_empty() {
-            let mut global_items: Vec<(String, crate::metastore::FileMetadata)> = Vec::new();
+            let mut global_items: Vec<(String, crate::meta_store::FileMetadata)> = Vec::new();
             let mut global_idx: Vec<usize> = Vec::new();
             for (idx, (mp, path, meta)) in batch_meta.into_iter().enumerate() {
                 let has_per_mount = self
@@ -5251,7 +5251,7 @@ impl Kernel {
     /// R20.18.3: when `sys_setattr(DT_MOUNT)` leader path runs without
     /// explicit metastore / raft_backend (Python didn't hand in
     /// `py_zone_handle` or `metastore_path`) AND federation is active,
-    /// auto-resolve the zone raft group and build a `ZoneMetastore`
+    /// auto-resolve the zone raft group and build a `ZoneMetaStore`
     /// over it.
     ///
     /// Behavior matrix:
@@ -5263,7 +5263,7 @@ impl Kernel {
     /// - Federation active, zone_id already loaded → reuse handle.
     ///
     /// In every federation-active branch, the returned tuple is
-    /// `(Some(ZoneMetastore), Some((consensus, runtime)))` so
+    /// `(Some(ZoneMetaStore), Some((consensus, runtime)))` so
     /// `dlc.mount` wires a raft-backed mount identically to the
     /// old Python `_mount_via_kernel` path.
     #[allow(clippy::type_complexity)]
@@ -5271,14 +5271,14 @@ impl Kernel {
         &self,
         zone_id: &str,
         mount_path: &str,
-        metastore: Option<Arc<dyn crate::metastore::Metastore>>,
+        metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
             tokio::runtime::Handle,
         )>,
     ) -> Result<
         (
-            Option<Arc<dyn crate::metastore::Metastore>>,
+            Option<Arc<dyn crate::meta_store::MetaStore>>,
             Option<(
                 nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
                 tokio::runtime::Handle,
@@ -5293,7 +5293,7 @@ impl Kernel {
 
         let Some(zm) = self.zone_manager.get() else {
             // No federation — local-only mount (metastore_path /
-            // MemoryMetastore fallback handled upstream).
+            // MemoryMetaStore fallback handled upstream).
             return Ok((None, None));
         };
 
@@ -5302,8 +5302,8 @@ impl Kernel {
         })?;
         let consensus = handle.consensus_node();
         let runtime = handle.runtime_handle();
-        let ms: Arc<dyn crate::metastore::Metastore> =
-            crate::raft_metastore::ZoneMetastore::new_arc(
+        let ms: Arc<dyn crate::meta_store::MetaStore> =
+            crate::raft_meta_store::ZoneMetaStore::new_arc(
                 consensus.clone(),
                 runtime.clone(),
                 mount_path.to_string(),
@@ -5599,12 +5599,12 @@ fn wire_federation_mount_impl(
     };
     tracing::info!(global_path = %global_path, "wire_federation_mount: will add to VFSRouter");
 
-    // 3. Build a ZoneMetastore rooted at global_path targeting the
+    // 3. Build a ZoneMetaStore rooted at global_path targeting the
     //    target's state machine. Reuses the root mount's backend (Arc
     //    clone), so every federation mount shares the CAS backend on
     //    this node.
-    let metastore: Arc<dyn crate::metastore::Metastore> =
-        crate::raft_metastore::ZoneMetastore::new_arc(
+    let metastore: Arc<dyn crate::meta_store::MetaStore> =
+        crate::raft_meta_store::ZoneMetaStore::new_arc(
             target_consensus.clone(),
             runtime.clone(),
             global_path.clone(),
@@ -5935,12 +5935,12 @@ mod tests {
     #[test]
     fn test_resolve_federation_mount_backing_passthrough_when_explicit() {
         // When the caller already supplied a metastore (e.g. Python
-        // passed `metastore_path` → LocalMetastore), the resolver
+        // passed `metastore_path` → LocalMetaStore), the resolver
         // must not auto-resolve — preserves the "local-only mount"
         // path even when federation is active.
         let k = Kernel::new();
-        let ms: Arc<dyn crate::metastore::Metastore> =
-            Arc::new(crate::metastore::MemoryMetastore::new());
+        let ms: Arc<dyn crate::meta_store::MetaStore> =
+            Arc::new(crate::meta_store::MemoryMetaStore::new());
         let (out_ms, out_rb) = k
             .resolve_federation_mount_backing("test-zone", "/test", Some(ms.clone()), None)
             .expect("resolve");
@@ -5955,7 +5955,7 @@ mod tests {
     fn test_resolve_federation_mount_backing_no_federation_returns_none_none() {
         // No zone_manager attached (slim / non-federation profile) →
         // resolver is a no-op, returns (None, None) so upstream
-        // continues with local-only MemoryMetastore fallback.
+        // continues with local-only MemoryMetaStore fallback.
         let k = Kernel::new();
         assert!(k.zone_manager.get().is_none());
         let (out_ms, out_rb) = k
@@ -6314,7 +6314,7 @@ mod tests {
         // Write a file via metastore so UPDATE has something to find
         k.metastore_put(
             "/update-test.txt",
-            crate::metastore::FileMetadata {
+            crate::meta_store::FileMetadata {
                 path: "/update-test.txt".to_string(),
                 size: 0,
                 etag: None,
@@ -6366,18 +6366,18 @@ mod tests {
     // ── R20.3 metastore-key tests ──────────────────────────────────────
     //
     // Post-R20.3 the kernel passes full global paths to the metastore
-    // trait. ZoneMetastore (the federation impl) internalizes the
+    // trait. ZoneMetaStore (the federation impl) internalizes the
     // translation to zone-relative — see rust/kernel/src/raft_metastore.rs
-    // for that coverage. These tests use LocalMetastore (full-path store)
+    // for that coverage. These tests use LocalMetaStore (full-path store)
     // so they exercise the kernel call path without any translation.
 
-    use crate::metastore::Metastore as MetastoreTrait;
+    use crate::meta_store::MetaStore as MetastoreTrait;
 
-    /// Create a temporary LocalMetastore for testing.
-    fn temp_metastore() -> Arc<crate::metastore::LocalMetastore> {
+    /// Create a temporary LocalMetaStore for testing.
+    fn temp_metastore() -> Arc<crate::meta_store::LocalMetaStore> {
         let dir = std::env::temp_dir().join(format!("nexus-test-ms-{}", uuid::Uuid::new_v4()));
         let path = dir.join("meta.redb");
-        Arc::new(crate::metastore::LocalMetastore::open(&path).unwrap())
+        Arc::new(crate::meta_store::LocalMetaStore::open(&path).unwrap())
     }
 
     #[test]
@@ -6385,7 +6385,7 @@ mod tests {
         // Mount "/data" in zone "root" with a shared metastore.
         // DT_DIR at "/data/sub" now stores metastore key "/data/sub"
         // (full global path) — R20.3 moved zone-relative translation
-        // into ZoneMetastore, so generic full-path stores see full keys.
+        // into ZoneMetaStore, so generic full-path stores see full keys.
         let k = Kernel::new();
         let ms = temp_metastore();
         k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
@@ -6471,15 +6471,15 @@ mod tests {
 
     #[test]
     fn test_sys_rename_cross_mount() {
-        use crate::metastore::{FileMetadata, MemoryMetastore};
+        use crate::meta_store::{FileMetadata, MemoryMetaStore};
         use std::sync::Arc;
 
         let k = Kernel::new();
         let zone = contracts::ROOT_ZONE_ID;
 
-        // Set up two separate mounts with independent MemoryMetastores
-        let ms_a = Arc::new(MemoryMetastore::new());
-        let ms_b = Arc::new(MemoryMetastore::new());
+        // Set up two separate mounts with independent MemoryMetaStores
+        let ms_a = Arc::new(MemoryMetaStore::new());
+        let ms_b = Arc::new(MemoryMetaStore::new());
 
         k.vfs_router.add_mount("/mnt_a", zone, None, false);
         k.vfs_router.add_mount("/mnt_b", zone, None, false);
@@ -6488,11 +6488,11 @@ mod tests {
         let canon_b = crate::vfs_router::canonicalize_mount_path("/mnt_b", zone);
         k.vfs_router.install_metastore(
             &canon_a,
-            ms_a.clone() as Arc<dyn crate::metastore::Metastore>,
+            ms_a.clone() as Arc<dyn crate::meta_store::MetaStore>,
         );
         k.vfs_router.install_metastore(
             &canon_b,
-            ms_b.clone() as Arc<dyn crate::metastore::Metastore>,
+            ms_b.clone() as Arc<dyn crate::meta_store::MetaStore>,
         );
 
         // Seed a file in mount A's metastore
@@ -6530,14 +6530,14 @@ mod tests {
 
     #[test]
     fn test_sys_rename_cross_mount_directory_children() {
-        use crate::metastore::{FileMetadata, MemoryMetastore};
+        use crate::meta_store::{FileMetadata, MemoryMetaStore};
         use std::sync::Arc;
 
         let k = Kernel::new();
         let zone = contracts::ROOT_ZONE_ID;
 
-        let ms_a = Arc::new(MemoryMetastore::new());
-        let ms_b = Arc::new(MemoryMetastore::new());
+        let ms_a = Arc::new(MemoryMetaStore::new());
+        let ms_b = Arc::new(MemoryMetaStore::new());
 
         k.vfs_router.add_mount("/mnt_a", zone, None, false);
         k.vfs_router.add_mount("/mnt_b", zone, None, false);
@@ -6546,11 +6546,11 @@ mod tests {
         let canon_b = crate::vfs_router::canonicalize_mount_path("/mnt_b", zone);
         k.vfs_router.install_metastore(
             &canon_a,
-            ms_a.clone() as Arc<dyn crate::metastore::Metastore>,
+            ms_a.clone() as Arc<dyn crate::meta_store::MetaStore>,
         );
         k.vfs_router.install_metastore(
             &canon_b,
-            ms_b.clone() as Arc<dyn crate::metastore::Metastore>,
+            ms_b.clone() as Arc<dyn crate::meta_store::MetaStore>,
         );
 
         // Seed a directory with children
@@ -6599,17 +6599,17 @@ mod tests {
     /// silent miss; callers no longer need a separate Python-side shim.
     #[test]
     fn test_sys_unlink_mount_root_delegates_to_dlc_unmount() {
-        use crate::metastore::{FileMetadata, MemoryMetastore};
+        use crate::meta_store::{FileMetadata, MemoryMetaStore};
         use std::sync::Arc;
 
         let k = Kernel::new();
         let zone = contracts::ROOT_ZONE_ID;
 
-        let ms = Arc::new(MemoryMetastore::new());
+        let ms = Arc::new(MemoryMetaStore::new());
         k.vfs_router.add_mount("/mnt", zone, None, false);
         let canon = crate::vfs_router::canonicalize_mount_path("/mnt", zone);
         k.vfs_router
-            .install_metastore(&canon, ms.clone() as Arc<dyn crate::metastore::Metastore>);
+            .install_metastore(&canon, ms.clone() as Arc<dyn crate::meta_store::MetaStore>);
 
         // Seed a DT_MOUNT entry at the mount root and a child file.
         let mount_meta = FileMetadata {

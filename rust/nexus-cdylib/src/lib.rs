@@ -28,7 +28,7 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     lib::python::register(m)?;
     // §3 / §4 kernel — pillars + primitives + #[pyclass] surface.
     kernel::python::register(m)?;
-    // Raft / federation — ZoneManager / ZoneHandle / Metastore.
+    // Raft / federation — ZoneManager / ZoneHandle / MetaStore.
     nexus_raft::pyo3_bindings::register_python_classes(m)?;
     Ok(())
 }

@@ -11,7 +11,7 @@
 //!   - `rust/kernel/src/router.rs::PathRouter` owned a `HashMap<String,
 //!     MountEntry>` of backends-only
 //!   - `rust/kernel/src/kernel.rs::Kernel::mount_metastores` was a *separate*
-//!     `DashMap<String, Arc<dyn Metastore>>` keyed by the same canonical paths
+//!     `DashMap<String, Arc<dyn MetaStore>>` keyed by the same canonical paths
 //!
 //! Both halves now live in `MountEntry`, so callers no longer have to keep
 //! the two maps consistent. The Python side's `VFSRouter._entries` Python-
@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use crate::backend::{ExternalTransport, ObjectStore, StorageError, WriteResult};
 use crate::kernel::OperationContext;
-use crate::metastore::Metastore;
+use crate::meta_store::MetaStore;
 
 // ---------------------------------------------------------------------------
 // MountEntry — runtime record for a single mount
@@ -43,7 +43,7 @@ use crate::metastore::Metastore;
 /// re-initialising the backend per child zone.
 ///
 /// `metastore` is `Arc` because the same metastore instance may be handed
-/// in from a separate crate (e.g. `rust/raft::ZoneMetastore`) via
+/// in from a separate crate (e.g. `rust/raft::ZoneMetaStore`) via
 /// `install_metastore`, and that crate keeps its own `Arc` reference to
 /// the underlying state machine. Shared ownership is required.
 pub struct MountEntry {
@@ -54,8 +54,8 @@ pub struct MountEntry {
 
     /// Per-mount metastore for metadata operations. `None` means use the
     /// kernel's global `Kernel::metastore` instead. Federation mode wires a
-    /// `ZoneMetastore` here per zone.
-    pub metastore: Option<Arc<dyn Metastore>>,
+    /// `ZoneMetaStore` here per zone.
+    pub metastore: Option<Arc<dyn MetaStore>>,
 
     /// True when this mount is an external connector whose reads/writes
     /// must be handled by Python (no Rust fast path available).
@@ -111,7 +111,7 @@ impl MountEntry {
 
     /// Builder-style metastore setter. Used when the metastore is known at
     /// mount-creation time (standalone redb path).
-    pub fn with_metastore(mut self, ms: Arc<dyn Metastore>) -> Self {
+    pub fn with_metastore(mut self, ms: Arc<dyn MetaStore>) -> Self {
         self.metastore = Some(ms);
         self
     }
@@ -191,7 +191,7 @@ impl VFSRouter {
     /// *new* entry has no metastore wired, the previous entry's metastore
     /// is preserved. This makes the `install_metastore` → `add_mount`
     /// ordering (used by federation when `attach_raft_zone_to_kernel`
-    /// runs before the root DLC mount) insensitive so the ZoneMetastore
+    /// runs before the root DLC mount) insensitive so the ZoneMetaStore
     /// isn't wiped when the backend mount registers afterwards.
     pub fn add(&self, mount_point: &str, zone_id: &str, mut entry: MountEntry) {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
@@ -255,10 +255,10 @@ impl VFSRouter {
     /// Upsert semantics: if no entry exists under ``canonical_key`` yet,
     /// a bare placeholder entry (no backend) is created and tagged with
     /// the metastore. This lets federation bootstrap attach a
-    /// ``ZoneMetastore`` at ``/`` before the root DLC mount registers its
+    /// ``ZoneMetaStore`` at ``/`` before the root DLC mount registers its
     /// backend — when the backend mount arrives later, ``add`` preserves
     /// the already-installed metastore.
-    pub fn install_metastore(&self, canonical_key: &str, metastore: Arc<dyn Metastore>) {
+    pub fn install_metastore(&self, canonical_key: &str, metastore: Arc<dyn MetaStore>) {
         if let Some(mut entry) = self.entries.get_mut(canonical_key) {
             entry.metastore = Some(metastore);
             return;
@@ -307,7 +307,7 @@ impl VFSRouter {
     }
 
     /// Borrow every entry mutably. Used by ``Kernel::release_metastores``
-    /// (Issue #3765 Cat-5/6) to drop per-mount ``Arc<dyn Metastore>`` so the
+    /// (Issue #3765 Cat-5/6) to drop per-mount ``Arc<dyn MetaStore>`` so the
     /// underlying redb file handles are released on kernel close.
     pub fn entries_iter_mut(
         &self,
@@ -376,13 +376,13 @@ impl VFSRouter {
     /// given ``coherence_key`` (R20.6 option B).
     ///
     /// Prior impl (``mount_points_for_metastore``) keyed by
-    /// ``Arc::ptr_eq`` on ``Arc<dyn Metastore>``. R20.3 gave every
-    /// crosslink its own ``ZoneMetastore`` allocation so Arc identity
+    /// ``Arc::ptr_eq`` on ``Arc<dyn MetaStore>``. R20.3 gave every
+    /// crosslink its own ``ZoneMetaStore`` allocation so Arc identity
     /// no longer groups crosslinks of the same zone — each zone needs
     /// a storage-level identity that survives per-mount wrapping.
-    /// ``Metastore::coherence_key`` exposes that identity (stable
+    /// ``MetaStore::coherence_key`` exposes that identity (stable
     /// integer; state-machine Arc pointer for raft-backed zones,
-    /// ``None`` for standalone ``LocalMetastore``).
+    /// ``None`` for standalone ``LocalMetaStore``).
     ///
     /// Kernel stays federation-agnostic — ``coherence_key`` is just an
     /// opaque ``usize``; the kernel never learns "zone id" or any other
@@ -790,24 +790,24 @@ mod tests {
 
     #[test]
     fn test_install_metastore_late() {
-        use crate::metastore::{FileMetadata, MetastoreError};
+        use crate::meta_store::{FileMetadata, MetaStoreError};
 
-        // Trivial in-memory Metastore impl for the test.
+        // Trivial in-memory MetaStore impl for the test.
         struct DummyMs;
-        impl Metastore for DummyMs {
-            fn get(&self, _: &str) -> Result<Option<FileMetadata>, MetastoreError> {
+        impl MetaStore for DummyMs {
+            fn get(&self, _: &str) -> Result<Option<FileMetadata>, MetaStoreError> {
                 Ok(None)
             }
-            fn put(&self, _: &str, _: FileMetadata) -> Result<(), MetastoreError> {
+            fn put(&self, _: &str, _: FileMetadata) -> Result<(), MetaStoreError> {
                 Ok(())
             }
-            fn delete(&self, _: &str) -> Result<bool, MetastoreError> {
+            fn delete(&self, _: &str) -> Result<bool, MetaStoreError> {
                 Ok(false)
             }
-            fn list(&self, _: &str) -> Result<Vec<FileMetadata>, MetastoreError> {
+            fn list(&self, _: &str) -> Result<Vec<FileMetadata>, MetaStoreError> {
                 Ok(vec![])
             }
-            fn exists(&self, _: &str) -> Result<bool, MetastoreError> {
+            fn exists(&self, _: &str) -> Result<bool, MetaStoreError> {
                 Ok(false)
             }
         }
@@ -893,7 +893,7 @@ mod tests {
         assert_eq!(recovered, global);
     }
 
-    /// Federation topology: two DISTINCT ``ZoneMetastore`` Arcs (with
+    /// Federation topology: two DISTINCT ``ZoneMetaStore`` Arcs (with
     /// different ``mount_point``s) can back the same zone's state
     /// machine — they share the same ``coherence_key``. The reverse
     /// lookup must return every surface with that key, and must NOT
@@ -907,32 +907,32 @@ mod tests {
         struct KeyedStub {
             key: Option<usize>,
         }
-        impl crate::metastore::Metastore for KeyedStub {
+        impl crate::meta_store::MetaStore for KeyedStub {
             fn get(
                 &self,
                 _: &str,
-            ) -> Result<Option<crate::metastore::FileMetadata>, crate::metastore::MetastoreError>
+            ) -> Result<Option<crate::meta_store::FileMetadata>, crate::meta_store::MetaStoreError>
             {
                 Ok(None)
             }
             fn put(
                 &self,
                 _: &str,
-                _: crate::metastore::FileMetadata,
-            ) -> Result<(), crate::metastore::MetastoreError> {
+                _: crate::meta_store::FileMetadata,
+            ) -> Result<(), crate::meta_store::MetaStoreError> {
                 Ok(())
             }
-            fn delete(&self, _: &str) -> Result<bool, crate::metastore::MetastoreError> {
+            fn delete(&self, _: &str) -> Result<bool, crate::meta_store::MetaStoreError> {
                 Ok(false)
             }
             fn list(
                 &self,
                 _: &str,
-            ) -> Result<Vec<crate::metastore::FileMetadata>, crate::metastore::MetastoreError>
+            ) -> Result<Vec<crate::meta_store::FileMetadata>, crate::meta_store::MetaStoreError>
             {
                 Ok(Vec::new())
             }
-            fn exists(&self, _: &str) -> Result<bool, crate::metastore::MetastoreError> {
+            fn exists(&self, _: &str) -> Result<bool, crate::meta_store::MetaStoreError> {
                 Ok(false)
             }
             fn coherence_key(&self) -> Option<usize> {
@@ -943,13 +943,13 @@ mod tests {
         const CORP_KEY: usize = 0xC0;
         const FAMILY_KEY: usize = 0xFA;
 
-        let corp_a: Arc<dyn Metastore> = Arc::new(KeyedStub {
+        let corp_a: Arc<dyn MetaStore> = Arc::new(KeyedStub {
             key: Some(CORP_KEY),
         });
-        let corp_b: Arc<dyn Metastore> = Arc::new(KeyedStub {
+        let corp_b: Arc<dyn MetaStore> = Arc::new(KeyedStub {
             key: Some(CORP_KEY),
         }); // DISTINCT Arc, same coherence key — crosslink of the same zone.
-        let family: Arc<dyn Metastore> = Arc::new(KeyedStub {
+        let family: Arc<dyn MetaStore> = Arc::new(KeyedStub {
             key: Some(FAMILY_KEY),
         });
 

@@ -50,8 +50,16 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
     "semaphore": "core/lock/semaphore.rs",
     "dispatch": "core/dispatch/mod.rs",
     "hook_registry": "core/dispatch/hook_registry.rs",
-    "metastore": "core/metastore/mod.rs",
-    "remote_metastore": "core/metastore/remote.rs",
+    # Phase 0.5 — Rust trait Metastore renamed MetaStore for §3 pillar
+    # symmetry with `ObjectStore` / `CacheStore`. Directory renamed
+    # `core/metastore/` → `core/meta_store/`. Flat alias keys keep their
+    # historical `metastore` / `remote_metastore` names because lib.rs's
+    # compat re-exports still surface the modules under those Rust paths
+    # for callers that haven't migrated yet.
+    "metastore": "core/meta_store/mod.rs",
+    "remote_metastore": "core/meta_store/remote.rs",
+    "meta_store": "core/meta_store/mod.rs",
+    "remote_meta_store": "core/meta_store/remote.rs",
     "pipe": "core/pipe/mod.rs",
     "pipe_manager": "core/pipe/manager.rs",
     "shm_pipe": "core/pipe/shm.rs",
@@ -707,7 +715,7 @@ def parse_traits(text: str) -> list[TraitDef]:
     """Extract trait definitions with their method signatures."""
     results = []
     # Match both `pub(crate) trait Foo` and `pub trait Foo` — kernel
-    # traits that external crates (e.g. rust/raft::ZoneMetastore) impl
+    # traits that external crates (e.g. rust/raft::ZoneMetaStore) impl
     # are `pub`; internal-only traits stay `pub(crate)`.
     for m in re.finditer(r"pub(?:\(crate\))?\s+trait\s+(\w+)\s*(?::\s*[^{]*)?\s*\{", text):
         trait_name = m.group(1)
@@ -1131,20 +1139,20 @@ PILLAR_ADAPTERS: dict[str, dict[str, str]] = {
     # PyObjectStoreAdapter removed — all connectors now have Rust-native backends
     # (Crossing 1 elimination, Phase 5D). No Python fallback needed.
     # "ObjectStore": { ... },
-    # PyMetastoreAdapter removed (Phase 9) — Rust kernel uses LocalMetastore directly.
-    # "Metastore": { ... },
+    # PyMetaStoreAdapter removed (Phase 9) — Rust kernel uses LocalMetaStore directly.
+    # "MetaStore": { ... },
 }
 
 # Methods that need special handling beyond simple call_method1 + extract.
 # Key: "TraitName.method_name", value: override tag.
 ADAPTER_METHOD_OVERRIDES: dict[str, str] = {
     # ObjectStore overrides removed — PyObjectStoreAdapter deleted (Phase 5D).
-    # Metastore.get() → check None + extract_metadata
-    "Metastore.get": "OPTION_FILE_METADATA",
-    # Metastore.put() → to_python_metadata for FileMetadata param
-    "Metastore.put": "PUT_FILE_METADATA",
-    # Metastore.list() → iterate + extract_metadata
-    "Metastore.list": "VEC_FILE_METADATA",
+    # MetaStore.get() → check None + extract_metadata
+    "MetaStore.get": "OPTION_FILE_METADATA",
+    # MetaStore.put() → to_python_metadata for FileMetadata param
+    "MetaStore.put": "PUT_FILE_METADATA",
+    # MetaStore.list() → iterate + extract_metadata
+    "MetaStore.list": "VEC_FILE_METADATA",
 }
 
 
@@ -1155,7 +1163,7 @@ def _rust_err_map(config: dict[str, str], method_name: str, first_param: str) ->
     else:
         # Use :? for slice params (e.g. paths: &[String]) since &[T] doesn't impl Display
         fmt_spec = ":?" if first_param in ("paths", "items") else ""
-        return f'MetastoreError::IOError(format!("metastore.{method_name}({{{first_param}{fmt_spec}}}): {{e}}"))'
+        return f'MetaStoreError::IOError(format!("metastore.{method_name}({{{first_param}{fmt_spec}}}): {{e}}"))'
 
 
 def _generate_adapter_method(
@@ -1338,13 +1346,13 @@ def _generate_adapter_method(
         lines.append("            let iter = result")
         lines.append("                .try_iter()")
         lines.append(
-            f'                .map_err(|e| MetastoreError::IOError(format!("metastore.{method.name} iter: {{e}}")))?;'
+            f'                .map_err(|e| MetaStoreError::IOError(format!("metastore.{method.name} iter: {{e}}")))?;'
         )
         lines.append("            let mut items = Vec::new();")
         lines.append("            for item in iter {")
         lines.append("                let item =")
         lines.append(
-            f'                    item.map_err(|e| MetastoreError::IOError(format!("metastore.{method.name} item: {{e}}")))?;'
+            f'                    item.map_err(|e| MetaStoreError::IOError(format!("metastore.{method.name} item: {{e}}")))?;'
         )
         lines.append("                items.push(extract_metadata(py, &item)?);")
         lines.append("            }")
@@ -1425,7 +1433,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "use std::io;",
         "",
         "use crate::backend::{ObjectStore, StorageError};",
-        "use crate::metastore::{FileMetadata, MetastoreError};",
+        "use crate::meta_store::{FileMetadata, MetaStoreError};",
         "",
         "// ── FileMetadata conversion helpers (PyO3-specific) ──────────────────────",
         "",
@@ -1433,20 +1441,20 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "fn extract_metadata(",
         "    py: Python<'_>,",
         "    obj: &Bound<'_, PyAny>,",
-        ") -> Result<FileMetadata, MetastoreError> {",
-        "    let get_str = |name: &str| -> Result<String, MetastoreError> {",
+        ") -> Result<FileMetadata, MetaStoreError> {",
+        "    let get_str = |name: &str| -> Result<String, MetaStoreError> {",
         "        obj.getattr(name)",
         "            .and_then(|v| v.extract::<String>())",
-        '            .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}")))',
+        '            .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}")))',
         "    };",
-        "    let get_opt_str = |name: &str| -> Result<Option<String>, MetastoreError> {",
+        "    let get_opt_str = |name: &str| -> Result<Option<String>, MetaStoreError> {",
         "        match obj.getattr(name) {",
         "            Ok(v) if v.is_none() => Ok(None),",
         "            Ok(v) => v",
         "                .extract::<String>()",
         "                .map(Some)",
-        '                .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}"))),',
-        '            Err(e) => Err(MetastoreError::IOError(format!("field {name}: {e}"))),',
+        '                .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}"))),',
+        '            Err(e) => Err(MetaStoreError::IOError(format!("field {name}: {e}"))),',
         "        }",
         "    };",
         "",
@@ -1456,16 +1464,16 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "        size: obj",
         '            .getattr("size")',
         "            .and_then(|v| v.extract::<u64>())",
-        '            .map_err(|e| MetastoreError::IOError(format!("field size: {e}")))?,',
+        '            .map_err(|e| MetaStoreError::IOError(format!("field size: {e}")))?,',
         '        etag: get_opt_str("etag")?,',
         "        version: obj",
         '            .getattr("version")',
         "            .and_then(|v| v.extract::<u32>())",
-        '            .map_err(|e| MetastoreError::IOError(format!("field version: {e}")))?,',
+        '            .map_err(|e| MetaStoreError::IOError(format!("field version: {e}")))?,',
         "        entry_type: obj",
         '            .getattr("entry_type")',
         "            .and_then(|v| v.extract::<u8>())",
-        '            .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,',
+        '            .map_err(|e| MetaStoreError::IOError(format!("field entry_type: {e}")))?,',
         '        zone_id: get_opt_str("zone_id")?,',
         '        mime_type: get_opt_str("mime_type")?,',
         '        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),',
@@ -1490,9 +1498,9 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "fn to_python_metadata<'py>(",
         "    py: Python<'py>,",
         "    meta: &FileMetadata,",
-        ") -> Result<Bound<'py, PyAny>, MetastoreError> {",
-        "    fn err(e: PyErr) -> MetastoreError {",
-        '        MetastoreError::IOError(format!("to_python_metadata: {e}"))',
+        ") -> Result<Bound<'py, PyAny>, MetaStoreError> {",
+        "    fn err(e: PyErr) -> MetaStoreError {",
+        '        MetaStoreError::IOError(format!("to_python_metadata: {e}"))',
         "    }",
         "    let cls = py",
         '        .import("nexus.contracts.metadata")',
@@ -2120,7 +2128,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '#[cfg(feature = "py-hook-adapters")]',
             "use crate::hook_registry::InterceptHook;",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
-            "use crate::metastore::{FileMetadata, MetastoreError};",
+            "use crate::meta_store::{FileMetadata, MetaStoreError};",
             "use crate::vfs_router::RouteError;",
         ]
     )
@@ -2298,20 +2306,20 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "fn extract_metadata(",
             "    py: Python<'_>,",
             "    obj: &Bound<'_, PyAny>,",
-            ") -> Result<FileMetadata, MetastoreError> {",
-            "    let get_str = |name: &str| -> Result<String, MetastoreError> {",
+            ") -> Result<FileMetadata, MetaStoreError> {",
+            "    let get_str = |name: &str| -> Result<String, MetaStoreError> {",
             "        obj.getattr(name)",
             "            .and_then(|v| v.extract::<String>())",
-            '            .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}")))',
+            '            .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}")))',
             "    };",
-            "    let get_opt_str = |name: &str| -> Result<Option<String>, MetastoreError> {",
+            "    let get_opt_str = |name: &str| -> Result<Option<String>, MetaStoreError> {",
             "        match obj.getattr(name) {",
             "            Ok(v) if v.is_none() => Ok(None),",
             "            Ok(v) => v",
             "                .extract::<String>()",
             "                .map(Some)",
-            '                .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}"))),',
-            '            Err(e) => Err(MetastoreError::IOError(format!("field {name}: {e}"))),',
+            '                .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}"))),',
+            '            Err(e) => Err(MetaStoreError::IOError(format!("field {name}: {e}"))),',
             "        }",
             "    };",
             "",
@@ -2321,16 +2329,16 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        size: obj",
             '            .getattr("size")',
             "            .and_then(|v| v.extract::<u64>())",
-            '            .map_err(|e| MetastoreError::IOError(format!("field size: {e}")))?,',
+            '            .map_err(|e| MetaStoreError::IOError(format!("field size: {e}")))?,',
             '        etag: get_opt_str("etag")?,',
             "        version: obj",
             '            .getattr("version")',
             "            .and_then(|v| v.extract::<u32>())",
-            '            .map_err(|e| MetastoreError::IOError(format!("field version: {e}")))?,',
+            '            .map_err(|e| MetaStoreError::IOError(format!("field version: {e}")))?,',
             "        entry_type: obj",
             '            .getattr("entry_type")',
             "            .and_then(|v| v.extract::<u8>())",
-            '            .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,',
+            '            .map_err(|e| MetaStoreError::IOError(format!("field entry_type: {e}")))?,',
             '        zone_id: get_opt_str("zone_id")?,',
             '        mime_type: get_opt_str("mime_type")?,',
             '        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),',
@@ -2355,9 +2363,9 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "fn to_python_metadata<'py>(",
             "    py: Python<'py>,",
             "    meta: &FileMetadata,",
-            ") -> Result<Bound<'py, PyAny>, MetastoreError> {",
-            "    fn err(e: PyErr) -> MetastoreError {",
-            '        MetastoreError::IOError(format!("to_python_metadata: {e}"))',
+            ") -> Result<Bound<'py, PyAny>, MetaStoreError> {",
+            "    fn err(e: PyErr) -> MetaStoreError {",
+            '        MetaStoreError::IOError(format!("to_python_metadata: {e}"))',
             "    }",
             "    let cls = py",
             '        .import("nexus.contracts.metadata")',
@@ -2728,9 +2736,9 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.inner.set_self_address(addr);",
             "    }",
             "",
-            "    // ── Metastore wiring ──────────────────────────────────────────────",
+            "    // ── MetaStore wiring ──────────────────────────────────────────────",
             "",
-            "    /// Wire LocalMetastore by path — Rust kernel opens redb directly.",
+            "    /// Wire LocalMetaStore by path — Rust kernel opens redb directly.",
             "    /// Eliminates GIL crossing on every metastore.get/put.",
             "    fn set_metastore_path(&self, path: &str) -> PyResult<()> {",
             "        self.inner.set_metastore_path(path).map_err(Into::into)",
@@ -2743,7 +2751,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.inner.release_metastores()",
             "    }",
             "",
-            "    // ── Metastore proxy methods (for RustMetastoreProxy) ──────────────",
+            "    // ── MetaStore proxy methods (for RustMetastoreProxy) ──────────────",
             "",
             "    fn metastore_get(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {",
             "        match self",
@@ -3502,9 +3510,9 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                    .map_err(pyo3::exceptions::PyRuntimeError::new_err)?",
             "            );",
             "            let remote_ms = std::sync::Arc::new(",
-            "                crate::remote_metastore::RemoteMetastore::new(Arc::clone(&transport))",
-            "            ) as Arc<dyn crate::metastore::Metastore>;",
-            "            self.inner.pending_remote_metastore.lock().replace(remote_ms);",
+            "                crate::remote_meta_store::RemoteMetaStore::new(Arc::clone(&transport))",
+            "            ) as Arc<dyn crate::meta_store::MetaStore>;",
+            "            self.inner.pending_remote_meta_store.lock().replace(remote_ms);",
             "            let b = crate::remote_backend::RemoteBackend::new(transport);",
             "            Some(Arc::new(b) as Arc<dyn ObjectStore>)",
             '        } else if backend_type == "hn" {',
@@ -3570,17 +3578,17 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "            None",
             "        };",
             "",
-            "        // Metastore resolution: metastore_path -> LocalMetastore.",
+            "        // MetaStore resolution: metastore_path -> LocalMetaStore.",
             "        // Federation DT_MOUNT auto-resolves its raft backing via",
             "        // `resolve_federation_mount_backing` inside Kernel::sys_setattr",
             "        // (R20.18.3), so Python always passes `None` for raft_backend.",
-            "        let metastore: Option<Arc<dyn crate::metastore::Metastore>> =",
+            "        let metastore: Option<Arc<dyn crate::meta_store::MetaStore>> =",
             "            if let Some(ms_path) = metastore_path {",
-            "                let ms = crate::metastore::LocalMetastore::open(",
+            "                let ms = crate::meta_store::LocalMetaStore::open(",
             "                    std::path::Path::new(ms_path),",
             "                )",
-            '                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("LocalMetastore: {e:?}")))?;',
-            "                Some(Arc::new(ms) as Arc<dyn crate::metastore::Metastore>)",
+            '                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("LocalMetaStore: {e:?}")))?;',
+            "                Some(Arc::new(ms) as Arc<dyn crate::meta_store::MetaStore>)",
             "            } else {",
             "                None",
             "            };",
@@ -3605,7 +3613,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "            .map_err::<PyErr, _>(Into::into)?;",
             "",
             "        // Install remote metastore on the mount entry (if pending from remote backend setup)",
-            "        if let Some(remote_ms) = self.inner.pending_remote_metastore.lock().take() {",
+            "        if let Some(remote_ms) = self.inner.pending_remote_meta_store.lock().take() {",
             '            let canonical_key = format!("/{zone_id}{path}");',
             "            self.inner.vfs_router.install_metastore(&canonical_key, remote_ms);",
             "        }",

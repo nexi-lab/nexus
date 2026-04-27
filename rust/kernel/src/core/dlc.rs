@@ -50,7 +50,7 @@ impl DriverLifecycleCoordinator {
     /// - `zone_id` — zone identifier
     /// - `backend_name` — backend identifier string
     /// - `backend` — optional Rust backend (None = Python-side backend)
-    /// - `metastore` — optional per-mount metastore (ZoneMetastore or LocalMetastore)
+    /// - `metastore` — optional per-mount metastore (ZoneMetaStore or LocalMetaStore)
     /// - `raft_backend` — optional (ZoneConsensus, Handle) for federation DI
     #[allow(clippy::too_many_arguments)]
     pub fn mount(
@@ -60,7 +60,7 @@ impl DriverLifecycleCoordinator {
         zone_id: &str,
         backend_name: &str,
         backend: Option<Arc<dyn crate::backend::ObjectStore>>,
-        metastore: Option<Arc<dyn crate::metastore::Metastore>>,
+        metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
             tokio::runtime::Handle,
@@ -88,14 +88,14 @@ impl DriverLifecycleCoordinator {
         let _ = backend_name; // accepted for ABI compat; no longer plumbed.
 
         // 2. Write DT_MOUNT metadata entry (best-effort).
-        // R20.3: the ZoneMetastore (per-mount) and LocalMetastore (global
+        // R20.3: the ZoneMetaStore (per-mount) and LocalMetaStore (global
         // fallback) both accept full paths at the trait boundary.
-        // ZoneMetastore translates to its zone-relative root "/" internally;
-        // LocalMetastore stores the full path directly. Either way the
+        // ZoneMetaStore translates to its zone-relative root "/" internally;
+        // LocalMetaStore stores the full path directly. Either way the
         // caller passes ``mount_point`` (the VFS-global DT_MOUNT key).
         let canonical = canonicalize(mount_point, zone_id);
         kernel.with_metastore(&canonical, |ms| {
-            let meta = crate::metastore::FileMetadata {
+            let meta = crate::meta_store::FileMetadata {
                 path: mount_point.to_string(),
                 size: 0,
                 etag: None,
@@ -150,7 +150,7 @@ impl DriverLifecycleCoordinator {
         let canonical = canonicalize(mount_point, zone_id);
 
         // 1. Delete metastore entry (best-effort) — full path
-        // (ZoneMetastore translates internally to its zone-relative root).
+        // (ZoneMetaStore translates internally to its zone-relative root).
         kernel.with_metastore(&canonical, |ms| {
             let _ = ms.delete(mount_point);
         });

@@ -28,7 +28,7 @@ use crate::hook_registry::HookRegistry;
 #[cfg(feature = "py-hook-adapters")]
 use crate::hook_registry::InterceptHook;
 use crate::kernel::{Kernel, KernelError, OperationContext};
-use crate::metastore::{FileMetadata, MetastoreError};
+use crate::meta_store::{FileMetadata, MetaStoreError};
 use crate::vfs_router::RouteError;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -214,20 +214,20 @@ fn get_hook_ctx_cache(py: Python<'_>) -> Option<&'static HookContextCache> {
 fn extract_metadata(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-) -> Result<FileMetadata, MetastoreError> {
-    let get_str = |name: &str| -> Result<String, MetastoreError> {
+) -> Result<FileMetadata, MetaStoreError> {
+    let get_str = |name: &str| -> Result<String, MetaStoreError> {
         obj.getattr(name)
             .and_then(|v| v.extract::<String>())
-            .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}")))
+            .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}")))
     };
-    let get_opt_str = |name: &str| -> Result<Option<String>, MetastoreError> {
+    let get_opt_str = |name: &str| -> Result<Option<String>, MetaStoreError> {
         match obj.getattr(name) {
             Ok(v) if v.is_none() => Ok(None),
             Ok(v) => v
                 .extract::<String>()
                 .map(Some)
-                .map_err(|e| MetastoreError::IOError(format!("field {name}: {e}"))),
-            Err(e) => Err(MetastoreError::IOError(format!("field {name}: {e}"))),
+                .map_err(|e| MetaStoreError::IOError(format!("field {name}: {e}"))),
+            Err(e) => Err(MetaStoreError::IOError(format!("field {name}: {e}"))),
         }
     };
 
@@ -237,16 +237,16 @@ fn extract_metadata(
         size: obj
             .getattr("size")
             .and_then(|v| v.extract::<u64>())
-            .map_err(|e| MetastoreError::IOError(format!("field size: {e}")))?,
+            .map_err(|e| MetaStoreError::IOError(format!("field size: {e}")))?,
         etag: get_opt_str("etag")?,
         version: obj
             .getattr("version")
             .and_then(|v| v.extract::<u32>())
-            .map_err(|e| MetastoreError::IOError(format!("field version: {e}")))?,
+            .map_err(|e| MetaStoreError::IOError(format!("field version: {e}")))?,
         entry_type: obj
             .getattr("entry_type")
             .and_then(|v| v.extract::<u8>())
-            .map_err(|e| MetastoreError::IOError(format!("field entry_type: {e}")))?,
+            .map_err(|e| MetaStoreError::IOError(format!("field entry_type: {e}")))?,
         zone_id: get_opt_str("zone_id")?,
         mime_type: get_opt_str("mime_type")?,
         created_at_ms: extract_opt_datetime_ms(obj, "created_at"),
@@ -271,9 +271,9 @@ fn extract_opt_datetime_ms(obj: &Bound<'_, PyAny>, name: &str) -> Option<i64> {
 fn to_python_metadata<'py>(
     py: Python<'py>,
     meta: &FileMetadata,
-) -> Result<Bound<'py, PyAny>, MetastoreError> {
-    fn err(e: PyErr) -> MetastoreError {
-        MetastoreError::IOError(format!("to_python_metadata: {e}"))
+) -> Result<Bound<'py, PyAny>, MetaStoreError> {
+    fn err(e: PyErr) -> MetaStoreError {
+        MetaStoreError::IOError(format!("to_python_metadata: {e}"))
     }
     let cls = py
         .import("nexus.contracts.metadata")
@@ -886,9 +886,9 @@ impl PyKernel {
         self.inner.set_self_address(addr);
     }
 
-    // ── Metastore wiring ──────────────────────────────────────────────
+    // ── MetaStore wiring ──────────────────────────────────────────────
 
-    /// Wire LocalMetastore by path — Rust kernel opens redb directly.
+    /// Wire LocalMetaStore by path — Rust kernel opens redb directly.
     /// Eliminates GIL crossing on every metastore.get/put.
     fn set_metastore_path(&self, path: &str) -> PyResult<()> {
         self.inner.set_metastore_path(path).map_err(Into::into)
@@ -901,7 +901,7 @@ impl PyKernel {
         self.inner.release_metastores()
     }
 
-    // ── Metastore proxy methods (for RustMetastoreProxy) ──────────────
+    // ── MetaStore proxy methods (for RustMetastoreProxy) ──────────────
 
     fn metastore_get(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {
         match self
@@ -1698,11 +1698,11 @@ impl PyKernel {
                 crate::rpc_transport::RpcTransport::new(rt, addr, token, tls.as_ref(), timeout)
                     .map_err(pyo3::exceptions::PyRuntimeError::new_err)?,
             );
-            let remote_ms = std::sync::Arc::new(crate::remote_metastore::RemoteMetastore::new(
+            let remote_ms = std::sync::Arc::new(crate::remote_meta_store::RemoteMetaStore::new(
                 Arc::clone(&transport),
-            )) as Arc<dyn crate::metastore::Metastore>;
+            )) as Arc<dyn crate::meta_store::MetaStore>;
             self.inner
-                .pending_remote_metastore
+                .pending_remote_meta_store
                 .lock()
                 .replace(remote_ms);
             let b = crate::remote_backend::RemoteBackend::new(transport);
@@ -1776,17 +1776,17 @@ impl PyKernel {
             None
         };
 
-        // Metastore resolution: metastore_path -> LocalMetastore.
+        // MetaStore resolution: metastore_path -> LocalMetaStore.
         // Federation DT_MOUNT auto-resolves its raft backing via
         // `resolve_federation_mount_backing` inside Kernel::sys_setattr
         // (R20.18.3), so Python always passes `None` for raft_backend.
-        let metastore: Option<Arc<dyn crate::metastore::Metastore>> =
+        let metastore: Option<Arc<dyn crate::meta_store::MetaStore>> =
             if let Some(ms_path) = metastore_path {
-                let ms = crate::metastore::LocalMetastore::open(std::path::Path::new(ms_path))
+                let ms = crate::meta_store::LocalMetaStore::open(std::path::Path::new(ms_path))
                     .map_err(|e| {
-                        pyo3::exceptions::PyIOError::new_err(format!("LocalMetastore: {e:?}"))
+                        pyo3::exceptions::PyIOError::new_err(format!("LocalMetaStore: {e:?}"))
                     })?;
-                Some(Arc::new(ms) as Arc<dyn crate::metastore::Metastore>)
+                Some(Arc::new(ms) as Arc<dyn crate::meta_store::MetaStore>)
             } else {
                 None
             };
@@ -1812,7 +1812,7 @@ impl PyKernel {
             .map_err::<PyErr, _>(Into::into)?;
 
         // Install remote metastore on the mount entry (if pending from remote backend setup)
-        if let Some(remote_ms) = self.inner.pending_remote_metastore.lock().take() {
+        if let Some(remote_ms) = self.inner.pending_remote_meta_store.lock().take() {
             let canonical_key = format!("/{zone_id}{path}");
             self.inner
                 .vfs_router

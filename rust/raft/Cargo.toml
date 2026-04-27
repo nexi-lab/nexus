@@ -87,7 +87,7 @@ pyo3 = { version = "0.27.2", optional = true }
 mimalloc = { workspace = true, optional = true }
 
 # NOTE: F2 C1 (d16cfc9a7) tried to pull the kernel rlib into _nexus_raft.so
-# so raft could impl `kernel::Metastore` directly. That turned out to cause
+# so raft could impl `kernel::MetaStore` directly. That turned out to cause
 # a post-start SIGSEGV in tokio worker threads: both nexus_kernel.so and
 # _nexus_raft.so end up with their own copy of kernel's thread_local! state
 # and vtables, and the two cdylibs can't reliably share a single process

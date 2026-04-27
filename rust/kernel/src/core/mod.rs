@@ -29,7 +29,7 @@ pub mod lock;
 pub mod dispatch;
 
 // §4.6 — metastore pillar (trait + memory + remote proxy).
-pub mod metastore;
+pub mod meta_store;
 
 // §4.2 — DT_PIPE / DT_STREAM IPC pillars.
 pub mod pipe;

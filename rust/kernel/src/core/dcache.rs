@@ -35,8 +35,8 @@ pub(crate) struct CachedEntry {
     pub(crate) last_writer_address: Option<String>,
 }
 
-impl From<&crate::metastore::FileMetadata> for CachedEntry {
-    fn from(m: &crate::metastore::FileMetadata) -> Self {
+impl From<&crate::meta_store::FileMetadata> for CachedEntry {
+    fn from(m: &crate::meta_store::FileMetadata) -> Self {
         Self {
             size: m.size,
             etag: m.etag.clone(),

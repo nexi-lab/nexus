@@ -40,13 +40,13 @@ pub(crate) use core::dlc;
 pub(crate) use core::file_watch;
 pub use core::lock as lock_manager;
 pub use core::lock::locks;
-pub use core::metastore;
+pub use core::meta_store;
 pub use core::vfs_router;
 // Kept under flat `semaphore::` so `m.add_class::<semaphore::VFSSemaphore>()`
 // in #[pymodule] keeps the single-segment shape that
 // scripts/codegen_kernel_abi.py's `add_class::<MOD::Name>` regex matches.
 pub(crate) use core::lock::semaphore;
-pub(crate) use core::metastore::remote as remote_metastore;
+pub(crate) use core::meta_store::remote as remote_meta_store;
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
 #[cfg(unix)]
@@ -83,7 +83,7 @@ pub(crate) use core::stream::wal as wal_stream;
 //   * Phase E — audit_hook, permission_hook.
 //   * Phase F — federation_client, peer_blob_client, blob_fetcher,
 //     grpc_server, rpc_transport, ipc.
-//   * Phase G — raft_metastore, replication.
+//   * Phase G — raft_meta_store, replication.
 //   * Phase H — bitmap, bloom, hash (delete duplicates with lib),
 //     glob, io, path_utils, prefix, rebac, search, simd, trigram.
 //   * Phase E — agent_status_resolver (services/agents).
@@ -116,8 +116,8 @@ mod kernel;
 // kept public so other crates (e.g. `rust/raft`) can reference `PyKernel`
 // via cross-crate PyO3 borrows — needed for
 // `PyZoneHandle::attach_to_kernel_mount()` which wires a Raft-backed
-// `Metastore` into `Kernel::mount_metastores` without surfacing a
-// separate `KernelMetastore` Python class.
+// `MetaStore` into `Kernel::mount_metastores` without surfacing a
+// separate `KernelMetaStore` Python class.
 pub mod generated_kernel_abi_pyo3;
 // Compat alias so any out-of-tree consumer pinned to the pre-Phase-C
 // path keeps working through one release. Removable once downstream
@@ -138,7 +138,7 @@ mod openai_inference;
 pub mod openai_streaming;
 mod peer_blob_client;
 mod permission_hook;
-mod raft_metastore;
+mod raft_meta_store;
 mod remote_backend;
 mod replication;
 mod rpc_transport;

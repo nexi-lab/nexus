@@ -2,7 +2,7 @@
 //! Embedded key-value storage using redb 2.x.
 //!
 //! Pure Rust embedded database with typed tables, ACID transactions,
-//! and a reliable on-disk format. Sole Metastore KV driver for Nexus.
+//! and a reliable on-disk format. Sole MetaStore KV driver for Nexus.
 //!
 //! - Stable: redb 2.x has a committed on-disk format
 //! - ACID: Full MVCC transactions with crash safety

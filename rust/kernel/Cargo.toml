@@ -19,7 +19,7 @@ crate-type = ["rlib"]
 contracts = { workspace = true }
 lib = { workspace = true, features = ["python"] }
 services = { workspace = true }
-# F2 C8 (Option A): raft rlib pulled in so kernel can impl Metastore over
+# F2 C8 (Option A): raft rlib pulled in so kernel can impl MetaStore over
 # raft's ZoneConsensus directly, no cross-cdylib Rust trait object
 # dispatch. See rust/kernel/src/raft_metastore.rs.
 raft = { workspace = true }

@@ -1,4 +1,4 @@
-//! Remote Metastore — `Metastore` trait impl via tonic gRPC.
+//! Remote MetaStore — `MetaStore` trait impl via tonic gRPC.
 //!
 //! Replaces Python `storage/remote_metastore.py`. Each method dispatches
 //! a Call RPC to the remote server's VFS layer (sys_stat, sys_readdir,
@@ -8,33 +8,33 @@
 
 use std::sync::Arc;
 
-use crate::metastore::{FileMetadata, Metastore, MetastoreError, PaginatedList};
+use crate::meta_store::{FileMetadata, MetaStore, MetaStoreError, PaginatedList};
 use crate::rpc_transport::RpcTransport;
 
-/// Metastore backed by a remote Nexus server via gRPC Call RPC.
+/// MetaStore backed by a remote Nexus server via gRPC Call RPC.
 ///
 /// All metadata ops serialize to JSON, dispatch via `Call(method, payload)`,
 /// and deserialize the response. Server-side NexusFS is the SSOT.
-pub(crate) struct RemoteMetastore {
+pub(crate) struct RemoteMetaStore {
     transport: Arc<RpcTransport>,
 }
 
-impl RemoteMetastore {
+impl RemoteMetaStore {
     pub fn new(transport: Arc<RpcTransport>) -> Self {
         Self { transport }
     }
 }
 
-impl Metastore for RemoteMetastore {
-    fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetastoreError> {
+impl MetaStore for RemoteMetaStore {
+    fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetaStoreError> {
         let payload = serde_json::json!({ "path": path });
         let bytes =
-            serde_json::to_vec(&payload).map_err(|e| MetastoreError::IOError(e.to_string()))?;
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
 
         let (resp_bytes, is_error) = self
             .transport
             .call("sys_stat", &bytes)
-            .map_err(MetastoreError::IOError)?;
+            .map_err(MetaStoreError::IOError)?;
 
         if is_error {
             // Server reported error (path not found, etc.)
@@ -42,7 +42,7 @@ impl Metastore for RemoteMetastore {
         }
 
         let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
-            .map_err(|e| MetastoreError::IOError(format!("decode sys_stat response: {e}")))?;
+            .map_err(|e| MetaStoreError::IOError(format!("decode sys_stat response: {e}")))?;
 
         // Server returns None/null for missing paths
         if value.is_null() {
@@ -52,7 +52,7 @@ impl Metastore for RemoteMetastore {
         parse_metadata_from_json(&value).map(Some)
     }
 
-    fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetastoreError> {
+    fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetaStoreError> {
         let payload = serde_json::json!({
             "path": path,
             "entry_type": metadata.entry_type,
@@ -64,53 +64,53 @@ impl Metastore for RemoteMetastore {
             "last_writer_address": metadata.last_writer_address,
         });
         let bytes =
-            serde_json::to_vec(&payload).map_err(|e| MetastoreError::IOError(e.to_string()))?;
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
 
         let (_resp, is_error) = self
             .transport
             .call("sys_setattr", &bytes)
-            .map_err(MetastoreError::IOError)?;
+            .map_err(MetaStoreError::IOError)?;
 
         if is_error {
-            return Err(MetastoreError::IOError(format!(
+            return Err(MetaStoreError::IOError(format!(
                 "sys_setattr failed for {path}"
             )));
         }
         Ok(())
     }
 
-    fn delete(&self, path: &str) -> Result<bool, MetastoreError> {
+    fn delete(&self, path: &str) -> Result<bool, MetaStoreError> {
         let payload = serde_json::json!({ "path": path });
         let bytes =
-            serde_json::to_vec(&payload).map_err(|e| MetastoreError::IOError(e.to_string()))?;
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
 
         let (_resp, is_error) = self
             .transport
             .call("sys_unlink", &bytes)
-            .map_err(MetastoreError::IOError)?;
+            .map_err(MetaStoreError::IOError)?;
 
         Ok(!is_error)
     }
 
-    fn list(&self, prefix: &str) -> Result<Vec<FileMetadata>, MetastoreError> {
+    fn list(&self, prefix: &str) -> Result<Vec<FileMetadata>, MetaStoreError> {
         let payload = serde_json::json!({
             "path": prefix,
             "recursive": true,
         });
         let bytes =
-            serde_json::to_vec(&payload).map_err(|e| MetastoreError::IOError(e.to_string()))?;
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
 
         let (resp_bytes, is_error) = self
             .transport
             .call("sys_readdir", &bytes)
-            .map_err(MetastoreError::IOError)?;
+            .map_err(MetaStoreError::IOError)?;
 
         if is_error {
             return Ok(Vec::new());
         }
 
         let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
-            .map_err(|e| MetastoreError::IOError(format!("decode sys_readdir: {e}")))?;
+            .map_err(|e| MetaStoreError::IOError(format!("decode sys_readdir: {e}")))?;
 
         // Server returns an array of entries (path, entry_type pairs or full metadata)
         let entries = match value.as_array() {
@@ -124,15 +124,15 @@ impl Metastore for RemoteMetastore {
         Ok(entries)
     }
 
-    fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
+    fn exists(&self, path: &str) -> Result<bool, MetaStoreError> {
         let payload = serde_json::json!({ "path": path });
         let bytes =
-            serde_json::to_vec(&payload).map_err(|e| MetastoreError::IOError(e.to_string()))?;
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
 
         let (resp_bytes, is_error) = self
             .transport
             .call("access", &bytes)
-            .map_err(MetastoreError::IOError)?;
+            .map_err(MetaStoreError::IOError)?;
 
         if is_error {
             return Ok(false);
@@ -148,15 +148,15 @@ impl Metastore for RemoteMetastore {
         }))
     }
 
-    fn is_implicit_directory(&self, path: &str) -> Result<bool, MetastoreError> {
+    fn is_implicit_directory(&self, path: &str) -> Result<bool, MetaStoreError> {
         let payload = serde_json::json!({ "path": path });
         let bytes =
-            serde_json::to_vec(&payload).map_err(|e| MetastoreError::IOError(e.to_string()))?;
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
 
         let (resp_bytes, is_error) = self
             .transport
             .call("is_directory", &bytes)
-            .map_err(MetastoreError::IOError)?;
+            .map_err(MetaStoreError::IOError)?;
 
         if is_error {
             return Ok(false);
@@ -172,7 +172,7 @@ impl Metastore for RemoteMetastore {
         recursive: bool,
         limit: usize,
         cursor: Option<&str>,
-    ) -> Result<PaginatedList, MetastoreError> {
+    ) -> Result<PaginatedList, MetaStoreError> {
         let mut payload = serde_json::json!({
             "path": prefix,
             "recursive": recursive,
@@ -182,19 +182,19 @@ impl Metastore for RemoteMetastore {
             payload["cursor"] = serde_json::Value::String(c.to_string());
         }
         let bytes =
-            serde_json::to_vec(&payload).map_err(|e| MetastoreError::IOError(e.to_string()))?;
+            serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
 
         let (resp_bytes, is_error) = self
             .transport
             .call("sys_readdir", &bytes)
-            .map_err(MetastoreError::IOError)?;
+            .map_err(MetaStoreError::IOError)?;
 
         if is_error {
             return Ok(PaginatedList::default());
         }
 
         let value: serde_json::Value = serde_json::from_slice(&resp_bytes)
-            .map_err(|e| MetastoreError::IOError(format!("decode paginated readdir: {e}")))?;
+            .map_err(|e| MetaStoreError::IOError(format!("decode paginated readdir: {e}")))?;
 
         let items: Vec<FileMetadata> = value
             .get("items")
@@ -230,10 +230,10 @@ impl Metastore for RemoteMetastore {
 }
 
 /// Parse FileMetadata from a JSON value (server sys_stat response).
-fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, MetastoreError> {
+fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, MetaStoreError> {
     let obj = value
         .as_object()
-        .ok_or_else(|| MetastoreError::IOError("expected JSON object".into()))?;
+        .ok_or_else(|| MetaStoreError::IOError("expected JSON object".into()))?;
 
     Ok(FileMetadata {
         path: obj

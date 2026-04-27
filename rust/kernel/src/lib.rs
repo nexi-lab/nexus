@@ -48,6 +48,13 @@ pub use core::vfs_router;
 pub(crate) use core::lock::semaphore;
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
+
+// NostrBackend ObjectStore stub — chat-with-me remote-identity leg.
+// Lives kernel-side in this rebase commit; later commits move it to
+// `rust/backends/src/nostr/` (the canonical home for ObjectStore
+// drivers per the post-#3932 architecture).
+#[cfg(feature = "nostr")]
+mod nostr_backend;
 #[cfg(unix)]
 pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]

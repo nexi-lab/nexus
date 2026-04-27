@@ -1,76 +1,63 @@
 // sudo-code session lifecycle gRPC service.
 //
-// Surfaces the in-process sudo-code runtime that nexusd links as a Rust
-// crate. sudowork (Electron, TypeScript) is the primary caller; any
-// other client that wants to spawn / drive a sudo-code session against
-// nexusd uses the same service.
+// Surface is intentionally narrow: spawn, cancel, liveness. sudo-code
+// runs as a subprocess driven by `nexus.services.acp.AcpService` (same
+// shape claude / codex / codebuddy / nanobot already use), and prompt
+// + event flow uses the existing chat-with-me VFS surface
+// (`/agents/{name}/chat-with-me` and `/agents/human-{user}/chat-with-me`)
+// over `NexusVFSService.{Read,Write}` + `sys_watch`. There is no
+// SendPrompt / SubscribeEvents RPC here — that would duplicate the A2A
+// primitive every other agent already uses (see the sudowork
+// integration design `docs/tech/nexus-integration-architecture.md` §3).
 //
-// The "session" abstraction encapsulates one running sudo-code agent
-// (one tokio task inside nexusd, one pid in the AgentRegistry). A
-// session has a stable session_id and an associated agent_id assigned
-// by the AgentRegistry at StartSession time. The runtime workspace
-// lives at /proc/{pid}/workspace/ inside nexus VFS; see
-// docs/architecture/KERNEL-ARCHITECTURE.md §4.5 (DT_LINK) and the
-// sudowork integration design (sudowork/docs/tech/nexus-integration-architecture.md)
-// for the broader path layout.
+// Session abstraction: one running sudo-code subprocess (one pid in
+// AgentRegistry, one stdio-bound process). session_id and agent_id are
+// allocated by nexusd at StartSession time so callers do not race on
+// identity.
 
 syntax = "proto3";
 
 package nexus.grpc.sudo_code;
 
 service SudoCodeService {
-  // Start a new sudo-code session. nexusd allocates an agent_id via
+  // Spawn a new sudo-code session. nexusd allocates an agent_id via
   // AgentRegistry.spawn (callers do NOT supply one — keeps a single
   // authority over identity), constructs /proc/{pid}/workspace/ with
   // OS-level symlinks for each requested repo, plants the DT_LINK
-  // shortcut at /proc/{pid}/workspace/chat-with-me, and spawns the
-  // sudo-code runtime as a tokio task with cwd set to the workspace.
+  // shortcut at /proc/{pid}/workspace/chat-with-me, then delegates to
+  // AcpService.call_agent which spawns `scode serve` as a subprocess
+  // and binds its stdio to /proc/{pid}/fd/{0,1,2}.
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
 
-  // Send a single prompt to a running session. Streams of token-level
-  // events come back over SubscribeEvents; SendPrompt itself only
-  // acknowledges receipt so the call returns quickly.
-  rpc SendPrompt(SendPromptRequest) returns (SendPromptResponse);
-
-  // Server-streaming subscription to a session's event stream — token
-  // chunks, tool calls, completion, errors. Re-subscribing at any
-  // offset replays from that point (sudo-code persists the conversation
-  // as JSONL inside /proc/{pid}/workspace/.scode/sessions/, so the
-  // server can serve historical events without external storage).
-  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream SessionEvent);
-
-  // Cancel an in-flight prompt or terminate the entire session.
-  // Mode `CANCEL_TURN` aborts the current generation but keeps the
-  // session alive; `CANCEL_SESSION` tears the tokio task down and
-  // unregisters the agent.
+  // Cancel an in-flight turn or terminate the whole session.
+  //   CANCEL_MODE_CANCEL_TURN    — abort the current generation, keep
+  //                                the subprocess alive
+  //   CANCEL_MODE_CANCEL_SESSION — terminate the subprocess, unregister
+  //                                the agent from AgentRegistry
   rpc Cancel(CancelRequest) returns (CancelResponse);
 
-  // Snapshot the current session state — last assistant message, token
-  // counters, model, workspace root. Cheap status read; for the live
-  // event firehose use SubscribeEvents.
+  // Liveness / state snapshot. Cheap read — pulls AgentTable state +
+  // workspace path. For live message flow use sys_watch over the
+  // chat-with-me path; this RPC is only for "is the session still
+  // alive, what state is it in" checks.
   rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
 }
 
 // ── Session lifecycle ──────────────────────────────────────────────
 
 message StartSessionRequest {
-  // Stable image name registered under /agents/{name}/. Examples:
+  // Stable agent name registered under /agents/{name}/. Examples:
   // "scode-standard", "scode-fast". Required.
-  string image = 1;
+  string agent = 1;
 
   // Repo specs that nexusd materializes as OS-level symlinks under
-  // /proc/{pid}/workspace/{repo_alias}. Empty = no symlinks (sudo-code
+  // /proc/{pid}/workspace/{alias}. Empty = no symlinks (sudo-code
   // operates on the VFS workspace root only).
   repeated WorkspaceRepo repos = 2;
 
-  // Optional model override — falls back to /agents/{image}/config.toml
+  // Optional model override — falls back to /agents/{agent}/config.toml
   // when empty.
   string model = 3;
-
-  // Optional initial prompt sent immediately after spawn so callers
-  // can avoid an extra round-trip when they already know the first
-  // user message. Empty = no auto-prompt; SendPrompt drives the turn.
-  string initial_prompt = 4;
 }
 
 message WorkspaceRepo {
@@ -91,52 +78,7 @@ message StartSessionResponse {
   string workspace_path = 3;
 }
 
-// ── Prompt / event streaming ───────────────────────────────────────
-
-message SendPromptRequest {
-  string session_id = 1;
-  string prompt = 2;
-}
-
-message SendPromptResponse {
-  // Monotonically-increasing turn index assigned by the runtime;
-  // SubscribeEvents emits events tagged with this turn so callers can
-  // correlate.
-  uint64 turn = 1;
-}
-
-message SubscribeEventsRequest {
-  string session_id = 1;
-
-  // Resume offset into the session's event jsonl. 0 = stream from the
-  // current end (live tail). Negative offsets are reserved.
-  uint64 from_offset = 2;
-}
-
-message SessionEvent {
-  // Event-stream offset in the underlying jsonl (monotonic per
-  // session). Re-subscribers pass this back as `from_offset` to
-  // resume.
-  uint64 offset = 1;
-  uint64 turn = 2;
-  EventKind kind = 3;
-  // Free-form payload — the runtime decides the JSON shape per kind.
-  // Kept as bytes so the proto layer doesn't bind to any single
-  // schema for tool-call args / model output.
-  bytes payload = 4;
-
-  enum EventKind {
-    EVENT_KIND_UNSPECIFIED = 0;
-    EVENT_KIND_TEXT_CHUNK = 1;
-    EVENT_KIND_TOOL_CALL = 2;
-    EVENT_KIND_TOOL_RESULT = 3;
-    EVENT_KIND_TURN_END = 4;
-    EVENT_KIND_ERROR = 5;
-    EVENT_KIND_SESSION_END = 6;
-  }
-}
-
-// ── Cancel / status ────────────────────────────────────────────────
+// ── Cancel ─────────────────────────────────────────────────────────
 
 message CancelRequest {
   string session_id = 1;
@@ -153,6 +95,8 @@ message CancelResponse {
   bool cancelled = 1;
 }
 
+// ── Liveness snapshot ──────────────────────────────────────────────
+
 message GetSessionRequest {
   string session_id = 1;
 }
@@ -160,12 +104,10 @@ message GetSessionRequest {
 message GetSessionResponse {
   string session_id = 1;
   string agent_id = 2;
-  string image = 3;
+  string agent = 3;
   string workspace_path = 4;
   string model = 5;
-  // Total turns the session has produced so far.
-  uint64 turn_count = 6;
   // AgentState from contracts/process_types.py, lower-cased — same
   // surface the kernel agent_wait syscall accepts.
-  string state = 7;
+  string state = 6;
 }

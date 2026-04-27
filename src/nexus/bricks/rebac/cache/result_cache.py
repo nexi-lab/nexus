@@ -237,6 +237,10 @@ class ReBACPermissionCache:
         self._targeted_invalidations = 0
         self._index_lookups = 0
 
+        # Counter for periodic stale-index pruning (every max_size//4 inserts)
+        self._index_inserts_since_prune: int = 0
+        self._index_prune_interval: int = max(max_size // 4, 64)
+
     def _get_jittered_ttl(self, base_ttl: float) -> float:
         """Add random jitter to TTL to prevent thundering herd.
 
@@ -299,6 +303,12 @@ class ReBACPermissionCache:
         if self._invalidation_mode != "targeted":
             return
 
+        # Periodically prune index entries whose primary cache keys were evicted by TTL/LRU.
+        self._index_inserts_since_prune += 1
+        if self._index_inserts_since_prune >= self._index_prune_interval:
+            self._prune_stale_indexes()
+            self._index_inserts_since_prune = 0
+
         # Subject index
         subject_key = (zone_id, subject_type, subject_id)
         if subject_key not in self._subject_index:
@@ -352,6 +362,23 @@ class ReBACPermissionCache:
                 break
             path = parent
         return prefixes
+
+    def _prune_stale_indexes(self) -> None:
+        """Remove index entries whose primary cache keys have been TTL/LRU-evicted.
+
+        Called periodically from _add_to_indexes to keep secondary indexes
+        bounded when the primary grant/denial caches evict entries silently.
+        Must be called under self._lock.
+        """
+        for index in (self._subject_index, self._object_index, self._path_prefix_index):
+            for index_key in list(index.keys()):
+                live = {
+                    k for k in index[index_key] if k in self._grant_cache or k in self._denial_cache
+                }
+                if live:
+                    index[index_key] = live
+                else:
+                    del index[index_key]
 
     def _remove_from_indexes(self, key: str) -> None:
         """Remove a cache key from all secondary indexes (Issue #1077).

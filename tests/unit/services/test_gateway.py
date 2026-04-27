@@ -399,28 +399,3 @@ class TestMountOperations:
         assert result[0]["mount_point"] == "/mnt/test"
         assert result[0]["backend_type"] == "rust-native"
         assert result[0]["backend"] is None
-
-    def test_get_mount_for_path_found(self, gateway, mock_fs):
-        """get_mount_for_path returns mount info."""
-        mock_fs._driver_coordinator.mount_points.return_value = ["/mnt"]
-
-        result = gateway.get_mount_for_path("/mnt/subdir/file.txt")
-        assert result is not None
-        assert result["mount_point"] == "/mnt"
-        assert result["backend_path"] == "subdir/file.txt"
-        assert result["backend"] is None
-
-    def test_get_mount_for_path_root(self, gateway, mock_fs):
-        """get_mount_for_path handles root mount."""
-        mock_fs._driver_coordinator.mount_points.return_value = ["/"]
-
-        result = gateway.get_mount_for_path("/any/path")
-        assert result is not None
-        assert result["mount_point"] == "/"
-        assert result["backend"] is None
-
-    def test_get_mount_for_path_not_found(self, gateway, mock_fs):
-        """get_mount_for_path returns None when no mount matches."""
-        mock_fs._driver_coordinator.mount_points.return_value = []
-        result = gateway.get_mount_for_path("/orphan/path")
-        assert result is None

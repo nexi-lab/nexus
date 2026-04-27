@@ -69,7 +69,7 @@ class ReadmePathResolver:
         if rel.startswith("schemas/") and rel.endswith(".yaml"):
             op_name = rel[len("schemas/") : -len(".yaml")]
             gen = backend.get_doc_generator()
-            schema = gen._schemas.get(op_name)
+            schema = gen.get_schema(op_name)
             if schema is not None:
                 return gen.generate_schema_yaml(op_name, schema).encode()
 

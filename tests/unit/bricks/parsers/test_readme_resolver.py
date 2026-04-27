@@ -15,7 +15,8 @@ def _make_backend(skill_name: str = "testskill", ops: list[str] | None = None) -
     backend.SKILL_NAME = skill_name
     backend.generate_readme.return_value = f"# {skill_name} readme"
     gen = MagicMock()
-    gen._schemas = {op: MagicMock() for op in ops}
+    _schemas = {op: MagicMock() for op in ops}
+    gen.get_schema.side_effect = _schemas.get
     gen.generate_schema_yaml.return_value = f"# schema: {skill_name}"
     backend.get_doc_generator.return_value = gen
     return backend

@@ -272,7 +272,7 @@ class TestBootBrickServices:
         }
         assert expected_keys == set(result.keys())
 
-    def test_version_service_degrades_gracefully(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_version_service_degrades_gracefully(self) -> None:
         """Issue #2034 / 10A: VersionService failure should not crash brick boot."""
         from nexus.factory import _boot_brick_services, _boot_system_services
 
@@ -280,7 +280,7 @@ class TestBootBrickServices:
         system = _boot_system_services(ctx)
 
         with (
-            caplog.at_level(logging.DEBUG, logger="nexus.factory._bricks"),
+            patch("nexus.factory._bricks.logger.debug") as log_debug,
             patch(
                 "nexus.bricks.versioning.version_service.VersionService",
                 side_effect=RuntimeError("version db unavailable"),
@@ -293,9 +293,14 @@ class TestBootBrickServices:
         assert result["version_service"] is None
         # Other brick services are unaffected
         assert "wallet_provisioner" in result
-        assert any("version db unavailable" in r.getMessage() for r in caplog.records)
+        assert any(
+            "VersionService unavailable" in str(call.args[0])
+            and "version db unavailable" in str(call.args[1])
+            for call in log_debug.call_args_list
+            if len(call.args) >= 2
+        )
 
-    def test_circuit_breaker_degrades_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_circuit_breaker_degrades_with_warning(self) -> None:
         """Issue #2034 / 14A: Circuit breaker failure logs WARNING, not fatal."""
         from nexus.factory import _boot_brick_services, _boot_system_services
 
@@ -303,7 +308,7 @@ class TestBootBrickServices:
         system = _boot_system_services(ctx)
 
         with (
-            caplog.at_level(logging.WARNING, logger="nexus.factory"),
+            patch("nexus.factory._bricks.logger.warning") as log_warning,
             patch(
                 "nexus.bricks.rebac.circuit_breaker.AsyncCircuitBreaker",
                 side_effect=RuntimeError("circuit breaker config error"),
@@ -313,7 +318,11 @@ class TestBootBrickServices:
 
         assert "rebac_circuit_breaker" in result
         assert result["rebac_circuit_breaker"] is None
-        assert any("circuit-breaking protection" in r.message for r in caplog.records)
+        assert any(
+            "circuit-breaking protection" in str(call.args[0])
+            for call in log_warning.call_args_list
+            if call.args
+        )
 
     def test_failure_logged_at_debug(self, caplog: pytest.LogCaptureFixture) -> None:
         from nexus.factory import _boot_brick_services, _boot_system_services

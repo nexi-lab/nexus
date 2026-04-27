@@ -29,6 +29,12 @@ raft = { workspace = true }
 # entry points (currently `install_audit_hook`) compose into the
 # single `nexus_kernel.so` cdylib.
 services = { workspace = true, features = ["python"] }
+# Phase 2: backends with the `python` feature enabled so the
+# `BlobPackEngine` pyclass + `DefaultBackendFactory` registration
+# compose into the single `nexus_kernel.so` cdylib.  This is the
+# crate that owns the 17-way `BackendFactory::build` switch the
+# kernel calls through `kernel::hal::backend_factory::get_factory()`.
+backends = { workspace = true, features = ["python"] }
 # Sole crate that enables `extension-module`. Cargo unifies pyo3
 # features across the workspace, so every transitive pyo3 user
 # (kernel, lib, raft, backends, …) sees the cdylib-correct

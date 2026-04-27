@@ -59,7 +59,7 @@ impl DriverLifecycleCoordinator {
         mount_point: &str,
         zone_id: &str,
         backend_name: &str,
-        backend: Option<Arc<dyn crate::backend::ObjectStore>>,
+        backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,

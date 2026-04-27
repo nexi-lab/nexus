@@ -13,8 +13,8 @@
 //!
 //! `add_mount(backend_type="x")`
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
-use crate::kernel::OperationContext;
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+use kernel::kernel::OperationContext;
 use std::io;
 
 const X_API_BASE: &str = "https://api.x.com/2";

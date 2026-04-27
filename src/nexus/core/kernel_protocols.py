@@ -130,6 +130,11 @@ class ObjectStore(Protocol):
 
 
 @runtime_checkable
+class BackendFactory(Protocol):
+    def build(self, args: Any) -> Any: ...
+
+
+@runtime_checkable
 class LlmStreamingBackend(Protocol):
     def run_streaming(self, request_bytes: bytes, stream_path: str, stream_manager: Any) -> Any: ...
 

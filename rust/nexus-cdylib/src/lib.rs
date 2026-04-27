@@ -40,5 +40,13 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // `kernel::python::register` for now — see `kernel/src/transport/`
     // module's docstring for why those files live in kernel rather
     // than the transport crate.
+    //
+    // Phase 2: backends-tier PyO3 entry points (BlobPackEngine pyclass)
+    // **and** the `BackendFactory` registration — `backends::python::
+    // register` calls `kernel::hal::backend_factory::set_factory(
+    // Arc::new(DefaultBackendFactory))` so `PyKernel.sys_setattr` can
+    // construct concrete backends without the kernel ever knowing the
+    // concrete types live in the backends crate.
+    backends::python::register(m)?;
     Ok(())
 }

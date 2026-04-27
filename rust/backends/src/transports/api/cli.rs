@@ -11,8 +11,8 @@
 //!
 //! `add_mount(backend_type="cli")`
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
-use crate::kernel::OperationContext;
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+use kernel::kernel::OperationContext;
 use std::collections::HashMap;
 use std::io;
 use std::process::Command;

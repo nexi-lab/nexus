@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
-use crate::rpc_transport::RpcTransport;
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+use kernel::rpc_transport::RpcTransport;
 
 /// ObjectStore backed by a remote Nexus server via gRPC.
 ///
@@ -50,7 +50,7 @@ impl ObjectStore for RemoteBackend {
         &self,
         content_id: &str,
         backend_path: &str,
-        _ctx: &crate::kernel::OperationContext,
+        _ctx: &kernel::kernel::OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         let path = to_server_path(backend_path);
         self.transport
@@ -63,7 +63,7 @@ impl ObjectStore for RemoteBackend {
         &self,
         content: &[u8],
         content_id: &str,
-        _ctx: &crate::kernel::OperationContext,
+        _ctx: &kernel::kernel::OperationContext,
         _offset: u64,
     ) -> Result<WriteResult, StorageError> {
         let path = to_server_path(content_id);

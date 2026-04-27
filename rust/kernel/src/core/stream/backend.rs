@@ -7,7 +7,7 @@
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub(crate) enum StreamError {
+pub enum StreamError {
     Closed(&'static str),
     Full(usize, usize),
     Empty,
@@ -21,7 +21,7 @@ pub(crate) enum StreamError {
 /// Enables `DashMap<String, Arc<dyn StreamBackend>>` in StreamManager for
 /// heterogeneous backend dispatch.
 #[allow(dead_code)] // Used via Arc<dyn StreamBackend> in StreamManager + generated_pyo3.rs
-pub(crate) trait StreamBackend: Send + Sync {
+pub trait StreamBackend: Send + Sync {
     fn push(&self, data: &[u8]) -> Result<usize, StreamError>;
     fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError>;
     fn read_batch(&self, offset: usize, count: usize)

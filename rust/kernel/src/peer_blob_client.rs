@@ -38,7 +38,7 @@ const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// Shared peer-RPC client. Construct once per kernel, clone the `Arc` into
 /// any caller that needs to fetch blobs from peers.
 #[allow(dead_code)]
-pub(crate) struct PeerBlobClient {
+pub struct PeerBlobClient {
     runtime: Arc<tokio::runtime::Runtime>,
     channels: DashMap<String, tonic::transport::Channel>,
     per_peer_semaphores: DashMap<String, Arc<Semaphore>>,
@@ -84,7 +84,7 @@ impl PeerBlobClient {
     /// Exposed runtime handle — kernel-owned code paths (e.g. the migrated
     /// `try_remote_fetch`) call `runtime.handle().block_on(...)` to execute
     /// async work without reconstructing a runtime per call.
-    pub(crate) fn runtime(&self) -> &Arc<tokio::runtime::Runtime> {
+    pub fn runtime(&self) -> &Arc<tokio::runtime::Runtime> {
         &self.runtime
     }
 
@@ -247,7 +247,7 @@ impl PeerBlobClient {
 /// Build the kernel-owned multi-threaded runtime. Two workers is plenty for
 /// IO-bound peer RPCs; increase only if a workload saturates both.
 #[allow(dead_code)]
-pub(crate) fn build_kernel_runtime() -> Arc<tokio::runtime::Runtime> {
+pub fn build_kernel_runtime() -> Arc<tokio::runtime::Runtime> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("nexus-kernel-peer")

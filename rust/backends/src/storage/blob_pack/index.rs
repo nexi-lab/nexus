@@ -6,7 +6,7 @@
 //! Uses full 32-byte blake3 hashes as keys to preserve CAS identity —
 //! a content-addressed store must never alias distinct hashes.
 //!
-//! Thread safety: callers protect the index with `RwLock<VolumeIndex>`.
+//! Thread safety: callers protect the index with `RwLock<BlobPackIndex>`.
 //! Volume FDs support concurrent pread via `read_at` (no seek required).
 //!
 //! Issue #3404: in-memory volume index.
@@ -76,7 +76,7 @@ pub enum ReadContentResult {
 ///
 /// Memory: ~56 bytes per entry (32B key + 16B value + hashmap overhead).
 /// For 1M entries: ~56 MB — trivial for any deployment.
-pub struct VolumeIndex {
+pub struct BlobPackIndex {
     /// blake3_hash → (volume_id, offset, size)
     /// Uses ahash for faster hashing of 32-byte keys (~2-3x vs SipHash).
     map: AHashMap<[u8; 32], MemIndexEntry>,
@@ -84,7 +84,7 @@ pub struct VolumeIndex {
     volumes: HashMap<u32, std::fs::File>,
 }
 
-impl VolumeIndex {
+impl BlobPackIndex {
     pub fn new() -> Self {
         Self {
             map: AHashMap::new(),
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_insert_lookup_remove() {
-        let mut idx = VolumeIndex::new();
+        let mut idx = BlobPackIndex::new();
         let hash = make_hash(1);
         let entry = make_entry(1, 64, 100);
 
@@ -403,14 +403,14 @@ mod tests {
 
     #[test]
     fn test_with_capacity() {
-        let idx = VolumeIndex::with_capacity(1000);
+        let idx = BlobPackIndex::with_capacity(1000);
         assert_eq!(idx.len(), 0);
         assert!(idx.memory_bytes() > 0);
     }
 
     #[test]
     fn test_load_entries() {
-        let mut idx = VolumeIndex::new();
+        let mut idx = BlobPackIndex::new();
         let entries = (0..100u8).map(|i| (make_hash(i), make_entry(1, i as u64 * 100, 50)));
         idx.load_entries(entries);
         assert_eq!(idx.len(), 100);
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_memory_bytes_grows() {
-        let mut idx = VolumeIndex::new();
+        let mut idx = BlobPackIndex::new();
         let empty_bytes = idx.memory_bytes();
 
         for i in 0..100u8 {
@@ -429,7 +429,7 @@ mod tests {
         let loaded_bytes = idx.memory_bytes();
         assert!(loaded_bytes > empty_bytes);
 
-        let per_entry = (loaded_bytes - std::mem::size_of::<VolumeIndex>()) as f64 / 100.0;
+        let per_entry = (loaded_bytes - std::mem::size_of::<BlobPackIndex>()) as f64 / 100.0;
         // 32 (key) + 16 (value) + 1 (control) = 49 bytes minimum
         assert!(per_entry >= 49.0, "per_entry={per_entry} too small");
         assert!(per_entry < 120.0, "per_entry={per_entry} too large");
@@ -437,14 +437,14 @@ mod tests {
 
     #[test]
     fn test_read_content_not_found() {
-        let idx = VolumeIndex::new();
+        let idx = BlobPackIndex::new();
         let hash = make_hash(1);
         matches!(idx.read_content(&hash), ReadContentResult::NotFound);
     }
 
     #[test]
     fn test_read_content_no_fd() {
-        let mut idx = VolumeIndex::new();
+        let mut idx = BlobPackIndex::new();
         let hash = make_hash(1);
         let entry = make_entry(99, 64, 100);
         idx.insert(hash, entry);
@@ -469,7 +469,7 @@ mod tests {
         let vol_path = dir.path().join("test.vol");
         std::fs::write(&vol_path, b"test volume data").unwrap();
 
-        let mut idx = VolumeIndex::new();
+        let mut idx = BlobPackIndex::new();
         assert_eq!(idx.volume_count(), 0);
 
         idx.open_volume(1, &vol_path).unwrap();
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_overwrite_entry() {
-        let mut idx = VolumeIndex::new();
+        let mut idx = BlobPackIndex::new();
         let hash = make_hash(1);
 
         idx.insert(hash, make_entry(1, 64, 100));

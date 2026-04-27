@@ -23,6 +23,8 @@
 //!
 //! Issue #3403: CAS volume packing.
 
+pub mod index;
+
 use parking_lot::{Mutex, RwLock};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -34,7 +36,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::volume_index::{MemIndexEntry, ReadContentResult, VolumeIndex};
+use crate::storage::blob_pack::index::{BlobPackIndex, MemIndexEntry, ReadContentResult};
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -392,14 +394,22 @@ fn pread_blob(path: &Path, offset: u64, size: u32) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-// ─── VolumeEngine — the main engine exposed to Python ───────────────────────
+// ─── BlobPackEngine — the main engine exposed to Python ───────────────────────
 
 /// Thread-safe CAS volume engine with redb index.
 ///
 /// Manages append-only volume files and a redb index mapping
 /// content hashes to (volume_id, offset, size).
-#[pyclass]
-pub struct VolumeEngine {
+//
+// Phase 0.5 / Phase 2: Rust type renamed `VolumeEngine -> BlobPackEngine`
+// for clarity, but the Python-visible class name stays `"VolumeEngine"`
+// for ABI compat through Phase 8 (~5 callers in
+// `nexus.backends.storage.cas_local` + the rust-compat shim).  The
+// pyclass anchor is dropped wholesale once Phase 8 retires the last
+// `VolumeLocalTransport` caller — the Rust type keeps its new name
+// regardless.
+#[pyclass(name = "VolumeEngine")]
+pub struct BlobPackEngine {
     /// Root directory for volume storage
     volumes_dir: PathBuf,
     /// redb database for the index
@@ -428,7 +438,7 @@ pub struct VolumeEngine {
     index_batch_size: usize,
     /// In-memory index for O(1) lookups — mirrors redb, avoids disk I/O on reads.
     /// Issue #3404.
-    mem_index: RwLock<VolumeIndex>,
+    mem_index: RwLock<BlobPackIndex>,
     /// Compaction stats counters (Issue #3408).
     compaction_volumes_total: AtomicU64,
     compaction_blobs_moved_total: AtomicU64,
@@ -459,7 +469,7 @@ fn io_err(e: impl std::fmt::Display) -> PyErr {
 }
 
 #[pymethods]
-impl VolumeEngine {
+impl BlobPackEngine {
     /// Create or open a volume engine at the given directory.
     ///
     /// Args:
@@ -502,7 +512,7 @@ impl VolumeEngine {
             compaction_sparsity_threshold,
             pending_index: Mutex::new(Vec::with_capacity(256)),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -1644,7 +1654,7 @@ impl VolumeEngine {
 
 // ─── Internal methods (not exposed to Python) ───────────────────────────────
 
-impl VolumeEngine {
+impl BlobPackEngine {
     /// Core put implementation shared by `put()` and `put_with_expiry()`.
     fn put_impl(&self, hash_hex: &str, data: &[u8], expiry: f64) -> PyResult<bool> {
         let hash = hex_to_hash(hash_hex)?;
@@ -1944,7 +1954,7 @@ impl VolumeEngine {
         let snapshot_path = self.snapshot_path();
 
         let (mut idx, need_reconciliation) = if !had_tmp_files {
-            if let Some(snap_idx) = VolumeIndex::load_snapshot(&snapshot_path) {
+            if let Some(snap_idx) = BlobPackIndex::load_snapshot(&snapshot_path) {
                 let redb_count = {
                     let db = self.db.read();
                     let txn = db.begin_read().map_err(db_err)?;
@@ -2062,12 +2072,15 @@ impl VolumeEngine {
 
     /// Load the mem_index from redb in a single pass (slow path).
     /// Also detects and removes stale entries pointing to missing volumes.
-    fn load_index_from_redb(&self, volume_paths: &HashMap<u32, PathBuf>) -> PyResult<VolumeIndex> {
+    fn load_index_from_redb(
+        &self,
+        volume_paths: &HashMap<u32, PathBuf>,
+    ) -> PyResult<BlobPackIndex> {
         let db = self.db.read();
         let txn = db.begin_read().map_err(db_err)?;
         let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
         let count = table.len().map_err(db_err)? as usize;
-        let mut idx = VolumeIndex::with_capacity(count);
+        let mut idx = BlobPackIndex::with_capacity(count);
         let mut stale_keys: Vec<Vec<u8>> = Vec::new();
         let mut max_expiry_map: HashMap<u32, f64> = HashMap::new();
 
@@ -2356,7 +2369,7 @@ impl VolumeEngine {
     }
 }
 
-impl Drop for VolumeEngine {
+impl Drop for BlobPackEngine {
     fn drop(&mut self) {
         if self.is_open.load(Ordering::SeqCst) {
             // Best-effort seal on drop
@@ -2554,7 +2567,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2567,7 +2580,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -2611,7 +2624,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2624,7 +2637,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -2653,7 +2666,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2666,7 +2679,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -2704,7 +2717,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        let mut engine = VolumeEngine {
+        let mut engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2717,7 +2730,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -2753,7 +2766,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        let mut engine = VolumeEngine {
+        let mut engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2766,7 +2779,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -2797,7 +2810,7 @@ mod tests {
         }
 
         // Very small target so volumes seal quickly
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2810,7 +2823,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -2848,7 +2861,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2861,7 +2874,7 @@ mod tests {
             compaction_sparsity_threshold: 0.3,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -2911,7 +2924,7 @@ mod tests {
             txn.open_table(META_TABLE).unwrap();
             txn.commit().unwrap();
         }
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2924,7 +2937,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -2957,7 +2970,7 @@ mod tests {
             txn.open_table(META_TABLE).unwrap();
             txn.commit().unwrap();
         }
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -2970,7 +2983,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -3002,7 +3015,7 @@ mod tests {
             txn.open_table(META_TABLE).unwrap();
             txn.commit().unwrap();
         }
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -3015,7 +3028,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
@@ -3069,7 +3082,7 @@ mod tests {
             txn.open_table(META_TABLE).unwrap();
             txn.commit().unwrap();
         }
-        let engine = VolumeEngine {
+        let engine = BlobPackEngine {
             volumes_dir: dir.path().to_path_buf(),
             db: RwLock::new(db),
             active: Mutex::new(None),
@@ -3082,7 +3095,7 @@ mod tests {
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
-            mem_index: RwLock::new(VolumeIndex::new()),
+            mem_index: RwLock::new(BlobPackIndex::new()),
             compaction_volumes_total: AtomicU64::new(0),
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),

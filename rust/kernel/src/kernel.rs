@@ -648,10 +648,17 @@ pub struct Kernel {
     // task blocking `docker stop`).
     pub(crate) peer_client: Arc<crate::peer_blob_client::PeerBlobClient>,
     // Scatter-gather fetcher: drives bounded fan-out against
-    // `backend_name.origins` whenever a local chunk miss occurs. Installed
-    // on every `CASEngine` via `VFSRouter` on mount registration.
+    // `backend_name.origins` whenever a local chunk miss occurs.
+    // Installed on every `CASEngine` via `VFSRouter` on mount
+    // registration.
+    //
+    // Phase 2: type widened from concrete `Arc<GrpcChunkFetcher>` to
+    // `Arc<dyn RemoteChunkFetcher>` so `BackendFactory` impls in the
+    // backends crate can `Arc::clone(&self.inner.chunk_fetcher)` and
+    // pass it through to `CasLocalBackend::new_with_fetcher` without
+    // an explicit cast.
     #[allow(dead_code)]
-    pub(crate) chunk_fetcher: Arc<crate::cas_remote::GrpcChunkFetcher>,
+    pub(crate) chunk_fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher>,
     /// Pending remote metastore — set by ``sys_setattr(backend_type="remote")``
     /// and consumed immediately after mount registration to install the
     /// ``RemoteMetaStore`` on the mount entry. This avoids threading the
@@ -717,10 +724,12 @@ impl Kernel {
         let peer_client = Arc::new(crate::peer_blob_client::PeerBlobClient::new(Arc::clone(
             &runtime,
         )));
-        let chunk_fetcher = Arc::new(crate::cas_remote::GrpcChunkFetcher::new(
-            Arc::clone(&peer_client),
-            None,
-        ));
+        // Concrete Arc<GrpcChunkFetcher> coerced to the trait object
+        // `Arc<dyn RemoteChunkFetcher>` so backends's `BackendFactory`
+        // can clone + pass it without a cast at every call site.
+        let chunk_fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher> = Arc::new(
+            crate::cas_remote::GrpcChunkFetcher::new(Arc::clone(&peer_client), None),
+        );
         let k = Self {
             dlc: crate::dlc::DriverLifecycleCoordinator::new(),
             dcache: Arc::new(DCache::new()),
@@ -1523,7 +1532,7 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        backend: Option<Arc<dyn crate::backend::ObjectStore>>,
+        backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
@@ -1685,7 +1694,7 @@ impl Kernel {
         entry_type: i32,
         // -- DT_MOUNT params (entry_type == 2) --
         backend_name: &str,
-        backend: Option<Arc<dyn crate::backend::ObjectStore>>,
+        backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
         raft_backend: Option<(
             nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
@@ -4669,6 +4678,108 @@ impl Kernel {
         self.vfs_router
             .list_dir(&route.mount_point, &route.backend_path)
             .unwrap_or_default()
+    }
+
+    // ── Phase 6: sys_grep + sys_glob ───────────────────────────────────────
+    //
+    // Two read-only "search" syscalls that wrap `lib::search` /
+    // `lib::glob` algorithms inside the standard syscall pipeline
+    // (validate path → walk recursive prefix scan → INTERCEPT-free
+    // since reads are routed through `sys_read`).  Replace the
+    // pre-Phase-6 Python helpers in `nexus.fs._helpers.{grep, glob}`,
+    // which Phase 7 deletes.
+
+    /// Glob-match: walk every path under `prefix` recursively and
+    /// return the ones matching `pattern` (one of `?`, `*`, `**`,
+    /// `[abc]`, `{a,b}` per the `globset` crate's syntax).
+    ///
+    /// Pure metadata scan — never reads file content, only consults
+    /// the metastore for the path list.  `Send + Sync` callers can
+    /// use the result list directly without holding kernel locks.
+    pub fn sys_glob(
+        &self,
+        pattern: &str,
+        prefix: &str,
+        _ctx: &OperationContext,
+    ) -> Result<Vec<String>, KernelError> {
+        validate_path_fast(prefix)?;
+        let all_paths = self.collect_paths_recursive(prefix)?;
+        let patterns = vec![pattern.to_string()];
+        lib::glob::glob_match(&patterns, &all_paths)
+            .map_err(|e| KernelError::IOError(format!("sys_glob: {e}")))
+    }
+
+    /// Grep: walk every regular file under `prefix` recursively, read
+    /// content via `sys_read`, scan lines with `lib::search::search_lines`,
+    /// return up to `max_results` matches.
+    ///
+    /// Skips:
+    ///   * non-regular entries (directories, pipes, streams, mounts)
+    ///   * unreadable files (permission errors, missing content)
+    ///   * non-UTF-8 content (binary files)
+    ///
+    /// `ignore_case = true` switches `lib::search::build_search_mode`
+    /// to a case-insensitive regex; literal patterns auto-detect via
+    /// `lib::search::is_literal_pattern`.
+    pub fn sys_grep(
+        &self,
+        pattern: &str,
+        prefix: &str,
+        ignore_case: bool,
+        max_results: usize,
+        ctx: &OperationContext,
+    ) -> Result<Vec<lib::search::grep::GrepMatch>, KernelError> {
+        validate_path_fast(prefix)?;
+        let search_mode = lib::search::build_search_mode(pattern, ignore_case)
+            .map_err(|e| KernelError::IOError(format!("sys_grep regex: {e}")))?;
+        let all_paths = self.collect_paths_recursive(prefix)?;
+
+        let mut all_matches: Vec<lib::search::grep::GrepMatch> = Vec::new();
+        for fpath in all_paths {
+            if all_matches.len() >= max_results {
+                break;
+            }
+            // Probe entry_type via dcache; skip non-regular entries.
+            // A None dcache entry is conservatively treated as
+            // regular (the metastore stamped it; sys_read will fail
+            // gracefully if the underlying backend disagrees).
+            if let Some(entry) = self.dcache.get_entry(&fpath) {
+                if entry.entry_type != crate::dcache::DT_REG {
+                    continue;
+                }
+            }
+            let bytes = match self.sys_read(&fpath, ctx) {
+                Ok(r) => r.data.unwrap_or_default(),
+                Err(_) => continue,
+            };
+            let content = match std::str::from_utf8(&bytes) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let remaining = max_results.saturating_sub(all_matches.len());
+            let matches = lib::search::search_lines(&fpath, content, &search_mode, remaining);
+            all_matches.extend(matches);
+        }
+        Ok(all_matches)
+    }
+
+    /// Helper: walk every metastore entry under `prefix` recursively
+    /// and return the full list of paths.  Pages through the metastore
+    /// in chunks of 1024 to bound peak memory on a deep tree.
+    fn collect_paths_recursive(&self, prefix: &str) -> Result<Vec<String>, KernelError> {
+        let mut out: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self.metastore_list_paginated(prefix, true, 1024, cursor.as_deref())?;
+            for meta in &page.items {
+                out.push(meta.path.clone());
+            }
+            if !page.has_more {
+                break;
+            }
+            cursor = page.next_cursor.clone();
+        }
+        Ok(out)
     }
 
     // ── R10c: direct CAS surface ─────────────────────────────────────────

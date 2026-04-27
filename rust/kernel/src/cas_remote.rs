@@ -36,7 +36,7 @@ use crate::peer_blob_client::PeerBlobClient;
 /// typically parsed from `backend_name = "cas-local@host1:port,host2:port"`.
 /// Empty = local-only (caller should not even construct this, but we return
 /// `None` defensively).
-pub(crate) trait RemoteChunkFetcher: Send + Sync {
+pub trait RemoteChunkFetcher: Send + Sync {
     /// Fetch a chunk by hash. Returns `Some(bytes)` on success, `None` when
     /// no origin has the chunk (caller maps to `CASError::NotFound`).
     ///
@@ -47,7 +47,7 @@ pub(crate) trait RemoteChunkFetcher: Send + Sync {
 
 /// Production fetcher — gRPC `ReadBlob` scatter-gather over a shared
 /// `PeerBlobClient` channel pool.
-pub(crate) struct GrpcChunkFetcher {
+pub struct GrpcChunkFetcher {
     client: Arc<PeerBlobClient>,
     self_address: Option<String>,
 }

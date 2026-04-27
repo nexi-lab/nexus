@@ -27,14 +27,11 @@ pub mod abc;
 pub mod core;
 pub mod hal;
 
-// Phase B holding pen for ObjectStore impls (CasLocalBackend,
-// PathLocalBackend, LocalConnectorBackend) — Phase 2 lifts them into
-// `backends/`.  `backend` is a flat re-export shim over the trait
-// (in `crate::abc::object_store` after Phase 1) plus the impls so the
-// 17 callers using `use crate::backend::{ObjectStore, ...}` keep
-// working through the transition.
-mod _backend_impls;
-pub mod backend;
+// Phase 2: `_backend_impls` (CasLocalBackend / PathLocalBackend /
+// LocalConnectorBackend) and the `backend` re-export shim were
+// retired here.  Concrete impls now live in `rust/backends/storage/`;
+// every `use crate::backend::{ObjectStore, ...}` callsite migrated
+// to `use crate::abc::object_store::*`.
 
 // ── Phase C compat shims ─────────────────────────────────────────────
 // Pre-Phase-C kernel modules are re-exported from `core::*` under
@@ -56,7 +53,6 @@ pub use core::vfs_router;
 // in #[pymodule] keeps the single-segment shape that
 // scripts/codegen_kernel_abi.py's `add_class::<MOD::Name>` regex matches.
 pub(crate) use core::lock::semaphore;
-pub(crate) use core::meta_store::remote as remote_meta_store;
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
 #[cfg(unix)]
@@ -65,7 +61,7 @@ pub(crate) use core::pipe::shm as shm_pipe;
 pub(crate) use core::pipe::stdio as stdio_pipe;
 pub(crate) use core::service_registry;
 pub(crate) use core::stream;
-pub(crate) use core::stream::manager as stream_manager;
+pub use core::stream::manager as stream_manager;
 #[cfg(unix)]
 pub(crate) use core::stream::shm as shm_stream;
 // `core::stream::stdio` only ships its pyclass on Unix (the
@@ -106,29 +102,27 @@ pub(crate) use core::stream::wal as wal_stream;
 // kernel reaches them only through the in-tree Rust API surface
 // (`Kernel::register_native_hook`, `PathResolver` impls).  The cdylib
 // composes both crates via `services::python::register(m)`.
-#[cfg(feature = "connectors")]
-mod anthropic_backend;
-#[cfg(feature = "connectors")]
-pub mod anthropic_streaming;
-mod blob_fetcher;
-mod cas_chunking;
-mod cas_engine;
-mod cas_remote;
-mod cas_transport;
-#[cfg(feature = "connectors")]
-mod cli_backend;
+// Phase 2: connector backends (anthropic / openai / gdrive / gmail /
+// slack / x / hn / nostr / cli / s3 / gcs) moved to
+// `backends::transports::api::*` and `backends::transports::blob::*`.
+// Their construction is now invoked through the
+// `kernel::hal::backend_factory::BackendFactory` trait that backends
+// registers at cdylib boot.
+pub mod blob_fetcher;
+// Phase 2: CAS pillar primitives stay in kernel (`cas_engine`,
+// `cas_chunking`, `cas_remote`, `cas_transport`) — they're the
+// kernel's content-addressed storage primitive (Linux-VFS analogue).
+// `pub` so backends can construct backend impls (e.g. `CasLocalBackend`)
+// that wrap a `kernel::cas_engine::CASEngine`.  See
+// `kernel/src/hal/mod.rs` doc for the architectural rationale.
+pub mod cas_chunking;
+pub mod cas_engine;
+pub mod cas_remote;
+pub mod cas_transport;
 // Phase 4: `federation_client` moved to `kernel::transport::federation`
 // (was intended to move to `rust/transport/` crate but parked here
 // pending the transport-primitives crate split — see
 // `kernel::transport::mod` doc).
-#[cfg(feature = "connectors")]
-mod gcs_backend;
-#[cfg(feature = "connectors")]
-mod gdrive_backend;
-#[cfg(feature = "connectors")]
-mod gmail_backend;
-#[cfg(feature = "connectors")]
-mod hn_backend;
 // Phase 4: `ipc` moved to `kernel::transport::ipc` (parked in kernel
 // pending the transport-primitives crate split).
 // `kernel` itself is `pub` (Phase 3 onward) so peer crates
@@ -155,29 +149,18 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 // Python `dispatch_method` pending the broader 195-service migration.
 // Phase 4: `grpc_server` moved to `kernel::transport::grpc` (parked
 // in kernel pending the transport-primitives crate split).
-#[cfg(feature = "nostr")]
-pub mod nostr_relay;
-#[cfg(feature = "connectors")]
-mod openai_backend;
-#[cfg(feature = "connectors")]
-mod openai_inference;
-#[cfg(feature = "connectors")]
-pub mod openai_streaming;
-mod peer_blob_client;
+// Phase 2: `nostr_relay`, `openai_*`, `s3_backend`, `slack_backend`,
+// `x_backend`, `gdrive_backend`, `gmail_backend`, `hn_backend`,
+// `cli_backend`, `gcs_backend`, `anthropic_*`, `remote_backend`,
+// `volume_engine`, `volume_index` all moved to `rust/backends/`.
+// Their construction goes through
+// `kernel::hal::backend_factory::BackendFactory`.
+pub mod peer_blob_client;
 pub mod transport;
 // `permission_hook` moved to `services::permission::hook` (Phase 3).
 mod raft_meta_store;
-mod remote_backend;
 mod replication;
-mod rpc_transport;
-#[cfg(feature = "connectors")]
-mod s3_backend;
-#[cfg(feature = "connectors")]
-mod slack_backend;
-mod volume_engine;
-mod volume_index;
-#[cfg(feature = "connectors")]
-mod x_backend;
+pub mod rpc_transport;
 
 // Phase 0 — `#[pymodule] fn nexus_kernel` lives in `rust/nexus-cdylib/`
 // now (the dedicated cdylib build artifact). Kernel's pyclass /

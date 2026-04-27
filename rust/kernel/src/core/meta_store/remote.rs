@@ -15,7 +15,7 @@ use crate::rpc_transport::RpcTransport;
 ///
 /// All metadata ops serialize to JSON, dispatch via `Call(method, payload)`,
 /// and deserialize the response. Server-side NexusFS is the SSOT.
-pub(crate) struct RemoteMetaStore {
+pub struct RemoteMetaStore {
     transport: Arc<RpcTransport>,
 }
 

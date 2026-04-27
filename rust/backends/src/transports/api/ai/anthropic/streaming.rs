@@ -33,9 +33,9 @@ use std::sync::Arc;
 use futures::StreamExt;
 use serde_json::{json, Map, Value};
 
-use crate::anthropic_backend::AnthropicBackend;
-use crate::openai_streaming::LlmStreamingBackend;
-use crate::stream_manager::StreamManager;
+use crate::transports::api::ai::anthropic::AnthropicBackend;
+use crate::transports::api::ai::openai::streaming::LlmStreamingBackend;
+use kernel::stream_manager::StreamManager;
 
 impl LlmStreamingBackend for AnthropicBackend {
     #[allow(private_interfaces)]
@@ -598,7 +598,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn build_backend(tmp: &TempDir, base_url: &str) -> AnthropicBackend {
-        let rt = crate::peer_blob_client::build_kernel_runtime();
+        let rt = kernel::peer_blob_client::build_kernel_runtime();
         AnthropicBackend::new(
             "anthropic_native",
             base_url,

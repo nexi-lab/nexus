@@ -26,7 +26,7 @@
 use dashmap::DashMap;
 use std::sync::Arc;
 
-use crate::backend::{ExternalTransport, ObjectStore, StorageError, WriteResult};
+use crate::abc::object_store::{ExternalTransport, ObjectStore, StorageError, WriteResult};
 use crate::kernel::OperationContext;
 use crate::meta_store::MetaStore;
 
@@ -584,7 +584,7 @@ impl VFSRouter {
         canonical_key: &str,
         src_backend_path: &str,
         dst_backend_path: &str,
-    ) -> Option<crate::backend::WriteResult> {
+    ) -> Option<crate::abc::object_store::WriteResult> {
         let entry = self.entries.get(canonical_key)?;
         entry
             .backend

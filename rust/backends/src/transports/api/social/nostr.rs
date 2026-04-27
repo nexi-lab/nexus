@@ -48,8 +48,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::kernel::Kernel;
-use crate::kernel::{KernelError, OperationContext};
+use kernel::kernel::Kernel;
+use kernel::kernel::{KernelError, OperationContext};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

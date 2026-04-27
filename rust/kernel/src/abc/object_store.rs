@@ -14,8 +14,6 @@
 
 use std::io;
 
-use crate::cas_engine::CASError;
-
 /// Error type for ObjectStore operations.
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -28,14 +26,10 @@ pub enum StorageError {
     NotSupported(&'static str),
 }
 
-impl From<CASError> for StorageError {
-    fn from(e: CASError) -> Self {
-        match e {
-            CASError::NotFound(s) => StorageError::NotFound(s),
-            CASError::IOError(e) => StorageError::IOError(e),
-        }
-    }
-}
+// Phase 2: `From<CASError> for StorageError` lives in
+// `kernel/src/cas_engine.rs` (next to `CASError`) — both types stay
+// kernel-local so the orphan rule is satisfied; the conversion lives
+// with its canonical `CASError` site.
 
 /// Result of a write operation (equivalent to Python `WriteResult`).
 ///
@@ -48,9 +42,9 @@ impl From<CASError> for StorageError {
 /// - `size`: Content size in bytes.
 #[allow(dead_code)]
 pub struct WriteResult {
-    pub(crate) content_id: String,
-    pub(crate) version: String,
-    pub(crate) size: u64,
+    pub content_id: String,
+    pub version: String,
+    pub size: u64,
 }
 
 // ── ExternalTransport ──────────────────────────────────────────
@@ -109,8 +103,12 @@ pub trait ObjectStore: Send + Sync {
     /// Consumed by `PyKernel::llm_start_streaming` — any ObjectStore that
     /// returns `Some` must implement the full SSE → DT_STREAM →
     /// `CASEngine::write_content_tracked` pipeline.
-    #[cfg(feature = "connectors")]
-    fn as_llm_streaming(&self) -> Option<&dyn crate::openai_streaming::LlmStreamingBackend> {
+    ///
+    /// Phase 2: trait reached through `crate::hal::llm_streaming` (HAL)
+    /// — the concrete connector backends moved to
+    /// `backends::transports::api::ai::*` and impl this trait through
+    /// the same HAL interface.
+    fn as_llm_streaming(&self) -> Option<&dyn crate::hal::llm_streaming::LlmStreamingBackend> {
         None
     }
 

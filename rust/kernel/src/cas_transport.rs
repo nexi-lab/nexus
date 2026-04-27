@@ -43,7 +43,7 @@ pub(crate) fn blob_key(content_hash: &str) -> String {
 /// Thread-safe: all mutable state is behind `Mutex`. Designed to be shared
 /// via `Arc` inside `Kernel`.
 #[allow(dead_code)]
-pub(crate) struct LocalCASTransport {
+pub struct LocalCASTransport {
     root: PathBuf,
     fsync_on_write: bool,
     /// Monotonic parent-directory cache — once a CAS two-level dir exists,

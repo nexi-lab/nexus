@@ -16,7 +16,7 @@ use crate::kernel::vfs_proto;
 
 /// Optional TLS material for the remote connection.
 #[derive(Debug, Clone)]
-pub(crate) struct TlsConfig {
+pub struct TlsConfig {
     pub ca_pem: Vec<u8>,
     pub cert_pem: Option<Vec<u8>>,
     pub key_pem: Option<Vec<u8>>,
@@ -26,7 +26,7 @@ pub(crate) struct TlsConfig {
 ///
 /// Holds a shared tokio runtime and a pre-connected tonic Channel.
 /// All RPC methods block on the runtime (GIL released by callers).
-pub(crate) struct RpcTransport {
+pub struct RpcTransport {
     runtime: Arc<tokio::runtime::Runtime>,
     channel: Channel,
     auth_token: String,
@@ -272,14 +272,14 @@ impl RpcTransport {
 
 /// Result of a typed Read RPC.
 #[allow(dead_code)]
-pub(crate) struct ReadResult {
+pub struct ReadResult {
     pub content: Vec<u8>,
     pub etag: String,
     pub size: u64,
 }
 
 /// Result of a typed Write RPC.
-pub(crate) struct WriteRpcResult {
+pub struct WriteRpcResult {
     pub etag: String,
     pub size: u64,
 }

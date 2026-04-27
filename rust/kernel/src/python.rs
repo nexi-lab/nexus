@@ -21,10 +21,8 @@
 //! regex captures exactly two `::`-separated segments, so a 3-segment
 //! `crate::shm_pipe::Foo` would silently drop out of the generated stubs.
 
-#[cfg(feature = "connectors")]
-use crate::openai_inference;
 use crate::transport::{federation as transport_federation, grpc as transport_grpc};
-use crate::{generated_kernel_abi_pyo3, semaphore, volume_engine};
+use crate::{generated_kernel_abi_pyo3, semaphore};
 #[cfg(unix)]
 use crate::{shm_pipe, shm_stream, stdio_stream};
 use pyo3::prelude::*;
@@ -32,19 +30,9 @@ use pyo3::prelude::*;
 /// Register every kernel-owned PyO3 export into the parent module.
 /// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_kernel`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
-    // OpenAI inference (§10 D3) — GIL-free HTTP calls. Stays kernel-side
-    // through Phase 2 connector migration; later moves to backends.
-    #[cfg(feature = "connectors")]
-    {
-        m.add_function(wrap_pyfunction!(
-            openai_inference::openai_chat_completion,
-            m
-        )?)?;
-        m.add_function(wrap_pyfunction!(
-            openai_inference::openai_chat_completion_stream,
-            m
-        )?)?;
-    }
+    // Phase 2: openai_inference moved to backends (registered through
+    // backends::python::register).  CAS Volume Engine (now BlobPackEngine)
+    // also moved to backends::storage::blob_pack.
     // VFSLockManager deleted — I/O lock is now internal to LockManager,
     // accessed through Kernel syscalls (sys_read/sys_write/sys_copy).
     // MemoryPipeBackend / MemoryStreamBackend are kernel-internal only
@@ -62,11 +50,6 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     #[cfg(unix)]
     m.add_class::<stdio_stream::StdioStreamBackend>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
-    // CAS Volume Engine (Issue #3403). Phase 2 moves the Rust impl into
-    // `backends::storage::blob_pack` and renames the type to
-    // `BlobPackEngine` (kept `#[pyclass(name = "VolumeEngine")]` alias
-    // for one release for Python compat).
-    m.add_class::<volume_engine::VolumeEngine>()?;
     // Phase 4: gRPC server pyclass + entry function moved from
     // `kernel::grpc_server` to `kernel::transport::grpc`; same
     // pyclass / pyfunction names, just different submodule path.

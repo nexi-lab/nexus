@@ -12,8 +12,8 @@
 //!
 //! `add_mount(backend_type="hn")`
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
-use crate::kernel::OperationContext;
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+use kernel::kernel::OperationContext;
 use std::io;
 
 const HN_API_BASE: &str = "https://hacker-news.firebaseio.com/v0";

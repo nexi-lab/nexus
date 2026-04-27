@@ -7,8 +7,8 @@
 
 #![allow(dead_code)]
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
-use crate::kernel::OperationContext;
+use kernel::abc::object_store::{ObjectStore, StorageError, WriteResult};
+use kernel::kernel::OperationContext;
 use std::io;
 
 /// Google Cloud Storage backend.

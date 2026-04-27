@@ -202,6 +202,12 @@ SharedMemoryPipeBackend = _get("SharedMemoryPipeBackend")
 SharedMemoryStreamBackend = _get("SharedMemoryStreamBackend")
 VFSSemaphore = _get("VFSSemaphore")
 VolumeEngine = _get("VolumeEngine")
+# Phase 0.5 / Phase 2: Rust type renamed `VolumeEngine -> BlobPackEngine`,
+# but the PyO3 boundary keeps the historical Python class name
+# `"VolumeEngine"` for ABI compat through Phase 8's deprecation
+# window.  Expose `BlobPackEngine` as an alias so callers that follow
+# the new name resolve to the same pyclass.
+BlobPackEngine = VolumeEngine
 
 # Path utilities
 get_ancestors = _get("get_ancestors")

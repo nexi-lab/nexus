@@ -58,6 +58,14 @@ pub use core::stream::manager as stream_manager;
 #[cfg(unix)]
 pub(crate) use core::stream::shm as shm_stream;
 
+// Hook impls for managed-agent / workspace boundary teaching.  This
+// hook will move to `rust/services/src/managed_agent/` once that
+// module lands; for now it lives kernel-side to keep the rebase
+// commit-by-commit intent (Phase H restructure put hooks under
+// `core/dispatch/`, but the managed-agent-specific hook only really
+// makes sense alongside its service).
+mod workspace_boundary_hook;
+
 // ── Kernel-owned primitives ──────────────────────────────────────────
 // CAS (content-addressed storage) — the kernel's storage primitive
 // (Linux-VFS analogue).  `pub` so `backends::storage::cas_local` can

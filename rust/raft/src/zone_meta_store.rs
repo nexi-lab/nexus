@@ -356,11 +356,8 @@ mod tests {
             created_at_ms: None,
             modified_at_ms: None,
             last_writer_address: Some("nexus-1:2028".to_string()),
-<<<<<<< HEAD:rust/raft/src/zone_meta_store.rs
             target_zone_id: None,
-=======
             link_target: None,
->>>>>>> 066e21e86 (feat(kernel): DT_LINK entry_type + link_target field plumbing + resolve_link helper):rust/kernel/src/raft_metastore.rs
         };
         let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
         assert_eq!(restored.path, meta.path);

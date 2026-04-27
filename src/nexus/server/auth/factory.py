@@ -112,6 +112,24 @@ class _ChainedAPIKeyAuth(AuthProvider):
             return True
         return await self._fallback.validate_token(token)
 
+    @property
+    def session_factory(self) -> Any:
+        """Expose the database provider session factory for admin RPC handlers."""
+        if hasattr(self._fallback, "session_factory"):
+            return self._fallback.session_factory
+        if hasattr(self._primary, "session_factory"):
+            return self._primary.session_factory
+        raise AttributeError("session_factory")
+
+    @property
+    def _record_store(self) -> Any:
+        """Expose the database provider record store for admin grant handling."""
+        if hasattr(self._fallback, "_record_store"):
+            return self._fallback._record_store
+        if hasattr(self._primary, "_record_store"):
+            return self._primary._record_store
+        raise AttributeError("_record_store")
+
     def close(self) -> None:
         self._primary.close()
         self._fallback.close()

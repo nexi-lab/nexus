@@ -13,10 +13,18 @@ The module automatically falls back to Python implementation if Rust is unavaila
 """
 
 import logging
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 # RUST_FALLBACK: rebac — compute_permissions_bulk, etc. from nexus_kernel
-import nexus_kernel as _rust_module
+_rust_module: ModuleType | None
+try:
+    import nexus_kernel as _rust_module
+except ImportError as e:
+    _rust_module = None
+    _RUST_IMPORT_ERROR: ImportError | None = e
+else:
+    _RUST_IMPORT_ERROR = None
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import Entity
@@ -29,8 +37,11 @@ logger = logging.getLogger(__name__)
 
 _internal_module: Any = _rust_module
 _external_module: Any = _rust_module
-RUST_AVAILABLE = True
-logger.info("Rust acceleration available (nexus_kernel)")
+RUST_AVAILABLE = _rust_module is not None
+if RUST_AVAILABLE:
+    logger.info("Rust acceleration available (nexus_kernel)")
+else:
+    logger.debug("Rust acceleration unavailable: %s", _RUST_IMPORT_ERROR)
 
 
 def is_rust_available() -> bool:
@@ -241,9 +252,11 @@ def _compute_permission_simple(
         if (
             tuple_dict["subject_type"] == subject.entity_type
             and tuple_dict["subject_id"] == subject.entity_id
+            and tuple_dict.get("subject_relation") is None
             and tuple_dict["relation"] == permission
             and tuple_dict["object_type"] == obj.entity_type
             and tuple_dict["object_id"] == obj.entity_id
+            and not tuple_dict.get("conditions")
         ):
             return True
 

@@ -560,7 +560,7 @@ class RecordStoreWriteObserver:
                     change_type="upsert",
                 )
                 if new_path:
-                    recorder.record_rename(event["path"], new_path)
+                    recorder.record_rename(event["path"], new_path, zone_id=zone_id)
 
             elif op == "mkdir":
                 op_logger.log_operation(

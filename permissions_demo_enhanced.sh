@@ -222,6 +222,42 @@ if [ -z "$NEXUS_GRPC_HOST" ] && [ -n "$NEXUS_GRPC_PORT" ]; then
     export NEXUS_GRPC_HOST="localhost:$NEXUS_GRPC_PORT"
 fi
 
+ensure_demo_zones() {
+    if [ -z "${NEXUS_DATABASE_URL:-}" ]; then
+        return 0
+    fi
+
+    nexus_python <<'PY'
+import os
+import sys
+
+try:
+    import psycopg2
+except Exception as exc:
+    print(f"  WARNING: Could not ensure demo zones: psycopg2 unavailable ({exc})", file=sys.stderr)
+    raise SystemExit(0)
+
+db_url = os.environ.get("NEXUS_DATABASE_URL")
+zones = (
+    ("default", "Default", "Default demo zone"),
+    ("acme", "ACME", "ACME demo zone"),
+)
+
+with psycopg2.connect(db_url) as conn:
+    with conn.cursor() as cursor:
+        cursor.executemany(
+            """
+            INSERT INTO zones (zone_id, name, description, phase, finalizers, created_at, updated_at)
+            VALUES (%s, %s, %s, 'Active', '[]', NOW(), NOW())
+            ON CONFLICT (zone_id) DO UPDATE
+            SET phase = 'Active', deleted_at = NULL, updated_at = NOW()
+            """,
+            zones,
+        )
+    conn.commit()
+PY
+}
+
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║   Nexus CLI - COMPREHENSIVE ReBAC Permissions Demo      ║"
 echo "╚══════════════════════════════════════════════════════════╝"
@@ -236,6 +272,7 @@ echo ""
 
 ROOT_ADMIN_KEY="$NEXUS_API_KEY"
 export DEMO_BASE="/workspace/rebac-comprehensive-demo"  # BUGFIX: Export for Python scripts
+ensure_demo_zones
 # Create a default-zone admin key so ALL operations (file I/O and ReBAC) happen
 # in zone "default". The root admin key has zone "root" which skips zone path
 # scoping — meaning files created by root-zone admin live at /workspace/... while

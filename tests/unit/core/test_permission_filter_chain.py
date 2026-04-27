@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip("pyroaring")
 
-from nexus.bricks.rebac.filter_chain import (
+from nexus.bricks.rebac.permission_filter_chain import (
     BulkReBACStrategy,
     FilterContext,
     FilterResult,
@@ -231,6 +231,25 @@ class TestHierarchyPreFilterStrategy:
         assert result.allowed == []
         assert len(result.remaining) == 120
 
+    def test_top_level_denial_does_not_drop_direct_child_grants(self, mock_cache, mock_rebac):
+        """Denied ancestors do not prove that every descendant is denied."""
+        paths = [f"/docs/dir_{i}/file_{j}.txt" for i in range(201) for j in range(2)]
+        ctx = _make_ctx(paths, mock_cache, mock_rebac)
+
+        subject = ("user", "alice")
+        allowed_parent = "/docs/dir_17"
+        allowed_check = (subject, "read", ("file", allowed_parent))
+        mock_rebac.rebac_check_bulk.return_value = {allowed_check: True}
+
+        strategy = HierarchyPreFilterStrategy()
+        result = strategy.apply(ctx, paths)
+
+        assert result.allowed == []
+        assert result.remaining == [
+            "/docs/dir_17/file_0.txt",
+            "/docs/dir_17/file_1.txt",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Strategy 4: ZonePreFilterStrategy
@@ -273,6 +292,23 @@ class TestZonePreFilterStrategy:
         assert result.allowed == []
         assert result.remaining == paths
 
+    def test_internal_zone_prefix_cross_zone_skipped(self, mock_cache, mock_rebac):
+        """Paths in /zone/<other_zone>/ are removed from remaining."""
+        paths = [
+            "/zone/other_zone/secret.txt",
+            "/zone/root/mine.txt",
+            "/workspace/ok.txt",
+        ]
+        ctx = _make_ctx(paths, mock_cache, mock_rebac, zone_id=ROOT_ZONE_ID)
+
+        strategy = ZonePreFilterStrategy()
+        result = strategy.apply(ctx, paths)
+
+        assert result.allowed == []
+        assert "/zone/other_zone/secret.txt" not in result.remaining
+        assert "/zone/root/mine.txt" in result.remaining
+        assert "/workspace/ok.txt" in result.remaining
+
 
 # ---------------------------------------------------------------------------
 # Strategy 5: BulkReBACStrategy
@@ -296,6 +332,26 @@ class TestBulkReBACStrategy:
         result = strategy.apply(ctx, list(ctx.paths))
 
         assert result.allowed == ["/workspace/a.txt"]
+        assert result.remaining == []
+        assert result.short_circuit is True
+
+    def test_bulk_defaults_virtual_paths_to_file_objects(self, mock_cache, mock_rebac):
+        """filter_list paths use file objects even outside /workspace."""
+        paths = ["/docs/a.txt", "/zone/root/docs/b.txt"]
+        ctx = _make_ctx(paths, mock_cache, mock_rebac, zone_id=ROOT_ZONE_ID)
+
+        subject = ("user", "alice")
+        check_a = (subject, "read", ("file", "/docs/a.txt"))
+        check_b = (subject, "read", ("file", "/docs/b.txt"))
+        mock_rebac.rebac_check_bulk.return_value = {
+            check_a: True,
+            check_b: True,
+        }
+
+        strategy = BulkReBACStrategy()
+        result = strategy.apply(ctx, paths)
+
+        assert result.allowed == paths
         assert result.remaining == []
         assert result.short_circuit is True
 

@@ -132,13 +132,6 @@ class HierarchyPreFilterStrategy:
 
         subject = ctx.subject
 
-        # Multi-level hierarchy: if too many parents, check top-level first
-        if len(unique_parents) > 200:
-            unique_parents = self._top_level_prune(unique_parents, subject, ctx)
-            if not unique_parents:
-                # All top-level dirs denied — deny remaining paths
-                return FilterResult(allowed=[], remaining=[], short_circuit=True)
-
         # Batch check unique parent directories
         parent_checks = [
             (subject, "read", ("file", unscope_internal_path(parent))) for parent in unique_parents
@@ -181,48 +174,6 @@ class HierarchyPreFilterStrategy:
 
         return FilterResult(allowed=[], remaining=remaining)
 
-    def _top_level_prune(
-        self,
-        unique_parents: list[str],
-        subject: tuple[str, str],
-        ctx: FilterContext,
-    ) -> list[str]:
-        """Check top-level dirs first to quickly eliminate large subtrees."""
-        top_level_dirs: set[str] = set()
-        for parent in unique_parents:
-            parts = parent.strip("/").split("/")
-            if parts and parts[0]:
-                top_level_dirs.add("/" + parts[0])
-
-        top_level_checks = [
-            (subject, "read", ("file", unscope_internal_path(d))) for d in top_level_dirs
-        ]
-        top_level_results = ctx.rebac_manager.rebac_check_bulk(
-            top_level_checks, zone_id=ctx.zone_id
-        )
-
-        denied_top_level = {
-            d
-            for d, check in zip(top_level_dirs, top_level_checks, strict=False)
-            if not top_level_results.get(check, False)
-        }
-
-        if denied_top_level:
-            filtered_parents = []
-            for parent in unique_parents:
-                top = "/" + parent.strip("/").split("/")[0] if parent != "/" else "/"
-                if top not in denied_top_level:
-                    filtered_parents.append(parent)
-
-            logger.info(
-                f"[HIERARCHY-TOPLEVEL] {len(denied_top_level)}/{len(top_level_dirs)} "
-                f"top-level dirs denied, reduced parents: "
-                f"{len(unique_parents)} -> {len(filtered_parents)}"
-            )
-            return filtered_parents
-
-        return unique_parents
-
 
 # =============================================================================
 # Strategy 4: Zone Pre-Filter (cross-zone elimination)
@@ -232,6 +183,15 @@ class HierarchyPreFilterStrategy:
 class ZonePreFilterStrategy:
     """Skip paths belonging to other zones."""
 
+    @staticmethod
+    def _extract_zone_id(path: str) -> str | None:
+        """Return the zone id from supported internal zone prefixes."""
+        for prefix in ("/zone/", "/zones/"):
+            if path.startswith(prefix):
+                zone_id = path[len(prefix) :].split("/", 1)[0]
+                return zone_id or None
+        return None
+
     def apply(self, ctx: FilterContext, remaining: list[str]) -> FilterResult:
         if not remaining:
             return FilterResult()
@@ -239,11 +199,10 @@ class ZonePreFilterStrategy:
         kept: list[str] = []
         skipped = 0
         for path in remaining:
-            if path.startswith("/zones/"):
-                path_parts = path.split("/")
-                if len(path_parts) >= 3 and path_parts[2] != ctx.zone_id:
-                    skipped += 1
-                    continue
+            path_zone_id = self._extract_zone_id(path)
+            if path_zone_id is not None and path_zone_id != ctx.zone_id:
+                skipped += 1
+                continue
             kept.append(path)
 
         if skipped:
@@ -271,11 +230,7 @@ class BulkReBACStrategy:
 
         checks = []
         for path in remaining:
-            # Derive obj_type from the first path segment (same as mount_point
-            # first segment by LPM routing).  No resolve_path needed (§12d).
-            first_seg = path.strip("/").split("/")[0] if path and path != "/" else ""
-            obj_type = first_seg if first_seg and not path.startswith("/workspace") else "file"
-            checks.append((subject, "read", (obj_type, unscope_internal_path(path))))
+            checks.append((subject, "read", ("file", unscope_internal_path(path))))
 
         # Retry-once on transient I/O failures only
         try:

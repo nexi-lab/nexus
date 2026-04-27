@@ -205,6 +205,74 @@ class TestRecordCreate:
         assert len(active) == 1
         assert active[0].content_hash == "new-hash"
 
+    def test_duplicate_create_event_same_hash_is_idempotent(self, session: Session) -> None:
+        """A repeated create event for an active path should not violate uniqueness."""
+        metadata = _make_metadata(path="/test/dup.txt", etag="same-hash")
+        recorder = VersionRecorder(session)
+        recorder.record_write(metadata, is_new=True)
+        session.commit()
+
+        recorder.record_write(metadata, is_new=True)
+        session.commit()
+
+        active = (
+            session.execute(
+                select(FilePathModel).where(
+                    FilePathModel.zone_id == metadata.zone_id,
+                    FilePathModel.virtual_path == "/test/dup.txt",
+                    FilePathModel.deleted_at.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(active) == 1
+        assert active[0].current_version == 1
+
+        versions = (
+            session.execute(
+                select(VersionHistoryModel).where(
+                    VersionHistoryModel.resource_id == active[0].path_id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(versions) == 1
+
+    def test_create_event_for_existing_path_with_new_hash_updates(self, session: Session) -> None:
+        """A create-labeled event for an active path with new content is an update."""
+        first = _make_metadata(path="/test/dup-new-content.txt", etag="hash-1")
+        second = _make_metadata(path="/test/dup-new-content.txt", etag="hash-2", size=2048)
+        recorder = VersionRecorder(session)
+        recorder.record_write(first, is_new=True)
+        session.commit()
+
+        recorder.record_write(second, is_new=True)
+        session.commit()
+
+        fp = session.execute(
+            select(FilePathModel).where(
+                FilePathModel.zone_id == first.zone_id,
+                FilePathModel.virtual_path == "/test/dup-new-content.txt",
+                FilePathModel.deleted_at.is_(None),
+            )
+        ).scalar_one()
+        assert fp.content_hash == "hash-2"
+        assert fp.size_bytes == 2048
+        assert fp.current_version == 2
+
+        versions = (
+            session.execute(
+                select(VersionHistoryModel)
+                .where(VersionHistoryModel.resource_id == fp.path_id)
+                .order_by(VersionHistoryModel.version_number)
+            )
+            .scalars()
+            .all()
+        )
+        assert [v.content_hash for v in versions] == ["hash-1", "hash-2"]
+
     def test_defaults_zone_to_default(self, session: Session) -> None:
         """When zone_id is None, should default to ROOT_ZONE_ID ('root')."""
         metadata = _make_metadata(zone_id=None)
@@ -419,6 +487,49 @@ class TestRecordDelete:
         recorder3 = VersionRecorder(session)
         recorder3.record_delete("/test/file.txt")
         session.commit()
+
+
+# ---------------------------------------------------------------------------
+# TestRecordRename
+# ---------------------------------------------------------------------------
+
+
+class TestRecordRename:
+    """Tests for VersionRecorder.record_rename."""
+
+    def test_rename_to_existing_destination_retires_old_row(self, session: Session) -> None:
+        """A delayed rename event should not violate the active path uniqueness index."""
+        recorder = VersionRecorder(session)
+        old_metadata = _make_metadata(path="/test/old.txt", etag="old-hash", zone_id="root")
+        new_metadata = _make_metadata(path="/test/new.txt", etag="new-hash", zone_id="root")
+        recorder.record_write(old_metadata, is_new=True)
+        recorder.record_write(new_metadata, is_new=True)
+        session.commit()
+
+        recorder.record_rename("/test/old.txt", "/test/new.txt", zone_id="root")
+        session.commit()
+
+        old_row = session.execute(
+            select(FilePathModel).where(
+                FilePathModel.zone_id == "root",
+                FilePathModel.virtual_path == "/test/old.txt",
+            )
+        ).scalar_one()
+        active_new_rows = (
+            session.execute(
+                select(FilePathModel).where(
+                    FilePathModel.zone_id == "root",
+                    FilePathModel.virtual_path == "/test/new.txt",
+                    FilePathModel.deleted_at.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        assert old_row.deleted_at is not None
+        assert len(active_new_rows) == 1
+        assert active_new_rows[0].content_hash == "new-hash"
 
 
 # ---------------------------------------------------------------------------

@@ -83,18 +83,22 @@ class TestErrors:
     async def test_sweep_error_does_not_stop_worker(self, mock_snapshot_service: MagicMock) -> None:
         """Worker should continue running even if a sweep fails."""
         call_count = 0
+        continued = asyncio.Event()
 
         async def failing_cleanup(limit: int = 100) -> int:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("DB error")
+            continued.set()
             return 0
 
         mock_snapshot_service.cleanup_expired = failing_cleanup
         worker = SnapshotCleanupWorker(mock_snapshot_service, sweep_interval=0.01)
-        await worker.start()
-        await asyncio.sleep(0.1)  # 10x sweep interval to avoid macOS flakiness
-        assert worker.is_running
-        assert call_count >= 2  # continued past the error
-        await worker.stop()
+        try:
+            await worker.start()
+            await asyncio.wait_for(continued.wait(), timeout=2.0)
+            assert worker.is_running
+            assert call_count >= 2  # continued past the error
+        finally:
+            await worker.stop()

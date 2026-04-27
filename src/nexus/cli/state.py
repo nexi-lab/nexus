@@ -202,4 +202,8 @@ def resolve_connection_env(
         pg_port = ports.get("postgres", 5432)
         env_vars["DATABASE_URL"] = f"postgresql://postgres:nexus@localhost:{pg_port}/nexus"
 
+    if "dragonfly" in services:
+        dragonfly_port = ports.get("dragonfly", 6379)
+        env_vars["NEXUS_DRAGONFLY_URL"] = f"redis://localhost:{dragonfly_port}"
+
     return env_vars

@@ -39,10 +39,10 @@ logger = logging.getLogger(__name__)
 # Lazy import to avoid ImportError when pydantic-monty is not installed
 try:
     from pydantic_monty import (
+        FunctionSnapshot,
         Monty,
         MontyComplete,
         MontyRuntimeError,
-        MontySnapshot,
         MontySyntaxError,
         MontyTypingError,
         ResourceLimits,
@@ -264,18 +264,14 @@ class MontySandboxProvider(SandboxProvider):
 
         try:
             # Build Monty instance
-            ext_fn_names = list(instance.host_functions.keys())
-            monty = Monty(
-                code=code,
-                external_functions=ext_fn_names if ext_fn_names else None,
-            )
+            monty = Monty(code=code)
 
             # Optional type checking
             if self._enable_type_checking:
                 type_stubs = self._build_type_stubs(instance.host_functions)
                 if type_stubs:
                     try:
-                        monty.type_check(prefix_code=type_stubs)
+                        monty.type_check(type_check_stubs=type_stubs)
                     except MontyTypingError as e:
                         elapsed = time.monotonic() - start_time
                         return CodeExecutionResult(
@@ -287,7 +283,7 @@ class MontySandboxProvider(SandboxProvider):
 
             # Execute — use iterative mode if host functions exist,
             # complete mode otherwise
-            if ext_fn_names:
+            if instance.host_functions:
                 output = self._run_iterative(monty, instance, limits, _print_callback)
             else:
                 output = monty.run(
@@ -512,7 +508,7 @@ class MontySandboxProvider(SandboxProvider):
                     f"Possible infinite host-function loop in sandbox "
                     f"{instance.sandbox_id}."
                 )
-            if isinstance(progress, MontySnapshot):
+            if isinstance(progress, FunctionSnapshot):
                 snapshot = cast(Any, progress)
                 fn_name = snapshot.function_name
                 fn_args = snapshot.args
@@ -522,16 +518,16 @@ class MontySandboxProvider(SandboxProvider):
                 if handler is None:
                     # Unknown function — resume with NameError
                     progress = snapshot.resume(
-                        exception=NameError(f"Host function '{fn_name}' is not registered")
+                        {"exception": NameError(f"Host function '{fn_name}' is not registered")}
                     )
                     continue
 
                 try:
                     result = handler(*fn_args, **fn_kwargs)
-                    progress = snapshot.resume(return_value=result)
+                    progress = snapshot.resume({"return_value": result})
                 except Exception as exc:
                     # Propagate host function errors back to Monty code
-                    progress = snapshot.resume(exception=exc)
+                    progress = snapshot.resume({"exception": exc})
             else:
                 # Unexpected state — should not happen in non-async mode
                 raise SandboxProviderError(

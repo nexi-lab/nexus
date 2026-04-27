@@ -573,6 +573,7 @@ class ReBACManager:
             object_type == "file"
             and permission in ("read", "write", "execute")
             and self._boundary_cache
+            and context is None
         ):
             boundary = self._boundary_cache.get_boundary(
                 effective_zone, subject_type, subject_id, permission, object_id
@@ -597,7 +598,7 @@ class ReBACManager:
 
         # OPTIMIZATION 2: Try Tiger Cache (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
-        if self._tiger_cache and zone_id:
+        if self._tiger_cache and zone_id and context is None:
             tiger_result = self.tiger_check_access(
                 subject=subject,
                 permission=permission,
@@ -619,11 +620,11 @@ class ReBACManager:
             result = self._rebac_check_base(subject, permission, object, context, zone_id)
 
             # Write-through to Tiger Cache (Issue #935)
-            if result and self._tiger_cache and zone_id:
+            if result and self._tiger_cache and zone_id and context is None:
                 self._tiger_write_through_single(subject, permission, object, zone_id, logger)
 
             # Issue #922: Cache boundary if permission was granted via parent
-            if result and object_type == "file" and self._boundary_cache:
+            if result and object_type == "file" and self._boundary_cache and context is None:
                 self._cache_boundary_if_inherited(subject, permission, object, zone_id, logger)
 
             return result
@@ -635,11 +636,16 @@ class ReBACManager:
         )
 
         # Write-through to Tiger Cache (Issue #935)
-        if detailed_result.allowed and self._tiger_cache and zone_id:
+        if detailed_result.allowed and self._tiger_cache and zone_id and context is None:
             self._tiger_write_through_single(subject, permission, object, zone_id, logger)
 
         # Issue #922: Cache boundary if permission was granted via parent
-        if detailed_result.allowed and object_type == "file" and self._boundary_cache:
+        if (
+            detailed_result.allowed
+            and object_type == "file"
+            and self._boundary_cache
+            and context is None
+        ):
             self._cache_boundary_if_inherited(subject, permission, object, zone_id, logger)
 
         return detailed_result.allowed
@@ -877,31 +883,34 @@ class ReBACManager:
         # Clean up expired tuples
         self._cleanup_expired_tuples_if_needed()
 
-        # Always use cached (eventual) consistency: Use cache (up to cache_ttl_seconds staleness)
-        cached = self._get_cached_check_zone_aware(
-            subject_entity, permission, object_entity, zone_id
-        )
-        if cached is not None:
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"  -> CACHE HIT: returning cached result={cached}")
-            decision_time_ms = (time.perf_counter() - start_time) * 1000
-            return CheckResult(
-                allowed=cached,
-                consistency_token=self._get_version_token(zone_id),
-                decision_time_ms=decision_time_ms,
-                cached=True,
-                cache_age_ms=None,  # Could be up to cache_ttl_seconds old
-                traversal_stats=None,
+        # Context-sensitive ABAC checks cannot use the context-free cache key.
+        if context is None:
+            # Always use cached (eventual) consistency: Use cache (up to cache_ttl_seconds staleness)
+            cached = self._get_cached_check_zone_aware(
+                subject_entity, permission, object_entity, zone_id
             )
+            if cached is not None:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"  -> CACHE HIT: returning cached result={cached}")
+                decision_time_ms = (time.perf_counter() - start_time) * 1000
+                return CheckResult(
+                    allowed=cached,
+                    consistency_token=self._get_version_token(zone_id),
+                    decision_time_ms=decision_time_ms,
+                    cached=True,
+                    cache_age_ms=None,  # Could be up to cache_ttl_seconds old
+                    traversal_stats=None,
+                )
         logger.debug("  -> CACHE MISS: computing fresh result")
 
         # Cache miss - compute fresh and cache
         result = self._fresh_compute(
             subject_entity, permission, object_entity, zone_id, start_time, context
         )
-        self._cache_check_result_zone_aware(
-            subject_entity, permission, object_entity, zone_id, result.allowed
-        )
+        if context is None:
+            self._cache_check_result_zone_aware(
+                subject_entity, permission, object_entity, zone_id, result.allowed
+            )
         return result
 
     def _fresh_compute(
@@ -995,30 +1004,32 @@ class ReBACManager:
                 check_permission_single_rust,
             )
 
-            if is_rust_available():
-                # Fetch tuples and namespace configs for Rust
-                # CROSS-ZONE FIX: Pass subject to include cross-zone shares
+            if is_rust_available() and context is None:
+                # Fetch tuples and namespace configs for Rust.
+                # CROSS-ZONE FIX: Pass subject to include cross-zone shares.
                 tuples = self._fetch_tuples_for_rust(zone_id, subject=subject)
-                namespace_configs = self._get_namespace_configs_for_rust()
+                if not any(tuple_data.get("conditions") for tuple_data in tuples):
+                    namespace_configs = self._get_namespace_configs_for_rust()
 
-                result = check_permission_single_rust(
-                    subject_type=subject.entity_type,
-                    subject_id=subject.entity_id,
-                    permission=permission,
-                    object_type=obj.entity_type,
-                    object_id=obj.entity_id,
-                    tuples=tuples,
-                    namespace_configs=namespace_configs,
-                )
+                    result = check_permission_single_rust(
+                        subject_type=subject.entity_type,
+                        subject_id=subject.entity_id,
+                        permission=permission,
+                        object_type=obj.entity_type,
+                        object_id=obj.entity_id,
+                        tuples=tuples,
+                        namespace_configs=namespace_configs,
+                    )
 
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                stats.duration_ms = elapsed_ms
-                logger.debug(
-                    f"[RUST-SINGLE] Permission check completed in {elapsed_ms:.2f}ms: "
-                    f"{subject.entity_type}:{subject.entity_id} {permission} "
-                    f"{obj.entity_type}:{obj.entity_id} = {result}"
-                )
-                return result
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    stats.duration_ms = elapsed_ms
+                    logger.debug(
+                        f"[RUST-SINGLE] Permission check completed in {elapsed_ms:.2f}ms: "
+                        f"{subject.entity_type}:{subject.entity_id} {permission} "
+                        f"{obj.entity_type}:{obj.entity_id} = {result}"
+                    )
+                    return result
+                logger.debug("Skipping Rust permission check for conditional ReBAC tuples")
 
         except (RuntimeError, ValueError) as e:
             logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
@@ -1321,7 +1332,7 @@ class ReBACManager:
 
         # Tiger Cache: Write-through - persist grant immediately
         # This is the fast path (~1-5ms) vs queue processing (~20-40s)
-        if self._tiger_cache:
+        if self._tiger_cache and not conditions:
             subject_tuple = (subject[0], subject[1])
             object_type = object[0]
             object_id = object[1]
@@ -1430,6 +1441,9 @@ class ReBACManager:
             # Tiger Cache: Write-through for bulk operations
             if self._tiger_cache:
                 for t in tuples:
+                    if t.get("conditions"):
+                        continue
+
                     subject = t["subject"]
                     obj = t["object"]
                     relation = t.get("relation", "")

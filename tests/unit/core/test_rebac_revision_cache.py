@@ -44,10 +44,14 @@ def _check_postgres_available():
         return False
 
 
-# Skip all tests in this module if PostgreSQL is not available
-pytestmark = pytest.mark.skipif(
-    not _check_postgres_available(), reason="PostgreSQL not available at localhost:5432"
-)
+# These tests rebuild the shared ReBAC PostgreSQL tables in their fixture.
+# Keep them on one xdist worker so table drop/create cannot race.
+pytestmark = [
+    pytest.mark.skipif(
+        not _check_postgres_available(), reason="PostgreSQL not available at localhost:5432"
+    ),
+    pytest.mark.xdist_group(name="rebac_revision_cache"),
+]
 
 
 @pytest.fixture

@@ -21,16 +21,25 @@ from nexus.storage.read_set import AccessType, ReadSetEntry, ResourceType
 # Path strategies
 # ---------------------------------------------------------------------------
 
-# Characters allowed in path segments (no /, no null, no control chars)
-_PATH_SEGMENT_CHARS = st.characters(
-    whitelist_categories=("L", "N", "P", "S"),
-    blacklist_characters="/\x00",
-)
-
-_PATH_SEGMENT = st.text(
-    alphabet=_PATH_SEGMENT_CHARS,
-    min_size=1,
-    max_size=50,
+# Keep path generation cheap under xdist. These cover common filesystem-safe
+# segment shapes without making Hypothesis synthesize arbitrary strings.
+_PATH_SEGMENT = st.sampled_from(
+    [
+        "workspace",
+        "shared",
+        "external",
+        "system",
+        "archives",
+        "data",
+        "docs",
+        "file.txt",
+        "name_1",
+        "x-y",
+        "user@example",
+        "v1.2",
+        "a+b",
+        "0",
+    ]
 )
 
 

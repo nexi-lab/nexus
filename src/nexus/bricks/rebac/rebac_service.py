@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 from nexus.contracts.exceptions import CircuitOpenError
+from nexus.contracts.types import OperationContext
 from nexus.lib.context_utils import get_subject_from_context
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -431,6 +432,8 @@ class ReBACService(ReBACShareMixin):
                 elif hasattr(context, "zone_id"):
                     effective_zone_id = context.zone_id
 
+            manager_context = None if isinstance(context, OperationContext) else context
+
             # Check permission with optional ABAC context (always cached consistency)
             # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
@@ -438,7 +441,7 @@ class ReBACService(ReBACShareMixin):
                 subject=subject,
                 permission=permission,
                 object=object,
-                context=context,
+                context=manager_context,
                 zone_id=effective_zone_id,
             )
 

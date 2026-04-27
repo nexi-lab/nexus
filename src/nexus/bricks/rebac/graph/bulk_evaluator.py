@@ -272,6 +272,8 @@ def check_direct_relation(
         True if direct tuple exists.
     """
     for tuple_data in tuples_graph:
+        if _has_conditions(tuple_data):
+            continue
         if (
             tuple_data["subject_type"] == subject.entity_type
             and tuple_data["subject_id"] == subject.entity_id
@@ -300,6 +302,8 @@ def find_related_objects(
 
     related = []
     for tuple_data in tuples_graph:
+        if _has_conditions(tuple_data):
+            continue
         if (
             tuple_data["subject_type"] == obj.entity_type
             and tuple_data["subject_id"] == obj.entity_id
@@ -325,6 +329,8 @@ def find_subjects(
 
     subjects = []
     for tuple_data in tuples_graph:
+        if _has_conditions(tuple_data):
+            continue
         if (
             tuple_data["object_type"] == obj.entity_type
             and tuple_data["object_id"] == obj.entity_id
@@ -332,3 +338,8 @@ def find_subjects(
         ):
             subjects.append(_Entity(tuple_data["subject_type"], tuple_data["subject_id"]))
     return subjects
+
+
+def _has_conditions(tuple_data: dict[str, Any]) -> bool:
+    """Bulk checks have no ABAC context, so conditioned tuples are unusable."""
+    return bool(tuple_data.get("conditions"))

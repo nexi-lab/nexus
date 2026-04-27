@@ -117,6 +117,50 @@ pub fn list_active_pid_chat_paths(
     ))
 }
 
+/// One envelope read off a single pid's `/proc/{pid}/chat-with-me`.
+/// `bytes` is the raw stream entry as written by the sender; `pid` is
+/// the pid the entry was read from (carried so reads tagged with their
+/// source can show "agent-name (instance pid)" in UIs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatStreamEntry {
+    pub pid: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Merge entries from multiple pids' `chat-with-me` streams into a
+/// single chronological sequence. Entries are sorted by their JSON
+/// envelope's `ts` field (ISO-8601 string — same shape mailbox stamping
+/// emits and AuditRecord uses, which sorts lexicographically the same
+/// way it sorts chronologically). Entries with no `ts` field — and any
+/// payload that fails to parse as JSON — fall to the end in source
+/// order, so receivers always see well-formed timestamped envelopes
+/// before any malformed ones rather than the merge silently dropping
+/// content.
+///
+/// Stable sort: entries with equal timestamps keep their pid-order
+/// from the input, which keeps readers reading multiple instances
+/// from getting flicker on simultaneous writes.
+pub fn merge_chat_streams(streams: Vec<Vec<ChatStreamEntry>>) -> Vec<ChatStreamEntry> {
+    let mut all: Vec<ChatStreamEntry> = streams.into_iter().flatten().collect();
+    all.sort_by(|a, b| {
+        let a_ts = extract_ts(&a.bytes);
+        let b_ts = extract_ts(&b.bytes);
+        match (a_ts, b_ts) {
+            (Some(at), Some(bt)) => at.cmp(&bt),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+    all
+}
+
+fn extract_ts(bytes: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let ts = value.as_object()?.get("ts")?;
+    ts.as_str().map(|s| s.to_string())
+}
+
 fn parse_agent_chat_path(path: &str) -> Option<&str> {
     let rest = path.strip_prefix(AGENTS_PREFIX)?;
     let agent_name = rest.strip_suffix(CHAT_WITH_ME_SUFFIX)?;
@@ -284,6 +328,84 @@ mod tests {
         t.register(descriptor("p1", "scode-standard", AgentState::Ready));
         let r = list_active_pid_chat_paths(&t, "/agents/scode-standard/chat-with-me").unwrap();
         assert_eq!(r, Some(vec!["/proc/p1/chat-with-me".to_string()]));
+    }
+
+    // ── merge_chat_streams ─────────────────────────────────────────────
+
+    fn entry(pid: &str, bytes: &[u8]) -> ChatStreamEntry {
+        ChatStreamEntry {
+            pid: pid.to_string(),
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    #[test]
+    fn merge_empty_returns_empty() {
+        let merged = merge_chat_streams(Vec::new());
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn merge_single_stream_passthrough() {
+        let stream_a = vec![
+            entry("p1", br#"{"ts":"2026-04-27T10:00:00.000Z","body":"a1"}"#),
+            entry("p1", br#"{"ts":"2026-04-27T10:00:01.000Z","body":"a2"}"#),
+        ];
+        let merged = merge_chat_streams(vec![stream_a]);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].pid, "p1");
+        assert_eq!(merged[1].pid, "p1");
+    }
+
+    #[test]
+    fn merge_interleaves_by_iso_timestamp() {
+        let stream_a = vec![
+            entry("p1", br#"{"ts":"2026-04-27T10:00:00.000Z","body":"a1"}"#),
+            entry("p1", br#"{"ts":"2026-04-27T10:00:02.000Z","body":"a2"}"#),
+        ];
+        let stream_b = vec![
+            entry("p2", br#"{"ts":"2026-04-27T10:00:01.000Z","body":"b1"}"#),
+            entry("p2", br#"{"ts":"2026-04-27T10:00:03.000Z","body":"b2"}"#),
+        ];
+        let merged = merge_chat_streams(vec![stream_a, stream_b]);
+        let pids: Vec<&str> = merged.iter().map(|e| e.pid.as_str()).collect();
+        assert_eq!(pids, vec!["p1", "p2", "p1", "p2"]);
+    }
+
+    #[test]
+    fn merge_is_stable_for_equal_timestamps() {
+        let same_ts = br#"{"ts":"2026-04-27T10:00:00.000Z","body":"x"}"#;
+        let stream_a = vec![entry("p_a", same_ts)];
+        let stream_b = vec![entry("p_b", same_ts)];
+        let merged = merge_chat_streams(vec![stream_a, stream_b]);
+        // Stable sort: input order (a before b) preserved on tie.
+        assert_eq!(merged[0].pid, "p_a");
+        assert_eq!(merged[1].pid, "p_b");
+    }
+
+    #[test]
+    fn merge_pushes_missing_ts_to_end() {
+        let stream_a = vec![entry(
+            "p1",
+            br#"{"ts":"2026-04-27T10:00:00.000Z","body":"timed"}"#,
+        )];
+        let stream_b = vec![entry("p2", br#"{"body":"no ts"}"#)];
+        let merged = merge_chat_streams(vec![stream_b, stream_a]);
+        // Even though stream_b is first in input, the timed entry comes first.
+        assert_eq!(merged[0].pid, "p1");
+        assert_eq!(merged[1].pid, "p2");
+    }
+
+    #[test]
+    fn merge_handles_non_json_payloads_at_end() {
+        let stream_a = vec![entry(
+            "p1",
+            br#"{"ts":"2026-04-27T10:00:00.000Z","body":"timed"}"#,
+        )];
+        let stream_b = vec![entry("p_bogus", b"plain text, not json")];
+        let merged = merge_chat_streams(vec![stream_b, stream_a]);
+        assert_eq!(merged[0].pid, "p1");
+        assert_eq!(merged[1].pid, "p_bogus");
     }
 
     #[test]

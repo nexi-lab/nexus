@@ -7,6 +7,7 @@ registries) into README.md markdown.
 import posixpath
 from typing import Any
 
+import yaml
 from pydantic import BaseModel
 
 from nexus.backends.connectors.base import ConfirmLevel, ErrorDef, OpTraits
@@ -41,6 +42,7 @@ class ReadmeDocGenerator:
         error_registry: dict[str, ErrorDef],
         examples: dict[str, str],
         readme_dir: str = ".readme",
+        short_description: str = "",
         nested_examples: dict[str, list[str]] | None = None,
         field_examples: dict[str, str] | None = None,
         write_paths: dict[str, str] | None = None,
@@ -51,6 +53,7 @@ class ReadmeDocGenerator:
         self._error_registry = error_registry
         self._examples = examples
         self._readme_dir = readme_dir
+        self._short_description = short_description
         self._nested_examples = nested_examples or {}
         self._field_examples = field_examples or {}
         # operation_name -> write path (e.g., "send_email" -> "SENT/_new.yaml")
@@ -62,6 +65,19 @@ class ReadmeDocGenerator:
     # Public API
     # ------------------------------------------------------------------
 
+    def _generate_frontmatter(self) -> str:
+        """Generate YAML frontmatter for the README.
+
+        Returns:
+            YAML frontmatter as string with leading/trailing ---.
+        """
+        frontmatter = {
+            "title": self._format_display_name(),
+            "description": self._short_description,
+        }
+        yaml_str = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+        return f"---\n{yaml_str}---"
+
     def generate_readme(self, mount_path: str) -> str:
         """Auto-generate README.md from connector metadata.
 
@@ -72,6 +88,8 @@ class ReadmeDocGenerator:
             Generated README.md content as string.
         """
         lines = [
+            self._generate_frontmatter(),
+            "",
             f"# {self._format_display_name()} Connector",
             "",
             "## Mount Path",

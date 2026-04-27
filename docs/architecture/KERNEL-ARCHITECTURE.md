@@ -686,24 +686,36 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
                   ↑
                  lib                          (depends on contracts only)
                   ↑
-               kernel                         (depends on contracts + lib + raft)
-          ↑    ↑      ↑    ↑
-          │    │      │    │
-  backends services transport raft            (peers — depend on kernel,
-          ↑    ↑      ↑    ↑                  not on each other)
-          │    │      │    │
-          └────┴──────┴────┴──── nexus-cdylib   (sink — no other crate
-                                                  depends on it; it just
-                                                  composes the wheel)
+        transport-primitives                  (low-level TLS / pool / addressing;
+                  ↑                            depends only on contracts)
+                  │
+               kernel                         (depends on contracts + lib +
+                  ↑                            transport-primitives + raft)
+          ↑    ↑    ↑    ↑
+          │    │    │    │
+  backends services transport raft            (peers — depend on kernel +
+          ↑    ↑    ↑    ↑                    transport-primitives;
+          │    │    │    │                    no cross-edges among peers)
+          └────┴────┴────┴──── nexus-cdylib   (sink — no other crate
+                                                depends on it; it just
+                                                composes the wheel)
+
+  rust/profiles/cluster                       (standalone binary — depends
+                                                on raft + contracts only;
+                                                no kernel, no Python.)
 ```
 
 Hard invariants:
 
 - `services ⊥ backends ⊥ transport ⊥ raft` — peer crates have no
   cross-dependencies.
+- `raft → transport-primitives` only; raft never depends on `transport`.
+  This is the cycle-break that landed in Phase 4 (full).
 - `lib` cannot depend on `kernel` (one-way: kernel → lib only) —
   preserves WASM-clean lib.
 - `nexus-cdylib` is a sink — no other workspace crate depends on it.
+- `rust/profiles/*` are sinks — they produce standalone binaries, no
+  other workspace crate depends on them.
 
 #### Cdylib is not an architectural tier
 
@@ -757,6 +769,31 @@ REMOTE is orthogonal — stateless proxy, all operations via gRPC to server.
 
 Same kernel binary, different driver injection. See §1 `connect()`.
 **Source of truth:** `src/nexus/contracts/deployment_profile.py`.
+
+### 7.1 Profile binaries (`rust/profiles/`)
+
+Profile crates produce **standalone deployment binaries** — different
+artifact type from the rlib peer crates and the `nexus-cdylib` Python
+wheel.  Each profile that runs as its own process gets a subdirectory
+under `rust/profiles/`:
+
+| Profile | Crate | Artifact | Status |
+|---------|-------|----------|--------|
+| cluster | `rust/profiles/cluster/` | `nexusd-cluster` (~8 MB ELF/EXE) | shipped |
+| slim | `rust/profiles/slim/` | `nexusd-slim` | future |
+| full | `rust/profiles/full/` | `nexusd-full` | future |
+| embedded | `rust/profiles/embedded/` | `nexusd-embedded` | future |
+| lite | `rust/profiles/lite/` | `nexusd-lite` | future |
+| cloud | `rust/profiles/cloud/` | `nexusd-cloud` | future |
+| remote | `rust/profiles/remote/` | `nexusd-remote` | future |
+
+YAGNI principle: only `cluster/` exists today (Sudowork's deployment
+binary).  Other profile binaries are added to `rust/profiles/` as they
+become real deliverables — no premature scaffolding.
+
+**`nexus-cdylib` is not a profile.**  It is the Python SDK *artifact*
+(loaded into an external Python process), not a deployment binary —
+hence its location at workspace top-level rather than under `profiles/`.
 
 ---
 

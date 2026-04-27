@@ -6,11 +6,19 @@ through agent_chat resolver + mailbox stamping; reads use sys_watch).
 See ``docs/architecture/...`` and the sudowork integration design for
 the broader path layout.
 
-The actual subprocess spawn (and ACP JSON-RPC over stdio plumbing) is
-delegated to ``nexus.services.acp.service.AcpService`` — sudo-code is
-just another ACP backend, same shape claude / codex / codebuddy use.
+The runtime task that backs each session is registered into the
+``AgentRuntimeRegistry`` slot at module init by the in-process
+sudo-code crate (a Rust crate linked into nexusd, parallel to
+``NativeInterceptHook`` registration). When no runtime is registered
+for an agent name, ``SudoCodeRPCService.start_session`` still creates
+the AgentRegistry record so a follow-up runtime install can pick it
+up — the gRPC contract is decoupled from the runtime wire-up timing.
 """
 
+from nexus.services.sudo_code.runtime_registry import (
+    AgentRuntime,
+    AgentRuntimeRegistry,
+)
 from nexus.services.sudo_code.sudo_code_rpc_service import SudoCodeRPCService
 
-__all__ = ["SudoCodeRPCService"]
+__all__ = ["AgentRuntime", "AgentRuntimeRegistry", "SudoCodeRPCService"]

@@ -63,7 +63,9 @@ try:
     HolderInfo = getattr(_pyo3_mod, "HolderInfo", None)
     _HAS_METASTORE = Metastore is not None
 except ImportError:
-    logger.debug("Metastore not available. Install with: maturin develop -m rust/kernel/Cargo.toml")
+    logger.debug(
+        "Metastore not available. Install with: maturin develop -m rust/nexus-cdylib/Cargo.toml"
+    )
 
 # =========================================================================
 # ZoneHandle: Per-zone Raft node handle (requires --features full)
@@ -95,7 +97,7 @@ def require_metastore() -> None:
     if not _HAS_METASTORE:
         raise RuntimeError(
             "Metastore is not available. Build with:\n"
-            "  maturin develop -m rust/kernel/Cargo.toml\n"
+            "  maturin develop -m rust/nexus-cdylib/Cargo.toml\n"
             "Or install the pre-built wheel:\n"
             "  pip install nexus-ai-fs"
         )

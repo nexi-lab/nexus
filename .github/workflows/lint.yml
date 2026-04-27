@@ -102,10 +102,13 @@ jobs:
             rust/kernel
             rust/raft
             rust/cluster
+            rust/nexus-cdylib
 
       - name: Check Rust formatting
         run: |
-          for crate in tasks lib kernel raft cluster; do
+          # Phase 0: nexus-cdylib joins the fmt loop alongside the other
+          # workspace crates.
+          for crate in tasks lib kernel raft cluster nexus-cdylib; do
             echo "::group::fmt $crate"
             cd rust/$crate && cargo fmt --check && cd ../..
             echo "::endgroup::"
@@ -123,6 +126,12 @@ jobs:
           echo "::endgroup::"
           echo "::group::clippy cluster"
           cd rust/cluster && cargo clippy -- -D warnings && cd ../..
+          echo "::endgroup::"
+          # Phase 0: nexus-cdylib pulls everything together — clippy
+          # runs against the full transitive build to catch any
+          # extension-module unification surprises.
+          echo "::group::clippy nexus-cdylib"
+          cd rust/nexus-cdylib && cargo clippy -- -D warnings && cd ../..
           echo "::endgroup::"
 
       - name: Run Rust tests

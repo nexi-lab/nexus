@@ -10,9 +10,10 @@ name: Conda Pack
 #   1. Create nexus conda env (Python 3.14)
 #   2. Rust toolchain + (macOS) pinned protoc 3.20.3
 #   3. pip install . (pdf-inspector builds from sdist against pyo3-ffi)
-#   4. Compile kernel (rust/kernel) via maturin — pulls in raft rlib;
-#      Metastore / ZoneManager are re-exported from nexus_kernel
-#   5. pip install kernel wheel into the nexus env (skipped on Windows)
+#   4. Compile nexus-cdylib (rust/nexus-cdylib) via maturin — composes
+#      kernel + lib + raft rlibs; Metastore / ZoneManager are exposed
+#      from nexus_kernel
+#   5. pip install nexus-kernel wheel into the nexus env (skipped on Windows)
 #   6. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
 
 on:
@@ -134,17 +135,18 @@ jobs:
           conda run -n nexus pip install maturin
 
       # Skipped on Windows: shm_pipe.rs / shm_stream.rs use POSIX-only APIs.
-      # The nexus_raft crate is now rlib-only and is linked into the kernel
-      # cdylib, so there is no separate raft wheel to build here anymore —
-      # Metastore / ZoneManager are exposed from nexus_kernel directly.
-      - name: Build kernel wheel  (rust/kernel)
+      # Phase 0: the wheel-producing crate is `rust/nexus-cdylib/` — kernel
+      # is rlib-only now. nexus-cdylib composes kernel + lib + raft into
+      # the single `nexus_kernel` wheel; Metastore / ZoneManager are
+      # exposed from `nexus_kernel` directly (no separate raft wheel).
+      - name: Build nexus-kernel wheel  (rust/nexus-cdylib)
         if: matrix.os != 'windows-latest'
         shell: bash -el {0}
         run: |
           mkdir -p build/dist
           conda run -n nexus maturin build --release \
             --out build/dist \
-            -m rust/kernel/Cargo.toml
+            -m rust/nexus-cdylib/Cargo.toml
 
       # ── Install wheels into the nexus env ────────────────────────────────
       - name: Install Rust wheels into nexus environment

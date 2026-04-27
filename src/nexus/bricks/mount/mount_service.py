@@ -584,6 +584,15 @@ class MountService:
             self._driver_coordinator.unmount(mount_point)
             raise
 
+        # Register ReadmeDocMixin backend in readme_resolver (Issue #3827)
+        from nexus.backends.connectors.base import ReadmeDocMixin
+
+        if isinstance(backend, ReadmeDocMixin) and backend.SKILL_NAME:
+            backend.set_mount_path(mount_point)
+            _readme_res = self.nexus_fs.service("readme_resolver") if self.nexus_fs else None
+            if _readme_res is not None:
+                _readme_res.register_backend(mount_point, backend)
+
         return mount_point
 
     def remove_mount_sync(
@@ -623,6 +632,11 @@ class MountService:
 
         result["removed"] = True
         logger.info(f"Removed mount from router: {mount_point}")
+
+        # Unregister from readme_resolver (Issue #3827)
+        _readme_res = self.nexus_fs.service("readme_resolver") if self.nexus_fs else None
+        if _readme_res is not None:
+            _readme_res.unregister_backend(mount_point)
 
         # Extract zone_id once for all cleanup operations
         zone_id = get_zone_id(context)

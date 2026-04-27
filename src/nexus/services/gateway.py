@@ -503,33 +503,6 @@ class NexusFSGateway:
             )
         return sorted(mounts, key=lambda m: m["mount_point"])
 
-    def get_mount_for_path(self, path: str) -> dict[str, Any] | None:
-        """Get mount info and backend-relative path for a virtual path.
-
-        Resolve mount info and backend-relative path for a virtual path.
-        Mounts are checked longest-prefix-first so that more-specific mounts
-        (e.g. ``/mnt/foo``) match before less-specific ones (e.g. ``/``).
-
-        Args:
-            path: Virtual file path
-
-        Returns:
-            Dict with mount_point, backend, backend_path keys,
-            or None if no mount matches.
-        """
-
-        dlc = self._fs._driver_coordinator
-        all_mounts = sorted(dlc.mount_points(), key=len, reverse=True)
-        for mp in all_mounts:
-            if path == mp or path.startswith(mp + "/") or mp == "/":
-                backend_path = path.lstrip("/") if mp == "/" else path[len(mp) :].lstrip("/")
-                return {
-                    "mount_point": mp,
-                    "backend": None,
-                    "backend_path": backend_path,
-                }
-        return None
-
     # =========================================================================
     # Search Operations (Issue #1287: replaces 8 Callable[..., Any] params)
     # =========================================================================

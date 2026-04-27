@@ -114,9 +114,14 @@ class ContextualNexusFS:
         return result
 
     def list_mounts(self) -> list[str]:
-        mounts = self._kernel._driver_coordinator.mount_points()
-        filtered = [mount for mount in mounts if mount != "/"]
-        return filtered or mounts
+        # Use public syscall: readdir("/") returns top-level entries including mounts.
+        _rk = getattr(self._kernel, "_kernel", None)
+        if _rk is not None:
+            entries = _rk.readdir("/", self._kernel._zone_id, True)
+            mounts = [path for path, _etype in entries if path != "/"]
+            return mounts or ["/"]
+        result: list[str] = self._kernel._driver_coordinator.mount_points()
+        return result
 
     async def close(self) -> None:
         return None

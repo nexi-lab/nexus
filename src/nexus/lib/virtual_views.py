@@ -26,6 +26,7 @@ History:
 """
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any, cast, overload
 
@@ -48,6 +49,8 @@ PARSEABLE_EXTENSIONS = {
     ".rtf",
     ".epub",
 }
+
+_PARSED_VIEW_SUFFIX_RE = re.compile(r"_parsed\.(?P<ext>[^/.]+)\.md$", re.IGNORECASE)
 
 
 def is_parseable_path(path: str) -> bool:
@@ -93,31 +96,17 @@ def parse_virtual_path(path: str, check_fn: Callable[[str], Any]) -> tuple[str, 
     # 1. File ends with .md
     # 2. Contains _parsed before the original extension
     # 3. The file without _parsed.md suffix actually exists
-    if path.endswith(".md"):
-        # Find the last occurrence of _parsed in the path
-        # e.g., "/dir/file_parsed.xlsx.md" → find "_parsed" before ".xlsx.md"
-        parsed_idx = path.rfind("_parsed.")
+    match = _PARSED_VIEW_SUFFIX_RE.search(path)
+    if match is not None:
+        original_ext = f".{match.group('ext')}"
+        original_path = f"{path[: match.start()]}{original_ext}"
 
-        if parsed_idx != -1:
-            # Extract the base name and extension
-            # e.g., "/dir/file_parsed.xlsx.md" → "/dir/file" + ".xlsx"
-            base_path = path[:parsed_idx]  # Everything before "_parsed"
-            ext_with_md = path[
-                parsed_idx + 7 :
-            ]  # Everything after "_parsed" (skip 7 chars to keep the dot)
-
-            # Remove the .md suffix to get the original extension
-            # e.g., ".xlsx.md" → ".xlsx"
-            if ext_with_md.endswith(".md"):
-                original_ext = ext_with_md[:-3]  # Remove .md
-                original_path = base_path + original_ext
-
-                # Only treat as virtual view if the extension is parseable
-                # and the original file exists
-                if original_ext in PARSEABLE_EXTENSIONS:
-                    result = check_fn(original_path)
-                    if result:
-                        return (original_path, "md", result)
+        # Only treat as virtual view if the extension is parseable
+        # and the original file exists.
+        if original_ext.lower() in PARSEABLE_EXTENSIONS:
+            result = check_fn(original_path)
+            if result:
+                return (original_path, "md", result)
 
     # Not a virtual view, return as-is
     return (path, None, None)
@@ -143,7 +132,7 @@ def get_parsed_content(
         Parsed content as bytes (UTF-8 encoded text)
     """
     # Check if this is a parseable binary file (Excel, PDF, etc.)
-    is_parseable = any(path.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
+    is_parseable = is_parseable_path(path)
 
     if is_parseable:
         if parse_fn is not None:
@@ -187,15 +176,17 @@ def should_add_virtual_views(file_path: str) -> bool:
         False  # Not a parseable type
     """
     # Don't add virtual views to files that already end with .md
-    if file_path.endswith(".md"):
+    lower_path = file_path.lower()
+    if lower_path.endswith(".md"):
         return False
 
     # Don't add virtual views to files that already have _parsed in the name
-    if "_parsed." in file_path:
+    filename = lower_path.rsplit("/", 1)[-1]
+    if "_parsed." in filename:
         return False
 
     # Only add virtual views for parseable file types
-    return any(file_path.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
+    return is_parseable_path(file_path)
 
 
 @overload

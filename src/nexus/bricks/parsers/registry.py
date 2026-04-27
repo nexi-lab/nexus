@@ -45,23 +45,30 @@ class ParserRegistry(BaseRegistry[Parser]):
         if not isinstance(parser, Parser):
             raise ValueError(f"Parser must be an instance of Parser, got {type(parser)}")
 
-        # Store in BaseRegistry (keyed by name, allow duplicates)
+        # Store in BaseRegistry (keyed by name, overwriting by name).
         super().register(parser.name, parser, allow_overwrite=True)
+
+        existing_parsers = tuple(p for p in self._parsers if p.name != parser.name)
 
         # Immutable rebuild: create new sorted tuple with added parser
         self._parsers = tuple(
-            sorted([*self._parsers, parser], key=lambda p: p.priority, reverse=True)
+            sorted([*existing_parsers, parser], key=lambda p: p.priority, reverse=True)
         )
 
         # Immutable rebuild: create new extension index
-        new_ext_index = dict(self._parsers_by_extension)
+        new_ext_index = {
+            ext: tuple(p for p in parsers if p.name != parser.name)
+            for ext, parsers in self._parsers_by_extension.items()
+        }
         for ext in parser.supported_formats:
             ext_lower = ext.lower()
             existing = new_ext_index.get(ext_lower, ())
             new_ext_index[ext_lower] = tuple(
                 sorted([*existing, parser], key=lambda p: p.priority, reverse=True)
             )
-        self._parsers_by_extension = new_ext_index
+        self._parsers_by_extension = {
+            ext: parsers for ext, parsers in new_ext_index.items() if parsers
+        }
 
         logger.info("Registered parser %r for formats: %s", parser.name, parser.supported_formats)
 

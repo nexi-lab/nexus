@@ -6,6 +6,7 @@ configurations to avoid repeated YAML parsing overhead.
 
 import logging
 import os
+from hashlib import sha256
 from typing import Any
 
 from nexus.bricks.parsers.validation.models import ValidationPipelineConfig, ValidatorConfig
@@ -33,6 +34,7 @@ class ValidatorConfigLoader:
 
     def __init__(self) -> None:
         self._cache: dict[str, ValidationPipelineConfig] = {}
+        self._content_hashes: dict[str, str] = {}
         self._mtimes: dict[str, float] = {}
 
     def load_from_string(self, content: str, cache_key: str = "") -> ValidationPipelineConfig:
@@ -46,7 +48,12 @@ class ValidatorConfigLoader:
         Returns:
             Parsed pipeline configuration.
         """
-        if cache_key and cache_key in self._cache:
+        content_hash = sha256(content.encode("utf-8")).hexdigest()
+        if (
+            cache_key
+            and cache_key in self._cache
+            and self._content_hashes.get(cache_key) == content_hash
+        ):
             return self._cache[cache_key]
 
         data = _parse_yaml_content(content)
@@ -54,6 +61,7 @@ class ValidatorConfigLoader:
 
         if cache_key:
             self._cache[cache_key] = config
+            self._content_hashes[cache_key] = content_hash
 
         return config
 
@@ -90,9 +98,11 @@ class ValidatorConfigLoader:
         """
         if config_path is None:
             self._cache.clear()
+            self._content_hashes.clear()
             self._mtimes.clear()
         else:
             self._cache.pop(config_path, None)
+            self._content_hashes.pop(config_path, None)
             self._mtimes.pop(config_path, None)
 
     def _build_config(self, data: dict[str, Any]) -> ValidationPipelineConfig:

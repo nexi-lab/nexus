@@ -4,7 +4,41 @@ import sys
 
 import pytest
 
+from nexus.bricks.parsers.providers.base import ParseProvider, ProviderConfig
 from nexus.bricks.parsers.providers.registry import ProviderRegistry
+from nexus.bricks.parsers.types import ParseResult
+
+
+class _Provider(ParseProvider):
+    def __init__(self, name: str, priority: int) -> None:
+        self._name = name
+        super().__init__(ProviderConfig(name=name, priority=priority))
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def default_formats(self) -> list[str]:
+        return [".pdf"]
+
+    def is_available(self) -> bool:
+        return True
+
+    async def parse(self, content: bytes, file_path: str, metadata=None) -> ParseResult:
+        return ParseResult(text=self.name)
+
+
+def test_register_overwrite_replaces_priority_order() -> None:
+    registry = ProviderRegistry()
+    first = _Provider("same", priority=100)
+    replacement = _Provider("same", priority=1)
+
+    registry.register(first)
+    registry.register(replacement)
+
+    assert registry.get_provider("doc.pdf") is replacement
+    assert registry.get_all_providers() == [replacement]
 
 
 def test_auto_discover_registers_pdf_inspector_when_available(monkeypatch):

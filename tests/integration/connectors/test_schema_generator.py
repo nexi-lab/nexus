@@ -169,6 +169,48 @@ class TestGenerateReadme:
         doc = gen.generate_readme("/mnt/x")
         assert "# My Cool Skill Connector" in doc
 
+    def test_frontmatter_present_with_skill_name(self, generator: ReadmeDocGenerator) -> None:
+        doc = generator.generate_readme("/mnt/calendar")
+        assert doc.startswith("---\n")
+        assert "name: test_skill" in doc
+        assert "---\n" in doc[4:]  # closing delimiter exists
+
+    def test_frontmatter_operations_list(self, generator: ReadmeDocGenerator) -> None:
+        doc = generator.generate_readme("/mnt/calendar")
+        assert "operations: [create_event, update_event]" in doc
+
+    def test_frontmatter_description_empty_when_no_short_desc(
+        self, generator: ReadmeDocGenerator
+    ) -> None:
+        doc = generator.generate_readme("/mnt/calendar")
+        # no description line in frontmatter when short_description is empty
+        # Extract frontmatter (between the --- delimiters)
+        closing_delim = doc.find("---", 4)  # Find closing --- after opening
+        frontmatter = doc[:closing_delim]
+        assert "description:" not in frontmatter
+
+    def test_frontmatter_absent_for_empty_skill_name(self) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+        )
+        doc = gen.generate_readme("/mnt/x")
+        assert not doc.startswith("---")
+
+    def test_frontmatter_no_operations_key_when_no_schemas(self) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="myskill",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+        )
+        doc = gen.generate_readme("/mnt/x")
+        assert "operations:" not in doc
+
 
 # ===========================================================================
 # write_readme tests removed (Issue #3728): the method was deleted.

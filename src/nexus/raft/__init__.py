@@ -57,10 +57,10 @@ try:
     # while a locally-installed wheel lags behind.
     import nexus_kernel as _pyo3_mod
 
-    Metastore = getattr(_pyo3_mod, "Metastore", None)
-    LockState = getattr(_pyo3_mod, "LockState", None)
-    LockInfo = getattr(_pyo3_mod, "LockInfo", None)
-    HolderInfo = getattr(_pyo3_mod, "HolderInfo", None)
+    Metastore = getattr(_pyo3_mod, "PyMetaStore", None)
+    LockState = getattr(_pyo3_mod, "PyLockState", None)
+    LockInfo = getattr(_pyo3_mod, "PyLockInfo", None)
+    HolderInfo = getattr(_pyo3_mod, "PyHolderInfo", None)
     _HAS_METASTORE = Metastore is not None
 except ImportError:
     logger.debug(

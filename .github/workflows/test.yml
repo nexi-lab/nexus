@@ -164,7 +164,7 @@ jobs:
           # Python drives zones via Kernel's zone_* methods now. Smoke
           # test the surviving raft-bound pyclass (Metastore) + the
           # kernel's own entry points.
-          uv run python -c "from nexus_kernel import PyKernel; print('raft bindings OK')"
+          uv run python -c "from nexus_kernel import PyMetaStore, PyKernel; print('raft bindings OK')"
         shell: bash
 
       - name: Run unit tests

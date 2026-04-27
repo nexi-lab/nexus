@@ -18,6 +18,10 @@ from __future__ import annotations
 import warnings
 
 from nexus.backends.transports.blob_pack_local_transport import (
+    TTL_BUCKETS,
+    ceil_bucket,
+)
+from nexus.backends.transports.blob_pack_local_transport import (
     BlobPackLocalTransport as VolumeLocalTransport,
 )
 
@@ -29,4 +33,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-__all__ = ["VolumeLocalTransport"]
+__all__ = ["TTL_BUCKETS", "VolumeLocalTransport", "ceil_bucket"]

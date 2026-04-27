@@ -194,7 +194,7 @@ Kernel syscalls, all POSIX-aligned, all path-addressed:
 
 `sys_setattr` is the universal creation/management syscall:
 `mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
-`umount` = `rmdir` on DT_MOUNT path.
+`umount` = `rmdir` on DT_MOUNT path, `symlink` = `sys_setattr(entry_type=DT_LINK, link_target=...)`.
 
 Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` pattern):
 - `sys_lock(path, lock_id=None)` — acquire (lock_id=None) or extend TTL (lock_id=existing)
@@ -212,6 +212,9 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
 - **DT_PIPE / DT_STREAM I/O**: Rust dcache detects entry_type early in sys_read/sys_write
   and dispatches to PipeManager/StreamManager inline — no VFS lock, no metastore update,
   no observer dispatch (matching Linux `write(2)` on a pipe not triggering inotify)
+- **DT_LINK**: route() follows the link target one hop with self-loop rejection (§4.5);
+  hooks fire on the resolved target path so audit and access checks behave identically
+  to a direct write
 - **Read**: same pipeline minus FileEvent (reads are not mutations)
 - **Read-only metadata** (stat, access, readdir, is_directory): direct Metastore
   lookup only — no routing, locking, or dispatch
@@ -528,6 +531,32 @@ See `federation-memo.md` §7j for design rationale.
 - **Local**: `VFSSemaphore` (Rust) — exclusive (mutex), shared (RW), counting (semaphore)
 - **Distributed**: `upgrade_to_distributed(ZoneConsensus, Handle)` — advisory locks replicated via Raft
 - **Syscalls**: `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2)
+
+### 4.5 DT_LINK — Path-Internal Symlink
+
+| Property | Value |
+|----------|-------|
+| Linux analogue | `symlink(2)` |
+| Entry type | `DT_LINK = 6` (`proto/nexus/core/metadata.proto`) |
+| Storage | `FileMetadata.link_target` — absolute or workspace-relative VFS path |
+| Resolution | Kernel `route()` follows the link before reaching the backend; one hop only, with self-loop rejection |
+
+A DT_LINK is a metadata-only entry whose `link_target` field carries the path it
+points at. Path resolution treats it as a redirect: every `sys_*` call against a
+DT_LINK path resolves to the equivalent operation on the link target, with hooks
+firing on the resolved target path. `sys_unlink` removes the link without touching
+the target; `sys_stat` reports the entry as a link with its `link_target` filled in.
+
+Cycle handling is bounded by the one-hop rule — if `target` is itself a DT_LINK,
+the resolver returns `ELOOP` rather than chaining. Self-loops (`link → itself`) are
+rejected at `sys_setattr` time.
+
+**Use cases:**
+
+- `/proc/{pid}/agent` → `/agents/{name}/` (runtime back-reference to image; mirrors Linux `/proc/{pid}/exe`)
+- `/proc/{pid}/workspace/chat-with-me` → `/proc/{pid}/chat-with-me` (workspace-anchored mailbox shortcut so agents addressing each other don't have to walk the registry)
+
+See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-architecture.md`) for the A2A messaging conventions that consume DT_LINK.
 
 ---
 

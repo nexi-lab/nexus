@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -131,15 +132,16 @@ class TestRuntimeState:
 class TestResolveConnectionEnv:
     def test_basic_env(self) -> None:
         config = {
-            "ports": {"http": 2026, "grpc": 2028},
+            "ports": {"http": 2026, "grpc": 2028, "dragonfly": 6379},
             "api_key": "sk-fromconfig",
-            "services": ["nexus", "postgres"],
+            "services": ["nexus", "postgres", "dragonfly"],
         }
         env = resolve_connection_env(config, state={})
         assert env["NEXUS_URL"] == "http://localhost:2026"
         assert env["NEXUS_API_KEY"] == "sk-fromconfig"
         assert env["NEXUS_GRPC_HOST"] == "localhost:2028"
         assert env["NEXUS_GRPC_PORT"] == "2028"
+        assert env["NEXUS_DRAGONFLY_URL"] == "redis://localhost:6379"
         assert "DATABASE_URL" in env
         assert "5432" in env["DATABASE_URL"]
 
@@ -159,7 +161,7 @@ class TestResolveConnectionEnv:
         assert env["NEXUS_GRPC_PORT"] == "3028"
 
     def test_tls_from_state(self) -> None:
-        config = {"ports": {}, "services": []}
+        config: dict[str, Any] = {"ports": {}, "services": []}
         state = {
             "tls": {
                 "cert": "/data/tls/node.pem",
@@ -190,7 +192,12 @@ class TestResolveConnectionEnv:
         env = resolve_connection_env(config, state={})
         assert "DATABASE_URL" not in env
 
+    def test_no_dragonfly_url_without_dragonfly(self) -> None:
+        config = {"ports": {}, "services": ["nexus", "postgres"]}
+        env = resolve_connection_env(config, state={})
+        assert "NEXUS_DRAGONFLY_URL" not in env
+
     def test_no_api_key_when_empty(self) -> None:
-        config = {"ports": {}, "services": []}
+        config: dict[str, Any] = {"ports": {}, "services": []}
         env = resolve_connection_env(config, state={})
         assert "NEXUS_API_KEY" not in env

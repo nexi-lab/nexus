@@ -1,0 +1,171 @@
+// sudo-code session lifecycle gRPC service.
+//
+// Surfaces the in-process sudo-code runtime that nexusd links as a Rust
+// crate. sudowork (Electron, TypeScript) is the primary caller; any
+// other client that wants to spawn / drive a sudo-code session against
+// nexusd uses the same service.
+//
+// The "session" abstraction encapsulates one running sudo-code agent
+// (one tokio task inside nexusd, one pid in the AgentRegistry). A
+// session has a stable session_id and an associated agent_id assigned
+// by the AgentRegistry at StartSession time. The runtime workspace
+// lives at /proc/{pid}/workspace/ inside nexus VFS; see
+// docs/architecture/KERNEL-ARCHITECTURE.md §4.5 (DT_LINK) and the
+// sudowork integration design (sudowork/docs/tech/nexus-integration-architecture.md)
+// for the broader path layout.
+
+syntax = "proto3";
+
+package nexus.grpc.sudo_code;
+
+service SudoCodeService {
+  // Start a new sudo-code session. nexusd allocates an agent_id via
+  // AgentRegistry.spawn (callers do NOT supply one — keeps a single
+  // authority over identity), constructs /proc/{pid}/workspace/ with
+  // OS-level symlinks for each requested repo, plants the DT_LINK
+  // shortcut at /proc/{pid}/workspace/chat-with-me, and spawns the
+  // sudo-code runtime as a tokio task with cwd set to the workspace.
+  rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
+
+  // Send a single prompt to a running session. Streams of token-level
+  // events come back over SubscribeEvents; SendPrompt itself only
+  // acknowledges receipt so the call returns quickly.
+  rpc SendPrompt(SendPromptRequest) returns (SendPromptResponse);
+
+  // Server-streaming subscription to a session's event stream — token
+  // chunks, tool calls, completion, errors. Re-subscribing at any
+  // offset replays from that point (sudo-code persists the conversation
+  // as JSONL inside /proc/{pid}/workspace/.scode/sessions/, so the
+  // server can serve historical events without external storage).
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream SessionEvent);
+
+  // Cancel an in-flight prompt or terminate the entire session.
+  // Mode `CANCEL_TURN` aborts the current generation but keeps the
+  // session alive; `CANCEL_SESSION` tears the tokio task down and
+  // unregisters the agent.
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+
+  // Snapshot the current session state — last assistant message, token
+  // counters, model, workspace root. Cheap status read; for the live
+  // event firehose use SubscribeEvents.
+  rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+}
+
+// ── Session lifecycle ──────────────────────────────────────────────
+
+message StartSessionRequest {
+  // Stable image name registered under /agents/{name}/. Examples:
+  // "scode-standard", "scode-fast". Required.
+  string image = 1;
+
+  // Repo specs that nexusd materializes as OS-level symlinks under
+  // /proc/{pid}/workspace/{repo_alias}. Empty = no symlinks (sudo-code
+  // operates on the VFS workspace root only).
+  repeated WorkspaceRepo repos = 2;
+
+  // Optional model override — falls back to /agents/{image}/config.toml
+  // when empty.
+  string model = 3;
+
+  // Optional initial prompt sent immediately after spawn so callers
+  // can avoid an extra round-trip when they already know the first
+  // user message. Empty = no auto-prompt; SendPrompt drives the turn.
+  string initial_prompt = 4;
+}
+
+message WorkspaceRepo {
+  // Path on the host filesystem to symlink into the workspace. Absolute
+  // host path; nexusd validates it exists at session-start time.
+  string host_path = 1;
+
+  // Name under which the symlink appears in /proc/{pid}/workspace/.
+  // Empty = derive from the host path's basename.
+  string alias = 2;
+}
+
+message StartSessionResponse {
+  string session_id = 1;
+  // pid in the AgentRegistry — `/proc/{pid}/` is the runtime namespace.
+  string agent_id = 2;
+  // Resolved workspace root: /proc/{pid}/workspace/.
+  string workspace_path = 3;
+}
+
+// ── Prompt / event streaming ───────────────────────────────────────
+
+message SendPromptRequest {
+  string session_id = 1;
+  string prompt = 2;
+}
+
+message SendPromptResponse {
+  // Monotonically-increasing turn index assigned by the runtime;
+  // SubscribeEvents emits events tagged with this turn so callers can
+  // correlate.
+  uint64 turn = 1;
+}
+
+message SubscribeEventsRequest {
+  string session_id = 1;
+
+  // Resume offset into the session's event jsonl. 0 = stream from the
+  // current end (live tail). Negative offsets are reserved.
+  uint64 from_offset = 2;
+}
+
+message SessionEvent {
+  // Event-stream offset in the underlying jsonl (monotonic per
+  // session). Re-subscribers pass this back as `from_offset` to
+  // resume.
+  uint64 offset = 1;
+  uint64 turn = 2;
+  EventKind kind = 3;
+  // Free-form payload — the runtime decides the JSON shape per kind.
+  // Kept as bytes so the proto layer doesn't bind to any single
+  // schema for tool-call args / model output.
+  bytes payload = 4;
+
+  enum EventKind {
+    EVENT_KIND_UNSPECIFIED = 0;
+    EVENT_KIND_TEXT_CHUNK = 1;
+    EVENT_KIND_TOOL_CALL = 2;
+    EVENT_KIND_TOOL_RESULT = 3;
+    EVENT_KIND_TURN_END = 4;
+    EVENT_KIND_ERROR = 5;
+    EVENT_KIND_SESSION_END = 6;
+  }
+}
+
+// ── Cancel / status ────────────────────────────────────────────────
+
+message CancelRequest {
+  string session_id = 1;
+  CancelMode mode = 2;
+
+  enum CancelMode {
+    CANCEL_MODE_UNSPECIFIED = 0;
+    CANCEL_MODE_CANCEL_TURN = 1;
+    CANCEL_MODE_CANCEL_SESSION = 2;
+  }
+}
+
+message CancelResponse {
+  bool cancelled = 1;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message GetSessionResponse {
+  string session_id = 1;
+  string agent_id = 2;
+  string image = 3;
+  string workspace_path = 4;
+  string model = 5;
+  // Total turns the session has produced so far.
+  uint64 turn_count = 6;
+  // AgentState from contracts/process_types.py, lower-cased — same
+  // surface the kernel agent_wait syscall accepts.
+  string state = 7;
+}

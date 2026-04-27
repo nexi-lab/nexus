@@ -413,6 +413,26 @@ class TestReBACCheck:
         assert call_kwargs["zone_id"] == "zone-acme"
 
     @pytest.mark.asyncio
+    async def test_check_does_not_forward_operation_context_as_abac_context(
+        self, service, mock_rebac_manager
+    ):
+        """OperationContext supplies auth zone, not ABAC context for manager caches."""
+        ctx = OperationContext(
+            user_id="alice", groups=[], zone_id="zone-acme", is_system=False, is_admin=False
+        )
+
+        await service.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/doc.txt"),
+            context=ctx,
+        )
+
+        call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
+        assert call_kwargs["zone_id"] == "zone-acme"
+        assert call_kwargs["context"] is None
+
+    @pytest.mark.asyncio
     async def test_check_explicit_zone_overrides_context(self, service, mock_rebac_manager):
         """Test that explicit zone_id takes precedence over context."""
         ctx = OperationContext(

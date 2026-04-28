@@ -27,6 +27,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from nexus.contracts.constants import SYSTEM_PATH_PREFIX
+from nexus.contracts.types import OperationContext
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import NamespaceConfig
@@ -35,6 +36,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _NS_DIR = f"{SYSTEM_PATH_PREFIX}rebac/namespaces/"
+
+
+def _system_ctx() -> OperationContext:
+    """System context for kernel-internal mutations under /__sys__/.
+
+    sys_unlink etc. now reject ``context=None`` for /__sys__/* paths
+    (Issue #3786 hardening); rebac's namespace store is internal kernel
+    code so it speaks with an explicit is_system token.
+    """
+    return OperationContext(user_id="system", groups=[], is_system=True)
 
 
 def _config_path(object_type: str) -> str:
@@ -151,7 +162,7 @@ class MetastoreNamespaceStore:
         if self._read(path) is None:
             return False
         try:
-            self._nx.sys_unlink(path)
+            self._nx.sys_unlink(path, context=_system_ctx())
         except FileNotFoundError:
             return False
         return True

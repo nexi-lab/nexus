@@ -313,8 +313,30 @@ async def handle_set_metadata(nexus_fs: "NexusFS", params: Any, context: Any) ->
 
     Reconstructs a FileMetadata from the dict sent by the client and
     stores it via the server-side metastore.
+
+    Issue #3786 / Codex Round 5 finding #2: enforce WRITE permission on
+    ``params.path`` before persisting.  Without this gate a federation token
+    holding read-only or no grant for /zone/X/ could overwrite arbitrary
+    metadata there (poisoning, hiding files, redirecting backends).  The
+    mutation bypasses ``Kernel::sys_write`` and the ``request_zone_perms_scope``
+    wrapper, so the enforcer is invoked here directly.
     """
+    from nexus.contracts.exceptions import PermissionDeniedError
+    from nexus.contracts.types import Permission
     from nexus.storage._metadata_mapper_generated import MetadataMapper
+
+    enforcer = nexus_fs.service("permission_enforcer")
+    if enforcer is not None and context is not None and not getattr(context, "is_system", False):
+        from nexus.lib.zone_perms_cache import request_zone_perms_scope
+
+        _zp = getattr(context, "zone_perms", ())
+        with request_zone_perms_scope(_zp):
+            allowed = enforcer.check(params.path, Permission.WRITE, context)
+        if not allowed:
+            raise PermissionDeniedError(
+                f"set_metadata denied: WRITE not granted for {params.path!r}",
+                path=params.path,
+            )
 
     meta_dict: dict[str, Any] = params.metadata or {}
     # Ensure path is set (prefer params.path over dict contents)
@@ -696,8 +718,39 @@ async def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) ->
 # ---------------------------------------------------------------------------
 
 
-def handle_sys_lock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
+def _enforce_lock_write_permission(nexus_fs: "NexusFS", path: str, context: Any) -> None:
+    """Require WRITE on ``path`` before touching the Rust lock manager.
+
+    Issue #3786 / Codex Round 6 finding #2: NexusFS.sys_lock ignores its
+    context kwarg and the lock RPC handlers used to drop ``context``
+    entirely, so any authenticated token (federation included) could
+    acquire/extend/release locks on any path it could name — a cheap
+    cross-zone DoS vector.  Enforce the same WRITE policy other
+    mutating RPCs use; system contexts (server-internal callers) skip.
+    """
+    enforcer = nexus_fs.service("permission_enforcer")
+    if enforcer is None or context is None:
+        return
+    if getattr(context, "is_system", False):
+        return
+
+    from nexus.contracts.exceptions import PermissionDeniedError
+    from nexus.contracts.types import Permission
+    from nexus.lib.zone_perms_cache import request_zone_perms_scope
+
+    _zp = getattr(context, "zone_perms", ())
+    with request_zone_perms_scope(_zp):
+        allowed = enforcer.check(path, Permission.WRITE, context)
+    if not allowed:
+        raise PermissionDeniedError(
+            f"lock denied: WRITE not granted for {path!r}",
+            path=path,
+        )
+
+
+def handle_sys_lock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Acquire or extend advisory lock via NexusFS.sys_lock."""
+    _enforce_lock_write_permission(nexus_fs, params.path, context)
     lock_id = nexus_fs.sys_lock(
         params.path,
         lock_id=getattr(params, "lock_id", None),
@@ -708,8 +761,9 @@ def handle_sys_lock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str,
     return {"acquired": lock_id is not None, "lock_id": lock_id}
 
 
-def handle_sys_unlock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
+def handle_sys_unlock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Release advisory lock via NexusFS.sys_unlock."""
+    _enforce_lock_write_permission(nexus_fs, params.path, context)
     released = nexus_fs.sys_unlock(
         params.path,
         lock_id=getattr(params, "lock_id", None),
@@ -718,8 +772,9 @@ def handle_sys_unlock(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     return {"released": released}
 
 
-def handle_lock_acquire(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:  # noqa: ARG001
+def handle_lock_acquire(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Tier 2 lock_acquire — dict wrapper over sys_lock for gRPC."""
+    _enforce_lock_write_permission(nexus_fs, params.path, context)
     lock_id = nexus_fs.sys_lock(
         params.path,
         mode=getattr(params, "mode", "exclusive"),

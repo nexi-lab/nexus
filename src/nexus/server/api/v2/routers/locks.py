@@ -12,8 +12,10 @@ import uuid
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+
+from nexus.server.dependencies import get_operation_context, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -118,12 +120,25 @@ def _mgr_extend(mgr: Any, lock_id: str, resource: str, ttl: int) -> Any:
 
 
 @router.get("")
-async def list_locks(request: Request) -> dict[str, Any]:
-    """List all active locks."""
+async def list_locks(
+    request: Request,
+    auth_result: dict = Depends(require_auth),
+) -> dict[str, Any]:
+    """List all active locks (admin/system only).
+
+    Issue #3786 / Codex Round 8 finding #3: previously this handler
+    invoked sys_readdir without an OperationContext, which the readdir
+    gate treated as privileged.  Now we resolve the caller and require
+    admin/system, then propagate that context downstream so the gate
+    matches the policy stated in the readdir branch.
+    """
+    ctx = get_operation_context(auth_result)
+    if not (getattr(ctx, "is_admin", False) or getattr(ctx, "is_system", False)):
+        raise HTTPException(status_code=403, detail="locks listing requires admin")
     nx = _get_nexus_fs(request)
     if nx and hasattr(nx, "sys_readdir"):
         try:
-            kernel_locks = nx.sys_readdir("/__sys__/locks/", details=True)
+            kernel_locks = nx.sys_readdir("/__sys__/locks/", details=True, context=ctx)
             locks = [
                 {
                     "lock_id": holder.get("lock_id", ""),

@@ -180,7 +180,18 @@ class DatabaseAPIKeyAuth(AuthProvider):
             # means no zone access. The tripwire migration (04188c0bbb28)
             # prevents Phase 3 upgrade until pre-Phase-2 keys are backfilled
             # to the junction.
-            zone_id = zone_perm_rows[0][0] if zone_perm_rows else None
+            # Issue #3786: multi-zone tokens (len > 1) get zone_id=ROOT_ZONE_ID so
+            # the Rust context reflects cross-zone scope; single-zone tokens keep the
+            # specific zone_id for backward-compat and namespace routing.
+            from nexus.contracts.constants import ROOT_ZONE_ID as _ROOT_ZONE_ID
+
+            zone_id = (
+                zone_perm_rows[0][0]
+                if len(zone_perm_rows) == 1
+                else _ROOT_ZONE_ID
+                if zone_perm_rows
+                else None
+            )
             is_admin = bool(api_key.is_admin)
             key_id = api_key.key_id
             key_name = api_key.name
@@ -366,8 +377,18 @@ class DatabaseAPIKeyAuth(AuthProvider):
         if not api_key:
             return False
 
+        # Snapshot subject before mutation — needed to drop the cached zone_perms
+        # so the revoked grants can't authorise further requests.  Mirrors
+        # api_key_ops.revoke_api_key (Issue #3786 / Codex Round 3 finding #3).
+        revoked_subject = api_key.subject_id if hasattr(api_key, "subject_id") else api_key.user_id
+
         api_key.revoked = 1
         api_key.revoked_at = datetime.now(UTC)
         session.flush()
+
+        if revoked_subject:
+            from nexus.storage.api_key_ops import invalidate_zone_perms_for_subject
+
+            invalidate_zone_perms_for_subject(revoked_subject)
 
         return True

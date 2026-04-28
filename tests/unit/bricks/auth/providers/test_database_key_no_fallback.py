@@ -78,8 +78,12 @@ def test_legacy_zone_scoped_admin_rejected(session_factory):
     assert result.authenticated is False
 
 
-def test_multi_zone_key_uses_junction_primary_for_zone_id(session_factory):
-    """After Task 6, api_key.zone_id is NULL; result.zone_id must come from the junction primary."""
+def test_multi_zone_key_uses_root_for_zone_id(session_factory):
+    """After #3786: multi-zone keys (junction has >1 row) get zone_id=ROOT_ZONE_ID
+    so the Rust context reflects cross-zone scope; zone_set still carries both.
+    Single-zone keys keep their specific zone_id (covered separately)."""
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
     with session_factory() as s:
         s.add(ZoneModel(zone_id="ops", name="ops", phase="Active"))
         s.commit()
@@ -89,6 +93,5 @@ def test_multi_zone_key_uses_junction_primary_for_zone_id(session_factory):
     auth = _make_auth(session_factory)
     result = asyncio.run(auth.authenticate(raw))
     assert result.authenticated is True
-    # MIN granted_at picks "eng" (first inserted); zone_set contains both.
-    assert result.zone_id == "eng"
+    assert result.zone_id == ROOT_ZONE_ID
     assert set(result.zone_set) == {"eng", "ops"}

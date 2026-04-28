@@ -73,6 +73,25 @@ class RPCTransport:
         tls_config: ZoneTlsConfig | None = None,
         peer_ca_pem: bytes | None = None,
     ) -> None:
+        # Strip protocol prefix if present — callers (e.g. FederationHandshake)
+        # may pass the full URL "grpc://host:port".  The loopback check below
+        # operates on the host portion only and would otherwise see
+        # "grpc://localhost" (not "localhost") and reject the connection.
+        #
+        # Track whether the caller asked for a TLS scheme so we can fail
+        # closed if no TLS material is provided — preventing silent
+        # plaintext downgrade for grpcs:// URLs.
+        _scheme_requires_tls = False
+        if server_address.startswith("grpc://"):
+            server_address = server_address[len("grpc://") :]
+        elif server_address.startswith("grpcs://"):
+            server_address = server_address[len("grpcs://") :]
+            _scheme_requires_tls = True
+        if _scheme_requires_tls and tls_config is None:
+            raise ValueError(
+                f"grpcs:// scheme requires TLS configuration (got '{server_address}' "
+                "with no tls_config). Pass a ZoneTlsConfig or use grpc:// for plaintext."
+            )
         self.server_address = server_address
         self._auth_token = auth_token or ""
         self._timeout = timeout

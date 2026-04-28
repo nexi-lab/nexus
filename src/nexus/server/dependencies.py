@@ -425,6 +425,24 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     # and skip stale-session detection (documented limitation).
     agent_generation = auth_result.get("agent_generation")
 
+    # #3785/#3786: multi-zone tokens carry zone_perms as list-of-lists
+    # (serialized by both the gRPC path via dataclasses.asdict and the HTTP
+    # path at line 247). Convert back to the canonical tuple-of-tuples so
+    # OperationContext.__post_init__ uses it as the authoritative source and
+    # rebuilds zone_set from it instead of falling back to the single zone_id.
+    raw_zone_perms = auth_result.get("zone_perms") or []
+    zone_perms: tuple[tuple[str, str], ...] = tuple(
+        (str(zp[0]), str(zp[1])) for zp in raw_zone_perms if len(zp) == 2
+    )
+
+    # Multi-zone tokens span more than one zone. scope_params_for_zone uses
+    # zone_id to validate embedded /zone/<id>/ prefixes — if zone_id is set
+    # to the first zone, writes to any other zone in zone_perms are rejected.
+    # Use ROOT_ZONE_ID so the path passes through unmodified; the kernel routes
+    # based on the embedded /zone/<id>/ prefix and zone_set enforces access.
+    if len(zone_perms) > 1:
+        zone_id = ROOT_ZONE_ID
+
     return OperationContext(
         user_id=user_id,
         agent_id=agent_id,
@@ -435,4 +453,5 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         groups=[],
         admin_capabilities=admin_capabilities,
         agent_generation=agent_generation,
+        zone_perms=zone_perms,
     )

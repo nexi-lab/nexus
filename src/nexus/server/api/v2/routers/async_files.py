@@ -36,8 +36,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.bricks.search.primitives.glob_fast import glob_filter
-from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
+from nexus._rust_compat import grep_files_mmap
+from nexus.bricks.search.primitives.glob_helpers import glob_filter
 from nexus.bricks.snapshot.errors import TransactionConflictError as _TransactionConflictError
 from nexus.contracts.exceptions import (
     AccessDeniedError,

@@ -71,7 +71,7 @@ class TestFilterFields:
     """Field filtering for JSON output."""
 
     def test_filter_dict(self) -> None:
-        data = {"path": "/a", "size": 100, "etag": "abc"}
+        data = {"path": "/a", "size": 100, "content_id": "abc"}
         result = _filter_fields(data, "path,size")
         assert result == {"path": "/a", "size": 100}
 

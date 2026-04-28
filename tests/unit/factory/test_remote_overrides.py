@@ -28,7 +28,7 @@ class _FakeTransport:
 
     def write_file(self, path: str, content: bytes) -> dict[str, Any]:
         self.typed_writes.append((path, content))
-        return {"etag": "typed", "size": len(content)}
+        return {"content_id": "typed", "size": len(content)}
 
 
 def test_remote_sys_read_uses_generic_rpc_for_server_side_scoping() -> None:

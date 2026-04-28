@@ -163,12 +163,12 @@ class IsolatedBackend(Backend):
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 8192,
         context: "Any | None" = None,
     ) -> Iterator[bytes]:
         """Read full content via pool, then re-chunk locally."""
-        content = self.read_content(content_hash, context=context)
+        content = self.read_content(content_id, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 

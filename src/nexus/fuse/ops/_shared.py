@@ -393,7 +393,7 @@ def _maybe_parse(ctx: FUSESharedContext, path: str, view_type: str | None, conte
 
 
 def get_content_hash(ctx: FUSESharedContext, path: str) -> str | None:
-    """Get content hash for a file from metadata."""
+    """Get content id for a file from metadata."""
     from nexus.lib.sync_bridge import run_sync as _run_sync
 
     try:
@@ -401,8 +401,8 @@ def get_content_hash(ctx: FUSESharedContext, path: str) -> str | None:
         if metadata is None:
             return None
         if isinstance(metadata, dict):
-            return metadata.get("content_hash") or metadata.get("hash")
-        return getattr(metadata, "content_hash", None) or getattr(metadata, "hash", None)
+            return metadata.get("content_id") or metadata.get("hash")
+        return getattr(metadata, "content_id", None) or getattr(metadata, "hash", None)
     except Exception:
         return None  # FUSE hot path — no logging to avoid perf impact
 

@@ -57,7 +57,7 @@ class TestOnPostWrite:
             content=b"data",
             context=None,
             old_metadata=old,
-            content_hash="new-hash",
+            content_id="new-hash",
         )
         hook.on_post_write(ctx)
 
@@ -80,7 +80,7 @@ class TestOnPostWrite:
             content=b"data",
             context=None,
             old_metadata=_make_meta(),
-            content_hash="new-hash",
+            content_id="new-hash",
         )
         hook.on_post_write(ctx)
         mock_svc.track_write.assert_not_called()
@@ -94,7 +94,7 @@ class TestOnPostWrite:
             content=b"data",
             context=None,
             old_metadata=None,
-            content_hash="hash-1",
+            content_id="hash-1",
             is_new_file=True,
         )
         hook.on_post_write(ctx)

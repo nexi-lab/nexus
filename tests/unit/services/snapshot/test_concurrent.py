@@ -55,15 +55,15 @@ class TestCASHoldConcurrent:
         sem = PythonVFSSemaphore()
         ref_count = {"count": 1}
 
-        def mock_hold_reference(content_hash: str) -> bool:
-            holder = sem.acquire(content_hash, max_holders=1, timeout_ms=5000)
+        def mock_hold_reference(content_id: str) -> bool:
+            holder = sem.acquire(content_id, max_holders=1, timeout_ms=5000)
             if holder is None:
                 return False
             try:
                 ref_count["count"] += 1
                 return True
             finally:
-                sem.release(content_hash, holder)
+                sem.release(content_id, holder)
 
         num_threads = 20
 

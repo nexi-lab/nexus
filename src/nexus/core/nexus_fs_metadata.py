@@ -755,7 +755,7 @@ class MetadataMixin:
             # Reconstruct old metadata from Rust result fields for the
             # audit trail (record_store_write_observer uses .content_id + .to_dict()).
             _old_meta: _FM | None = None
-            if _rename_result.old_etag is not None or _rename_result.old_size is not None:
+            if _rename_result.old_content_id is not None or _rename_result.old_size is not None:
                 from datetime import UTC, datetime
 
                 _mod_at = (
@@ -766,7 +766,7 @@ class MetadataMixin:
                 _old_meta = _FM(
                     path=old_path,
                     size=_rename_result.old_size or 0,
-                    content_id=_rename_result.old_etag,
+                    content_id=_rename_result.old_content_id,
                     version=_rename_result.old_version or 1,
                     modified_at=_mod_at,
                 )
@@ -848,7 +848,7 @@ class MetadataMixin:
             "src_path": src_path,
             "dst_path": dst_path,
             "size": _copy_result.size,
-            "content_id": _copy_result.etag,
+            "content_id": _copy_result.content_id,
             "version": _copy_result.version,
         }
 

@@ -41,7 +41,7 @@ def session_factory(engine):
 
 def _make_manifest(*files: tuple[str, str, int]) -> WorkspaceManifest:
     """Create a manifest from (path, hash, size) tuples."""
-    entries = {path: ManifestEntry(content_hash=h, size=s, mime_type=None) for path, h, s in files}
+    entries = {path: ManifestEntry(content_id=h, size=s, mime_type=None) for path, h, s in files}
     return WorkspaceManifest(entries=entries)
 
 

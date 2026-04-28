@@ -41,7 +41,7 @@ class ReadHookContext:
     agent_id: str | None = None
     metadata: FileMetadata | None = None
     content: bytes | None = None
-    content_hash: str | None = None
+    content_id: str | None = None
     warnings: list[OperationWarning] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -56,7 +56,7 @@ class WriteHookContext:
     zone_id: str | None = None
     agent_id: str | None = None
     is_new_file: bool = False
-    content_hash: str | None = None
+    content_id: str | None = None
     metadata: FileMetadata | None = None
     old_metadata: FileMetadata | None = None
     new_version: int = 1

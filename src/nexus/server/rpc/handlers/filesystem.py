@@ -422,7 +422,7 @@ async def handle_semantic_search_index(
         db_path = unscope_internal_path(path)
 
         # Query file paths from the daemon's database connection.  Also
-        # grab the ``content_hash`` at selection time so the stale-doc CAS
+        # grab the ``content_id`` at selection time so the stale-doc CAS
         # below can cite the row's then-current hash regardless of what
         # algorithm the backend used to produce it (raw-byte BLAKE3 for
         # local CAS, provider version IDs for S3/GCS, …).  Scope the
@@ -440,7 +440,7 @@ async def handle_semantic_search_index(
                     like_pattern = db_path.rstrip("/") + "/%"
                     result = await sess.execute(
                         sa_text(
-                            "SELECT virtual_path, content_hash FROM file_paths"
+                            "SELECT virtual_path, content_id FROM file_paths"
                             " WHERE (virtual_path LIKE :like OR virtual_path = :exact)"
                             "   AND zone_id = :zid"
                             "   AND deleted_at IS NULL"
@@ -453,7 +453,7 @@ async def handle_semantic_search_index(
                 else:
                     result = await sess.execute(
                         sa_text(
-                            "SELECT content_hash FROM file_paths"
+                            "SELECT content_id FROM file_paths"
                             " WHERE virtual_path = :exact"
                             "   AND zone_id = :zid"
                             "   AND deleted_at IS NULL"
@@ -483,7 +483,7 @@ async def handle_semantic_search_index(
         documents: list[dict[str, Any]] = []
         read_errors = 0
         total_chunks = 0
-        # Track (doc_id, file_path, observed_content_hash) tuples for
+        # Track (doc_id, file_path, observed_content_id) tuples for
         # parseable files whose parse SUCCEEDED but produced empty text
         # (image-only PDFs, blank docx, …).  Only these are reliable
         # stale-doc signals: a parser *error* might be a transient outage,
@@ -491,7 +491,7 @@ async def handle_semantic_search_index(
         # back on the next tick.  ``_apply_parse_transform_with_status``
         # tells these apart.
         #
-        # ``observed_content_hash`` is whatever ``file_paths.content_hash``
+        # ``observed_content_id`` is whatever ``file_paths.content_id``
         # held at selection time — BLAKE3 for local CAS backends, provider
         # version IDs for S3/GCS.  The CAS below compares string equality
         # against the current row, so the stored shape doesn't matter:
@@ -501,7 +501,7 @@ async def handle_semantic_search_index(
         for file_path in paths_to_index:
             try:
                 raw = nexus_fs.sys_read(file_path, context=context)
-                # Pass the DB-tracked content_hash so the parse cache key
+                # Pass the DB-tracked content_id so the parse cache key
                 # matches what has_successful_parse later compares against
                 # (etag on S3/GCS, BLAKE3 on local CAS — adapter stores
                 # whatever the caller supplies).
@@ -511,7 +511,7 @@ async def handle_semantic_search_index(
                     file_path,
                     raw,
                     parse_fn=_parse_fn,
-                    content_hash=observed_hash,
+                    content_id=observed_hash,
                 )
                 doc_id = f"{zone_id}:{file_path}" if zone_id != ROOT_ZONE_ID else file_path
                 if content_str and content_str.strip():
@@ -530,7 +530,7 @@ async def handle_semantic_search_index(
         )
 
         # CAS-guard the purge against concurrent writers.  Re-read
-        # ``file_paths.content_hash`` for every candidate and only delete
+        # ``file_paths.content_id`` for every candidate and only delete
         # docs whose current DB-tracked hash still equals what we saw at
         # read time.  If the hash has advanced, someone rewrote the file
         # under us and a concurrent indexer may have already succeeded
@@ -550,7 +550,7 @@ async def handle_semantic_search_index(
                         row = (
                             await sess.execute(
                                 _sa_text(
-                                    "SELECT content_hash FROM file_paths"
+                                    "SELECT content_id FROM file_paths"
                                     " WHERE virtual_path = :vp"
                                     "   AND zone_id = :zid"
                                     "   AND deleted_at IS NULL"
@@ -560,7 +560,7 @@ async def handle_semantic_search_index(
                         ).fetchone()
                     except Exception as cas_err:
                         _log.warning(
-                            "semantic_search_index: content_hash CAS lookup failed for %s: %s",
+                            "semantic_search_index: content_id CAS lookup failed for %s: %s",
                             file_path,
                             cas_err,
                         )
@@ -573,13 +573,13 @@ async def handle_semantic_search_index(
                     # Otherwise skip — the hash either advanced (concurrent
                     # writer may have re-indexed) or we never had a hash to
                     # compare against (permissive delete could wipe healthy
-                    # docs on backends that don't populate content_hash).
+                    # docs on backends that don't populate content_id).
                     if row is None or observed_hash is not None and row[0] == observed_hash:
                         stale_ids_to_delete.append(doc_id)
                     else:
                         _log.info(
                             "semantic_search_index: skipped stale-doc purge for %s — "
-                            "content_hash advanced or unavailable (CAS miss)",
+                            "content_id advanced or unavailable (CAS miss)",
                             file_path,
                         )
         elif stale_candidates:

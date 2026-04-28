@@ -153,7 +153,7 @@ class ContentMixin:
                 zone_id=zone_id,
                 agent_id=agent_id,
                 content=data,
-                content_hash=result.content_hash,
+                content_id=result.content_id,
             )
             self._kernel.dispatch_post_hooks("read", _read_ctx)
             data = _read_ctx.content or data
@@ -595,7 +595,7 @@ class ContentMixin:
                 _old_metadata = FileMetadata(
                     path=path,
                     size=result.old_size or 0,
-                    content_id=result.old_etag,
+                    content_id=result.old_content_id,
                     version=result.old_version or 1,
                     modified_at=_mod_at,
                 )
@@ -618,7 +618,7 @@ class ContentMixin:
                     zone_id=zone_id,
                     agent_id=agent_id,
                     is_new_file=result.is_new,
-                    content_hash=result.content_id or "",
+                    content_id=result.content_id or "",
                     metadata=_meta_obj,
                     old_metadata=_old_metadata,
                     new_version=result.version,
@@ -748,7 +748,7 @@ class ContentMixin:
             _old_meta = FileMetadata(
                 path=path,
                 size=result.old_size or 0,
-                etag=result.old_etag,
+                content_id=result.old_content_id,
                 version=result.old_version or 1,
                 modified_at=_mod_at,
             )
@@ -768,7 +768,7 @@ class ContentMixin:
                 zone_id=zone_id,
                 agent_id=agent_id,
                 is_new_file=result.is_new,
-                content_hash=_cid,
+                content_id=_cid,
                 metadata=FileMetadata(
                     path=path,
                     size=result.size,
@@ -1375,7 +1375,7 @@ class ContentMixin:
                 {
                     "path":        str,
                     "content":     bytes,
-                    "content_id":  str | None,   # from actual read bytes (r.content_hash)
+                    "content_id":  str | None,   # from actual read bytes (r.content_id)
                     "version":     int,           # from pre-read metadata snapshot
                     "modified_at": datetime | None,  # from pre-read metadata snapshot
                     "size":        int,
@@ -1549,16 +1549,16 @@ class ContentMixin:
                     zone_id=zone_id,
                     agent_id=agent_id,
                     content=content,
-                    content_hash=r.content_hash,
+                    content_id=r.content_id,
                 )
                 self._kernel.dispatch_post_hooks("read", _read_ctx)
                 content = _read_ctx.content or content
 
-            # Use r.content_hash as the primary content_id — it reflects the actual bytes
+            # Use r.content_id as the primary content_id — it reflects the actual bytes
             # returned by this read, not the pre-read metadata snapshot (which can be
             # stale under concurrent writes).  Fall back to meta.content_id only when the
-            # Rust result has no content_hash (older backends / degenerate path).
-            _etag = r.content_hash or (meta.content_id if meta else None)
+            # Rust result has no content_id (older backends / degenerate path).
+            _etag = r.content_id or (meta.content_id if meta else None)
             results.append(
                 {
                     "path": path,

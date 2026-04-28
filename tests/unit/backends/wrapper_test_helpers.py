@@ -52,18 +52,18 @@ def make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
         storage[h] = content
         return WriteResult(content_id=h, version=h, size=len(content))
 
-    def read_content(content_hash: str, context: object = None) -> bytes:
-        if content_hash in storage:
-            return storage[content_hash]
-        raise NexusFileNotFoundError(content_hash)
+    def read_content(content_id: str, context: object = None) -> bytes:
+        if content_id in storage:
+            return storage[content_id]
+        raise NexusFileNotFoundError(content_id)
 
     def batch_read_content(
-        content_hashes: list[str],
+        content_ids: list[str],
         context: object = None,
         *,
         contexts: dict | None = None,
     ) -> dict[str, bytes | None]:
-        return {h: storage.get(h) for h in content_hashes}
+        return {h: storage.get(h) for h in content_ids}
 
     mock.write_content = MagicMock(side_effect=write_content)
     mock.read_content = MagicMock(side_effect=read_content)

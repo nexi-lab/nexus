@@ -87,13 +87,13 @@ class TestOnWriteHappyPath:
             fps = session.query(FilePathModel).filter(FilePathModel.deleted_at.is_(None)).all()
             assert len(fps) == 1
             assert fps[0].virtual_path == "/new.txt"
-            assert fps[0].content_hash == "hash1"
+            assert fps[0].content_id == "hash1"
             assert fps[0].current_version == 1
 
             vhs = session.query(VersionHistoryModel).all()
             assert len(vhs) == 1
             assert vhs[0].version_number == 1
-            assert vhs[0].content_hash == "hash1"
+            assert vhs[0].content_id == "hash1"
 
     def test_update_file_increments_version(
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
@@ -116,7 +116,7 @@ class TestOnWriteHappyPath:
                 .one()
             )
             assert fp.current_version == 2
-            assert fp.content_hash == "v2hash"
+            assert fp.content_id == "v2hash"
 
             vhs = (
                 session.query(VersionHistoryModel)

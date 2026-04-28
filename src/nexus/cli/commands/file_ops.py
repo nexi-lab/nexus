@@ -326,16 +326,16 @@ def _cat_md_section(
         hook = nx.service("md_structure") if hasattr(nx, "service") else None
         if hook is None or not hasattr(hook, "read_section"):
             return None
-        content_hash = ""
+        content_id = ""
         meta = getattr(nx, "metadata", None)
         if meta is not None:
             try:
                 file_meta = meta.get(path)
                 if file_meta and file_meta.content_id:
-                    content_hash = file_meta.content_id
+                    content_id = file_meta.content_id
             except Exception:
                 pass
-        result: str | None = hook.read_section(path, content, content_hash, section, block_type)
+        result: str | None = hook.read_section(path, content, content_id, section, block_type)
         return result
     except Exception:
         return None

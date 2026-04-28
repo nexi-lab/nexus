@@ -85,7 +85,7 @@ class TestTTLFullPathIntegration:
         # Write with very small TTL
         ctx = self._make_context(ttl_seconds=0.001)
         result = engine.write_content(b"short lived", context=ctx)
-        content_hash = result.content_id
+        content_id = result.content_id
 
         # Seal so the sweeper can operate
         for eng in transport._ttl_engines.values():
@@ -96,7 +96,7 @@ class TestTTLFullPathIntegration:
 
         # Read should raise NexusFileNotFoundError (expired at read time)
         with pytest.raises(NexusFileNotFoundError):
-            engine.read_content(content_hash)
+            engine.read_content(content_id)
 
         # Run the sweeper
         results = transport.expire_ttl_volumes()
@@ -145,7 +145,7 @@ class TestTTLGCSeparation:
     """Verify GC only operates on permanent engine (decision 7A)."""
 
     def test_list_content_hashes_excludes_ttl(self, tmp_path) -> None:
-        """list_content_hashes() only returns permanent engine hashes."""
+        """list_content_ids() only returns permanent engine hashes."""
         from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
 
         transport = VolumeLocalTransport(str(tmp_path))
@@ -158,8 +158,8 @@ class TestTTLGCSeparation:
         h_ttl = f"{'b' * 64}"
         transport.store_ttl(f"cas/{h_ttl[:2]}/{h_ttl[2:4]}/{h_ttl}", b"ttl", ttl_seconds=60.0)
 
-        # list_content_hashes should only return permanent hashes
-        hashes = transport.list_content_hashes()
+        # list_content_ids should only return permanent hashes
+        hashes = transport.list_content_ids()
         hash_set = {h for h, _ in hashes}
 
         assert h_perm in hash_set

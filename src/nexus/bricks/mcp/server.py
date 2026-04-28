@@ -362,14 +362,14 @@ async def create_mcp_server(
         if hook is None or not hasattr(hook, "read_section"):
             return None
 
-        content_hash = _md_get_etag(nx_instance, path)
-        return hook.read_section(path, content, content_hash, section, block_type)
+        content_id = _md_get_etag(nx_instance, path)
+        return hook.read_section(path, content, content_id, section, block_type)
 
     def _md_get_structure_listing(
         nx_instance: NexusFS,
         path: str,
         content: bytes | None = None,
-        content_hash: str = "",
+        content_id: str = "",
     ) -> list[dict[str, Any]] | None:
         """Get the structure listing for a markdown file.
 
@@ -380,7 +380,7 @@ async def create_mcp_server(
         if hook is None or not hasattr(hook, "get_structure_listing"):
             return None
 
-        return hook.get_structure_listing(path, content=content, content_hash=content_hash)
+        return hook.get_structure_listing(path, content=content, content_id=content_id)
 
     # =========================================================================
     # FILE OPERATIONS TOOLS
@@ -475,9 +475,9 @@ async def create_mcp_server(
         except Exception as e:
             return tool_error("access_denied", f"Cannot access {path}: {e}")
         content = raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
-        content_hash = _md_get_etag(nx_instance, path)
+        content_id = _md_get_etag(nx_instance, path)
         listing = _md_get_structure_listing(
-            nx_instance, path, content=content, content_hash=content_hash
+            nx_instance, path, content=content, content_id=content_id
         )
         if listing is None:
             return tool_error("not_found", f"No markdown structure available for {path}")

@@ -130,7 +130,7 @@ class TestWriteContent:
         result = connector.write_content(content, ctx)
 
         assert isinstance(result, WriteResult)
-        assert result.content_hash  # SHA256 of CLI stdout
+        assert result.content_id  # SHA256 of CLI stdout
         assert result.size == len(content)
 
     def test_validated_payload_forwarded_to_cli(self) -> None:

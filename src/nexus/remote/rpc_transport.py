@@ -241,16 +241,19 @@ class RPCTransport:
         self,
         path: str,
         content: bytes,
-        etag: str | None = None,
+        content_id: str | None = None,
         read_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Write file content via typed Write RPC — no JSON/base64 overhead.
 
         Returns:
-            Dict with ``etag`` and ``size``.
+            Dict with ``content_id`` and ``size``.
         """
         request = vfs_pb2.WriteRequest(
-            path=path, content=content, auth_token=self._auth_token, etag=etag or ""
+            path=path,
+            content=content,
+            auth_token=self._auth_token,
+            content_id=content_id or "",
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
@@ -259,7 +262,7 @@ class RPCTransport:
             self._raise_transport_error(exc, timeout, "Write")
         if response.is_error:
             self._handle_typed_error(response.error_payload)
-        return {"etag": response.etag, "size": response.size}
+        return {"content_id": response.content_id, "size": response.size}
 
     @retry(
         stop=stop_after_attempt(3),

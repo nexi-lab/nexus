@@ -24,7 +24,7 @@ class _FakeTxn:
 class _FakeEntry:
     path: str = "/corp/file.txt"
     operation: str = "write"
-    content_hash: str = "abc123"
+    content_id: str = "abc123"
 
 
 @pytest.fixture()

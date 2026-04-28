@@ -689,7 +689,7 @@ class RaftMetadataStore(MetastoreABC):
             paths: List of virtual paths
 
         Returns:
-            Dictionary mapping path to content_hash (or None if not found)
+            Dictionary mapping path to content_id (or None if not found)
         """
         if not paths:
             return {}

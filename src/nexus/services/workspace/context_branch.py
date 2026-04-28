@@ -1283,7 +1283,7 @@ class ContextBranchService:
         for path in base_paths & target_paths:
             base_entry = base.get(path)
             target_entry = target.get(path)
-            if base_entry and target_entry and base_entry.content_hash != target_entry.content_hash:
+            if base_entry and target_entry and base_entry.content_id != target_entry.content_id:
                 changes[path] = ("modify", target_entry)
 
         return changes

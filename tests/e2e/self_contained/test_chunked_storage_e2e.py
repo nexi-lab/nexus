@@ -70,21 +70,21 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
         nexus_fs.write("/delete_test.bin", large_content)
-        content_hash = nexus_fs.get_etag("/delete_test.bin")
+        content_id = nexus_fs.get_etag("/delete_test.bin")
 
         # Verify chunked and content exists
-        assert nexus_fs._kernel.cas_is_chunked("/", "root", content_hash)
-        assert nexus_fs._kernel.cas_exists("/", "root", content_hash)
+        assert nexus_fs._kernel.cas_is_chunked("/", "root", content_id)
+        assert nexus_fs._kernel.cas_exists("/", "root", content_id)
 
         # Delete VFS metadata
         nexus_fs.sys_unlink("/delete_test.bin")
         assert nexus_fs.sys_stat("/delete_test.bin") is None
 
         # Simulate GC cleanup
-        nexus_fs._kernel.cas_delete("/", "root", content_hash)
+        nexus_fs._kernel.cas_delete("/", "root", content_id)
 
         # Content hash should no longer exist
-        assert not nexus_fs._kernel.cas_exists("/", "root", content_hash)
+        assert not nexus_fs._kernel.cas_exists("/", "root", content_id)
 
     @pytest.mark.asyncio
     async def test_file_size_correct_for_chunked(self, nexus_fs) -> None:

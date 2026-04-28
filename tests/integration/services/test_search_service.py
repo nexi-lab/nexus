@@ -1412,7 +1412,7 @@ def _make_md_structure_json():
     return json.dumps(
         {
             "version": 2,
-            "content_hash": "abc123",
+            "content_id": "abc123",
             "tokens_est_method": "bytes/4",
             "frontmatter": {
                 "byte_start": 0,

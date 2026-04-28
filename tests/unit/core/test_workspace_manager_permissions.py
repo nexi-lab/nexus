@@ -55,7 +55,7 @@ class TestWorkspaceManagerPermissions:
         """Test that create_snapshot succeeds when permission is granted."""
         # Setup
         mock_rebac_manager.rebac_check.return_value = True
-        mock_backend.write_content.return_value = MagicMock(content_hash="manifest_hash_123")
+        mock_backend.write_content.return_value = MagicMock(content_id="manifest_hash_123")
 
         # Mock database session
         mock_session = MagicMock()
@@ -352,7 +352,7 @@ class TestWorkspaceManagerPermissions:
             record_store=MagicMock(session_factory=mock_metadata.SessionLocal),
         )
 
-        mock_backend.write_content.return_value = MagicMock(content_hash="manifest_hash_123")
+        mock_backend.write_content.return_value = MagicMock(content_id="manifest_hash_123")
         mock_session = MagicMock()
         mock_metadata.SessionLocal.return_value.__enter__.return_value = mock_session
         mock_metadata.list.return_value = []

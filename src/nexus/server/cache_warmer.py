@@ -776,9 +776,9 @@ class CacheWarmer:
                     if self._local_disk_cache and isinstance(content, bytes):
                         metadata = self._nexus.metadata.get(path)
                         if metadata and metadata.content_id:
-                            content_hash = metadata.content_id
+                            content_id = metadata.content_id
                             self._local_disk_cache.put(
-                                content_hash,
+                                content_id,
                                 content,
                                 zone_id=zone_id,
                             )

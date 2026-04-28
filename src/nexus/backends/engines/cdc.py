@@ -138,7 +138,7 @@ class ChunkedReference:
     total_size: int = 0
     chunk_count: int = 0
     avg_chunk_size: int = 0
-    content_hash: str = ""
+    content_id: str = ""
     chunks: tuple[ChunkInfo, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,7 +147,7 @@ class ChunkedReference:
             "total_size": self.total_size,
             "chunk_count": self.chunk_count,
             "avg_chunk_size": self.avg_chunk_size,
-            "content_hash": self.content_hash,
+            "content_id": self.content_id,
             "chunks": [c.to_dict() for c in self.chunks],
         }
 
@@ -158,7 +158,7 @@ class ChunkedReference:
             total_size=data["total_size"],
             chunk_count=data["chunk_count"],
             avg_chunk_size=data.get("avg_chunk_size", 0),
-            content_hash=data["content_hash"],
+            content_id=data["content_id"],
             chunks=tuple(ChunkInfo.from_dict(c) for c in data["chunks"]),
         )
 
@@ -255,7 +255,7 @@ class CDCEngine:
             total_size=len(content),
             chunk_count=len(chunk_infos),
             avg_chunk_size=len(content) // len(chunk_infos) if chunk_infos else 0,
-            content_hash=full_content_hash,
+            content_id=full_content_hash,
             chunks=tuple(chunk_infos),
         )
         manifest_bytes = manifest.to_json()
@@ -405,7 +405,7 @@ class CDCEngine:
             total_size=total_size,
             chunk_count=len(all_chunks),
             avg_chunk_size=total_size // len(all_chunks) if all_chunks else 0,
-            content_hash="",  # Skip full-file hash for partial writes
+            content_id="",  # Skip full-file hash for partial writes
             chunks=all_chunks,
         )
         manifest_bytes = new_manifest.to_json()
@@ -454,13 +454,13 @@ class CDCEngine:
         content = b"".join(chunk_data[o] for o in sorted(chunk_data.keys()))
 
         # Verify full-content hash when available.
-        # Partial writes (write_chunked_partial) set content_hash="" — skip check,
+        # Partial writes (write_chunked_partial) set content_id="" — skip check,
         # relying on per-chunk hash verification instead (Issue #1395).
-        if manifest.content_hash:
+        if manifest.content_id:
             actual_hash = hash_content(content)
-            if actual_hash != manifest.content_hash:
+            if actual_hash != manifest.content_id:
                 raise ValueError(
-                    f"Content hash mismatch: expected {manifest.content_hash}, got {actual_hash}"
+                    f"Content hash mismatch: expected {manifest.content_id}, got {actual_hash}"
                 )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000

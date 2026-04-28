@@ -39,35 +39,35 @@ class TestDefaultBackendStreamRange:
     def test_stream_range_first_10_bytes(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"0123456789ABCDEF"
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
         # Use the base class default impl by calling through the method
         # (CASLocalBackend overrides, so we test the base default explicitly)
         from nexus.backends.base.backend import Backend
 
-        chunks = list(Backend.stream_range(backend, content_hash, 0, 9))
+        chunks = list(Backend.stream_range(backend, content_id, 0, 9))
         result = b"".join(chunks)
         assert result == b"0123456789"
 
     def test_stream_range_middle_bytes(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"0123456789ABCDEF"
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
         from nexus.backends.base.backend import Backend
 
-        chunks = list(Backend.stream_range(backend, content_hash, 5, 10))
+        chunks = list(Backend.stream_range(backend, content_id, 5, 10))
         result = b"".join(chunks)
         assert result == b"56789A"
 
     def test_stream_range_last_bytes(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"0123456789ABCDEF"
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
         from nexus.backends.base.backend import Backend
 
-        chunks = list(Backend.stream_range(backend, content_hash, 10, 15))
+        chunks = list(Backend.stream_range(backend, content_id, 10, 15))
         result = b"".join(chunks)
         assert result == b"ABCDEF"
 
@@ -81,9 +81,9 @@ class TestCASLocalBackendStreamRange:
     def test_first_10_bytes(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"Hello, World! This is a test file for range requests."
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
-        chunks = list(backend.stream_range(content_hash, 0, 9))
+        chunks = list(backend.stream_range(content_id, 0, 9))
         result = b"".join(chunks)
         assert result == b"Hello, Wor"
         assert len(result) == 10
@@ -91,45 +91,45 @@ class TestCASLocalBackendStreamRange:
     def test_middle_range(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
-        chunks = list(backend.stream_range(content_hash, 10, 19))
+        chunks = list(backend.stream_range(content_id, 10, 19))
         result = b"".join(chunks)
         assert result == b"KLMNOPQRST"
 
     def test_last_bytes(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"ABCDEFGHIJ"
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
-        chunks = list(backend.stream_range(content_hash, 7, 9))
+        chunks = list(backend.stream_range(content_id, 7, 9))
         result = b"".join(chunks)
         assert result == b"HIJ"
 
     def test_single_byte(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"ABCDE"
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
-        chunks = list(backend.stream_range(content_hash, 2, 2))
+        chunks = list(backend.stream_range(content_id, 2, 2))
         result = b"".join(chunks)
         assert result == b"C"
 
     def test_full_file(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"Complete file content"
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
-        chunks = list(backend.stream_range(content_hash, 0, len(data) - 1))
+        chunks = list(backend.stream_range(content_id, 0, len(data) - 1))
         result = b"".join(chunks)
         assert result == data
 
     def test_respects_chunk_size(self, tmp_path: Path) -> None:
         backend = _create_local_backend(tmp_path)
         data = b"A" * 100
-        content_hash = _write_content(backend, data)
+        content_id = _write_content(backend, data)
 
-        chunks = list(backend.stream_range(content_hash, 0, 99, chunk_size=30))
+        chunks = list(backend.stream_range(content_id, 0, 99, chunk_size=30))
         # Should have 4 chunks: 30 + 30 + 30 + 10
         assert len(chunks) == 4
         assert len(chunks[0]) == 30

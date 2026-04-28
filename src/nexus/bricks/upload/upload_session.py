@@ -41,7 +41,7 @@ class UploadSession:
         backend_upload_id: Backend-specific multipart upload ID (e.g. S3 UploadId).
         backend_name: Name of the backend handling this upload.
         parts_received: Number of chunk parts received so far.
-        content_hash: Final content hash after assembly (BLAKE3).
+        content_id: Final content hash after assembly (BLAKE3).
     """
 
     upload_id: str
@@ -58,7 +58,7 @@ class UploadSession:
     backend_upload_id: str | None = None
     backend_name: str | None = None
     parts_received: int = 0
-    content_hash: str | None = None
+    content_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for persistence."""
@@ -77,7 +77,7 @@ class UploadSession:
             "backend_upload_id": self.backend_upload_id,
             "backend_name": self.backend_name,
             "parts_received": self.parts_received,
-            "content_hash": self.content_hash,
+            "content_id": self.content_id,
         }
 
     @classmethod
@@ -114,7 +114,7 @@ class UploadSession:
             backend_upload_id=data.get("backend_upload_id"),
             backend_name=data.get("backend_name"),
             parts_received=data.get("parts_received", 0),
-            content_hash=data.get("content_hash"),
+            content_id=data.get("content_id"),
         )
 
     @property

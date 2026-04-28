@@ -48,7 +48,7 @@ def _write_ctx(**kwargs) -> WriteHookContext:
         "zone_id": "z1",
         "agent_id": None,
         "is_new_file": True,
-        "content_hash": "abc",
+        "content_id": "abc",
         "metadata": None,
         "old_metadata": None,
         "new_version": 1,

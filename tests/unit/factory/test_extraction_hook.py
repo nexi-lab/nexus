@@ -237,8 +237,8 @@ class TestExtractionHook:
         """One file failing doesn't prevent other files from being extracted."""
         mock_backend = MagicMock()
 
-        def read_content(content_hash):
-            if content_hash == "bad":
+        def read_content(content_id):
+            if content_id == "bad":
                 raise RuntimeError("Corrupted")
             return b"name,age\nAlice,30\n"
 

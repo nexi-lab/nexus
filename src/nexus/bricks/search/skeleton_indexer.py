@@ -2,7 +2,7 @@
 
 Responsible for:
     1. Reading the first SKELETON_HEAD_BYTES of a file.
-    2. Computing skeleton_content_hash = sha256(head) and skipping if unchanged.
+    2. Computing skeleton_content_id = sha256(head) and skipping if unchanged.
     3. Dispatching to the correct DocumentExtractor from SKELETON_EXTRACTOR_REGISTRY.
     4. Upserting the row into document_skeleton (DB) and the BM25S index (daemon).
 
@@ -13,7 +13,7 @@ lifecycle or the mutation event format.  The SkeletonPipeConsumer calls
 Design decisions:
     - 2KB head cap enforced here (7A), not inside each extractor.
     - path_tokens dropped (6A): virtual_path + title fed as separate BM25S fields.
-    - skip guard via skeleton_content_hash (14A).
+    - skip guard via skeleton_content_id (14A).
     - Bootstrap from DB rows handled by SearchDaemon, not this module (13B).
 """
 
@@ -199,7 +199,7 @@ class SkeletonIndexer:
 
             async with self._session_factory() as session:
                 result = await session.execute(
-                    select(DocumentSkeletonModel.skeleton_content_hash).where(
+                    select(DocumentSkeletonModel.skeleton_content_id).where(
                         DocumentSkeletonModel.path_id == path_id
                     )
                 )
@@ -214,7 +214,7 @@ class SkeletonIndexer:
         path_id: str,
         zone_id: str,
         title: str | None,
-        content_hash: str,
+        content_id: str,
     ) -> None:
         if self._session_factory is None:
             return
@@ -230,7 +230,7 @@ class SkeletonIndexer:
                     path_id=path_id,
                     zone_id=zone_id,
                     title=title,
-                    skeleton_content_hash=content_hash,
+                    skeleton_content_id=content_id,
                     indexed_at=now,
                 )
                 stmt = stmt.on_conflict_do_update(
@@ -238,7 +238,7 @@ class SkeletonIndexer:
                     set_={
                         "zone_id": zone_id,
                         "title": title,
-                        "skeleton_content_hash": content_hash,
+                        "skeleton_content_id": content_id,
                         "indexed_at": now,
                     },
                 )
@@ -246,14 +246,14 @@ class SkeletonIndexer:
                 await session.commit()
         except Exception:
             # Attempt PostgreSQL upsert as fallback
-            await self._upsert_db_row_pg(path_id, zone_id, title, content_hash)
+            await self._upsert_db_row_pg(path_id, zone_id, title, content_id)
 
     async def _upsert_db_row_pg(
         self,
         path_id: str,
         zone_id: str,
         title: str | None,
-        content_hash: str,
+        content_id: str,
     ) -> None:
         if self._session_factory is None:
             return
@@ -268,7 +268,7 @@ class SkeletonIndexer:
                     path_id=path_id,
                     zone_id=zone_id,
                     title=title,
-                    skeleton_content_hash=content_hash,
+                    skeleton_content_id=content_id,
                     indexed_at=now,
                 )
                 stmt = stmt.on_conflict_do_update(
@@ -276,7 +276,7 @@ class SkeletonIndexer:
                     set_={
                         "zone_id": zone_id,
                         "title": title,
-                        "skeleton_content_hash": content_hash,
+                        "skeleton_content_id": content_id,
                         "indexed_at": now,
                     },
                 )

@@ -55,9 +55,9 @@ async def stream_file(
         )
 
         meta = await to_thread_with_timeout(nexus_fs.stat, full_path, context=context)
-        content_hash = meta.get("content_id") or meta.get("content_hash")
-        if not content_hash:
-            raise HTTPException(status_code=500, detail="File has no content hash")
+        content_id = meta.get("content_id")
+        if not content_id:
+            raise HTTPException(status_code=500, detail="File has no content id")
 
         total_size = meta.get("size", 0)
 
@@ -68,10 +68,10 @@ async def stream_file(
             ),
             full_generator=lambda: nexus_fs.stream(full_path, context=context),
             total_size=total_size,
-            etag=content_hash,
+            etag=content_id,
             content_type="application/octet-stream",
             filename=path.split("/")[-1],
-            extra_headers={"X-Content-Hash": content_hash},
+            extra_headers={"X-Content-Id": content_id},
         )
 
     except NexusFileNotFoundError:

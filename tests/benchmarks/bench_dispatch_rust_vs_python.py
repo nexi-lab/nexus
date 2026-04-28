@@ -60,7 +60,7 @@ def _write_ctx(**kw):
         "zone_id": "z1",
         "agent_id": None,
         "is_new_file": True,
-        "content_hash": "abc123",
+        "content_id": "abc123",
         "metadata": None,
         "old_metadata": None,
         "new_version": 1,
@@ -76,7 +76,7 @@ def _read_ctx(**kw):
         "zone_id": "z1",
         "agent_id": None,
         "content": b"x" * 1024,
-        "content_hash": "abc123",
+        "content_id": "abc123",
     }
     defaults.update(kw)
     return ReadHookContext(**defaults)

@@ -40,16 +40,16 @@ class TestBackendWriteStreamDefault:
                 self.written_content = content
                 return ObjectStoreWriteResult(content_id=hash_content(content), size=len(content))
 
-            def read_content(self, content_hash: str, context=None) -> bytes:
+            def read_content(self, content_id: str, context=None) -> bytes:
                 return b""
 
-            def delete_content(self, content_hash: str, context=None) -> None:
+            def delete_content(self, content_id: str, context=None) -> None:
                 pass
 
-            def content_exists(self, content_hash: str, context=None) -> bool:
+            def content_exists(self, content_id: str, context=None) -> bool:
                 return False
 
-            def get_content_size(self, content_hash: str, context=None) -> int:
+            def get_content_size(self, content_id: str, context=None) -> int:
                 return 0
 
             def mkdir(
@@ -89,10 +89,10 @@ class TestCASLocalBackendStreaming:
         """Test that stream_content yields file content in chunks."""
         # Write some content first
         content = b"A" * 1000 + b"B" * 1000 + b"C" * 1000
-        content_hash = local_backend.write_content(content).content_id
+        content_id = local_backend.write_content(content).content_id
 
         # Stream with small chunks
-        chunks = list(local_backend.stream_content(content_hash, chunk_size=500))
+        chunks = list(local_backend.stream_content(content_id, chunk_size=500))
 
         # Should have multiple chunks
         assert len(chunks) == 6  # 3000 bytes / 500 = 6 chunks
@@ -101,9 +101,9 @@ class TestCASLocalBackendStreaming:
     def test_stream_content_default_chunk_size(self, local_backend: CASLocalBackend) -> None:
         """Test stream_content with default chunk size."""
         content = b"test content"
-        content_hash = local_backend.write_content(content).content_id
+        content_id = local_backend.write_content(content).content_id
 
-        chunks = list(local_backend.stream_content(content_hash))
+        chunks = list(local_backend.stream_content(content_id))
 
         assert b"".join(chunks) == content
 
@@ -122,10 +122,10 @@ class TestCASLocalBackendStreaming:
             yield b"World!"
 
         result = local_backend.write_stream(chunks())
-        content_hash = result.content_id
+        content_id = result.content_id
 
         # Verify content was written correctly
-        content = local_backend.read_content(content_hash)
+        content = local_backend.read_content(content_id)
         assert content == b"Hello World!"
 
     def test_write_stream_hash_matches_write_content(self, local_backend: CASLocalBackend) -> None:
@@ -154,10 +154,10 @@ class TestCASLocalBackendStreaming:
                 yield content_per_chunk
 
         result = local_backend.write_stream(chunks())
-        content_hash = result.content_id
+        content_id = result.content_id
 
         # Verify content
-        content = local_backend.read_content(content_hash)
+        content = local_backend.read_content(content_id)
         assert len(content) == chunk_size * num_chunks
         assert content == content_per_chunk * num_chunks
 
@@ -169,10 +169,10 @@ class TestCASLocalBackendStreaming:
             yield  # Make it a generator
 
         result = local_backend.write_stream(chunks())
-        content_hash = result.content_id
+        content_id = result.content_id
 
         # Should write empty content
-        content = local_backend.read_content(content_hash)
+        content = local_backend.read_content(content_id)
         assert content == b""
 
     def test_write_stream_returns_size(self, local_backend: CASLocalBackend) -> None:

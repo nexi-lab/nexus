@@ -43,8 +43,8 @@ class FakeCAS:
         self.store: dict[str, bytes] = {}
         self._snap_counter = 0
 
-    def read_content(self, content_hash, context=None):
-        return self.store[content_hash]
+    def read_content(self, content_id, context=None):
+        return self.store[content_id]
 
     def write_content(self, data, content_id: str = "", *, offset: int = 0, context=None):
         h = hashlib.sha256(data).hexdigest()
@@ -68,7 +68,7 @@ class FakeWorkspaceManager:
         manifest = WorkspaceManifest(
             entries={
                 f"file-{self._snap_counter}.txt": ManifestEntry(
-                    content_hash=f"hash-{self._snap_counter}",
+                    content_id=f"hash-{self._snap_counter}",
                     size=100 * self._snap_counter,
                     mime_type="text/plain",
                 )

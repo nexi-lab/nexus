@@ -111,7 +111,7 @@ SELECT
     fp.virtual_path,
     fp.file_type,
     fp.size_bytes,
-    fp.content_hash,
+    fp.content_id,
     fp.created_at,
     fp.updated_at,
     -- Include status and priority from metadata
@@ -167,7 +167,7 @@ SELECT
     fp.virtual_path,
     fp.file_type,
     fp.size_bytes,
-    fp.content_hash,
+    fp.content_id,
     fp.created_at,
     fp.updated_at,
     (SELECT fm_status.value
@@ -208,7 +208,7 @@ SELECT
     fp.virtual_path,
     fp.file_type,
     fp.size_bytes,
-    fp.content_hash,
+    fp.content_id,
     fp.created_at,
     fp.updated_at,
     (SELECT fm_status.value
@@ -354,7 +354,7 @@ SELECT
     fp.virtual_path,
     fp.file_type,
     fp.size_bytes,
-    fp.content_hash,
+    fp.content_id,
     fp.created_at,
     fp.updated_at,
     (SELECT fm_status.value
@@ -407,7 +407,7 @@ SELECT
     fp.virtual_path,
     fp.file_type,
     fp.size_bytes,
-    fp.content_hash,
+    fp.content_id,
     fp.created_at,
     fp.updated_at,
     fp.accessed_at,

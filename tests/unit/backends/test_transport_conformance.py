@@ -168,14 +168,14 @@ class TestCopyBlob:
 
 class TestListContentHashes:
     def test_empty(self, transport):
-        if not hasattr(transport, "list_content_hashes"):
-            pytest.skip("Transport does not support list_content_hashes")
-        result = transport.list_content_hashes()
+        if not hasattr(transport, "list_content_ids"):
+            pytest.skip("Transport does not support list_content_ids")
+        result = transport.list_content_ids()
         assert result == []
 
     def test_after_put(self, transport):
-        if not hasattr(transport, "list_content_hashes"):
-            pytest.skip("Transport does not support list_content_hashes")
+        if not hasattr(transport, "list_content_ids"):
+            pytest.skip("Transport does not support list_content_ids")
 
         hash_hex = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         key = f"cas/{hash_hex[:2]}/{hash_hex[2:4]}/{hash_hex}"
@@ -185,7 +185,7 @@ class TestListContentHashes:
         if hasattr(transport, "seal_active_volume"):
             transport.seal_active_volume()
 
-        result = transport.list_content_hashes()
+        result = transport.list_content_ids()
         hashes = [h for h, _ts in result]
         assert hash_hex in hashes
 

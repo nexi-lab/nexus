@@ -19,14 +19,14 @@ class TestWritePathTracking:
         path = "/file.txt"
         snapshot_hash = "old-hash"
         metadata_snapshot = {"size": 100}
-        content_hash = "new-hash"
+        content_id = "new-hash"
 
         _snapshot_svc = mock_svc
         if _snapshot_svc is not None:
             _txn_id = _snapshot_svc.is_tracked(path)
             if _txn_id is not None:
                 _snapshot_svc.track_write(
-                    _txn_id, path, snapshot_hash, metadata_snapshot, content_hash
+                    _txn_id, path, snapshot_hash, metadata_snapshot, content_id
                 )
 
         mock_svc.track_write.assert_called_once_with(

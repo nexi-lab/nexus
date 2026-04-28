@@ -35,14 +35,14 @@ def test_write_and_read_content(temp_backend):
     """Test writing and reading content."""
     content = b"Hello, World!"
     result = temp_backend.write_content(content)
-    content_hash = result.content_id
+    content_id = result.content_id
 
     # Verify hash is correct (using BLAKE3)
     expected_hash = hash_content(content)
-    assert content_hash == expected_hash
+    assert content_id == expected_hash
 
     # Read content back
-    retrieved = temp_backend.read_content(content_hash)
+    retrieved = temp_backend.read_content(content_id)
     assert retrieved == content
 
 
@@ -71,18 +71,18 @@ def test_read_nonexistent_content(temp_backend):
 def test_delete_content(temp_backend):
     """Test deleting content."""
     content = b"Content to delete"
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
     # Verify content exists
-    retrieved = temp_backend.read_content(content_hash)
+    retrieved = temp_backend.read_content(content_id)
     assert retrieved == content
 
     # Delete content
-    temp_backend.delete_content(content_hash)
+    temp_backend.delete_content(content_id)
 
     # Verify content is deleted
     with pytest.raises(NexusFileNotFoundError):
-        temp_backend.read_content(content_hash)
+        temp_backend.read_content(content_id)
 
 
 def test_delete_nonexistent_content(temp_backend):
@@ -99,9 +99,9 @@ def test_delete_nonexistent_content(temp_backend):
 def test_exists_content(temp_backend):
     """Test checking if content exists."""
     content = b"Existence test"
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
-    assert temp_backend.content_exists(content_hash) is True
+    assert temp_backend.content_exists(content_id) is True
 
     fake_hash = "c" * 64
     assert temp_backend.content_exists(fake_hash) is False
@@ -109,12 +109,12 @@ def test_exists_content(temp_backend):
 
 def test_blob_key(temp_backend):
     """Test CAS blob key generation."""
-    content_hash = "abcdef1234567890" + "0" * 48  # 64 char hash
+    content_id = "abcdef1234567890" + "0" * 48  # 64 char hash
 
-    key = temp_backend._blob_key(content_hash)
+    key = temp_backend._blob_key(content_id)
 
     # Should create two-level directory structure: cas/ab/cd/<hash>
-    assert key == f"cas/ab/cd/{content_hash}"
+    assert key == f"cas/ab/cd/{content_id}"
 
 
 def test_content_hash_roundtrip(temp_backend):
@@ -129,14 +129,14 @@ def test_content_hash_roundtrip(temp_backend):
 def test_write_empty_content(temp_backend):
     """Test writing empty content."""
     content = b""
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
     # Verify hash is correct for empty content (using BLAKE3)
     expected_hash = hash_content(b"")
-    assert content_hash == expected_hash
+    assert content_id == expected_hash
 
     # Read it back
-    retrieved = temp_backend.read_content(content_hash)
+    retrieved = temp_backend.read_content(content_id)
     assert retrieved == b""
 
 
@@ -144,10 +144,10 @@ def test_write_large_content(temp_backend):
     """Test writing large content."""
     # 10 MB of data
     content = b"X" * (10 * 1024 * 1024)
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
     # Verify it can be read back
-    retrieved = temp_backend.read_content(content_hash)
+    retrieved = temp_backend.read_content(content_id)
     assert len(retrieved) == len(content)
     assert retrieved == content
 
@@ -155,9 +155,9 @@ def test_write_large_content(temp_backend):
 def test_get_content_size(temp_backend):
     """Test getting content size."""
     content = b"Test content for size"
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
-    size = temp_backend.get_content_size(content_hash)
+    size = temp_backend.get_content_size(content_id)
     assert size == len(content)
 
 
@@ -224,9 +224,9 @@ def test_binary_content(temp_backend):
     """Test handling of binary content."""
     # Binary data with all byte values
     content = bytes(range(256))
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
-    retrieved = temp_backend.read_content(content_hash)
+    retrieved = temp_backend.read_content(content_id)
     assert retrieved == content
 
 
@@ -321,14 +321,14 @@ def test_batch_read_content_empty_list(temp_backend):
 def test_batch_read_content_deduplication(temp_backend):
     """Test that batch read handles duplicate hashes correctly."""
     content = b"Duplicate content"
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
     # Request same hash multiple times
-    result = temp_backend.batch_read_content([content_hash, content_hash, content_hash])
+    result = temp_backend.batch_read_content([content_id, content_id, content_id])
 
     # Dictionary can only have one entry per unique key
     assert len(result) == 1
-    assert result[content_hash] == content
+    assert result[content_id] == content
 
 
 def test_batch_read_content_parallel(tmp_path):
@@ -387,13 +387,13 @@ def test_batch_read_content_single_file_no_threadpool(tmp_path):
     backend = CASLocalBackend(root_path=tmp_path / "backend")
 
     content = b"Single file content"
-    content_hash = backend.write_content(content).content_id
+    content_id = backend.write_content(content).content_id
 
     # Batch read with single file
-    result = backend.batch_read_content([content_hash])
+    result = backend.batch_read_content([content_id])
 
     assert len(result) == 1
-    assert result[content_hash] == content
+    assert result[content_id] == content
 
 
 def test_batch_read_workers_configurable(tmp_path):
@@ -431,10 +431,10 @@ def test_batch_read_respects_worker_limit(tmp_path):
 def test_stream_content_small_file(temp_backend):
     """Test streaming a small file."""
     content = b"Small file content for streaming test"
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
     # Stream content
-    chunks = list(temp_backend.stream_content(content_hash, chunk_size=10))
+    chunks = list(temp_backend.stream_content(content_id, chunk_size=10))
 
     # Verify chunks reassemble to original content
     streamed_content = b"".join(chunks)
@@ -448,11 +448,11 @@ def test_stream_content_large_file(temp_backend):
     """Test streaming a large file in chunks."""
     # Create 1MB test file
     content = b"X" * (1024 * 1024)
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
     # Stream in 64KB chunks
     chunk_size = 64 * 1024
-    chunks = list(temp_backend.stream_content(content_hash, chunk_size=chunk_size))
+    chunks = list(temp_backend.stream_content(content_id, chunk_size=chunk_size))
 
     # Verify chunks reassemble correctly
     streamed_content = b"".join(chunks)
@@ -466,9 +466,9 @@ def test_stream_content_exact_chunk_boundary(temp_backend):
     """Test streaming when file size is exact multiple of chunk size."""
     chunk_size = 100
     content = b"A" * (chunk_size * 5)  # Exactly 5 chunks
-    content_hash = temp_backend.write_content(content).content_id
+    content_id = temp_backend.write_content(content).content_id
 
-    chunks = list(temp_backend.stream_content(content_hash, chunk_size=chunk_size))
+    chunks = list(temp_backend.stream_content(content_id, chunk_size=chunk_size))
 
     assert len(chunks) == 5
     assert all(len(chunk) == chunk_size for chunk in chunks)
@@ -487,11 +487,11 @@ def test_stream_content_memory_efficient(temp_backend):
     """Test that streaming doesn't load entire file into memory."""
     # Create 10MB file
     large_content = b"X" * (10 * 1024 * 1024)
-    content_hash = temp_backend.write_content(large_content).content_id
+    content_id = temp_backend.write_content(large_content).content_id
 
     # Stream it - should not cause memory spike
     total_bytes = 0
-    for chunk in temp_backend.stream_content(content_hash, chunk_size=8192):
+    for chunk in temp_backend.stream_content(content_id, chunk_size=8192):
         total_bytes += len(chunk)
         # Process chunk (in real use, this could be written to network/disk)
         assert len(chunk) <= 8192
@@ -621,7 +621,7 @@ class TestChunkedCASIntegration:
         assert manifest.type == "chunked_manifest_v1"
         assert manifest.total_size == len(content)
         assert manifest.chunk_count > 0
-        assert manifest.content_hash == hash_content(content)
+        assert manifest.content_id == hash_content(content)
 
     def test_chunked_delete_releases_chunks(self, chunked_backend):
         """Deleting chunked content releases all chunk refs."""

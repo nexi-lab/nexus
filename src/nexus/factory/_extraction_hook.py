@@ -27,10 +27,10 @@ def _read_content(
     backend: Any,
 ) -> bytes | None:
     """Read file content from CAS backend."""
-    content_hash = metadata.get("content_id")
-    if not content_hash:
+    content_id = metadata.get("content_id")
+    if not content_id:
         return None
-    result: bytes | None = backend.read_content(content_hash)
+    result: bytes | None = backend.read_content(content_id)
     return result
 
 
@@ -45,7 +45,7 @@ def make_extraction_hook(
 
     Args:
         session_factory: RecordStore session factory for AspectService.
-        backend: Storage backend with read_content(content_hash).
+        backend: Storage backend with read_content(content_id).
         metastore: Metastore (unused, kept for API compatibility).
         max_extract_bytes: Max file size for auto-extraction (100MB).
 

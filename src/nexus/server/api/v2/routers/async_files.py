@@ -1016,8 +1016,8 @@ def create_async_files_router(
             )
             if isinstance(content, str):
                 content = content.encode("utf-8")
-            content_hash = _md_get_etag(fs, path)
-            listing = _md_get_listing(fs, path, content=content, content_hash=content_hash)
+            content_id = _md_get_etag(fs, path)
+            listing = _md_get_listing(fs, path, content=content, content_id=content_id)
             if listing is None:
                 raise HTTPException(
                     status_code=404,
@@ -1062,9 +1062,9 @@ def create_async_files_router(
             hook = fs.service("md_structure") if hasattr(fs, "service") else None
             if hook is None or not hasattr(hook, "read_section"):
                 return None
-            content_hash = _md_get_etag(fs, path)
+            content_id = _md_get_etag(fs, path)
             result: str | None = hook.read_section(
-                path, content, content_hash, section_name, block_type
+                path, content, content_id, section_name, block_type
             )
             return result
         except Exception:
@@ -1075,7 +1075,7 @@ def create_async_files_router(
         fs: Any,
         path: str,
         content: bytes | None = None,
-        content_hash: str = "",
+        content_id: str = "",
     ) -> list[dict[str, Any]] | None:
         """Get the structure listing for a markdown file."""
         try:
@@ -1083,7 +1083,7 @@ def create_async_files_router(
             if hook is None or not hasattr(hook, "get_structure_listing"):
                 return None
             listing: list[dict[str, Any]] | None = hook.get_structure_listing(
-                path, content=content, content_hash=content_hash
+                path, content=content, content_id=content_id
             )
             return listing
         except Exception:

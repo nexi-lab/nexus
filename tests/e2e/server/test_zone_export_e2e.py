@@ -182,8 +182,8 @@ class TestBundleReader:
             records = list(reader.iter_file_records())
             readme_record = next(r for r in records if "readme" in r.virtual_path)
 
-            if readme_record.content_hash:
-                content = reader.read_content_blob(readme_record.content_hash)
+            if readme_record.content_id:
+                content = reader.read_content_blob(readme_record.content_id)
                 assert content is not None
                 assert b"Test Project" in content
 

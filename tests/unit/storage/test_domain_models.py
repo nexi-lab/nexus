@@ -14,36 +14,34 @@ class TestMemoryModelValidate:
     def test_valid_memory(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="a" * 64, scope="agent", visibility="private", state="active")
+        m = MemoryModel(content_id="a" * 64, scope="agent", visibility="private", state="active")
         m.validate()  # should not raise
 
     def test_missing_content_hash(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="", scope="agent", visibility="private", state="active")
-        with pytest.raises(Exception, match="content_hash is required"):
+        m = MemoryModel(content_id="", scope="agent", visibility="private", state="active")
+        with pytest.raises(Exception, match="content_id is required"):
             m.validate()
 
     def test_invalid_scope(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(
-            content_hash="a" * 64, scope="invalid", visibility="private", state="active"
-        )
+        m = MemoryModel(content_id="a" * 64, scope="invalid", visibility="private", state="active")
         with pytest.raises(Exception, match="scope must be one of"):
             m.validate()
 
     def test_invalid_visibility(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="a" * 64, scope="agent", visibility="invalid", state="active")
+        m = MemoryModel(content_id="a" * 64, scope="agent", visibility="invalid", state="active")
         with pytest.raises(Exception, match="visibility must be one of"):
             m.validate()
 
     def test_invalid_state(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="a" * 64, scope="agent", visibility="private", state="xyz")
+        m = MemoryModel(content_id="a" * 64, scope="agent", visibility="private", state="xyz")
         with pytest.raises(Exception, match="state must be one of"):
             m.validate()
 
@@ -51,7 +49,7 @@ class TestMemoryModelValidate:
         from nexus.storage.models.memory import MemoryModel
 
         m = MemoryModel(
-            content_hash="a" * 64,
+            content_id="a" * 64,
             scope="agent",
             visibility="private",
             state="active",
@@ -64,7 +62,7 @@ class TestMemoryModelValidate:
         from nexus.storage.models.memory import MemoryModel
 
         m = MemoryModel(
-            content_hash="a" * 64,
+            content_id="a" * 64,
             scope="agent",
             visibility="private",
             state="active",

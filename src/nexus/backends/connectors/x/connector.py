@@ -206,12 +206,12 @@ class PathXBackend(
 
     def read_content(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> bytes:
         """Read content from X API via virtual path.
 
-        For X connector, content_hash is ignored -- we use backend_path from context.
+        For X connector, content_id is ignored -- we use backend_path from context.
         """
         if not context or not hasattr(context, "backend_path") or not context.backend_path:
             raise BackendError(
@@ -220,7 +220,7 @@ class PathXBackend(
             )
 
         self._bind_transport(context)
-        return super().read_content(content_hash, context)
+        return super().read_content(content_id, context)
 
     def write_content(
         self,
@@ -260,7 +260,7 @@ class PathXBackend(
 
     def delete_content(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> None:
         """Delete content (delete tweet or draft)."""
@@ -275,17 +275,17 @@ class PathXBackend(
 
     def content_exists(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> bool:
         if not context or not hasattr(context, "backend_path"):
             return False
         self._bind_transport(context)
-        return super().content_exists(content_hash, context)
+        return super().content_exists(content_id, context)
 
     def get_content_size(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> int:
         """Return approximate content size (tweets are small)."""

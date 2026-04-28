@@ -260,7 +260,7 @@ class TestVersionRecorderEdgeCases:
                 .all()
             )
             assert len(active) == 1
-            assert active[0].content_hash == "new-content"
+            assert active[0].content_id == "new-content"
         finally:
             session.close()
 

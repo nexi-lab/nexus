@@ -183,7 +183,7 @@ class PathS3Backend(PathAddressingEngine, MultipartUpload):
             size=meta["size"],
             mtime=meta["last_modified"],
             backend_version=version_id,
-            content_hash=meta.get("etag"),
+            content_id=meta.get("etag"),
         )
 
     # === Presigned URLs ===

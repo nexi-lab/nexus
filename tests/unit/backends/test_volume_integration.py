@@ -84,7 +84,7 @@ class TestVolumeEngineIntegration:
 
         engine.seal_active()
 
-        listed = {h for h, _ts in engine.list_content_hashes()}
+        listed = {h for h, _ts in engine.list_content_ids()}
         assert listed == written
 
         engine.close()

@@ -155,8 +155,8 @@ class TestMultipartUpload:
             part = backend.upload_part("test/file.bin", upload_id, i + 1, f"part{i}".encode())
             parts.append(part)
 
-        content_hash = backend.complete_multipart("test/file.bin", upload_id, parts)
-        data = backend.read_content(content_hash)
+        content_id = backend.complete_multipart("test/file.bin", upload_id, parts)
+        data = backend.read_content(content_id)
         assert data == b"part0part1part2"
 
     def test_multipart_abort(self, backend):

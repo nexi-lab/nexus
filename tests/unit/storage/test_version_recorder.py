@@ -119,7 +119,7 @@ class TestRecordCreate:
         # Verify field name translations (proto name -> SQLAlchemy column)
         assert fp.virtual_path == metadata.path  # path -> virtual_path
         assert fp.size_bytes == metadata.size  # size -> size_bytes
-        assert fp.content_hash == metadata.content_id  # content_id -> content_hash
+        assert fp.content_id == metadata.content_id  # content_id -> content_id
         assert fp.file_type == metadata.mime_type  # mime_type -> file_type
         assert fp.zone_id == metadata.zone_id
         assert fp.posix_uid == metadata.owner_id  # owner_id -> posix_uid
@@ -142,7 +142,7 @@ class TestRecordCreate:
 
         assert vh.resource_type == "file"
         assert vh.version_number == 1
-        assert vh.content_hash == "sha256-abc"
+        assert vh.content_id == "sha256-abc"
         assert vh.parent_version_id is None
         assert vh.source_type == "original"
         assert vh.created_by == "user-1"
@@ -203,7 +203,7 @@ class TestRecordCreate:
             .all()
         )
         assert len(active) == 1
-        assert active[0].content_hash == "new-hash"
+        assert active[0].content_id == "new-hash"
 
     def test_duplicate_create_event_same_hash_is_idempotent(self, session: Session) -> None:
         """A repeated create event for an active path should not violate uniqueness."""
@@ -258,7 +258,7 @@ class TestRecordCreate:
                 FilePathModel.deleted_at.is_(None),
             )
         ).scalar_one()
-        assert fp.content_hash == "hash-2"
+        assert fp.content_id == "hash-2"
         assert fp.size_bytes == 2048
         assert fp.current_version == 2
 
@@ -271,7 +271,7 @@ class TestRecordCreate:
             .scalars()
             .all()
         )
-        assert [v.content_hash for v in versions] == ["hash-1", "hash-2"]
+        assert [v.content_id for v in versions] == ["hash-1", "hash-2"]
 
     def test_defaults_zone_to_default(self, session: Session) -> None:
         """When zone_id is None, should default to ROOT_ZONE_ID ('root')."""
@@ -308,7 +308,7 @@ class TestRecordCreate:
         ).scalar_one()
 
         assert vh.version_number == 1
-        assert vh.content_hash == "blake3-empty"
+        assert vh.content_id == "blake3-empty"
         assert vh.size_bytes == 0
 
 
@@ -348,7 +348,7 @@ class TestRecordUpdate:
         ).scalar_one()
 
         assert fp.size_bytes == 4096
-        assert fp.content_hash == "updated-hash"
+        assert fp.content_id == "updated-hash"
         assert fp.file_type == "application/json"
 
     def test_increments_version(self, session: Session) -> None:
@@ -391,9 +391,9 @@ class TestRecordUpdate:
 
         assert len(versions) == 2
         assert versions[0].version_number == 1
-        assert versions[0].content_hash == "original-hash"
+        assert versions[0].content_id == "original-hash"
         assert versions[1].version_number == 2
-        assert versions[1].content_hash == "v2-hash"
+        assert versions[1].content_id == "v2-hash"
         assert versions[1].parent_version_id == versions[0].version_id
 
     def test_no_version_bump_without_etag(self, session: Session) -> None:
@@ -435,7 +435,7 @@ class TestRecordUpdate:
         ).scalar_one_or_none()
 
         assert fp is not None
-        assert fp.content_hash == "orphan-hash"
+        assert fp.content_id == "orphan-hash"
         assert fp.current_version == 1  # Created as version 1
 
 
@@ -529,7 +529,7 @@ class TestRecordRename:
 
         assert old_row.deleted_at is not None
         assert len(active_new_rows) == 1
-        assert active_new_rows[0].content_hash == "new-hash"
+        assert active_new_rows[0].content_id == "new-hash"
 
 
 # ---------------------------------------------------------------------------

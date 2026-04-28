@@ -127,7 +127,7 @@ class ZoneExportService:
                 (temp_path / "embeddings").mkdir(parents=True)
 
             # Export metadata to JSONL
-            content_hashes: set[str] = set()
+            content_ids: set[str] = set()
             hash_to_path: dict[str, str] = {}
             files_path = temp_path / BUNDLE_PATHS["files"]
 
@@ -135,7 +135,7 @@ class ZoneExportService:
                 zone_id=zone_id,
                 output_path=files_path,
                 options=options,
-                content_hashes=content_hashes,
+                content_ids=content_ids,
                 hash_to_path=hash_to_path,
                 progress_callback=progress_callback,
             )
@@ -148,9 +148,9 @@ class ZoneExportService:
                 checksums.add_file(BUNDLE_PATHS["files"], files_path.read_bytes())
 
             # Export content blobs if requested
-            if options.include_content and content_hashes:
+            if options.include_content and content_ids:
                 blob_count = self._export_content_blobs(
-                    content_hashes=content_hashes,
+                    content_ids=content_ids,
                     hash_to_path=hash_to_path,
                     output_dir=temp_path / "content" / "cas",
                     progress_callback=progress_callback,
@@ -196,7 +196,7 @@ class ZoneExportService:
         zone_id: str,
         output_path: Path,
         options: ZoneExportOptions,
-        content_hashes: set[str],
+        content_ids: set[str],
         hash_to_path: dict[str, str],
         progress_callback: ProgressCallback | None = None,
     ) -> tuple[int, int]:
@@ -206,7 +206,7 @@ class ZoneExportService:
             zone_id: Zone to export
             output_path: Path for JSONL output
             options: Export options
-            content_hashes: Set to collect content hashes for blob export
+            content_ids: Set to collect content hashes for blob export
             progress_callback: Optional progress callback
 
         Returns:
@@ -257,7 +257,7 @@ class ZoneExportService:
                     physical_path="",
                     file_type=file_meta.mime_type,
                     size_bytes=file_meta.size,
-                    content_hash=file_meta.content_id,
+                    content_id=file_meta.content_id,
                     created_at=file_meta.created_at,
                     updated_at=file_meta.modified_at,
                     current_version=getattr(file_meta, "version", 1),
@@ -272,8 +272,8 @@ class ZoneExportService:
                 # (identical content at a different path) are no-ops —
                 # `_export_content_blobs` reads via sys_read(path) once
                 # per unique hash.
-                if file_meta.content_id and file_meta.content_id not in content_hashes:
-                    content_hashes.add(file_meta.content_id)
+                if file_meta.content_id and file_meta.content_id not in content_ids:
+                    content_ids.add(file_meta.content_id)
                     hash_to_path[file_meta.content_id] = file_meta.path
 
                 file_count += 1
@@ -291,7 +291,7 @@ class ZoneExportService:
 
     def _export_content_blobs(
         self,
-        content_hashes: set[str],
+        content_ids: set[str],
         hash_to_path: dict[str, str],
         output_dir: Path,
         progress_callback: ProgressCallback | None = None,
@@ -307,27 +307,27 @@ class ZoneExportService:
         arbitrary).
         """
         blob_count = 0
-        total_hashes = len(content_hashes)
+        total_hashes = len(content_ids)
 
-        for idx, content_hash in enumerate(content_hashes):
-            path = hash_to_path.get(content_hash)
+        for idx, content_id in enumerate(content_ids):
+            path = hash_to_path.get(content_id)
             if not path:
-                logger.warning("No source path recorded for hash %s; skipping", content_hash[:12])
+                logger.warning("No source path recorded for hash %s; skipping", content_id[:12])
                 continue
             try:
                 data = self.nexus_fs.sys_read(path)
                 if data is None:
                     logger.warning(
-                        "sys_read returned no data for %s (hash %s)", path, content_hash[:12]
+                        "sys_read returned no data for %s (hash %s)", path, content_id[:12]
                     )
                     continue
 
                 # Write to CAS structure (2-char prefix directories)
-                if len(content_hash) >= 2:
-                    prefix = content_hash[:2]
+                if len(content_id) >= 2:
+                    prefix = content_id[:2]
                     blob_dir = output_dir / prefix
                     blob_dir.mkdir(parents=True, exist_ok=True)
-                    blob_path = blob_dir / content_hash
+                    blob_path = blob_dir / content_id
                     blob_path.write_bytes(data if isinstance(data, bytes) else bytes(data))
                     blob_count += 1
 
@@ -336,7 +336,7 @@ class ZoneExportService:
                     progress_callback(idx + 1, total_hashes)
 
             except Exception as e:
-                logger.warning("Error exporting blob %s: %s", content_hash, e)
+                logger.warning("Error exporting blob %s: %s", content_id, e)
 
         # Final progress update
         if progress_callback:

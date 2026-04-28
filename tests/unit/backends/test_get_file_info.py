@@ -64,7 +64,7 @@ class TestGCSConnectorGetFileInfo:
         assert info.size == 2048
         assert info.mtime == datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
         assert info.backend_version == "1234567890"
-        assert info.content_hash is None
+        assert info.content_id is None
 
     def test_raises_not_found_for_missing_blob(self, connector):
         """Should raise NexusFileNotFoundError when blob doesn't exist."""

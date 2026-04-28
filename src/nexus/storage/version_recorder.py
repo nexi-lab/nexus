@@ -139,7 +139,7 @@ class VersionRecorder:
             # and occasionally report a create for a path already present in the
             # RecordStore. Keep the recorder idempotent instead of failing the
             # whole flush on the unique (zone_id, virtual_path) constraint.
-            if metadata.etag is not None and existing.content_hash == metadata.etag:
+            if metadata.content_id is not None and existing.content_id == metadata.content_id:
                 from nexus.storage._metadata_mapper_generated import MetadataMapper
 
                 self.session.execute(
@@ -178,7 +178,7 @@ class VersionRecorder:
                 resource_type="file",
                 resource_id=file_path.path_id,
                 version_number=1,
-                content_hash=metadata.content_id,
+                content_id=metadata.content_id,
                 size_bytes=metadata.size or 0,
                 mime_type=metadata.mime_type,
                 parent_version_id=None,
@@ -236,7 +236,7 @@ class VersionRecorder:
                 resource_type="file",
                 resource_id=existing.path_id,
                 version_number=new_version,
-                content_hash=metadata.content_id,
+                content_id=metadata.content_id,
                 size_bytes=metadata.size or 0,
                 mime_type=metadata.mime_type,
                 parent_version_id=prev_version.version_id if prev_version else None,

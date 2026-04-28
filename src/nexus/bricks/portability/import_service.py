@@ -298,26 +298,26 @@ class ZoneImportService:
 
         # Import content blob if needed
         content: bytes | None = None
-        content_ref_valid = False  # True when content_hash exists in CAS/backend
-        if options.content_mode == ContentMode.INCLUDE and record.content_hash:
+        content_ref_valid = False  # True when content_id exists in CAS/backend
+        if options.content_mode == ContentMode.INCLUDE and record.content_id:
             # Check if we already imported this content (deduplication)
-            if record.content_hash in content_hashes_imported:
+            if record.content_id in content_hashes_imported:
                 result.content_blobs_skipped += 1
                 content_ref_valid = True  # Already in CAS from a prior file
             else:
-                content = reader.read_content_blob(record.content_hash)
+                content = reader.read_content_blob(record.content_id)
                 if content is not None:
-                    content_hashes_imported.add(record.content_hash)
+                    content_hashes_imported.add(record.content_id)
                     result.content_blobs_imported += 1
                 else:
                     logger.warning(
-                        "Content blob not found for %s: %s", remapped_path, record.content_hash
+                        "Content blob not found for %s: %s", remapped_path, record.content_id
                     )
                     result.add_warning(
-                        f"Content blob not found: {record.content_hash} for {remapped_path}"
+                        f"Content blob not found: {record.content_id} for {remapped_path}"
                     )
 
-        elif options.content_mode == ContentMode.REFERENCE and record.content_hash:
+        elif options.content_mode == ContentMode.REFERENCE and record.content_id:
             # Reference mode: verify content exists by reading through the
             # VFS path. R20.18.x removed direct backend access on NexusFS;
             # the kernel owns routing, so we re-read via sys_read and
@@ -327,14 +327,12 @@ class ZoneImportService:
                 data = self.nexus_fs.sys_read(remapped_path)
                 if data is None:
                     result.add_warning(
-                        f"Referenced content not found: {record.content_hash} for {remapped_path}"
+                        f"Referenced content not found: {record.content_id} for {remapped_path}"
                     )
                 else:
                     content_ref_valid = True
             except Exception as e:
-                result.add_warning(
-                    f"Failed to verify content reference: {record.content_hash}: {e}"
-                )
+                result.add_warning(f"Failed to verify content reference: {record.content_id}: {e}")
 
         # Write file to NexusFS
         if content is not None:
@@ -380,7 +378,7 @@ class ZoneImportService:
         elif content_ref_valid or options.content_mode == ContentMode.SKIP:
             # Content already in CAS (dedup) / verified in backend (reference) /
             # metadata-only import (SKIP) — create metadata entry pointing to
-            # the existing content_hash.
+            # the existing content_id.
             self._import_metadata_only(
                 path=remapped_path,
                 record=record,
@@ -417,7 +415,7 @@ class ZoneImportService:
             metadata = self._file_metadata_class(
                 path=path,
                 size=record.size_bytes,
-                content_id=record.content_hash,
+                content_id=record.content_id,
                 mime_type=record.file_type,
                 created_at=record.created_at if options.preserve_timestamps else None,
                 modified_at=record.updated_at if options.preserve_timestamps else None,

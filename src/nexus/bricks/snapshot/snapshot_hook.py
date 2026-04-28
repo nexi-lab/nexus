@@ -6,7 +6,7 @@ to the snapshot service.
 
 Data mapping:
     WriteHookContext.old_metadata  → snapshot_hash (content_id), metadata_snapshot
-    WriteHookContext.content_hash  → new content hash
+    WriteHookContext.content_id  → new content hash
     DeleteHookContext.metadata     → pre-delete snapshot_hash, metadata_snapshot
 """
 
@@ -58,7 +58,7 @@ class SnapshotWriteHook:
             ctx.path,
             snapshot_hash,
             metadata_snapshot,
-            ctx.content_hash,
+            ctx.content_id,
         )
 
     def on_post_delete(self, ctx: DeleteHookContext) -> None:

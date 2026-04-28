@@ -34,7 +34,7 @@ class WorkspaceManager:
     - Snapshot diff (compare two snapshots)
 
     Design:
-    - Snapshots are CAS-backed manifests (JSON files listing path → content_hash)
+    - Snapshots are CAS-backed manifests (JSON files listing path → content_id)
     - Zero storage overhead (content already in CAS)
     - Deduplication (same workspace state = same manifest hash)
     """
@@ -311,7 +311,7 @@ class WorkspaceManager:
 
                 # Check if file exists with same content
                 existing = self.metadata.get(full_path)
-                if existing and existing.content_id == entry.content_hash:
+                if existing and existing.content_id == entry.content_id:
                     continue  # Already up to date
 
                 # Create metadata entry pointing to existing CAS content
@@ -319,7 +319,7 @@ class WorkspaceManager:
                 file_meta = FileMetadata(
                     path=full_path,
                     size=entry.size,
-                    content_id=entry.content_hash,
+                    content_id=entry.content_id,
                     mime_type=entry.mime_type,
                     modified_at=datetime.now(UTC),
                     version=1,  # Will be updated by metadata store  # Track who restored this version
@@ -488,14 +488,14 @@ class WorkspaceManager:
                 entry1 = manifest1.get(path)
                 entry2 = manifest2.get(path)
                 assert entry1 is not None and entry2 is not None
-                if entry1.content_hash != entry2.content_hash:
+                if entry1.content_id != entry2.content_id:
                     modified.append(
                         {
                             "path": path,
                             "old_size": entry1.size,
                             "new_size": entry2.size,
-                            "old_hash": entry1.content_hash,
-                            "new_hash": entry2.content_hash,
+                            "old_hash": entry1.content_id,
+                            "new_hash": entry2.content_id,
                         }
                     )
 

@@ -115,15 +115,15 @@ def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocalBacken
     embedded_cas.write("/shared1.txt", content)
 
     meta1 = embedded_cas.metadata.get("/shared1.txt")
-    content_hash = meta1.content_id
+    content_id = meta1.content_id
 
-    assert local_backend.content_exists(content_hash)
+    assert local_backend.content_exists(content_id)
 
     # Delete content via CAS backend directly (simulates GC cleanup)
-    local_backend.delete_content(content_hash)
+    local_backend.delete_content(content_id)
 
     # Content should now be deleted from CAS
-    assert not local_backend.content_exists(content_hash)
+    assert not local_backend.content_exists(content_id)
 
 
 def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
@@ -171,10 +171,10 @@ def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: CASLocalBa
 
     # Get content hash
     meta = embedded_cas.metadata.get("/file0.txt")
-    content_hash = meta.content_id
+    content_id = meta.content_id
 
     # Content should only be stored once
-    assert local_backend.get_content_size(content_hash) == len(content)
+    assert local_backend.get_content_size(content_id) == len(content)
 
 
 def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
@@ -261,10 +261,10 @@ def test_cas_concurrent_deduplication(
 
     # Get content hash
     meta = embedded_cas.metadata.get(paths[0])
-    content_hash = meta.content_id
+    content_id = meta.content_id
 
     # Content should exist (deduplication means single blob)
-    assert local_backend.content_exists(content_hash)
+    assert local_backend.content_exists(content_id)
 
 
 def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:

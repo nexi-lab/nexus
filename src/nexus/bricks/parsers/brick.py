@@ -127,7 +127,7 @@ class ParsersBrick:
             # Distinguish 'parsed ok but no extractable text' (image-only
             # PDFs, blank .docx, scanned docs awaiting OCR) from 'parser
             # broken / format unsupported'.  Returning ``b""`` for the
-            # former lets the indexer advance ``indexed_content_hash``
+            # former lets the indexer advance ``indexed_content_id``
             # with zero chunks instead of retrying the parse on every
             # tick forever; ``None`` still signals a genuine error.
             if result is None:

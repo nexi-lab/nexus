@@ -89,12 +89,12 @@ class TestPathScoping:
         d = {
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "size": 100,
-            "etag": "abc123",
+            "content_id": "abc123",
         }
         result = scoped_fs._unscope_dict(d, ["path"])
         assert result["path"] == "/workspace/file.txt"
         assert result["size"] == 100
-        assert result["etag"] == "abc123"
+        assert result["content_id"] == "abc123"
 
 
 class TestRootNormalization:

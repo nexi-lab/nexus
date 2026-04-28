@@ -169,6 +169,30 @@ class TestGenerateReadme:
         doc = gen.generate_readme("/mnt/x")
         assert "# My Cool Skill Connector" in doc
 
+    def test_frontmatter_present(self, generator: ReadmeDocGenerator) -> None:
+        doc = generator.generate_readme("/mnt/calendar")
+        assert doc.startswith("---\n")
+        # Frontmatter delimiters bracket the title/description block
+        closing = doc.find("---", 4)
+        assert closing != -1
+        front = doc[:closing]
+        assert "title:" in front
+
+    def test_frontmatter_includes_short_description(self) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="test_skill",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+            short_description="Manage calendar events",
+        )
+        doc = gen.generate_readme("/mnt/calendar")
+        closing = doc.find("---", 4)
+        front = doc[:closing]
+        assert "description:" in front
+        assert "Manage calendar events" in front
+
 
 # ===========================================================================
 # write_readme tests removed (Issue #3728): the method was deleted.

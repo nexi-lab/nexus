@@ -125,13 +125,77 @@ class DispatchMixin:
         """PRE-DISPATCH: first-match resolver for read."""
         return self._resolve(path, "try_read", context=context)
 
-    def resolve_write(self, path: str, content: bytes) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for write."""
-        return self._resolve(path, "try_write", content=content)
+    def resolve_write(self, path: str, content: bytes, *, context: Any = None) -> tuple[bool, Any]:
+        """PRE-DISPATCH: first-match resolver for write.
+
+        ``context`` lets resolvers gate on the caller's identity (so an
+        unauthorized writer cannot probe existence via differential
+        error surfaces — see Issue #3827).
+        """
+        return self._resolve(path, "try_write", content=content, context=context)
 
     def resolve_delete(self, path: str, *, context: Any = None) -> tuple[bool, Any]:
         """PRE-DISPATCH: first-match resolver for delete."""
         return self._resolve(path, "try_delete", context=context)
+
+    def resolve_stat(self, path: str, *, context: Any = None) -> tuple[bool, dict[str, Any] | None]:
+        """PRE-DISPATCH: first-match resolver for stat/getattr.
+
+        Returns ``(True, stat_dict)`` when a resolver synthesizes metadata
+        for a virtual path that has no kernel-side metastore entry (so a
+        listed virtual entry is also stat-visible). Resolvers that do not
+        implement ``try_stat`` are skipped.
+        """
+        kernel = getattr(self, "_kernel", None)
+        trie = getattr(self, "_trie_resolvers", None)
+        fallback = getattr(self, "_fallback_resolvers", None)
+        if kernel is None or trie is None or fallback is None:
+            return False, None
+        idx = kernel.trie_lookup(path)
+        if idx is not None:
+            resolver = trie.get(idx)
+            if resolver is not None and hasattr(resolver, "try_stat"):
+                result = resolver.try_stat(path, context=context)
+                if result is not None:
+                    return True, result
+        for r in fallback:
+            if not hasattr(r, "try_stat"):
+                continue
+            result = r.try_stat(path, context=context)
+            if result is not None:
+                return True, result
+        return False, None
+
+    def resolve_list(
+        self, path: str, *, context: Any = None, recursive: bool = False
+    ) -> tuple[bool, list[tuple[str, int]] | None]:
+        """PRE-DISPATCH: first-match resolver for list/readdir.
+
+        Returns ``(True, [(path, entry_type)])`` so ``sys_readdir`` can
+        render files vs directories correctly. ``entry_type`` mirrors the
+        kernel DT enum (0=DT_REG, 1=DT_DIR). ``recursive`` is forwarded so
+        resolvers may emit nested children when supported. Resolvers that
+        do not implement ``try_list`` are skipped.
+        """
+        kernel = getattr(self, "_kernel", None)
+        trie = getattr(self, "_trie_resolvers", None)
+        fallback = getattr(self, "_fallback_resolvers", None)
+        if kernel is None or trie is None or fallback is None:
+            return False, None
+        idx = kernel.trie_lookup(path)
+        if idx is not None:
+            resolver = trie.get(idx)
+            if resolver is not None and hasattr(resolver, "try_list"):
+                result = resolver.try_list(path, context=context, recursive=recursive)
+                if result is not None:
+                    return True, result
+        for r in fallback:
+            if not hasattr(r, "try_list"):
+                continue
+            result = r.try_list(path, context=context, recursive=recursive)
+            if result is not None:
+                return True, result
+        return False, None
 
     @property
     def resolver_count(self) -> int:

@@ -72,8 +72,11 @@ class TaskAgentResolver:
 
         return json.dumps(payload, ensure_ascii=False).encode()
 
-    def try_write(self, path: str, _content: bytes) -> dict[str, Any] | None:
+    def try_write(
+        self, path: str, _content: bytes, *, context: Any = None
+    ) -> dict[str, Any] | None:
         """Reject writes on agent status paths (read-only virtual path)."""
+        _ = context
         if self._match_task_id(path) is not None:
             raise PermissionError(f"{path}: task agent status is read-only")
         return None

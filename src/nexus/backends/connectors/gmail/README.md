@@ -1,3 +1,9 @@
+---
+name: gmail
+description: Read/send/reply to email via the Gmail API. Use when the user mentions email, inbox, compose, reply, forward, or draft.
+operations: [send_email, reply_email, forward_email, create_draft]
+---
+
 # Gmail Connector
 
 ## Mount Path

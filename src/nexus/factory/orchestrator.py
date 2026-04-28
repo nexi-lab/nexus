@@ -517,6 +517,12 @@ def _register_vfs_hooks(
     )
     _enlist("virtual_view", _vview_resolver)
 
+    # ── PRE-DISPATCH: ReadmePathResolver (Issue #3827) ───────────────────
+    from nexus.bricks.parsers.readme_resolver import ReadmePathResolver
+
+    _readme_resolver = ReadmePathResolver(nexus_fs=nx)
+    _enlist("readme_resolver", _readme_resolver)
+
     # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──
     _proc_ref = nx.service("agent_registry") if hasattr(nx, "service") else None
     _proc_table = _proc_ref if _proc_ref is not None else None

@@ -76,8 +76,11 @@ class AgentStatusResolver:
 
         return json.dumps(desc.to_dict(), ensure_ascii=False, indent=2).encode()
 
-    def try_write(self, path: str, _content: bytes) -> dict[str, Any] | None:
+    def try_write(
+        self, path: str, _content: bytes, *, context: Any = None
+    ) -> dict[str, Any] | None:
         """Reject writes on proc paths (read-only, like Linux /proc)."""
+        _ = context
         if self._match_pid(path) is not None:
             raise PermissionError(f"{path}: proc filesystem is read-only")
         return None

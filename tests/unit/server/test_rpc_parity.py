@@ -208,6 +208,8 @@ def test_all_public_methods_are_exposed_or_excluded():
         "resolve_read",  # Internal - PRE-DISPATCH resolver
         "resolve_write",  # Internal - PRE-DISPATCH resolver
         "resolve_delete",  # Internal - PRE-DISPATCH resolver
+        "resolve_list",  # Internal - PRE-DISPATCH resolver
+        "resolve_stat",  # Internal - PRE-DISPATCH resolver
         "intercept_pre_read",  # Internal - PRE-INTERCEPT dispatch
         "intercept_pre_write",  # Internal - PRE-INTERCEPT dispatch
         "intercept_pre_delete",  # Internal - PRE-INTERCEPT dispatch

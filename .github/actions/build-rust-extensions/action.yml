@@ -1,5 +1,5 @@
 name: Build Rust Extensions
-description: Build the nexus-cdylib (Phase 0) and tasks Python wheels from Rust source. The nexus-cdylib build artifact composes kernel + lib + raft (and post-Phase-2/3/4 also backends/services/transport) rlibs into the single `nexus_runtime.so` wheel. raft is rlib-only since F2 C8.
+description: Build the nexus-cdylib Python wheel from Rust source. The nexus-cdylib build artifact composes kernel + lib + raft + backends + services + transport rlibs into the single `nexus_runtime.so` wheel. raft is rlib-only since F2 C8.
 
 inputs:
   profile:
@@ -74,7 +74,6 @@ runs:
         workspaces: |
           rust/nexus-cdylib
           rust/raft
-          rust/tasks
 
     - name: Install maturin
       run: pip install maturin
@@ -88,10 +87,10 @@ runs:
         fi
 
         mkdir -p ${{ inputs.output-dir }}
-        # Phase 0: the wheel-producing crate is `rust/nexus-cdylib/` —
-        # kernel is rlib-only.  nexus-cdylib composes kernel + lib +
-        # raft (and post-Phase-2/3/4 also backends/services/transport)
-        # rlibs into the single `nexus_runtime` wheel.
+        # The wheel-producing crate is `rust/nexus-cdylib/` — kernel is
+        # rlib-only.  nexus-cdylib composes kernel + lib + raft +
+        # backends + services + transport rlibs into the single
+        # `nexus_runtime` wheel; tasks now lives in `rust/services/src/tasks/`
+        # and registers its pyclasses through `services::python::register`.
         cd rust/nexus-cdylib && maturin build $PROFILE_FLAG --out ../../${{ inputs.output-dir }} && cd ../..
-        cd rust/tasks && maturin build $PROFILE_FLAG --features mimalloc --out ../../${{ inputs.output-dir }} && cd ../..
       shell: bash

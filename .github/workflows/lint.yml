@@ -97,7 +97,6 @@ jobs:
         with:
           shared-key: "rust-lint"
           workspaces: |
-            rust/tasks
             rust/lib
             rust/kernel
             rust/raft

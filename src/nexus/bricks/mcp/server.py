@@ -311,7 +311,16 @@ async def create_mcp_server(
     # Add the middleware to FastMCP
     mcp.add_middleware(APIKeyExtractionMiddleware())
 
-    # Add tool namespace middleware if provided (Issue #1272)
+    # Add tool namespace middleware if provided (Issue #1272). The factory
+    # may pass a zero-arg callable that builds the middleware on demand —
+    # this defers the fastmcp/beartype import until an MCP server is
+    # actually started, keeping ``nexus.connect()`` lightweight.
+    if (
+        tool_namespace_middleware is not None
+        and not hasattr(tool_namespace_middleware, "on_call_tool")
+        and callable(tool_namespace_middleware)
+    ):
+        tool_namespace_middleware = tool_namespace_middleware()
     if tool_namespace_middleware is not None:
         mcp.add_middleware(tool_namespace_middleware)
 

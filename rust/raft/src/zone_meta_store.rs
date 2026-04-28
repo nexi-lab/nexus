@@ -287,6 +287,38 @@ impl MetaStore for ZoneMetaStore {
     fn coherence_key(&self) -> Option<usize> {
         Some(self.coherence_id)
     }
+
+    fn append_stream_entry(&self, key: &str, data: &[u8]) -> Result<(), MetaStoreError> {
+        // Stream entries skip the zone-key translation `put` does for
+        // FileMetadata — `key` is the full WAL identity (`__wal_stream__/…`
+        // or `__wal_pipe__/…`) and the side-table is zone-scoped at the
+        // raft state-machine layer (this `ZoneMetaStore` is bound to a
+        // single zone via `node`).
+        let cmd = Command::AppendStreamEntry {
+            key: key.to_string(),
+            data: data.to_vec(),
+        };
+        let result = self.runtime.block_on(self.node.propose(cmd)).map_err(|e| {
+            MetaStoreError::IOError(format!("ZoneMetaStore.append_stream_entry({key}): {e}"))
+        })?;
+        match result {
+            crate::prelude::CommandResult::Success => Ok(()),
+            crate::prelude::CommandResult::Error(e) => Err(MetaStoreError::IOError(format!(
+                "ZoneMetaStore.append_stream_entry({key}) rejected: {e}"
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    fn get_stream_entry(&self, key: &str) -> Result<Option<Vec<u8>>, MetaStoreError> {
+        let key_owned = key.to_string();
+        let fut = self
+            .node
+            .with_state_machine(move |sm: &FullStateMachine| sm.get_stream_entry(&key_owned));
+        self.runtime.block_on(fut).map_err(|e| {
+            MetaStoreError::IOError(format!("ZoneMetaStore.get_stream_entry({key}): {e}"))
+        })
+    }
 }
 
 #[cfg(test)]

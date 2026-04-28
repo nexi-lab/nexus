@@ -267,16 +267,6 @@ impl FederationProvider for RaftFederationProvider {
         Err("locks_for_zone: not yet wired through trait".into())
     }
 
-    fn wal_stream_for_zone(
-        &self,
-        _kernel: &Kernel,
-        _zone_id: &str,
-        _stream_id: &str,
-        _prefix: &str,
-    ) -> FederationResult<Arc<dyn kernel::stream::StreamBackend>> {
-        Err("wal_stream_for_zone: not yet wired through trait".into())
-    }
-
     fn remote_read_blob(
         &self,
         kernel: &Kernel,
@@ -395,58 +385,6 @@ impl FederationProvider for RaftFederationProvider {
             ("witness_count".to_string(), status.witness_count.into()),
         ])
     }
-
-    fn append_wal_entry(
-        &self,
-        _kernel: &Kernel,
-        zone_id: &str,
-        entry_type: u8,
-        vfs_path: &str,
-        seq: u64,
-        entry: Vec<u8>,
-    ) -> FederationResult<u64> {
-        let zm = self.zm().ok_or("federation not active")?;
-        let consensus = zm
-            .registry()
-            .get_node(zone_id)
-            .ok_or_else(|| format!("zone {zone_id} not loaded"))?;
-        let runtime = self.runtime.get().cloned().ok_or("runtime missing")?;
-        let key = encode_wal_key(entry_type, vfs_path, seq);
-        let wal = crate::wal_stream_backend::RaftWalConsensus::new(consensus, runtime);
-        crate::wal_stream_backend::WalConsensus::append(&wal, &key, &entry)?;
-        Ok(seq)
-    }
-
-    fn get_wal_entry(
-        &self,
-        _kernel: &Kernel,
-        zone_id: &str,
-        entry_type: u8,
-        vfs_path: &str,
-        seq: u64,
-    ) -> FederationResult<Option<Vec<u8>>> {
-        let zm = self.zm().ok_or("federation not active")?;
-        let consensus = zm
-            .registry()
-            .get_node(zone_id)
-            .ok_or_else(|| format!("zone {zone_id} not loaded"))?;
-        let runtime = self.runtime.get().cloned().ok_or("runtime missing")?;
-        let key = encode_wal_key(entry_type, vfs_path, seq);
-        let wal = crate::wal_stream_backend::RaftWalConsensus::new(consensus, runtime);
-        crate::wal_stream_backend::WalConsensus::get(&wal, &key)
-    }
-}
-
-/// Encode `(entry_type, vfs_path, seq)` into a redb key.  The
-/// `entry_type` byte tags the keyspace (DT_PIPE vs DT_STREAM) so pipe
-/// and stream entries at distinct VFS paths share `TREE_STREAM_ENTRIES`
-/// without ever colliding — defense in depth even though the VFS
-/// invariant (path is pipe XOR stream) already prevents collision at
-/// the same path.  Format: `"<entry_type>:<vfs_path>:<seq>"` —
-/// human-readable for debugging; `entry_type` rendered as decimal so
-/// the prefix range stays adjacent in lexicographic order.
-fn encode_wal_key(entry_type: u8, vfs_path: &str, seq: u64) -> String {
-    format!("{entry_type}:{vfs_path}:{seq}")
 }
 
 /// Install `RaftFederationProvider` into the kernel's federation slot

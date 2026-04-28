@@ -27,16 +27,12 @@ pub mod remote;
 pub mod shm;
 #[cfg(unix)]
 pub mod stdio;
-// `pub mod wal;` deferred — WalPipeCore composed `WalStreamCore` from
-// the kernel-side `wal_stream` module, but Phase H of the rust-workspace
-// restructure moved that module to `nexus_raft::wal_stream_backend`
-// (kernel↔raft Cargo edge flip).  Re-introducing WAL pipe support
-// requires wiring it through the new
-// `kernel::hal::federation::FederationProvider::{append_wal_entry,
-// get_wal_entry}` trait surface (added in this PR for exactly this
-// purpose).  Tracked as a follow-up so #3933's WAL pipe semantics can
-// land cleanly on top of Phase H without re-introducing the kernel→raft
-// edge.
+// `wal.rs` — durable DT_PIPE backed by a distributed `MetaStore`.
+// Composes `core::stream::wal::WalStreamCore` and adds a per-replica
+// head cursor for single-consumer FIFO semantics.  Kernel primitive;
+// federation just DIs the underlying `MetaStore` (typically the raft
+// crate's `ZoneMetaStore`).
+pub mod wal;
 
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};

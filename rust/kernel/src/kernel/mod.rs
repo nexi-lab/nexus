@@ -1561,7 +1561,7 @@ impl Kernel {
             }
             3 => {
                 // DT_PIPE — create or idempotent-open
-                self.setattr_pipe(path, capacity, io_profile, read_fd, write_fd)
+                self.setattr_pipe(path, capacity, io_profile, read_fd, write_fd, zone_id)
             }
             4 => {
                 // DT_STREAM — create or idempotent-open
@@ -1596,6 +1596,7 @@ impl Kernel {
         io_profile: &str,
         read_fd: Option<i32>,
         write_fd: Option<i32>,
+        zone_id: &str,
     ) -> Result<SysSetAttrResult, KernelError> {
         // Idempotent open: if DT_PIPE already exists, re-create buffer if lost
         if let Some(meta) = self.metastore_get(path).ok().flatten() {
@@ -1656,14 +1657,28 @@ impl Kernel {
                 return Err(KernelError::IOError("stdio pipes require unix".into()));
             }
         } else if io_profile == "wal" {
-            // Phase H deferred WAL pipe — WalPipeCore composed
-            // WalStreamCore from kernel-side `crate::wal_stream`, but
-            // Phase H moved that module to nexus_raft::wal_stream_backend.
-            // The follow-up PR rewires through
-            // FederationProvider::{append_wal_entry, get_wal_entry}.
-            return Err(KernelError::IOError(
-                "io_profile=wal pipes deferred pending FederationProvider rewire".into(),
-            ));
+            // Raft-replicated DT_PIPE — composes whatever distributed
+            // `MetaStore` impl federation has DI'd
+            // (`FederationProvider::metastore_for_zone`).  Single-
+            // consumer semantics (each replica owns its head cursor);
+            // see `core/pipe/wal.rs` for the contract.  Resolves the
+            // metastore from the path's mount entry so per-zone WAL
+            // pipes pick up their own zone's raft group.
+            let provider = self.federation_arc();
+            let resolve_zone = if zone_id.is_empty() { "root" } else { zone_id };
+            let store = provider
+                .metastore_for_zone(self, resolve_zone)
+                .map_err(|e| {
+                    KernelError::IOError(format!(
+                        "io_profile=wal requires federation (set NEXUS_PEERS): {e}"
+                    ))
+                })?;
+            let backend = crate::core::pipe::wal::WalPipeCore::new(store, path.to_string());
+            self.pipe_manager
+                .register(path, Arc::new(backend))
+                .map_err(pipe_mgr_err)?;
+            self.write_pipe_inode(path, capacity)?;
+            (None, None, None)
         } else {
             self.create_pipe(path, capacity)?;
             (None, None, None)
@@ -1730,16 +1745,22 @@ impl Kernel {
                 ));
             }
         } else if io_profile == "wal" {
-            // R20.18.6: raft-backed durable stream.  Phase H of the
-            // rust-workspace restructure routes the construction through
-            // `FederationProvider::wal_stream_for_zone` so the kernel
-            // does not name raft-side types.
-            let backend = self
-                .federation_arc()
-                .wal_stream_for_zone(self, "root", path, "")
-                .map_err(KernelError::IOError)?;
+            // Raft-replicated durable DT_STREAM.  WalStreamCore is a
+            // kernel primitive (`core/stream/wal.rs`); it composes
+            // whatever distributed `MetaStore` impl federation has
+            // DI'd via `metastore_for_zone`.  No per-primitive DI
+            // method on FederationProvider — federation just installs
+            // the storage capability and the kernel constructs the
+            // backend itself, layering preserved.
+            let provider = self.federation_arc();
+            let store = provider.metastore_for_zone(self, "root").map_err(|e| {
+                KernelError::IOError(format!(
+                    "io_profile=wal requires federation (set NEXUS_PEERS): {e}"
+                ))
+            })?;
+            let backend = crate::core::stream::wal::WalStreamCore::new(store, path.to_string());
             self.stream_manager
-                .register(path, backend)
+                .register(path, Arc::new(backend))
                 .map_err(stream_mgr_err)?;
             self.write_stream_inode(path, capacity)?;
             (None, None)
@@ -2144,21 +2165,28 @@ impl Kernel {
         &self,
         zone_id: &str,
         stream_path: &str,
-    ) -> Result<Arc<dyn crate::stream::StreamBackend>, KernelError> {
-        // Phase H of the rust-workspace restructure: WAL stream
-        // construction lives in raft now and surfaces through
-        // `FederationProvider::wal_stream_for_zone`.
-        let backend = self
+    ) -> Result<Arc<crate::core::stream::wal::WalStreamCore>, KernelError> {
+        // WAL streams are kernel primitives composing whatever
+        // distributed `MetaStore` federation has DI'd via
+        // `FederationProvider::metastore_for_zone`.  Federation only
+        // installs the storage capability; the kernel constructs the
+        // backend itself, no per-primitive DI methods.
+        let store = self
             .federation_arc()
-            .wal_stream_for_zone(self, zone_id, stream_path, "")
+            .metastore_for_zone(self, zone_id)
             .map_err(KernelError::IOError)?;
+        let core = Arc::new(crate::core::stream::wal::WalStreamCore::new(
+            store,
+            stream_path.to_string(),
+        ));
         // Register with StreamManager — ignore Exists (idempotent re-call).
-        let _ = self
-            .stream_manager
-            .register(stream_path, Arc::clone(&backend));
+        let _ = self.stream_manager.register(
+            stream_path,
+            Arc::clone(&core) as Arc<dyn crate::stream::StreamBackend>,
+        );
         // Seed DCache + metastore inode so sys_read can locate the stream.
         let _ = self.write_stream_inode(stream_path, 0);
-        Ok(backend)
+        Ok(core)
     }
 
     // ── Zone revision counter (§10 A2) ────────────────────────────────

@@ -335,4 +335,37 @@ pub trait MetaStore: Send + Sync {
     fn coherence_key(&self) -> Option<usize> {
         None
     }
+
+    /// Append a raw byte entry at `key` to the metastore's
+    /// stream-entries side table.  Used by `WalStreamCore` /
+    /// `WalPipeCore` (the durable DT_STREAM / DT_PIPE backends) to
+    /// persist an entry through whatever replication the metastore
+    /// happens to provide — ``LocalMetaStore`` has no replication and
+    /// returns ``NotSupported`` (callers fall back to the in-memory
+    /// stream/pipe backends), ``ZoneMetaStore`` proposes
+    /// ``Command::AppendStreamEntry`` so peers see the entry via
+    /// raft commit.
+    ///
+    /// The metastore impl owns the key namespace — kernel-side
+    /// callers prefix with ``__wal_stream__/<id>`` or
+    /// ``__wal_pipe__/<id>`` so stream and pipe entries never collide
+    /// in the shared side table.
+    fn append_stream_entry(&self, key: &str, data: &[u8]) -> Result<(), MetaStoreError> {
+        let _ = (key, data);
+        Err(MetaStoreError::IOError(
+            "append_stream_entry: not supported by this metastore (use a distributed impl, e.g. ZoneMetaStore)".to_string(),
+        ))
+    }
+
+    /// Read a raw byte entry at `key` from the metastore's
+    /// stream-entries side table.  Counterpart to
+    /// [`Self::append_stream_entry`].  ``Ok(None)`` means the entry
+    /// has not been written yet (cursor ahead of writer); ``Err``
+    /// surfaces I/O / state-machine failures.
+    fn get_stream_entry(&self, key: &str) -> Result<Option<Vec<u8>>, MetaStoreError> {
+        let _ = key;
+        Err(MetaStoreError::IOError(
+            "get_stream_entry: not supported by this metastore (use a distributed impl, e.g. ZoneMetaStore)".to_string(),
+        ))
+    }
 }

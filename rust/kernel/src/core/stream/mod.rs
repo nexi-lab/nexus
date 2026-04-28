@@ -25,10 +25,10 @@
 //   core/stream/shm.rs      — SharedMemoryStream  (was kernel/src/shm_stream.rs)
 //   core/stream/stdio.rs    — StdioStreamBackend  (was kernel/src/stdio_stream.rs)
 //   core/stream/remote.rs   — RemoteStreamBackend (was kernel/src/remote_stream.rs)
-// Phase H of the rust-workspace restructure moved the WAL-replicated
-// stream backend out of kernel into the raft crate
-// (`nexus_raft::wal_stream_backend`) so the kernel→raft Cargo edge can
-// be inverted to raft→kernel.
+// `wal.rs` — WAL-replicated stream backend.  Kernel primitive that
+// composes whatever distributed `MetaStore` impl federation has DI'd
+// (typically `ZoneMetaStore` from the raft crate) — kernel does not
+// name raft types directly, layering stays clean.
 pub mod backend;
 pub mod manager;
 pub mod observer;
@@ -36,6 +36,7 @@ pub mod remote;
 #[cfg(unix)]
 pub mod shm;
 pub mod stdio;
+pub mod wal;
 
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};

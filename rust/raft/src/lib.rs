@@ -119,8 +119,13 @@ pub mod pyo3_bindings;
 pub mod federation_provider;
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod replication_scanner;
-#[cfg(all(feature = "grpc", has_protos))]
-pub mod wal_stream_backend;
+// WAL stream / pipe backends moved into the kernel crate
+// (`kernel::core::stream::wal`, `kernel::core::pipe::wal`) — they
+// are kernel primitives that compose whatever distributed `MetaStore`
+// federation has DI'd (typically `ZoneMetaStore` below).  Raft no
+// longer ships its own `WalConsensus` trait; the kernel-side
+// `MetaStore::{append_stream_entry, get_stream_entry}` methods are
+// the abstraction.
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod zone_meta_store;
 

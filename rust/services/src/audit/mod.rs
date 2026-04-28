@@ -29,10 +29,7 @@ use chrono::SecondsFormat;
 use serde::Serialize;
 
 use kernel::core::dispatch::{HookContext, NativeInterceptHook};
-// Phase H of the rust-workspace restructure: WAL stream backend
-// moved to nexus_raft::wal_stream_backend.  AuditHook only uses the
-// trait surface (`kernel::stream::StreamBackend`) at runtime; the
-// concrete WalStreamCore appears in unit tests below.
+use kernel::core::stream::wal::WalStreamCore;
 use kernel::kernel::{Kernel, KernelError};
 
 /// A single VFS operation record, serialised to JSON and appended to the
@@ -168,7 +165,9 @@ impl NativeInterceptHook for AuditHook {
 /// boot path) call this exactly once per zone.
 pub fn install(kernel: &Kernel, zone_id: &str, stream_path: &str) -> Result<(), KernelError> {
     let stream = kernel.prepare_audit_stream(zone_id, stream_path)?;
-    let hook = AuditHook::new(stream);
+    // AuditHook needs the trait surface — concrete WalStreamCore
+    // upcasts via `as Arc<dyn StreamBackend>`.
+    let hook = AuditHook::new(stream as Arc<dyn kernel::stream::StreamBackend>);
     kernel.register_native_hook(Box::new(hook));
     Ok(())
 }
@@ -176,37 +175,55 @@ pub fn install(kernel: &Kernel, zone_id: &str, stream_path: &str) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::abc::meta_store::{FileMetadata, MetaStore, MetaStoreError};
     use kernel::core::dispatch::{HookIdentity, WriteHookCtx};
-    use nexus_raft::wal_stream_backend::{WalConsensus, WalStreamCore};
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    struct MemConsensus {
+    /// In-memory MetaStore mock for the audit-stream tests.  Implements
+    /// only the stream-entries surface; structured FileMetadata calls
+    /// are unused here so they're stubs.
+    struct MemKvStore {
         inner: Mutex<BTreeMap<String, Vec<u8>>>,
     }
-    impl MemConsensus {
+    impl MemKvStore {
         fn new() -> Arc<Self> {
             Arc::new(Self {
                 inner: Mutex::new(BTreeMap::new()),
             })
         }
     }
-    impl WalConsensus for MemConsensus {
-        fn append(&self, key: &str, data: &[u8]) -> Result<(), String> {
+    impl MetaStore for MemKvStore {
+        fn get(&self, _path: &str) -> Result<Option<FileMetadata>, MetaStoreError> {
+            Ok(None)
+        }
+        fn put(&self, _path: &str, _meta: FileMetadata) -> Result<(), MetaStoreError> {
+            Ok(())
+        }
+        fn delete(&self, _path: &str) -> Result<bool, MetaStoreError> {
+            Ok(false)
+        }
+        fn list(&self, _prefix: &str) -> Result<Vec<FileMetadata>, MetaStoreError> {
+            Ok(Vec::new())
+        }
+        fn exists(&self, _path: &str) -> Result<bool, MetaStoreError> {
+            Ok(false)
+        }
+        fn append_stream_entry(&self, key: &str, data: &[u8]) -> Result<(), MetaStoreError> {
             self.inner
                 .lock()
                 .unwrap()
                 .insert(key.to_string(), data.to_vec());
             Ok(())
         }
-        fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
+        fn get_stream_entry(&self, key: &str) -> Result<Option<Vec<u8>>, MetaStoreError> {
             Ok(self.inner.lock().unwrap().get(key).cloned())
         }
     }
 
     #[test]
     fn on_post_write_sends_record_to_stream() {
-        let stream = Arc::new(WalStreamCore::new(MemConsensus::new(), "audit-test".into()));
+        let stream = Arc::new(WalStreamCore::new(MemKvStore::new(), "audit-test".into()));
         let hook = AuditHook::new(Arc::clone(&stream) as Arc<dyn kernel::stream::StreamBackend>);
 
         let ctx = HookContext::Write(WriteHookCtx {
@@ -242,7 +259,7 @@ mod tests {
     #[test]
     fn on_post_delete_records_delete_op() {
         use kernel::core::dispatch::{DeleteHookCtx, HookIdentity};
-        let stream = Arc::new(WalStreamCore::new(MemConsensus::new(), "audit-del".into()));
+        let stream = Arc::new(WalStreamCore::new(MemKvStore::new(), "audit-del".into()));
         let hook = AuditHook::new(Arc::clone(&stream) as Arc<dyn kernel::stream::StreamBackend>);
 
         let ctx = HookContext::Delete(DeleteHookCtx {

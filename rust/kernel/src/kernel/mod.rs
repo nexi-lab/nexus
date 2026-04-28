@@ -13,10 +13,12 @@
 //!
 //! Issue #1868: Phase H — kernel boundary collapse.
 
-use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
+#[cfg(test)]
+use crate::dcache::DT_REG;
+use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM};
 use crate::dispatch::{MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
-use crate::lock_manager::{LockManager, LockMode};
+use crate::lock_manager::LockManager;
 use crate::meta_store::LocalMetaStore;
 use crate::vfs_router::{
     canonicalize_mount_path as canonicalize, RouteError, RustRouteResult, VFSRouter,
@@ -2196,7 +2198,6 @@ impl Kernel {
     // ── File I/O syscalls (sys_read / sys_write / sys_stat / sys_unlink /
     //    sys_rename / sys_copy / sys_mkdir / sys_rmdir) ──────────────────
     // (Moved to `kernel::io` submodule — Phase G of Phase 3 restructure.)
-
 
     /// Backend-native directory listing for external mounts.
     ///

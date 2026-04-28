@@ -250,6 +250,7 @@ fn extract_metadata(
         created_at_ms: extract_opt_datetime_ms(obj, "created_at"),
         modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),
         last_writer_address: get_opt_str("last_writer_address")?,
+        target_zone_id: get_opt_str("target_zone_id")?,
     })
 }
 

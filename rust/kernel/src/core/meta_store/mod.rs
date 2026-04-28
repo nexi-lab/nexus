@@ -333,6 +333,7 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     write_opt_i64(&mut buf, meta.created_at_ms);
     write_opt_i64(&mut buf, meta.modified_at_ms);
     write_opt_str(&mut buf, &meta.last_writer_address);
+    write_opt_str(&mut buf, &meta.target_zone_id);
 
     buf
 }
@@ -427,6 +428,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
     let modified_at_ms = read_opt_i64(data, &mut pos)?;
     // Trailing optional slots may grow over time; missing reads return None.
     let last_writer_address = read_opt_str(data, &mut pos).ok().flatten();
+    let target_zone_id = read_opt_str(data, &mut pos).ok().flatten();
 
     let _ = pos;
 
@@ -440,6 +442,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
         mime_type,
         created_at_ms,
         modified_at_ms,
+        target_zone_id,
         last_writer_address,
     })
 }
@@ -815,10 +818,7 @@ mod tests {
     use super::*;
 
     /// Binary serialize↔deserialize round-trip covers both a DT_REG
-    /// entry and a DT_MOUNT entry so entry_type survives intact. Target
-    /// zone is never carried by the kernel struct (federation-only —
-    /// lives on the raft proto itself), so we only assert the fields
-    /// the kernel tracks.
+    /// entry and a DT_MOUNT entry so entry_type survives intact.
     #[test]
     fn test_serialize_roundtrip() {
         let cases = [
@@ -833,6 +833,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: Some("nexus-1:2028".to_string()),
+                target_zone_id: None,
             },
             FileMetadata {
                 path: "/mnt/peer".to_string(),
@@ -845,6 +846,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                target_zone_id: Some("zone-a".to_string()),
             },
         ];
         for meta in &cases {
@@ -857,6 +859,7 @@ mod tests {
             assert_eq!(restored.zone_id, meta.zone_id);
             assert_eq!(restored.mime_type, meta.mime_type);
             assert_eq!(restored.last_writer_address, meta.last_writer_address);
+            assert_eq!(restored.target_zone_id, meta.target_zone_id);
         }
     }
 
@@ -872,6 +875,7 @@ mod tests {
             created_at_ms: None,
             modified_at_ms: None,
             last_writer_address: None,
+            target_zone_id: None,
         }
     }
 
@@ -980,6 +984,7 @@ mod tests {
             created_at_ms: None,
             modified_at_ms: None,
             last_writer_address: None,
+            target_zone_id: None,
         };
         let data = serialize_metadata(&meta);
         let restored = deserialize_metadata(&data).unwrap();

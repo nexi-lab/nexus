@@ -1013,6 +1013,10 @@ impl Kernel {
             created_at_ms,
             modified_at_ms,
             last_writer_address: self.self_address.read().clone(),
+            // build_metadata is called for non-DT_MOUNT writes (sys_write,
+            // mkdir, etc.); DT_MOUNT entries are constructed in dlc.rs
+            // with the target zone explicitly set.
+            target_zone_id: None,
         }
     }
 
@@ -3060,6 +3064,7 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                target_zone_id: None,
             },
         )
         .unwrap();

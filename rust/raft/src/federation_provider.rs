@@ -538,7 +538,7 @@ fn wire_mount_core(
     mount_path: &str,
     target_zone_id: &str,
 ) -> FederationResult<()> {
-    tracing::info!(
+    tracing::debug!(
         parent_zone_id = %parent_zone_id,
         mount_path = %mount_path,
         target_zone_id = %target_zone_id,

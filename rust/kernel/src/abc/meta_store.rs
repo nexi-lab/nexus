@@ -59,6 +59,13 @@ pub struct FileMetadata {
     /// it; the kernel only stores and forwards. `None` on single-node
     /// deployments without a published address.
     pub last_writer_address: Option<String>,
+    /// For `entry_type == DT_MOUNT (2)`: the zone this mount points
+    /// to.  Federation's `mount_apply_cb` reads this on every replicated
+    /// SetMetadata to wire cross-zone routing on followers — it must
+    /// round-trip through the metastore proto, so we carry it on the
+    /// kernel struct rather than reconstructing it from a sibling
+    /// channel.  `None` for non-DT_MOUNT entries.
+    pub target_zone_id: Option<String>,
 }
 
 /// Error type for `MetaStore` operations.

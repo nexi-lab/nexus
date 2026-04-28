@@ -271,5 +271,9 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
             .get("last_writer_address")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        target_zone_id: obj
+            .get("target_zone_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     })
 }

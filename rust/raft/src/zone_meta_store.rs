@@ -156,15 +156,15 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetaSt
         } else {
             Some(proto.last_writer_address)
         },
+        target_zone_id: if proto.target_zone_id.is_empty() {
+            None
+        } else {
+            Some(proto.target_zone_id)
+        },
     })
 }
 
 pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
-    // ``target_zone_id`` is intentionally left at the proto default ("")
-    // — the kernel struct does not carry it. DT_MOUNT writes that need
-    // a target come from federation (``rust/raft/src/pyo3_bindings.rs``
-    // constructs the proto directly); entries written through
-    // ``ZoneMetaStore`` are non-mount kinds whose target is always "".
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
         size: meta.size as i64,
@@ -174,6 +174,11 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
         zone_id: meta.zone_id.clone().unwrap_or_default(),
         mime_type: meta.mime_type.clone().unwrap_or_default(),
         last_writer_address: meta.last_writer_address.clone().unwrap_or_default(),
+        // For DT_MOUNT entries this carries the cross-zone routing
+        // pointer that federation's `mount_apply_cb` reads on every
+        // replicated SetMetadata to wire the mount on followers.
+        // Empty for non-DT_MOUNT entries.
+        target_zone_id: meta.target_zone_id.clone().unwrap_or_default(),
         ..Default::default()
     };
     proto.encode_to_vec()
@@ -327,10 +332,9 @@ mod tests {
 
     /// Proto encode↔decode preserves every field the kernel struct
     /// tracks. ``target_zone_id`` deliberately not asserted here —
-    /// R20.1 removed it from the kernel struct on the principle that
-    /// federation (which authors DT_MOUNT entries) operates on the
-    /// proto directly, so dropping the field from the kernel-side
-    /// mapper is correct.
+    /// `target_zone_id` is now carried on the kernel struct (added back
+    /// for federation's `mount_apply_cb` to read on every replicated
+    /// SetMetadata) and round-trips through the proto.
     #[test]
     fn proto_roundtrip_preserves_kernel_fields() {
         let meta = KernelFileMetadata {
@@ -344,6 +348,7 @@ mod tests {
             created_at_ms: None,
             modified_at_ms: None,
             last_writer_address: Some("nexus-1:2028".to_string()),
+            target_zone_id: None,
         };
         let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
         assert_eq!(restored.path, meta.path);

@@ -183,11 +183,13 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         try:
             import nexus_runtime as _nk
 
-            _nk.install_transport_wiring(kernel)
-            # Phase 5 anchor: replace the kernel's NoopFederationProvider
-            # with RaftFederationProvider so federation-aware syscalls
-            # dispatch through the trait.
+            # Federation wiring runs FIRST so init_from_env can stash the
+            # raft-side `BlobFetcherSlot` into the kernel; the transport
+            # install hook below drains that slot and installs the real
+            # fetcher.  Reverse order would leave the slot empty when
+            # transport drains, falling back to "blob fetcher not installed".
             _nk.install_federation_wiring(kernel)
+            _nk.install_transport_wiring(kernel)
         except Exception as _wiring_exc:
             import logging as _logging
 
@@ -525,8 +527,10 @@ def connect(
             try:
                 import nexus_runtime as _nk
 
-                _nk.install_transport_wiring(_early_kernel)
+                # Federation wiring first so init_from_env stashes the
+                # blob-fetcher slot before transport drains it.
                 _nk.install_federation_wiring(_early_kernel)
+                _nk.install_transport_wiring(_early_kernel)
             except Exception as _wiring_exc:
                 import logging as _logging
 

@@ -232,8 +232,10 @@ class NexusFS(  # type: ignore[misc]
                     try:
                         import nexus_runtime as _nk
 
-                        _nk.install_transport_wiring(self._kernel)
+                        # Federation first so init_from_env stashes the
+                        # blob-fetcher slot before transport drains it.
                         _nk.install_federation_wiring(self._kernel)
+                        _nk.install_transport_wiring(self._kernel)
                     except Exception as _wiring_exc:
                         logger.warning(
                             "install_transport_wiring/install_federation_wiring "

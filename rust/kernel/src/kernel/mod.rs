@@ -1656,25 +1656,14 @@ impl Kernel {
                 return Err(KernelError::IOError("stdio pipes require unix".into()));
             }
         } else if io_profile == "wal" {
-            // Raft-replicated DT_PIPE — mirrors the `setattr_stream`
-            // wal branch. Single-consumer semantics (each replica owns
-            // its head cursor); see `core/pipe/wal.rs` for the contract.
-            let zm = self.zone_manager_arc().ok_or_else(|| {
-                KernelError::IOError("io_profile=wal requires federation (set NEXUS_PEERS)".into())
-            })?;
-            let root_zone = "root";
-            let consensus = zm.registry().get_node(root_zone).ok_or_else(|| {
-                KernelError::IOError(format!("io_profile=wal: zone {root_zone} not loaded"))
-            })?;
-            let runtime = zm.runtime_handle();
-            let wal_consensus: Arc<dyn crate::wal_stream::WalConsensus> =
-                Arc::new(crate::wal_stream::RaftWalConsensus::new(consensus, runtime));
-            let backend = crate::core::pipe::wal::WalPipeCore::new(wal_consensus, path.to_string());
-            self.pipe_manager
-                .register(path, Arc::new(backend))
-                .map_err(pipe_mgr_err)?;
-            self.write_pipe_inode(path, capacity)?;
-            (None, None, None)
+            // Phase H deferred WAL pipe — WalPipeCore composed
+            // WalStreamCore from kernel-side `crate::wal_stream`, but
+            // Phase H moved that module to nexus_raft::wal_stream_backend.
+            // The follow-up PR rewires through
+            // FederationProvider::{append_wal_entry, get_wal_entry}.
+            return Err(KernelError::IOError(
+                "io_profile=wal pipes deferred pending FederationProvider rewire".into(),
+            ));
         } else {
             self.create_pipe(path, capacity)?;
             (None, None, None)

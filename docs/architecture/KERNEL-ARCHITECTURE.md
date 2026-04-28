@@ -882,6 +882,31 @@ FileEvent). Not kernel-owned, but bottom-layer infrastructure.
 
 See `federation-memo.md` §2–§5 for gRPC/consensus details.
 
+### 8.1 NexusVFSService.Call — RPC dispatch order
+
+The tonic `Call(method, payload)` handler resolves the method through
+two dispatch paths in order:
+
+1. **Rust services** — `Kernel::dispatch_rust_call(service, method, payload)`
+   routes to a `RustService::dispatch` impl when the method maps to a
+   Rust-flavoured entry in `ServiceRegistry`. Method names follow one
+   of two shapes:
+   - Dotted: `service.method` (canonical) — split on the first `.`,
+     dispatch the bare method on that service.
+   - Flat backward-compat: methods with the prefix `acp_` or
+     `managed_agent_` route to that service with the full method name
+     preserved (matches Python `@rpc_expose` naming).
+2. **Python `@rpc_expose`** — fallback path when the Rust dispatch
+   returns `None` (no Rust service for that name) or `NotFound`
+   (service exists but doesn't expose the method). The handler hands
+   the original method string to `bridge.dispatch_call`, which runs
+   the existing async `dispatch_method` on the FastAPI loop.
+
+Auth is resolved before either dispatch path so admin-only checks
+apply uniformly. `RustCallError::InvalidArgument` and `Internal`
+short-circuit straight to the wire encoder; no fallback in those
+cases.
+
 ---
 
 ## 9. Cross-References

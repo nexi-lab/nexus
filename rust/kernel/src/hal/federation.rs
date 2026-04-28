@@ -142,6 +142,35 @@ pub trait FederationProvider: Send + Sync + 'static {
     /// Take and return any previously stashed blob-fetcher slot.
     /// `None` after the first take or if no slot was stashed.
     fn take_blob_fetcher_slot(&self, kernel: &crate::kernel::Kernel) -> Option<BlobFetcherSlot>;
+
+    /// Create (or look up an existing) raft zone with `zone_id`.
+    /// Idempotent — repeat calls return the same zone.  Wires the
+    /// kernel-side apply-cb so DT_MOUNT events on the new zone
+    /// propagate to the VFSRouter + Python DLC.  Used by the
+    /// `federation_create_zone` RPC entry point.
+    fn create_zone(&self, kernel: &crate::kernel::Kernel, zone_id: &str) -> FederationResult<()>;
+
+    /// Remove a raft zone, cascade-unmounting every cross-zone mount
+    /// pointing to it first.  `force=true` honors the POSIX-style
+    /// `unlink while i_links > 0` bypass for the case where the
+    /// cascade can't fully drain references (raft replication race
+    /// on a follower, partial unmount, …).
+    fn remove_zone(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+        force: bool,
+    ) -> FederationResult<()>;
+
+    /// Join an existing raft zone as a voter (`as_learner=false`) or
+    /// learner (`as_learner=true`).  Used by `federation_join` to
+    /// pull a zone advertised by a peer into the local node.
+    fn join_zone(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+        as_learner: bool,
+    ) -> FederationResult<()>;
 }
 
 /// No-op fallback used at `Kernel::new` so the federation slot is
@@ -234,6 +263,28 @@ impl FederationProvider for NoopFederationProvider {
 
     fn take_blob_fetcher_slot(&self, _kernel: &crate::kernel::Kernel) -> Option<BlobFetcherSlot> {
         None
+    }
+
+    fn create_zone(&self, _kernel: &crate::kernel::Kernel, _zone_id: &str) -> FederationResult<()> {
+        Err("FederationProvider not installed".into())
+    }
+
+    fn remove_zone(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _zone_id: &str,
+        _force: bool,
+    ) -> FederationResult<()> {
+        Err("FederationProvider not installed".into())
+    }
+
+    fn join_zone(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _zone_id: &str,
+        _as_learner: bool,
+    ) -> FederationResult<()> {
+        Err("FederationProvider not installed".into())
     }
 }
 

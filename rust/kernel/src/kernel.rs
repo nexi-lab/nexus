@@ -201,7 +201,7 @@ pub struct SysReadResult {
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
     /// Content hash (content_id) for post-hook context.
-    pub content_hash: Option<String>,
+    pub content_id: Option<String>,
     /// DT_REG(1), DT_PIPE(3), DT_STREAM(4).
     pub entry_type: u8,
 }
@@ -2821,7 +2821,7 @@ impl Kernel {
             path: path.to_string(),
             identity: hook_id,
             content: None,
-            content_hash: None,
+            content_id: None,
         }))?;
 
         // 2. Route (pure Rust LPM)
@@ -2859,7 +2859,7 @@ impl Kernel {
                             return Ok(SysReadResult {
                                 data: Some(data),
                                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                                content_hash: None,
+                                content_id: None,
                                 entry_type: DT_REG,
                             });
                         }
@@ -2877,7 +2877,7 @@ impl Kernel {
                         return Ok(SysReadResult {
                             data: Some(data),
                             post_hook_needed: false,
-                            content_hash: None,
+                            content_id: None,
                             entry_type: DT_PIPE,
                         });
                     }
@@ -2886,7 +2886,7 @@ impl Kernel {
                         return Ok(SysReadResult {
                             data: None,
                             post_hook_needed: false,
-                            content_hash: None,
+                            content_id: None,
                             entry_type: DT_PIPE,
                         });
                     }
@@ -2900,7 +2900,7 @@ impl Kernel {
             return Ok(SysReadResult {
                 data: None,
                 post_hook_needed: false,
-                content_hash: None,
+                content_id: None,
                 entry_type: DT_PIPE,
             });
         }
@@ -2910,7 +2910,7 @@ impl Kernel {
             return Ok(SysReadResult {
                 data: None,
                 post_hook_needed: false,
-                content_hash: None,
+                content_id: None,
                 entry_type: DT_STREAM,
             });
         }
@@ -2946,7 +2946,7 @@ impl Kernel {
             Some(data) => Ok(SysReadResult {
                 data: Some(data),
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_hash: entry.content_id.clone(),
+                content_id: entry.content_id.clone(),
                 entry_type: DT_REG,
             }),
             // Local backend miss + metadata exists → federation path:
@@ -3016,7 +3016,7 @@ impl Kernel {
         Ok(SysReadResult {
             data: Some(data),
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-            content_hash: entry.content_id.clone(),
+            content_id: entry.content_id.clone(),
             entry_type: DT_REG,
         })
     }
@@ -3070,7 +3070,7 @@ impl Kernel {
             },
             content: vec![], // no clone — no current hook inspects content
             is_new_file: false,
-            content_hash: None,
+            content_id: None,
             new_version: 0,
             size_bytes: None,
         }))?;
@@ -3279,7 +3279,7 @@ impl Kernel {
                     },
                     content: vec![],
                     is_new_file: result_is_new,
-                    content_hash: None,
+                    content_id: None,
                     new_version: new_version.into(),
                     size_bytes: Some(wr.size),
                 }));
@@ -4603,7 +4603,7 @@ impl Kernel {
                 self.sys_read(path, ctx).unwrap_or(SysReadResult {
                     data: None,
                     post_hook_needed: false,
-                    content_hash: None,
+                    content_id: None,
                     entry_type: 0,
                 })
             })
@@ -4876,7 +4876,7 @@ impl Kernel {
     // `content_exists`, `get_content_size`, `is_chunked`, `_write_at_offset`).
     // Each resolves (mount_point, zone_id) → MountEntry → &CASEngine via
     // `ObjectStore::as_cas`; non-CAS backends surface as `InvalidPath`.
-    // Error context enrichment: the backend_name + content_hash are baked
+    // Error context enrichment: the backend_name + content_id are baked
     // into the returned `KernelError` so Python callers see
     // `BackendError("CAS I/O error [mount=cas-local hash=abcd…]: …")`
     // instead of a bare I/O message.
@@ -4937,11 +4937,11 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
         origins: &[String],
     ) -> Result<Vec<u8>, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_read", |cas| {
-            cas.read_content_with_origins(content_hash, origins)
+            cas.read_content_with_origins(content_id, origins)
         })
     }
 
@@ -4951,16 +4951,16 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
         start: u64,
         end: u64,
         origins: &[String],
     ) -> Result<Vec<u8>, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_read_range", |cas| {
-            if cas.is_chunked(content_hash) {
-                cas.read_chunked_range_with_origins(content_hash, start, end, origins)
+            if cas.is_chunked(content_id) {
+                cas.read_chunked_range_with_origins(content_id, start, end, origins)
             } else {
-                let full = cas.read_content_with_origins(content_hash, origins)?;
+                let full = cas.read_content_with_origins(content_id, origins)?;
                 let s = start as usize;
                 let e = (end as usize).min(full.len());
                 if s >= e {
@@ -4977,13 +4977,13 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<(), KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_delete", |cas| {
-            if cas.is_chunked(content_hash) {
-                cas.delete_chunked(content_hash)
+            if cas.is_chunked(content_id) {
+                cas.delete_chunked(content_id)
             } else {
-                cas.delete_content(content_hash)
+                cas.delete_content(content_id)
             }
         })
     }
@@ -4994,10 +4994,10 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<bool, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_exists", |cas| {
-            Ok(cas.content_exists(content_hash))
+            Ok(cas.content_exists(content_id))
         })
     }
 
@@ -5007,29 +5007,29 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<u64, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_size", |cas| {
-            cas.get_size(content_hash)
+            cas.get_size(content_id)
         })
     }
 
-    /// True iff this content_hash was stored as a chunked manifest.
+    /// True iff this content_id was stored as a chunked manifest.
     /// Uses the `.meta` sidecar presence as a fast-reject.
     pub fn cas_is_chunked(
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<bool, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_is_chunked", |cas| {
-            Ok(cas.is_chunked(content_hash))
+            Ok(cas.is_chunked(content_id))
         })
     }
 
     /// Partial write — dispatches to `write_chunked_partial` when the old
     /// blob is chunked, otherwise does a full read-modify-write in Rust.
-    /// Returns the new content_hash.
+    /// Returns the new content_id.
     pub fn cas_write_partial(
         &self,
         mount_point: &str,

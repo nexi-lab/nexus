@@ -310,7 +310,7 @@ pub struct ReadHookCtx {
     pub path: String,
     pub identity: HookIdentity,
     pub content: Option<Vec<u8>>,
-    pub content_hash: Option<String>,
+    pub content_id: Option<String>,
 }
 
 /// WriteHookContext — pre/post write intercept.
@@ -324,7 +324,7 @@ pub struct WriteHookCtx {
     /// Use `size_bytes` for byte-count metadata in post-hook context.
     pub content: Vec<u8>,
     pub is_new_file: bool,
-    pub content_hash: Option<String>,
+    pub content_id: Option<String>,
     pub new_version: u64,
     /// Populated in post-hook context; None in pre-hook.
     pub size_bytes: Option<u64>,

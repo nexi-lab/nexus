@@ -201,7 +201,7 @@ impl NexusVfsService for VfsServiceImpl {
                 Ok(Response::new(ReadResponse {
                     size: bytes.len() as i64,
                     content: bytes,
-                    content_id: result.content_hash.unwrap_or_default(),
+                    content_id: result.content_id.unwrap_or_default(),
                     is_error: false,
                     error_payload: Vec::new(),
                 }))

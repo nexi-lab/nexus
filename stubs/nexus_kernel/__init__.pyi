@@ -322,21 +322,21 @@ class PyKernel:
         self, mount_point: str, zone_id: str, content: bytes, ttl_seconds: int | None = None
     ) -> tuple[str, bool]: ...
     def cas_read(
-        self, mount_point: str, zone_id: str, content_hash: str, origins: list[str] | None = None
+        self, mount_point: str, zone_id: str, content_id: str, origins: list[str] | None = None
     ) -> bytes: ...
     def cas_read_range(
         self,
         mount_point: str,
         zone_id: str,
-        content_hash: str,
+        content_id: str,
         start: int,
         end: int,
         origins: list[str] | None = None,
     ) -> bytes: ...
-    def cas_delete(self, mount_point: str, zone_id: str, content_hash: str) -> None: ...
-    def cas_exists(self, mount_point: str, zone_id: str, content_hash: str) -> bool: ...
-    def cas_size(self, mount_point: str, zone_id: str, content_hash: str) -> int: ...
-    def cas_is_chunked(self, mount_point: str, zone_id: str, content_hash: str) -> bool: ...
+    def cas_delete(self, mount_point: str, zone_id: str, content_id: str) -> None: ...
+    def cas_exists(self, mount_point: str, zone_id: str, content_id: str) -> bool: ...
+    def cas_size(self, mount_point: str, zone_id: str, content_id: str) -> int: ...
+    def cas_is_chunked(self, mount_point: str, zone_id: str, content_id: str) -> bool: ...
     def cas_write_partial(
         self,
         mount_point: str,
@@ -539,7 +539,7 @@ class PyKernel:
 class PySysReadResult:
     data: bytes | None
     post_hook_needed: bool
-    content_hash: str | None
+    content_id: str | None
     entry_type: int
 
 class PySysWriteResult:

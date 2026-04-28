@@ -746,7 +746,7 @@ impl PyOperationContext {
 pub struct PySysReadResult {
     pub data: Option<Py<PyBytes>>,
     pub post_hook_needed: bool,
-    pub content_hash: Option<String>,
+    pub content_id: Option<String>,
     pub entry_type: u8,
 }
 
@@ -1322,33 +1322,33 @@ impl PyKernel {
         .map_err(Into::into)
     }
 
-    #[pyo3(signature = (mount_point, zone_id, content_hash, *, origins=None))]
+    #[pyo3(signature = (mount_point, zone_id, content_id, *, origins=None))]
     fn cas_read<'py>(
         &self,
         py: Python<'py>,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
         origins: Option<Vec<String>>,
     ) -> PyResult<Py<PyBytes>> {
         let origins_vec = origins.unwrap_or_default();
         let bytes = py
             .detach(|| {
                 self.inner
-                    .cas_read(mount_point, zone_id, content_hash, &origins_vec)
+                    .cas_read(mount_point, zone_id, content_id, &origins_vec)
             })
             .map_err::<PyErr, _>(Into::into)?;
         Ok(PyBytes::new(py, &bytes).unbind())
     }
 
-    #[pyo3(signature = (mount_point, zone_id, content_hash, start, end, *, origins=None))]
+    #[pyo3(signature = (mount_point, zone_id, content_id, start, end, *, origins=None))]
     #[allow(clippy::too_many_arguments)]
     fn cas_read_range<'py>(
         &self,
         py: Python<'py>,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
         start: u64,
         end: u64,
         origins: Option<Vec<String>>,
@@ -1359,7 +1359,7 @@ impl PyKernel {
                 self.inner.cas_read_range(
                     mount_point,
                     zone_id,
-                    content_hash,
+                    content_id,
                     start,
                     end,
                     &origins_vec,
@@ -1374,9 +1374,9 @@ impl PyKernel {
         py: Python<'py>,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> PyResult<()> {
-        py.detach(|| self.inner.cas_delete(mount_point, zone_id, content_hash))
+        py.detach(|| self.inner.cas_delete(mount_point, zone_id, content_id))
             .map_err(Into::into)
     }
 
@@ -1385,9 +1385,9 @@ impl PyKernel {
         py: Python<'py>,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> PyResult<bool> {
-        py.detach(|| self.inner.cas_exists(mount_point, zone_id, content_hash))
+        py.detach(|| self.inner.cas_exists(mount_point, zone_id, content_id))
             .map_err(Into::into)
     }
 
@@ -1396,9 +1396,9 @@ impl PyKernel {
         py: Python<'py>,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> PyResult<u64> {
-        py.detach(|| self.inner.cas_size(mount_point, zone_id, content_hash))
+        py.detach(|| self.inner.cas_size(mount_point, zone_id, content_id))
             .map_err(Into::into)
     }
 
@@ -1407,13 +1407,10 @@ impl PyKernel {
         py: Python<'py>,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> PyResult<bool> {
-        py.detach(|| {
-            self.inner
-                .cas_is_chunked(mount_point, zone_id, content_hash)
-        })
-        .map_err(Into::into)
+        py.detach(|| self.inner.cas_is_chunked(mount_point, zone_id, content_id))
+            .map_err(Into::into)
     }
 
     #[pyo3(signature = (mount_point, zone_id, old_hash, buf, offset, *, origins=None))]
@@ -2096,7 +2093,7 @@ impl PyKernel {
         Ok(PySysReadResult {
             data: result.data.map(|d| PyBytes::new(py, &d).into()),
             post_hook_needed: result.post_hook_needed,
-            content_hash: result.content_hash,
+            content_id: result.content_id,
             entry_type: result.entry_type,
         })
     }
@@ -2514,7 +2511,7 @@ impl PyKernel {
             .map(|r| PySysReadResult {
                 data: r.data.map(|d| PyBytes::new(py, &d).into()),
                 post_hook_needed: r.post_hook_needed,
-                content_hash: r.content_hash,
+                content_id: r.content_id,
                 entry_type: r.entry_type,
             })
             .collect())

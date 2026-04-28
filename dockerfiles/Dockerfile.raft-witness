@@ -31,21 +31,26 @@ COPY Cargo.toml Cargo.lock ./
 # Copy proto files (build.rs expects ../../proto relative to rust/raft/)
 COPY proto/ ./proto/
 
-# Copy Rust source — raft is the build target, transport + contracts are real deps.
+# Copy Rust source — raft is the build target.  Phase H flipped the
+# Cargo edge (kernel → raft) into (raft → kernel), so the witness
+# build now needs the real ``kernel`` + ``lib`` sources alongside the
+# transport / contracts / transport-primitives crates the binary already
+# linked against.  Everything else is stubbed below.
 COPY rust/raft/ ./rust/raft/
+COPY rust/kernel/ ./rust/kernel/
+COPY rust/lib/ ./rust/lib/
 COPY rust/transport/ ./rust/transport/
 COPY rust/contracts/ ./rust/contracts/
 # Copy transport-primitives — raft depends on it directly (Phase 4 split).
 COPY rust/transport-primitives/ ./rust/transport-primitives/
-# Stub out workspace members raft does not depend on at build time.
-# Phase 0 added `nexus-cdylib` as the dedicated cdylib build artifact
-# (alongside Phase A's lib rename and Phase D's backends addition);
-# Phase 4 (full) reorg moved `cluster` to `profiles/cluster` (deployment
-# profile binaries get their own folder).  Every workspace member must
-# appear here so Cargo can resolve the workspace manifest from inside
-# the slim witness image (which only ships rust/raft + rust/transport
-# + rust/transport-primitives + rust/contracts).
-RUN for d in lib kernel services tasks backends nexus-cdylib; do \
+# Stub out workspace members the witness binary does not depend on.
+# nexus-cdylib + cluster + services + tasks + backends only matter at
+# the cdylib / cluster-binary boundary; the slim witness binary links
+# only ``raft`` (which transitively pulls in kernel + lib + transport-
+# primitives + transport + contracts already copied above).  Empty
+# ``lib.rs`` keeps the workspace manifest resolvable without dragging
+# in the heavier pyo3 / tokio surface those crates carry.
+RUN for d in services tasks backends nexus-cdylib; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \

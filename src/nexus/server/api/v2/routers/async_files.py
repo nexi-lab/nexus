@@ -200,6 +200,39 @@ def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
     )
 
 
+def _metadata_field(meta: Any, name: str, default: Any = None) -> Any:
+    """Read a metadata field from either dict or object-shaped sys_stat output."""
+    if isinstance(meta, dict):
+        return meta.get(name, default)
+    return getattr(meta, name, default)
+
+
+def _metadata_timestamp(meta: Any, name: str) -> str | None:
+    value = _metadata_field(meta, name)
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())
+    return str(value)
+
+
+def _to_metadata_response(meta: Any, fallback_path: str) -> "MetadataResponse":
+    is_directory = _metadata_field(
+        meta,
+        "is_directory",
+        _metadata_field(meta, "is_dir", False),
+    )
+    return MetadataResponse(
+        path=_metadata_field(meta, "path", fallback_path),
+        size=_metadata_field(meta, "size", 0) or 0,
+        etag=_metadata_field(meta, "etag"),
+        version=_metadata_field(meta, "version", 1) or 1,
+        is_directory=bool(is_directory),
+        created_at=_metadata_timestamp(meta, "created_at"),
+        modified_at=_metadata_timestamp(meta, "modified_at"),
+    )
+
+
 # =============================================================================
 # Request/Response Models
 # =============================================================================
@@ -1450,15 +1483,7 @@ def create_async_files_router(
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
-            return MetadataResponse(
-                path=meta.path,
-                size=meta.size,
-                etag=meta.etag,
-                version=meta.version,
-                is_directory=meta.is_dir,
-                created_at=meta.created_at.isoformat() if meta.created_at else None,
-                modified_at=meta.modified_at.isoformat() if meta.modified_at else None,
-            )
+            return _to_metadata_response(meta, fallback_path=path)
 
         except AuthenticationError:
             # Preserve structured re-auth signal (see /list and /read handlers).

@@ -343,6 +343,58 @@ impl FederationProvider for RaftFederationProvider {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+
+    fn zone_share(
+        &self,
+        _kernel: &Kernel,
+        _parent_zone: &str,
+        _prefix: &str,
+        _new_zone: &str,
+    ) -> FederationResult<u64> {
+        Err("zone_share: not yet wired through trait".into())
+    }
+
+    fn register_share(
+        &self,
+        _kernel: &Kernel,
+        _local_path: &str,
+        _zone_id: &str,
+    ) -> FederationResult<()> {
+        Err("register_share: not yet wired through trait".into())
+    }
+
+    fn lookup_share(
+        &self,
+        _kernel: &Kernel,
+        _remote_path: &str,
+    ) -> FederationResult<Option<String>> {
+        Ok(None)
+    }
+
+    fn zone_links_count(&self, _kernel: &Kernel, _zone_id: &str) -> FederationResult<i64> {
+        Ok(0)
+    }
+
+    fn zone_cluster_info(
+        &self,
+        _kernel: &Kernel,
+        zone_id: &str,
+    ) -> FederationResult<Vec<(String, serde_json::Value)>> {
+        let zm = self.zm().ok_or("federation not active")?;
+        let status = zm.cluster_status(zone_id);
+        Ok(vec![
+            ("zone_id".to_string(), status.zone_id.into()),
+            ("node_id".to_string(), status.node_id.into()),
+            ("has_store".to_string(), status.has_store.into()),
+            ("is_leader".to_string(), status.is_leader.into()),
+            ("leader_id".to_string(), status.leader_id.into()),
+            ("term".to_string(), status.term.into()),
+            ("commit_index".to_string(), status.commit_index.into()),
+            ("applied_index".to_string(), status.applied_index.into()),
+            ("voter_count".to_string(), status.voter_count.into()),
+            ("witness_count".to_string(), status.witness_count.into()),
+        ])
+    }
 }
 
 /// Install `RaftFederationProvider` into the kernel's federation slot

@@ -171,6 +171,52 @@ pub trait FederationProvider: Send + Sync + 'static {
         zone_id: &str,
         as_learner: bool,
     ) -> FederationResult<()>;
+
+    /// Copy a subtree from `parent_zone` (rooted at `prefix`) into
+    /// `new_zone` as the new zone's content.  Used by federation_share.
+    /// Returns the number of entries copied.
+    fn zone_share(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        parent_zone: &str,
+        prefix: &str,
+        new_zone: &str,
+    ) -> FederationResult<u64>;
+
+    /// Register a `local_path → zone_id` mapping in the
+    /// raft-replicated share registry so peers can resolve the share
+    /// without a separate RPC.
+    fn register_share(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        local_path: &str,
+        zone_id: &str,
+    ) -> FederationResult<()>;
+
+    /// Look up a previously-registered share by remote path.  `None`
+    /// if the path was never shared on any cluster member.
+    fn lookup_share(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        remote_path: &str,
+    ) -> FederationResult<Option<String>>;
+
+    /// Count of mounts pointing at `zone_id` across the cluster.
+    fn zone_links_count(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+    ) -> FederationResult<i64>;
+
+    /// Rich cluster status (node_id, leader_id, term, commit_index,
+    /// applied_index, voter_count, witness_count) for `zone_id`.
+    /// Returned as `(field_name, json_value)` pairs so the kernel
+    /// HAL stays JSON-typed.
+    fn zone_cluster_info(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+    ) -> FederationResult<Vec<(String, serde_json::Value)>>;
 }
 
 /// No-op fallback used at `Kernel::new` so the federation slot is
@@ -284,6 +330,49 @@ impl FederationProvider for NoopFederationProvider {
         _zone_id: &str,
         _as_learner: bool,
     ) -> FederationResult<()> {
+        Err("FederationProvider not installed".into())
+    }
+
+    fn zone_share(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _parent_zone: &str,
+        _prefix: &str,
+        _new_zone: &str,
+    ) -> FederationResult<u64> {
+        Err("FederationProvider not installed".into())
+    }
+
+    fn register_share(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _local_path: &str,
+        _zone_id: &str,
+    ) -> FederationResult<()> {
+        Err("FederationProvider not installed".into())
+    }
+
+    fn lookup_share(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _remote_path: &str,
+    ) -> FederationResult<Option<String>> {
+        Ok(None)
+    }
+
+    fn zone_links_count(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _zone_id: &str,
+    ) -> FederationResult<i64> {
+        Ok(0)
+    }
+
+    fn zone_cluster_info(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _zone_id: &str,
+    ) -> FederationResult<Vec<(String, serde_json::Value)>> {
         Err("FederationProvider not installed".into())
     }
 }

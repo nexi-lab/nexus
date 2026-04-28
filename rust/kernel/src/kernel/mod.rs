@@ -765,6 +765,7 @@ impl Kernel {
     /// callers should opt in explicitly via `Kernel::new()` rather
     /// than the implicit `Default::default()` shortcut.
     #[allow(clippy::new_without_default)]
+    #[allow(clippy::let_and_return)]
     pub fn new() -> Self {
         // Phase 4 (full): kernel owns its tokio runtime now (was on
         // `PeerBlobClient` pre-Phase-4).  Multi-thread, two workers
@@ -835,17 +836,15 @@ impl Kernel {
             cross_zone_mounts: Arc::new(DashMap::new()),
             mount_reconciliation_done: AtomicBool::new(false),
         };
-        // R20.18.5 activation: every Kernel instance attempts federation
-        // bootstrap from env. `init_federation_from_env` is a no-op
-        // when NEXUS_HOSTNAME is unset (tests / slim profile) so
-        // unit tests aren't affected. Bootstrap failures are logged
-        // and the kernel stays up in "federation disabled" mode so a
-        // misconfigured NEXUS_PEERS doesn't take the whole process
-        // down — gives operators a path to diagnose via sys_stat on
-        // `/__sys__/zones/`.
-        if let Err(e) = k.init_federation_from_env() {
-            tracing::warn!("federation bootstrap from env failed: {:?}", e);
-        }
+        // R20.18.5 activation: federation bootstrap is now driven by
+        // `install_federation_wiring` (see `kernel::raft_federation_provider`).
+        // The cdylib boot path constructs `Kernel`, then calls
+        // `install_federation_wiring(kernel)` which installs the
+        // `RaftFederationProvider` and dispatches `init_from_env`
+        // through the trait.  Kernel construction stays raft-free at
+        // this seam so non-cdylib callers (Rust tests, embedded) don't
+        // pay the federation init cost unless they explicitly install
+        // the provider.
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.

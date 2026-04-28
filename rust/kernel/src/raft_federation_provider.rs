@@ -157,12 +157,20 @@ impl FederationProvider for RaftFederationProvider {
     }
 }
 
-/// Install `RaftFederationProvider` into the kernel's federation slot.
+/// Install `RaftFederationProvider` into the kernel's federation slot
+/// **and** dispatch `init_from_env` so the federation cluster boots.
 ///
 /// Mirrors `transport::blob::peer_client::install` — called once per
 /// process from the cdylib boot path
 /// (`nexus-cdylib::install_federation_wiring`).  Idempotent — the
 /// kernel slot is simply replaced so re-imports stay safe.
+///
+/// Federation init failures are logged but non-fatal; the kernel
+/// stays up in "federation disabled" mode so a misconfigured
+/// `NEXUS_PEERS` doesn't take the whole process down.
 pub fn install(kernel: &Kernel) {
     kernel.set_federation(Arc::new(RaftFederationProvider));
+    if let Err(e) = kernel.federation_arc().init_from_env(kernel) {
+        tracing::warn!("federation init_from_env failed: {}", e);
+    }
 }

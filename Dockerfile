@@ -267,7 +267,6 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 # Always verifiable (present regardless of extras): Rust extensions.
 RUN python3 -c "\
 import nexus_runtime; \
-from nexus_runtime import PyMetaStore; \
 print('✓ Core imports passed (always-present subset)')"
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).

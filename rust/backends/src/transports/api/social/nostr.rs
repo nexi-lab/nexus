@@ -296,7 +296,7 @@ async fn global_watch_loop(kernel: Arc<Kernel>, tx: broadcast::Sender<Arc<NostrE
         match maybe_event {
             Ok(Some(file_event)) => {
                 let ctx = relay_ctx();
-                match kernel.sys_read(&file_event.path, &ctx) {
+                match kernel.sys_read(file_event.path(), &ctx) {
                     Ok(result) => {
                         if let Some(data) = result.data {
                             match serde_json::from_slice::<NostrEvent>(&data) {
@@ -306,7 +306,7 @@ async fn global_watch_loop(kernel: Arc<Kernel>, tx: broadcast::Sender<Arc<NostrE
                                 }
                                 Err(e) => {
                                     tracing::warn!(
-                                        path = %file_event.path,
+                                        path = %file_event.path(),
                                         error = %e,
                                         "nostr watch: event parse failed"
                                     );
@@ -316,7 +316,7 @@ async fn global_watch_loop(kernel: Arc<Kernel>, tx: broadcast::Sender<Arc<NostrE
                     }
                     Err(e) => {
                         tracing::warn!(
-                            path = %file_event.path,
+                            path = %file_event.path(),
                             error = ?e,
                             "nostr watch: sys_read failed"
                         );

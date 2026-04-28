@@ -31,7 +31,7 @@ use pyo3::prelude::*;
 /// `Kernel::dispatch_rust_call`. Maps onto JSON-RPC-shaped wire error
 /// codes by the gRPC `Call` handler (commit 13).
 #[derive(Debug)]
-pub(crate) enum RustCallError {
+pub enum RustCallError {
     /// Method name is not handled by this service. The default
     /// `RustService::dispatch` impl returns this so existing services
     /// compile without an explicit override.
@@ -65,7 +65,7 @@ impl std::error::Error for RustCallError {}
 /// Implementors live in `rust/kernel/src/<service>/` (or post-3932,
 /// `rust/services/src/<service>/`). They must be `Send + Sync` so the
 /// registry can hand `Arc<dyn RustService>` to multiple consumers.
-pub(crate) trait RustService: Send + Sync {
+pub trait RustService: Send + Sync {
     fn name(&self) -> &str;
 
     /// Start the service. Called once at bootstrap (or at enlist time

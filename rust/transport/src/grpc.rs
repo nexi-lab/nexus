@@ -336,6 +336,7 @@ impl NexusVfsService for VfsServiceImpl {
                 None
             };
 
+        let kernel = Arc::clone(&self.kernel);
         let bridge = self.bridge.clone();
         let api_key = self.api_key.clone();
         let payload = req.payload;
@@ -347,6 +348,9 @@ impl NexusVfsService for VfsServiceImpl {
                 // Build the auth dict for dispatch. API-key path fills
                 // a synthetic admin dict (matches Python's
                 // `get_operation_context` for static-key holders).
+                // Resolved up front so admin-only checks still apply
+                // before either the Rust or the Python dispatch path
+                // sees the call.
                 let auth_pyobj = match auth_dict_blob {
                     Some(prebuilt) => prebuilt.into_py_dict(py)?,
                     None if token.is_empty() && api_key.is_none() => {
@@ -369,6 +373,32 @@ impl NexusVfsService for VfsServiceImpl {
                         result.into_pyobject(py)?.into_any().unbind()
                     }
                 };
+
+                // Try Rust dispatch first; on miss, fall through to
+                // the Python `dispatch_method` path so the existing
+                // 195 `@rpc_expose` services keep working without
+                // changes.
+                if let Some((svc_name, rust_method)) = resolve_rust_dispatch(&method) {
+                    match kernel.dispatch_rust_call(svc_name, rust_method, &payload) {
+                        Some(Ok(bytes)) => return Ok((false, bytes)),
+                        Some(Err(kernel::service_registry::RustCallError::InvalidArgument(m))) => {
+                            return Ok((
+                                true,
+                                encode_rpc_error_bytes(RpcErrorCode::InvalidPath, &m),
+                            ));
+                        }
+                        Some(Err(kernel::service_registry::RustCallError::Internal(m))) => {
+                            return Ok((
+                                true,
+                                encode_rpc_error_bytes(RpcErrorCode::InternalError, &m),
+                            ));
+                        }
+                        // NotFound = service exists but doesn't expose
+                        // this method; None = name doesn't resolve to
+                        // a Rust service. Both cases fall through.
+                        Some(Err(kernel::service_registry::RustCallError::NotFound)) | None => {}
+                    }
+                }
 
                 let payload_bytes = PyBytes::new(py, &payload);
                 let resp = bridge
@@ -550,6 +580,36 @@ fn status_to_code(s: &Status) -> RpcErrorCode {
         Code::InvalidArgument => RpcErrorCode::InvalidPath,
         _ => RpcErrorCode::InternalError,
     }
+}
+
+/// Resolve a `Call.method` string into `(service_name, dispatch_method)`
+/// for the Rust dispatch attempt. Returning `None` means the method
+/// cannot be routed to a Rust service; the call handler falls through
+/// to the Python `dispatch_method` path with the original method name.
+///
+/// Resolution rules:
+///   1. Dotted form `service.method` is canonical: split on the first
+///      `.` and dispatch the bare method name on that service.
+///   2. Flat backward-compat: methods starting with `acp_` route to the
+///      `acp` service with the FULL method name preserved (Python
+///      `@rpc_expose` names keep the service prefix, e.g. `acp_call`).
+///      Methods starting with `managed_agent_` route to the
+///      `managed_agent` service with the full name; transitional only,
+///      future clients use the dotted form.
+///   3. Anything else returns `None` — straight to Python.
+fn resolve_rust_dispatch(method: &str) -> Option<(&str, &str)> {
+    if let Some((svc, bare)) = method.split_once('.') {
+        if !svc.is_empty() && !bare.is_empty() {
+            return Some((svc, bare));
+        }
+    }
+    if method.starts_with("acp_") {
+        return Some(("acp", method));
+    }
+    if method.starts_with("managed_agent_") {
+        return Some(("managed_agent", method));
+    }
+    None
 }
 
 // ── Auth result extraction ───────────────────────────────────────────
@@ -807,4 +867,67 @@ pub fn start_vfs_grpc_server(
     Ok(PyVfsGrpcServerHandle {
         inner: Some(handle),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── resolve_rust_dispatch ──────────────────────────────────────────
+
+    #[test]
+    fn dotted_form_splits_on_first_dot() {
+        assert_eq!(
+            resolve_rust_dispatch("managed_agent.start_session_v1"),
+            Some(("managed_agent", "start_session_v1"))
+        );
+    }
+
+    #[test]
+    fn dotted_form_keeps_inner_dots_in_method() {
+        // Future versions may use `service.namespace.method`; only the
+        // first dot is the split point.
+        assert_eq!(
+            resolve_rust_dispatch("acp.session.cancel"),
+            Some(("acp", "session.cancel"))
+        );
+    }
+
+    #[test]
+    fn dotted_form_empty_service_falls_through() {
+        // Leading dot is malformed — fall through.
+        assert_eq!(resolve_rust_dispatch(".start"), None);
+    }
+
+    #[test]
+    fn dotted_form_empty_method_falls_through() {
+        // Trailing dot is malformed — fall through.
+        assert_eq!(resolve_rust_dispatch("acp."), None);
+    }
+
+    #[test]
+    fn flat_acp_routes_to_acp_with_full_name() {
+        // Python @rpc_expose keeps the `acp_` prefix in the method
+        // name, so the full string is what the Rust port will register.
+        assert_eq!(resolve_rust_dispatch("acp_call"), Some(("acp", "acp_call")));
+        assert_eq!(resolve_rust_dispatch("acp_kill"), Some(("acp", "acp_kill")));
+    }
+
+    #[test]
+    fn flat_managed_agent_routes_to_managed_agent_with_full_name() {
+        assert_eq!(
+            resolve_rust_dispatch("managed_agent_start_session_v1"),
+            Some(("managed_agent", "managed_agent_start_session_v1"))
+        );
+    }
+
+    #[test]
+    fn unknown_flat_method_falls_through() {
+        // Methods that don't match either prefix and don't have a dot
+        // belong to one of the existing 195 Python @rpc_expose
+        // services — go straight to Python.
+        assert_eq!(resolve_rust_dispatch("get_capabilities"), None);
+        assert_eq!(resolve_rust_dispatch("ping"), None);
+        assert_eq!(resolve_rust_dispatch(""), None);
+    }
 }

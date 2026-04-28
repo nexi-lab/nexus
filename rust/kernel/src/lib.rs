@@ -66,7 +66,7 @@ mod managed_agent;
 pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]
 pub(crate) use core::pipe::stdio as stdio_pipe;
-pub(crate) use core::service_registry;
+pub use core::service_registry;
 pub use core::stream;
 pub use core::stream::manager as stream_manager;
 #[cfg(unix)]

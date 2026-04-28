@@ -115,7 +115,7 @@ impl Kernel {
     /// off `ServiceRegistry`; the registry stays a kernel primitive
     /// (KERNEL-ARCHITECTURE §4) and consumers go through `Kernel`.
     #[allow(dead_code)]
-    pub(crate) fn dispatch_rust_call(
+    pub fn dispatch_rust_call(
         &self,
         name: &str,
         method: &str,

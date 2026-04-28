@@ -473,39 +473,27 @@ def _boot_post_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:WIRED] EvictionManager unavailable: %s", exc)
 
-    # AcpService (agent call protocol)
-    acp_rpc_service: Any = None
-    _acp_service: Any = None
+    # AcpService is owned by the Rust kernel. Install once, then late-bind
+    # the Python AgentRegistry (still Python this PR -- planned migration
+    # tracked separately) and the permission-lease termination callback.
     if _agent_reg is not None:
         try:
-            from nexus.services.acp.service import AcpService
+            import nexus_kernel
 
-            _acp_service = AcpService(
-                agent_registry=_agent_reg,
-                zone_id=ROOT_ZONE_ID,
-            )
-            nx.sys_setattr("/__sys__/services/acp_service", service=_acp_service)
-            logger.debug("[BOOT:WIRED] AcpService created")
+            _kernel_handle = getattr(nx, "_kernel", None)
+            if _kernel_handle is not None:
+                nexus_kernel.nx_acp_install(_kernel_handle, ROOT_ZONE_ID)
+                nexus_kernel.nx_acp_set_agent_registry(_kernel_handle, _agent_reg)
+                logger.debug("[BOOT:WIRED] AcpService (Rust) installed")
+                _perm_lease_table = getattr(nx, "_permission_lease_table", None)
+                if _perm_lease_table is not None:
+                    nexus_kernel.nx_acp_register_on_terminate(
+                        _kernel_handle,
+                        "perm-lease-revoke",
+                        _perm_lease_table.invalidate_agent,
+                    )
         except Exception as exc:
-            logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
-    if _acp_service is not None:
-        # Late-bind NexusFS for VFS-routed file I/O (``everything is a file``).
-        if hasattr(_acp_service, "bind_fs"):
-            _acp_service.bind_fs(nx)
-        # PipeManager deleted — agent stdio pipes registered via NexusFS._kernel directly.
-        # Wire agent termination → permission lease revocation (Issue #3398 decision 2A)
-        _perm_lease_table = getattr(nx, "_permission_lease_table", None)
-        if _perm_lease_table is not None and hasattr(_acp_service, "register_on_terminate"):
-            _acp_service.register_on_terminate(
-                "perm-lease-revoke", _perm_lease_table.invalidate_agent
-            )
-        try:
-            from nexus.services.acp.acp_rpc_service import AcpRPCService
-
-            acp_rpc_service = AcpRPCService(acp_service=_acp_service)
-            logger.debug("[BOOT:WIRED] AcpRPCService created")
-        except Exception as exc:
-            logger.warning("[BOOT:WIRED] AcpRPCService unavailable: %s", exc)
+            logger.warning("[BOOT:WIRED] AcpService (Rust) install failed: %s", exc)
 
     user_provisioning_service: Any = None
     try:
@@ -626,7 +614,6 @@ def _boot_post_kernel_services(
         "operations_service": operations_service,
         "workspace_rpc_service": workspace_rpc_service,
         "agent_rpc_service": agent_rpc_service,
-        "acp_rpc_service": acp_rpc_service,
         "user_provisioning_service": user_provisioning_service,
         "sandbox_rpc_service": sandbox_rpc_service,
         "metadata_export_service": metadata_export_service,

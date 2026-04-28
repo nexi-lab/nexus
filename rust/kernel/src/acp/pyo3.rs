@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList};
 
 use super::service::{AcpService, AgentDescriptor, AgentRegistry, OnTerminateCallback};
 use crate::generated_pyo3::PyKernel;
@@ -52,6 +52,31 @@ pub(crate) fn nx_acp_set_agent_registry(
     let svc = lookup_acp(&py_kernel)?;
     svc.set_agent_registry(Arc::new(PyAgentRegistry::new(registry)) as Arc<dyn AgentRegistry>);
     Ok(())
+}
+
+/// In-process dispatch entry point for Python callers. Routes
+/// through the registered AcpService's `RustService::dispatch`
+/// without a tonic round-trip. Returns the raw JSON bytes; callers
+/// (e.g. the task_manager adapter) parse with `json.loads`.
+#[pyfunction]
+pub(crate) fn nx_acp_dispatch<'py>(
+    py: Python<'py>,
+    py_kernel: PyRef<'_, PyKernel>,
+    method: &str,
+    payload: &[u8],
+) -> PyResult<Bound<'py, PyBytes>> {
+    let svc = lookup_acp(&py_kernel)?;
+    // RustService::dispatch is sync but call_agent runs an async
+    // tokio block_on internally; release the GIL so other Python
+    // tasks can run while we wait.
+    let bytes = py
+        .detach(|| {
+            <super::service::AcpService as crate::service_registry::RustService>::dispatch(
+                &svc, method, payload,
+            )
+        })
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    Ok(PyBytes::new(py, &bytes))
 }
 
 /// Register a Python callback fired with the terminating pid when

@@ -987,6 +987,18 @@ def generate_stubs(
         "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
     )
     lines.append("")
+    # ── AcpService PyO3 surface (acp/pyo3.rs) — hand-written, NOT codegen.
+    lines.append("# " + "-" * 75)
+    lines.append("# AcpService PyO3 surface (acp/pyo3.rs) -- hand-written, NOT codegen.")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append('def nx_acp_install(py_kernel: Any, default_zone: str = "root") -> None: ...')
+    lines.append("def nx_acp_set_agent_registry(py_kernel: Any, registry: Any) -> None: ...")
+    lines.append("def nx_acp_dispatch(py_kernel: Any, method: str, payload: bytes) -> bytes: ...")
+    lines.append(
+        "def nx_acp_register_on_terminate(py_kernel: Any, callback_id: str, callback: Any) -> None: ..."
+    )
+    lines.append("")
 
     return "\n".join(lines)
 

@@ -40,6 +40,7 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // AgentKind::UNMANAGED agents (subprocess + ACP-over-stdio).
     m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_install, m)?)?;
     m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_set_agent_registry, m)?)?;
+    m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_dispatch, m)?)?;
     m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_register_on_terminate, m)?)?;
     Ok(())
 }

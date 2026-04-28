@@ -438,7 +438,8 @@ def _boot_pre_kernel_services(
 
     # (IPC primitives are kernel-owned: Rust DashMap + metastore/dcache integration.
     # AgentRegistry is lazy-constructed by the first consumer via sys_setattr.
-    # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
+    # EvictionManager is deferred to _do_link(); AcpService is owned by the Rust
+    # kernel and installed in _wired.py via nexus_kernel.nx_acp_install.)
 
     # =====================================================================
     # Assemble result

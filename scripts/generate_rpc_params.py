@@ -115,7 +115,6 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.services.workspace.workspace_rpc_service",
     "nexus.services.agents.agent_rpc_service",
     "nexus.services.lifecycle.user_provisioning",
-    "nexus.services.acp.acp_rpc_service",
     "nexus.services.metadata_export",
     # Brick services with @rpc_expose
     "nexus.bricks.mcp.mcp_service",

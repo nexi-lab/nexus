@@ -1,7 +1,8 @@
 """VFS path conventions — single source of truth for all VFS path patterns.
 
-Zero nexus.* imports. Used by services (AgentStatusResolver, AcpService,
-ManagedAgentLoop, TaskManagerService) and bricks alike.
+Zero nexus.* imports. Used by services (AgentStatusResolver,
+TaskManagerService), the Rust-side AcpService (rust/kernel/src/acp/paths.rs
+mirrors these conventions), and bricks alike.
 
 Every VFS path pattern in the system should be constructed through this
 module. No inline f-string path construction elsewhere.
@@ -15,7 +16,7 @@ Categories:
 References:
     - contracts/constants.py — SYSTEM_PATH_PREFIX
     - services/agents/agent_status_resolver.py — AgentStatusResolver trie patterns
-    - services/acp/service.py — AcpService path conventions
+    - rust/kernel/src/acp/paths.rs — Rust-side path mirror
 """
 
 

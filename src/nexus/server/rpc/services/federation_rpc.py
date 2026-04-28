@@ -262,17 +262,18 @@ class FederationRPCService:
         path: str,
     ) -> dict[str, Any]:
         # Standard sys_unlink on a DT_MOUNT entry → unmount.
+        # Already-unmounted / never-mounted is a no-op (matches POSIX
+        # `umount` of a non-mounted path).
         ctx = (
             self._kernel.context_for_zone(parent_zone)
             if hasattr(self._kernel, "context_for_zone")
             else None
         )
-        try:
-            self._kernel.sys_unlink(path, ctx) if ctx is not None else self._kernel.sys_unlink(path)
-        except Exception:
-            # Already unmounted / never mounted — surface as no-op,
-            # matching POSIX `umount` of a non-mounted path.
-            pass
+        with contextlib.suppress(Exception):
+            if ctx is not None:
+                self._kernel.sys_unlink(path, ctx)
+            else:
+                self._kernel.sys_unlink(path)
         # Mirror into Python DLC removal: without this the
         # unmounted path stays reachable via the mount-registered path.
         nx = self._nexus_fs

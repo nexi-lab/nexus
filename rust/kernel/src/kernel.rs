@@ -1847,6 +1847,7 @@ impl Kernel {
     /// - `"memory"` (default) → MemoryPipeBackend
     /// - `"shared_memory"` → SharedMemoryPipeBackend (mmap, cross-process)
     /// - `"stdio"` → StdioPipeBackend (subprocess fd, newline-framed)
+    /// - `"wal"` → WalPipeCore (raft-replicated, cross-node, single-consumer)
     #[allow(unused_variables)]
     fn setattr_pipe(
         &self,
@@ -1914,6 +1915,26 @@ impl Kernel {
             {
                 return Err(KernelError::IOError("stdio pipes require unix".into()));
             }
+        } else if io_profile == "wal" {
+            // Raft-replicated DT_PIPE — mirrors the `setattr_stream`
+            // wal branch. Single-consumer semantics (each replica owns
+            // its head cursor); see `core/pipe/wal.rs` for the contract.
+            let zm = self.zone_manager_arc().ok_or_else(|| {
+                KernelError::IOError("io_profile=wal requires federation (set NEXUS_PEERS)".into())
+            })?;
+            let root_zone = "root";
+            let consensus = zm.registry().get_node(root_zone).ok_or_else(|| {
+                KernelError::IOError(format!("io_profile=wal: zone {root_zone} not loaded"))
+            })?;
+            let runtime = zm.runtime_handle();
+            let wal_consensus: Arc<dyn crate::wal_stream::WalConsensus> =
+                Arc::new(crate::wal_stream::RaftWalConsensus::new(consensus, runtime));
+            let backend = crate::core::pipe::wal::WalPipeCore::new(wal_consensus, path.to_string());
+            self.pipe_manager
+                .register(path, Arc::new(backend))
+                .map_err(pipe_mgr_err)?;
+            self.write_pipe_inode(path, capacity)?;
+            (None, None, None)
         } else {
             self.create_pipe(path, capacity)?;
             (None, None, None)
@@ -2634,6 +2655,16 @@ impl Kernel {
         self.pipe_manager.has(path)
     }
 
+    /// Queued bytes pending in a DT_PIPE.
+    ///
+    /// Returns `KernelError::FileNotFound` if no pipe is registered at `path`.
+    /// `Ok(0)` means the pipe exists but has nothing to pop.
+    pub fn pipe_size(&self, path: &str) -> Result<usize, KernelError> {
+        self.pipe_manager
+            .size(path)
+            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))
+    }
+
     /// Non-blocking write to a pipe. Returns bytes written.
     pub fn pipe_write_nowait(&self, path: &str, data: &[u8]) -> Result<usize, KernelError> {
         self.pipe_manager
@@ -2710,6 +2741,18 @@ impl Kernel {
     /// Check if a stream exists.
     pub fn has_stream(&self, path: &str) -> bool {
         self.stream_manager.has(path)
+    }
+
+    /// Current tail (write offset) of a DT_STREAM.
+    ///
+    /// Returns `KernelError::FileNotFound` if no stream is registered at
+    /// `path`. Callers use this for the seek-to-end pattern: read the tail,
+    /// then pass it as the offset to `stream_read_at_blocking` to skip
+    /// history and block until new data arrives.
+    pub fn stream_tail(&self, path: &str) -> Result<usize, KernelError> {
+        self.stream_manager
+            .tail(path)
+            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))
     }
 
     /// Non-blocking write to a stream. Returns byte offset.

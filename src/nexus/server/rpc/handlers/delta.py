@@ -39,6 +39,8 @@ async def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> d
     content = nexus_fs.sys_read(params.path, context=context)
     if isinstance(content, str):
         content = content.encode("utf-8")
+    # delta handler operates on DT_REG; the dict shape is DT_STREAM-only.
+    assert isinstance(content, bytes)
 
     server_hash = hash_content(content)
 
@@ -143,6 +145,8 @@ async def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> 
     except Exception as e:
         raise ValueError("Cannot apply delta to non-existent file. Use write() instead.") from e
 
+    # delta handler operates on DT_REG; the dict shape is DT_STREAM-only.
+    assert isinstance(current_content, bytes)
     current_hash = hash_content(current_content)
     if current_hash != base_hash:
         return {

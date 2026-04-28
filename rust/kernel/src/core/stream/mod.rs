@@ -1,11 +1,19 @@
 //! Linear append-only buffer for DT_STREAM kernel IPC (Task #1574).
 //!
-//! Unlike `pipe.rs` (circular ring, destructive pop), MemoryStreamBackend is a
-//! linear append-only buffer where reads are non-destructive and offset-based.
-//! Multiple readers maintain independent cursors (fan-out).
+//! Semantic: log/topic (Kafka, Redis Streams, NATS JetStream). Reads are
+//! non-destructive and offset-based; the caller owns the cursor. Multiple
+//! readers fan out from independent offsets. This is the inverse of
+//! DT_PIPE (FIFO, destructive pop, single consumer): a stream replays.
 //!
 //! Message framing: `[4B u32 LE length][N bytes payload]`.
 //! No sentinel, no wrap-around — fundamentally simpler than the ring buffer.
+//!
+//! Read contract from Python: ``sys_read(path, offset)`` on a DT_STREAM
+//! returns ``{"data": bytes, "next_offset": int}`` so callers can advance
+//! their cursor without decoding the 4-byte LE frame header. ``next_offset``
+//! is the byte offset of the *next* frame, suitable to pass back as
+//! ``offset`` on the following ``sys_read``. DT_REG / DT_PIPE return raw
+//! bytes — the dict shape is gated on the DT_STREAM entry type.
 //!
 //! Error encoding: Rust raises `RuntimeError("StreamFull:…")` etc. Python
 //! translates to the matching exception class.

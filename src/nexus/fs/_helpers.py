@@ -237,6 +237,10 @@ def _LEGACY_grep(
             content = kernel.sys_read(fp, context=LOCAL_CONTEXT)
         except Exception:
             continue
+        if not isinstance(content, bytes):
+            # DT_STREAM returns {data, next_offset} — grep only scans
+            # regular files, so skip non-bytes payloads.
+            continue
         try:
             text = content.decode("utf-8", errors="replace")
         except Exception:

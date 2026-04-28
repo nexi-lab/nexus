@@ -80,8 +80,12 @@ class ScopedFilesystem(ScopedPathMixin):
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-    ) -> bytes:
-        """Read file content as bytes (POSIX pread)."""
+    ) -> bytes | dict[str, Any]:
+        """Read file content as bytes (POSIX pread).
+
+        DT_STREAM returns ``{"data": bytes, "next_offset": int}``;
+        DT_REG / DT_PIPE return ``bytes``.
+        """
         return self._fs.sys_read(
             self._scope_path(path), count=count, offset=offset, context=context
         )

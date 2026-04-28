@@ -27,6 +27,7 @@ pub mod remote;
 pub mod shm;
 #[cfg(unix)]
 pub mod stdio;
+pub mod wal;
 
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};

@@ -285,6 +285,15 @@ impl StreamManager {
         self.buffers.get(path).map(|r| Arc::clone(r.value()))
     }
 
+    /// Current tail (write offset) of a registered stream.
+    ///
+    /// Returns `None` if no stream is registered at `path`. Callers use
+    /// this for the seek-to-end pattern: `cursor = tail(path)` then
+    /// `read_at(path, cursor)` skips all history and blocks for new data.
+    pub fn tail(&self, path: &str) -> Option<usize> {
+        self.buffers.get(path).map(|b| b.tail_offset())
+    }
+
     /// Append all entries from `from` (starting at `from_offset`) into `to`.
     ///
     /// Analogous to a read-then-write splice between two DT_STREAMs. `to` must
@@ -420,6 +429,31 @@ mod tests {
         let sm = StreamManager::new();
         let result = sm.collect_all_payloads("/s/nope");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tail_empty_stream() {
+        let sm = StreamManager::new();
+        sm.create("/s/empty", 1024).unwrap();
+        assert_eq!(sm.tail("/s/empty"), Some(0));
+    }
+
+    #[test]
+    fn test_tail_after_push() {
+        // Frame layout is [4B u32 LE length][N bytes payload]; tail tracks
+        // the post-frame write offset, so after one 5-byte push it lands at 9.
+        let sm = StreamManager::new();
+        sm.create("/s/one", 1024).unwrap();
+        sm.write_nowait("/s/one", b"hello").unwrap();
+        assert_eq!(sm.tail("/s/one"), Some(4 + 5));
+        sm.write_nowait("/s/one", b"world!").unwrap();
+        assert_eq!(sm.tail("/s/one"), Some(4 + 5 + 4 + 6));
+    }
+
+    #[test]
+    fn test_tail_missing_path_returns_none() {
+        let sm = StreamManager::new();
+        assert_eq!(sm.tail("/s/nope"), None);
     }
 
     /// Regression test for the lost-wakeup race.

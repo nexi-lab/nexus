@@ -189,6 +189,8 @@ class ZoektPipeConsumer:
                 except NexusFileNotFoundError:
                     logger.debug("Zoekt pipe closed, consumer exiting")
                     break
+                # DT_PIPE returns raw bytes (only DT_STREAM uses the dict shape).
+                assert isinstance(first, bytes)
                 msg = json.loads(first)
                 if msg["type"] == "write":
                     pending_paths.add(msg["path"])
@@ -203,6 +205,7 @@ class ZoektPipeConsumer:
                     break
                 try:
                     data = await asyncio.to_thread(nx.sys_read, _ZOEKT_PIPE_PATH)
+                    assert isinstance(data, bytes)
                     msg = json.loads(data)
                     if msg["type"] == "write":
                         pending_paths.add(msg["path"])

@@ -125,7 +125,7 @@ class NexusFSGateway:
         path: str,
         *,
         context: "OperationContext | None" = None,
-    ) -> bytes:
+    ) -> bytes | dict[str, Any]:
         """Read file content as bytes (POSIX pread(2)).
 
         Args:
@@ -133,7 +133,8 @@ class NexusFSGateway:
             context: Operation context for permissions
 
         Returns:
-            File content as bytes.
+            File content as bytes for DT_REG / DT_PIPE.
+            DT_STREAM returns ``{"data": bytes, "next_offset": int}``.
         """
         return self._fs.sys_read(path, context=context)
 

@@ -42,9 +42,10 @@ class AttrHandler:
         permission_bits = mode & 0o777
         ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, mode=permission_bits)
 
-        ctx.cache.invalidate_path(original_path)
+        invalidation_paths = [original_path]
         if path != original_path:
-            ctx.cache.invalidate_path(path)
+            invalidation_paths.append(path)
+        ctx.cache.invalidate_and_revoke(invalidation_paths)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.METADATA_CHANGE, original_path)
@@ -85,9 +86,10 @@ class AttrHandler:
         if attrs:
             ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, **attrs)
 
-        ctx.cache.invalidate_path(original_path)
+        invalidation_paths = [original_path]
         if path != original_path:
-            ctx.cache.invalidate_path(path)
+            invalidation_paths.append(path)
+        ctx.cache.invalidate_and_revoke(invalidation_paths)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.METADATA_CHANGE, original_path)
@@ -114,9 +116,13 @@ class AttrHandler:
 
         ctx.nexus_fs.write(original_path, content, context=ctx.context)
 
-        ctx.cache.invalidate_path(original_path)
+        invalidation_paths = [original_path]
         if path != original_path:
-            ctx.cache.invalidate_path(path)
+            invalidation_paths.append(path)
+        ctx.cache.invalidate_and_revoke(invalidation_paths)
+
+        if ctx.readahead:
+            ctx.readahead.invalidate_path(original_path)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.FILE_WRITE, original_path, size=length)

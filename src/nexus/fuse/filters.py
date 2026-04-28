@@ -6,12 +6,16 @@ because only FUSE handlers use it.
 """
 
 import fnmatch
+import importlib
 from typing import Any
 
 # RUST_FALLBACK: filter_paths
-import nexus_kernel
+try:
+    nexus_kernel: Any | None = importlib.import_module("nexus_kernel")
+except ImportError:
+    nexus_kernel = None
 
-RUST_AVAILABLE = True
+RUST_AVAILABLE = nexus_kernel is not None
 
 # OS-generated metadata file patterns
 # These files are automatically created by operating systems and should be
@@ -72,7 +76,7 @@ def filter_os_metadata(files: list[str]) -> list[str]:
         ['file.txt']
     """
     # Use Rust for bulk filtering if available (5-10x faster)
-    if RUST_AVAILABLE and len(files) >= 10:
+    if RUST_AVAILABLE and nexus_kernel is not None and len(files) >= 10:
         try:
             result: list[str] = nexus_kernel.filter_paths(files, OS_METADATA_PATTERNS)
             return result

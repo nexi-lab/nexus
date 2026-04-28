@@ -9,6 +9,7 @@ This module contains:
 
 import errno
 import functools
+import inspect
 import logging
 import os
 import stat
@@ -422,12 +423,39 @@ def read_range_from_backend(ctx: FUSESharedContext, path: str, offset: int, size
     from nexus.lib.sync_bridge import run_sync as _run_sync
 
     try:
+        end = offset + size
+        read_range = getattr(ctx.nexus_fs, "read_range", None)
+        if callable(read_range):
+            if _accepts_context(read_range):
+                return cast("bytes", read_range(path, offset, end, context=ctx.context))
+            return cast("bytes", read_range(path, offset, end))
+
+        sys_read = getattr(ctx.nexus_fs, "sys_read", None)
+        if callable(sys_read):
+            if _accepts_context(sys_read):
+                return cast(
+                    "bytes",
+                    sys_read(path, count=size, offset=offset, context=ctx.context),
+                )
+            content = cast("bytes", sys_read(path))
+            return content[offset:end]
+
         content = _run_sync(get_file_content(ctx, path, None))
-        end = min(offset + size, len(content))
         return content[offset:end]
     except Exception as e:
         logger.warning(f"[FUSE-READAHEAD] Failed to read {path}:{offset}+{size}: {e}")
         return b""
+
+
+def _accepts_context(func: Callable[..., Any]) -> bool:
+    """Return whether a callable accepts a ``context=`` keyword argument."""
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        param.name == "context" or param.kind == inspect.Parameter.VAR_KEYWORD for param in params
+    )
 
 
 def get_from_local_disk_cache(ctx: FUSESharedContext, path: str) -> bytes | None:
@@ -482,7 +510,10 @@ def put_to_local_disk_cache(
 async def get_metadata(ctx: FUSESharedContext, path: str) -> Any:
     """Get file/directory metadata from filesystem."""
     if hasattr(ctx.nexus_fs, "sys_stat"):
-        metadata_dict = ctx.nexus_fs.sys_stat(path)
+        if _accepts_context(ctx.nexus_fs.sys_stat):
+            metadata_dict = ctx.nexus_fs.sys_stat(path, context=ctx.context)
+        else:
+            metadata_dict = ctx.nexus_fs.sys_stat(path)
         if metadata_dict:
             return MetadataObj.from_dict(metadata_dict)
     return None
@@ -496,7 +527,10 @@ def stat_size_fallback(ctx: FUSESharedContext, path: str) -> int:
     """
     if hasattr(ctx.nexus_fs, "stat"):
         try:
-            stat_result = ctx.nexus_fs.stat(path)
+            if _accepts_context(ctx.nexus_fs.stat):
+                stat_result = ctx.nexus_fs.stat(path, context=ctx.context)
+            else:
+                stat_result = ctx.nexus_fs.stat(path)
             if stat_result:
                 stat_size = stat_result.get("st_size") or stat_result.get("size", 0)
                 if stat_size and stat_size > 0:

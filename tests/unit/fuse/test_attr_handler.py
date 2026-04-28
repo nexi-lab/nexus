@@ -22,7 +22,7 @@ class TestChmod:
     ) -> None:
         fuse_ops.cache = mock_cache
         fuse_ops.chmod("/file.txt", 0o644)
-        mock_cache.invalidate_path.assert_called_with("/file.txt")
+        mock_cache.invalidate_and_revoke.assert_called_once_with(["/file.txt"])
 
     def test_chmod_rejects_virtual_view(self, fuse_ops: Any) -> None:
         with patch.object(fuse_ops, "_parse_virtual_path", return_value=("/f.xlsx", "md")):
@@ -41,6 +41,16 @@ class TestChown:
             # Just verify it doesn't crash — uid/gid mapping is platform-specific
             mock_chown.return_value = None
             mock_chown(fuse_ops, "/file.txt", os.getuid(), os.getgid())
+
+    def test_chown_invalidates_and_revokes(
+        self, fuse_ops: Any, mock_nexus_fs: MagicMock, mock_cache: MagicMock
+    ) -> None:
+        fuse_ops.cache = mock_cache
+        mock_nexus_fs.access.return_value = True
+
+        fuse_ops.chown("/file.txt", 123456, -1)
+
+        mock_cache.invalidate_and_revoke.assert_called_once_with(["/file.txt"])
 
     def test_chown_rejects_virtual_view(self, fuse_ops: Any) -> None:
         with patch.object(fuse_ops, "_parse_virtual_path", return_value=("/f.xlsx", "md")):
@@ -75,7 +85,16 @@ class TestTruncate:
         mock_nexus_fs.sys_read.return_value = b"data"
 
         fuse_ops.truncate("/file.txt", 2)
-        mock_cache.invalidate_path.assert_called()
+        mock_cache.invalidate_and_revoke.assert_called_once_with(["/file.txt"])
+
+    def test_truncate_invalidates_readahead(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
+        mock_nexus_fs.access.return_value = True
+        mock_nexus_fs.sys_read.return_value = b"data"
+        fuse_ops._readahead = MagicMock()
+
+        fuse_ops.truncate("/file.txt", 2)
+
+        fuse_ops._readahead.invalidate_path.assert_called_once_with("/file.txt")
 
 
 class TestUtimens:

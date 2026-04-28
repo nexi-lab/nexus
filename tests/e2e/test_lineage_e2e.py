@@ -156,7 +156,7 @@ class TestLineageE2EFlow:
             stale = svc.check_staleness(
                 path,
                 current_version=i + 1,  # Same version as recorded
-                current_etag=f"etag_{test_id}_{i}",
+                current_content_id=f"etag_{test_id}_{i}",
                 zone_id=zone_id,
             )
             assert len(stale) == 0, f"Output should NOT be stale for {path}"
@@ -165,7 +165,7 @@ class TestLineageE2EFlow:
         stale = svc.check_staleness(
             input_paths[0],
             current_version=99,  # Version changed!
-            current_etag="new_etag",
+            current_content_id="new_etag",
             zone_id=zone_id,
         )
         assert len(stale) >= 1, "Output should be stale after input changed"
@@ -396,7 +396,10 @@ class TestLineageE2EFlow:
 
         # --- Verify staleness: change a.csv → only output1 is stale ---
         stale = svc.check_staleness(
-            f"/e2e/{test_id}/a.csv", current_version=99, current_etag="changed", zone_id=zone_id
+            f"/e2e/{test_id}/a.csv",
+            current_version=99,
+            current_content_id="changed",
+            zone_id=zone_id,
         )
         assert len(stale) >= 1
         stale_urns = {s["downstream_urn"] for s in stale}

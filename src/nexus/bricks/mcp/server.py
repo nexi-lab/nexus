@@ -334,7 +334,7 @@ async def create_mcp_server(
     # Markdown structure helpers (Issue #3718)
     # =========================================================================
 
-    def _md_get_etag(nx_instance: NexusFS, path: str) -> str:
+    def _md_get_content_id(nx_instance: NexusFS, path: str) -> str:
         """Get the authoritative file content_id from the metastore primary row."""
         meta = getattr(nx_instance, "metadata", None)
         if meta is None:
@@ -362,7 +362,7 @@ async def create_mcp_server(
         if hook is None or not hasattr(hook, "read_section"):
             return None
 
-        content_id = _md_get_etag(nx_instance, path)
+        content_id = _md_get_content_id(nx_instance, path)
         return hook.read_section(path, content, content_id, section, block_type)
 
     def _md_get_structure_listing(
@@ -475,7 +475,7 @@ async def create_mcp_server(
         except Exception as e:
             return tool_error("access_denied", f"Cannot access {path}: {e}")
         content = raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
-        content_id = _md_get_etag(nx_instance, path)
+        content_id = _md_get_content_id(nx_instance, path)
         listing = _md_get_structure_listing(
             nx_instance, path, content=content, content_id=content_id
         )

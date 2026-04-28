@@ -194,13 +194,13 @@ class TestResponseContent:
         body = json.loads(resp.body)
         assert body["path"] == "/missing/file"
 
-    def test_conflict_response_includes_etag_data(self) -> None:
+    def test_conflict_response_includes_content_id_data(self) -> None:
         import json
 
         resp = nexus_error_handler(MagicMock(), ConflictError("/test", "etag-old", "etag-new"))
         body = json.loads(resp.body)
-        assert body["expected_etag"] == "etag-old"
-        assert body["current_etag"] == "etag-new"
+        assert body["expected_content_id"] == "etag-old"
+        assert body["current_content_id"] == "etag-new"
 
     def test_is_expected_controls_classification(self) -> None:
         """Verify is_expected flag matches exception class defaults."""

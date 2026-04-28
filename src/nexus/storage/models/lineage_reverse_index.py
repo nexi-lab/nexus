@@ -6,7 +6,7 @@ indexed query instead of scanning all lineage aspects.
 
 Design decisions:
     - Denormalized from lineage aspects (aspect is source of truth)
-    - Stores upstream_version + upstream_etag for single-query staleness detection
+    - Stores upstream_version + upstream_content_id for single-query staleness detection
     - Upsert semantics: DELETE old entries on re-write, INSERT new ones
     - Composite indexes for both forward and reverse lookups
     - Rebuildable from aspects if the table is ever corrupted
@@ -47,7 +47,7 @@ class LineageReverseIndexModel(Base):
 
     # Denormalized upstream version info for single-query staleness detection
     upstream_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    upstream_etag: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    upstream_content_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
 
     # Access type (content, metadata, list, exists)
     access_type: Mapped[str] = mapped_column(String(20), nullable=False, default="content")
@@ -82,7 +82,7 @@ class LineageReverseIndexModel(Base):
             "upstream_path",
             "zone_id",
             "upstream_version",
-            "upstream_etag",
+            "upstream_content_id",
         ),
     )
 

@@ -187,7 +187,7 @@ class TestExtractionHook:
 
         mock_backend.read_content.assert_not_called()
 
-    def test_skips_missing_etag(self, db_session_factory) -> None:
+    def test_skips_missing_content_id(self, db_session_factory) -> None:
         """Events without content_id (content hash) are skipped."""
         mock_backend = MagicMock()
 

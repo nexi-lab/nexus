@@ -2,7 +2,7 @@
 
 Verifies that GC correctly:
 - Deletes unreferenced blobs past grace period
-- Keeps referenced blobs (etag in metastore)
+- Keeps referenced blobs (content_id in metastore)
 - Keeps unreferenced blobs within grace period
 - Expands CDC manifests to keep chunk blobs
 """
@@ -73,7 +73,7 @@ class TestGCReachability:
         assert not engine.content_exists(content_id)
 
     def test_gc_keeps_referenced_blob(self, engine: CASLocalBackend) -> None:
-        """Referenced blob (etag in metastore) → NOT deleted."""
+        """Referenced blob (content_id in metastore) → NOT deleted."""
         result = engine.write_content(b"still in use")
         content_id = result.content_id
 

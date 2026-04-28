@@ -8,7 +8,7 @@ Architecture decisions:
     - **Synchronous** (not background) because markdown-it-py parses 50 KB
       in < 1 ms — no reason to complicate with threading.
     - **Lazy hash validation** on the read path: if the stored
-      ``content_id`` doesn't match the file's current etag, re-parse
+      ``content_id`` doesn't match the file's current content_id, re-parse
       inline and update the index (self-healing).
     - Follows the ``AutoParseWriteHook`` pattern for DI and registration.
 """
@@ -96,7 +96,7 @@ class MarkdownStructureWriteHook:
             path: Virtual file path.
             current_content: If provided, used for stale-index re-parse
                 instead of requiring a separate read.
-            current_hash: Current etag of the file — compared against the
+            current_hash: Current content_id of the file — compared against the
                 stored ``content_id`` to detect staleness.
 
         Returns:
@@ -107,7 +107,7 @@ class MarkdownStructureWriteHook:
             return None
 
         # If the caller can't provide a hash (e.g. connector paths with no
-        # authoritative etag), skip the cache entirely and parse from content.
+        # authoritative content_id), skip the cache entirely and parse from content.
         # This prevents stale cached indices from serving wrong byte ranges.
         if not current_hash and current_content is not None:
             return self._reindex(path, current_content, "")

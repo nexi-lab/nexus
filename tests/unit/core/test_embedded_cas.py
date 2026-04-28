@@ -93,7 +93,7 @@ def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: CASLo
     assert embedded_cas.access("/file1.txt")
     assert embedded_cas.access("/file2.txt")
 
-    # Get metadata - should have same content hash (etag)
+    # Get metadata - should have same content_id
     meta1 = embedded_cas.metadata.get("/file1.txt")
     meta2 = embedded_cas.metadata.get("/file2.txt")
 

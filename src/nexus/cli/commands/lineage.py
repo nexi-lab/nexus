@@ -78,9 +78,9 @@ def lineage_upstream(
     console.print(f"  Upstream inputs ({len(upstream)}):")
     for entry in upstream:
         version = entry.get("version", 0)
-        etag = entry.get("content_id", "")[:12]
+        content_id = entry.get("content_id", "")[:12]
         access = entry.get("access_type", "content")
-        console.print(f"    {entry['path']}  (v{version}, {access}, content_id={etag}...)")
+        console.print(f"    {entry['path']}  (v{version}, {access}, content_id={content_id}...)")
 
 
 @lineage.command(name="downstream")
@@ -131,14 +131,14 @@ def lineage_downstream(
 @click.option(
     "--version", "file_version", type=int, help="Current version (auto-detected if omitted)"
 )
-@click.option("--etag", help="Current etag/content hash (auto-detected if omitted)")
+@click.option("--content-id", help="Current content_id/content hash (auto-detected if omitted)")
 @add_backend_options
 @click.pass_context
 def lineage_stale(
     ctx: click.Context,
     path: str,
     file_version: int | None,
-    etag: str | None,
+    content_id: str | None,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -146,7 +146,7 @@ def lineage_stale(
 
     Example:
         nexus lineage stale /data/input.csv
-        nexus lineage stale /data/input.csv --version 5 --etag abc123
+        nexus lineage stale /data/input.csv --version 5 --content-id abc123
     """
     from nexus.cli.api_client import get_api_client_from_options
     from nexus.cli.config import resolve_connection
@@ -157,22 +157,22 @@ def lineage_stale(
     )
     client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
 
-    # Auto-detect version/etag if not provided
-    if file_version is None or etag is None:
+    # Auto-detect version/content_id if not provided
+    if file_version is None or content_id is None:
         try:
             stat = client.get(f"/api/v2/files/stat?path={quote(path, safe='')}")
             if file_version is None:
                 file_version = stat.get("version", 0)
-            if etag is None:
-                etag = stat.get("content_id", "")
+            if content_id is None:
+                content_id = stat.get("content_id", "")
         except Exception as exc:
             console.print(
-                "[yellow]Could not auto-detect version/etag. Provide --version and --etag.[/yellow]"
+                "[yellow]Could not auto-detect version/content_id. Provide --version and --content-id.[/yellow]"
             )
             raise SystemExit(1) from exc
 
     try:
-        params = f"path={quote(path, safe='')}&current_version={file_version}&current_etag={quote(etag or '', safe='')}"
+        params = f"path={quote(path, safe='')}&current_version={file_version}&current_content_id={quote(content_id or '', safe='')}"
         result = client.get(f"/api/v2/lineage/stale/query?{params}")
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
@@ -181,7 +181,7 @@ def lineage_stale(
     stale = result.get("stale", [])
     console.print(f"[bold]Staleness check for {path}[/bold]")
     console.print(f"  Current version: {file_version}")
-    console.print(f"  Current etag:    {(etag or '')[:12]}...")
+    console.print(f"  Current content_id: {(content_id or '')[:12]}...")
     console.print()
 
     if not stale:

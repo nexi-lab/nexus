@@ -147,7 +147,7 @@ class WorkspaceManifest:
 
         Args:
             file_entries: List of (rel_path, content_id, size, mime_type) tuples.
-                         Must already be filtered (no directories, no missing etags).
+                         Must already be filtered (no directories, no missing content_ids).
 
         Returns:
             WorkspaceManifest with entries sorted by path

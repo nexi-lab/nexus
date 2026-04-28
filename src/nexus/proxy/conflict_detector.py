@@ -1,6 +1,6 @@
 """Conflict detection for edge split-brain reconciliation.
 
-Compares edge vs cloud state using vector clocks and etags to determine
+Compares edge vs cloud state using vector clocks and content_ids to determine
 whether operations conflict and how to resolve them using LWW (last-writer-wins).
 
 Issue #1707: Edge split-brain resilience.

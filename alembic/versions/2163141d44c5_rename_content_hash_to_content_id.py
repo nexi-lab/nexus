@@ -11,6 +11,7 @@ Affected tables:
     - upload_sessions.content_hash    -> content_id
     - version_history.content_hash    -> content_id
     - document_skeleton.skeleton_content_hash -> skeleton_content_id
+    - lineage_reverse_index.upstream_etag    -> upstream_content_id
 
 Indexes renamed:
     - idx_file_paths_content_hash      -> idx_file_paths_content_id
@@ -89,6 +90,12 @@ def upgrade() -> None:
         "skeleton_content_hash",
         new_column_name="skeleton_content_id",
     )
+    if "lineage_reverse_index" in table_names:
+        op.alter_column(
+            "lineage_reverse_index",
+            "upstream_etag",
+            new_column_name="upstream_content_id",
+        )
 
     # ---------------------------------------------------------------------
     # 3. Re-create indexes against the new column names. Only re-create the
@@ -148,6 +155,12 @@ def downgrade() -> None:
         op.drop_index("idx_version_history_content_id", table_name="version_history")
 
     # Reverse the column renames
+    if "lineage_reverse_index" in table_names:
+        op.alter_column(
+            "lineage_reverse_index",
+            "upstream_content_id",
+            new_column_name="upstream_etag",
+        )
     op.alter_column(
         "document_skeleton",
         "skeleton_content_id",

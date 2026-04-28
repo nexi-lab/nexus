@@ -172,16 +172,18 @@ class TestChunkedStorageHTTPAPI:
         assert response.status_code == 200
         assert response.json().get("error") is None
 
-        # Get ETags - same content should have same ETag
-        response = rpc_call(test_app, "get_etag", {"path": path_a})
+        # Get content_ids - same content should have same content_id
+        response = rpc_call(test_app, "get_content_id", {"path": path_a})
         assert response.status_code == 200
-        etag_a = response.json().get("result")
+        content_id_a = response.json().get("result")
 
-        response = rpc_call(test_app, "get_etag", {"path": path_b})
+        response = rpc_call(test_app, "get_content_id", {"path": path_b})
         assert response.status_code == 200
-        etag_b = response.json().get("result")
+        content_id_b = response.json().get("result")
 
-        assert etag_a == etag_b, "Same content should have same ETag (deduplicated)"
+        assert content_id_a == content_id_b, (
+            "Same content should have same content_id (deduplicated)"
+        )
 
         # Read both back
         response = rpc_call(test_app, "read", {"path": path_a}, timeout=120.0)

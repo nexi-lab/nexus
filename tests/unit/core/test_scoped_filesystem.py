@@ -167,7 +167,7 @@ class TestCoreFileOperations:
         mock_fs.read.return_value = {
             "content": b"data",
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
-            "etag": "abc",
+            "content_id": "abc",
         }
         result = scoped_fs.read("/workspace/file.txt", return_metadata=True)
         assert result["path"] == "/workspace/file.txt"

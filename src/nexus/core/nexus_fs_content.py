@@ -949,14 +949,14 @@ class ContentMixin:
             # If if_match is provided, verify it matches current content_id
             # (the write call will also check, but we check here to fail fast)
             if if_match is not None and not force:
-                current_etag = result.get("content_id")
-                if current_etag != if_match:
+                current_content_id = result.get("content_id")
+                if current_content_id != if_match:
                     from nexus.contracts.exceptions import ConflictError
 
                     raise ConflictError(
                         path=path,
-                        expected_etag=if_match,
-                        current_etag=current_etag or "(no content_id)",
+                        expected_content_id=if_match,
+                        current_content_id=current_content_id or "(no content_id)",
                     )
         except Exception as e:
             # If file doesn't exist, treat as empty (will create new file)
@@ -1075,14 +1075,14 @@ class ContentMixin:
         assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
         content_bytes: bytes = result["content"]
-        current_etag = result.get("content_id")
+        current_content_id = result.get("content_id")
 
         # Check content_id if provided (optimistic concurrency control)
-        if if_match is not None and current_etag != if_match:
+        if if_match is not None and current_content_id != if_match:
             raise ConflictError(
                 path=path,
-                expected_etag=if_match,
-                current_etag=current_etag or "(no content_id)",
+                expected_content_id=if_match,
+                current_content_id=current_content_id or "(no content_id)",
             )
 
         # Decode content to string for editing
@@ -1202,7 +1202,7 @@ class ContentMixin:
         failure leaves already-written files on disk. No rollback or compensation
         is performed. Callers that need true all-or-nothing semantics should use
         separate write() calls inside an explicit transaction (if supported) or
-        implement idempotent retries using the returned etags.
+        implement idempotent retries using the returned content_ids.
 
         Args:
             files: List of (path, content) tuples to write
@@ -1558,12 +1558,12 @@ class ContentMixin:
             # returned by this read, not the pre-read metadata snapshot (which can be
             # stale under concurrent writes).  Fall back to meta.content_id only when the
             # Rust result has no content_id (older backends / degenerate path).
-            _etag = r.content_id or (meta.content_id if meta else None)
+            _content_id = r.content_id or (meta.content_id if meta else None)
             results.append(
                 {
                     "path": path,
                     "content": content,
-                    "content_id": _etag,
+                    "content_id": _content_id,
                     "version": meta.version if meta else 0,
                     "modified_at": meta.modified_at if meta else None,
                     "size": len(content),

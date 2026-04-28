@@ -354,29 +354,29 @@ def test_unicode_paths(embedded: NexusFS) -> None:
 
 
 @pytest.mark.asyncio
-def test_etag_changes_on_update(embedded: NexusFS) -> None:
-    """Test that ETag changes when file is updated."""
+def test_content_id_changes_on_update(embedded: NexusFS) -> None:
+    """Test that content_id changes when file is updated."""
     path = "/test.txt"
 
     # Write initial content
     embedded.write(path, b"Content 1")
     meta1 = embedded.metadata.get(path)
     assert meta1 is not None
-    etag1 = meta1.content_id
+    content_id1 = meta1.content_id
 
     # Update content
     embedded.write(path, b"Content 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
-    etag2 = meta2.content_id
+    content_id2 = meta2.content_id
 
-    # ETags should be different
-    assert etag1 != etag2
+    # content_ids should be different
+    assert content_id1 != content_id2
 
 
 @pytest.mark.asyncio
-def test_etag_same_for_same_content(embedded: NexusFS) -> None:
-    """Test that ETag is the same for same content."""
+def test_content_id_same_for_same_content(embedded: NexusFS) -> None:
+    """Test that content_id is the same for same content."""
     path1 = "/file1.txt"
     path2 = "/file2.txt"
     content = b"Same content"
@@ -560,7 +560,7 @@ def test_list_with_details(embedded: NexusFS) -> None:
     """Test listing files with detailed metadata.
 
     The kernel's sys_readdir(details=True) returns dicts with keys:
-    ``path``, ``size``, ``etag``.  Richer fields (modified_at, created_at)
+    ``path``, ``size``, ``content_id``.  Richer fields (modified_at, created_at)
     are available via ``metadata.get()`` but are NOT included in the
     readdir detail dict.
     """
@@ -578,7 +578,7 @@ def test_list_with_details(embedded: NexusFS) -> None:
     assert len(files) >= 2
     assert isinstance(files[0], dict)
 
-    # Check file1 — only path/size/etag are returned by sys_readdir
+    # Check file1 — only path/size/content_id are returned by sys_readdir
     file1 = next(f for f in files if f["path"] == "/file1.txt")
     assert file1["size"] == 5
     assert file1["content_id"] is not None

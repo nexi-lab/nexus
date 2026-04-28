@@ -131,11 +131,11 @@ class TestRenameMetadataConsistency:
     @pytest.mark.asyncio
     def test_rename_updates_path_in_metadata(self, nx):
         nx.write("/files/original.txt", b"content")
-        original_etag = nx.stat("/files/original.txt")["content_id"]
+        original_content_id = nx.stat("/files/original.txt")["content_id"]
         nx.sys_rename("/files/original.txt", "/files/renamed.txt")
         meta = nx.stat("/files/renamed.txt")
         # The content_id (content hash) should be preserved after rename
-        assert meta["content_id"] == original_etag
+        assert meta["content_id"] == original_content_id
 
 
 def _create_local_backend(tmp_path):

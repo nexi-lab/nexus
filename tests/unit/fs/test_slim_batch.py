@@ -4,9 +4,9 @@ Boots a real NexusFS kernel (SQLite + CASLocalBackend) and exercises the kernel
 batch APIs - no mocks, no external server process required.
 
 Verifies:
-- write_batch returns correct metadata (etag, version, size)
+- write_batch returns correct metadata (content_id, version, size)
 - read_batch returns correct content and metadata
-- Round-trip: write then read produces identical bytes and etags
+- Round-trip: write then read produces identical bytes and content_ids
 - Partial mode: missing path returns error item, not exception
 - Strict mode: missing path raises NexusFileNotFoundError
 - Binary content survives round-trip intact
@@ -191,7 +191,7 @@ class TestSlimReadBatch:
 
 class TestSlimBatchRoundTrip:
     @pytest.mark.asyncio
-    async def test_write_then_read_etag_matches(self, slim: NexusFS) -> None:
+    async def test_write_then_read_content_id_matches(self, slim: NexusFS) -> None:
         write_results = slim.write_batch(
             [
                 ("/files/rt_a.txt", b"payload A"),

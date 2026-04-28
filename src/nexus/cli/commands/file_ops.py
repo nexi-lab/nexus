@@ -1165,7 +1165,7 @@ def edit(
             applied = result.get("applied_count", 0)
             diff = result.get("diff", "")
             matches = result.get("matches", [])
-            etag = result.get("content_id", "")
+            content_id = result.get("content_id", "")
 
             if preview:
                 if success and applied > 0:
@@ -1183,8 +1183,8 @@ def edit(
                 console.print(
                     f"[nexus.success]✓[/nexus.success] {applied} edit(s) applied to [nexus.path]{path}[/nexus.path]"
                 )
-                if etag:
-                    console.print(f"  [nexus.muted]content_id: {etag}[/nexus.muted]")
+                if content_id:
+                    console.print(f"  [nexus.muted]content_id: {content_id}[/nexus.muted]")
                 for m in matches:
                     sim = m.get("similarity")
                     method = m.get("method", "exact")

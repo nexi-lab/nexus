@@ -1016,7 +1016,7 @@ def create_async_files_router(
             )
             if isinstance(content, str):
                 content = content.encode("utf-8")
-            content_id = _md_get_etag(fs, path)
+            content_id = _md_get_content_id(fs, path)
             listing = _md_get_listing(fs, path, content=content, content_id=content_id)
             if listing is None:
                 raise HTTPException(
@@ -1039,7 +1039,7 @@ def create_async_files_router(
 
     # --- Markdown helpers (Issue #3718) ---
 
-    def _md_get_etag(fs: Any, path: str) -> str:
+    def _md_get_content_id(fs: Any, path: str) -> str:
         """Get the authoritative file content_id from the metastore primary row."""
         meta = getattr(fs, "metadata", None)
         if meta is None:
@@ -1062,7 +1062,7 @@ def create_async_files_router(
             hook = fs.service("md_structure") if hasattr(fs, "service") else None
             if hook is None or not hasattr(hook, "read_section"):
                 return None
-            content_id = _md_get_etag(fs, path)
+            content_id = _md_get_content_id(fs, path)
             result: str | None = hook.read_section(
                 path, content, content_id, section_name, block_type
             )
@@ -1561,7 +1561,7 @@ def create_async_files_router(
         mid-batch failure leaves already-written files on disk; no rollback or
         compensation is performed. Callers that need true all-or-nothing
         semantics must implement their own retry/reconcile logic using the
-        returned etags.
+        returned content_ids.
 
         13× faster than N sequential writes for small files.
 

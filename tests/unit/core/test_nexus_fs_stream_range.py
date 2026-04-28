@@ -143,7 +143,7 @@ class TestReadRange:
             stub_fs.read_range("/test/missing.txt", 0, 10)
 
     @pytest.mark.asyncio
-    def test_file_with_no_etag_reads_via_sys_read(self, stub_fs):
+    def test_file_with_no_content_id_reads_via_sys_read(self, stub_fs):
         """Post-simplification: read_range delegates to sys_read, which reads
         via backend regardless of content_id presence.  A file with metadata but
         no content_id still returns content (the backend call uses the content_id value,

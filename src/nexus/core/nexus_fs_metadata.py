@@ -526,7 +526,7 @@ class MetadataMixin:
         return result
 
     @rpc_expose(description="Get ETag (content hash) for HTTP caching")
-    def get_etag(
+    def get_content_id(
         self,
         path: str,
         context: OperationContext | None = None,  # noqa: ARG002

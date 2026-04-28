@@ -22,7 +22,7 @@ Storage layout (in transport key-space):
     cas/<hash[0:2]>/<hash[2:4]>/<hash>.meta   # JSON metadata sidecar (CDC only)
     dirs/<path>/                               # Directory marker
 
-GC: Reachability-based. No ref_count — GC scans metastore for referenced etags,
+GC: Reachability-based. No ref_count — GC scans metastore for referenced content_ids,
 sweeps CAS blobs, deletes unreferenced blobs older than grace period.
 
 References:
@@ -92,7 +92,7 @@ class CASAddressingEngine(Backend):
 
     Directory markers live at ``dirs/<path>/``.
 
-    GC uses reachability-based scan (metastore → referenced etags → sweep CAS).
+    GC uses reachability-based scan (metastore → referenced content_ids → sweep CAS).
     No ref_count — writes are idempotent direct writes.
 
     Attributes:

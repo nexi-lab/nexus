@@ -193,11 +193,11 @@ class BaseRemoteNexusFS:
         elif code == RPCErrorCode.VALIDATION_ERROR.value:
             raise ValidationError(message)
         elif code == RPCErrorCode.CONFLICT.value:
-            # Extract etag info from data
-            expected_etag = data.get("expected_etag") if data else "(unknown)"
-            current_etag = data.get("current_etag") if data else "(unknown)"
+            # Extract content_id info from data
+            expected_content_id = data.get("expected_content_id") if data else "(unknown)"
+            current_content_id = data.get("current_content_id") if data else "(unknown)"
             path = data.get("path") if data else "unknown"
-            raise ConflictError(path, expected_etag, current_etag)
+            raise ConflictError(path, expected_content_id, current_content_id)
         else:
             raise NexusError(f"RPC error [{code}]: {message}")
 

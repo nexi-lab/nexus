@@ -43,7 +43,7 @@ class TestWriteBatchHappyPath:
             assert results[i]["size"] == len(content)
 
     @pytest.mark.asyncio
-    def test_write_batch_returns_etag(self, nx):
+    def test_write_batch_returns_content_id(self, nx):
         results = nx.write_batch([("/files/a.txt", b"content")])
         assert "content_id" in results[0]
         assert isinstance(results[0]["content_id"], str)

@@ -108,10 +108,10 @@ class RemoteBackend(ObjectStoreABC):
     ) -> WriteResult:
         path = self._to_server_path(context)
         result = self._transport.write_file(path, content)  # Typed RPC — raw bytes
-        etag = result.get("etag", "")
+        cid = result.get("content_id", "")
         return WriteResult(
-            content_id=etag,
-            version=etag,
+            content_id=cid,
+            version=cid,
             size=result.get("size", len(content)),
         )
 

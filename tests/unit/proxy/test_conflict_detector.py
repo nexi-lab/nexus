@@ -30,7 +30,7 @@ class TestConflictDetectorNoConflict:
         assert result.outcome is ConflictOutcome.NO_CONFLICT
         assert "identical" in result.reason
 
-    def test_concurrent_same_etag_no_conflict(self) -> None:
+    def test_concurrent_same_content_id_no_conflict(self) -> None:
         """Concurrent clocks but same content → no conflict."""
         detector = ConflictDetector()
         edge = OperationState(
@@ -158,10 +158,10 @@ class TestConflictDetectorTrueConflict:
         assert result.cloud_state is cloud
 
 
-class TestConflictDetectorNoneEtag:
-    """Etag comparison is skipped when either etag is None."""
+class TestConflictDetectorNoneContentId:
+    """Content_id comparison is skipped when either content_id is None."""
 
-    def test_none_etags_use_lww(self) -> None:
+    def test_none_content_ids_use_lww(self) -> None:
         detector = ConflictDetector()
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 2, "cloud": 1}),

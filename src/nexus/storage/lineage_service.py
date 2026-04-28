@@ -91,7 +91,7 @@ class LineageService:
                     downstream_urn=entity_urn,
                     zone_id=zone_id or ROOT_ZONE_ID,
                     upstream_version=upstream.get("version", 0),
-                    upstream_etag=upstream.get("content_id", ""),
+                    upstream_content_id=upstream.get("content_id", ""),
                     access_type=upstream.get("access_type", "content"),
                     agent_id=lineage.agent_id or "",
                     downstream_path=downstream_path,
@@ -133,7 +133,7 @@ class LineageService:
 
         Returns:
             List of dicts with downstream_urn, downstream_path, upstream_version,
-            upstream_etag, agent_id.
+            upstream_content_id, agent_id.
         """
         stmt = select(LineageReverseIndexModel).where(
             LineageReverseIndexModel.upstream_path == upstream_path,
@@ -148,7 +148,7 @@ class LineageService:
                 "downstream_urn": row.downstream_urn,
                 "downstream_path": row.downstream_path,
                 "upstream_version": row.upstream_version,
-                "upstream_etag": row.upstream_etag,
+                "upstream_content_id": row.upstream_content_id,
                 "access_type": row.access_type,
                 "agent_id": row.agent_id,
                 "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -160,7 +160,7 @@ class LineageService:
         self,
         upstream_path: str,
         current_version: int,
-        current_etag: str,
+        current_content_id: str,
         *,
         zone_id: str | None = None,
         limit: int = 1000,
@@ -168,14 +168,14 @@ class LineageService:
         """Find downstream entities that are stale because upstream changed.
 
         A downstream is stale if its recorded upstream_version != current_version
-        OR its recorded upstream_etag != current_etag.
+        OR its recorded upstream_content_id != current_content_id.
 
         Uses denormalized version/content_id in the reverse index for a single query.
 
         Args:
             upstream_path: Path of the changed upstream file.
             current_version: Current version of the upstream file.
-            current_etag: Current content hash of the upstream file.
+            current_content_id: Current content hash of the upstream file.
             zone_id: Optional zone filter.
             limit: Max results.
 
@@ -193,19 +193,22 @@ class LineageService:
 
         stale = []
         for row in rows:
-            # Not stale if both version AND etag match
-            if row.upstream_version == current_version and row.upstream_etag == current_etag:
+            # Not stale if both version AND content_id match
+            if (
+                row.upstream_version == current_version
+                and row.upstream_content_id == current_content_id
+            ):
                 continue
 
-            # Stale: version or etag differs
+            # Stale: version or content_id differs
             stale.append(
                 {
                     "downstream_urn": row.downstream_urn,
                     "downstream_path": row.downstream_path,
                     "recorded_version": row.upstream_version,
-                    "recorded_etag": row.upstream_etag,
+                    "recorded_content_id": row.upstream_content_id,
                     "current_version": current_version,
-                    "current_etag": current_etag,
+                    "current_content_id": current_content_id,
                     "agent_id": row.agent_id,
                 }
             )

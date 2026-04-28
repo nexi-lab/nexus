@@ -996,12 +996,8 @@ def generate_stubs(
     lines.append(
         "def federation_register_share(kernel: Any, local_path: str, zone_id: str) -> None: ..."
     )
-    lines.append(
-        "def federation_lookup_share(kernel: Any, remote_path: str) -> str | None: ..."
-    )
-    lines.append(
-        "def federation_zone_links_count(kernel: Any, zone_id: str) -> int: ..."
-    )
+    lines.append("def federation_lookup_share(kernel: Any, remote_path: str) -> str | None: ...")
+    lines.append("def federation_zone_links_count(kernel: Any, zone_id: str) -> int: ...")
     lines.append(
         "def federation_zone_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ..."
     )

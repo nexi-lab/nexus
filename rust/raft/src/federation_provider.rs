@@ -395,6 +395,47 @@ impl FederationProvider for RaftFederationProvider {
             ("witness_count".to_string(), status.witness_count.into()),
         ])
     }
+
+    fn append_stream_entry(
+        &self,
+        _kernel: &Kernel,
+        zone_id: &str,
+        stream_id: &str,
+        seq: u64,
+        entry: Vec<u8>,
+    ) -> FederationResult<u64> {
+        let zm = self.zm().ok_or("federation not active")?;
+        let consensus = zm
+            .registry()
+            .get_node(zone_id)
+            .ok_or_else(|| format!("zone {zone_id} not loaded"))?;
+        let runtime = self.runtime.get().cloned().ok_or("runtime missing")?;
+        // `stream_id` already carries the namespace prefix (`__wal_stream__/<id>`
+        // or `__wal_pipe__/<id>`) from WalStreamCore / WalPipeCore so pipe
+        // and stream entries share TREE_STREAM_ENTRIES without colliding.
+        let key = format!("{stream_id}/{seq}");
+        let wal = crate::wal_stream_backend::RaftWalConsensus::new(consensus, runtime);
+        crate::wal_stream_backend::WalConsensus::append(&wal, &key, &entry)?;
+        Ok(seq)
+    }
+
+    fn get_stream_entry(
+        &self,
+        _kernel: &Kernel,
+        zone_id: &str,
+        stream_id: &str,
+        seq: u64,
+    ) -> FederationResult<Option<Vec<u8>>> {
+        let zm = self.zm().ok_or("federation not active")?;
+        let consensus = zm
+            .registry()
+            .get_node(zone_id)
+            .ok_or_else(|| format!("zone {zone_id} not loaded"))?;
+        let runtime = self.runtime.get().cloned().ok_or("runtime missing")?;
+        let key = format!("{stream_id}/{seq}");
+        let wal = crate::wal_stream_backend::RaftWalConsensus::new(consensus, runtime);
+        crate::wal_stream_backend::WalConsensus::get(&wal, &key)
+    }
 }
 
 /// Install `RaftFederationProvider` into the kernel's federation slot

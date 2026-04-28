@@ -217,6 +217,39 @@ pub trait FederationProvider: Send + Sync + 'static {
         kernel: &crate::kernel::Kernel,
         zone_id: &str,
     ) -> FederationResult<Vec<(String, serde_json::Value)>>;
+
+    /// Append `entry` at `(zone_id, stream_id, seq)` to the raft-replicated
+    /// WAL stream and return the committed sequence number.  Used by both
+    /// DT_STREAM (`io_profile="wal"`) and DT_PIPE (`io_profile="wal"`)
+    /// backends — `stream_id` carries the kernel-side namespace prefix
+    /// (`__wal_stream__/<id>` or `__wal_pipe__/<id>`) so pipe and stream
+    /// entries share `TREE_STREAM_ENTRIES` without colliding.
+    ///
+    /// Read-your-writes semantics: a successful append is observable to a
+    /// subsequent `get_stream_entry` from the same node before the entry
+    /// flushes to disk.  Implementations achieve this via an inflight
+    /// cache; the trait surface does not surface the cache directly.
+    fn append_stream_entry(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+        stream_id: &str,
+        seq: u64,
+        entry: Vec<u8>,
+    ) -> FederationResult<u64>;
+
+    /// Read the entry at `(zone_id, stream_id, seq)`.  Returns
+    /// `Ok(None)` when the entry has not been written yet (cursor ahead
+    /// of writer).  Returns `Err` when the stream is closed AND the
+    /// offset is out of range — callers can distinguish "not yet"
+    /// (retry / wait) from "permanently absent" (replay finished).
+    fn get_stream_entry(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+        stream_id: &str,
+        seq: u64,
+    ) -> FederationResult<Option<Vec<u8>>>;
 }
 
 /// No-op fallback used at `Kernel::new` so the federation slot is
@@ -374,6 +407,27 @@ impl FederationProvider for NoopFederationProvider {
         _zone_id: &str,
     ) -> FederationResult<Vec<(String, serde_json::Value)>> {
         Err("FederationProvider not installed".into())
+    }
+
+    fn append_stream_entry(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _zone_id: &str,
+        _stream_id: &str,
+        _seq: u64,
+        _entry: Vec<u8>,
+    ) -> FederationResult<u64> {
+        Err("FederationProvider not installed".into())
+    }
+
+    fn get_stream_entry(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _zone_id: &str,
+        _stream_id: &str,
+        _seq: u64,
+    ) -> FederationResult<Option<Vec<u8>>> {
+        Ok(None)
     }
 }
 

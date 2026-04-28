@@ -379,8 +379,16 @@ impl FederationProvider for RaftFederationProvider {
         zm.lookup_share(remote_path).map_err(|e| e.to_string())
     }
 
-    fn zone_links_count(&self, _kernel: &Kernel, _zone_id: &str) -> FederationResult<i64> {
-        Ok(0)
+    fn zone_links_count(&self, _kernel: &Kernel, zone_id: &str) -> FederationResult<i64> {
+        // Count comes from the provider's reverse index (mounts pointing
+        // at `zone_id`).  Node-local cache derived from DT_MOUNT entries —
+        // matches what `wire_mount` populates as apply-cb fires.
+        let count = self
+            .cross_zone_mounts
+            .get(zone_id)
+            .map(|v| v.len() as i64)
+            .unwrap_or(0);
+        Ok(count)
     }
 
     fn zone_cluster_info(

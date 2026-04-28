@@ -85,19 +85,25 @@ class TestReadinessProbe:
         assert body["status"] == "ready"
         assert "uptime_seconds" in body
 
-    def test_503_on_raft_not_ready(self) -> None:
+    def test_503_on_raft_not_ready(self, monkeypatch) -> None:
         tracker = StartupTracker()
         for phase in _REQUIRED_FOR_READY:
             tracker.complete(phase)
 
-        # R20.18.5: federation readiness moved from the Python
-        # FederationService.ensure_topology() to a kernel atomic flipped
-        # by Kernel::init_federation_from_env after reconcile finishes
-        # (Kernel.mount_reconciliation_done()). Mock that instead.
-        mock_kernel = MagicMock()
-        mock_kernel.mount_reconciliation_done.return_value = False
+        # Phase H: federation readiness moved from the deleted
+        # ``Kernel.mount_reconciliation_done`` PyO3 method to a
+        # kernel-internal HAL probe exposed as
+        # ``nexus_runtime.federation_is_initialized(kernel)``.  Stub
+        # it out with the readiness flag flipped to False so the probe
+        # fires the "Raft topology not ready" branch.
+        import sys
+        from types import SimpleNamespace
+
+        fake = SimpleNamespace(federation_is_initialized=lambda _k: False)
+        monkeypatch.setitem(sys.modules, "nexus_runtime", fake)
+
         mock_fs = MagicMock()
-        mock_fs._kernel = mock_kernel
+        mock_fs._kernel = MagicMock()
 
         app = _make_app(tracker)
         app.state.nexus_fs = mock_fs

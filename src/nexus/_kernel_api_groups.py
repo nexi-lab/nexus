@@ -30,11 +30,6 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
         "hash_content_py",
         "hash_content_smart_py",
     ),
-    "ipc": (
-        "SharedMemoryPipeBackend",
-        "SharedMemoryStreamBackend",
-        "StdioStreamBackend",
-    ),
     "io": (
         "read_file",
         "read_files_bulk",

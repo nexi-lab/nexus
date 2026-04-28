@@ -84,7 +84,6 @@ except ImportError:
 
 # Per-group availability flags (set after validation below)
 RUST_HASH_AVAILABLE: bool = False
-RUST_IPC_AVAILABLE: bool = False
 
 _REBUILD_CMD = "cd rust/kernel && maturin develop --release"
 
@@ -100,7 +99,7 @@ if RUST_AVAILABLE:
     _log = _logging.getLogger(__name__)
 
     # Compute per-group availability BEFORE the core kill-switch clears _nf.
-    # This ensures hash/ipc flags reflect actual symbol presence, not whether
+    # This ensures hash flag reflects actual symbol presence, not whether
     # an unrelated core symbol (e.g. SyscallEngine) is missing.
     _group_ok = {}
     for _group, _symbols in _CAPABILITY_GROUPS.items():
@@ -117,7 +116,6 @@ if RUST_AVAILABLE:
             )
 
     RUST_HASH_AVAILABLE = _group_ok.get("hash", False)
-    RUST_IPC_AVAILABLE = _group_ok.get("ipc", False)
 
     _core_disabled = not _group_ok.get("core", False)
     if _core_disabled:
@@ -198,8 +196,6 @@ PathTrie = _get("PathTrie")
 
 # Classes still exported as standalone
 BloomFilter = _get("BloomFilter")
-SharedMemoryPipeBackend = _get("SharedMemoryPipeBackend")
-SharedMemoryStreamBackend = _get("SharedMemoryStreamBackend")
 VFSSemaphore = _get("VFSSemaphore")
 BlobPackEngine = _get("BlobPackEngine")
 

@@ -57,16 +57,6 @@ pub use core::stream;
 pub use core::stream::manager as stream_manager;
 #[cfg(unix)]
 pub(crate) use core::stream::shm as shm_stream;
-// `core::stream::stdio` only ships its pyclass on Unix (the
-// `StdioStreamBackend` impl is `#[cfg(unix)]`); the cdylib's
-// `m.add_class::<stdio_stream::StdioStreamBackend>` line below is
-// likewise cfg-gated, so the shim must match. Without the shim the
-// Linux build trips `unresolved module \`stdio_stream\`` even though
-// the Windows build (where neither the shim nor the add_class line
-// are emitted) compiles fine.
-#[cfg(unix)]
-pub(crate) use core::stream::stdio as stdio_stream;
-// Phase H: WAL stream backend moved to nexus_raft::wal_stream_backend.
 
 // ── Kernel-owned primitives ──────────────────────────────────────────
 // CAS (content-addressed storage) — the kernel's storage primitive

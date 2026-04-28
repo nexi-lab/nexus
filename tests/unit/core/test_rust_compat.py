@@ -207,20 +207,6 @@ class TestNonCoreMissing:
         compat = _reload_rust_compat(mod)
         assert compat.RUST_AVAILABLE is True
 
-    def test_ipc_available_false_when_ipc_group_missing(self) -> None:
-        mod = _make_fake_module(
-            missing_module_symbols=["SharedMemoryPipeBackend", "SharedMemoryStreamBackend"]
-        )
-        compat = _reload_rust_compat(mod)
-        assert compat.RUST_IPC_AVAILABLE is False
-
-    def test_rust_available_true_when_only_ipc_missing(self) -> None:
-        mod = _make_fake_module(
-            missing_module_symbols=["SharedMemoryPipeBackend", "SharedMemoryStreamBackend"]
-        )
-        compat = _reload_rust_compat(mod)
-        assert compat.RUST_AVAILABLE is True
-
 
 # ---------------------------------------------------------------------------
 # Tests: Kernel class method validation (the Issue #3712 regression case)
@@ -322,11 +308,6 @@ class TestFullyCurrentBinary:
         mod = _make_fake_module()
         compat = _reload_rust_compat(mod)
         assert compat.RUST_HASH_AVAILABLE is True
-
-    def test_ipc_available_true(self) -> None:
-        mod = _make_fake_module()
-        compat = _reload_rust_compat(mod)
-        assert compat.RUST_IPC_AVAILABLE is True
 
     def test_kernel_symbol_is_class(self) -> None:
         mod = _make_fake_module()

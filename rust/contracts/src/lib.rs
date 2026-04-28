@@ -7,6 +7,7 @@
 
 pub mod constants;
 pub mod lock_state;
+pub mod operation_context;
 pub mod rust_service;
 
 pub use constants::{
@@ -15,4 +16,5 @@ pub use constants::{
 pub use lock_state::{
     HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState, Locks,
 };
+pub use operation_context::OperationContext;
 pub use rust_service::{RustCallError, RustService};

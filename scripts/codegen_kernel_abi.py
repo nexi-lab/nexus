@@ -980,6 +980,32 @@ def generate_stubs(
     lines.append("")
     lines.append("def hostname_to_node_id(hostname: str) -> int: ...")
     lines.append("")
+    # Federation control-plane (kernel-internal HAL bridges, exposed to
+    # Python as module-level functions — analogue to mkfs / zfs admin).
+    lines.append("def install_federation_wiring(kernel: Any) -> None: ...")
+    lines.append("def federation_create_zone(kernel: Any, zone_id: str) -> str: ...")
+    lines.append(
+        "def federation_remove_zone(kernel: Any, zone_id: str, force: bool = False) -> None: ..."
+    )
+    lines.append(
+        "def federation_join_zone(kernel: Any, zone_id: str, as_learner: bool = False) -> str: ..."
+    )
+    lines.append(
+        "def federation_zone_share(kernel: Any, parent_zone: str, prefix: str, new_zone: str) -> int: ..."
+    )
+    lines.append(
+        "def federation_register_share(kernel: Any, local_path: str, zone_id: str) -> None: ..."
+    )
+    lines.append(
+        "def federation_lookup_share(kernel: Any, remote_path: str) -> str | None: ..."
+    )
+    lines.append(
+        "def federation_zone_links_count(kernel: Any, zone_id: str) -> int: ..."
+    )
+    lines.append(
+        "def federation_zone_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ..."
+    )
+    lines.append("")
 
     return "\n".join(lines)
 

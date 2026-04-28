@@ -217,10 +217,21 @@ class PermissionCheckHook:
         self._lease_stamp(ctx.path, agent_id)
 
     def on_pre_rename(self, ctx: RenameHookContext) -> None:
-        """Check WRITE permission on both source and destination."""
+        """Check WRITE permission on both source and destination.
+
+        Issue #3786 / Codex Round 4: prior code only verified the source,
+        so a federation token with write on /zone/A/ could rename into
+        /zone/B/ even when zone B was read-only or absent from its
+        ``zone_perms``. Both paths now reach the enforcer's zone allow-list.
+        """
+        if not self._enforce_permissions:
+            return
         if self._is_system_path(ctx.old_path) and self._is_system_path(ctx.new_path):
             return
-        self._checker.check(ctx.old_path, Permission.WRITE, ctx.context)
+        if not self._is_system_path(ctx.old_path):
+            self._checker.check(ctx.old_path, Permission.WRITE, ctx.context)
+        if not self._is_system_path(ctx.new_path):
+            self._checker.check(ctx.new_path, Permission.WRITE, ctx.context)
 
     def on_pre_copy(self, ctx: "CopyHookContext") -> None:
         """Check READ on source, WRITE on destination (Issue #3329)."""

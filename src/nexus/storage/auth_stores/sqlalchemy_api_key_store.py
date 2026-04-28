@@ -129,9 +129,26 @@ class SQLAlchemyAPIKeyStore:
             key = session.scalar(stmt)
             if not key:
                 return False
+            # Snapshot subject before mutation — needed to drop the cached
+            # zone_perms so revoked grants can't authorise further requests
+            # on the native (Rust-stripped) code path.  Issue #3786 / Codex
+            # Round 4 finding #3.
+            revoked_subject = key.subject_id if hasattr(key, "subject_id") else key.user_id
             key.revoked = 1
             key.revoked_at = datetime.now(UTC)
             session.commit()
+
+            if revoked_subject:
+                try:
+                    from nexus.lib.zone_perms_cache import invalidate_zone_perms
+
+                    invalidate_zone_perms(revoked_subject)
+                except Exception:
+                    logger.warning(
+                        "Failed to invalidate zone_perms cache for revoked key %s",
+                        key_id,
+                        exc_info=True,
+                    )
             return True
 
     def update_last_used(self, key_hash: str) -> None:

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.types import OperationContext
 from nexus.core.path_utils import validate_path
+from nexus.lib.zone_perms_cache import request_zone_perms_scope
 
 if TYPE_CHECKING:
     pass
@@ -137,7 +138,12 @@ class InternalMixin:
         ctx = self._resolve_cred(context)
         is_admin = getattr(ctx, "is_admin", False)
         rust_ctx = self._build_rust_ctx(ctx, is_admin)
-        results = self._kernel.dispatch_pre_hooks_batch_stat(paths, rust_ctx, permission)
+        # Bind real zone_perms to the request scope so the Python PermissionHook
+        # the Rust batch dispatcher invokes can resurrect them without racing
+        # the subject-keyed cache.  Issue #3786 / Codex Round 6 finding #3.
+        _zp = getattr(ctx, "zone_perms", ()) if ctx else ()
+        with request_zone_perms_scope(_zp):
+            results = self._kernel.dispatch_pre_hooks_batch_stat(paths, rust_ctx, permission)
         return {p for p, allowed in zip(paths, results, strict=True) if allowed}
 
     # _dispatch_write_events deleted — callers inline the post-hook dispatch.

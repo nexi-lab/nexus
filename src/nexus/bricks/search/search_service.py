@@ -1239,6 +1239,29 @@ class SearchService:
         filter_start = time.time()
         if _accessible_int_ids is not None:
             allowed_set = {meta.path for meta in all_files}
+            # Issue #3786 / Codex Round 9 finding #3: predicate-pushdown
+            # via _accessible_int_ids reflects ReBAC visibility for the
+            # subject — but multi-zone federation tokens can scope to a
+            # subset of those zones.  Intersect with the token's
+            # zone_perms allow-list so list/glob/grep cannot leak paths
+            # outside the active token scope.
+            try:
+                _eff_zp = self._permission_enforcer._effective_zone_perms(ctx)
+            except Exception:
+                _eff_zp = getattr(ctx, "zone_perms", ()) or ()
+            _real_zp = tuple((z, p) for z, p in (_eff_zp or ()) if z != ROOT_ZONE_ID)
+            if (
+                getattr(ctx, "zone_id", ROOT_ZONE_ID) == ROOT_ZONE_ID
+                and _real_zp
+                and not getattr(ctx, "is_admin", False)
+            ):
+                _allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
+                allowed_set = {
+                    p
+                    for p in allowed_set
+                    if not p.startswith("/zone/")
+                    or (len(p[6:].split("/", 1)) > 0 and p[6:].split("/", 1)[0] in _allowed_zones)
+                }
             logger.info(
                 f"[PREDICATE-PUSHDOWN] Skipped filter_list() - "
                 f"using {len(allowed_set)} pre-filtered paths"

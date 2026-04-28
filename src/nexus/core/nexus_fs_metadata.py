@@ -28,6 +28,7 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.lib.rpc_decorator import rpc_expose
+from nexus.lib.zone_perms_cache import request_zone_perms_scope
 
 if TYPE_CHECKING:
     pass
@@ -296,6 +297,28 @@ class MetadataMixin:
         ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
 
+        # Issue #3786 / Codex Round 6 finding #1: dispatch the stat
+        # permission hook before reading kernel metadata so federation
+        # tokens cannot probe paths outside their zone allow-list.
+        # Wrap the kernel call in request_zone_perms_scope so the rebuilt
+        # PermissionHook context resurrects zone_perms without racing the
+        # subject-keyed cache.
+        from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+        from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
+        _zp = getattr(ctx, "zone_perms", ()) if ctx else ()
+        try:
+            with request_zone_perms_scope(_zp):
+                self._kernel.dispatch_pre_hooks(
+                    "stat",
+                    _SHC(path=normalized, context=ctx, permission="READ"),
+                )
+        except (_PDE, PermissionError):
+            # Codex Round 9 finding #2: PermissionChecker.check raises
+            # the builtin PermissionError on normal denials.  Re-raise both
+            # so denial is honoured.
+            raise
+
         # Build the base stat via a single code path. F3 C1 guarantees a
         # metastore is always wired (``Kernel::new()`` installs
         # ``MemoryMetastore`` by default), so the Rust kernel is the
@@ -319,7 +342,8 @@ class MetadataMixin:
                 return _virt
 
         # Rust sys_stat handles: dcache → metastore → implicit directory.
-        result = self._kernel.sys_stat(normalized, self._zone_id)
+        with request_zone_perms_scope(_zp):
+            result = self._kernel.sys_stat(normalized, self._zone_id)
         if result is not None:
             result["owner"] = ctx.user_id
             result["group"] = ctx.user_id
@@ -333,7 +357,7 @@ class MetadataMixin:
         self,
         path: str,
         *,
-        context: OperationContext | None = None,  # noqa: ARG002
+        context: OperationContext | None = None,
         **attrs: Any,
     ) -> dict[str, Any]:
         """Upsert file metadata (chmod/chown/utimensat + mknod analog).
@@ -358,6 +382,45 @@ class MetadataMixin:
         Returns:
             Dict with path, created flag, and type-specific fields.
         """
+        # ── Authorization gate (Issue #3786 / Codex Round 7 finding #2) ──
+        # NexusFS.sys_setattr is the underlying primitive used by mounts,
+        # service registration, and metadata mutation.  Without an
+        # in-class gate, in-process callers (and any future RPC handler
+        # that forgot to gate) could poison metadata under /zone/X for a
+        # token without WRITE there.  Defense in depth: check here even
+        # though `handle_set_metadata` already checks at the RPC edge.
+        _entry_type = attrs.get("entry_type", 0)
+        if context is not None and not getattr(context, "is_system", False):
+            from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+
+            _is_admin_caller = bool(getattr(context, "is_admin", False))
+
+            # /__sys__/ and DT_MOUNT are kernel-management primitives —
+            # require admin (matches the tests/api_server gating that
+            # already enforces this via separate channels).
+            if path.startswith("/__sys__/") or _entry_type == DT_MOUNT:
+                if not _is_admin_caller:
+                    raise _PDE(
+                        f"sys_setattr denied: {path!r} requires admin privileges",
+                        path=path,
+                    )
+            else:
+                # Regular metadata path — require WRITE under the
+                # request scope so federation tokens can't mutate
+                # metadata outside their zone allow-list.
+                enforcer = self.service("permission_enforcer") if hasattr(self, "service") else None
+                if enforcer is not None:
+                    from nexus.contracts.types import Permission as _P
+
+                    _zp = getattr(context, "zone_perms", ())
+                    with request_zone_perms_scope(_zp):
+                        _allowed = enforcer.check(path, _P.WRITE, context)
+                    if not _allowed:
+                        raise _PDE(
+                            f"sys_setattr denied: WRITE not granted for {path!r}",
+                            path=path,
+                        )
+
         # ── /__sys__/ kernel management dispatch ──────────────────────
         # Service registration via syscall. These paths bypass the normal
         # metastore path — kernel routes them to ServiceRegistry.
@@ -549,6 +612,29 @@ class MetadataMixin:
 
     # ── Tier 2 directory ──────────────────────────────────────────────
 
+    def _gate_sys_namespace_mutation(
+        self, paths: tuple[str, ...], context: OperationContext | None
+    ) -> None:
+        """Reject /__sys__/ mutations from non-admin callers.
+
+        Codex Round 10 finding #2: PermissionCheckHook intentionally skips
+        ``/__sys__/`` paths, so mkdir/rename/copy must enforce here.  Any
+        path under /__sys__/ — source or destination — requires admin or
+        is_system; ``context is None`` is no longer treated as privileged.
+        """
+        if not any(p.startswith("/__sys__/") for p in paths):
+            return
+        if context is not None and (
+            getattr(context, "is_admin", False) or getattr(context, "is_system", False)
+        ):
+            return
+        from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+
+        raise _PDE(
+            f"system namespace mutation denied: {paths!r} requires admin",
+            path=paths[0] if paths else "/__sys__/",
+        )
+
     @rpc_expose(description="Create directory")
     def mkdir(
         self,
@@ -564,13 +650,19 @@ class MetadataMixin:
         DT_DIR metadata creation delegated to Rust kernel sys_setattr.
         """
         path = self._validate_path(path)
+        self._gate_sys_namespace_mutation((path,), context)
         ctx = self._resolve_cred(context)
 
         # Rust kernel handles existence check (explicit + implicit directory),
         # exist_ok/parents semantics, backend.mkdir, ensure_parent_directories,
         # DT_DIR metadata creation, and dcache update.
         _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
-        _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
+        # Bind real zone_perms to the request scope so the Python PermissionHook
+        # (rebuilt from the Rust-stripped context) can resurrect them without
+        # racing the subject-keyed cache.  Issue #3786 / Codex Round 4.
+        _zp = getattr(ctx, "zone_perms", ()) if ctx else ()
+        with request_zone_perms_scope(_zp):
+            _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
         if _mkdir_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import MkdirHookContext
 
@@ -631,6 +723,24 @@ class MetadataMixin:
             PermissionError: If path is read-only or user doesn't have write permission.
         """
         # ── /__sys__/ kernel management dispatch ──────────────────────
+        # Issue #3786 / Codex Round 8 #1 + Round 9 #4: gate ALL /__sys__/
+        # mutations to admin/system, not just service unregister.  The
+        # PermissionCheckHook explicitly skips system paths, so without
+        # this gate any non-admin caller reaching sys_unlink could
+        # disrupt internal entries (services, hooks, namespaces, locks,
+        # rebac).  Internal kernel callers must pass an explicit system
+        # context — None is no longer treated as privileged.
+        if path.startswith("/__sys__/") and (
+            context is None
+            or not (getattr(context, "is_admin", False) or getattr(context, "is_system", False))
+        ):
+            from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+
+            raise _PDE(
+                f"sys_unlink denied: {path!r} requires admin privileges",
+                path=path,
+            )
+
         if path.startswith("/__sys__/services/"):
             name = path.rsplit("/", 1)[-1]
             # Unregister hooks first
@@ -652,7 +762,12 @@ class MetadataMixin:
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
+        # Bind real zone_perms to the request scope so the Python PermissionHook
+        # (rebuilt from the Rust-stripped context) can resurrect them without
+        # racing the subject-keyed cache.  Issue #3786 / Codex Round 4.
+        _zp = getattr(context, "zone_perms", ()) if context else ()
+        with request_zone_perms_scope(_zp):
+            _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
 
         if _unlink_result.hit:
             # Rust handled the full operation (§12e: DT_DIR inlined via sys_rmdir).
@@ -748,6 +863,7 @@ class MetadataMixin:
         """
         old_path = self._validate_path(old_path)
         new_path = self._validate_path(new_path)
+        self._gate_sys_namespace_mutation((old_path, new_path), context)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
 
@@ -755,7 +871,12 @@ class MetadataMixin:
 
         # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
+        # Bind real zone_perms to the request scope so the Python PermissionHook
+        # (rebuilt from the Rust-stripped context) can resurrect them without
+        # racing the subject-keyed cache.  Issue #3786 / Codex Round 4.
+        _zp = getattr(context, "zone_perms", ()) if context else ()
+        with request_zone_perms_scope(_zp):
+            _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
         # Rust handles all entry types (files, dirs, mounts, external storage).
         # Dispatch POST hooks with reconstructed metadata for audit trail.
@@ -829,6 +950,7 @@ class MetadataMixin:
         """
         src_path = self._validate_path(src_path)
         dst_path = self._validate_path(dst_path)
+        self._gate_sys_namespace_mutation((src_path, dst_path), context)
         context = self._parse_context(context)
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
@@ -836,7 +958,12 @@ class MetadataMixin:
         # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy.
         # Rust validates source existence + rejects directories internally.
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
+        # Bind real zone_perms to the request scope so the Python PermissionHook
+        # (rebuilt from the Rust-stripped context) can resurrect them without
+        # racing the subject-keyed cache.  Issue #3786 / Codex Round 4.
+        _zp = getattr(context, "zone_perms", ()) if context else ()
+        with request_zone_perms_scope(_zp):
+            _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
 
         # POST-INTERCEPT hooks (zero consumers use metadata field)
         if _copy_result.post_hook_needed:
@@ -1433,9 +1560,25 @@ class MetadataMixin:
                 return [p for p, _ in _virt]
 
         # ── /__sys__/locks/ virtual namespace (like /proc/locks) ──
+        # Gated to admin/system: lock holdings disclose tenant activity
+        # (path frequency, holder ids) that a federation token must not
+        # see.  Issue #3786 / Codex Round 7 finding #1 + Round 8 #3:
+        # callers MUST pass an explicit context — None is no longer
+        # treated as privileged because external HTTP routers used to
+        # forget to propagate it, defeating the gate.
         sys_locks_prefix = "/__sys__/locks"
         stripped = path.rstrip("/")
         if stripped == sys_locks_prefix or stripped.startswith(sys_locks_prefix + "/"):
+            _is_priv = context is not None and (
+                getattr(context, "is_admin", False) or getattr(context, "is_system", False)
+            )
+            if not _is_priv:
+                from nexus.contracts.exceptions import PermissionDeniedError as _PDE
+
+                raise _PDE(
+                    f"sys_readdir denied: {sys_locks_prefix} is admin-only",
+                    path=path,
+                )
             prefix = stripped[len(sys_locks_prefix) :]
             lock_limit = limit or 1024
             locks = self._kernel.metastore_list_locks(prefix, lock_limit)
@@ -1470,9 +1613,38 @@ class MetadataMixin:
                 logger.debug("kernel.readdir failed for %s: %s", path, exc)
                 _kernel_entries = None
             if _kernel_entries:
-                return [
+                _children = [
                     child for child, _etype in _kernel_entries if not self._is_internal_path(child)
                 ]
+                # Issue #3786 / Codex Round 7 finding #1: federation tokens
+                # land here as zone_id="root", so without an explicit zone_perms
+                # filter they would receive every name the kernel returns,
+                # including paths under zones outside their allow-list.
+                _ctx_zp = (
+                    getattr(context, "zone_perms", ())
+                    if context is not None and not isinstance(context, dict)
+                    else (
+                        tuple(tuple(zp) for zp in (context.get("zone_perms") or ()) if len(zp) == 2)
+                        if isinstance(context, dict)
+                        else ()
+                    )
+                )
+                _real_zp = tuple((z, p) for z, p in (_ctx_zp or ()) if z != ROOT_ZONE_ID)
+                if not _is_admin and _real_zp:
+                    _allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
+                    _filtered: builtins.list[str] = []
+                    for _child in _children:
+                        if _child.startswith("/zone/"):
+                            _parts = _child[6:].split("/", 1)
+                            if _parts and _parts[0] in _allowed_zones:
+                                _filtered.append(_child)
+                            # else: drop — outside token's allow-list
+                        else:
+                            # Non-zone paths (root namespace) — keep; they
+                            # are not the federation tenant data.
+                            _filtered.append(_child)
+                    return _filtered
+                return _children
 
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):
@@ -1489,15 +1661,36 @@ class MetadataMixin:
         if isinstance(context, dict):
             caller_zone = context.get("zone_id") or ROOT_ZONE_ID
             caller_is_admin = bool(context.get("is_admin", False))
+            _ctx_zp = tuple(tuple(zp) for zp in (context.get("zone_perms") or ()) if len(zp) == 2)
         elif context is not None:
             caller_zone = getattr(context, "zone_id", None) or ROOT_ZONE_ID
             caller_is_admin = bool(getattr(context, "is_admin", False))
+            _ctx_zp = tuple(getattr(context, "zone_perms", ()) or ())
         else:
             caller_zone = ROOT_ZONE_ID
             caller_is_admin = False
+            _ctx_zp = ()
+
+        # Issue #3786 / Codex Round 8 finding #2: federation token allow-list
+        # for the recursive / detail / paginated path.  Multi-zone tokens land
+        # here as caller_zone==root (so the original _zone_allowed shortcut
+        # would let them enumerate every zone).  Build the allow-list once.
+        _real_zp = tuple((z, p) for z, p in _ctx_zp if z != ROOT_ZONE_ID)
+        _fed_allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
 
         def _zone_allowed(entry: Any) -> bool:
-            if caller_is_admin or caller_zone == ROOT_ZONE_ID:
+            if caller_is_admin:
+                return True
+            # Federation token tripwire — restrict /zone/<id>/ entries to
+            # the allow-list even when caller_zone==root.  Root-namespace
+            # entries (no /zone/ prefix) stay visible.
+            if _real_zp:
+                _ep = getattr(entry, "path", "") or ""
+                if _ep.startswith("/zone/"):
+                    _parts = _ep[6:].split("/", 1)
+                    return bool(_parts) and _parts[0] in _fed_allowed_zones
+                return True
+            if caller_zone == ROOT_ZONE_ID:
                 return True
             entry_zone = getattr(entry, "zone_id", None) or ROOT_ZONE_ID
             # Root zone is the global namespace, not any user's private zone:

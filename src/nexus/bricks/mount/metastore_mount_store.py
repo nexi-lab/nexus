@@ -26,10 +26,21 @@ from typing import Any, Protocol
 from urllib.parse import quote, unquote
 
 from nexus.contracts.constants import SYSTEM_PATH_PREFIX
+from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
 _MOUNTS_DIR = f"{SYSTEM_PATH_PREFIX}mounts/"
+
+
+def _system_ctx() -> OperationContext:
+    """System context for kernel-internal mutations under /__sys__/.
+
+    sys_unlink etc. now reject ``context=None`` for /__sys__/* paths
+    (Issue #3786 hardening); the mount store is internal kernel code so
+    it speaks with an explicit is_system token.
+    """
+    return OperationContext(user_id="system", groups=[], is_system=True)
 
 
 def _config_path(mount_point: str) -> str:
@@ -197,7 +208,7 @@ class MetastoreMountStore:
         if not self._exists(path):
             return False
         try:
-            self._nx.sys_unlink(path)
+            self._nx.sys_unlink(path, context=_system_ctx())
         except FileNotFoundError:
             return False
         return True

@@ -14,6 +14,7 @@ Wired into NexusFS via factory/orchestrator.py DI.
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 if TYPE_CHECKING:
@@ -152,6 +153,43 @@ class PermissionChecker:
             permission_path = original_path
         else:
             permission_path = path
+
+        # ----------------------------------------------------------
+        # Issue #3786 / Codex Round 9 #1 + Round 10 #1: federation-token
+        # zone_perms tripwire BEFORE the owner fast-path.  Owner-on-file
+        # would otherwise short-circuit authorization for /zone/X paths
+        # the token never had grants on (or had only read-only grants
+        # for, on a WRITE request).  Round 10 — runs for both root-zoned
+        # multi-zone tokens *and* single-zone tokens whose ``zone_id`` is
+        # the concrete zone but whose ``zone_perms`` entry is read-only.
+        # ----------------------------------------------------------
+        if self._permission_enforcer is not None:
+            try:
+                _eff_zp = self._permission_enforcer._effective_zone_perms(ctx)
+            except Exception:
+                _eff_zp = ctx.zone_perms or ()
+            _real_zp = tuple((z, p) for z, p in (_eff_zp or ()) if z != ROOT_ZONE_ID)
+            if _real_zp and permission_path.startswith("/zone/"):
+                _parts = permission_path[6:].split("/", 1)
+                _path_zone = _parts[0] if _parts else ""
+                if _path_zone and _path_zone != ROOT_ZONE_ID:
+                    _allowed = False
+                    _perm_char = "w" if permission == Permission.WRITE else "r"
+                    for _z, _perms in _real_zp:
+                        if _z == _path_zone:
+                            if _perm_char in _perms or "x" in _perms:
+                                _allowed = True
+                            else:
+                                raise PermissionError(
+                                    f"Access denied: zone {_path_zone!r} is "
+                                    f"read-only for this token (path '{path}')"
+                                )
+                            break
+                    if not _allowed:
+                        raise PermissionError(
+                            f"Access denied: zone {_path_zone!r} not in token's "
+                            f"zone_perms allow-list (path '{path}')"
+                        )
 
         # ----------------------------------------------------------
         # Issue #920 / #1825: O(1) owner fast-path via kernel contract.

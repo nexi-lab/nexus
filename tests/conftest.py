@@ -14,8 +14,15 @@ Usage:
 """
 
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+# Ensure local src is in path for worktree development
+_src_path = Path(__file__).parent.parent / "src"
+if str(_src_path) not in sys.path:
+    sys.path.insert(0, str(_src_path))
 
 # ---------------------------------------------------------------------------
 # Issue #3712: auto-rebuild stale nexus_kernel binary before test runs.

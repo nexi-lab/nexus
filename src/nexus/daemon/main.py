@@ -18,6 +18,7 @@ from typing import Any
 import click
 
 from nexus.cli.exit_codes import ExitCode
+from nexus.daemon.sandbox_bootstrap import SandboxBootstrapper
 
 logger = logging.getLogger("nexusd")
 
@@ -224,6 +225,28 @@ def _print_lifecycle_summary(nx: Any) -> None:
     envvar="NEXUS_WORKERS",
     help="Number of uvicorn workers (default: 1).",
 )
+@click.option(
+    "--workspace",
+    "workspace",
+    type=click.Path(),
+    default=None,
+    envvar="NEXUS_WORKSPACE",
+    help="Local directory to index and mount as 'local' zone (sandbox profile only).",
+)
+@click.option(
+    "--hub-url",
+    "hub_url",
+    default=None,
+    envvar="NEXUS_HUB_URL",
+    help="Hub gRPC endpoint for sandbox federation (sandbox profile only).",
+)
+@click.option(
+    "--hub-token",
+    "hub_token",
+    default=None,
+    envvar="NEXUS_HUB_TOKEN",
+    help="Bearer token for hub authentication (sandbox profile only; prefer env var).",
+)
 @click.version_option(package_name="nexus-ai-fs", prog_name="nexusd")
 @click.pass_context
 def main(
@@ -239,6 +262,9 @@ def main(
     log_level: str | None,
     log_format: str,
     workers: int | None,
+    workspace: str | None,
+    hub_url: str | None,
+    hub_token: str | None,
 ) -> None:
     """Nexus node daemon.
 
@@ -252,6 +278,7 @@ def main(
         nexusd --config /etc/nexus/config.yaml   # from config file
         nexusd share /data/shared                # share a subtree
         nexusd join peer1:2126 /shared /local    # join a peer's zone
+        nexusd --profile sandbox --workspace ~/code --hub-url grpc://hub:443
     """
     # If a subcommand was invoked, skip daemon startup
     if ctx.invoked_subcommand is not None:
@@ -262,7 +289,38 @@ def main(
     port = port or 2026
     log_level = log_level or "info"
 
+    # Derive gRPC port from HTTP port (port + 2).  Always set this so the
+    # gRPC server binds relative to --port, not to an inherited NEXUS_GRPC_PORT
+    # from a parent nexus hub in the environment (e.g. `eval $(nexus env)`).
+    # Default: HTTP 2026 → gRPC 2028; custom --port N → gRPC N+2.
+    os.environ["NEXUS_GRPC_PORT"] = str(port + 2)
+
     deployment_profile = deployment_profile or "auto"
+
+    # --- Sandbox flag validation --------------------------------------------
+    # --workspace, --hub-url, --hub-token are ONLY valid with --profile sandbox
+    _sandbox_flags = {
+        "--workspace": workspace,
+        "--hub-url": hub_url,
+        "--hub-token": hub_token,
+    }
+    _has_sandbox_flag = any(v is not None for v in _sandbox_flags.values())
+    if _has_sandbox_flag and deployment_profile != "sandbox":
+        _used = [k for k, v in _sandbox_flags.items() if v is not None]
+        click.echo(
+            f"Error: {', '.join(_used)} {'is' if len(_used) == 1 else 'are'} only valid "
+            "with --profile sandbox.",
+            err=True,
+        )
+        sys.exit(ExitCode.USAGE_ERROR)
+
+    # --hub-url without any token is an error
+    if hub_url is not None and not hub_token:
+        click.echo(
+            "Error: --hub-url requires a token. Pass --hub-token or set NEXUS_HUB_TOKEN.",
+            err=True,
+        )
+        sys.exit(ExitCode.USAGE_ERROR)
 
     # Configure logging early
     _log_level = getattr(logging, log_level.upper())
@@ -346,6 +404,35 @@ def main(
 
         # --- Service lifecycle summary (Issue #1578) -------------------------
         _print_lifecycle_summary(nx)
+
+        # --- Sandbox boot sequence (Issue #3786) ----------------------------
+        if deployment_profile == "sandbox" and workspace is not None:
+            _workspace_path = Path(workspace)
+            _search_registry = getattr(nx, "_search_registry", None)
+            if _search_registry is None:
+                _search_registry = getattr(nx, "zone_search_registry", None)
+            _search_daemon = getattr(nx, "_search_daemon", None)
+            if _search_daemon is None:
+                _search_daemon = getattr(nx, "search_daemon", None)
+            _health_state_raw: dict[str, Any] | None = getattr(nx, "_health_state", None)
+            _health_state: dict[str, Any] = (
+                _health_state_raw if _health_state_raw is not None else {"status": "indexing"}
+            )
+            bootstrapper = SandboxBootstrapper(
+                workspace=_workspace_path,
+                hub_url=hub_url,
+                hub_token=hub_token,
+                nexus_fs=nx,
+                search_registry=_search_registry,
+                search_daemon=_search_daemon,
+                health_state=_health_state,
+            )
+            bootstrapper.run()
+            logger.info(
+                "[nexusd] SandboxBootstrapper.run() complete (workspace=%s, hub=%s)",
+                _workspace_path,
+                hub_url or "none",
+            )
 
         # --- Resolve auth ---------------------------------------------------
         auth_provider: Any = None

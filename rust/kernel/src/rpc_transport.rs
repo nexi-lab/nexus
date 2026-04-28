@@ -34,6 +34,8 @@ pub struct RpcTransport {
     timeout: Duration,
 }
 
+#[allow(dead_code)] // typed read/write/delete kept for future fast-path optimisation;
+                    // RemoteBackend now routes through Call RPC (Issue #3786 Round 1-2)
 impl RpcTransport {
     /// Connect to a remote server. `address` is `host:port` or `http(s)://host:port`.
     /// Channel is lazy — actual TCP connection happens on first RPC call.

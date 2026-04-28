@@ -2049,12 +2049,20 @@ impl PyKernel {
             match self.dispatch_pre_hooks_inner("stat", &shc) {
                 Ok(()) => results.push(true),
                 Err(e) => {
-                    // PermissionDeniedError → denied; other errors propagate
+                    // PermissionDeniedError or builtin PermissionError → denied;
+                    // other errors propagate.  Issue #3786 / Codex Round 10 finding #3:
+                    // PermissionChecker.check raises the builtin on normal denials,
+                    // so we must catch both classes here or batch_stat would surface
+                    // a 500 instead of a per-path False.
                     if let Some(cls) = perm_denied_cls {
                         if e.is_instance(py, cls) {
                             results.push(false);
                             continue;
                         }
+                    }
+                    if e.is_instance_of::<pyo3::exceptions::PyPermissionError>(py) {
+                        results.push(false);
+                        continue;
                     }
                     return Err(e);
                 }

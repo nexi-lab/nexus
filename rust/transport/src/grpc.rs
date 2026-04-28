@@ -115,7 +115,10 @@ struct VfsServiceImpl {
 impl VfsServiceImpl {
     /// Validate the bearer token and produce an `OperationContext`.
     /// API key fast-path is fully Rust; OIDC tokens delegate to Python.
-    async fn resolve_context(&self, token: &str) -> Result<OperationContext, Status> {
+    async fn resolve_context(
+        &self,
+        token: &str,
+    ) -> Result<(OperationContext, Vec<(String, String)>), Status> {
         // Fast path: API key constant-time compare. user_id matches the
         // string `get_operation_context` produces from the same auth
         // dict ("api-key-user") — keeps audit/permission context
@@ -123,12 +126,15 @@ impl VfsServiceImpl {
         // (Python dispatch).
         if let (Some(ref expected), false) = (&self.api_key, token.is_empty()) {
             if subtle_eq(expected.as_bytes(), token.as_bytes()) {
-                return Ok(OperationContext::new(
-                    "api-key-user",
-                    /* zone_id */ "root",
-                    /* is_admin */ true,
-                    /* agent_id */ None,
-                    /* is_system */ false,
+                return Ok((
+                    OperationContext::new(
+                        "api-key-user",
+                        /* zone_id */ "root",
+                        /* is_admin */ true,
+                        /* agent_id */ None,
+                        /* is_system */ false,
+                    ),
+                    Vec::new(),
                 ));
             }
         }
@@ -156,12 +162,15 @@ impl VfsServiceImpl {
         .map_err(|e| Status::unauthenticated(format!("auth backend: {e}")))?;
 
         match auth_dict_serialized {
-            Some(auth) if auth.authenticated => Ok(OperationContext::new(
-                &auth.user_id,
-                &auth.zone_id,
-                auth.is_admin,
-                auth.agent_id.as_deref(),
-                /* is_system */ false,
+            Some(auth) if auth.authenticated => Ok((
+                OperationContext::new(
+                    &auth.user_id,
+                    &auth.zone_id,
+                    auth.is_admin,
+                    auth.agent_id.as_deref(),
+                    /* is_system */ false,
+                ),
+                auth.zone_perms,
             )),
             _ => Err(Status::unauthenticated("Authentication failed")),
         }
@@ -185,10 +194,20 @@ impl VfsServiceImpl {
 impl NexusVfsService for VfsServiceImpl {
     async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>, Status> {
         let req = req.into_inner();
-        let ctx = match self.resolve_context(&req.auth_token).await {
+        let (ctx, zone_perms) = match self.resolve_context(&req.auth_token).await {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_read(s))),
         };
+        // Issue #3786 / Codex Round 5 finding #1: federation tokens
+        // (multi-zone) must use Call dispatch so Python can build a
+        // request-scoped zone_perms context.  Typed Read bypasses Python
+        // dispatch entirely — accepting it here would let a federation
+        // token read across its zone allow-list without enforcement.
+        if !zone_perms.is_empty() {
+            return Ok(Response::new(error_read(Status::permission_denied(
+                "federation token: use Call dispatch (sys_read RPC) — typed Read bypasses zone authorization",
+            ))));
+        }
         match self.kernel.sys_read(&req.path, &ctx) {
             Ok(result) => {
                 // `sys_read.data` is `Option<Vec<u8>>` because the kernel
@@ -221,10 +240,15 @@ impl NexusVfsService for VfsServiceImpl {
 
     async fn write(&self, req: Request<WriteRequest>) -> Result<Response<WriteResponse>, Status> {
         let req = req.into_inner();
-        let ctx = match self.resolve_context(&req.auth_token).await {
+        let (ctx, zone_perms) = match self.resolve_context(&req.auth_token).await {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_write(s))),
         };
+        if !zone_perms.is_empty() {
+            return Ok(Response::new(error_write(Status::permission_denied(
+                "federation token: use Call dispatch (sys_write RPC) — typed Write bypasses zone authorization",
+            ))));
+        }
         // Phase 1 ignores `content_id` (OCC) — `Write` traffic is REMOTE-profile
         // bulk content. OCC writes go through `Call → occ_write` (still
         // Python). When the OCC service migrates to Rust we'll honor
@@ -256,10 +280,15 @@ impl NexusVfsService for VfsServiceImpl {
         req: Request<DeleteRequest>,
     ) -> Result<Response<DeleteResponse>, Status> {
         let req = req.into_inner();
-        let ctx = match self.resolve_context(&req.auth_token).await {
+        let (ctx, zone_perms) = match self.resolve_context(&req.auth_token).await {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_delete(s))),
         };
+        if !zone_perms.is_empty() {
+            return Ok(Response::new(error_delete(Status::permission_denied(
+                "federation token: use Call dispatch (sys_unlink RPC) — typed Delete bypasses zone authorization",
+            ))));
+        }
         match self.kernel.sys_unlink(&req.path, &ctx, req.recursive) {
             Ok(result) => Ok(Response::new(DeleteResponse {
                 success: result.hit,
@@ -280,7 +309,7 @@ impl NexusVfsService for VfsServiceImpl {
     async fn ping(&self, req: Request<PingRequest>) -> Result<Response<PingResponse>, Status> {
         // Ping requires auth so callers can verify their token before
         // doing real work — matches Python servicer.
-        let ctx = self.resolve_context(&req.into_inner().auth_token).await?;
+        let (ctx, _zone_perms) = self.resolve_context(&req.into_inner().auth_token).await?;
         let uptime = self.server_started_at.elapsed().as_secs() as i64;
         self.started_secs.store(uptime as u64, Ordering::Relaxed);
         Ok(Response::new(PingResponse {
@@ -531,6 +560,11 @@ struct AuthResult {
     zone_id: String,
     is_admin: bool,
     agent_id: Option<String>,
+    /// Zone permission grants from federation tokens — list of
+    /// (zone_id, perm_chars) pairs.  Single-zone tokens carry an
+    /// empty Vec; only multi-zone federation tokens populate this.
+    /// PermissionEnforcer + request_zone_perms_scope enforce the grants.
+    zone_perms: Vec<(String, String)>,
 }
 
 impl AuthResult {
@@ -578,6 +612,20 @@ impl AuthResult {
                 .transpose()?
                 .flatten()
         };
+        // zone_perms: federation tokens encode their zone allow-list as
+        // a list of [zone_id, perm_chars] pairs.  Missing key is treated
+        // as a non-federation token (single-zone with empty grants).  If
+        // the key IS present but cannot be decoded, surface the error so
+        // we fail closed rather than silently treating it as empty.
+        // Codex Round 5 finding #1.
+        let zone_perms: Vec<(String, String)> = match dict.get_item("zone_perms")? {
+            None => Vec::new(),
+            Some(v) => v.extract::<Vec<(String, String)>>().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "auth dict zone_perms is malformed (expected list of [zone, perms]): {e}"
+                ))
+            })?,
+        };
         let _ = py;
         Ok(Self {
             authenticated,
@@ -585,6 +633,7 @@ impl AuthResult {
             zone_id,
             is_admin,
             agent_id,
+            zone_perms,
         })
     }
 }

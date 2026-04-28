@@ -53,15 +53,23 @@ impl MetaStore for RemoteMetaStore {
     }
 
     fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetaStoreError> {
+        // Wire format expected by the hub's `handle_set_metadata` (#3786):
+        //     {"path": ..., "metadata": { ...flat fields... }}
+        // The handler reads `params.path` + `params.metadata` (a dict) and
+        // reconstructs the FileMetadata via MetadataMapper.from_json.  Sending
+        // flat fields at the top level fails parse_method_params(SetMetadataParams)
+        // and the SimpleNamespace fallback has no `metadata` attribute.
         let payload = serde_json::json!({
             "path": path,
-            "entry_type": metadata.entry_type,
-            "size": metadata.size,
-            "content_id": metadata.content_id,
-            "version": metadata.version,
-            "zone_id": metadata.zone_id,
-            "mime_type": metadata.mime_type,
-            "last_writer_address": metadata.last_writer_address,
+            "metadata": {
+                "entry_type": metadata.entry_type,
+                "size": metadata.size,
+                "content_id": metadata.content_id,
+                "version": metadata.version,
+                "zone_id": metadata.zone_id,
+                "mime_type": metadata.mime_type,
+                "last_writer_address": metadata.last_writer_address,
+            },
         });
         let bytes =
             serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;

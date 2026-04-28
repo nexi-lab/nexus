@@ -17,6 +17,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 from datetime import UTC, datetime
@@ -31,6 +32,7 @@ from nexus.cli.commands.init_cmd import (
     DEFAULT_IMAGE_REGISTRY,
     _resolve_image_ref,
 )
+from nexus.cli.exit_codes import ExitCode
 from nexus.cli.port_utils import (
     VALID_STRATEGIES,
     check_port_available,
@@ -519,6 +521,30 @@ def register_commands(cli: click.Group) -> None:
         "token and injects it as NEXUS_ADMIN_BOOTSTRAP_TOKEN into the server env)."
     ),
 )
+@click.option(
+    "--profile",
+    "profile",
+    default=None,
+    help="Stack profile to activate. Use 'sandbox' to launch nexusd directly (no Docker).",
+)
+@click.option(
+    "--workspace",
+    "workspace",
+    default=lambda: os.environ.get("NEXUS_WORKSPACE", ""),
+    help="Workspace path for sandbox profile (env: NEXUS_WORKSPACE).",
+)
+@click.option(
+    "--hub-url",
+    "hub_url",
+    default=lambda: os.environ.get("NEXUS_HUB_URL", ""),
+    help="Hub gRPC URL for sandbox federation (env: NEXUS_HUB_URL).",
+)
+@click.option(
+    "--hub-token",
+    "hub_token",
+    default=lambda: os.environ.get("NEXUS_HUB_TOKEN", ""),
+    help="Hub authentication token for sandbox federation (env: NEXUS_HUB_TOKEN).",
+)
 def up(
     detach: bool,
     addons: tuple[str, ...],
@@ -528,6 +554,10 @@ def up(
     force_pull: bool | None,
     timeout: int,
     with_daemon: bool,
+    profile: str | None,
+    workspace: str,
+    hub_url: str,
+    hub_token: str,
 ) -> None:
     """Start the Nexus stack.
 
@@ -548,7 +578,49 @@ def up(
         nexus up --port-strategy prompt # ask on conflicts
         nexus up --build                # force rebuild images
         nexus up --pull                 # discard local build, pull remote
+        nexus up --profile sandbox --workspace ~/myapp    # lightweight sandbox (no Docker)
     """
+    # ------------------------------------------------------------------
+    # Sandbox shortcut: invoke nexusd directly, bypassing Docker Compose.
+    # ------------------------------------------------------------------
+
+    # Validate: sandbox-only flags must not be used without --profile sandbox
+    _sandbox_flags = {
+        "workspace": workspace,
+        "hub-url": hub_url,
+        "hub-token": hub_token,
+    }
+    if profile != "sandbox":
+        for flag_name, flag_value in _sandbox_flags.items():
+            if flag_value:
+                click.echo(f"Error: --{flag_name} is only valid with --profile sandbox.")
+                raise SystemExit(ExitCode.USAGE_ERROR)
+
+    if profile == "sandbox":
+        # Validate: --hub-url requires --hub-token
+        if hub_url and not hub_token:
+            click.echo("Error: --hub-url requires --hub-token (or set NEXUS_HUB_TOKEN).")
+            raise SystemExit(ExitCode.USAGE_ERROR)
+
+        # Locate nexusd binary
+        nexusd_bin = shutil.which("nexusd")
+        if nexusd_bin:
+            cmd: list[str] = [nexusd_bin]
+        else:
+            cmd = [sys.executable, "-m", "nexus.daemon.main"]
+
+        # Build the command
+        cmd.extend(["--profile", "sandbox"])
+        if workspace:
+            cmd.extend(["--workspace", workspace])
+        if hub_url:
+            cmd.extend(["--hub-url", hub_url])
+        if hub_token:
+            cmd.extend(["--hub-token", hub_token])
+
+        _sandbox_result = subprocess.run(cmd)
+        sys.exit(_sandbox_result.returncode)
+
     config = _load_project_config_optional()
 
     # Auto-init: if no nexus.yaml in CWD, search parent directories first

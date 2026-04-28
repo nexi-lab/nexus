@@ -448,7 +448,12 @@ def test_authenticate_loads_zone_set_from_junction(tmp_path):
     result = asyncio.run(auth.authenticate(raw_key))
 
     assert result.authenticated is True
-    assert result.zone_id == "eng"
+    # Issue #3786: multi-zone tokens (junction has >1 row) get zone_id=ROOT_ZONE_ID
+    # so the Rust context reflects cross-zone scope; zone_set still carries the
+    # full grant list. Single-zone tokens keep their specific zone_id.
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    assert result.zone_id == ROOT_ZONE_ID
     assert sorted(result.zone_set) == ["eng", "ops"]
 
 

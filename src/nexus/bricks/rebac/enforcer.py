@@ -14,6 +14,21 @@ from sqlalchemy.exc import OperationalError
 from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
 from nexus.contracts.types import OperationContext, Permission
 
+# Issue #3786: Zone-perms resurrection cache primitives live in
+# ``nexus.lib.zone_perms_cache`` so the kernel layer (``nexus.core.*``)
+# and storage layer can bind / invalidate request-scope grants without
+# crossing the four-tier import boundary (bricks > services > core >
+# lib+security > contracts).  Re-exported here so existing intra-brick
+# callers keep using the canonical name.
+from nexus.lib.zone_perms_cache import (  # noqa: F401 — re-export
+    cache_zone_perms,
+    invalidate_zone_perms,
+    request_zone_perms_scope,
+)
+from nexus.lib.zone_perms_cache import (
+    lookup_zone_perms as _lookup_zone_perms,
+)
+
 
 def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
     """Check for stale agent sessions and raise if the session is outdated.
@@ -371,6 +386,21 @@ class PermissionEnforcer:
             # Fail-closed: deny access on error (security-critical)
             return dict.fromkeys(prefixes, False)
 
+    def _effective_zone_perms(self, context: OperationContext) -> tuple:
+        """Resolve the request's effective zone_perms — context > cache > default.
+
+        Centralized so ``check`` and ``filter_list`` agree on the source of
+        grants for multi-zone federation tokens.  See the matching comment
+        in ``check`` (Issue #3786) for the full reasoning.
+        """
+        if context.zone_id == ROOT_ZONE_ID:
+            _ctx_has_real_perms = any(z != ROOT_ZONE_ID for z, _ in (context.zone_perms or ()))
+            if _ctx_has_real_perms:
+                return context.zone_perms
+            _cached = _lookup_zone_perms(context.user_id)
+            return _cached if _cached else (context.zone_perms or ())
+        return context.zone_perms or ()
+
     def check(
         self,
         path: str,
@@ -495,6 +525,53 @@ class PermissionEnforcer:
 
             self._log_bypass(context, path, permission_str, "admin", allowed=True)
             return True
+
+        # Issue #3786: Zone-perms authorization for multi-zone federation tokens.
+        # When zone_id == ROOT_ZONE_ID the token spans multiple zones; zone_perms
+        # is the authoritative grant list rather than the per-zone ReBAC graph
+        # (which would require ROOT_ZONE_ID grants that don't exist for cross-zone ops).
+        #
+        # Rust's resolve_context drops zone_perms when rebuilding the OperationContext
+        # for native Read/Write/Delete paths.  OperationContext.__post_init__ fills in
+        # zone_perms=(("root","rw"),) as a default when zone_id="root" and zone_perms=().
+        # That default is not the real token zone_perms.  We resurrect the real ones
+        # from the module-level cache populated by authenticate_sync — but ONLY when
+        # the context's own zone_perms are empty/default.  If the context already
+        # carries real (non-default) grants — i.e. the Call RPC dispatch path
+        # rebuilt them from the auth_dict — we trust those over the cache to avoid
+        # cross-token leaks (the cache is keyed only by subject_id; two API keys
+        # for the same subject can otherwise overwrite each other's grants).
+        if context.zone_id == ROOT_ZONE_ID:
+            _ctx_has_real_perms = any(z != ROOT_ZONE_ID for z, _ in (context.zone_perms or ()))
+            if _ctx_has_real_perms:
+                # Trust the request-bound context.
+                _effective_zone_perms = context.zone_perms
+            else:
+                # Fall back to the resurrection cache only when the context is
+                # bare (native Read/Write path with stripped zone_perms).
+                # `_lookup_zone_perms` enforces TTL and LRU eviction so revoked
+                # grants don't survive forever.
+                _cached = _lookup_zone_perms(context.user_id)
+                _effective_zone_perms = _cached if _cached else context.zone_perms
+        else:
+            _effective_zone_perms = context.zone_perms
+
+        # Only use the fast-path when the token explicitly grants named zones.
+        # zone_perms=(("root","rw"),) is the __post_init__ default, not a real grant.
+        _has_real_zone_perms = any(z != ROOT_ZONE_ID for z, _ in _effective_zone_perms)
+        if context.zone_id == ROOT_ZONE_ID and _has_real_zone_perms:
+            _zp_path_zone: str | None = None
+            if path.startswith("/zone/"):
+                parts = path[6:].split("/", 1)
+                if parts:
+                    _zp_path_zone = parts[0]
+            if _zp_path_zone and _zp_path_zone != ROOT_ZONE_ID:
+                perm_char = "w" if permission == Permission.WRITE else "r"
+                for zone, perms in _effective_zone_perms:
+                    if zone == _zp_path_zone:
+                        return perm_char in perms or "x" in perms
+                # Zone not in token's allow-list
+                return False
 
         # Issue #1239: Namespace visibility check (Agent OS Phase 0)
         # Unmounted paths are invisible (404 Not Found), not denied (403 Forbidden).
@@ -1043,6 +1120,27 @@ class PermissionEnforcer:
             context.is_system and self.allow_system_bypass
         ):
             return paths
+
+        # Issue #3786 / Codex Round 7 finding #3: zone_perms pre-filter for
+        # multi-zone federation tokens.  Such tokens land here as
+        # zone_id="root" (so the existing zone pre-filter is a no-op), but
+        # they are scoped to a finite allow-list of /zone/<id>/ paths.  Drop
+        # any candidate that targets a zone outside that list before the
+        # ReBAC chain runs — otherwise SearchService list/glob/grep would
+        # leak paths the underlying subject has ReBAC visibility into but
+        # the token does not.
+        _eff_perms = self._effective_zone_perms(context)
+        _real_zp = tuple((z, p) for z, p in _eff_perms if z != ROOT_ZONE_ID)
+        if context.zone_id == ROOT_ZONE_ID and _real_zp:
+            _allowed_zones = {z for z, p in _real_zp if "r" in p or "x" in p}
+            paths = [
+                p
+                for p in paths
+                if not p.startswith("/zone/")
+                or (p[6:].split("/", 1) and p[6:].split("/", 1)[0] in _allowed_zones)
+            ]
+            if not paths:
+                return []
 
         # Issue #1239 + #1244: Namespace pre-filter
         if self.namespace_manager is not None:

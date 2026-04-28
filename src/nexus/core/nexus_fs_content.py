@@ -28,6 +28,7 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.lib.rpc_decorator import rpc_expose
+from nexus.lib.zone_perms_cache import request_zone_perms_scope
 
 if TYPE_CHECKING:
     pass
@@ -111,7 +112,12 @@ class ContentMixin:
         if self._kernel is None:
             raise NexusFileNotFoundError(path)
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
-        result = self._kernel.sys_read(path, _rust_ctx)
+        # Bind real zone_perms to the request scope so the Python PermissionHook
+        # (rebuilt from the Rust-stripped context) can resurrect them without
+        # racing the subject-keyed cache.  Issue #3786 / Codex Round 3.
+        _zp = getattr(context, "zone_perms", ()) if context else ()
+        with request_zone_perms_scope(_zp):
+            result = self._kernel.sys_read(path, _rust_ctx)
 
         # DT_PIPE: result.data is the popped frame when available; None = empty.
         if result.entry_type == 3:  # DT_PIPE
@@ -219,10 +225,12 @@ class ContentMixin:
         if len(paths) <= 4:
             zone_id, agent_id, is_admin = self._get_context_identity(context)
             _rust_ctx = self._build_rust_ctx(context, is_admin)
+            _zp = getattr(context, "zone_perms", ()) if context else ()
             for path in paths:
                 try:
                     vpath = self._validate_path(path)
-                    result = self._kernel.sys_read(vpath, _rust_ctx)
+                    with request_zone_perms_scope(_zp):
+                        result = self._kernel.sys_read(vpath, _rust_ctx)
                     content = result.data or b""
                     if return_metadata:
                         meta = self.metadata.get(vpath)
@@ -291,6 +299,7 @@ class ContentMixin:
         read_start = time.time()
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _zp = getattr(context, "zone_perms", ()) if context else ()
 
         # Batch metadata lookup (needed for return_metadata=True)
         batch_meta: dict[str, FileMetadata | None] | None = None
@@ -306,7 +315,8 @@ class ContentMixin:
             try:
                 bulk_content: bytes | None = None
                 try:
-                    result = self._kernel.sys_read(path, _rust_ctx)
+                    with request_zone_perms_scope(_zp):
+                        result = self._kernel.sys_read(path, _rust_ctx)
                     bulk_content = result.data or b""
                 except NexusFileNotFoundError:
                     bulk_content = None
@@ -590,7 +600,16 @@ class ContentMixin:
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
-        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        # Bind real zone_perms to the request scope so the Python PermissionHook
+        # (rebuilt from the Rust-stripped context) can resurrect them without
+        # racing the subject-keyed cache.  Issue #3786 / Codex Round 3.
+        _zp = (
+            getattr(context, "zone_perms", ())
+            if context is not None and not isinstance(context, dict)
+            else ()
+        )
+        with request_zone_perms_scope(_zp):
+            result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
         if result.hit and result.post_hook_needed:
@@ -745,9 +764,70 @@ class ContentMixin:
         # metadata build+put, dcache update, and OBSERVE dispatch.
         context = self._parse_context(context)
         _is_admin = getattr(context, "is_admin", False) if context else False
+
+        # Issue #3786: zone_perms is not passed through the Rust boundary, so the
+        # Python PermissionHook receives a rebuilt OperationContext with empty zone_perms.
+        # Pre-check here using the original Python context (zone_perms intact) before
+        # crossing into Rust. Mirrors PermissionEnforcer logic: any non-root zone_perms
+        # grant on the token → use zone_perms as auth (covers both multi-zone and
+        # single-zone tokens; Codex Round 10 finding #1).
+        _zone_perms = getattr(context, "zone_perms", ()) if context else ()
+        _zone_perms_grants_write = False
+        # Only enforce zone_perms when the token explicitly grants named non-root zones.
+        # zone_perms=(("root","rw"),) is the OperationContext.__post_init__ default for
+        # root-zone/admin contexts — it signals "unrestricted" not "root-only".
+        _has_real_zone_perms = any(z != "root" for z, _ in _zone_perms) if _zone_perms else False
+        if _has_real_zone_perms and not _is_admin:
+            from nexus.contracts.exceptions import PermissionDeniedError
+
+            _path_zone: str | None = None
+            if path.startswith("/zone/"):
+                _parts = path[6:].split("/", 1)
+                if _parts:
+                    _path_zone = _parts[0]
+            if _path_zone and _path_zone != "root":
+                _allowed = False
+                for _zone, _perms in _zone_perms:
+                    if _zone == _path_zone:
+                        if "w" in _perms or "x" in _perms:
+                            _allowed = True
+                            _zone_perms_grants_write = True
+                        else:
+                            raise PermissionDeniedError(
+                                f"Access denied: zone {_path_zone!r} is read-only for this token",
+                                path=path,
+                            )
+                        break
+                if not _allowed:
+                    raise PermissionDeniedError(
+                        f"Access denied: zone {_path_zone!r} not in token's zone_perms allow-list",
+                        path=path,
+                    )
+
+        # When the pre-check above grants the write, we DO NOT escalate the
+        # context to admin.  The Python PermissionHook (which fires from
+        # inside Rust sys_write) receives a context with stripped zone_perms
+        # after the Rust→Python rebuild; the PermissionEnforcer's zone_perms
+        # fast-path (enforcer.py §"Issue #3786") resurrects them from the
+        # subject-keyed cache populated at authenticate_sync time and grants
+        # the write under the caller's real identity.
+        #
+        # An earlier revision forged is_admin=True + WRITE_ALL/MANAGE_ZONES
+        # here so the hook's admin bypass would short-circuit the cross-zone
+        # gate.  That worked but caused audit logs and POST hooks to attribute
+        # the write to a synthetic admin instead of the federation token's
+        # subject (Codex Round 2 flagged this).  Trusting the cache fast-path
+        # keeps the original caller identity intact end-to-end.
+        _ = _zone_perms_grants_write  # kept as a hook for future propagation work
+
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
-        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        # Bind real zone_perms to the request scope so the Python PermissionHook
+        # (rebuilt from the Rust-stripped context) can resurrect them without
+        # racing the subject-keyed cache.  Issue #3786 / Codex Round 3.
+        _zp_w = getattr(context, "zone_perms", ()) if context else ()
+        with request_zone_perms_scope(_zp_w):
+            result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         # Reconstruct old_metadata from Rust result (atomic snapshot taken
         # during write — no TOCTOU gap, no extra PyO3 round-trip).

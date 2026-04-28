@@ -996,3 +996,34 @@ class NamespaceMergeConflictError(NamespaceForkError):
             f"{len(conflicting_paths)} path(s) changed in both fork and parent: {paths_str}"
         )
         super().__init__(msg, fork_id=fork_id)
+
+
+# --- Federation Exceptions (Issue #3786) ---
+
+
+class ZoneReadOnlyError(NexusError):
+    """Raised when a write is attempted on a read-only federated zone."""
+
+    is_expected = True
+    status_code = 403
+    error_type = "Forbidden"
+
+
+class ZoneUnavailableError(NexusError):
+    """Raised when a remote zone's hub transport is unavailable mid-session."""
+
+    is_expected = False
+
+
+class HandshakeAuthError(NexusError):
+    """Raised when hub rejects the bearer token during federation handshake (401)."""
+
+    is_expected = True
+    status_code = 401
+    error_type = "Unauthorized"
+
+
+class HandshakeConnectionError(NexusError):
+    """Raised when the hub is unreachable during federation handshake."""
+
+    is_expected = False

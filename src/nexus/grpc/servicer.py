@@ -141,6 +141,14 @@ class VFSCallDispatcher:
             future = asyncio.run_coroutine_threadsafe(self._authenticate(token), self._loop)
             result = future.result(timeout=30)
             if result and result.get("authenticated"):
+                # Issue #3786: stash zone_perms so the enforcer can resurrect them
+                # after Rust's resolve_context drops them on native Read/Write paths.
+                zone_perms = result.get("zone_perms")
+                subject_id = result.get("subject_id")
+                if zone_perms and subject_id:
+                    from nexus.lib.zone_perms_cache import cache_zone_perms
+
+                    cache_zone_perms(subject_id, tuple(tuple(p) for p in zone_perms))
                 return result
             return None
         except Exception as exc:
@@ -197,6 +205,12 @@ class VFSCallDispatcher:
                     raise
 
             op_context = get_operation_context(auth_dict)
+            logger.debug(
+                "[VFSCallDispatcher] method=%s path=%s zone_id=%s",
+                method,
+                getattr(params, "path", None),
+                op_context.zone_id if op_context else None,
+            )
 
             search_delegation = auth_dict.get("search_delegation")
             if search_delegation is not None:

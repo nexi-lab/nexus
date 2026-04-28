@@ -712,6 +712,28 @@ The first edge keeps lib WASM-clean.  The second is the cycle-break
 that lets transport own kernel-bound code while raft keeps a
 kernel-free dependency footprint.
 
+#### Deviation: `rpc_transport` stays in `kernel`
+
+Workspace restructure Phase 4.1 originally proposed moving
+`rust/kernel/src/rpc_transport.rs` (the client-side gRPC transport used
+to reach a remote nexus from a connector) into the `transport` peer
+crate.  The move was reverted because of the peer-edge invariant.
+
+`rpc_transport` is constructed inside `backends::storage::remote::RemoteBackend`
+through the `BackendFactory` DI seam, which means the call graph
+already has `backends → kernel`.  Moving rpc_transport to `transport`
+would force `backends → transport`, closing a cross-edge between two
+peers and breaking the `services ⊥ backends ⊥ transport ⊥ raft`
+peer-orthogonality invariant.
+
+The pragmatic shape is therefore: rpc_transport lives in `kernel` as a
+*kernel-tier* primitive (clients reach a remote kernel through it,
+just like clients reach a local kernel through syscalls), while the
+`transport` crate owns the *server-side* gRPC dispatch and federation
+fabric.  Both halves talk via `transport-primitives` for shared TLS /
+connection-pool / addressing types, which is the actual boundary the
+peer split was designed to expose.
+
 ### Placement Decision Tree
 
 ```

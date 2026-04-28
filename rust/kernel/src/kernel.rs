@@ -2634,6 +2634,16 @@ impl Kernel {
         self.pipe_manager.has(path)
     }
 
+    /// Queued bytes pending in a DT_PIPE.
+    ///
+    /// Returns `KernelError::FileNotFound` if no pipe is registered at `path`.
+    /// `Ok(0)` means the pipe exists but has nothing to pop.
+    pub fn pipe_size(&self, path: &str) -> Result<usize, KernelError> {
+        self.pipe_manager
+            .size(path)
+            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))
+    }
+
     /// Non-blocking write to a pipe. Returns bytes written.
     pub fn pipe_write_nowait(&self, path: &str, data: &[u8]) -> Result<usize, KernelError> {
         self.pipe_manager
@@ -2710,6 +2720,18 @@ impl Kernel {
     /// Check if a stream exists.
     pub fn has_stream(&self, path: &str) -> bool {
         self.stream_manager.has(path)
+    }
+
+    /// Current tail (write offset) of a DT_STREAM.
+    ///
+    /// Returns `KernelError::FileNotFound` if no stream is registered at
+    /// `path`. Callers use this for the seek-to-end pattern: read the tail,
+    /// then pass it as the offset to `stream_read_at_blocking` to skip
+    /// history and block until new data arrives.
+    pub fn stream_tail(&self, path: &str) -> Result<usize, KernelError> {
+        self.stream_manager
+            .tail(path)
+            .ok_or_else(|| KernelError::FileNotFound(path.to_string()))
     }
 
     /// Non-blocking write to a stream. Returns byte offset.

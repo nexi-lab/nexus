@@ -258,6 +258,14 @@ impl PipeManager {
         self.buffers.get(path).map(|r| Arc::clone(r.value()))
     }
 
+    /// Queued bytes pending in a registered pipe.
+    ///
+    /// Returns `None` if no pipe is registered at `path`. `Some(0)` means
+    /// the pipe exists but has no pending payload.
+    pub(crate) fn size(&self, path: &str) -> Option<usize> {
+        self.buffers.get(path).map(|b| b.size())
+    }
+
     /// List all pipe paths.
     pub(crate) fn list(&self) -> Vec<String> {
         self.buffers.iter().map(|r| r.key().clone()).collect()
@@ -354,6 +362,35 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn test_size_empty_pipe() {
+        let mgr = PipeManager::new();
+        mgr.create("/p/empty", 1024).unwrap();
+        assert_eq!(mgr.size("/p/empty"), Some(0));
+    }
+
+    #[test]
+    fn test_size_tracks_used_bytes() {
+        // size() reports queued payload bytes, NOT including the 4B frame
+        // header — pipes are destructive (pop drains), so size() shrinks
+        // back to 0 once readers consume everything.
+        let mgr = PipeManager::new();
+        mgr.create("/p/q", 1024).unwrap();
+        mgr.write_nowait("/p/q", b"hello").unwrap();
+        assert_eq!(mgr.size("/p/q"), Some(5));
+        mgr.write_nowait("/p/q", b"!!!").unwrap();
+        assert_eq!(mgr.size("/p/q"), Some(8));
+        let popped = mgr.read_nowait("/p/q").unwrap();
+        assert_eq!(popped.as_deref(), Some(b"hello".as_ref()));
+        assert_eq!(mgr.size("/p/q"), Some(3));
+    }
+
+    #[test]
+    fn test_size_missing_path_returns_none() {
+        let mgr = PipeManager::new();
+        assert_eq!(mgr.size("/p/nope"), None);
+    }
 
     /// Regression test for the lost-wakeup race fixed in this commit.
     ///

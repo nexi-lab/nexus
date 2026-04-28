@@ -850,7 +850,7 @@ impl Kernel {
         // cost. Hook lives kernel-side in this rebase commit; later
         // commits move it to services/src/managed_agent/.
         k.register_native_hook(Box::new(
-            crate::workspace_boundary_hook::WorkspaceBoundaryHook::new(),
+            crate::managed_agent::workspace_boundary_hook::WorkspaceBoundaryHook::new(),
         ));
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator

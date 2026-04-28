@@ -9,6 +9,12 @@
 //!
 //! * [`status_resolver`] — `/{zone}/proc/{pid}/status` virtual file,
 //!   impls `kernel::core::dispatch::PathResolver`.
+//!
+//! `mailbox_stamping` used to live here; it moved to
+//! `kernel::managed_agent::mailbox_stamping_policy` because the policy
+//! belongs alongside the `ManagedAgentService` that owns the
+//! chat-with-me mailbox surface — it's a managed-agent concern, not
+//! a generic agent-table concern.
 
-pub mod mailbox_stamping;
+pub mod agent_table;
 pub mod status_resolver;

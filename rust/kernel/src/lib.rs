@@ -56,11 +56,12 @@ pub(crate) use core::pipe::manager as pipe_manager;
 #[cfg(feature = "nostr")]
 mod nostr_backend;
 
-// MailboxStampingHook — content-rewriting NativeInterceptHook that
-// stamps the envelope `from` field on writes to `*/chat-with-me`.
-// Lives kernel-side here; later migration commits move it to
-// `rust/services/src/managed_agent/`.
-mod mailbox_stamping_hook;
+// Managed-agent service hooks + policy.  Collected under one module so
+// the mailbox stamping policy lives alongside the workspace-boundary
+// teaching hook — both are pieces of the same `ManagedAgentService`
+// behavior surface.  Will move to `rust/services/src/managed_agent/`
+// once the kernel→services dep flip lands.
+mod managed_agent;
 #[cfg(unix)]
 pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]
@@ -70,14 +71,6 @@ pub use core::stream;
 pub use core::stream::manager as stream_manager;
 #[cfg(unix)]
 pub(crate) use core::stream::shm as shm_stream;
-
-// Hook impls for managed-agent / workspace boundary teaching.  This
-// hook will move to `rust/services/src/managed_agent/` once that
-// module lands; for now it lives kernel-side to keep the rebase
-// commit-by-commit intent (Phase H restructure put hooks under
-// `core/dispatch/`, but the managed-agent-specific hook only really
-// makes sense alongside its service).
-mod workspace_boundary_hook;
 
 // ── Kernel-owned primitives ──────────────────────────────────────────
 // CAS (content-addressed storage) — the kernel's storage primitive

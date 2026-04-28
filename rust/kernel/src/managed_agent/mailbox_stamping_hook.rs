@@ -5,10 +5,12 @@
 //! dispatch system has a registered `NativeInterceptHook`, and its
 //! `mutating_path_suffix` declaration drives the content-clone bypass
 //! at the sys_write call site (only `*/chat-with-me` writes pay the
-//! clone). The actual rewriting policy lives in
-//! `services::agents::mailbox_stamping::maybe_stamp_chat_envelope` —
-//! kernel owns "how to be a hook", services owns "what to rewrite".
+//! clone). The actual rewriting policy lives in the sibling
+//! `mailbox_stamping_policy::maybe_stamp_chat_envelope` — kernel owns
+//! "how to be a hook" (dispatch wiring), policy owns "what to rewrite"
+//! (envelope schema, identity guarantee).
 
+use super::mailbox_stamping_policy;
 use crate::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
 
 /// Path suffix the dispatcher consults to decide when to clone write
@@ -54,17 +56,10 @@ impl NativeInterceptHook for MailboxStampingHook {
         } else {
             Some(c.identity.agent_id.as_str())
         };
-        // Stamping policy lives in `services::agents::mailbox_stamping`,
-        // but kernel doesn't dep on services (the dep direction is
-        // services → kernel per Phase H). The hook's actual stamp
-        // routine lands when this file moves to
-        // `services/managed_agent/` in the migration commit; for now
-        // we Pass so non-stamped writes still flow through the
-        // dispatcher. The path-suffix gating (mutating_path_suffix
-        // returns "/chat-with-me") still suppresses the content clone
-        // for non-mailbox writes, so registration here is zero-cost.
-        let _ = caller;
-        Ok(HookOutcome::Pass)
+        match mailbox_stamping_policy::maybe_stamp_chat_envelope(&c.path, caller, &c.content) {
+            Some(rewritten) => Ok(HookOutcome::Replace(rewritten.into_owned())),
+            None => Ok(HookOutcome::Pass),
+        }
     }
 }
 

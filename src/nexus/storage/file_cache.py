@@ -416,7 +416,8 @@ class FileContentCache:
         from nexus._rust_compat import read_file
 
         try:
-            return read_file(str(cache_path))
+            data: bytes | None = read_file(str(cache_path))
+            return data
         except Exception as e:
             logger.warning(f"Failed to read cache file {cache_path}: {e}")
             return None

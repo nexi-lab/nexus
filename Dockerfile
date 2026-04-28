@@ -119,11 +119,13 @@ ENV CARGO_TARGET_DIR=/build/target \
     CARGO_BUILD_JOBS=2 \
     CARGO_NET_RETRY=10 \
     CARGO_HTTP_TIMEOUT=120
-# Phase 0: one cdylib, one wheel. The ``nexus-cdylib`` crate
+# Phase 3: one cdylib, one wheel. The ``nexus-cdylib`` crate
 # (rust/nexus-cdylib/) is the Python entry point — composes the
-# ``kernel`` + ``lib`` + ``raft`` rlibs into a single ``nexus_kernel``
-# wheel. ``ZoneManager`` / ``ZoneHandle`` / ``Metastore`` classes are
-# re-exported from ``nexus_kernel`` (no separate ``nexus_raft`` wheel).
+# ``kernel`` + ``lib`` + ``raft`` + ``backends`` + ``services`` +
+# ``transport`` rlibs into a single ``nexus_runtime`` wheel.
+# ``ZoneManager`` / ``ZoneHandle`` / ``MetaStore`` classes are
+# re-exported from ``nexus_runtime`` (no separate ``nexus_raft``
+# wheel; the standalone ``_nexus_tasks`` wheel was retired in #6).
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
@@ -135,7 +137,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
                SIMSIMD_TARGET_SVE_I8=0; \
     fi && \
     maturin build --release --out /build/dist -m rust/nexus-cdylib/Cargo.toml
-RUN pip install --no-cache-dir /build/dist/nexus_kernel-*.whl
+RUN pip install --no-cache-dir /build/dist/nexus_runtime-*.whl
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
@@ -264,8 +266,8 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 # are fatal, torch-dependent imports (txtai) are best-effort on ARM64.
 # Always verifiable (present regardless of extras): Rust extensions.
 RUN python3 -c "\
-import nexus_kernel; \
-from nexus_kernel import PyMetaStore; \
+import nexus_runtime; \
+from nexus_runtime import MetaStore; \
 print('✓ Core imports passed (always-present subset)')"
 # Extras-gated imports.
 # SANDBOX profile deliberately excludes pgvector/docker/fastembed/psutil (Issue #3778).
@@ -276,7 +278,7 @@ RUN set -eux; \
       *) echo "Skipping pgvector/docker/fastembed/psutil smoke test for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
     esac
 RUN python3 -c "\
-from nexus_kernel import cosine_similarity_f32, dot_product_f32; \
+from nexus_runtime import cosine_similarity_f32, dot_product_f32; \
 s = cosine_similarity_f32([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]); \
 assert abs(s - 1.0) < 0.01, f'cosine self-similarity failed: {s}'; \
 d = dot_product_f32([1.0, 2.0], [3.0, 4.0]); \

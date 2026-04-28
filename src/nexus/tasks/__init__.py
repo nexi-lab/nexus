@@ -21,35 +21,14 @@ Usage:
     await runner.run()
 """
 
-from typing import TYPE_CHECKING
+from nexus_runtime import QueueStats, TaskEngine, TaskRecord
 
-_HAS_NEXUS_TASKS = False
-
-if TYPE_CHECKING:
-    from nexus_runtime import QueueStats, TaskEngine, TaskRecord
-
-try:
-    from nexus_runtime import QueueStats, TaskEngine, TaskRecord
-
-    _HAS_NEXUS_TASKS = True
-except ImportError:
-    TaskEngine = None
-    TaskRecord = None
-    QueueStats = None
-
-
-def is_available() -> bool:
-    """Check if the Rust nexus_tasks extension is available."""
-    return _HAS_NEXUS_TASKS
-
-
-# Re-export the async runner (always available, gracefully degrades)
-from nexus.tasks.runner import AsyncTaskRunner  # noqa: E402
+# Re-export the async runner.
+from nexus.tasks.runner import AsyncTaskRunner
 
 __all__ = [
     "AsyncTaskRunner",
     "QueueStats",
     "TaskEngine",
     "TaskRecord",
-    "is_available",
 ]

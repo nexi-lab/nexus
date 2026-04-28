@@ -565,6 +565,60 @@ class PyFederationClient:
         self, peer_addr: str, zone_id: str, node_id: int, node_address: str, as_learner: bool
     ) -> None: ...
 
+class TaskEngine:
+    def __init__(self, db_path: str, max_pending: int = 1000, max_wait_secs: int = 300) -> None: ...
+    def submit(
+        self,
+        task_type: str,
+        params: bytes,
+        priority: int = 2,
+        max_retries: int = 3,
+        run_at: int = 0,
+    ) -> int: ...
+    def claim_next(self, worker_id: str, lease_secs: int = 300) -> Any | None: ...
+    def heartbeat(self, task_id: int, progress_pct: int = 0, message: str = "") -> bool: ...
+    def complete(self, task_id: int, worker_id: str, result: bytes) -> None: ...
+    def fail(self, task_id: int, worker_id: str, error_message: str) -> None: ...
+    def cancel(self, task_id: int) -> None: ...
+    def status(self, task_id: int) -> Any | None: ...
+    def list_tasks(
+        self,
+        status: int | None = None,
+        task_type: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Any]: ...
+    def requeue_abandoned(self) -> int: ...
+    def cleanup(self, max_completed_age_secs: int = 86400) -> int: ...
+    def stats(self) -> Any: ...
+
+class TaskRecord:
+    task_id: int
+    task_type: str
+    params: bytes
+    priority: int
+    status: int
+    result: bytes | None
+    error_message: str | None
+    attempt: int
+    max_retries: int
+    created_at: int
+    run_at: int
+    claimed_by: str | None
+    progress_pct: int
+    progress_message: str | None
+    completed_at: int | None
+    def __repr__(self) -> str: ...
+
+class QueueStats:
+    pending: int
+    running: int
+    completed: int
+    failed: int
+    dead_letter: int
+    cancelled: int
+    def __repr__(self) -> str: ...
+
 # ---------------------------------------------------------------------------
 # Raft-side classes re-exported via nexus_runtime
 # (rust/raft/src/federation/tofu.rs, rust/raft/src/pyo3_bindings.rs)

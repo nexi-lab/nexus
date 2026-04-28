@@ -4716,6 +4716,18 @@ def collect_all() -> tuple[
         peer_mod = ROOT / "rust" / peer / "src" / "python" / "mod.rs"
         if peer_mod.exists():
             peer_python_texts.append(peer_mod.read_text())
+    # Phase 3 plan #6: tasks pyclasses fold into nexus_runtime cdylib via
+    # `services::python::register` → `crate::tasks::register_python(m)`.
+    # The intra-crate `add_class::<PyTaskEngine>` calls live in
+    # `rust/services/src/tasks/mod.rs`, not the peer's python/mod.rs that
+    # the loop above scans. Tag those calls with their module ("tasks")
+    # so `_resolve_module_path("tasks")` lands on the right file.
+    extra_local_class_exports: list[tuple[str, str]] = []
+    tasks_mod = ROOT / "rust" / "services" / "src" / "tasks" / "mod.rs"
+    if tasks_mod.exists():
+        tasks_text = re.sub(r"//[^\n]*", "", tasks_mod.read_text())
+        for m in re.finditer(r"add_class::<(\w+)>", tasks_text):
+            extra_local_class_exports.append(("tasks", m.group(1)))
     func_exports, class_exports = parse_lib_exports(
         lib_text
         + "\n"
@@ -4725,6 +4737,7 @@ def collect_all() -> tuple[
         + "\n"
         + "\n".join(peer_python_texts)
     )
+    class_exports.extend(extra_local_class_exports)
 
     # Build set of exported function names per module
     exported_names: dict[str, set[str]] = {}

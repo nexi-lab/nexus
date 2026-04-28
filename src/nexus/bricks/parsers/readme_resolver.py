@@ -122,11 +122,15 @@ class ReadmePathResolver:
 
         return None
 
-    def try_list(self, path: str, *, context: Any = None) -> list[str] | None:
-        """List virtual children under `.readme` / `.readme/schemas`, or None.
+    def try_list(
+        self, path: str, *, context: Any = None, recursive: bool = False
+    ) -> list[tuple[str, int]] | None:
+        """List virtual children under ``.readme`` / ``.readme/schemas``.
 
-        Returns absolute paths so the caller can stitch them into a
-        ``sys_readdir`` result without needing to know the prefix.
+        Returns ``[(absolute_path, entry_type)]`` so callers can stitch the
+        result into ``sys_readdir`` with correct typing. ``entry_type``
+        uses the kernel's DT enum: 0 for files (DT_REG), 1 for directories
+        (DT_DIR). Honours ``recursive=True`` by emitting nested paths.
         """
         match = self._match_dir(path)
         if match is None:
@@ -137,39 +141,54 @@ class ReadmePathResolver:
             return None
 
         base = mount_point + "/.readme"
+        try:
+            gen = backend.get_doc_generator()
+        except Exception:
+            gen = None
+        schemas = getattr(gen, "_schemas", None) or {}
+
         if rel == "":
-            entries = [base + "/README.md"]
-            try:
-                gen = backend.get_doc_generator()
-            except Exception:
-                gen = None
-            if gen is not None and getattr(gen, "_schemas", None):
-                entries.append(base + "/schemas")
+            entries: list[tuple[str, int]] = [(base + "/README.md", 0)]
+            if schemas:
+                entries.append((base + "/schemas", 1))
+                if recursive:
+                    entries.extend((f"{base}/schemas/{op}.yaml", 0) for op in schemas)
             return entries
 
         if rel == "schemas":
-            try:
-                gen = backend.get_doc_generator()
-            except Exception:
-                return []
-            schemas = getattr(gen, "_schemas", None) or {}
-            return [f"{base}/schemas/{op}.yaml" for op in schemas]
+            return [(f"{base}/schemas/{op}.yaml", 0) for op in schemas]
 
         return None
 
-    def try_write(self, path: str, content: bytes) -> dict[str, Any] | None:
-        """Reject writes to .readme/ overlay (read-only)."""
+    def try_write(self, path: str, content: bytes, *, context: Any = None) -> dict[str, Any] | None:
+        """Reject writes to .readme/ overlay (read-only).
+
+        Unauthorized callers get None — same surface as a missing path —
+        so the overlay's existence is not disclosed via differential
+        error messages. Authorized callers get a PermissionError that
+        names the read-only contract.
+        """
         _ = content
-        if self._match(path) is not None:
-            raise PermissionError(f"{path}: .readme/ overlay is read-only")
-        return None
+        match = self._match(path) or self._match_dir(path)
+        if match is None:
+            return None
+        mount_point, _rel, _backend = match
+        if not self._caller_authorized(mount_point, context):
+            return None
+        raise PermissionError(f"{path}: .readme/ overlay is read-only")
 
     def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None:
-        """Reject deletes of .readme/ overlay (read-only)."""
-        _ = context
-        if self._match(path) is not None:
-            raise PermissionError(f"{path}: .readme/ overlay is read-only")
-        return None
+        """Reject deletes of .readme/ overlay (read-only).
+
+        Same auth-aware surface as ``try_write`` — see that docstring.
+        """
+        match = self._match(path) or self._match_dir(path)
+        if match is None:
+            return None
+        mount_point, _rel, _backend = match
+        if not self._caller_authorized(mount_point, context):
+            return None
+        raise PermissionError(f"{path}: .readme/ overlay is read-only")
 
     # ── HookSpec ──────────────────────────────────────────────────────────
 

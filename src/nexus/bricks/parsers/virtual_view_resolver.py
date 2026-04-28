@@ -115,8 +115,9 @@ class VirtualViewResolver(VFSPathResolver):
 
         return content
 
-    def try_write(self, path: str, content: bytes) -> dict[str, Any] | None:
+    def try_write(self, path: str, content: bytes, *, context: Any = None) -> dict[str, Any] | None:
         """Virtual views are read-only — raise if virtual view, else return None."""
+        _ = context
         from nexus.lib.virtual_views import parse_virtual_path
 
         _, view_type, _ = parse_virtual_path(path, self._metadata.exists)

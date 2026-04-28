@@ -576,7 +576,7 @@ class ContentMixin:
         # [TRANSITIONAL] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
 
-        _handled, _result = self.resolve_write(path, buf)
+        _handled, _result = self.resolve_write(path, buf, context=context)
         if _handled:
             base: dict[str, Any] = {"path": path, "bytes_written": len(buf)}
             if isinstance(_result, dict):
@@ -733,7 +733,7 @@ class ContentMixin:
         path = self._validate_path(path)
 
         # PRE-DISPATCH: virtual path resolvers (e.g. /__sys__ writers).
-        _handled, _result = self.resolve_write(path, buf)
+        _handled, _result = self.resolve_write(path, buf, context=context)
         if _handled:
             return _result
 

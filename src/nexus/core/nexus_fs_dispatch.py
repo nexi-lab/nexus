@@ -125,19 +125,29 @@ class DispatchMixin:
         """PRE-DISPATCH: first-match resolver for read."""
         return self._resolve(path, "try_read", context=context)
 
-    def resolve_write(self, path: str, content: bytes) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for write."""
-        return self._resolve(path, "try_write", content=content)
+    def resolve_write(self, path: str, content: bytes, *, context: Any = None) -> tuple[bool, Any]:
+        """PRE-DISPATCH: first-match resolver for write.
+
+        ``context`` lets resolvers gate on the caller's identity (so an
+        unauthorized writer cannot probe existence via differential
+        error surfaces — see Issue #3827).
+        """
+        return self._resolve(path, "try_write", content=content, context=context)
 
     def resolve_delete(self, path: str, *, context: Any = None) -> tuple[bool, Any]:
         """PRE-DISPATCH: first-match resolver for delete."""
         return self._resolve(path, "try_delete", context=context)
 
-    def resolve_list(self, path: str, *, context: Any = None) -> tuple[bool, list[str] | None]:
+    def resolve_list(
+        self, path: str, *, context: Any = None, recursive: bool = False
+    ) -> tuple[bool, list[tuple[str, int]] | None]:
         """PRE-DISPATCH: first-match resolver for list/readdir.
 
-        Resolvers that do not implement ``try_list`` are skipped (the
-        generic ``_resolve`` would raise AttributeError otherwise).
+        Returns ``(True, [(path, entry_type)])`` so ``sys_readdir`` can
+        render files vs directories correctly. ``entry_type`` mirrors the
+        kernel DT enum (0=DT_REG, 1=DT_DIR). ``recursive`` is forwarded so
+        resolvers may emit nested children when supported. Resolvers that
+        do not implement ``try_list`` are skipped.
         """
         if self._kernel is None:
             return False, None
@@ -145,13 +155,13 @@ class DispatchMixin:
         if idx is not None:
             resolver = self._trie_resolvers.get(idx)
             if resolver is not None and hasattr(resolver, "try_list"):
-                result = resolver.try_list(path, context=context)
+                result = resolver.try_list(path, context=context, recursive=recursive)
                 if result is not None:
                     return True, result
         for r in self._fallback_resolvers:
             if not hasattr(r, "try_list"):
                 continue
-            result = r.try_list(path, context=context)
+            result = r.try_list(path, context=context, recursive=recursive)
             if result is not None:
                 return True, result
         return False, None

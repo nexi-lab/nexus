@@ -5,6 +5,7 @@ Issue #1286, Decision 12: Automated alembic check test.
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -23,9 +24,15 @@ class TestAlembicCheck:
 
     def test_no_pending_migrations(self) -> None:
         """Run 'alembic check' to verify models match latest migration."""
+        project_root = Path(__file__).resolve().parents[3]
+        alembic_ini = project_root / "alembic" / "alembic.ini"
+        if not alembic_ini.exists():
+            pytest.skip(f"Alembic config not found at {alembic_ini}")
+
         result = subprocess.run(
-            [sys.executable, "-m", "alembic", "check"],
+            [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "check"],
             capture_output=True,
+            cwd=project_root,
             text=True,
             timeout=30,
         )
@@ -33,6 +40,8 @@ class TestAlembicCheck:
         if result.returncode != 0:
             # If alembic is not configured or DB not available, skip gracefully
             combined_output = (result.stdout + result.stderr).lower()
+            if "unable to open database file" in combined_output:
+                pytest.skip("Alembic database unavailable: unable to open database file")
             if any(
                 phrase in combined_output
                 for phrase in [

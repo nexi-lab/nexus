@@ -184,16 +184,27 @@ class TestBootIndexerNonBlocking:
         (tmp_path / "f.txt").write_text("hi")
 
         search_daemon = MagicMock()
+        index_started = threading.Event()
+        release_index = threading.Event()
         health_state: dict[str, str] = {"status": "indexing"}
+
+        def blocking_index(path: Path) -> None:
+            index_started.set()
+            release_index.wait(timeout=5)
+
+        search_daemon.index_file.side_effect = blocking_index
 
         threads_before = set(threading.enumerate())
         indexer = BootIndexer(tmp_path, search_daemon, health_state)
         indexer.start_async()
+        assert index_started.wait(timeout=5), "background indexing did not start"
         threads_after = set(threading.enumerate())
 
         # At least one new thread was created
         new_threads = threads_after - threads_before
         assert new_threads, "start_async() did not spawn any new threads"
+
+        release_index.set()
 
         # Wait for completion to avoid dangling threads in the test suite
         deadline = time.monotonic() + 5.0

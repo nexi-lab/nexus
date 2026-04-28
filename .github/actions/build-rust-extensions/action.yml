@@ -53,7 +53,9 @@ runs:
           macOS-ARM64) ASSET="protoc-3.20.3-osx-x86_64.zip" ;;
           *) echo "Unsupported: ${{ runner.os }}-${{ runner.arch }}" && exit 1 ;;
         esac
-        curl -fsSL -o /tmp/protoc.zip \
+        curl --fail --show-error --silent --location \
+          --retry 5 --retry-all-errors --retry-delay 2 \
+          -o /tmp/protoc.zip \
           "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/${ASSET}"
         mkdir -p "${RUNNER_TOOL_CACHE}/protoc/3.20.3"
         unzip -q /tmp/protoc.zip -d "${RUNNER_TOOL_CACHE}/protoc/3.20.3"

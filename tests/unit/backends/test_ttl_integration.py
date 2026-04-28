@@ -145,7 +145,7 @@ class TestTTLGCSeparation:
     """Verify GC only operates on permanent engine (decision 7A)."""
 
     def test_list_content_hashes_excludes_ttl(self, tmp_path) -> None:
-        """list_content_ids() only returns permanent engine hashes."""
+        """list_content_hashes() only returns permanent engine hashes."""
         from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
 
         transport = VolumeLocalTransport(str(tmp_path))
@@ -158,8 +158,8 @@ class TestTTLGCSeparation:
         h_ttl = f"{'b' * 64}"
         transport.store_ttl(f"cas/{h_ttl[:2]}/{h_ttl[2:4]}/{h_ttl}", b"ttl", ttl_seconds=60.0)
 
-        # list_content_ids should only return permanent hashes
-        hashes = transport.list_content_ids()
+        # list_content_hashes should only return permanent hashes
+        hashes = transport.list_content_hashes()
         hash_set = {h for h, _ in hashes}
 
         assert h_perm in hash_set

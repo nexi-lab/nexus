@@ -114,7 +114,7 @@ impl ObjectStore for LocalConnectorBackend {
             }
             let hash = lib::hash::hash_content(content);
             return Ok(WriteResult {
-                content_id: hash.clone(),
+                content_id: content_id.to_string(),
                 version: hash,
                 size: content.len() as u64,
             });
@@ -145,7 +145,7 @@ impl ObjectStore for LocalConnectorBackend {
         let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
         let hash = lib::hash::hash_content(&final_bytes);
         Ok(WriteResult {
-            content_id: hash.clone(),
+            content_id: content_id.to_string(),
             version: hash,
             size: final_bytes.len() as u64,
         })
@@ -226,7 +226,7 @@ impl ObjectStore for LocalConnectorBackend {
         let content = fs::read(&dst).map_err(StorageError::IOError)?;
         let hash = lib::hash::hash_content(&content);
         Ok(WriteResult {
-            content_id: hash.clone(),
+            content_id: dst_path.to_string(),
             version: hash,
             size,
         })

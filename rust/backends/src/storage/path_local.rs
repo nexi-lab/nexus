@@ -82,8 +82,12 @@ impl ObjectStore for PathLocalBackend {
                 }
             }
             let hash = lib::hash::hash_content(content);
+            // PAS contract: content_id = backend_path (the addressing key
+            // the metastore stores so subsequent read_content(content_id)
+            // can resolve back to the same file). The hash is preserved
+            // in `version` for OCC.
             return Ok(WriteResult {
-                content_id: hash.clone(),
+                content_id: content_id.to_string(),
                 version: hash,
                 size: content.len() as u64,
             });
@@ -124,8 +128,9 @@ impl ObjectStore for PathLocalBackend {
         // stays at its pre-R20.10 cost.
         let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
         let hash = lib::hash::hash_content(&final_bytes);
+        // PAS: content_id = backend_path; version carries the hash.
         Ok(WriteResult {
-            content_id: hash.clone(),
+            content_id: content_id.to_string(),
             version: hash,
             size: final_bytes.len() as u64,
         })

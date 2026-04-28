@@ -650,6 +650,25 @@ The Linux analogue is `make bzImage`: rlibs compile into one of two
 final artifacts (Python wheel or deployment binary) the same way
 `fs/built-in.a` and `kernel/built-in.a` link into `vmlinuz`.
 
+#### Kernel crate composition
+
+`rust/kernel/src/kernel/` hosts the `Kernel` struct and its
+syscall implementations across per-family submodules:
+
+| File                | Owns                                                                           |
+|---------------------|--------------------------------------------------------------------------------|
+| `kernel/mod.rs`     | `Kernel` struct, constructor, wiring, MetaStore + DCache + Router proxies.    |
+| `kernel/io.rs`      | `sys_read` / `sys_write` / `sys_stat` / `sys_unlink` / `sys_rename` / `sys_copy` / `sys_mkdir` / `sys_rmdir`. |
+| `kernel/ipc.rs`     | Pipe + stream registries (`create_pipe`, `pipe_write_nowait`, `stream_read_at`, …). |
+| `kernel/locks.rs`   | Advisory-lock syscalls (`sys_lock`, `sys_unlock`, `metastore_list_locks`, `install_federation_locks`). |
+| `kernel/dispatch.rs`| Native INTERCEPT hook dispatch (`dispatch_native_pre`, `dispatch_native_post`, `register_native_hook`). |
+| `kernel/observability.rs` | Observer registry, file-watch registry, `sys_watch`, `dispatch_mutation` shared helper. |
+
+Every submodule writes its methods as `impl Kernel { … }` blocks —
+Rust treats each block as a member set of the same `Kernel` type, so
+`self.method_in_io()` from a submodule reaches `self.method_in_mod()`
+without intermediate trait dispatch.
+
 #### Wheel composition
 
 `rust/nexus-cdylib/src/lib.rs` is the sole `#[pymodule] fn

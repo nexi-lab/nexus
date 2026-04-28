@@ -2853,8 +2853,7 @@ impl Kernel {
                         // treats every backend the same through ObjectStore trait.
                         if let Some(data) = self.vfs_router.read_content(
                             &route.mount_point,
-                            &route.backend_path, // CAS ignores this (not a hash) → Err → None
-                            &route.backend_path,
+                            &route.backend_path, // PAS uses as path; CAS rejects (not a hash)
                             ctx,
                         ) {
                             return Ok(SysReadResult {
@@ -2935,9 +2934,9 @@ impl Kernel {
         }
 
         // 5. Backend read (Rust-native ObjectStore)
-        let content =
-            self.vfs_router
-                .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
+        let content = self
+            .vfs_router
+            .read_content(&route.mount_point, content_id, ctx);
 
         // 6. Release VFS lock (always, even on miss)
         self.lock_manager.do_release(lock_handle);
@@ -4088,12 +4087,7 @@ impl Kernel {
 
         let content = self
             .vfs_router
-            .read_content(
-                &src_route.mount_point,
-                content_id,
-                &src_route.backend_path,
-                ctx,
-            )
+            .read_content(&src_route.mount_point, content_id, ctx)
             .ok_or_else(|| {
                 KernelError::IOError(format!(
                     "sys_copy: failed to read source content at {}",

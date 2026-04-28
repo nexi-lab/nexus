@@ -49,12 +49,11 @@ impl ObjectStore for RemoteBackend {
     fn read_content(
         &self,
         content_id: &str,
-        backend_path: &str,
         _ctx: &kernel::kernel::OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
-        let path = to_server_path(backend_path);
+        let path = to_server_path(content_id);
         self.transport
-            .read(&path, content_id)
+            .read(&path, "")
             .map(|r| r.content)
             .map_err(|e| StorageError::IOError(std::io::Error::other(e)))
     }

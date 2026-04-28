@@ -289,7 +289,6 @@ impl ObjectStore for S3Backend {
     fn read_content(
         &self,
         content_id: &str,
-        _backend_path: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         let key = self.object_key(content_id);

@@ -73,19 +73,21 @@ impl BlobFetcher for KernelBlobFetcher {
 
         // Case 1: VFS path → standard local read.
         if let Ok(route) = self.vfs_router.route(content_id, contracts::ROOT_ZONE_ID) {
+            // Local content_id from FileMetadata: hash for CAS, backend_path
+            // for PAS — exactly what the local backend's `read_content`
+            // expects.  Fall back to `route.backend_path` when dcache is
+            // cold (PAS cold-read still works because backend_path is the
+            // PAS content_id by construction; CAS cold-read fails, but
+            // that's expected — CAS reads need metadata).
             let local_content_id = self
                 .dcache
                 .get_entry(content_id)
                 .and_then(|e| e.content_id)
-                .unwrap_or_default();
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| route.backend_path.clone());
             return self
                 .vfs_router
-                .read_content(
-                    &route.mount_point,
-                    &local_content_id,
-                    &route.backend_path,
-                    &ctx,
-                )
+                .read_content(&route.mount_point, &local_content_id, &ctx)
                 .ok_or_else(|| format!("read_content({content_id}): not found"));
         }
 
@@ -97,7 +99,7 @@ impl BlobFetcher for KernelBlobFetcher {
         }
         let mut last_err: Option<String> = None;
         for backend in backends {
-            match backend.read_content(content_id, "", &ctx) {
+            match backend.read_content(content_id, &ctx) {
                 Ok(bytes) => return Ok(bytes),
                 Err(e) => last_err = Some(format!("{:?}", e)),
             }

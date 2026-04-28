@@ -234,11 +234,10 @@ impl ObjectStore for HNBackend {
 
     fn read_content(
         &self,
-        _content_id: &str,
-        backend_path: &str,
+        content_id: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
-        let (feed, rank) = Self::resolve_path(backend_path)?;
+        let (feed, rank) = Self::resolve_path(content_id)?;
 
         if feed.is_empty() {
             // Root listing

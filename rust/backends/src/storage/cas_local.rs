@@ -54,7 +54,6 @@ impl ObjectStore for CasLocalBackend {
     fn read_content(
         &self,
         content_id: &str,
-        _backend_path: &str,
         _ctx: &kernel::kernel::OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         self.0.read_content(content_id).map_err(StorageError::from)
@@ -144,7 +143,7 @@ mod tests {
         assert_eq!(result.size, content.len() as u64);
         assert_eq!(result.version, result.content_id); // CAS: version == hash
 
-        let read_back = backend.read_content(&result.content_id, "", &ctx).unwrap();
+        let read_back = backend.read_content(&result.content_id, &ctx).unwrap();
         assert_eq!(read_back, content);
     }
 
@@ -153,7 +152,6 @@ mod tests {
         let (_tmp, backend) = setup();
         let result = backend.read_content(
             "0000000000000000000000000000000000000000000000000000000000000000",
-            "",
             &test_ctx(),
         );
         assert!(result.is_err());
@@ -184,7 +182,7 @@ mod tests {
         let r = backend.write_content(b"to delete", "", &ctx, 0).unwrap();
         assert!(backend.delete_content(&r.content_id).is_ok());
         assert!(matches!(
-            backend.read_content(&r.content_id, "", &ctx).unwrap_err(),
+            backend.read_content(&r.content_id, &ctx).unwrap_err(),
             StorageError::NotFound(_)
         ));
     }
@@ -232,9 +230,7 @@ mod tests {
         assert_eq!(wr.size, content.len() as u64);
         assert_eq!(wr.content_id.len(), 64); // hash
 
-        let data = backend
-            .read_content(&wr.content_id, "docs/file.txt", &ctx)
-            .unwrap();
+        let data = backend.read_content("docs/file.txt", &ctx).unwrap();
         assert_eq!(data, content);
     }
 
@@ -246,7 +242,7 @@ mod tests {
         backend.write_content(b"v1", "file.txt", &ctx, 0).unwrap();
         backend.write_content(b"v2", "file.txt", &ctx, 0).unwrap();
 
-        let data = backend.read_content("", "file.txt", &ctx).unwrap();
+        let data = backend.read_content("file.txt", &ctx).unwrap();
         assert_eq!(data, b"v2");
     }
 
@@ -254,7 +250,7 @@ mod tests {
     fn test_path_local_not_found() {
         let (_tmp, backend) = setup_path();
         let ctx = test_ctx();
-        let result = backend.read_content("", "nonexistent.txt", &ctx);
+        let result = backend.read_content("nonexistent.txt", &ctx);
         assert!(matches!(result.unwrap_err(), StorageError::NotFound(_)));
     }
 
@@ -308,9 +304,7 @@ mod tests {
             .unwrap();
         assert_eq!(wr.size, content.len() as u64);
 
-        let data = backend
-            .read_content(&wr.content_id, "docs/file.txt", &ctx)
-            .unwrap();
+        let data = backend.read_content("docs/file.txt", &ctx).unwrap();
         assert_eq!(data, content);
     }
 
@@ -356,7 +350,7 @@ mod tests {
         backend
             .write_content(b"RUST!", "file.txt", &ctx, 6)
             .unwrap();
-        let data = backend.read_content("", "file.txt", &ctx).unwrap();
+        let data = backend.read_content("file.txt", &ctx).unwrap();
         assert_eq!(data, b"hello RUST!!");
     }
 
@@ -369,7 +363,7 @@ mod tests {
         backend
             .write_content(b"xyz", "sparse.txt", &ctx, 5)
             .unwrap();
-        let data = backend.read_content("", "sparse.txt", &ctx).unwrap();
+        let data = backend.read_content("sparse.txt", &ctx).unwrap();
         assert_eq!(data, b"ab\x00\x00\x00xyz");
     }
 
@@ -380,7 +374,7 @@ mod tests {
         let ctx = test_ctx();
         backend.write_content(b"head", "ext.txt", &ctx, 0).unwrap();
         backend.write_content(b"TAIL", "ext.txt", &ctx, 2).unwrap();
-        let data = backend.read_content("", "ext.txt", &ctx).unwrap();
+        let data = backend.read_content("ext.txt", &ctx).unwrap();
         assert_eq!(data, b"heTAIL");
     }
 
@@ -395,7 +389,7 @@ mod tests {
             .write_content(b"RUST!", &wr.content_id, &ctx, 6)
             .unwrap();
         assert_ne!(new_wr.content_id, wr.content_id); // new blob → new hash
-        let data = backend.read_content(&new_wr.content_id, "", &ctx).unwrap();
+        let data = backend.read_content(&new_wr.content_id, &ctx).unwrap();
         assert_eq!(data, b"hello RUST!!");
     }
 
@@ -407,7 +401,7 @@ mod tests {
         let new_wr = backend
             .write_content(b"xyz", &wr.content_id, &ctx, 5)
             .unwrap();
-        let data = backend.read_content(&new_wr.content_id, "", &ctx).unwrap();
+        let data = backend.read_content(&new_wr.content_id, &ctx).unwrap();
         assert_eq!(data, b"ab\x00\x00\x00xyz");
     }
 }

@@ -149,14 +149,16 @@ pub trait ObjectStore: Send + Sync {
 
     /// Read content by opaque identifier.
     ///
-    /// `content_id`: CAS=hash, PAS=version_id.
-    /// `backend_path`: mount-relative path (for path-addressed backends).
+    /// `content_id`: backend-defined opaque key.  CAS backends interpret
+    /// it as a content hash; PAS / connector backends interpret it as a
+    /// backend-relative path or backend-specific resource handle. The
+    /// kernel does not interpret it — caller passes through whatever
+    /// `FileMetadata.content_id` carried.
     /// `ctx`: operation credential for backends that need identity/auth.
-    /// CAS backends ignore backend_path and ctx.
+    /// CAS backends typically ignore `ctx`.
     fn read_content(
         &self,
         content_id: &str,
-        backend_path: &str,
         ctx: &crate::kernel::OperationContext,
     ) -> Result<Vec<u8>, StorageError>;
 

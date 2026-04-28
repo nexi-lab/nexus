@@ -48,23 +48,42 @@ def _has_index(table: str, name: str) -> bool:
 
 
 def upgrade() -> None:
-    """Add zone_id to rebac_changelog (idempotent)."""
+    """Converge rebac_changelog.zone_id to (NOT NULL, default 'root', indexed).
+
+    Steps run unconditionally so a partial prior run — e.g. a hotfix that
+    added the column nullable, or a retry that aborted between steps —
+    still ends in the model's expected shape:
+      1. Add the column if missing.
+      2. Backfill any NULL ``zone_id`` to ROOT_ZONE_ID.
+      3. Enforce NOT NULL + server default.
+      4. Ensure the lookup index exists.
+    """
+    # 1. Create the column when absent. Always nullable here so step 2 can
+    # backfill safely on populated tables.
     if not _has_column("rebac_changelog", "zone_id"):
         op.add_column(
             "rebac_changelog",
             sa.Column("zone_id", sa.String(255), nullable=True),
         )
-        op.execute(
-            sa.text(f"UPDATE rebac_changelog SET zone_id = '{ROOT_ZONE_ID}' WHERE zone_id IS NULL")
-        )
-        with op.batch_alter_table("rebac_changelog") as batch:
-            batch.alter_column(
-                "zone_id",
-                existing_type=sa.String(255),
-                nullable=False,
-                server_default=ROOT_ZONE_ID,
-            )
 
+    # 2. Backfill — runs every time so retries fix any NULL rows that
+    # slipped in between a prior add_column and its NOT NULL alter.
+    op.execute(
+        sa.text(f"UPDATE rebac_changelog SET zone_id = '{ROOT_ZONE_ID}' WHERE zone_id IS NULL")
+    )
+
+    # 3. Enforce NOT NULL + default. alter_column is idempotent w.r.t. the
+    # final state on PostgreSQL; SQLite gets the same shape via batch.
+    with op.batch_alter_table("rebac_changelog") as batch:
+        batch.alter_column(
+            "zone_id",
+            existing_type=sa.String(255),
+            nullable=False,
+            server_default=ROOT_ZONE_ID,
+        )
+
+    # 4. Index — guarded only because create_index would otherwise raise
+    # on a second run.
     if not _has_index("rebac_changelog", "ix_rebac_changelog_zone_id"):
         op.create_index(
             "ix_rebac_changelog_zone_id",

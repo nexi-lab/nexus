@@ -520,7 +520,7 @@ def _register_vfs_hooks(
     # ── PRE-DISPATCH: ReadmePathResolver (Issue #3827) ───────────────────
     from nexus.bricks.parsers.readme_resolver import ReadmePathResolver
 
-    _readme_resolver = ReadmePathResolver()
+    _readme_resolver = ReadmePathResolver(nexus_fs=nx)
     _enlist("readme_resolver", _readme_resolver)
 
     # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──

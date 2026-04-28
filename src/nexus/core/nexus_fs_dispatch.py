@@ -133,6 +133,29 @@ class DispatchMixin:
         """PRE-DISPATCH: first-match resolver for delete."""
         return self._resolve(path, "try_delete", context=context)
 
+    def resolve_list(self, path: str, *, context: Any = None) -> tuple[bool, list[str] | None]:
+        """PRE-DISPATCH: first-match resolver for list/readdir.
+
+        Resolvers that do not implement ``try_list`` are skipped (the
+        generic ``_resolve`` would raise AttributeError otherwise).
+        """
+        if self._kernel is None:
+            return False, None
+        idx = self._kernel.trie_lookup(path)
+        if idx is not None:
+            resolver = self._trie_resolvers.get(idx)
+            if resolver is not None and hasattr(resolver, "try_list"):
+                result = resolver.try_list(path, context=context)
+                if result is not None:
+                    return True, result
+        for r in self._fallback_resolvers:
+            if not hasattr(r, "try_list"):
+                continue
+            result = r.try_list(path, context=context)
+            if result is not None:
+                return True, result
+        return False, None
+
     @property
     def resolver_count(self) -> int:
         return len(self._trie_resolvers) + len(self._fallback_resolvers)

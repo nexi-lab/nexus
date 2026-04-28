@@ -1407,6 +1407,20 @@ class MetadataMixin:
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
+        # PRE-DISPATCH: virtual resolvers (e.g., ``.readme/`` overlay)
+        # contribute synthetic children before the kernel/metastore is
+        # consulted. ``recursive`` is forwarded so resolvers may emit
+        # nested entries when they support it.
+        if hasattr(self, "resolve_list"):
+            _handled, _virt = self.resolve_list(path, context=context, recursive=recursive)
+            if _handled and _virt is not None:
+                if details:
+                    return [
+                        {"path": p, "size": 0, "content_id": "", "entry_type": et}
+                        for p, et in _virt
+                    ]
+                return [p for p, _ in _virt]
+
         # ── /__sys__/locks/ virtual namespace (like /proc/locks) ──
         sys_locks_prefix = "/__sys__/locks"
         stripped = path.rstrip("/")

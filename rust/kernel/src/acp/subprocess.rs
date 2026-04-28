@@ -30,11 +30,11 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::process::Stdio;
 
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 use super::agent_config::AgentConfig;
 use super::paths;
@@ -89,17 +89,23 @@ pub(crate) fn prepare_clean_env(extra: &HashMap<String, String>) -> HashMap<Stri
     env
 }
 
-/// Owned subprocess + the parent-side OwnedFds the kernel got dup'd
-/// copies of. Drop closes everything still open.
+/// Owned subprocess + the parent-side stdio handles the kernel got
+/// dup'd copies of. The tokio types are kept here (rather than raw
+/// `OwnedFd`) so [`AcpConnection`](super::connection::AcpConnection)
+/// can drive them through `AsyncRead` / `AsyncWrite` directly.
+/// Drop closes everything still open; tokio's `kill_on_drop(true)`
+/// reaps the child process itself.
 pub(crate) struct AcpSubprocess {
     child: Child,
     /// Parent-side write end of the subprocess stdin pipe. `Some`
-    /// until `unregister_pipes` runs (then dropped to deliver EOF).
-    stdin_fd: Option<OwnedFd>,
+    /// until `take_stdio_for_connection` hands it off to the
+    /// AcpConnection (or `unregister_pipes` drops it to deliver
+    /// EOF).
+    stdin: Option<ChildStdin>,
     /// Parent-side read end of the subprocess stdout pipe.
-    stdout_fd: Option<OwnedFd>,
+    stdout: Option<ChildStdout>,
     /// Parent-side read end of the subprocess stderr pipe.
-    stderr_fd: Option<OwnedFd>,
+    stderr: Option<ChildStderr>,
     /// VFS paths the kernel registered the dup'd fds at.
     stdin_path: String,
     stdout_path: String,
@@ -163,10 +169,21 @@ impl AcpSubprocess {
 
         // Take the parent-side stdio handles. tokio's ChildStdin /
         // ChildStdout / ChildStderr each own a unique pipe fd; we
-        // convert them to OwnedFd so we can dup them for the kernel.
-        let stdin_fd = take_owned_fd(child.stdin.take())?;
-        let stdout_fd = take_owned_fd(child.stdout.take())?;
-        let stderr_fd = take_owned_fd(child.stderr.take())?;
+        // keep them as the canonical handles so AcpConnection can
+        // drive them through AsyncRead / AsyncWrite, and dup the raw
+        // fds for the kernel's stdio-backed DT_PIPE.
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| SubprocessError::Io("subprocess stdin missing".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| SubprocessError::Io("subprocess stdout missing".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| SubprocessError::Io("subprocess stderr missing".into()))?;
 
         let stdin_path = paths::proc_fd(zone, pid, 0);
         let stdout_path = paths::proc_fd(zone, pid, 1);
@@ -177,60 +194,83 @@ impl AcpSubprocess {
             kernel,
             &stdin_path,
             /* read_fd */ -1,
-            dup_fd(&stdin_fd)?,
+            dup_raw(stdin.as_raw_fd())?,
         ) {
-            let _ = unlink_quiet(kernel, &stdin_path);
             return Err(SubprocessError::Register(e));
         }
         // Register stdout (kernel reads from subprocess stdout).
         if let Err(e) = register_stdio_pipe(
             kernel,
             &stdout_path,
-            dup_fd(&stdout_fd)?,
+            dup_raw(stdout.as_raw_fd())?,
             /* write_fd */ -1,
         ) {
             let _ = unlink_quiet(kernel, &stdin_path);
-            let _ = unlink_quiet(kernel, &stdout_path);
             return Err(SubprocessError::Register(e));
         }
         // Register stderr.
         if let Err(e) = register_stdio_pipe(
             kernel,
             &stderr_path,
-            dup_fd(&stderr_fd)?,
+            dup_raw(stderr.as_raw_fd())?,
             /* write_fd */ -1,
         ) {
             let _ = unlink_quiet(kernel, &stdin_path);
             let _ = unlink_quiet(kernel, &stdout_path);
-            let _ = unlink_quiet(kernel, &stderr_path);
             return Err(SubprocessError::Register(e));
         }
 
         Ok(Self {
             child,
-            stdin_fd: Some(stdin_fd),
-            stdout_fd: Some(stdout_fd),
-            stderr_fd: Some(stderr_fd),
+            stdin: Some(stdin),
+            stdout: Some(stdout),
+            stderr: Some(stderr),
             stdin_path,
             stdout_path,
             stderr_path,
         })
     }
 
+    /// Move the parent-side stdio handles out of the subprocess so
+    /// the AcpConnection can wrap them as AsyncRead / AsyncWrite.
+    /// After this call the kernel-side DT_PIPEs (created in `spawn`)
+    /// remain registered; `unregister_pipes` is still required for
+    /// teardown.
+    pub(crate) fn take_stdio_for_connection(
+        &mut self,
+    ) -> Result<(ChildStdin, ChildStdout, ChildStderr), SubprocessError> {
+        let stdin = self
+            .stdin
+            .take()
+            .ok_or_else(|| SubprocessError::Io("stdin already taken".into()))?;
+        let stdout = self
+            .stdout
+            .take()
+            .ok_or_else(|| SubprocessError::Io("stdout already taken".into()))?;
+        let stderr = self
+            .stderr
+            .take()
+            .ok_or_else(|| SubprocessError::Io("stderr already taken".into()))?;
+        Ok((stdin, stdout, stderr))
+    }
+
     /// Unlink the three DT_PIPE entries (closing the kernel-side
-    /// dup'd fds) and drop the parent-side OwnedFds. After this call
-    /// the OS pipes collapse and the subprocess sees EOF on stdin
-    /// (drained reads return 0 on stdout/stderr).
+    /// dup'd fds) and drop the parent-side stdio handles still held
+    /// by this struct. After this call the OS pipes collapse and the
+    /// subprocess sees EOF on stdin / read returns 0 on stdout /
+    /// stderr — provided the AcpConnection that may have taken
+    /// ownership via `take_stdio_for_connection` has also dropped.
     ///
     /// Idempotent: subsequent calls are no-ops.
     pub(crate) fn unregister_pipes(&mut self, kernel: &Kernel) {
         let _ = unlink_quiet(kernel, &self.stdin_path);
         let _ = unlink_quiet(kernel, &self.stdout_path);
         let _ = unlink_quiet(kernel, &self.stderr_path);
-        // Drop parent-side OwnedFds so EOF is delivered to the child.
-        self.stdin_fd.take();
-        self.stdout_fd.take();
-        self.stderr_fd.take();
+        // Drop any remaining parent-side handles so EOF reaches the
+        // child even if take_stdio_for_connection wasn't called.
+        self.stdin.take();
+        self.stdout.take();
+        self.stderr.take();
     }
 
     /// Best-effort SIGKILL on the child. Safe to call even if the
@@ -252,32 +292,20 @@ impl AcpSubprocess {
 
 // ── Internal helpers ───────────────────────────────────────────────────
 
-fn take_owned_fd<T>(handle: Option<T>) -> Result<OwnedFd, SubprocessError>
-where
-    T: AsRawFd + IntoRawFd,
-{
-    let h = handle.ok_or_else(|| SubprocessError::Io("subprocess stdio handle missing".into()))?;
-    let raw = h.into_raw_fd();
-    // SAFETY: into_raw_fd guarantees ownership transfer; the OwnedFd
-    // assumes the only live reference to this fd (the subprocess
-    // crate gave it up at into_raw_fd).
-    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
-}
-
-/// `dup(2)` the fd so we can hand a separate handle to the kernel.
-/// The original `OwnedFd` keeps ownership of its number.
-fn dup_fd(fd: &OwnedFd) -> Result<i32, SubprocessError> {
+/// `dup(2)` the raw fd so the kernel-side StdioPipeBackend holds an
+/// independently-closable handle. Original tokio handle keeps its
+/// own fd number; both close on Drop without colliding.
+fn dup_raw(raw: i32) -> Result<i32, SubprocessError> {
     // SAFETY: libc::dup is the canonical way to duplicate a file
     // descriptor; the returned fd is independently closable.
-    let raw = unsafe { libc::dup(fd.as_raw_fd()) };
-    if raw < 0 {
+    let dup = unsafe { libc::dup(raw) };
+    if dup < 0 {
         return Err(SubprocessError::Io(format!(
-            "dup({}): {}",
-            fd.as_raw_fd(),
+            "dup({raw}): {}",
             std::io::Error::last_os_error()
         )));
     }
-    Ok(raw)
+    Ok(dup)
 }
 
 fn register_stdio_pipe(
@@ -300,16 +328,13 @@ fn unlink_quiet(kernel: &Kernel, path: &str) -> Result<(), KernelError> {
     kernel.sys_unlink(path, &ctx).map(|_| ())
 }
 
-impl Drop for AcpSubprocess {
-    fn drop(&mut self) {
-        // OwnedFds drop here — closes parent-side fds. The kernel-
-        // side StdioPipeBackend keeps its dup'd fd alive until
-        // `unregister_pipes` runs; if the caller forgot, the
-        // DT_PIPE entry leaks into the metastore. tokio Command's
-        // `kill_on_drop(true)` ensures the child process itself is
-        // reaped.
-    }
-}
+// Drop semantics: tokio's ChildStdin / ChildStdout / ChildStderr
+// each close their own fd, so dropping this struct closes the
+// parent-side OS pipe handles still held. The kernel-side
+// StdioPipeBackend keeps its dup'd fd alive until `unregister_pipes`
+// runs; if the caller forgot, the DT_PIPE entry leaks into the
+// metastore. tokio Command's `kill_on_drop(true)` ensures the child
+// process itself is reaped.
 
 #[cfg(test)]
 mod tests {

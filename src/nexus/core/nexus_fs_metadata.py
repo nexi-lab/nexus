@@ -307,6 +307,17 @@ class MetadataMixin:
         # implicit directories (paths with children but no explicit
         # entry) and the Python-side ``.readme/`` virtual-doc overlay
         # (Issue #3728).
+        # PRE-DISPATCH: virtual resolvers (e.g., ``.readme/`` overlay)
+        # advertise paths that have no kernel-side metastore entry, so we
+        # let them synthesize stat first. Mirrors the read/list pre-hook
+        # so listed virtual entries are also stat-visible.
+        if hasattr(self, "resolve_stat"):
+            _handled, _virt = self.resolve_stat(normalized, context=context)
+            if _handled and _virt is not None:
+                _virt.setdefault("owner", ctx.user_id)
+                _virt.setdefault("group", ctx.user_id)
+                return _virt
+
         # Rust sys_stat handles: dcache → metastore → implicit directory.
         result = self._kernel.sys_stat(normalized, self._zone_id)
         if result is not None:

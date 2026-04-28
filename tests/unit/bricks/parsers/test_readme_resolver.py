@@ -118,3 +118,68 @@ class TestHookSpec:
         spec = resolver.hook_spec()
         assert isinstance(spec, HookSpec)
         assert resolver in spec.resolvers
+
+
+class TestRealGeneratorSchemaRead:
+    """Round-3 review: ensure schema reads use the public ReadmeDocGenerator API.
+
+    Mock-only tests passed even when ``get_schema()`` did not exist on the real
+    generator. Hit the real class so a regression here surfaces immediately.
+    """
+
+    def test_schema_yaml_via_real_generator(self) -> None:
+        from pydantic import BaseModel, Field
+
+        from nexus.backends.connectors.base import OpTraits
+        from nexus.backends.connectors.schema_generator import ReadmeDocGenerator
+
+        class SendEmailIn(BaseModel):
+            to: str = Field(description="recipient")
+            subject: str = Field(description="subject line")
+
+        gen = ReadmeDocGenerator(
+            skill_name="gmail",
+            schemas={"send_email": SendEmailIn},
+            operation_traits={"send_email": OpTraits()},
+            error_registry={},
+            examples={},
+        )
+
+        class _Backend:
+            def generate_readme(self, _mp: str) -> str:
+                return "# gmail"
+
+            def get_doc_generator(self) -> ReadmeDocGenerator:
+                return gen
+
+        r = ReadmePathResolver()
+        r.register_backend("/mnt/gmail", _Backend())
+        out = r.try_read("/mnt/gmail/.readme/schemas/send_email.yaml")
+        assert out is not None
+        assert b"Schema: send_email" in out
+        # Missing op → None, not AttributeError.
+        assert r.try_read("/mnt/gmail/.readme/schemas/missing.yaml") is None
+
+
+class TestTryStat:
+    def test_stat_on_readme_file(self, mounted: ReadmePathResolver) -> None:
+        out = mounted.try_stat("/mnt/gmail/.readme/README.md")
+        assert out is not None
+        assert out["entry_type"] == 0
+        assert out["size"] > 0
+
+    def test_stat_on_readme_dir(self, mounted: ReadmePathResolver) -> None:
+        out = mounted.try_stat("/mnt/gmail/.readme")
+        assert out is not None
+        assert out["entry_type"] == 1
+
+    def test_stat_on_schemas_dir(self, mounted: ReadmePathResolver) -> None:
+        out = mounted.try_stat("/mnt/gmail/.readme/schemas")
+        assert out is not None
+        assert out["entry_type"] == 1
+
+    def test_stat_returns_none_for_unrelated(self, mounted: ReadmePathResolver) -> None:
+        assert mounted.try_stat("/mnt/gmail/INBOX/msg.yaml") is None
+
+    def test_stat_returns_none_for_unknown_schema(self, mounted: ReadmePathResolver) -> None:
+        assert mounted.try_stat("/mnt/gmail/.readme/schemas/missing.yaml") is None

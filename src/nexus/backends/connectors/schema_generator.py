@@ -65,6 +65,15 @@ class ReadmeDocGenerator:
     # Public API
     # ------------------------------------------------------------------
 
+    def get_schema(self, op_name: str) -> type[BaseModel] | None:
+        """Return the Pydantic schema class for an operation, or ``None``.
+
+        Public lookup used by the ``.readme/`` overlay resolver to render
+        ``schemas/<op>.yaml`` paths without touching the private
+        ``_schemas`` dict.
+        """
+        return self._schemas.get(op_name)
+
     def _generate_frontmatter(self) -> str:
         """Generate YAML frontmatter for the README.
 

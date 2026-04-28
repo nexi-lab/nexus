@@ -79,17 +79,30 @@ class ReadmePathResolver:
     def _caller_authorized(self, mount_point: str, context: Any) -> bool:
         """Return True if the caller has READ access on the owning mount.
 
-        When ``self._nx`` is wired we delegate to ``NexusFS.access`` which
-        runs the standard ReBAC chain. Without it (test harness), we fall
-        open to preserve unit-test ergonomics.
+        ``NexusFS.access`` only proves the path exists — the Rust kernel's
+        ``sys_stat`` does not run the ReBAC chain. We instead dispatch the
+        ``read`` pre-hook directly so the registered ``PermissionCheckHook``
+        runs the full READ check (Issue #3827 round-3 review). When
+        ``self._nx`` is unwired (unit-test fixtures), we fall open.
         """
         if self._nx is None:
             return True
+        kernel = getattr(self._nx, "_kernel", None)
+        if kernel is None:
+            return True
         try:
-            return bool(self._nx.access(mount_point, context=context))
+            from nexus.contracts.vfs_hooks import ReadHookContext
         except Exception:
-            # access() raises on InvalidPath etc. — treat as deny.
+            return True
+        try:
+            kernel.dispatch_pre_hooks("read", ReadHookContext(path=mount_point, context=context))
+        except PermissionError:
             return False
+        except Exception:
+            # Any non-permission failure (invalid context, missing zone) is
+            # treated as deny so the overlay never widens the surface.
+            return False
+        return True
 
     # ── VFSPathResolver protocol ──────────────────────────────────────────
 
@@ -157,6 +170,63 @@ class ReadmePathResolver:
 
         if rel == "schemas":
             return [(f"{base}/schemas/{op}.yaml", 0) for op in schemas]
+
+        return None
+
+    def try_stat(self, path: str, *, context: Any = None) -> dict[str, Any] | None:
+        """Synthesize stat for advertised .readme/ paths.
+
+        Mirrors ``try_list`` so callers that ``readdir → stat → read`` see
+        consistent metadata. Returns ``entry_type`` per the kernel DT enum
+        (0=DT_REG, 1=DT_DIR). README and schema YAML stats include their
+        rendered byte length so FUSE-style consumers can size buffers.
+        """
+        # Directory: bare ``.readme`` or ``.readme/schemas``.
+        dir_match = self._match_dir(path)
+        if dir_match is not None:
+            mount_point, rel, backend = dir_match
+            if not self._caller_authorized(mount_point, context):
+                return None
+            if rel == "":
+                return {"path": path, "size": 0, "etag": "", "entry_type": 1}
+            if rel == "schemas":
+                try:
+                    gen = backend.get_doc_generator()
+                except Exception:
+                    return None
+                if not getattr(gen, "_schemas", None):
+                    return None
+                return {"path": path, "size": 0, "etag": "", "entry_type": 1}
+
+        file_match = self._match(path)
+        if file_match is None:
+            return None
+        mount_point, rel, backend = file_match
+        if not self._caller_authorized(mount_point, context):
+            return None
+
+        if rel == "README.md":
+            text: str = backend.generate_readme(mount_point)
+            return {
+                "path": path,
+                "size": len(text.encode()),
+                "etag": "",
+                "entry_type": 0,
+            }
+
+        if rel.startswith("schemas/") and rel.endswith(".yaml"):
+            op_name = rel[len("schemas/") : -len(".yaml")]
+            gen = backend.get_doc_generator()
+            schema = gen.get_schema(op_name)
+            if schema is None:
+                return None
+            yaml_text: str = gen.generate_schema_yaml(op_name, schema)
+            return {
+                "path": path,
+                "size": len(yaml_text.encode()),
+                "etag": "",
+                "entry_type": 0,
+            }
 
         return None
 

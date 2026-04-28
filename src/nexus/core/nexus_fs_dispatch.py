@@ -138,6 +138,31 @@ class DispatchMixin:
         """PRE-DISPATCH: first-match resolver for delete."""
         return self._resolve(path, "try_delete", context=context)
 
+    def resolve_stat(self, path: str, *, context: Any = None) -> tuple[bool, dict[str, Any] | None]:
+        """PRE-DISPATCH: first-match resolver for stat/getattr.
+
+        Returns ``(True, stat_dict)`` when a resolver synthesizes metadata
+        for a virtual path that has no kernel-side metastore entry (so a
+        listed virtual entry is also stat-visible). Resolvers that do not
+        implement ``try_stat`` are skipped.
+        """
+        if self._kernel is None:
+            return False, None
+        idx = self._kernel.trie_lookup(path)
+        if idx is not None:
+            resolver = self._trie_resolvers.get(idx)
+            if resolver is not None and hasattr(resolver, "try_stat"):
+                result = resolver.try_stat(path, context=context)
+                if result is not None:
+                    return True, result
+        for r in self._fallback_resolvers:
+            if not hasattr(r, "try_stat"):
+                continue
+            result = r.try_stat(path, context=context)
+            if result is not None:
+                return True, result
+        return False, None
+
     def resolve_list(
         self, path: str, *, context: Any = None, recursive: bool = False
     ) -> tuple[bool, list[tuple[str, int]] | None]:

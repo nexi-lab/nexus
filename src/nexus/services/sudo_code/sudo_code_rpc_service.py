@@ -18,10 +18,11 @@ Layering: this RPC class owns the `session_id ↔ pid` map and AgentRegistry
 calls. The actual sudo-code agent loop is a separate Rust crate registered
 into nexus's `AgentRuntimeRegistry` (kernel-knows trait DI, parallel to
 `AcpService` for external ACP backends but in-process — sudo-code is our
-code in our process, no stdio bind, no JSON-RPC). When the runtime registry
-has no impl for `agent`, start_session still succeeds for AgentRegistry
-state tracking but the runtime spawn is skipped with a warning so callers
-see "agent registered but not driven" rather than a hard failure.
+code in our process, no stdio bind, no JSON-RPC). A registered runtime is
+required: `start_session` reaps the AgentRegistry pid and raises
+`RuntimeError` when the registry has nothing for the agent name. Returning
+a session_id with no runtime driving it would be silent failure (sudowork
+would wait for responses that never come).
 """
 
 from __future__ import annotations
@@ -41,8 +42,15 @@ class SudoCodeRPCService:
     """RPC surface for sudo-code session lifecycle.
 
     Spawn / cancel / liveness only — prompt and event flow uses the chat-with-me
-    VFS surface (sudowork writes to `/agents/{agent}/chat-with-me`, reads from
+    VFS surface (sudowork writes to `/proc/{pid}/chat-with-me`, reads from
     its own `/agents/{user}/chat-with-me` via `sys_watch`).
+
+    A registered ``AgentRuntime`` for the requested ``agent`` is required —
+    ``start_session`` reaps the AgentRegistry pid and raises ``RuntimeError``
+    when the runtime registry has nothing for the agent name. The earlier
+    "best-effort" fallback was removed: returning a session_id when no
+    runtime is driving the pid is silent failure (sudowork would wait for
+    responses that never come).
     """
 
     def __init__(
@@ -53,9 +61,9 @@ class SudoCodeRPCService:
     ) -> None:
         self._agent_registry = agent_registry
         # name → AgentRuntime slot (parallel to NativeInterceptHook
-        # registration). An empty registry is OK — start_session registers
-        # the agent in AgentRegistry but skips the runtime spawn so the
-        # runtime crate can wire up after the gRPC contract lands.
+        # registration). Defaults to an empty registry so callers that
+        # pass `None` still get a real object — but every spawn against
+        # an empty/unregistered slot raises (see start_session below).
         self._runtime_registry = (
             runtime_registry if runtime_registry is not None else AgentRuntimeRegistry()
         )
@@ -133,49 +141,49 @@ class SudoCodeRPCService:
 
         repos_list = list(repos) if repos else []
 
-        # Best-effort runtime spawn. The runtime registry is the kernel-knows
-        # slot the sudo-code crate registers into at module init; when no
-        # runtime is registered for this agent name, we still keep the
-        # AgentRegistry record so a follow-up runtime install can pick it up.
-        runtime_started = False
+        # Runtime dispatch. The runtime registry is the kernel-knows slot
+        # the sudo-code crate registers into at module init. A missing
+        # runtime is a misconfiguration — we reap the AgentRegistry pid
+        # and raise so sudowork sees a hard error instead of a session
+        # that looks alive but has nothing driving it.
         try:
             runtime = self._runtime_registry.get(agent)
         except Exception as exc:  # registry surface is open — be defensive
-            runtime = None
-            logger.warning(
+            self._agent_registry.kill(pid, exit_code=-1)
+            logger.error(
                 "sudo_code_start_session: runtime registry lookup failed for %s: %s",
                 agent,
                 exc,
             )
-        if runtime is not None:
-            try:
-                runtime.spawn(
-                    pid=pid,
-                    workspace_path=workspace_path,
-                    repos=repos_list,
-                    model=model,
-                )
-                runtime_started = True
-            except Exception as exc:
-                # Spawn failure leaves the agent in REGISTERED — the cancel
-                # path will reap it. Surface as a clear error so sudowork
-                # doesn't think the session is live.
-                logger.error(
-                    "sudo_code_start_session: runtime.spawn failed for pid=%s: %s",
-                    pid,
-                    exc,
-                )
-                self._agent_registry.kill(pid, exit_code=-1)
-                raise RuntimeError(
-                    f"sudo_code runtime for {agent!r} failed to spawn: {exc}"
-                ) from exc
-        else:
-            logger.warning(
-                "sudo_code_start_session: no runtime registered for %s; "
-                "agent record created but runtime is not driven (pid=%s)",
+            raise RuntimeError(
+                f"sudo_code runtime registry lookup failed for {agent!r}: {exc}"
+            ) from exc
+        if runtime is None:
+            self._agent_registry.kill(pid, exit_code=-1)
+            logger.error(
+                "sudo_code_start_session: no runtime registered for %s — "
+                "the sudo-code crate must register an AgentRuntime under this "
+                "name at module init",
                 agent,
-                pid,
             )
+            raise RuntimeError(f"sudo_code: no runtime registered for agent {agent!r}")
+        try:
+            runtime.spawn(
+                pid=pid,
+                workspace_path=workspace_path,
+                repos=repos_list,
+                model=model,
+            )
+        except Exception as exc:
+            # Spawn failure leaves the agent in REGISTERED — reap the pid
+            # so the AgentRegistry record does not drift.
+            logger.error(
+                "sudo_code_start_session: runtime.spawn failed for pid=%s: %s",
+                pid,
+                exc,
+            )
+            self._agent_registry.kill(pid, exit_code=-1)
+            raise RuntimeError(f"sudo_code runtime for {agent!r} failed to spawn: {exc}") from exc
 
         self._sessions[session_id] = _Session(
             session_id=session_id,
@@ -183,14 +191,12 @@ class SudoCodeRPCService:
             agent=agent,
             model=model,
             workspace_path=workspace_path,
-            runtime_started=runtime_started,
         )
         logger.info(
-            "sudo_code_start_session: session=%s pid=%s agent=%s runtime=%s",
+            "sudo_code_start_session: session=%s pid=%s agent=%s",
             session_id,
             pid,
             agent,
-            "started" if runtime_started else "skipped",
         )
         return {
             "session_id": session_id,
@@ -209,9 +215,7 @@ class SudoCodeRPCService:
 
         ``mode`` is one of ``cancel_turn`` (abort current generation, keep
         the agent loop alive) or ``cancel_session`` (terminate the agent and
-        unregister it from AgentRegistry). For sessions whose runtime never
-        started, cancel_session still reaps the AgentRegistry record so the
-        sudowork side gets a clean diagnostic rather than a stale entry.
+        unregister it from AgentRegistry).
         """
         del context
         sess = self._sessions.get(session_id)
@@ -225,26 +229,25 @@ class SudoCodeRPCService:
             )
 
         cancelled = False
-        if sess.runtime_started:
+        try:
+            runtime = self._runtime_registry.get(sess.agent)
+        except Exception as exc:
+            runtime = None
+            logger.warning(
+                "sudo_code_cancel: runtime registry lookup failed for %s: %s",
+                sess.agent,
+                exc,
+            )
+        if runtime is not None:
             try:
-                runtime = self._runtime_registry.get(sess.agent)
+                runtime.cancel(pid=sess.pid, mode=normalized)
+                cancelled = True
             except Exception as exc:
-                runtime = None
-                logger.warning(
-                    "sudo_code_cancel: runtime registry lookup failed for %s: %s",
-                    sess.agent,
+                logger.error(
+                    "sudo_code_cancel: runtime.cancel failed for pid=%s: %s",
+                    sess.pid,
                     exc,
                 )
-            if runtime is not None:
-                try:
-                    runtime.cancel(pid=sess.pid, mode=normalized)
-                    cancelled = True
-                except Exception as exc:
-                    logger.error(
-                        "sudo_code_cancel: runtime.cancel failed for pid=%s: %s",
-                        sess.pid,
-                        exc,
-                    )
 
         if normalized == "cancel_session":
             try:
@@ -302,11 +305,11 @@ class _Session:
 
     Lightweight value type — no methods. The kernel-side AgentTable is the
     state SSOT; this struct only carries the surface sudowork addresses
-    (session_id, agent name, workspace) plus a `runtime_started` flag so
-    cancel knows whether to call into the runtime registry.
+    (session_id, agent name, workspace) that the RPC handlers need to
+    reach AgentRegistry on follow-up calls.
     """
 
-    __slots__ = ("session_id", "pid", "agent", "model", "workspace_path", "runtime_started")
+    __slots__ = ("session_id", "pid", "agent", "model", "workspace_path")
 
     def __init__(
         self,
@@ -315,11 +318,9 @@ class _Session:
         agent: str,
         model: str,
         workspace_path: str,
-        runtime_started: bool,
     ) -> None:
         self.session_id = session_id
         self.pid = pid
         self.agent = agent
         self.model = model
         self.workspace_path = workspace_path
-        self.runtime_started = runtime_started

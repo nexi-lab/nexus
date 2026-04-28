@@ -3,8 +3,9 @@
 Mocks AgentRegistry (single authority over pid identity) and the
 AgentRuntimeRegistry slot (kernel-knows trait DI for the in-process
 sudo-code crate). Covers the contract sudowork sees: spawn / cancel /
-get_session, plus the best-effort runtime dispatch when no runtime is
-registered for the agent.
+get_session, plus the fail-loudly behaviour when no runtime is
+registered for the agent (silent failure would have sudowork waiting
+for responses that never come).
 """
 
 from __future__ import annotations
@@ -153,35 +154,31 @@ class TestStartSession:
         assert rs["model"] == "claude-sonnet-4-6"
 
     @pytest.mark.asyncio
-    async def test_no_runtime_registry_still_creates_agent_record(self):
-        """When runtime_registry is None, the AgentRegistry record is created
-        but the runtime spawn is skipped — sudowork sees a clean response so
-        a follow-up runtime install can pick the agent up."""
+    async def test_no_runtime_registry_reaps_pid_and_raises(self):
+        """When runtime_registry is None, the service falls back to a
+        default-empty registry. start_session must fail loudly: returning
+        a session_id with no runtime driving it would be silent failure
+        (sudowork would wait for responses that never come)."""
         ar = MockAgentRegistry()
         svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=None)
 
-        result = await svc.sudo_code_start_session(agent="scode-standard")
+        with pytest.raises(RuntimeError, match="no runtime registered"):
+            await svc.sudo_code_start_session(agent="scode-standard")
 
-        assert result["agent_id"] == "pid-1"
         assert len(ar.spawn_calls) == 1
-        # No runtime, no kill — agent is registered, just not driven.
-        assert ar.kill_calls == []
+        assert ar.kill_calls == [("pid-1", -1)]
 
     @pytest.mark.asyncio
-    async def test_runtime_not_registered_for_agent_logs_warning(self, caplog):
-        """Registry exists, but no runtime for this agent — warn, don't fail."""
-        import logging
-
+    async def test_runtime_not_registered_for_agent_reaps_pid_and_raises(self):
+        """Registry exists but no runtime for this agent — reap and raise."""
         ar = MockAgentRegistry()
         rr = MockRuntimeRegistry()  # empty
         svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=rr)
 
-        with caplog.at_level(logging.WARNING, logger="nexus.services.sudo_code"):
-            result = await svc.sudo_code_start_session(agent="scode-fast")
+        with pytest.raises(RuntimeError, match="no runtime registered"):
+            await svc.sudo_code_start_session(agent="scode-fast")
 
-        assert result["agent_id"] == "pid-1"
-        assert "no runtime registered" in caplog.text
-        assert ar.kill_calls == []
+        assert ar.kill_calls == [("pid-1", -1)]
 
     @pytest.mark.asyncio
     async def test_runtime_spawn_failure_reaps_pid_and_raises(self):
@@ -208,7 +205,8 @@ class TestStartSession:
     @pytest.mark.asyncio
     async def test_zone_and_owner_pulled_from_context(self):
         ar = MockAgentRegistry()
-        svc = SudoCodeRPCService(agent_registry=ar, zone_id="default")
+        rr = MockRuntimeRegistry({"scode-standard": MockRuntime()})
+        svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=rr, zone_id="default")
 
         await svc.sudo_code_start_session(
             agent="scode-standard",
@@ -221,7 +219,8 @@ class TestStartSession:
     @pytest.mark.asyncio
     async def test_zone_and_owner_default_when_no_context(self):
         ar = MockAgentRegistry()
-        svc = SudoCodeRPCService(agent_registry=ar, zone_id="default")
+        rr = MockRuntimeRegistry({"scode-standard": MockRuntime()})
+        svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=rr, zone_id="default")
 
         await svc.sudo_code_start_session(agent="scode-standard")
 
@@ -229,22 +228,18 @@ class TestStartSession:
         assert ar.spawn_calls[0]["owner_id"] == "system"
 
     @pytest.mark.asyncio
-    async def test_runtime_registry_lookup_failure_does_not_break_session(self, caplog):
-        """The registry surface is open — a buggy registry must not take down
-        the spawn path. The agent record still gets created."""
-        import logging
-
+    async def test_runtime_registry_lookup_failure_reaps_pid_and_raises(self):
+        """A buggy registry is a misconfiguration — fail loudly so sudowork
+        doesn't think the session is live."""
         ar = MockAgentRegistry()
         rr = MagicMock()
         rr.get.side_effect = RuntimeError("registry exploded")
         svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=rr)
 
-        with caplog.at_level(logging.WARNING, logger="nexus.services.sudo_code"):
-            result = await svc.sudo_code_start_session(agent="scode-standard")
+        with pytest.raises(RuntimeError, match="lookup failed"):
+            await svc.sudo_code_start_session(agent="scode-standard")
 
-        assert result["agent_id"] == "pid-1"
-        assert "registry lookup failed" in caplog.text
-        assert ar.kill_calls == []
+        assert ar.kill_calls == [("pid-1", -1)]
 
 
 # ---------------------------------------------------------------------------
@@ -297,24 +292,11 @@ class TestCancel:
     @pytest.mark.asyncio
     async def test_cancel_invalid_mode_rejected(self):
         ar = MockAgentRegistry()
-        svc = SudoCodeRPCService(agent_registry=ar)
+        rr = MockRuntimeRegistry({"scode-standard": MockRuntime()})
+        svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=rr)
         started = await svc.sudo_code_start_session(agent="scode-standard")
         with pytest.raises(ValueError, match="must be 'cancel_turn' or 'cancel_session'"):
             await svc.sudo_code_cancel(session_id=started["session_id"], mode="explode")
-
-    @pytest.mark.asyncio
-    async def test_cancel_session_without_runtime_still_kills_pid(self):
-        """Sessions whose runtime never started still need their AgentRegistry
-        record reaped — keeps state from drifting."""
-        ar = MockAgentRegistry()
-        svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=None)
-
-        started = await svc.sudo_code_start_session(agent="scode-standard")
-
-        result = await svc.sudo_code_cancel(session_id=started["session_id"], mode="cancel_session")
-
-        assert result["cancelled"] is True
-        assert ar.kill_calls == [("pid-1", 0)]
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +308,8 @@ class TestGetSession:
     @pytest.mark.asyncio
     async def test_returns_state_from_registry(self):
         ar = MockAgentRegistry()
-        svc = SudoCodeRPCService(agent_registry=ar)
+        rr = MockRuntimeRegistry({"scode-standard": MockRuntime()})
+        svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=rr)
         started = await svc.sudo_code_start_session(agent="scode-standard")
 
         snap = await svc.sudo_code_get_session(session_id=started["session_id"])
@@ -341,7 +324,8 @@ class TestGetSession:
     async def test_terminated_pid_surfaces_as_terminated_state(self):
         """When AgentRegistry.get returns None (pid reaped), state is 'terminated'."""
         ar = MockAgentRegistry()
-        svc = SudoCodeRPCService(agent_registry=ar)
+        rr = MockRuntimeRegistry({"scode-standard": MockRuntime()})
+        svc = SudoCodeRPCService(agent_registry=ar, runtime_registry=rr)
         started = await svc.sudo_code_start_session(agent="scode-standard")
         # Simulate pid reaped out-of-band.
         ar._procs.clear()

@@ -372,18 +372,21 @@ impl FederationProvider for RaftFederationProvider {
     fn register_share(
         &self,
         _kernel: &Kernel,
-        _local_path: &str,
-        _zone_id: &str,
+        local_path: &str,
+        zone_id: &str,
     ) -> FederationResult<()> {
-        Err("register_share: not yet wired through trait".into())
+        let zm = self.zm().ok_or("federation not active")?;
+        zm.register_share(local_path, zone_id)
+            .map_err(|e| e.to_string())
     }
 
     fn lookup_share(
         &self,
         _kernel: &Kernel,
-        _remote_path: &str,
+        remote_path: &str,
     ) -> FederationResult<Option<String>> {
-        Ok(None)
+        let zm = self.zm().ok_or("federation not active")?;
+        zm.lookup_share(remote_path).map_err(|e| e.to_string())
     }
 
     fn zone_links_count(&self, _kernel: &Kernel, _zone_id: &str) -> FederationResult<i64> {

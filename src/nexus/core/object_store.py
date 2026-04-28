@@ -129,6 +129,19 @@ class ObjectStoreABC(ABC):
 
     # === Streaming (concrete defaults) ===
 
+    @staticmethod
+    def _validate_stream_chunk_size(chunk_size: int) -> None:
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+    @classmethod
+    def _validate_stream_range(cls, start: int, end: int, chunk_size: int) -> None:
+        if start < 0:
+            raise ValueError(f"start must be non-negative, got {start}")
+        if end < start:
+            raise ValueError(f"end ({end}) must be >= start ({start})")
+        cls._validate_stream_chunk_size(chunk_size)
+
     def write_stream(
         self,
         chunks: Iterator[bytes],
@@ -172,6 +185,7 @@ class ObjectStoreABC(ABC):
         Yields:
             Chunks of file content.
         """
+        self._validate_stream_chunk_size(chunk_size)
         content = self.read_content(content_id, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
@@ -199,6 +213,7 @@ class ObjectStoreABC(ABC):
         Yields:
             Chunks covering the requested range.
         """
+        self._validate_stream_range(start, end, chunk_size)
         content = self.read_content(content_id, context=context)
         sliced = content[start : end + 1]
         for i in range(0, len(sliced), chunk_size):

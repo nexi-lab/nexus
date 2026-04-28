@@ -368,6 +368,7 @@ class Backend(ObjectStoreABC):
         """
         # Default implementation: read entire file and yield in chunks
         # Backends can override for true streaming from storage
+        self._validate_stream_chunk_size(chunk_size)
         content = self.read_content(content_id, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
@@ -395,6 +396,7 @@ class Backend(ObjectStoreABC):
         Yields:
             bytes: Chunks covering the requested range
         """
+        self._validate_stream_range(start, end, chunk_size)
         content = self.read_content(content_id, context=context)
         sliced = content[start : end + 1]
         for i in range(0, len(sliced), chunk_size):

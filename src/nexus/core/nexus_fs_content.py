@@ -441,6 +441,9 @@ class ContentMixin:
             >>> for chunk in nx.stream("/workspace/video.mp4", chunk_size=1024*1024):  # 1MB chunks
             ...     sys.stdout.buffer.write(chunk)
         """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
         path = self._validate_path(path)
 
         # Route through sys_read — Rust handles pre-hooks, CAS, federation,
@@ -474,6 +477,13 @@ class ContentMixin:
         Yields:
             bytes: Chunks of file content within the requested range
         """
+        if start < 0:
+            raise ValueError(f"start must be non-negative, got {start}")
+        if end < start:
+            raise ValueError(f"end ({end}) must be >= start ({start})")
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
         path = self._validate_path(path)
 
         # Route through sys_read with offset/count — Rust handles hooks,

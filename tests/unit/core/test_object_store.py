@@ -91,6 +91,43 @@ class MockBackend(Backend):
         return False
 
 
+class DirectObjectStore(ObjectStoreABC):
+    """Minimal direct ObjectStoreABC implementation for default method tests."""
+
+    def __init__(self) -> None:
+        self._content: dict[str, bytes] = {}
+
+    @property
+    def name(self) -> str:
+        return "direct"
+
+    def write_content(
+        self, content, content_id: str = "", *, offset: int = 0, context=None
+    ) -> WriteResult:
+        key = content_id or hashlib.sha256(content).hexdigest()
+        self._content[key] = content
+        return WriteResult(content_id=key, size=len(content))
+
+    def read_content(self, content_id, context=None) -> bytes:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(path=content_id, message="Content not found")
+        return self._content[content_id]
+
+    def delete_content(self, content_id, context=None) -> None:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(path=content_id, message="Content not found")
+        del self._content[content_id]
+
+    def get_content_size(self, content_id, context=None) -> int:
+        return len(self.read_content(content_id, context=context))
+
+    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
+        return None
+
+    def rmdir(self, path, recursive=False, context=None) -> None:
+        return None
+
+
 # === Fixtures ===
 
 
@@ -110,6 +147,14 @@ def mock_backend() -> MockBackend:
 def mock_store() -> MockBackend:
     """MockBackend as ObjectStoreABC (Backend IS ObjectStoreABC now)."""
     return MockBackend()
+
+
+@pytest.fixture(params=["backend", "object_store"])
+def default_stream_store(request) -> ObjectStoreABC:
+    """Stores that exercise Backend and direct ObjectStoreABC stream defaults."""
+    if request.param == "backend":
+        return MockBackend()
+    return DirectObjectStore()
 
 
 @pytest.fixture(params=["local", "mock"])
@@ -287,6 +332,36 @@ class TestErrorHandling:
         h1 = mock_store.write_content(content).content_id
         h2 = mock_store.write_content(content).content_id
         assert h1 == h2
+
+
+class TestDefaultStreamingValidation:
+    def test_stream_content_rejects_non_positive_chunk_size(
+        self, default_stream_store: ObjectStoreABC
+    ) -> None:
+        content_id = default_stream_store.write_content(b"abcdef").content_id
+        with pytest.raises(ValueError, match="chunk_size must be positive"):
+            list(default_stream_store.stream_content(content_id, chunk_size=0))
+
+    def test_stream_range_rejects_negative_start(
+        self, default_stream_store: ObjectStoreABC
+    ) -> None:
+        content_id = default_stream_store.write_content(b"abcdef").content_id
+        with pytest.raises(ValueError, match="start must be non-negative"):
+            list(default_stream_store.stream_range(content_id, -1, 3))
+
+    def test_stream_range_rejects_end_before_start(
+        self, default_stream_store: ObjectStoreABC
+    ) -> None:
+        content_id = default_stream_store.write_content(b"abcdef").content_id
+        with pytest.raises(ValueError, match="end.*must be >= start"):
+            list(default_stream_store.stream_range(content_id, 4, 3))
+
+    def test_stream_range_rejects_non_positive_chunk_size(
+        self, default_stream_store: ObjectStoreABC
+    ) -> None:
+        content_id = default_stream_store.write_content(b"abcdef").content_id
+        with pytest.raises(ValueError, match="chunk_size must be positive"):
+            list(default_stream_store.stream_range(content_id, 0, 3, chunk_size=0))
 
 
 # === Hash Validation Tests (Issue 5A) ===

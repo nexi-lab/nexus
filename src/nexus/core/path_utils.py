@@ -218,9 +218,10 @@ def validate_path(path: str, *, allow_root: bool = False) -> str:
                 f"Path components must not contain spaces at start/end.",
             )
 
-    # Reject parent directory traversal
-    if ".." in path:
-        raise InvalidPathError(path, "Path contains '..' segments")
+    # Reject traversal/aliasing segments. Match whole components only:
+    # filenames like "file..txt" and ".hidden" are valid names.
+    if any(part in {".", ".."} for part in parts):
+        raise InvalidPathError(path, "Path contains '.' or '..' segments")
 
     return path
 

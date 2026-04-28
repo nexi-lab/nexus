@@ -831,6 +831,7 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyTrustedZone>()?;
     }
     m.add_function(wrap_pyfunction!(install_federation_wiring_py, m)?)?;
+    m.add_function(wrap_pyfunction!(federation_is_initialized_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_create_zone_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_remove_zone_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_join_zone_py, m)?)?;
@@ -840,6 +841,20 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(federation_zone_links_count_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_zone_cluster_info_py, m)?)?;
     Ok(())
+}
+
+/// Federation readiness probe — replacement for the old
+/// `kernel.mount_reconciliation_done` PyO3 method.  Returns `True`
+/// once the FederationProvider has bootstrapped (ZoneManager exists,
+/// root zone loaded).  Used by `fastapi_server._federation_rpc_active`
+/// to decide whether to mount the FederationRPCService.
+#[pyfunction]
+#[pyo3(name = "federation_is_initialized")]
+fn federation_is_initialized_py(
+    kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
+) -> PyResult<bool> {
+    let k = kernel.kernel_ref();
+    Ok(k.federation_arc().is_initialized(k))
 }
 
 /// Python-facing one-shot install: replaces the kernel's

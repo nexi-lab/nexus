@@ -138,26 +138,24 @@ SANDBOX_HTTP_ALLOWLIST: frozenset[str] = frozenset(
 def _federation_rpc_active(kernel: Any) -> bool:
     """Decide whether to mount FederationRPCService on the RPC surface.
 
-    Gates on two signals:
-    - ``mount_reconciliation_done()`` — kernel bootstrap has finished.
-    - ``callable(zone_list)`` — kernel actually exposes the zone API
-      (slim profiles don't).
+    Gates on the FederationProvider readiness probe — Phase H made
+    zone lifecycle a kernel-internal HAL trait, so the kernel no
+    longer exposes ``mount_reconciliation_done`` / ``zone_list`` as
+    PyO3 methods.  ``nexus_runtime.federation_is_initialized(kernel)``
+    is the supported readiness probe; it returns True once the
+    ZoneManager is bootstrapped on this node.
 
-    Does NOT inspect ``zone_list()``'s result: a brand-new stack has zero
-    zones, and ``federation_list_zones`` is the primary way to observe
-    that state. Gating on non-empty would make bootstrap chicken-and-egg
-    (#3784 follow-up: ``federation_list_zones`` returns 'Method not found'
-    on fresh stacks).
+    Does NOT inspect ``federation_list_zones``'s result: a brand-new
+    stack has zero zones, and ``federation_list_zones`` is the primary
+    way to observe that state.  Gating on non-empty would make
+    bootstrap chicken-and-egg.
     """
     if kernel is None:
         return False
     try:
-        mrd = getattr(kernel, "mount_reconciliation_done", None)
-        active = bool(mrd()) if callable(mrd) else bool(mrd)
-        if not active:
-            return False
-        zl = getattr(kernel, "zone_list", None)
-        return callable(zl)
+        import nexus_runtime as _nr
+
+        return bool(_nr.federation_is_initialized(kernel))
     except Exception:
         return False
 

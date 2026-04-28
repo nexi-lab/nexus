@@ -983,6 +983,7 @@ def generate_stubs(
     # Federation control-plane (kernel-internal HAL bridges, exposed to
     # Python as module-level functions — analogue to mkfs / zfs admin).
     lines.append("def install_federation_wiring(kernel: Any) -> None: ...")
+    lines.append("def federation_is_initialized(kernel: Any) -> bool: ...")
     lines.append("def federation_create_zone(kernel: Any, zone_id: str) -> str: ...")
     lines.append(
         "def federation_remove_zone(kernel: Any, zone_id: str, force: bool = False) -> None: ..."

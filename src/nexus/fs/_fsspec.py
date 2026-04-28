@@ -268,7 +268,10 @@ class NexusFileSystem(AbstractFileSystem):
                 f"Use open() for streaming access."
             )
 
-        return self._kernel.sys_read(path, context=LOCAL_CONTEXT)
+        result = self._kernel.sys_read(path, context=LOCAL_CONTEXT)
+        # _cat_file targets DT_REG; the dict shape is DT_STREAM-only.
+        assert isinstance(result, bytes)
+        return result
 
     # -- Write -----------------------------------------------------------------
 

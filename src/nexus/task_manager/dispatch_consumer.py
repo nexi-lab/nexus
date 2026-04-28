@@ -194,6 +194,10 @@ class TaskDispatchPipeConsumer:
                 await asyncio.sleep(0.01)
                 continue
 
+            # _TASK_DISPATCH_PIPE_PATH is a DT_PIPE — sys_read returns
+            # raw bytes for DT_PIPE (only DT_STREAM returns the dict shape).
+            assert isinstance(data, bytes)
+
             try:
                 msg = json.loads(data)
                 await self._dispatch(msg)

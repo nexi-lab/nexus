@@ -68,8 +68,12 @@ class ContentMixin:
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-    ) -> bytes:
+    ) -> bytes | dict[str, Any]:
         """Read file content as bytes (POSIX pread(2)).
+
+        DT_REG / DT_PIPE return ``bytes``. DT_STREAM returns
+        ``{"data": bytes, "next_offset": int}`` so consumers can advance
+        their cursor without decoding the 4-byte LE frame header.
 
         Thin async wrapper around Rust Kernel.sys_read (pure Rust, zero GIL).
         DT_PIPE/DT_STREAM, resolve, and hooks are [TRANSITIONAL] — migrates
@@ -127,14 +131,17 @@ class ContentMixin:
                 _data = _data[offset : offset + count] if count is not None else _data[offset:]
             return bytes(_data)
 
-        # DT_STREAM: blocking reads with offset tracking
+        # DT_STREAM: blocking reads with offset tracking. Returns dict so
+        # the caller can advance its cursor without manually decoding the
+        # 4-byte LE frame header.
         if result.entry_type == 4:  # DT_STREAM
             _result = self._kernel.stream_read_at(path, offset)
             if _result is not None:
-                return bytes(_result[0])
+                _data, _next = _result
+                return {"data": bytes(_data), "next_offset": _next}
             # Slow path — block in Rust (GIL-free)
             _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
-            return bytes(_data)
+            return {"data": bytes(_data), "next_offset": _next}
 
         # DT_REG: Rust guarantees data is set on success.
         data = result.data or b""
@@ -404,6 +411,8 @@ class ContentMixin:
 
         # Use Rust sys_read with offset/count for range reads
         content = self.sys_read(path, count=end, offset=0, context=context)
+        # read_range targets DT_REG; the dict shape is DT_STREAM-only.
+        assert isinstance(content, bytes)
         return content[start:end]
 
     @rpc_expose(description="Stream file content in chunks")
@@ -449,6 +458,8 @@ class ContentMixin:
         # Route through sys_read — Rust handles pre-hooks, CAS, federation,
         # external connector dispatch.  Chunked Rust reads are future work.
         data = self.sys_read(path, context=context)
+        # stream() chunks DT_REG content; the dict shape is DT_STREAM-only.
+        assert isinstance(data, bytes)
         for pos in range(0, len(data), chunk_size):
             yield data[pos : pos + chunk_size]
 
@@ -489,6 +500,8 @@ class ContentMixin:
         # Route through sys_read with offset/count — Rust handles hooks,
         # CAS routing, federation, external connectors.
         data = self.sys_read(path, count=end - start + 1, offset=start, context=context)
+        # stream_range targets DT_REG; the dict shape is DT_STREAM-only.
+        assert isinstance(data, bytes)
         for pos in range(0, len(data), chunk_size):
             yield data[pos : pos + chunk_size]
 

@@ -72,11 +72,14 @@ async def handle_read_async(
         if result:
             return result
 
-    # Plain sys_read (Tier 1) — no metadata, no parsing
+    # Plain sys_read (Tier 1) — no metadata, no parsing.
+    # DT_REG / DT_PIPE return bytes; DT_STREAM returns
+    # ``{"data": bytes, "next_offset": int}`` so JSON-RPC consumers can
+    # advance their cursor without decoding the frame header.
     if not parsed and not return_metadata:
         _count = getattr(params, "count", None)
         _offset = getattr(params, "offset", 0) or 0
-        read_result: bytes = nexus_fs.sys_read(
+        read_result: bytes | dict[str, Any] = nexus_fs.sys_read(
             params.path,
             count=_count,
             offset=_offset,

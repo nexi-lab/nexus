@@ -26,78 +26,15 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 
 // ── RustService trait ───────────────────────────────────────────────────
-
-/// Error returned by `RustService::dispatch` and surfaced through
-/// `Kernel::dispatch_rust_call`. Maps onto JSON-RPC-shaped wire error
-/// codes by the gRPC `Call` handler (commit 13).
-#[derive(Debug)]
-pub enum RustCallError {
-    /// Method name is not handled by this service. The default
-    /// `RustService::dispatch` impl returns this so existing services
-    /// compile without an explicit override.
-    NotFound,
-    /// Payload could not be parsed, or its fields are out of range.
-    InvalidArgument(String),
-    /// Service-internal failure (state corruption, downstream IO error).
-    Internal(String),
-}
-
-impl std::fmt::Display for RustCallError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotFound => write!(f, "method not found"),
-            Self::InvalidArgument(m) => write!(f, "invalid argument: {m}"),
-            Self::Internal(m) => write!(f, "internal: {m}"),
-        }
-    }
-}
-
-impl std::error::Error for RustCallError {}
-
-/// Surface a Rust-implemented service exposes to ServiceRegistry.
-///
-/// Mirrors the Python `BackgroundService` protocol but with synchronous
-/// Rust signatures — the Rust path skips the asyncio.run trampoline the
-/// Python path needs. `start` / `stop` are still called by
-/// `start_all` / `stop_all`; `name` is the canonical service name used
-/// for `nx.service("…")` lookups.
-///
-/// Implementors live in `rust/kernel/src/<service>/` (or post-3932,
-/// `rust/services/src/<service>/`). They must be `Send + Sync` so the
-/// registry can hand `Arc<dyn RustService>` to multiple consumers.
-pub trait RustService: Send + Sync {
-    fn name(&self) -> &str;
-
-    /// Start the service. Called once at bootstrap (or at enlist time
-    /// for services registered post-bootstrap). Blocking is fine — the
-    /// Rust path does not run on the asyncio loop.
-    fn start(&self) -> Result<(), String> {
-        Ok(())
-    }
-
-    /// Stop the service. Called once at shutdown, in reverse
-    /// registration order.
-    fn stop(&self) -> Result<(), String> {
-        Ok(())
-    }
-
-    /// Dispatch a JSON-encoded RPC. The gRPC `Call` handler routes
-    /// `NexusVFSService.Call(method, payload)` requests to a Rust
-    /// service first via `Kernel::dispatch_rust_call`; on `NotFound`
-    /// the handler falls through to the Python `dispatch_method` path,
-    /// preserving compatibility with `@rpc_expose` services.
-    ///
-    /// `method` is the bare method name (no service prefix). `payload`
-    /// is the raw JSON request body — implementations parse and encode
-    /// with `serde_json` and surface decode failures as
-    /// `RustCallError::InvalidArgument`.
-    ///
-    /// Default impl returns `NotFound` so services that do not yet
-    /// expose any RPCs continue to compile.
-    fn dispatch(&self, _method: &str, _payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
-        Err(RustCallError::NotFound)
-    }
-}
+//
+// Trait + error type live in the `contracts` crate so out-of-kernel
+// services can implement / surface them without depending on this
+// crate. Re-exported here under the historical `service_registry`
+// path so existing intra-crate `use crate::service_registry::{...}`
+// import sites keep working. Visibility is `pub` so other workspace
+// crates (transport, services) can name the types in their own
+// `pub` signatures without each having to depend on `contracts`.
+pub use contracts::rust_service::{RustCallError, RustService};
 
 // ── ServiceInstance + ServiceEntry ──────────────────────────────────────
 

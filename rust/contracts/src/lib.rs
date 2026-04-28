@@ -7,6 +7,7 @@
 
 pub mod constants;
 pub mod lock_state;
+pub mod rust_service;
 
 pub use constants::{
     env, BLAKE3_EMPTY, MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID, SHARE_REGISTRY_PREFIX, VFS_ROOT,
@@ -14,3 +15,4 @@ pub use constants::{
 pub use lock_state::{
     HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState, Locks,
 };
+pub use rust_service::{RustCallError, RustService};

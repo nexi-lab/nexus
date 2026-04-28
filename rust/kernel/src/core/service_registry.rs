@@ -27,6 +27,33 @@ use pyo3::prelude::*;
 
 // ── RustService trait ───────────────────────────────────────────────────
 
+/// Error returned by `RustService::dispatch` and surfaced through
+/// `Kernel::dispatch_rust_call`. Maps onto JSON-RPC-shaped wire error
+/// codes by the gRPC `Call` handler (commit 13).
+#[derive(Debug)]
+pub(crate) enum RustCallError {
+    /// Method name is not handled by this service. The default
+    /// `RustService::dispatch` impl returns this so existing services
+    /// compile without an explicit override.
+    NotFound,
+    /// Payload could not be parsed, or its fields are out of range.
+    InvalidArgument(String),
+    /// Service-internal failure (state corruption, downstream IO error).
+    Internal(String),
+}
+
+impl std::fmt::Display for RustCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "method not found"),
+            Self::InvalidArgument(m) => write!(f, "invalid argument: {m}"),
+            Self::Internal(m) => write!(f, "internal: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for RustCallError {}
+
 /// Surface a Rust-implemented service exposes to ServiceRegistry.
 ///
 /// Mirrors the Python `BackgroundService` protocol but with synchronous
@@ -52,6 +79,23 @@ pub(crate) trait RustService: Send + Sync {
     /// registration order.
     fn stop(&self) -> Result<(), String> {
         Ok(())
+    }
+
+    /// Dispatch a JSON-encoded RPC. The gRPC `Call` handler routes
+    /// `NexusVFSService.Call(method, payload)` requests to a Rust
+    /// service first via `Kernel::dispatch_rust_call`; on `NotFound`
+    /// the handler falls through to the Python `dispatch_method` path,
+    /// preserving compatibility with `@rpc_expose` services.
+    ///
+    /// `method` is the bare method name (no service prefix). `payload`
+    /// is the raw JSON request body — implementations parse and encode
+    /// with `serde_json` and surface decode failures as
+    /// `RustCallError::InvalidArgument`.
+    ///
+    /// Default impl returns `NotFound` so services that do not yet
+    /// expose any RPCs continue to compile.
+    fn dispatch(&self, _method: &str, _payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+        Err(RustCallError::NotFound)
     }
 }
 

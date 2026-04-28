@@ -3568,4 +3568,74 @@ mod tests {
             "mount point should have been removed from the routing table"
         );
     }
+
+    // ── dispatch_rust_call ─────────────────────────────────────────────
+
+    mod dispatch_rust_call {
+        use super::*;
+        use crate::service_registry::{RustCallError, RustService};
+        use std::sync::Arc;
+
+        struct EchoService;
+
+        impl RustService for EchoService {
+            fn name(&self) -> &str {
+                "echo"
+            }
+            fn dispatch(&self, method: &str, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+                match method {
+                    "echo" => Ok(payload.to_vec()),
+                    _ => Err(RustCallError::NotFound),
+                }
+            }
+        }
+
+        #[test]
+        fn returns_none_for_unknown_service() {
+            let k = Kernel::new();
+            assert!(k.dispatch_rust_call("nope", "any", b"{}").is_none());
+        }
+
+        #[test]
+        fn returns_none_for_python_flavoured_service() {
+            // ServiceRegistry stores Python services through `enlist`;
+            // dispatch_rust_call only routes Rust-flavoured ones, so
+            // Python entries should fall through (None) — caller hands
+            // off to the Python `dispatch_method` path.
+            let k = Kernel::new();
+            assert!(k.dispatch_rust_call("auth_service", "any", b"{}").is_none());
+        }
+
+        #[test]
+        fn routes_through_to_registered_rust_service() {
+            let k = Kernel::new();
+            k.register_rust_service(
+                "echo",
+                Arc::new(EchoService) as Arc<dyn RustService>,
+                vec![],
+            )
+            .unwrap();
+            let out = k
+                .dispatch_rust_call("echo", "echo", b"hello")
+                .unwrap()
+                .unwrap();
+            assert_eq!(out, b"hello");
+        }
+
+        #[test]
+        fn surfaces_method_not_found_from_service() {
+            let k = Kernel::new();
+            k.register_rust_service(
+                "echo",
+                Arc::new(EchoService) as Arc<dyn RustService>,
+                vec![],
+            )
+            .unwrap();
+            let err = k
+                .dispatch_rust_call("echo", "nope", b"{}")
+                .unwrap()
+                .unwrap_err();
+            assert!(matches!(err, RustCallError::NotFound));
+        }
+    }
 }

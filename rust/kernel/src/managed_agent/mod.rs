@@ -45,9 +45,10 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 
-use crate::service_registry::RustService;
 use crate::core::agents::table::{AgentDescriptor, AgentKind, AgentState, AgentTable};
+use crate::service_registry::{RustCallError, RustService};
 
 pub(crate) mod mailbox_stamping_hook;
 pub(crate) mod mailbox_stamping_policy;
@@ -58,29 +59,33 @@ use session::{alloc_pid, alloc_session_id, now_ms, Session};
 
 // ── Public request / response shapes ────────────────────────────────────
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct WorkspaceRepo {
     pub host_path: String,
     pub alias: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct StartSessionRequest {
     pub agent: String,
+    #[serde(default)]
     pub repos: Vec<WorkspaceRepo>,
+    #[serde(default)]
     pub model: String,
+    #[serde(default)]
     pub owner_id: String,
+    #[serde(default)]
     pub zone_id: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct StartSessionResponse {
     pub session_id: String,
     pub agent_id: String,
     pub workspace_path: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct GetSessionResponse {
     pub session_id: String,
     pub agent_id: String,
@@ -90,13 +95,25 @@ pub(crate) struct GetSessionResponse {
     pub state: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum CancelMode {
     Turn,
     Session,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct CancelRequest {
+    pub session_id: String,
+    pub mode: CancelMode,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct GetSessionRequest {
+    pub session_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct CancelResponse {
     pub cancelled: bool,
 }
@@ -303,6 +320,18 @@ impl ManagedAgentService {
     }
 }
 
+impl From<ManagedAgentError> for RustCallError {
+    fn from(e: ManagedAgentError) -> Self {
+        match e {
+            ManagedAgentError::InvalidArgument(m) => Self::InvalidArgument(m),
+            ManagedAgentError::UnknownSession(s) => {
+                Self::InvalidArgument(format!("unknown session_id {s:?}"))
+            }
+            ManagedAgentError::Internal(m) => Self::Internal(m),
+        }
+    }
+}
+
 impl RustService for ManagedAgentService {
     fn name(&self) -> &str {
         Self::NAME
@@ -317,6 +346,33 @@ impl RustService for ManagedAgentService {
 
     fn stop(&self) -> Result<(), String> {
         Ok(())
+    }
+
+    /// Route the three session-lifecycle methods exposed over
+    /// `NexusVFSService.Call`. Method names are versioned so the wire
+    /// contract can evolve without breaking older sudowork clients.
+    fn dispatch(&self, method: &str, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+        match method {
+            "start_session_v1" => {
+                let req: StartSessionRequest = serde_json::from_slice(payload)
+                    .map_err(|e| RustCallError::InvalidArgument(e.to_string()))?;
+                let resp = self.start_session(req)?;
+                serde_json::to_vec(&resp).map_err(|e| RustCallError::Internal(e.to_string()))
+            }
+            "cancel_v1" => {
+                let req: CancelRequest = serde_json::from_slice(payload)
+                    .map_err(|e| RustCallError::InvalidArgument(e.to_string()))?;
+                let resp = self.cancel(&req.session_id, req.mode)?;
+                serde_json::to_vec(&resp).map_err(|e| RustCallError::Internal(e.to_string()))
+            }
+            "get_session_v1" => {
+                let req: GetSessionRequest = serde_json::from_slice(payload)
+                    .map_err(|e| RustCallError::InvalidArgument(e.to_string()))?;
+                let resp = self.get_session(&req.session_id)?;
+                serde_json::to_vec(&resp).map_err(|e| RustCallError::Internal(e.to_string()))
+            }
+            _ => Err(RustCallError::NotFound),
+        }
     }
 }
 
@@ -467,5 +523,101 @@ mod tests {
         let svc = fresh_service();
         let err = svc.get_session("sess-bogus").unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
+    }
+
+    // ── dispatch round-trip ─────────────────────────────────────────
+
+    mod dispatch {
+        use super::*;
+        use serde_json::json;
+
+        #[test]
+        fn start_session_v1_round_trip() {
+            let svc = fresh_service();
+            let payload = json!({
+                "agent": "scode-standard",
+                "model": "claude-sonnet-4-6",
+                "owner_id": "ethan",
+                "zone_id": "root",
+                "repos": [{"host_path": "/x/repo", "alias": "repo"}],
+            })
+            .to_string();
+            let bytes = svc
+                .dispatch("start_session_v1", payload.as_bytes())
+                .unwrap();
+            let resp: StartSessionResponse = serde_json::from_slice(&bytes).unwrap();
+            assert!(resp.session_id.starts_with("sess-"));
+            assert!(resp.agent_id.starts_with("pid-"));
+            assert_eq!(
+                resp.workspace_path,
+                format!("/proc/{}/workspace/", resp.agent_id)
+            );
+        }
+
+        #[test]
+        fn start_session_v1_defaults_optional_fields() {
+            let svc = fresh_service();
+            let payload = json!({"agent": "scode-standard"}).to_string();
+            let bytes = svc
+                .dispatch("start_session_v1", payload.as_bytes())
+                .unwrap();
+            let resp: StartSessionResponse = serde_json::from_slice(&bytes).unwrap();
+            assert!(resp.session_id.starts_with("sess-"));
+        }
+
+        #[test]
+        fn cancel_v1_session_round_trip() {
+            let svc = fresh_service();
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+            let payload = json!({"session_id": resp.session_id, "mode": "session"}).to_string();
+            let bytes = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap();
+            let cancel: CancelResponse = serde_json::from_slice(&bytes).unwrap();
+            assert!(cancel.cancelled);
+        }
+
+        #[test]
+        fn cancel_v1_turn_round_trip() {
+            let svc = fresh_service();
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+            let payload = json!({"session_id": resp.session_id, "mode": "turn"}).to_string();
+            let bytes = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap();
+            let cancel: CancelResponse = serde_json::from_slice(&bytes).unwrap();
+            assert!(cancel.cancelled);
+        }
+
+        #[test]
+        fn cancel_v1_unknown_session_surfaces_invalid_argument() {
+            let svc = fresh_service();
+            let payload = json!({"session_id": "sess-bogus", "mode": "session"}).to_string();
+            let err = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap_err();
+            assert!(matches!(err, RustCallError::InvalidArgument(_)));
+        }
+
+        #[test]
+        fn get_session_v1_round_trip() {
+            let svc = fresh_service();
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+            let payload = json!({"session_id": resp.session_id}).to_string();
+            let bytes = svc.dispatch("get_session_v1", payload.as_bytes()).unwrap();
+            let snap: GetSessionResponse = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(snap.session_id, resp.session_id);
+            assert_eq!(snap.state, "warming_up");
+        }
+
+        #[test]
+        fn unknown_method_returns_not_found() {
+            let svc = fresh_service();
+            let err = svc.dispatch("does_not_exist", b"{}").unwrap_err();
+            assert!(matches!(err, RustCallError::NotFound));
+        }
+
+        #[test]
+        fn malformed_payload_surfaces_invalid_argument() {
+            let svc = fresh_service();
+            let err = svc
+                .dispatch("start_session_v1", b"this is not json")
+                .unwrap_err();
+            assert!(matches!(err, RustCallError::InvalidArgument(_)));
+        }
     }
 }

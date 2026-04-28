@@ -100,4 +100,28 @@ impl Kernel {
     ) -> Option<std::sync::Arc<dyn crate::service_registry::RustService>> {
         self.service_registry.lookup_rust(name)
     }
+
+    /// Dispatch a JSON-encoded RPC to a Rust-flavoured service.
+    ///
+    /// `Some(Ok(bytes))` — service handled the call and returned a
+    /// JSON response.
+    /// `Some(Err(RustCallError))` — service exists but rejected the
+    /// call (NotFound / InvalidArgument / Internal).
+    /// `None` — `name` does not resolve as a Rust-flavoured service;
+    /// the gRPC `Call` handler falls through to the Python
+    /// `dispatch_method` path so `@rpc_expose` services keep working.
+    ///
+    /// Mirrors `service_lookup_rust` in keeping in-crate Rust callers
+    /// off `ServiceRegistry`; the registry stays a kernel primitive
+    /// (KERNEL-ARCHITECTURE §4) and consumers go through `Kernel`.
+    #[allow(dead_code)]
+    pub(crate) fn dispatch_rust_call(
+        &self,
+        name: &str,
+        method: &str,
+        payload: &[u8],
+    ) -> Option<Result<Vec<u8>, crate::service_registry::RustCallError>> {
+        let svc = self.service_registry.lookup_rust(name)?;
+        Some(svc.dispatch(method, payload))
+    }
 }

@@ -907,6 +907,18 @@ apply uniformly. `RustCallError::InvalidArgument` and `Internal`
 short-circuit straight to the wire encoder; no fallback in those
 cases.
 
+### 8.2 Registered Rust services
+
+| Service name | Source | Methods |
+|--------------|--------|---------|
+| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `services::agent_table::AgentTable` directly (no PyO3). |
+| `acp` | `rust/kernel/src/acp/` | `acp_call`, `acp_kill`, `acp_list_agents`, `acp_list_processes`, `acp_set_system_prompt`, `acp_get_system_prompt`, `acp_set_enabled_skills`, `acp_get_enabled_skills`, `acp_history` — stateless coding-agent CLI caller via ACP JSON-RPC. `call_agent` orchestrates `AcpSubprocess` (tokio Command + DT_PIPE) + `AcpConnection` + `AcpSubservice` lifecycle. AgentRegistry stays Python; reached through the `PyAgentRegistry` trait bridge wired by `nx_acp_set_agent_registry`. |
+
+In-process Python callers reach `acp_call` through
+`nexus_kernel.nx_acp_dispatch(kernel, "acp_call", payload)` (releases
+the GIL during the subprocess + ACP session). External callers come
+in over the tonic `Call` handler and follow the §8.1 dispatch order.
+
 ---
 
 ## 9. Cross-References

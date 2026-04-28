@@ -42,60 +42,62 @@ impl KernelBlobFetcher {
 impl BlobFetcher for KernelBlobFetcher {
     /// Resolve ``content_id`` against the local data plane.
     ///
-    /// Two cases — peer side picks based on what the local mount table
-    /// can route:
+    /// The peer doesn't tell us whether ``content_id`` is a VFS path, a
+    /// CAS hash, or a backend-specific handle. We try in order:
     ///
-    /// 1. **VFS path** — federation reads. ``content_id`` is the global
-    ///    VFS path the peer asked for. We re-route locally (peer self-
-    ///    routing — same as ``sys_read`` would), then read whatever the
-    ///    local backend stored at that path. The local
-    ///    ``FileMetadata.content_id`` (CAS hash or PAS backend_path,
-    ///    kernel-opaque) is the actual identifier we pass into
-    ///    ``read_content``; the backend interprets it.
+    /// 1. **Path-style local read** — if ``vfs_router.route()`` resolves
+    ///    ``content_id`` to a mount, try reading from that mount with
+    ///    the local ``FileMetadata.content_id`` (or the route's
+    ///    ``backend_path`` as a cold-cache fallback). This handles
+    ///    federation reads where the peer asked for a VFS path.
     ///
-    /// 2. **CAS chunk hash** — chunked dedup fetches. ``content_id`` is
-    ///    a content-address hash with no associated mount path; the
-    ///    ``vfs_router.route()`` call returns ``NotMounted`` so we fall
-    ///    through to a try-each-CAS-backend probe. The first backend
-    ///    that recognises the hash returns the bytes.
+    /// 2. **CAS hash fan-out** — if the path-style attempt didn't
+    ///    return bytes (mount lookup miss, or backend returned an
+    ///    error), try every backend's ``read_content(content_id, ctx)``.
+    ///    CAS backends recognise their hashes here; PAS / connector
+    ///    backends will reject and we move on. This catches:
+    ///      * CAS chunk fetches whose ``content_id`` is a raw hash
+    ///        with no mount path
+    ///      * Federation reads where the peer's local routing of the
+    ///        path doesn't reach the same mount as the writer (e.g.
+    ///        the writer published into a federation_share zone whose
+    ///        mount only exists on the joining node, or a crosslink
+    ///        alias whose target zone's storage lives elsewhere on
+    ///        the peer)
     ///
-    /// The kernel does not pre-classify which case ``content_id`` is —
-    /// the mount table answers that question. Caller-side (``kernel``,
-    /// ``peer_blob_client``, raft transport) stays purely transparent;
-    /// the dispatch is local to this peer's data plane, where it must
-    /// be (we are not a generic byte-server, we are this node's
-    /// VFSRouter).
+    /// Either path the file ends at the same shared storage Arc, so
+    /// fall-through is a thin extra try, not a heavy fan-out.
     async fn read(&self, content_id: &str) -> Result<Vec<u8>, String> {
         if content_id.is_empty() {
             return Err("empty content_id".to_string());
         }
         let ctx = OperationContext::new("system", contracts::ROOT_ZONE_ID, true, None, true);
 
-        // Case 1: VFS path → standard local read.
+        // Step 1: try path-style routing → local mount read.
         if let Ok(route) = self.vfs_router.route(content_id, contracts::ROOT_ZONE_ID) {
-            // Local content_id from FileMetadata: hash for CAS, backend_path
-            // for PAS — exactly what the local backend's `read_content`
-            // expects.  Fall back to `route.backend_path` when dcache is
-            // cold (PAS cold-read still works because backend_path is the
-            // PAS content_id by construction; CAS cold-read fails, but
-            // that's expected — CAS reads need metadata).
             let local_content_id = self
                 .dcache
                 .get_entry(content_id)
                 .and_then(|e| e.content_id)
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| route.backend_path.clone());
-            return self
-                .vfs_router
-                .read_content(&route.mount_point, &local_content_id, &ctx)
-                .ok_or_else(|| format!("read_content({content_id}): not found"));
+            if let Some(bytes) =
+                self.vfs_router
+                    .read_content(&route.mount_point, &local_content_id, &ctx)
+            {
+                return Ok(bytes);
+            }
         }
 
-        // Case 2: not a routable path → try each backend by raw
-        // content_id (CAS chunk-hash dedup fetch path).
+        // Step 2: hash-style fan-out across every local backend. CAS
+        // backends will recognise a hash; PAS / connector backends will
+        // reject and we keep walking. This is also the recovery path
+        // for federation-share / crosslink reads where the writer's
+        // local routing doesn't carry over verbatim to the peer's
+        // mount table.
         let backends = self.vfs_router.backends();
         if backends.is_empty() {
-            return Err("no local backends registered".to_string());
+            return Err(format!("read_content({content_id}): no local backends"));
         }
         let mut last_err: Option<String> = None;
         for backend in backends {
@@ -104,7 +106,7 @@ impl BlobFetcher for KernelBlobFetcher {
                 Err(e) => last_err = Some(format!("{:?}", e)),
             }
         }
-        Err(last_err.unwrap_or_else(|| "not found".to_string()))
+        Err(last_err.unwrap_or_else(|| format!("read_content({content_id}): not found")))
     }
 }
 

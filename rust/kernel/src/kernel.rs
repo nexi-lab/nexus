@@ -2996,22 +2996,36 @@ impl Kernel {
         // the runtime lingering if the future hadn't finished
         // draining; see R11 hypothesis #2).
         //
-        // Single transparent forward — kernel does not interpret what
-        // ``path`` means to the remote backend. Caching the fetched
-        // blob locally is intentionally NOT done here: that would
-        // require kernel-side knowledge of the local mount's
-        // addressing scheme (CAS hash → write_content; PAS → which
-        // backend_path slot), exactly the thing this refactor moved
-        // out. If a follow-up wants opportunistic local caching it
-        // belongs in the local backend's ``write_content`` callable
+        // Pass the file's **content_id** to the peer when we have one
+        // (CAS hash for content-addressed storage, backend_path for
+        // path-addressed storage). The peer's ``BlobFetcher::read``
+        // then either fans out by hash across CAS backends or routes
+        // the path to its own mount table. Falls back to the
+        // user-facing global ``path`` when content_id is unset (cold
+        // dcache or unwritten metadata) — ``BlobFetcher::read`` will
+        // path-route it through the peer's VFSRouter.
+        //
+        // Caching the fetched blob locally is intentionally NOT done
+        // here: that would require kernel-side knowledge of the local
+        // mount's addressing scheme (CAS hash → write_content; PAS →
+        // which backend_path slot), exactly the thing this refactor
+        // moved out. If a follow-up wants opportunistic local caching
+        // it belongs in the local backend's ``write_content`` callable
         // from the BlobFetcher impl, not here.
         //
         // Phase 4 (full): peer_client is now
         // ``RwLock<Arc<dyn PeerBlobClient>>``. ``peer_client_arc()``
         // clones the Arc out from under the read lock so the actual
         // fetch happens lock-free.
+        let fetch_key = entry
+            .content_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(path);
         let client = self.peer_client_arc();
-        let data = client.fetch(origin, path).map_err(KernelError::IOError)?;
+        let data = client
+            .fetch(origin, fetch_key)
+            .map_err(KernelError::IOError)?;
 
         Ok(SysReadResult {
             data: Some(data),

@@ -27,6 +27,10 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // §6 lib (libc analogue) — pure-Rust algorithm wrappers.
     lib::python::register(m)?;
     // §3 / §4 kernel — pillars + primitives + #[pyclass] surface.
+    // Also exposes `install_federation_wiring(kernel)` (Phase 5
+    // anchor): swaps the kernel's NoopFederationProvider for the
+    // real RaftFederationProvider so federation-aware syscalls
+    // dispatch through the trait.
     kernel::python::register(m)?;
     // Raft / federation — ZoneManager / ZoneHandle / MetaStore.
     nexus_raft::pyo3_bindings::register_python_classes(m)?;

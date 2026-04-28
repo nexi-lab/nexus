@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import blake3
 
-# RUST_FALLBACK: BloomFilter, read_file, read_files_bulk
+# RUST_FALLBACK: BloomFilter (read_file / read_files_bulk are required)
 if TYPE_CHECKING:
     from nexus_kernel import BloomFilter
 
@@ -413,16 +413,10 @@ class FileContentCache:
 
         cache_path = self._get_cache_path(zone_id, virtual_path)
 
-        # RUST_FALLBACK: read_file (optional — fall back to Python I/O if unavailable)
         from nexus._rust_compat import read_file
 
         try:
-            if read_file is not None:
-                result: bytes | None = read_file(str(cache_path))
-            else:
-                # Degraded path: Python read (stale/absent nexus_kernel)
-                result = cache_path.read_bytes() if cache_path.exists() else None
-            return result
+            return read_file(str(cache_path))
         except Exception as e:
             logger.warning(f"Failed to read cache file {cache_path}: {e}")
             return None
@@ -496,26 +490,9 @@ class FileContentCache:
             cache_to_virtual[cache_path] = vpath
             cache_paths.append(cache_path)
 
-        # RUST_FALLBACK: read_files_bulk (optional — fall back to sequential reads if unavailable)
-        from nexus._rust_compat import read_file, read_files_bulk
+        from nexus._rust_compat import read_files_bulk
 
-        if read_files_bulk is not None:
-            # Fast path: parallel mmap read
-            cache_contents = read_files_bulk(cache_paths)
-        else:
-            # Degraded path: sequential Python reads (stale/absent nexus_kernel)
-            cache_contents = {}
-            for cp in cache_paths:
-                if read_file is not None:
-                    data = read_file(cp)
-                else:
-                    try:
-                        with open(cp, "rb") as fh:
-                            data = fh.read()
-                    except OSError:
-                        data = None
-                if data is not None:
-                    cache_contents[cp] = data
+        cache_contents = read_files_bulk(cache_paths)
 
         # Map back to virtual paths
         result: dict[str, bytes] = {}

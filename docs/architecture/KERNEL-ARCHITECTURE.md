@@ -669,6 +669,27 @@ Rust treats each block as a member set of the same `Kernel` type, so
 `self.method_in_io()` from a submodule reaches `self.method_in_mod()`
 without intermediate trait dispatch.
 
+#### Federation DI surface
+
+The `Kernel.federation` slot holds an `Arc<dyn FederationProvider>`
+that drives every federation-aware syscall.  Trait surface lives in
+`kernel::hal::federation`; concrete impl
+(`RaftFederationProvider`) lives in `kernel::raft_federation_provider`.
+
+Boot wiring:
+
+| Step | Caller                                       | Effect                                    |
+|------|----------------------------------------------|-------------------------------------------|
+| 1    | `Kernel::new`                                | Slot defaults to `NoopFederationProvider` |
+| 2    | `nexus_kernel.install_federation_wiring(k)`  | Slot is replaced with `RaftFederationProvider` |
+| 3    | Federation syscalls (`init_federation_from_env`, …) | Dispatch through `kernel.federation_arc().<method>(kernel, …)` |
+
+Provider methods all take `kernel: &Kernel` so the unit-struct impl
+forwards into kernel-side primitives without holding back-references.
+The Phase 4 `PeerBlobClient` DI pattern is mirrored exactly:
+`set_federation` / `federation_arc` for the slot, dedicated
+`install_federation_wiring` boot hook for the swap.
+
 #### Wheel composition
 
 `rust/nexus-cdylib/src/lib.rs` is the sole `#[pymodule] fn

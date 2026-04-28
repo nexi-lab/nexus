@@ -4,21 +4,21 @@
 //! `Arc<nexus_raft::ZoneManager>` directly and 30+ call sites inside
 //! `kernel.rs` / `core/dlc.rs` / `core/stream/wal.rs` named raft
 //! types (`ZoneConsensus<FullStateMachine>`, `Command`, `BlobFetcherSlot`,
-//! `ZoneRaftRegistry`, …).  Adding `raft → kernel` (so Raft-backed
-//! `MetaStore` impls + replication scanners + WAL stream backends can
-//! depend on `kernel::abc::MetaStore` etc.) closed a Cargo cycle
-//! against the existing `kernel → raft` edge.
-//!
-//! This trait inverts the edge.  Kernel code holds an
-//! `Arc<dyn FederationProvider>` and never names a raft type; the
-//! concrete impl lives in `nexus_raft::federation_provider` and is
-//! installed by `nexus-cdylib` at boot via
-//! `Kernel::set_federation` (mirrors the Phase 4 PeerBlobClient DI
-//! pattern).
+//! `ZoneRaftRegistry`, …).  The kernel-side calls now go through this
+//! trait so federation-aware syscalls dispatch via `kernel.federation_arc()`
+//! instead of naming raft types directly.
 //!
 //! Linux analogue: kernel's `struct super_operations` — the filesystem
 //! abstraction surface that lets the VFS layer talk to any concrete
 //! filesystem driver without knowing the driver type.
+//!
+//! ## Method shape
+//!
+//! Every method takes `kernel: &Kernel` so the trait impl can reach
+//! kernel-side state (zone_manager, peer_client, dcache, vfs_router)
+//! without holding its own back-references.  Implementations are
+//! therefore unit / lightweight structs that delegate into the
+//! kernel's federation primitives.
 
 use std::sync::Arc;
 
@@ -37,15 +37,14 @@ pub type FederationResult<T> = Result<T, String>;
 ///
 /// Pre-Phase-5 this slot held a concrete `nexus_raft::blob_fetcher::
 /// BlobFetcherSlot`; the trait object form lets the kernel struct
-/// stay raft-free.
+/// stay raft-free at the call-site.
 pub type BlobFetcherSlot = Box<dyn std::any::Any + Send + Sync>;
 
 /// Abstract Raft federation surface.
 ///
-/// Implementor: `nexus_raft::federation_provider::RaftFederationProvider`.
-/// Kernel code calls into this trait whenever it needs a Raft-side
-/// service — zone listing, cross-zone routing, distributed lock
-/// installation, replicated stream construction, etc.
+/// Implementor: `kernel::raft_federation_provider::RaftFederationProvider`
+/// (Phase 5 anchor — provider lives in kernel for now; Phase H follow-up
+/// moves it to `nexus_raft::federation_provider`).
 ///
 /// `Send + Sync + 'static` so the `Arc<dyn FederationProvider>` can be
 /// shared across syscall threads and the cdylib's tokio runtime
@@ -56,48 +55,51 @@ pub trait FederationProvider: Send + Sync + 'static {
     /// `NEXUS_DATA_DIR`, `NEXUS_NO_TLS`).  Idempotent — returns
     /// `Ok(false)` if federation was already initialised.  Returns
     /// `Ok(true)` on first successful init.
-    ///
-    /// The provider may stash a `BlobFetcherSlot` via
-    /// [`stash_blob_fetcher_slot`] during this call so the transport
-    /// crate's blob fetcher can install itself later.
     fn init_from_env(&self, kernel: &crate::kernel::Kernel) -> FederationResult<bool>;
 
     /// True once federation has been initialised (zone manager exists).
-    fn is_initialized(&self) -> bool;
+    fn is_initialized(&self, kernel: &crate::kernel::Kernel) -> bool;
 
     /// Federation gRPC server bind address (e.g. `"0.0.0.0:2126"`).
     /// `None` when federation is not initialised.
-    fn bind_address(&self) -> Option<String>;
+    fn bind_address(&self, kernel: &crate::kernel::Kernel) -> Option<String>;
 
     /// Hostname this node advertises in federation.  `None` when
     /// federation is not initialised.
-    fn hostname(&self) -> Option<String>;
+    fn hostname(&self, kernel: &crate::kernel::Kernel) -> Option<String>;
 
     /// List zone IDs the federation knows about.  Returns an empty
     /// `Vec` when federation is not initialised, so callers (e.g.
     /// `sys_listdir("/__zones__")`) get a stable shape regardless of
     /// federation state.
-    fn list_zones(&self) -> Vec<String>;
+    fn list_zones(&self, kernel: &crate::kernel::Kernel) -> Vec<String>;
 
     /// Construct a per-zone `MetaStore` impl backed by the federation's
     /// Raft state machine.  Used by `Kernel::add_mount` when wiring a
     /// federation-mounted zone — the returned `Arc<dyn MetaStore>`
     /// goes onto the mount entry so all path lookups under that mount
     /// route through Raft.
-    fn metastore_for_zone(&self, zone_id: &str) -> FederationResult<Arc<dyn MetaStore>>;
+    fn metastore_for_zone(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+    ) -> FederationResult<Arc<dyn MetaStore>>;
 
     /// Construct a per-zone distributed-lock backend.  Replaces the
     /// kernel's default `LocalLocks` for the given zone so lock
     /// acquisitions replicate via `Command::AcquireLock` on every
-    /// peer.  Called from `Kernel::install_distributed_locks`.
-    fn locks_for_zone(&self, zone_id: &str) -> FederationResult<Arc<dyn Locks>>;
+    /// peer.
+    fn locks_for_zone(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+    ) -> FederationResult<Arc<dyn Locks>>;
 
     /// Construct a per-zone WAL `StreamBackend` impl backed by Raft
-    /// `Command::AppendStreamEntry` proposals.  Used when
-    /// `sys_setattr(DT_STREAM, io_profile = "wal")` registers a new
-    /// stream.
+    /// `Command::AppendStreamEntry` proposals.
     fn wal_stream_for_zone(
         &self,
+        kernel: &crate::kernel::Kernel,
         zone_id: &str,
         stream_id: &str,
         prefix: &str,
@@ -108,6 +110,7 @@ pub trait FederationProvider: Send + Sync + 'static {
     /// but the federation knows another peer has it.
     fn remote_read_blob(
         &self,
+        kernel: &crate::kernel::Kernel,
         zone_id: &str,
         path: &str,
         content_id: &str,
@@ -115,8 +118,6 @@ pub trait FederationProvider: Send + Sync + 'static {
 
     /// Wire a federation mount: register the dcache coherence callback,
     /// install the per-mount metastore, and seed the DCache entry.
-    /// Called from the apply-side `mount_apply_cb` after a
-    /// `Command::MountTarget` lands.
     fn wire_mount(
         &self,
         kernel: &crate::kernel::Kernel,
@@ -125,11 +126,7 @@ pub trait FederationProvider: Send + Sync + 'static {
         target_zone: &str,
     ) -> FederationResult<()>;
 
-    /// Start the EC replication scanner for the given zone.  Returns
-    /// the scanner as an opaque `Send`able handle whose `Drop`
-    /// stops the background thread; `Kernel::start_replication_scanner`
-    /// stashes the handle so a later `stop_replication_scanner`
-    /// drains it.
+    /// Start the EC replication scanner for the given zone.
     fn start_replication_scanner(
         &self,
         kernel: &crate::kernel::Kernel,
@@ -140,20 +137,20 @@ pub trait FederationProvider: Send + Sync + 'static {
 
     /// Stash a transport-tier blob-fetcher slot.  Drained by
     /// `transport::blob::fetcher::install` at cdylib boot.
-    fn stash_blob_fetcher_slot(&self, slot: BlobFetcherSlot);
+    fn stash_blob_fetcher_slot(&self, kernel: &crate::kernel::Kernel, slot: BlobFetcherSlot);
 
     /// Take and return any previously stashed blob-fetcher slot.
     /// `None` after the first take or if no slot was stashed.
-    fn take_blob_fetcher_slot(&self) -> Option<BlobFetcherSlot>;
+    fn take_blob_fetcher_slot(&self, kernel: &crate::kernel::Kernel) -> Option<BlobFetcherSlot>;
 }
 
 /// No-op fallback used at `Kernel::new` so the federation slot is
 /// never `None` — non-cdylib Rust tests + WASM builds keep the same
 /// call shape.  Every method either returns an empty/`None` value or
 /// errors out with a clear "federation not installed" message; the
-/// cdylib's `nexus-cdylib::install_federation_wiring` boot path
-/// replaces this with the real `nexus_raft::federation_provider`
-/// impl before any federation syscall fires.
+/// cdylib's `install_federation_wiring` boot path replaces this with
+/// the real `RaftFederationProvider` impl before any federation
+/// syscall fires.
 pub struct NoopFederationProvider;
 
 impl FederationProvider for NoopFederationProvider {
@@ -161,32 +158,41 @@ impl FederationProvider for NoopFederationProvider {
         Err("FederationProvider not installed (non-cdylib build)".into())
     }
 
-    fn is_initialized(&self) -> bool {
+    fn is_initialized(&self, _kernel: &crate::kernel::Kernel) -> bool {
         false
     }
 
-    fn bind_address(&self) -> Option<String> {
+    fn bind_address(&self, _kernel: &crate::kernel::Kernel) -> Option<String> {
         None
     }
 
-    fn hostname(&self) -> Option<String> {
+    fn hostname(&self, _kernel: &crate::kernel::Kernel) -> Option<String> {
         None
     }
 
-    fn list_zones(&self) -> Vec<String> {
+    fn list_zones(&self, _kernel: &crate::kernel::Kernel) -> Vec<String> {
         Vec::new()
     }
 
-    fn metastore_for_zone(&self, _zone_id: &str) -> FederationResult<Arc<dyn MetaStore>> {
+    fn metastore_for_zone(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _zone_id: &str,
+    ) -> FederationResult<Arc<dyn MetaStore>> {
         Err("FederationProvider not installed".into())
     }
 
-    fn locks_for_zone(&self, _zone_id: &str) -> FederationResult<Arc<dyn Locks>> {
+    fn locks_for_zone(
+        &self,
+        _kernel: &crate::kernel::Kernel,
+        _zone_id: &str,
+    ) -> FederationResult<Arc<dyn Locks>> {
         Err("FederationProvider not installed".into())
     }
 
     fn wal_stream_for_zone(
         &self,
+        _kernel: &crate::kernel::Kernel,
         _zone_id: &str,
         _stream_id: &str,
         _prefix: &str,
@@ -196,6 +202,7 @@ impl FederationProvider for NoopFederationProvider {
 
     fn remote_read_blob(
         &self,
+        _kernel: &crate::kernel::Kernel,
         _zone_id: &str,
         _path: &str,
         _content_id: &str,
@@ -223,9 +230,9 @@ impl FederationProvider for NoopFederationProvider {
         Err("FederationProvider not installed".into())
     }
 
-    fn stash_blob_fetcher_slot(&self, _slot: BlobFetcherSlot) {}
+    fn stash_blob_fetcher_slot(&self, _kernel: &crate::kernel::Kernel, _slot: BlobFetcherSlot) {}
 
-    fn take_blob_fetcher_slot(&self) -> Option<BlobFetcherSlot> {
+    fn take_blob_fetcher_slot(&self, _kernel: &crate::kernel::Kernel) -> Option<BlobFetcherSlot> {
         None
     }
 }

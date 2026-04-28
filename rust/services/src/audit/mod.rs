@@ -29,7 +29,6 @@ use chrono::SecondsFormat;
 use serde::Serialize;
 
 use kernel::core::dispatch::{HookContext, NativeInterceptHook};
-use kernel::core::stream::wal::WalStreamCore;
 use kernel::kernel::{Kernel, KernelError};
 
 /// A single VFS operation record, serialised to JSON and appended to the
@@ -177,6 +176,7 @@ mod tests {
     use super::*;
     use kernel::abc::meta_store::{FileMetadata, MetaStore, MetaStoreError};
     use kernel::core::dispatch::{HookIdentity, WriteHookCtx};
+    use kernel::core::stream::wal::WalStreamCore;
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 

@@ -472,17 +472,44 @@ impl HookContext {
 /// [`Kernel::register_native_hook`].  Same in-tree Rust API model as
 /// Linux LSM's `security_add_hooks` — not an ABI, just a kernel API
 /// surface for in-tree kernel modules.
+/// Outcome of a pre-intercept call. `Pass` lets the operation proceed
+/// unchanged; `Replace(bytes)` substitutes the bytes for the original
+/// write content before the backend sees it. Replacement is only
+/// meaningful for write contexts — read / delete / rename / mkdir /
+/// rmdir / copy / stat / access ignore the replacement bytes (the
+/// caller dispatching those ops drops the result).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum HookOutcome {
+    Pass,
+    Replace(Vec<u8>),
+}
+
 #[allow(dead_code)]
 pub trait NativeInterceptHook: Send + Sync {
     fn name(&self) -> &str;
 
-    /// Pre-intercept: return Err(message) to abort the operation.
-    fn on_pre(&self, _ctx: &HookContext) -> Result<(), String> {
-        Ok(())
+    /// Pre-intercept: return `Err` to abort, `Ok(HookOutcome::Pass)`
+    /// to proceed unchanged, or `Ok(HookOutcome::Replace(bytes))` to
+    /// substitute the write content. The replacement variant is only
+    /// honoured by `sys_write`; other syscalls discard it.
+    fn on_pre(&self, _ctx: &HookContext) -> Result<HookOutcome, String> {
+        Ok(HookOutcome::Pass)
     }
 
     /// Post-intercept: fire-and-forget after operation completes.
     fn on_post(&self, _ctx: &HookContext) {}
+
+    /// Path-suffix this hook rewrites write content for. `None`
+    /// (default) means the hook is accept/reject only — the
+    /// dispatcher will pass `WriteHookCtx::content = vec![]` and
+    /// never honour `Replace`. `Some` opts the hook in to content
+    /// rewriting; the dispatcher clones the real bytes into the
+    /// context only when at least one registered hook declares a
+    /// suffix that matches the write path.
+    fn mutating_path_suffix(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 // ── TrieNode ──────────────────────────────────────────────────────────

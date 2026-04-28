@@ -17,7 +17,7 @@
 //! advertised mailbox and exists precisely so other agents can write to
 //! it without being inside the workspace.
 
-use crate::dispatch::{HookContext, NativeInterceptHook};
+use crate::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
 
 /// Path prefix that scopes this hook. Anything under `/proc/{pid}/workspace/`
 /// is governed by the workspace boundary check. Other paths short-circuit
@@ -79,7 +79,7 @@ impl NativeInterceptHook for WorkspaceBoundaryHook {
         "workspace_boundary"
     }
 
-    fn on_pre(&self, ctx: &HookContext) -> Result<(), String> {
+    fn on_pre(&self, ctx: &HookContext) -> Result<HookOutcome, String> {
         // Only mutating-write contexts gate the boundary; reads, stat, and
         // other no-mutation ops walk through.
         let path = match ctx {
@@ -90,21 +90,21 @@ impl NativeInterceptHook for WorkspaceBoundaryHook {
             | HookContext::Rename(_)
             | HookContext::Copy(_)
             | HookContext::WriteBatch(_) => ctx.path(),
-            _ => return Ok(()),
+            _ => return Ok(HookOutcome::Pass),
         };
 
         let owner_pid = match Self::owner_pid(path) {
             Some(p) => p,
-            None => return Ok(()),
+            None => return Ok(HookOutcome::Pass),
         };
 
         if Self::is_chat_with_me(path, owner_pid) {
-            return Ok(());
+            return Ok(HookOutcome::Pass);
         }
 
         let caller = &ctx.identity().agent_id;
         if caller == owner_pid || caller.is_empty() {
-            return Ok(());
+            return Ok(HookOutcome::Pass);
         }
 
         Err(Self::teaching_error(path, owner_pid, caller))

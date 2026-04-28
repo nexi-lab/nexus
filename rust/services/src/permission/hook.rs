@@ -18,7 +18,7 @@
 //! as `services::audit::AuditHook`) and §11 Phase 11 will wire it up.
 
 use dashmap::DashMap;
-use kernel::core::dispatch::{HookContext, NativeInterceptHook};
+use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -190,19 +190,19 @@ impl NativeInterceptHook for PermissionHook {
         "permission_check"
     }
 
-    fn on_pre(&self, ctx: &HookContext) -> Result<(), String> {
+    fn on_pre(&self, ctx: &HookContext) -> Result<HookOutcome, String> {
         if !self.enforce.load(Ordering::Relaxed) {
-            return Ok(());
+            return Ok(HookOutcome::Pass);
         }
 
         let identity = ctx.identity();
 
         // Admin bypass
         if identity.is_admin {
-            return Ok(());
+            return Ok(HookOutcome::Pass);
         }
 
-        match ctx {
+        let check: Result<(), String> = match ctx {
             HookContext::Read(c) => {
                 self.check_with_lease(&c.path, &identity.agent_id, Permission::Read)
             }
@@ -214,13 +214,13 @@ impl NativeInterceptHook for PermissionHook {
             }
             HookContext::Rename(c) => {
                 // Check WRITE on both paths
-                self.python_check(&c.old_path, Permission::Write)?;
-                self.python_check(&c.new_path, Permission::Write)
+                self.python_check(&c.old_path, Permission::Write)
+                    .and_then(|()| self.python_check(&c.new_path, Permission::Write))
             }
             HookContext::Copy(c) => {
                 // READ on source, WRITE on destination
-                self.python_check(&c.src_path, Permission::Read)?;
-                self.python_check(&c.dst_path, Permission::Write)
+                self.python_check(&c.src_path, Permission::Read)
+                    .and_then(|()| self.python_check(&c.dst_path, Permission::Write))
             }
             HookContext::Mkdir(c) => self.python_check(&c.path, Permission::Write),
             HookContext::Rmdir(c) => {
@@ -229,6 +229,7 @@ impl NativeInterceptHook for PermissionHook {
             HookContext::Stat(c) => self.enforcer_check(&c.path, &c.permission),
             HookContext::Access(c) => self.enforcer_check(&c.path, &c.permission),
             HookContext::WriteBatch(_) => Ok(()), // Batch checks individual paths
-        }
+        };
+        check.map(|()| HookOutcome::Pass)
     }
 }

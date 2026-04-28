@@ -163,6 +163,15 @@ impl AgentObserver {
     pub(crate) fn set_model_name(&self, value: Option<String>) {
         self.inner.lock().unwrap().model_name = value;
     }
+
+    /// Reset every field to defaults — matches Python's
+    /// `self._observer = AgentObserver()` swap. Used by
+    /// `AcpConnection::session_load` after the 200ms replay drain so
+    /// `send_prompt` starts on a clean accumulator.
+    pub(crate) fn reset_all(&self) {
+        let mut s = self.inner.lock().unwrap();
+        *s = Inner::default();
+    }
 }
 
 impl Default for AgentObserver {

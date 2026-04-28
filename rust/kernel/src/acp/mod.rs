@@ -35,6 +35,7 @@ use std::sync::Arc;
 use crate::service_registry::RustService;
 
 pub(crate) mod agent_config;
+pub(crate) mod connection;
 pub(crate) mod jsonrpc;
 pub(crate) mod observer;
 pub(crate) mod paths;

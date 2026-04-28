@@ -55,6 +55,12 @@ pub(crate) use core::pipe::manager as pipe_manager;
 // drivers per the post-#3932 architecture).
 #[cfg(feature = "nostr")]
 mod nostr_backend;
+
+// MailboxStampingHook — content-rewriting NativeInterceptHook that
+// stamps the envelope `from` field on writes to `*/chat-with-me`.
+// Lives kernel-side here; later migration commits move it to
+// `rust/services/src/managed_agent/`.
+mod mailbox_stamping_hook;
 #[cfg(unix)]
 pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]

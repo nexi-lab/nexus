@@ -77,6 +77,11 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
     "dcache": "core/dcache.rs",
     "service_registry": "core/service_registry.rs",
     "file_watch": "core/file_watch.rs",
+    # Phase G: kernel.rs split — moved to kernel/mod.rs as the entry
+    # point.  Per-syscall-family submodules (kernel/io.rs, mount.rs,
+    # dispatch.rs, ipc.rs, federation.rs, agents.rs, locks.rs,
+    # observability.rs) live alongside.
+    "kernel": "kernel/mod.rs",
 }
 
 # Phase H/I: PyO3 wrappers for the lib algorithms now live in

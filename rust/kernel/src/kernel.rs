@@ -2973,8 +2973,8 @@ impl Kernel {
         &self,
         path: &str,
         entry: &CachedEntry,
-        _mount_point: &str,
-        _ctx: &OperationContext,
+        mount_point: &str,
+        ctx: &OperationContext,
     ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
@@ -3026,6 +3026,27 @@ impl Kernel {
         let data = client
             .fetch(origin, fetch_key)
             .map_err(KernelError::IOError)?;
+
+        // Cache the fetched blob locally so subsequent reads don't need to
+        // hit the writer node again. Critical for failover: once the
+        // origin goes down, re-fetch would fail (see
+        // `TestLeaderFailover::test_failover_and_recovery`) but the blob
+        // must still be readable from local storage.
+        //
+        // ``write_content`` is idempotent on the addressing key: CAS
+        // backends compute the same hash for the same bytes; PAS
+        // backends overwrite the file at the same backend_path. We pass
+        // through the writer's ``content_id`` (CAS hash or PAS backend_
+        // path — kernel-opaque) so the local backend stores the bytes
+        // under the same key the metastore points at. Failure is
+        // swallowed: the read still returns the bytes, the next read
+        // will simply remote-fetch again.
+        let cache_key = entry.content_id.as_deref().unwrap_or("");
+        if !cache_key.is_empty() {
+            let _ = self
+                .vfs_router
+                .write_content(mount_point, &data, cache_key, ctx, 0);
+        }
 
         Ok(SysReadResult {
             data: Some(data),

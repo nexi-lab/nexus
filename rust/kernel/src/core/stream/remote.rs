@@ -9,7 +9,7 @@
 //!   read  → Call("sys_read",  {path, offset: N})       → {"content": base64, "next_offset": N}
 //!
 //! The typed Write RPC is intentionally NOT used for push because the proto
-//! WriteResponse carries file-semantics fields (etag, size) and no stream
+//! WriteResponse carries file-semantics fields (content_id, size) and no stream
 //! byte-offset. The Call RPC routes through the server's Python dispatch layer
 //! which understands stream-path semantics.
 

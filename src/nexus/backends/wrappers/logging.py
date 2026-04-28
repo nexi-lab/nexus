@@ -139,21 +139,19 @@ class LoggingBackendWrapper(DelegatingBackend):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: "OperationContext | None" = None,
         *,
         contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         results, elapsed_ms = self._timed(
             "batch_read_content",
-            lambda: self._inner.batch_read_content(
-                content_hashes, context=context, contexts=contexts
-            ),
+            lambda: self._inner.batch_read_content(content_ids, context=context, contexts=contexts),
         )
         hit_count = sum(1 for v in results.values() if v is not None)
         logger.debug(
             "batch_read_content count=%d hits=%d latency_ms=%.2f",
-            len(content_hashes),
+            len(content_ids),
             hit_count,
             elapsed_ms,
         )

@@ -161,14 +161,14 @@ class DelegatingBackend(Backend):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: "OperationContext | None" = None,
         *,
         contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """Read batch from inner, then transform each item via ``_transform_on_read``."""
         raw_results = self._inner.batch_read_content(
-            content_hashes, context=context, contexts=contexts
+            content_ids, context=context, contexts=contexts
         )
 
         transformed: dict[str, bytes | None] = {}

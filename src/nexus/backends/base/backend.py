@@ -594,7 +594,7 @@ class Backend(ObjectStoreABC):
             context: Operation context for authentication (optional)
 
         Returns:
-            FileInfo with size, mtime, backend_version, content_hash.
+            FileInfo with size, mtime, backend_version, content_id.
 
         Raises:
             NotImplementedError: If backend doesn't support delta sync.

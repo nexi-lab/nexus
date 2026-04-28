@@ -352,11 +352,15 @@ impl FederationProvider for RaftFederationProvider {
     fn zone_share(
         &self,
         _kernel: &Kernel,
-        _parent_zone: &str,
-        _prefix: &str,
-        _new_zone: &str,
+        parent_zone: &str,
+        prefix: &str,
+        new_zone: &str,
     ) -> FederationResult<u64> {
-        Err("zone_share: not yet wired through trait".into())
+        let zm = self.zm().ok_or("federation not active")?;
+        let copied = zm
+            .share_subtree_core(parent_zone, prefix, new_zone)
+            .map_err(|e| e.to_string())?;
+        Ok(copied as u64)
     }
 
     fn register_share(

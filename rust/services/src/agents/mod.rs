@@ -10,6 +10,5 @@
 //! * [`status_resolver`] — `/{zone}/proc/{pid}/status` virtual file,
 //!   impls `kernel::core::dispatch::PathResolver`.
 
-pub mod agent_chat;
 pub mod mailbox_stamping;
 pub mod status_resolver;

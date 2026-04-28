@@ -673,8 +673,13 @@ without intermediate trait dispatch.
 
 The `Kernel.federation` slot holds an `Arc<dyn FederationProvider>`
 that drives every federation-aware syscall.  Trait surface lives in
-`kernel::hal::federation`; concrete impl
-(`RaftFederationProvider`) lives in `kernel::raft_federation_provider`.
+`kernel::hal::federation`; concrete impl (`RaftFederationProvider`)
+lives in the raft crate at `nexus_raft::federation_provider`.  The
+kernel ↔ raft Cargo edge is `raft → kernel` (post Phase H flip), so
+the kernel rlib has zero direct `nexus_raft::*` references — federation
+state (`ZoneManager`, `ZoneRaftRegistry`, `tokio::runtime::Handle`,
+`cross_zone_mounts` reverse index) is owned by the provider, not the
+kernel.
 
 Boot wiring:
 

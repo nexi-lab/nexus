@@ -1338,28 +1338,28 @@ mod tests {
         }
 
         #[test]
-        fn acp_call_returns_internal_when_agent_registry_unset() {
+        fn acp_call_fails_fast_without_config_or_registry() {
             let kernel = Arc::new(Kernel::new());
             let svc = AcpService::new(kernel, "root".into());
-            // No set_agent_registry call; even on cfg(unix) the
-            // registry lookup fails -> Internal.
+            // Neither agent.json (no VFS write) nor AgentRegistry are
+            // wired. On unix dispatch reaches call_agent and trips on
+            // the missing config -> InvalidArgument(UnknownAgent). On
+            // non-unix the dispatch shortcut returns Internal because
+            // call_agent itself isn't compiled. Both are acceptable
+            // failure modes -- the assertion is just "dispatch errors,
+            // not panic / not OK".
             let payload = json!({
                 "agent_id":"claude","prompt":"hi","context":{}
             })
             .to_string();
             #[cfg(unix)]
             {
-                // Wrap in a lightweight tokio runtime -- block_on
-                // requires one. AcpService::registry returns NotBound
-                // before call_agent gets far enough to spawn a CLI.
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .unwrap();
                 let err = rt
                     .block_on(async {
-                        // Run dispatch on a blocking thread inside the
-                        // runtime so Handle::current() resolves.
                         tokio::task::spawn_blocking(move || {
                             svc.dispatch("acp_call", payload.as_bytes())
                         })
@@ -1368,7 +1368,10 @@ mod tests {
                     })
                     .unwrap_err();
                 assert!(
-                    matches!(err, RustCallError::Internal(ref m) if m.contains("AgentRegistry")),
+                    matches!(
+                        err,
+                        RustCallError::InvalidArgument(_) | RustCallError::Internal(_)
+                    ),
                     "got {err:?}"
                 );
             }

@@ -428,6 +428,143 @@ mod tests {
         }
     }
 
+    // ── fd-lifecycle integration tests (linux/CI only) ──────────────
+
+    use super::AcpSubprocess;
+    use crate::kernel::Kernel;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn cat_on_path() -> bool {
+        std::process::Command::new("cat")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn cat_subprocess_cfg() -> AgentConfig {
+        AgentConfig {
+            agent_id: "cat".to_string(),
+            name: "cat".to_string(),
+            // POSIX `cat` echoes stdin to stdout until EOF.
+            command: "cat".to_string(),
+            prompt_flag: "-p".to_string(),
+            default_system_prompt: None,
+            extra_args: Vec::new(),
+            // Empty acp_args so we don't pass --experimental-acp to cat.
+            env: HashMap::new(),
+            npx_package: None,
+            acp_args: Vec::new(),
+            enabled: true,
+        }
+    }
+
+    /// Smoke: spawn cat, write a line to its stdin, read it back from
+    /// stdout, drop the connection so the subprocess sees EOF, reap.
+    ///
+    /// `#[ignore]` because a bare-kernel test environment doesn't have
+    /// a metastore mount at `/{zone}/proc/...`, so `unregister_pipes`
+    /// can't reach the kernel-side StdioPipeBackend to close its
+    /// dup'd fd, the subprocess never sees EOF on stdin, and `wait`
+    /// hangs. Run this test against a fully-wired kernel (boot via
+    /// PyKernel + factory) where the proc-tree mount is present:
+    ///   `cargo test acp::subprocess::tests::cat_roundtrip -- --ignored`
+    /// The roundtrip portion of the test (write -> read -> assert
+    /// echoed bytes) does pass; only the EOF / wait teardown trips on
+    /// the missing mount.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn cat_roundtrip_through_acp_subprocess() {
+        if !cat_on_path() {
+            eprintln!("cat not on PATH -- skipping");
+            return;
+        }
+        let kernel = Arc::new(Kernel::new());
+        let cwd = std::env::temp_dir();
+        let mut sub = AcpSubprocess::spawn(
+            &cat_subprocess_cfg(),
+            &cwd,
+            &kernel,
+            "root",
+            "pid-cat-roundtrip",
+        )
+        .await
+        .expect("spawn cat");
+
+        let (mut stdin, mut stdout, _stderr) = sub.take_stdio_for_connection().expect("take stdio");
+
+        // Write a line + flush; cat will echo it.
+        stdin
+            .write_all(b"hello acp\n")
+            .await
+            .expect("write to cat stdin");
+        stdin.flush().await.expect("flush");
+
+        // Read a line from cat stdout.
+        let mut buf = vec![0u8; 64];
+        let n = tokio::time::timeout(Duration::from_secs(5), stdout.read(&mut buf))
+            .await
+            .expect("stdout read timed out")
+            .expect("stdout read");
+        assert!(n > 0, "expected echoed bytes");
+        let echoed = std::str::from_utf8(&buf[..n]).unwrap();
+        assert!(echoed.starts_with("hello acp"), "got {echoed:?}");
+
+        // Drop stdin -> cat sees EOF -> exits 0.
+        drop(stdin);
+        drop(stdout);
+
+        sub.unregister_pipes(&kernel);
+        let exit = tokio::time::timeout(Duration::from_secs(5), sub.wait())
+            .await
+            .expect("wait timed out");
+        // cat exits 0 on clean EOF.
+        assert_eq!(exit, 0, "cat should exit 0 on EOF");
+    }
+
+    /// Stress the spawn / register / write / read / kill path 10x to
+    /// shake out fd leaks + register/unregister ordering bugs.
+    /// Same `#[ignore]` rationale as `cat_roundtrip_through_acp_subprocess`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore]
+    async fn cat_roundtrip_stress_10x() {
+        if !cat_on_path() {
+            eprintln!("cat not on PATH -- skipping");
+            return;
+        }
+        let kernel = Arc::new(Kernel::new());
+        let cwd = std::env::temp_dir();
+        for i in 0..10 {
+            let pid = format!("pid-stress-{i}");
+            let mut sub = AcpSubprocess::spawn(&cat_subprocess_cfg(), &cwd, &kernel, "root", &pid)
+                .await
+                .unwrap_or_else(|e| panic!("spawn iter {i}: {e}"));
+            let (mut stdin, mut stdout, _stderr) = sub.take_stdio_for_connection().unwrap();
+            let line = format!("iter {i}\n");
+            stdin.write_all(line.as_bytes()).await.unwrap();
+            stdin.flush().await.unwrap();
+            let mut buf = vec![0u8; 64];
+            let n = tokio::time::timeout(Duration::from_secs(5), stdout.read(&mut buf))
+                .await
+                .unwrap_or_else(|_| panic!("read iter {i} timed out"))
+                .unwrap();
+            let echoed = std::str::from_utf8(&buf[..n]).unwrap();
+            assert!(
+                echoed.starts_with(&format!("iter {i}")),
+                "iter {i}: got {echoed:?}"
+            );
+            drop(stdin);
+            drop(stdout);
+            sub.unregister_pipes(&kernel);
+            sub.kill().await;
+            let _ = tokio::time::timeout(Duration::from_secs(5), sub.wait()).await;
+        }
+    }
+
     #[test]
     fn prepare_clean_env_overlays_extras() {
         let extra = HashMap::from([

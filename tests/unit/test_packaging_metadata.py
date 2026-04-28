@@ -19,7 +19,7 @@ def test_semantic_search_stack_is_not_in_base_dependencies() -> None:
     assert any(dep.startswith("faiss-cpu") for dep in semantic_search)
 
 
-def test_root_package_does_not_advertise_unpublished_nexus_kernel_extra() -> None:
+def test_root_package_does_not_advertise_unpublished_nexus_runtime_extra() -> None:
     pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
     payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
 
@@ -53,7 +53,7 @@ def test_rust_package_versions_match_main_package() -> None:
     assert cargo_version == root_payload["project"]["version"]
 
 
-def test_release_workflow_builds_and_publishes_nexus_kernel() -> None:
+def test_release_workflow_builds_and_publishes_nexus_runtime() -> None:
     workflow_path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release.yml"
     workflow = workflow_path.read_text(encoding="utf-8")
 

@@ -155,6 +155,6 @@ If future brick lifecycle notifications are needed:
 - Issue #907: Delete ScopedHookEngine three-layer onion
 - Issue #900: Unify kernel notification mechanisms (KernelDispatch)
 - PR #2544: Implementation
-- `rust/nexus_kernel/src/dispatch.rs`: Rust Kernel dispatch (HookRegistry, ObserverRegistry, PathTrie)
+- `rust/nexus_runtime/src/dispatch.rs`: Rust Kernel dispatch (HookRegistry, ObserverRegistry, PathTrie)
 - `src/nexus/core/nexus_fs_dispatch.py`: DispatchMixin (Python-side registration API)
 - `docs/rfcs/adr-nexus-fs-method-freeze.md`: Related NexusFS method freeze decision

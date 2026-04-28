@@ -18,7 +18,7 @@ import time
 
 def _child_pipe_read_one(shm_path: str, result_q: multiprocessing.Queue):
     """Child: attach to shared ring buffer, poll-read one message."""
-    from nexus_kernel import SharedMemoryPipeBackend
+    from nexus_runtime import SharedMemoryPipeBackend
 
     reader = SharedMemoryPipeBackend.attach(shm_path, -1, -1)
     for _ in range(200):
@@ -33,7 +33,7 @@ def _child_pipe_read_one(shm_path: str, result_q: multiprocessing.Queue):
 
 def _child_pipe_read_three(shm_path: str, result_q: multiprocessing.Queue):
     """Child: read 3 messages from shared ring buffer."""
-    from nexus_kernel import SharedMemoryPipeBackend
+    from nexus_runtime import SharedMemoryPipeBackend
 
     reader = SharedMemoryPipeBackend.attach(shm_path, -1, -1)
     results = []
@@ -50,7 +50,7 @@ def _child_pipe_read_three(shm_path: str, result_q: multiprocessing.Queue):
 
 def _child_crash(shm_path: str):
     """Child: attach then crash immediately."""
-    from nexus_kernel import SharedMemoryPipeBackend
+    from nexus_runtime import SharedMemoryPipeBackend
 
     _reader = SharedMemoryPipeBackend.attach(shm_path, -1, -1)
     os._exit(1)
@@ -58,7 +58,7 @@ def _child_crash(shm_path: str):
 
 def _child_stream_read_one(shm_path: str, result_q: multiprocessing.Queue):
     """Child: poll-read one message at offset 0 from shared stream buffer."""
-    from nexus_kernel import SharedMemoryStreamBackend
+    from nexus_runtime import SharedMemoryStreamBackend
 
     reader = SharedMemoryStreamBackend.attach(shm_path, -1)
     for _ in range(200):
@@ -73,7 +73,7 @@ def _child_stream_read_one(shm_path: str, result_q: multiprocessing.Queue):
 
 def _child_stream_read_at(shm_path: str, offset: int, result_q: multiprocessing.Queue):
     """Child: read one message at given offset from shared stream buffer."""
-    from nexus_kernel import SharedMemoryStreamBackend
+    from nexus_runtime import SharedMemoryStreamBackend
 
     reader = SharedMemoryStreamBackend.attach(shm_path, -1)
     for _ in range(200):
@@ -96,7 +96,7 @@ class TestCrossProcessPipe:
 
     def test_cross_process_pipe_roundtrip(self):
         """Parent writes, child reads via separate processes."""
-        from nexus_kernel import SharedMemoryPipeBackend
+        from nexus_runtime import SharedMemoryPipeBackend
 
         core, shm_path, data_rd_fd, space_rd_fd = SharedMemoryPipeBackend.create(4096)
         os.close(data_rd_fd)
@@ -118,7 +118,7 @@ class TestCrossProcessPipe:
 
     def test_cross_process_multiple_messages(self):
         """Multiple messages through cross-process ring buffer."""
-        from nexus_kernel import SharedMemoryPipeBackend
+        from nexus_runtime import SharedMemoryPipeBackend
 
         core, shm_path, data_rd_fd, space_rd_fd = SharedMemoryPipeBackend.create(4096)
         os.close(data_rd_fd)
@@ -142,7 +142,7 @@ class TestCrossProcessPipe:
 
     def test_child_crash_cleanup(self):
         """Shared memory file persists after child crash — creator cleans up."""
-        from nexus_kernel import SharedMemoryPipeBackend
+        from nexus_runtime import SharedMemoryPipeBackend
 
         core, shm_path, data_rd_fd, space_rd_fd = SharedMemoryPipeBackend.create(64)
         os.close(data_rd_fd)
@@ -165,7 +165,7 @@ class TestCrossProcessStream:
 
     def test_cross_process_stream_roundtrip(self):
         """Parent writes, child reads via separate processes."""
-        from nexus_kernel import SharedMemoryStreamBackend
+        from nexus_runtime import SharedMemoryStreamBackend
 
         core, shm_path, data_rd_fd = SharedMemoryStreamBackend.create(4096)
         os.close(data_rd_fd)
@@ -185,7 +185,7 @@ class TestCrossProcessStream:
 
     def test_cross_process_stream_multi_reader(self):
         """Multiple child readers with independent cursors."""
-        from nexus_kernel import SharedMemoryStreamBackend
+        from nexus_runtime import SharedMemoryStreamBackend
 
         core, shm_path, data_rd_fd = SharedMemoryStreamBackend.create(4096)
         os.close(data_rd_fd)

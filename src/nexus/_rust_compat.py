@@ -1,10 +1,10 @@
 """Rust extension compatibility shim.
 
-Centralises all ``nexus_kernel`` imports so that the slim ``nexus-fs``
+Centralises all ``nexus_runtime`` imports so that the slim ``nexus-fs``
 package (which does not depend on the Rust extension) can still import
 ``nexus.core.*`` modules without crashing at import time.
 
-Every symbol is re-exported as its original name.  When ``nexus_kernel``
+Every symbol is re-exported as its original name.  When ``nexus_runtime``
 is unavailable the symbol is set to ``None`` and call-sites must
 guard with ``if _Symbol is not None:`` before use.
 
@@ -22,7 +22,7 @@ from typing import Any
 # -- Attempt bulk import of the Rust extension --------------------------------
 
 try:
-    import nexus_kernel as _nf
+    import nexus_runtime as _nf
 
     RUST_AVAILABLE: bool = True
 except ModuleNotFoundError:
@@ -44,7 +44,7 @@ RUST_EXTENSION_INSTALLED: bool = True  # assume installed unless ModuleNotFoundE
 try:
     import importlib.util
 
-    RUST_EXTENSION_INSTALLED = importlib.util.find_spec("nexus_kernel") is not None
+    RUST_EXTENSION_INSTALLED = importlib.util.find_spec("nexus_runtime") is not None
 except Exception:
     pass
 
@@ -108,7 +108,7 @@ if RUST_AVAILABLE:
         _group_ok[_group] = len(_missing) == 0
         if _missing:
             _log.warning(
-                "nexus_kernel binary is stale — %s group missing symbols %s. "
+                "nexus_runtime binary is stale — %s group missing symbols %s. "
                 "%s features disabled. Rebuild: %s",
                 _group,
                 _missing,
@@ -134,7 +134,7 @@ if RUST_AVAILABLE:
             )
             if _missing_methods:
                 _log.warning(
-                    "nexus_kernel.PyKernel is stale — binary missing %d method(s): %s. Rebuild: %s",
+                    "nexus_runtime.PyKernel is stale — binary missing %d method(s): %s. Rebuild: %s",
                     len(_missing_methods),
                     _missing_methods,
                     _REBUILD_CMD,
@@ -168,7 +168,7 @@ _nf_snapshot: Any = _nf
 
 
 def _get(name: str) -> Any:
-    """Get an attribute from nexus_kernel, or None if unavailable.
+    """Get an attribute from nexus_runtime, or None if unavailable.
 
     Returns None if the module is absent OR if the symbol belongs to a
     capability group that failed validation (e.g. core symbols when core

@@ -110,7 +110,7 @@ def _maybe_build_trigram_background(
 
     def _build() -> None:
         try:
-            from nexus_kernel import build_trigram_index_from_entries
+            from nexus_runtime import build_trigram_index_from_entries
 
             entries: list[tuple[str, bytes]] = []
             for fp in file_paths:
@@ -151,7 +151,7 @@ def _trigram_candidates(
     index_path: str, pattern: str, path: str, ignore_case: bool
 ) -> list[str] | None:
     try:
-        from nexus_kernel import trigram_search_candidates
+        from nexus_runtime import trigram_search_candidates
     except (ImportError, OSError):
         return None
     try:

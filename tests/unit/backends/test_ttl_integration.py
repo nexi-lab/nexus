@@ -13,7 +13,7 @@ import pytest
 
 def _vol_engine_available() -> bool:
     try:
-        from nexus_kernel import BlobPackEngine  # noqa: F401
+        from nexus_runtime import BlobPackEngine  # noqa: F401
 
         return True
     except ImportError:
@@ -21,7 +21,7 @@ def _vol_engine_available() -> bool:
 
 
 needs_vol_engine = pytest.mark.skipif(
-    not _vol_engine_available(), reason="nexus_kernel.BlobPackEngine not available"
+    not _vol_engine_available(), reason="nexus_runtime.BlobPackEngine not available"
 )
 
 

@@ -23,7 +23,7 @@ def _make_volume_transport(tmp_path):
 
         return BlobPackLocalTransport(root_path=tmp_path, fsync=False)
     except Exception:
-        pytest.skip("BlobPackLocalTransport not available (nexus_kernel not built)")
+        pytest.skip("BlobPackLocalTransport not available (nexus_runtime not built)")
 
 
 @pytest.fixture(params=["local", "volume"], ids=["LocalTransport", "BlobPackLocalTransport"])

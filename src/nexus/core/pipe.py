@@ -8,7 +8,7 @@ Implements the Kernel messaging tier from KERNEL-ARCHITECTURE.md §6:
 
 This file defines the PipeBackend protocol and exception classes for DT_PIPE.
 The actual data plane lives in the Rust kernel IPC registry
-(DashMap<String, RingBufferCore>) inside ``nexus_kernel``. The mkfifo /
+(DashMap<String, RingBufferCore>) inside ``nexus_runtime``. The mkfifo /
 ``fs/pipe.c`` equivalent (named-pipe creation, lookup, destroy) is also
 owned by the Rust kernel — there is no Python ``PipeManager`` anymore.
 

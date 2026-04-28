@@ -21,7 +21,7 @@ from nexus.contracts.vfs_hooks import ReadHookContext, WriteHookContext
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 
 try:
-    from nexus_kernel import PyKernel
+    from nexus_runtime import PyKernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -85,7 +85,7 @@ def _read_ctx(**kw):
 # ── Pre-hook dispatch benchmarks ─────────────────────────────────────
 
 
-@pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not available")
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not available")
 class TestPreHookDispatch:
     """Benchmark: Rust dispatch_pre_hooks overhead."""
 
@@ -114,7 +114,7 @@ class TestPreHookDispatch:
 # ── Post-hook dispatch benchmarks ────────────────────────────────────
 
 
-@pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not available")
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not available")
 class TestPostHookDispatch:
     """Benchmark: Rust dispatch_post_hooks overhead."""
 
@@ -158,7 +158,7 @@ def _make_observer(name: str = "bench_obs", event_mask: int = 0x7FF):
     return obs
 
 
-@pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not available")
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not available")
 class TestObserverDispatch:
     """Benchmark: Rust dispatch_observers bitmask filtering."""
 
@@ -187,7 +187,7 @@ class TestObserverDispatch:
 # ── Full syscall benchmarks (sys_read / sys_write) ───────────────────
 
 
-@pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not available")
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not available")
 class TestSyscallOverhead:
     """Benchmark: full sys_read/sys_write path including hook dispatch.
 
@@ -216,7 +216,7 @@ class TestSyscallOverhead:
     @pytest.mark.benchmark_ci
     def test_sys_write_no_hooks(self, benchmark, mounted_dispatch):
         """sys_write 1KB, no hooks."""
-        from nexus_kernel import PyOperationContext
+        from nexus_runtime import PyOperationContext
 
         ctx = PyOperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         content = b"x" * 1024
@@ -230,7 +230,7 @@ class TestSyscallOverhead:
     @pytest.mark.benchmark_ci
     def test_sys_read_no_hooks(self, benchmark, mounted_dispatch):
         """sys_read 1KB, no hooks (after write)."""
-        from nexus_kernel import PyOperationContext
+        from nexus_runtime import PyOperationContext
 
         ctx = PyOperationContext(user_id="bench", zone_id=ROOT_ZONE_ID)
         mounted_dispatch._kernel.sys_write("/bench/read_target.txt", ctx, b"y" * 1024)
@@ -243,7 +243,7 @@ class TestSyscallOverhead:
     @pytest.mark.benchmark(group="syscall")
     def test_sys_write_with_hooks(self, benchmark, mounted_dispatch):
         """sys_write 1KB with 3 hooks (pre + post)."""
-        from nexus_kernel import PyOperationContext
+        from nexus_runtime import PyOperationContext
 
         for i in range(3):
             mounted_dispatch.register_intercept_write(_make_hook(f"h{i}"))
@@ -259,7 +259,7 @@ class TestSyscallOverhead:
     @pytest.mark.benchmark(group="syscall")
     def test_sys_read_with_hooks(self, benchmark, mounted_dispatch):
         """sys_read 1KB with 3 hooks (pre only for read)."""
-        from nexus_kernel import PyOperationContext
+        from nexus_runtime import PyOperationContext
 
         for i in range(3):
             mounted_dispatch.register_intercept_read(_make_hook(f"h{i}"))

@@ -4,7 +4,7 @@
 //! Phase 3 restructure plan #6: `_nexus_tasks.so` standalone cdylib
 //! retired; the PyTaskEngine / PyTaskRecord / PyQueueStats pyclasses
 //! register through `services::python::register` into the unified
-//! `nexus_kernel` cdylib so the runtime ships a single Python wheel
+//! `nexus_runtime` cdylib so the runtime ships a single Python wheel
 //! instead of two.  Kernel never names task types — services owns
 //! the boundary.
 
@@ -276,7 +276,7 @@ impl PyTaskEngine {
 }
 
 /// Register every task pyclass into the parent PyModule.  Called
-/// from `services::python::register` so the `nexus_kernel` cdylib
+/// from `services::python::register` so the `nexus_runtime` cdylib
 /// surfaces task types alongside audit / agents on a single Python
 /// import.
 pub fn register_python(m: &Bound<'_, PyModule>) -> PyResult<()> {

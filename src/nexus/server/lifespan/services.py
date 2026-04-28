@@ -249,7 +249,7 @@ def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None
 
         # Get or create a kernel identity for credential signing.
         # The kernel uses a well-known agent_id for its signing key.
-        _kernel_agent_id = "__nexus_kernel__"
+        _kernel_agent_id = "__nexus_runtime__"
         kernel_key_record = key_service.ensure_keypair(_kernel_agent_id)
 
         # Pre-decrypt the signing key for fast issuance

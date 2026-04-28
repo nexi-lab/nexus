@@ -290,12 +290,12 @@ async def main():
     rust_grep_available = False
     rust_glob_available = False
     try:
-        from nexus_kernel import grep_bulk as _rust_grep
+        from nexus_runtime import grep_bulk as _rust_grep
         rust_grep_available = True
     except ImportError:
         _rust_grep = None
     try:
-        from nexus_kernel import glob_match_bulk as _rust_glob
+        from nexus_runtime import glob_match_bulk as _rust_glob
         rust_glob_available = True
     except ImportError:
         _rust_glob = None

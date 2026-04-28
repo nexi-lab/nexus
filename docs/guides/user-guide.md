@@ -88,12 +88,12 @@ it in the same uv-managed environment:
 ```bash
 source .venv/bin/activate
 uv pip install -e . maturin
-maturin develop --release -m rust/nexus_kernel/Cargo.toml
-python -c "import nexus_kernel; print('nexus_kernel available')"
+maturin develop --release -m rust/nexus_runtime/Cargo.toml
+python -c "import nexus_runtime; print('nexus_runtime available')"
 ```
 
 You do not need this for a normal first run. Nexus falls back to Python
-implementations when `nexus_kernel` is not installed. Add it when you want faster
+implementations when `nexus_runtime` is not installed. Add it when you want faster
 grep/glob, hashing, lock/semaphore primitives, Bloom-filter paths, and some
 permission/search fast paths.
 
@@ -1137,7 +1137,7 @@ useful map.
 | Package group | What it gives you as a user |
 | --- | --- |
 | `nexus.core` | the kernel facade, VFS, syscalls, routing, locks |
-| `nexus_kernel` (Rust) | Rust kernel binary — DT_PIPE / DT_STREAM registries, mount router, blocking IPC waits, and the syscall fast paths used by background consumers |
+| `nexus_runtime` (Rust) | Rust kernel binary — DT_PIPE / DT_STREAM registries, mount router, blocking IPC waits, and the syscall fast paths used by background consumers |
 | `nexus.contracts` | stable protocol and type boundaries |
 | `nexus.storage` | metadata, record store, history, audit, snapshots |
 | `nexus.backends` | local/cloud/object backends and connector adapters |

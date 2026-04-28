@@ -6,7 +6,7 @@ query-side concerns (static-prefix extraction for directory pruning,
 include/exclude filter composition, single-pattern matching) that
 belong in the search brick rather than as kernel surface.
 
-The Rust-accelerated primitives go through `nexus_kernel` directly:
+The Rust-accelerated primitives go through `nexus_runtime` directly:
 
     from nexus._rust_compat import glob_match_bulk
 

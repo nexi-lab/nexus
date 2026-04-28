@@ -13,7 +13,7 @@ surfaces.
   state machine for the root zone plus any federation zones declared
   via env vars.
 - **IPC-over-VFS**: agent-to-agent message passing implemented as VFS
-  paths under `/__ipc__/`. See `nexus_kernel::ipc` (PR #3896).
+  paths under `/__ipc__/`. See `nexus_runtime::ipc` (PR #3896).
 - **Federation**: Day-1 cluster formation, dynamic share/join, mTLS
   Cert-of-First-Use trust store. All convergent — every node tries
   to apply the same topology and retries on per-zone leader changes.

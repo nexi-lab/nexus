@@ -805,11 +805,11 @@ fn hostname_to_node_id(hostname: &str) -> u64 {
 
 /// Register raft's PyO3 classes on the calling crate's Python module.
 ///
-/// F2 C8 (Option A): raft is an rlib inside the ``nexus_kernel`` cdylib
+/// F2 C8 (Option A): raft is an rlib inside the ``nexus_runtime`` cdylib
 /// now — the old ``#[pymodule] fn _nexus_raft`` is gone. Kernel's own
 /// ``#[pymodule]`` calls this function to expose ``MetaStore`` /
-/// ``ZoneManager`` / ``ZoneHandle`` from the single ``nexus_kernel``
-/// Python module. Kept ``pub`` so ``kernel::lib::nexus_kernel`` can
+/// ``ZoneManager`` / ``ZoneHandle`` from the single ``nexus_runtime``
+/// Python module. Kept ``pub`` so ``kernel::lib::nexus_runtime`` can
 /// reach it via the ``nexus_raft_lib::register_python_classes`` path.
 pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMetaStore>()?;

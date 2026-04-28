@@ -3,7 +3,7 @@
 This module provides BLAKE3 hashing for content-addressable storage,
 with ~3x speedup over SHA-256.
 
-# RUST_FALLBACK: hash_fast — hash_content, hash_content_smart have Rust equivalents in nexus_kernel.
+# RUST_FALLBACK: hash_fast — hash_content, hash_content_smart have Rust equivalents in nexus_runtime.
 
 Usage:
     from nexus.core.hash_fast import hash_content, hash_content_smart
@@ -79,12 +79,12 @@ def hash_content(content: bytes) -> str:
         result = _python_blake3.blake3(content).hexdigest()
         return result
 
-    # If nexus_kernel was detected at all (even degraded), refuse SHA-256.
+    # If nexus_runtime was detected at all (even degraded), refuse SHA-256.
     # A stale Rust extension with incomplete hash support must not silently
     # produce incompatible content IDs — fail closed instead.
     if _RUST_EXT_INSTALLED:
         raise RuntimeError(
-            "nexus_kernel is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "nexus_runtime is installed but BLAKE3 hashing is unavailable (stale build?). "
             "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
         )
     logger.warning(
@@ -141,7 +141,7 @@ def hash_content_smart(content: bytes) -> str:
     # Fail closed under version skew — same guard as hash_content().
     if _RUST_EXT_INSTALLED:
         raise RuntimeError(
-            "nexus_kernel is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "nexus_runtime is installed but BLAKE3 hashing is unavailable (stale build?). "
             "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
         )
 
@@ -221,10 +221,10 @@ def create_hasher() -> Any:
         return _python_blake3.blake3()
     if _RUST_AVAILABLE:
         return _RustOnePassHasher()
-    # Fail closed: stale nexus_kernel must not silently produce SHA-256 CAS blobs.
+    # Fail closed: stale nexus_runtime must not silently produce SHA-256 CAS blobs.
     if _RUST_EXT_INSTALLED:
         raise RuntimeError(
-            "nexus_kernel is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "nexus_runtime is installed but BLAKE3 hashing is unavailable (stale build?). "
             "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
         )
     return hashlib.sha256()

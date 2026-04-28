@@ -21,13 +21,13 @@ from nexus.core.pipe import (
 )
 
 try:
-    from nexus_kernel import PyKernel
+    from nexus_runtime import PyKernel
 
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not built")
+pytestmark = pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not built")
 
 
 def _make_kernel() -> "PyKernel":

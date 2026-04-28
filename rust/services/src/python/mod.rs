@@ -1,7 +1,7 @@
 //! `services::python` — services-tier PyO3 surface.
 //!
 //! Single `register(m)` entry point that the `nexus-cdylib` crate's
-//! `#[pymodule] fn nexus_kernel` invokes alongside `lib::python::register`,
+//! `#[pymodule] fn nexus_runtime` invokes alongside `lib::python::register`,
 //! `kernel::python::register`, etc.  Same compositional pattern as every
 //! other peer crate's PyO3 boundary.
 //!
@@ -30,7 +30,7 @@ use crate::audit;
 /// Python signature:
 ///
 /// ```python
-/// nexus_kernel.install_audit_hook(kernel, zone_id="root", stream_path="/audit/traces/")
+/// nexus_runtime.install_audit_hook(kernel, zone_id="root", stream_path="/audit/traces/")
 /// ```
 #[pyfunction]
 #[pyo3(name = "install_audit_hook")]
@@ -44,11 +44,11 @@ fn install_audit_hook_py(
 }
 
 /// Register every services-tier PyO3 export into the parent module.
-/// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_kernel`.
+/// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_runtime`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(install_audit_hook_py, m)?)?;
     // Phase 3 restructure plan #6: tasks pyclasses (PyTaskEngine /
-    // PyTaskRecord / PyQueueStats) folded into nexus_kernel cdylib —
+    // PyTaskRecord / PyQueueStats) folded into nexus_runtime cdylib —
     // standalone _nexus_tasks.so retired.
     crate::tasks::register_python(m)?;
     Ok(())

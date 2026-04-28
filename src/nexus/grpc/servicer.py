@@ -1,7 +1,7 @@
 """VFS gRPC dispatcher — sync bridge from Rust tonic server to Python.
 
 After Phase 1 of the VFS server migration, the Rust tonic server (in
-``nexus_kernel``) owns ``:2028``. ``Read`` / ``Write`` / ``Delete`` /
+``nexus_runtime``) owns ``:2028``. ``Read`` / ``Write`` / ``Delete`` /
 ``Ping`` are pure-Rust handlers that call ``Kernel::sys_*`` directly —
 zero PyO3 cost. The generic ``Call`` RPC still requires Python because
 its 195 ``@rpc_expose`` targets live in the Python ``bricks/services/``
@@ -61,7 +61,7 @@ class VFSCallDispatcher:
     """Sync bridge between the Rust tonic server and Python's async dispatch.
 
     Created once at FastAPI startup; callables are passed by reference
-    to ``nexus_kernel.start_vfs_grpc_server``. Holds:
+    to ``nexus_runtime.start_vfs_grpc_server``. Holds:
 
     - ``loop`` — the FastAPI event loop. ``dispatch_method`` and
       ``auth_provider.authenticate`` are async; the Rust server calls

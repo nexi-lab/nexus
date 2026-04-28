@@ -1,6 +1,6 @@
 """Tests for Rust-accelerated path_utils functions.
 
-Validates that the Rust implementations in ``nexus_kernel`` produce identical
+Validates that the Rust implementations in ``nexus_runtime`` produce identical
 results to the Python fallback implementations in ``nexus.core.path_utils``.
 
 Skipped when Rust extension is not available (pure-Python CI).
@@ -13,37 +13,37 @@ import unittest
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 try:
-    from nexus_kernel import (
+    from nexus_runtime import (
         canonicalize_path as rust_canonicalize_path,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         extract_zone_id as rust_extract_zone_id,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         get_ancestors as rust_get_ancestors,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         get_parent as rust_get_parent,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         get_parent_chain as rust_get_parent_chain,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         normalize_path as rust_normalize_path,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         parent_path as rust_parent_path,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         path_matches_pattern as rust_path_matches_pattern,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         split_path as rust_split_path,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         unscope_internal_path as rust_unscope_internal_path,
     )
-    from nexus_kernel import (
+    from nexus_runtime import (
         validate_path as rust_validate_path,
     )
 
@@ -52,7 +52,7 @@ except ImportError:
     RUST_AVAILABLE = False
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustSplitPath(unittest.TestCase):
     def test_empty(self) -> None:
         assert rust_split_path("") == []
@@ -68,7 +68,7 @@ class TestRustSplitPath(unittest.TestCase):
         assert rust_split_path("/a/b/") == ["a", "b"]
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustGetParent(unittest.TestCase):
     def test_deep(self) -> None:
         assert rust_get_parent("/a/b/c.txt") == "/a/b"
@@ -80,7 +80,7 @@ class TestRustGetParent(unittest.TestCase):
         assert rust_get_parent("/") is None
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustGetAncestors(unittest.TestCase):
     def test_deep(self) -> None:
         assert rust_get_ancestors("/a/b/c.txt") == ["/a/b/c.txt", "/a/b", "/a"]
@@ -92,7 +92,7 @@ class TestRustGetAncestors(unittest.TestCase):
         assert rust_get_ancestors("/") == []
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustGetParentChain(unittest.TestCase):
     def test_deep(self) -> None:
         result = rust_get_parent_chain("/a/b/c.txt")
@@ -102,7 +102,7 @@ class TestRustGetParentChain(unittest.TestCase):
         assert rust_get_parent_chain("/a") == []
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustParentPath(unittest.TestCase):
     def test_deep(self) -> None:
         assert rust_parent_path("/a/b/c") == "/a/b"
@@ -114,7 +114,7 @@ class TestRustParentPath(unittest.TestCase):
         assert rust_parent_path("/") is None
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustValidatePath(unittest.TestCase):
     def test_strip_whitespace(self) -> None:
         assert rust_validate_path("  /foo/bar  ", False) == "/foo/bar"
@@ -168,7 +168,7 @@ class TestRustValidatePath(unittest.TestCase):
             rust_validate_path("/ a/b", False)
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustNormalizePath(unittest.TestCase):
     def test_basic(self) -> None:
         assert rust_normalize_path("/a//b/./c") == "/a/b/c"
@@ -184,7 +184,7 @@ class TestRustNormalizePath(unittest.TestCase):
             rust_normalize_path("a/b")
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustPathMatchesPattern(unittest.TestCase):
     def test_star(self) -> None:
         assert rust_path_matches_pattern("/a/b.txt", "/a/*.txt") is True
@@ -202,7 +202,7 @@ class TestRustPathMatchesPattern(unittest.TestCase):
         assert rust_path_matches_pattern("/a/b.txt", "/a/c.txt") is False
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustUnscopeInternalPath(unittest.TestCase):
     def test_tenant(self) -> None:
         assert rust_unscope_internal_path("/tenant:x/workspace/f.txt") == "/workspace/f.txt"
@@ -223,7 +223,7 @@ class TestRustUnscopeInternalPath(unittest.TestCase):
         assert rust_unscope_internal_path("/tenant:x") == "/"
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustCanonicalizePath(unittest.TestCase):
     def test_basic(self) -> None:
         assert rust_canonicalize_path("/workspace/file.txt", "root") == "/root/workspace/file.txt"
@@ -239,7 +239,7 @@ class TestRustCanonicalizePath(unittest.TestCase):
         assert rust_canonicalize_path("/workspace") == "/root/workspace"
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustExtractZoneId(unittest.TestCase):
     def test_basic(self) -> None:
         zone, relative = rust_extract_zone_id("/root/workspace/file.txt")
@@ -257,7 +257,7 @@ class TestRustExtractZoneId(unittest.TestCase):
         assert relative == "/a/b"
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_runtime extension not available")
 class TestRustPythonParity(unittest.TestCase):
     """Cross-check: Rust and Python produce identical results."""
 

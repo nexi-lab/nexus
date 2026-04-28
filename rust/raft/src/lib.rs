@@ -44,7 +44,7 @@
 //!
 //! Part of Issue #1159: P2P Federation and Consensus Zones
 
-// F2 C8: mimalloc allocator moved to the final cdylib (nexus_kernel).
+// F2 C8: mimalloc allocator moved to the final cdylib (nexus_runtime).
 // An rlib cannot declare ``#[global_allocator]`` — only the final
 // binary (cdylib/bin) can.
 
@@ -98,7 +98,7 @@ pub mod transport;
 
 /// Python bindings via PyO3 (requires `python` feature).
 ///
-/// F2 C8 (Option A): raft is an rlib inside the ``nexus_kernel`` cdylib.
+/// F2 C8 (Option A): raft is an rlib inside the ``nexus_runtime`` cdylib.
 /// The PyO3 classes are registered by calling
 /// ``_nexus_raft::register_python_classes(m)`` from kernel's
 /// ``#[pymodule]`` entry point.

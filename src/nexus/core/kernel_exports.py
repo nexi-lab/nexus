@@ -12,7 +12,7 @@ Re-run: python scripts/codegen_kernel_abi.py
 
 from __future__ import annotations
 
-from nexus_kernel import (
+from nexus_runtime import (
     BloomFilter,
     PyFederationClient,
     PyKernel,

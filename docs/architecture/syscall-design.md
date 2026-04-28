@@ -338,8 +338,8 @@ Key design decisions:
 | Dispatch (KernelDispatch → DispatchMixin) | **Done** — Rust Kernel owns registries, DispatchMixin provides Python API (PR 7c) |
 | Overlay feature | **Deleted** — CAS dedup makes it unnecessary (PR 7, -1354 lines) |
 | CDC reassembly | **Done** — chunked_manifest detection + reassembly in Rust CAS engine |
-| `stubs/nexus_kernel/__init__.pyi` | **Auto-generated** — `codegen_kernel_abi.py` reads Rust source |
-| Module rename | **Done** — `nexus_fast` → `nexus_kernel` (PR 8) |
+| `stubs/nexus_runtime/__init__.pyi` | **Auto-generated** — `codegen_kernel_abi.py` reads Rust source |
+| Module rename | **Done** — `nexus_fast` → `nexus_runtime` (PR 8) |
 | `_backend_read` elimination | **Done** — all sys_read paths go through Rust kernel; Python `_backend_read` deleted (#1817 PR #3848) |
 | `sys_write` metadata in Rust | **Done** — Rust kernel builds metadata after CAS write; Python `_write_internal`/`_build_write_metadata` deleted (#1817 PR #3848) |
 | PIPE/STREAM in Rust | **Done** — sys_read/sys_write dispatch to PipeManager/StreamManager in Rust; `pipe_read_nowait`/`pipe_destroy` bypasses deleted (#1817 PR #3852) |
@@ -407,12 +407,12 @@ Migration phases (incremental, each a PR):
 | §7 PR 7a (ABC → Protocol) | Done | `NexusFilesystemABC(ABC)` → `NexusFilesystem(Protocol)`, 28 files |
 | §7 PR 7b (Metastore adapter) | Done | `PyMetastoreAdapter` in Rust, `set_metastore()`, dcache-miss fallback |
 | §7 PR 7c (Dispatch collapse) | Done | `_resolve_and_read` deleted, `_read_via_dlc` → `_backend_read`, `KernelDispatch` → `DispatchMixin` |
-| §7 PR 7d (Crate rename) | Done | `rust/nexus_pyo3` → `rust/nexus_kernel` |
+| §7 PR 7d (Crate rename) | Done | `rust/nexus_pyo3` → `rust/nexus_runtime` |
 | §7 PR 7e (Dispatch traits) | Done | `InterceptHook`/`PathResolver`/`MutationObserver` Rust traits + PyO3 adapters |
 | §7 PR 7f (CDC Rust) | Done | CDC chunked_manifest detection + reassembly in Rust CAS engine |
 | §7 PR 7g (Overlay deleted) | Done | Overlay feature deleted (-1354 lines), CAS dedup replaces it |
 | §7 PR 8 (Codegen) | Done | `codegen_kernel_abi.py` generates stubs, protocols, exports from Rust source |
-| §7 PR 8 (Module rename) | Done | `nexus_fast` → `nexus_kernel` (Python module name, 90+ files) |
+| §7 PR 8 (Module rename) | Done | `nexus_fast` → `nexus_runtime` (Python module name, 90+ files) |
 | **§7 remaining** | **Done** | `_backend_read` deleted, sys_write metadata moved to Rust, PIPE/STREAM dispatched in Rust, advisory locks in Rust, connectors via gRPC — all completed in #1817/#1960 |
 
 The key insight: **Phase H is the last phase that adds logic.** The §7

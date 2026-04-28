@@ -2,7 +2,7 @@
 //!
 //! Mirrors `kernel::python::register`, `services::python::register`,
 //! and `transport::python::register` — single entry point that the
-//! `nexus-cdylib` `#[pymodule] fn nexus_kernel` invokes to register
+//! `nexus-cdylib` `#[pymodule] fn nexus_runtime` invokes to register
 //! every PyO3 class / function this crate owns.
 //!
 //! Two responsibilities:
@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 /// Register every backends-tier PyO3 export into the parent module
 /// **and** install the global `BackendFactory` for `sys_setattr`.
-/// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_kernel` after
+/// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_runtime` after
 /// `kernel::python::register`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // ── #[pyclass] registrations ────────────────────────────────────

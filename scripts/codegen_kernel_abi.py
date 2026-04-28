@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RUST_SRC = ROOT / "rust" / "kernel" / "src"
 
-STUBS_PATH = ROOT / "stubs" / "nexus_kernel" / "__init__.pyi"
+STUBS_PATH = ROOT / "stubs" / "nexus_runtime" / "__init__.pyi"
 EXPORTS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_exports.py"
 PROTOCOLS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_protocols.py"
 API_GROUPS_PATH = ROOT / "src" / "nexus" / "_kernel_api_groups.py"
@@ -177,7 +177,7 @@ class ClassDef:
     # when PyO3 does not rename the class — PyKernel, for example, is
     # exposed to Python as ``Kernel`` via ``#[pyclass(name = "Kernel")]``
     # and must appear as ``class Kernel:`` in the generated stub so
-    # ``from nexus_kernel import Kernel`` type-checks.
+    # ``from nexus_runtime import Kernel`` type-checks.
     py_name: str = ""
 
 
@@ -845,7 +845,7 @@ def generate_stubs(
         MARKER,
         "# Source: rust/kernel/src/*.rs",
         "",
-        '"""Type stubs for nexus_kernel — Rust-accelerated PyO3 extension module.',
+        '"""Type stubs for nexus_runtime — Rust-accelerated PyO3 extension module.',
         "",
         "Auto-generated from rust/kernel/src/*.rs exports.",
         "Re-run: python scripts/codegen_kernel_abi.py",
@@ -946,16 +946,16 @@ def generate_stubs(
 
     # ------------------------------------------------------------------
     # Symbols registered by nexus-raft's ``register_python_classes`` —
-    # the ``nexus_kernel`` module re-exports them, but the codegen's
+    # the ``nexus_runtime`` module re-exports them, but the codegen's
     # ``lib.rs`` parser only sees kernel-side ``add_class!`` /
     # ``wrap_pyfunction!`` calls. Until the parser is extended to follow
     # ``register_python_classes``, declare these by hand so mypy can
     # type-check imports like::
     #
-    #     from nexus_kernel import TofuTrustStore, hostname_to_node_id
+    #     from nexus_runtime import TofuTrustStore, hostname_to_node_id
     # ------------------------------------------------------------------
     lines.append("# " + "-" * 75)
-    lines.append("# Raft-side classes re-exported via nexus_kernel")
+    lines.append("# Raft-side classes re-exported via nexus_runtime")
     lines.append("# (rust/raft/src/federation/tofu.rs, rust/raft/src/pyo3_bindings.rs)")
     lines.append("# " + "-" * 75)
     lines.append("")
@@ -1065,7 +1065,7 @@ def generate_exports(all_names: list[str]) -> str:
         '"""',
         "from __future__ import annotations",
         "",
-        "from nexus_kernel import (",
+        "from nexus_runtime import (",
     ]
 
     for name in static_names:
@@ -1075,7 +1075,7 @@ def generate_exports(all_names: list[str]) -> str:
     lines.append("")
 
     # Feature-gated functions (behind #[cfg]) are NOT re-exported here.
-    # Import directly from nexus_kernel when needed.
+    # Import directly from nexus_runtime when needed.
 
     # __all__ for clean star imports (excludes feature-gated names)
     lines.append("__all__ = [")
@@ -1109,7 +1109,7 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
         MARKER,
         "# Source: rust/kernel/src/kernel.rs (PyKernel methods)",
         "",
-        '"""Auto-generated API surface groups for nexus_kernel version validation.',
+        '"""Auto-generated API surface groups for nexus_runtime version validation.',
         "",
         "Used by nexus._rust_compat to validate the installed binary against the",
         "expected API surface at import time.  Re-run: python scripts/codegen_kernel_abi.py",
@@ -1131,7 +1131,7 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
     lines += [
         "}",
         "",
-        "# All public methods that must exist on nexus_kernel.PyKernel.",
+        "# All public methods that must exist on nexus_runtime.PyKernel.",
         "# Auto-derived from #[pymethods] in rust/kernel/src/kernel.rs.",
         "# A stale binary missing any of these triggers an actionable ImportError.",
         "KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset({",
@@ -4684,7 +4684,7 @@ def collect_all() -> tuple[
 
     Returns (module_functions, classes, class_order, traits, all_export_names).
     """
-    # Phase 0: kernel/src/lib.rs's `#[pymodule] fn nexus_kernel` body
+    # Phase 0: kernel/src/lib.rs's `#[pymodule] fn nexus_runtime` body
     # moved to kernel/src/python.rs (`pub fn register`). The cdylib
     # itself now lives in rust/nexus-cdylib/src/lib.rs and just delegates
     # into per-crate `python::register` fns.
@@ -4703,7 +4703,7 @@ def collect_all() -> tuple[
     if lib_python_mod.exists():
         lib_python_text = lib_python_mod.read_text()
     # Phase 4 (full): peer-crate `python::register` fns also expose
-    # pyclasses / pyfunctions into the same `nexus_kernel` Python
+    # pyclasses / pyfunctions into the same `nexus_runtime` Python
     # module (the cdylib calls `kernel::python::register`,
     # `lib::python::register`, AND e.g. `transport::python::register`,
     # `backends::python::register`, `services::python::register`).

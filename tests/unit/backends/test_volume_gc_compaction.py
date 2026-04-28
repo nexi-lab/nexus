@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
-    from nexus_kernel import BlobPackEngine
+    from nexus_runtime import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
@@ -26,7 +26,7 @@ except ImportError:
 from nexus.backends.engines.cas_gc import CASGarbageCollector
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_runtime.BlobPackEngine not available"
 )
 
 

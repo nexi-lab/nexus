@@ -1,7 +1,7 @@
 """SSH-style mTLS for gRPC zone federation (#1250).
 
 Auto-generates X.509 certificates on zone init. The TOFU peer-CA trust
-store is provided by ``nexus_kernel.PyTofuTrustStore``.
+store is provided by ``nexus_runtime.PyTofuTrustStore``.
 """
 
 from nexus.security.tls.certgen import (

@@ -40,7 +40,7 @@ import blake3
 
 # RUST_FALLBACK: BloomFilter (read_file / read_files_bulk are required)
 if TYPE_CHECKING:
-    from nexus_kernel import BloomFilter
+    from nexus_runtime import BloomFilter
 
 logger = logging.getLogger(__name__)
 
@@ -105,14 +105,14 @@ class FileContentCache:
     def _init_bloom_filter(self) -> None:
         """Initialize Bloom filter for fast cache miss detection.
 
-        Degrades gracefully to `_bloom=None` when nexus_kernel is absent or stale.
+        Degrades gracefully to `_bloom=None` when nexus_runtime is absent or stale.
         """
         # RUST_FALLBACK: BloomFilter (optional — stale/absent binary disables bloom)
         from nexus._rust_compat import BloomFilter
 
         if BloomFilter is None:
             logger.debug(
-                "BloomFilter unavailable (stale or absent nexus_kernel) — "
+                "BloomFilter unavailable (stale or absent nexus_runtime) — "
                 "cache miss detection will use disk checks"
             )
             self._bloom = None
@@ -388,7 +388,7 @@ class FileContentCache:
         Uses Bloom filter for fast cache miss detection - avoids disk I/O
         for entries that definitely don't exist.
 
-        Uses mmap-based reading via nexus_kernel for better performance:
+        Uses mmap-based reading via nexus_runtime for better performance:
         - Leverages OS page cache efficiently
         - 20-70% faster for medium to large files
 
@@ -461,7 +461,7 @@ class FileContentCache:
     ) -> dict[str, bytes]:
         """Read multiple files from cache.
 
-        Uses parallel mmap-based reading via nexus_kernel for better performance
+        Uses parallel mmap-based reading via nexus_runtime for better performance
         when reading many files (10+ files uses parallel I/O).
 
         Args:

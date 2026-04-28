@@ -20,50 +20,8 @@ from nexus.contracts.exceptions import NexusPermissionError
 from nexus.contracts.rpc import rpc_expose
 
 
-class FederationRPCMixin:
-    """Mixin providing federation RPC methods with context-aware authentication."""
-
-    @rpc_expose(admin_only=False)
-    def federation_client_whoami(self, _context: Any = None) -> dict[str, Any]:
-        """Return the caller's zone grants for federation handshake.
-
-        Called by thin clients during SandboxBootstrapper startup to discover
-        which zones their bearer token can access and with what permissions.
-        Returns a list of {zone_id, permission} dicts from the caller's context.
-
-        Issue #3786: federation handshake for thin client.
-        """
-        if _context is None:
-            raise NexusPermissionError("federation_client_whoami requires authentication")
-
-        # P3-2 multi-zone tokens carry zone_perms: tuple[tuple[str, str], ...]
-        zone_perms = getattr(_context, "zone_perms", None)
-        if zone_perms:
-            zones = [{"zone_id": zid, "permission": perm} for zid, perm in zone_perms]
-            return {"zones": zones}
-
-        # P3-1 single-zone tokens carry zone_id; look up actual permission if available.
-        # Re-read zone_perms here: OperationContext.__post_init__ always populates it
-        # from zone_id (defaulting to "rw"), so a real OperationContext will have a
-        # non-empty zone_perms even when zone_id is set without an explicit zone_perms.
-        # On raw/mock contexts without __post_init__, default to "rw" (legacy single-zone
-        # tokens are write-capable per OperationContext.__post_init__ policy, #3785 F3c).
-        zone_id = getattr(_context, "zone_id", None)
-        if zone_id:
-            perm = "rw"
-            _zone_perms = getattr(_context, "zone_perms", None)
-            if _zone_perms:
-                for zid, p in _zone_perms:
-                    if zid == zone_id:
-                        perm = p
-                        break
-            return {"zones": [{"zone_id": zone_id, "permission": perm}]}
-
-        raise NexusPermissionError("token carries no zone grants")
-
-
-class FederationRPCService(FederationRPCMixin):
-    """Federation CRUD RPCs backed by ``nexus_kernel`` zone_* methods."""
+class FederationRPCService:
+    """Federation CRUD RPCs backed by ``nexus_runtime`` zone_* methods."""
 
     def __init__(self, kernel: Any, nexus_fs: Any = None) -> None:
         self._kernel = kernel

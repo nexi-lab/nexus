@@ -9,7 +9,7 @@ Tests the full lifecycle:
 Requires: AWS credentials with access to the test bucket.
 Run with: pytest tests/integration/backends/test_batch_prealloc_s3_e2e.py -v
 
-Skipped automatically if boto3, nexus_kernel, or S3 credentials are unavailable.
+Skipped automatically if boto3, nexus_runtime, or S3 credentials are unavailable.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ except Exception:
 
 # Skip if Rust BlobPackEngine unavailable
 try:
-    from nexus_kernel import BlobPackEngine
+    from nexus_runtime import BlobPackEngine
 
     HAS_ENGINE = True
 except ImportError:
@@ -41,7 +41,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
     not (HAS_S3 and HAS_ENGINE),
-    reason="Requires S3 credentials and nexus_kernel.BlobPackEngine",
+    reason="Requires S3 credentials and nexus_runtime.BlobPackEngine",
 )
 
 TEST_BUCKET = os.environ.get("NEXUS_TEST_S3_BUCKET", "nexus-888")

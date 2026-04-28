@@ -5,18 +5,18 @@ from __future__ import annotations
 import sys
 import types
 
-# nexus.bricks.search.__init__ imports SearchService → nexus_kernel (Rust
+# nexus.bricks.search.__init__ imports SearchService → nexus_runtime (Rust
 # extension).  The Rust binary is not available in the test venv, so we
 # stub the module before any nexus.bricks.search import can trigger it.
 # Using a MagicMock stub so that any attribute access (import name from ...)
 # succeeds without enumerating every symbol the Rust extension exposes.
-if "nexus_kernel" not in sys.modules:
+if "nexus_runtime" not in sys.modules:
     from unittest.mock import MagicMock as _MagicMock
 
-    _nexus_kernel_stub = _MagicMock()
-    _nexus_kernel_stub.__name__ = "nexus_kernel"
-    _nexus_kernel_stub.__spec__ = types.ModuleType("nexus_kernel")
-    sys.modules["nexus_kernel"] = _nexus_kernel_stub
+    _nexus_runtime_stub = _MagicMock()
+    _nexus_runtime_stub.__name__ = "nexus_runtime"
+    _nexus_runtime_stub.__spec__ = types.ModuleType("nexus_runtime")
+    sys.modules["nexus_runtime"] = _nexus_runtime_stub
 
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock

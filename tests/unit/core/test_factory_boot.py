@@ -401,7 +401,7 @@ class TestBrickServicesFieldCompleteness:
         record_store.database_url = "sqlite://"
         record_store.async_session_factory = MagicMock()
 
-        from nexus_kernel import PyKernel
+        from nexus_runtime import PyKernel
 
         metadata_store = MagicMock()
         metadata_store._kernel = PyKernel()
@@ -453,7 +453,7 @@ class TestBrickServicesFieldCompleteness:
         record_store.database_url = "sqlite://"
         record_store.async_session_factory = MagicMock()
 
-        from nexus_kernel import PyKernel
+        from nexus_runtime import PyKernel
 
         metadata_store = MagicMock()
         metadata_store._kernel = PyKernel()

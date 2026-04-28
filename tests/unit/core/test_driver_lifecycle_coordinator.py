@@ -22,7 +22,7 @@ from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 
 
 class _MockDispatch:
-    """Lightweight mock for DispatchMixin (no real nexus_kernel needed)."""
+    """Lightweight mock for DispatchMixin (no real nexus_runtime needed)."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []

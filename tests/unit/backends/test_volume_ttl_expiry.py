@@ -17,7 +17,7 @@ def make_hash(seed: int) -> str:
 
 def _vol_engine_available() -> bool:
     try:
-        from nexus_kernel import BlobPackEngine  # noqa: F401
+        from nexus_runtime import BlobPackEngine  # noqa: F401
 
         return True
     except ImportError:
@@ -25,7 +25,7 @@ def _vol_engine_available() -> bool:
 
 
 needs_vol_engine = pytest.mark.skipif(
-    not _vol_engine_available(), reason="nexus_kernel.BlobPackEngine not available"
+    not _vol_engine_available(), reason="nexus_runtime.BlobPackEngine not available"
 )
 
 
@@ -34,14 +34,14 @@ class TestPutWithExpiry:
     """Test writing blobs with expiry timestamps."""
 
     def test_put_with_expiry_returns_true(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         result = engine.put_with_expiry(make_hash(1), b"hello", time.time() + 3600)
         assert result is True
 
     def test_put_with_expiry_dedup(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
@@ -50,7 +50,7 @@ class TestPutWithExpiry:
         assert engine.put_with_expiry(h, b"hello", expiry) is False  # dedup
 
     def test_put_with_zero_expiry_is_permanent(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
@@ -60,7 +60,7 @@ class TestPutWithExpiry:
         engine.close()
 
     def test_read_expired_entry_returns_none(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
@@ -72,7 +72,7 @@ class TestPutWithExpiry:
         engine.close()
 
     def test_exists_expired_entry_returns_false(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
@@ -81,7 +81,7 @@ class TestPutWithExpiry:
         engine.close()
 
     def test_get_size_expired_entry_returns_none(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
@@ -90,7 +90,7 @@ class TestPutWithExpiry:
         engine.close()
 
     def test_unexpired_entry_readable(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
@@ -101,7 +101,7 @@ class TestPutWithExpiry:
         engine.close()
 
     def test_mix_permanent_and_ttl(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         h_perm = make_hash(1)
@@ -123,7 +123,7 @@ class TestExpireTTLVolumes:
     """Test the expire_ttl_volumes() method."""
 
     def test_expire_empty_engine(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         result = engine.expire_ttl_volumes()
@@ -131,7 +131,7 @@ class TestExpireTTLVolumes:
         engine.close()
 
     def test_expire_permanent_entries_untouched(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         h = make_hash(1)
@@ -144,7 +144,7 @@ class TestExpireTTLVolumes:
         engine.close()
 
     def test_expire_removes_expired_entries(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         hashes = []
@@ -172,7 +172,7 @@ class TestExpireTTLVolumes:
         the live entry's expiry (future). The volume stays. The expired
         entry is still invisible at read-time (mem_index expiry check).
         """
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
 
@@ -194,7 +194,7 @@ class TestExpireTTLVolumes:
         engine.close()
 
     def test_expire_deletes_fully_empty_volume_file(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         vol_dir = tmp_path / "vol"
         engine = BlobPackEngine(str(vol_dir))
@@ -217,7 +217,7 @@ class TestExpireTTLVolumes:
         engine.close()
 
     def test_expire_idempotent(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         engine.put_with_expiry(make_hash(1), b"data", time.time() - 1.0)
@@ -236,14 +236,14 @@ class TestSealIfNonempty:
     """Test the seal_if_nonempty() method for TTL rotation."""
 
     def test_seal_empty_returns_false(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         assert engine.seal_if_nonempty() is False
         engine.close()
 
     def test_seal_nonempty_returns_true(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         engine.put(make_hash(1), b"data")
@@ -254,7 +254,7 @@ class TestSealIfNonempty:
         engine.close()
 
     def test_seal_after_seal_returns_false(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         engine = BlobPackEngine(str(tmp_path / "vol"))
         engine.put(make_hash(1), b"data")
@@ -270,7 +270,7 @@ class TestSnapshotWithExpiry:
     """Test that snapshot persistence includes expiry field."""
 
     def test_snapshot_roundtrip_with_expiry(self, tmp_path) -> None:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
 
         vol_dir = tmp_path / "vol"
 

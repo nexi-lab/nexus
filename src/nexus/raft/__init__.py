@@ -10,12 +10,12 @@ Two access modes:
 REMOTE profile uses RPCTransport → NexusVFSService (see nexus.remote).
 Federation lives entirely in the Rust kernel now — the cluster
 profile binary (`nexusd-cluster`) owns the orchestrator; Python
-callers reach it through `nexus_kernel.ZoneManager` / `ZoneHandle` or
+callers reach it through `nexus_runtime.ZoneManager` / `ZoneHandle` or
 the federation_* RPCs in `nexus.server.rpc.services.federation_rpc`.
 
 Architecture:
     Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
-    Consensus:  NexusFS -> nexus_kernel.ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
+    Consensus:  NexusFS -> nexus_runtime.ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
     Remote:     NexusFS -> RPCTransport -> NexusVFSService (gRPC) -> server (~50-100ms)
 
 Example (Metastore - embedded mode):
@@ -26,8 +26,8 @@ Example (Metastore - embedded mode):
     metadata = store.get_metadata("/path/to/file")
 
 Example (consensus mode — via kernel zone_* methods):
-    import nexus_kernel
-    kernel = nexus_kernel.PyKernel()
+    import nexus_runtime
+    kernel = nexus_runtime.PyKernel()
     kernel.zone_create("root", ["2@peer:2126"])
     kernel.zone_mount("root", "/data", "shared-zone")
     # Read/write through kernel.sys_* like any path; mount routes to the
@@ -50,12 +50,12 @@ HolderInfo: Any = None
 
 try:
     # F2 C8 (Option A): raft's PyO3 classes were moved into the
-    # ``nexus_kernel`` cdylib. A single .so holds Kernel + Metastore +
+    # ``nexus_runtime`` cdylib. A single .so holds Kernel + Metastore +
     # ZoneManager + ZoneHandle so raft's ``kernel::Metastore`` impls can
     # be installed as true Rust trait objects without cross-cdylib
     # duplication. Use ``getattr`` so mypy doesn't trip on stale stubs
     # while a locally-installed wheel lags behind.
-    import nexus_kernel as _pyo3_mod
+    import nexus_runtime as _pyo3_mod
 
     Metastore = getattr(_pyo3_mod, "PyMetaStore", None)
     LockState = getattr(_pyo3_mod, "PyLockState", None)
@@ -72,7 +72,7 @@ except ImportError:
 # =========================================================================
 ZoneHandle: Any = None
 try:
-    import nexus_kernel as _pyo3_mod2
+    import nexus_runtime as _pyo3_mod2
 
     ZoneHandle = getattr(_pyo3_mod2, "ZoneHandle", None)
 except (ImportError, AttributeError):
@@ -106,7 +106,7 @@ def require_metastore() -> None:
 __all__ = [
     # PyO3 FFI: Metastore driver (embedded mode)
     "Metastore",
-    # Per-zone Raft node handle (cdylib-loaded if nexus_kernel is built
+    # Per-zone Raft node handle (cdylib-loaded if nexus_runtime is built
     # with the full feature; None otherwise — matches Metastore semantics)
     "ZoneHandle",
     # Lock types

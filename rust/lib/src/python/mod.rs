@@ -24,7 +24,7 @@ pub mod simd;
 pub mod trigram;
 
 /// Register every `lib::python::*` PyO3 export into the parent module.
-/// Called from `kernel/src/lib.rs`'s `#[pymodule] fn nexus_kernel`.
+/// Called from `kernel/src/lib.rs`'s `#[pymodule] fn nexus_runtime`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // ReBAC
     m.add_function(wrap_pyfunction!(rebac::compute_permissions_bulk, m)?)?;

@@ -2241,7 +2241,7 @@ _SSE_MOCK_SKIP_REASON = (
 def _bootstrap_standalone_fs(tmp_path):
     """Create an in-process NexusFS with a local CAS backend.
 
-    The e2e-runner container carries the full nexus_kernel install, so we
+    The e2e-runner container carries the full nexus_runtime install, so we
     can instantiate a fresh standalone filesystem just like the unit test
     at tests/unit/backends/test_openai_compat_rust.py::_bootstrap does.
     No RPC surface is added — the test drives kernel syscalls in-process

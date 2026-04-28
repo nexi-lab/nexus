@@ -173,7 +173,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
     _redb_path = Path(metadata_path).with_suffix(".redb")
 
     if kernel is None:
-        from nexus_kernel import PyKernel as _Kernel
+        from nexus_runtime import PyKernel as _Kernel
 
         kernel = _Kernel()
         # Phase 4 (full): drain the federation init's blob-fetcher slot
@@ -181,7 +181,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         # boot-time Noop default).  Idempotent — no-op if the slot
         # was never stashed (federation disabled).
         try:
-            import nexus_kernel as _nk
+            import nexus_runtime as _nk
 
             _nk.install_transport_wiring(kernel)
             # Phase 5 anchor: replace the kernel's NoopFederationProvider
@@ -523,7 +523,7 @@ def connect(
         if _RUST_AVAILABLE and _Kernel is not None:
             _early_kernel = _Kernel()
             try:
-                import nexus_kernel as _nk
+                import nexus_runtime as _nk
 
                 _nk.install_transport_wiring(_early_kernel)
                 _nk.install_federation_wiring(_early_kernel)
@@ -712,7 +712,7 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     Phase 3 (refactor/rust-workspace-parallel-layers): the audit hook
     moved out of the kernel crate into ``services::audit`` per the
     parallel-layers split. The Python entry point is now a free function
-    on the ``nexus_kernel`` module — ``install_audit_hook(kernel, zone,
+    on the ``nexus_runtime`` module — ``install_audit_hook(kernel, zone,
     stream)`` — instead of a method on the Kernel pyclass. Service-tier
     owns hook lifecycle; kernel only exposes the stream-prep half via
     ``Kernel::prepare_audit_stream`` (Rust API).
@@ -725,9 +725,9 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     audit_stream_path = "/audit/traces/"
 
     try:
-        import nexus_kernel
+        import nexus_runtime
 
-        nexus_kernel.install_audit_hook(kernel, audit_zone, audit_stream_path)
+        nexus_runtime.install_audit_hook(kernel, audit_zone, audit_stream_path)
         logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
     except RuntimeError as e:
         # Federation not active or zone not loaded — expected in standalone mode.

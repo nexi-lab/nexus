@@ -1,6 +1,6 @@
 """Volume-packed local Transport — append-only volume files for CAS.
 
-Wraps the Rust VolumeEngine (nexus_kernel.BlobPackEngine) and implements the
+Wraps the Rust VolumeEngine (nexus_runtime.BlobPackEngine) and implements the
 Transport protocol. Routes CAS blob keys (cas/...) to the volume engine
 and delegates directory operations (dirs/...) to an internal LocalTransport.
 
@@ -130,8 +130,8 @@ class BlobPackLocalTransport:
 
         if _BlobPackEngine is None:
             raise RuntimeError(
-                "BlobPackEngine is unavailable (stale or absent nexus_kernel). "
-                "BlobPackLocalTransport requires a working nexus_kernel binary — "
+                "BlobPackEngine is unavailable (stale or absent nexus_runtime). "
+                "BlobPackLocalTransport requires a working nexus_runtime binary — "
                 "there is no safe degraded mode. "
                 "Rebuild the extension: cd rust/kernel && maturin develop --release"
             )

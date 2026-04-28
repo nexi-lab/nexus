@@ -1,6 +1,6 @@
 """Unit tests for nexus._rust_compat capability group validation (Issue #3712).
 
-Tests use mock nexus_kernel modules to exercise degradation paths without
+Tests use mock nexus_runtime modules to exercise degradation paths without
 requiring a built Rust extension. All paths tested:
   - Module not installed (slim mode)
   - Module installed but import raises an unexpected error
@@ -9,7 +9,7 @@ requiring a built Rust extension. All paths tested:
   - Kernel class missing methods → RUST_AVAILABLE = False (stale binary)
   - Regression: close_all_pipes missing on Kernel triggers warning + disables Rust
 
-Running these tests does NOT require nexus_kernel to be built.
+Running these tests does NOT require nexus_runtime to be built.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _restore_sys_modules():
-    """Snapshot and restore nexus._rust_compat + nexus_kernel around each test."""
-    saved = {k: sys.modules.get(k) for k in ("nexus._rust_compat", "nexus_kernel")}
+    """Snapshot and restore nexus._rust_compat + nexus_runtime around each test."""
+    saved = {k: sys.modules.get(k) for k in ("nexus._rust_compat", "nexus_runtime")}
     yield
     for name, mod in saved.items():
         if mod is None:
@@ -65,7 +65,7 @@ def _make_fake_module(
     missing_module_symbols: list[str] | None = None,
     kernel_missing_methods: list[str] | None = None,
 ) -> types.ModuleType:
-    """Return a fake nexus_kernel module.
+    """Return a fake nexus_runtime module.
 
     Args:
         missing_module_symbols: top-level symbols to omit.
@@ -73,7 +73,7 @@ def _make_fake_module(
     """
     from nexus._kernel_api_groups import MODULE_CAPABILITY_GROUPS
 
-    mod = types.ModuleType("nexus_kernel")
+    mod = types.ModuleType("nexus_runtime")
 
     # Add all symbols from all capability groups, minus those requested missing
     all_symbols = {s for group in MODULE_CAPABILITY_GROUPS.values() for s in group}
@@ -90,20 +90,20 @@ def _make_fake_module(
 
 
 def _reload_rust_compat(fake_module: types.ModuleType | None) -> types.ModuleType:
-    """Reload nexus._rust_compat with nexus_kernel replaced by fake_module."""
+    """Reload nexus._rust_compat with nexus_runtime replaced by fake_module."""
     # Remove cached modules so they reload fresh
     for mod_name in list(sys.modules.keys()):
-        if mod_name in ("nexus._rust_compat", "nexus_kernel"):
+        if mod_name in ("nexus._rust_compat", "nexus_runtime"):
             del sys.modules[mod_name]
 
     if fake_module is None:
         # Simulate module not installed: sys.modules[name]=None blocks the import
         # (documented Python behaviour — cast needed because stubs type sys.modules
         # as dict[str, ModuleType], but None is intentionally valid here).
-        with patch.dict(sys.modules, {"nexus_kernel": cast(types.ModuleType, None)}):
+        with patch.dict(sys.modules, {"nexus_runtime": cast(types.ModuleType, None)}):
             return importlib.import_module("nexus._rust_compat")
     else:
-        with patch.dict(sys.modules, {"nexus_kernel": fake_module}):
+        with patch.dict(sys.modules, {"nexus_runtime": fake_module}):
             return importlib.import_module("nexus._rust_compat")
 
 
@@ -113,7 +113,7 @@ def _reload_rust_compat(fake_module: types.ModuleType | None) -> types.ModuleTyp
 
 
 class TestModuleNotInstalled:
-    """Slim nexus-fs mode — nexus_kernel not present at all."""
+    """Slim nexus-fs mode — nexus_runtime not present at all."""
 
     def test_rust_available_false(self) -> None:
         compat = _reload_rust_compat(None)
@@ -134,16 +134,16 @@ class TestModuleNotInstalled:
 
 
 class TestModuleImportError:
-    """nexus_kernel installed but raises on import (broken .so, wrong arch, etc.)."""
+    """nexus_runtime installed but raises on import (broken .so, wrong arch, etc.)."""
 
     def test_rust_available_false_on_broken_import(self) -> None:
         for mod_name in list(sys.modules.keys()):
-            if mod_name in ("nexus._rust_compat", "nexus_kernel"):
+            if mod_name in ("nexus._rust_compat", "nexus_runtime"):
                 del sys.modules[mod_name]
 
         # Simulate a broken import by making the import raise
         original = __builtins__  # noqa: F841
-        with patch("builtins.__import__", side_effect=_make_import_raiser("nexus_kernel")):
+        with patch("builtins.__import__", side_effect=_make_import_raiser("nexus_runtime")):
             try:
                 compat = importlib.import_module("nexus._rust_compat")
                 assert compat.RUST_AVAILABLE is False

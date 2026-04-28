@@ -2,7 +2,7 @@
 //!
 //! [`register`] adds the kernel's `#[pyclass]` / `#[pyfunction]`
 //! exports to the parent module.  `nexus-cdylib`'s `#[pymodule] fn
-//! nexus_kernel` calls this alongside the peer-crate registers
+//! nexus_runtime` calls this alongside the peer-crate registers
 //! (`lib::python::register`, `backends::python::register`,
 //! `services::python::register`, `transport::python::register`,
 //! `nexus_raft::pyo3_bindings::register_python_classes`).
@@ -20,7 +20,7 @@ use pyo3::prelude::*;
 
 /// Register kernel-owned `#[pyclass]` / `#[pyfunction]` exports into
 /// the parent module.  Called from `nexus-cdylib`'s
-/// `#[pymodule] fn nexus_kernel`.
+/// `#[pymodule] fn nexus_runtime`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // Shared-memory IPC primitives — Unix-only because the underlying
     // SHM impl uses POSIX `shm_open` / `mmap`.

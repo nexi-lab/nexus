@@ -8,7 +8,7 @@ capacity limits, close semantics, and stream lifecycle management.
 import pytest
 
 try:
-    from nexus_kernel import PyKernel
+    from nexus_runtime import PyKernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -16,7 +16,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
     not RUST_AVAILABLE,
-    reason="nexus_kernel not built — rebuild Rust extension",
+    reason="nexus_runtime not built — rebuild Rust extension",
 )
 
 

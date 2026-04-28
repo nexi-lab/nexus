@@ -643,7 +643,7 @@ The Rust workspace splits into three roles:
 | Role            | Cargo type   | Purpose                                                                  |
 |-----------------|--------------|--------------------------------------------------------------------------|
 | Library crates  | `rlib`       | Compose into Python wheel + standalone binaries.                         |
-| Wheel artifact  | `cdylib`     | `rust/nexus-cdylib/` — produces `nexus_kernel.so` / `.pyd` for Python.   |
+| Wheel artifact  | `cdylib`     | `rust/nexus-cdylib/` — produces `nexus_runtime.so` / `.pyd` for Python.   |
 | Profile binary  | binary       | `rust/profiles/<name>/` — standalone deployment binaries (see §7.1).     |
 
 The Linux analogue is `make bzImage`: rlibs compile into one of two
@@ -681,7 +681,7 @@ Boot wiring:
 | Step | Caller                                       | Effect                                    |
 |------|----------------------------------------------|-------------------------------------------|
 | 1    | `Kernel::new`                                | Slot defaults to `NoopFederationProvider` |
-| 2    | `nexus_kernel.install_federation_wiring(k)`  | Slot is replaced with `RaftFederationProvider` |
+| 2    | `nexus_runtime.install_federation_wiring(k)`  | Slot is replaced with `RaftFederationProvider` |
 | 3    | Federation syscalls (`init_federation_from_env`, …) | Dispatch through `kernel.federation_arc().<method>(kernel, …)` |
 
 Provider methods all take `kernel: &Kernel` so the unit-struct impl
@@ -693,12 +693,12 @@ The Phase 4 `PeerBlobClient` DI pattern is mirrored exactly:
 #### Wheel composition
 
 `rust/nexus-cdylib/src/lib.rs` is the sole `#[pymodule] fn
-nexus_kernel`; it aggregates each peer's PyO3 surface through that
+nexus_runtime`; it aggregates each peer's PyO3 surface through that
 peer's `python::register` entry:
 
 ```rust
 #[pymodule]
-fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
+fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     lib::python::register(m)?;
     kernel::python::register(m)?;
     nexus_raft::pyo3_bindings::register_python_classes(m)?;

@@ -57,7 +57,7 @@ def measure_file_per_blob(root: Path, count: int) -> dict:
 def measure_volume_packed(root: Path, count: int) -> dict | None:
     """Measure overhead of volume-packed CAS storage."""
     try:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
     except ImportError:
         return None
 
@@ -159,7 +159,7 @@ def main():
 
     # Run without volume engine — still useful to show file-per-blob overhead
     if not vol_result:
-        print("\n[!] nexus_kernel.BlobPackEngine not available — volume benchmark skipped")
+        print("\n[!] nexus_runtime.BlobPackEngine not available — volume benchmark skipped")
         print(f"    File-per-blob overhead: {file_result['overhead_per_blob']:.1f} bytes/blob")
         print("    This demonstrates the problem volumes solve.")
 
@@ -193,9 +193,9 @@ def bench_compaction(count: int = 10_000, blob_size: int = 100) -> dict | None:
             to run the real 1GB benchmark with 4KB blobs.
     """
     try:
-        from nexus_kernel import BlobPackEngine
+        from nexus_runtime import BlobPackEngine
     except ImportError:
-        print("[!] nexus_kernel.BlobPackEngine not available — compaction benchmark skipped")
+        print("[!] nexus_runtime.BlobPackEngine not available — compaction benchmark skipped")
         return None
 
     with tempfile.TemporaryDirectory() as tmpdir:

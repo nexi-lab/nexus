@@ -36,6 +36,7 @@ pub(crate) mod connection;
 pub(crate) mod jsonrpc;
 pub(crate) mod observer;
 pub(crate) mod paths;
+pub(crate) mod pyo3;
 pub(crate) mod service;
 #[cfg(unix)]
 pub(crate) mod subprocess;

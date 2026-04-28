@@ -21,7 +21,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
+
+/// Process-wide handle to the installed AcpService. Set by
+/// [`AcpService::install`] so the hand-written PyO3 surface can find
+/// the instance without downcasting through `Arc<dyn RustService>`.
+static ACP_SVC_HANDLE: OnceLock<Arc<AcpService>> = OnceLock::new();
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -30,6 +35,7 @@ use serde_json::{json, Value};
 use super::agent_config::AgentConfig;
 use super::paths;
 use crate::kernel::{Kernel, OperationContext};
+use crate::service_registry::{RustCallError, RustService};
 
 #[cfg(unix)]
 use super::connection::{AcpConnection, FsRead, FsWrite};
@@ -299,7 +305,7 @@ impl AcpService {
 
     pub(crate) fn delete_system_prompt(&self, agent_id: &str, zone_id: &str) {
         let path = paths::system_prompt(zone_id, agent_id);
-        let _ = self.kernel.sys_unlink(&path, &Self::ctx());
+        let _ = self.kernel.sys_unlink(&path, &Self::ctx(), false);
     }
 
     pub(crate) fn get_enabled_skills(&self, agent_id: &str, zone_id: &str) -> Option<Vec<Value>> {
@@ -383,6 +389,30 @@ impl AcpService {
         Ok(())
     }
 
+    /// Install the AcpService into a kernel's `ServiceRegistry`.
+    /// Called from the cdylib post-construction (PyKernel boot)
+    /// because `Arc<Kernel>` is only available after the wrapping
+    /// step.
+    ///
+    /// Stores the concrete Arc<AcpService> in [`ACP_SVC_HANDLE`] so
+    /// the PyO3 wiring (set_agent_registry, register_on_terminate)
+    /// can reach the same instance the registry holds without
+    /// downcasting `Arc<dyn RustService>`. The handle is process-wide;
+    /// a second `install` against a different kernel instance is
+    /// rejected by the underlying ServiceRegistry duplicate check.
+    pub(crate) fn install(kernel: &Arc<Kernel>, default_zone: &str) -> Result<(), String> {
+        let svc: Arc<Self> = Arc::new(Self::new(Arc::clone(kernel), default_zone.to_string()));
+        let _ = ACP_SVC_HANDLE.set(Arc::clone(&svc));
+        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())
+    }
+
+    /// Look up the installed AcpService instance. `None` when
+    /// install hasn't been called yet (e.g. tests that bypass the
+    /// PyKernel boot path).
+    pub(crate) fn handle() -> Option<Arc<Self>> {
+        ACP_SVC_HANDLE.get().cloned()
+    }
+
     pub(crate) fn persist_result(
         &self,
         result: &AcpResult,
@@ -423,7 +453,7 @@ impl AcpService {
     ///   - subprocess spawn   -> exit_code=127
     ///   - any other error    -> exit_code=-1 with stderr populated
     pub(crate) async fn call_agent(
-        self: &Arc<Self>,
+        &self,
         req: AcpCallRequest,
     ) -> Result<AcpResult, AcpServiceError> {
         let cfg = self
@@ -628,7 +658,7 @@ impl AcpService {
     }
 
     async fn run_session(
-        self: &Arc<Self>,
+        &self,
         subproc: &mut AcpSubprocess,
         _cfg: &AgentConfig,
         fs_read: FsRead,
@@ -805,6 +835,266 @@ fn build_metadata(
 // AcpSubprocess gains take_stdio_for_connection() in this commit too —
 // see subprocess.rs.
 
+// ── RustService dispatch ────────────────────────────────────────────────
+
+impl RustService for AcpService {
+    fn name(&self) -> &str {
+        Self::NAME
+    }
+
+    /// Dispatch the 9 `@rpc_expose` ACP RPC methods. JSON shapes
+    /// match the Python `AcpRPCService` contract 1:1 so existing
+    /// CLI clients keep working through the flat-name backward-compat
+    /// path (`acp_call`, `acp_kill`, etc.) wired in `grpc_server`.
+    fn dispatch(&self, method: &str, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+        match method {
+            "acp_call" => dispatch_acp_call(self, payload),
+            "acp_list_agents" => dispatch_list_configs(self, payload),
+            "acp_list_processes" => dispatch_list_processes(self, payload),
+            "acp_kill" => dispatch_kill(self, payload),
+            "acp_set_system_prompt" => dispatch_set_system_prompt(self, payload),
+            "acp_get_system_prompt" => dispatch_get_system_prompt(self, payload),
+            "acp_set_enabled_skills" => dispatch_set_enabled_skills(self, payload),
+            "acp_get_enabled_skills" => dispatch_get_enabled_skills(self, payload),
+            "acp_history" => dispatch_history(self, payload),
+            _ => Err(RustCallError::NotFound),
+        }
+    }
+}
+
+/// Common context block shared by every ACP RPC. The gRPC `Call`
+/// handler (commit 13 + commit 22's update) injects `{zone_id,
+/// user_id}` here when missing so dispatch can pull caller identity
+/// without poking at the bridge.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct AcpContext {
+    #[serde(default)]
+    zone_id: Option<String>,
+    #[serde(default)]
+    user_id: Option<String>,
+}
+
+impl AcpContext {
+    fn zone_or<'a>(&'a self, fallback: &'a str) -> &'a str {
+        self.zone_id.as_deref().unwrap_or(fallback)
+    }
+
+    fn user_or(&self) -> String {
+        self.user_id.clone().unwrap_or_else(|| "system".to_string())
+    }
+}
+
+fn decode<T: for<'de> Deserialize<'de>>(payload: &[u8]) -> Result<T, RustCallError> {
+    serde_json::from_slice(payload).map_err(|e| RustCallError::InvalidArgument(e.to_string()))
+}
+
+fn encode<T: Serialize>(v: &T) -> Result<Vec<u8>, RustCallError> {
+    serde_json::to_vec(v).map_err(|e| RustCallError::Internal(e.to_string()))
+}
+
+fn map_svc_err(e: AcpServiceError) -> RustCallError {
+    match e {
+        AcpServiceError::UnknownAgent(_) => RustCallError::InvalidArgument(e.to_string()),
+        AcpServiceError::NotBound(_) => RustCallError::Internal(e.to_string()),
+        AcpServiceError::Io(_) => RustCallError::Internal(e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpCallReq {
+    agent_id: String,
+    prompt: String,
+    #[serde(default = "default_cwd")]
+    cwd: String,
+    #[serde(default = "default_timeout_secs")]
+    timeout: f64,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    context: AcpContext,
+}
+
+fn dispatch_acp_call(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    #[cfg(unix)]
+    {
+        let req: AcpCallReq = decode(payload)?;
+        let zone = req.context.zone_or(&svc.default_zone).to_string();
+        let owner = req.context.user_or();
+        let call_req = AcpCallRequest {
+            agent_id: req.agent_id,
+            prompt: req.prompt,
+            owner_id: owner,
+            zone_id: zone,
+            cwd: req.cwd,
+            timeout_secs: req.timeout,
+            labels: HashMap::new(),
+            session_id: req.session_id,
+        };
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            RustCallError::Internal("acp_call requires an active tokio runtime".into())
+        })?;
+        let result = handle
+            .block_on(svc.call_agent(call_req))
+            .map_err(map_svc_err)?;
+        encode(&result)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (svc, payload);
+        Err(RustCallError::Internal(
+            "acp_call is unix-only on this build".into(),
+        ))
+    }
+}
+
+fn dispatch_list_configs(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    let req: AcpContextOnly = decode(payload).unwrap_or_default();
+    let zone = req.context.zone_or(&svc.default_zone);
+    let configs = svc.list_agent_configs(Some(zone));
+    let out: Vec<Value> = configs
+        .into_iter()
+        .map(|cfg| {
+            json!({
+                "agent_id": cfg.get("agent_id").and_then(Value::as_str).unwrap_or(""),
+                "name":     cfg.get("name").and_then(Value::as_str).unwrap_or(""),
+                "command":  cfg.get("command").and_then(Value::as_str).unwrap_or(""),
+                "enabled":  cfg.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+            })
+        })
+        .collect();
+    encode(&out)
+}
+
+fn dispatch_list_processes(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    let req: AcpContextOnly = decode(payload).unwrap_or_default();
+    let zone = req.context.zone_or(&svc.default_zone).to_string();
+    let agents = svc.list_agents(Some(&zone), None).map_err(map_svc_err)?;
+    let out: Vec<Value> = agents
+        .into_iter()
+        .map(|p| {
+            json!({
+                "pid":      p.pid,
+                "name":     p.name,
+                "owner_id": p.owner_id,
+                "zone_id":  p.zone_id,
+                "state":    p.state,
+                "labels":   p.labels,
+            })
+        })
+        .collect();
+    encode(&out)
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpKillReq {
+    pid: String,
+    #[serde(default)]
+    context: AcpContext,
+}
+
+fn dispatch_kill(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    let req: AcpKillReq = decode(payload)?;
+    svc.kill_agent(&req.pid).map_err(map_svc_err)?;
+    encode(&json!({
+        "pid":  req.pid,
+        "name": "",
+        "state": "TERMINATED",
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpSetSystemPromptReq {
+    agent_id: String,
+    content: String,
+    #[serde(default)]
+    context: AcpContext,
+}
+
+fn dispatch_set_system_prompt(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    let req: AcpSetSystemPromptReq = decode(payload)?;
+    let zone = req.context.zone_or(&svc.default_zone).to_string();
+    svc.set_system_prompt(&req.agent_id, &req.content, &zone)
+        .map_err(map_svc_err)?;
+    encode(&json!({
+        "agent_id": req.agent_id,
+        "length":   req.content.len(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpAgentReq {
+    agent_id: String,
+    #[serde(default)]
+    context: AcpContext,
+}
+
+fn dispatch_get_system_prompt(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    let req: AcpAgentReq = decode(payload)?;
+    let zone = req.context.zone_or(&svc.default_zone);
+    let content = svc.get_system_prompt(&req.agent_id, zone);
+    encode(&json!({
+        "agent_id": req.agent_id,
+        "content":  content,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpSetEnabledSkillsReq {
+    agent_id: String,
+    skills: Vec<Value>,
+    #[serde(default)]
+    context: AcpContext,
+}
+
+fn dispatch_set_enabled_skills(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    let req: AcpSetEnabledSkillsReq = decode(payload)?;
+    let zone = req.context.zone_or(&svc.default_zone).to_string();
+    svc.set_enabled_skills(&req.agent_id, &req.skills, &zone)
+        .map_err(map_svc_err)?;
+    encode(&json!({
+        "agent_id": req.agent_id,
+        "skills":   req.skills,
+    }))
+}
+
+fn dispatch_get_enabled_skills(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    let req: AcpAgentReq = decode(payload)?;
+    let zone = req.context.zone_or(&svc.default_zone);
+    let skills = svc.get_enabled_skills(&req.agent_id, zone);
+    encode(&json!({
+        "agent_id": req.agent_id,
+        "skills":   skills,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct AcpHistoryReq {
+    #[serde(default = "default_history_limit")]
+    limit: usize,
+    #[serde(default)]
+    context: AcpContext,
+}
+
+fn default_history_limit() -> usize {
+    50
+}
+
+fn dispatch_history(svc: &AcpService, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+    let req: AcpHistoryReq = decode(payload).unwrap_or_else(|_| AcpHistoryReq {
+        limit: default_history_limit(),
+        context: AcpContext::default(),
+    });
+    let zone = req.context.zone_or(&svc.default_zone);
+    let history = svc.get_call_history(Some(zone), req.limit);
+    encode(&history)
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AcpContextOnly {
+    #[serde(default)]
+    context: AcpContext,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -974,6 +1264,119 @@ mod tests {
         match svc.registry() {
             Ok(_) => panic!("expected NotBound error"),
             Err(e) => assert!(matches!(e, AcpServiceError::NotBound("AgentRegistry"))),
+        }
+    }
+
+    // ── dispatch round-trip ─────────────────────────────────────────
+
+    mod dispatch {
+        use super::*;
+        use serde_json::json;
+
+        #[test]
+        fn unknown_method_returns_not_found() {
+            let (svc, _reg) = fresh_service();
+            let err = svc.dispatch("never_heard_of_this", b"{}").unwrap_err();
+            assert!(matches!(err, RustCallError::NotFound));
+        }
+
+        #[test]
+        fn acp_kill_round_trip_through_dispatch() {
+            let (svc, reg) = fresh_service();
+            let pid = reg
+                .spawn("acp:claude", "alice", "root", HashMap::new())
+                .unwrap();
+            let payload = json!({"pid": pid, "context": {"zone_id": "root"}}).to_string();
+            let bytes = svc.dispatch("acp_kill", payload.as_bytes()).unwrap();
+            let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(resp["pid"], pid);
+            assert_eq!(resp["state"], "TERMINATED");
+            // Registry was called with -9.
+            let kills = reg.kills.lock().clone();
+            assert_eq!(kills, vec![(pid, -9)]);
+        }
+
+        #[test]
+        fn acp_history_returns_empty_when_no_proc_dir() {
+            let (svc, _reg) = fresh_service();
+            let payload = json!({"limit": 10, "context": {"zone_id": "root"}}).to_string();
+            let bytes = svc.dispatch("acp_history", payload.as_bytes()).unwrap();
+            let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            // Empty array — no proc dir exists in a fresh test kernel.
+            assert!(resp.is_array());
+            assert_eq!(resp.as_array().unwrap().len(), 0);
+        }
+
+        #[test]
+        fn acp_history_uses_default_limit_when_payload_empty() {
+            let (svc, _reg) = fresh_service();
+            // Empty payload is accepted -- decode falls back to defaults.
+            let bytes = svc.dispatch("acp_history", b"{}").unwrap();
+            let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(resp.is_array());
+        }
+
+        #[test]
+        fn acp_list_processes_routes_through_registry_filter() {
+            let (svc, reg) = fresh_service();
+            let _ = reg
+                .spawn(
+                    "acp:codex",
+                    "alice",
+                    "root",
+                    HashMap::from([("service".into(), "acp".into())]),
+                )
+                .unwrap();
+            let payload = json!({"context":{"zone_id":"root"}}).to_string();
+            let bytes = svc
+                .dispatch("acp_list_processes", payload.as_bytes())
+                .unwrap();
+            let resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let list = resp.as_array().unwrap();
+            assert_eq!(list.len(), 1);
+            assert_eq!(list[0]["name"], "acp:codex");
+        }
+
+        #[test]
+        fn acp_call_returns_internal_when_agent_registry_unset() {
+            let kernel = Arc::new(Kernel::new());
+            let svc = AcpService::new(kernel, "root".into());
+            // No set_agent_registry call; even on cfg(unix) the
+            // registry lookup fails -> Internal.
+            let payload = json!({
+                "agent_id":"claude","prompt":"hi","context":{}
+            })
+            .to_string();
+            #[cfg(unix)]
+            {
+                // Wrap in a lightweight tokio runtime -- block_on
+                // requires one. AcpService::registry returns NotBound
+                // before call_agent gets far enough to spawn a CLI.
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let err = rt
+                    .block_on(async {
+                        // Run dispatch on a blocking thread inside the
+                        // runtime so Handle::current() resolves.
+                        tokio::task::spawn_blocking(move || {
+                            svc.dispatch("acp_call", payload.as_bytes())
+                        })
+                        .await
+                        .unwrap()
+                    })
+                    .unwrap_err();
+                assert!(
+                    matches!(err, RustCallError::Internal(ref m) if m.contains("AgentRegistry")),
+                    "got {err:?}"
+                );
+            }
+            #[cfg(not(unix))]
+            {
+                let err = svc.dispatch("acp_call", payload.as_bytes()).unwrap_err();
+                assert!(matches!(err, RustCallError::Internal(_)));
+            }
         }
     }
 }

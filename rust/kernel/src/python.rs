@@ -13,7 +13,7 @@
 //! captures exactly two `::`-separated segments, so a 3-segment
 //! `crate::shm_pipe::Foo` silently drops out of the generated stubs.
 
-use crate::{generated_kernel_abi_pyo3, semaphore};
+use crate::{acp, generated_kernel_abi_pyo3, semaphore};
 use pyo3::prelude::*;
 
 /// Register kernel-owned `#[pyclass]` / `#[pyfunction]` exports into
@@ -35,5 +35,11 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
+    // ACP service wiring — hand-written hooks (boot install + Python
+    // AgentRegistry bridge + on-terminate callbacks). Hosts
+    // AgentKind::UNMANAGED agents (subprocess + ACP-over-stdio).
+    m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_install, m)?)?;
+    m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_set_agent_registry, m)?)?;
+    m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_register_on_terminate, m)?)?;
     Ok(())
 }

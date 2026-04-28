@@ -107,6 +107,13 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 pub mod raft_meta_store;
 pub mod replication;
 
+// Phase 5 anchor (Phase H of Phase 3 restructure plan): concrete
+// `FederationProvider` impl that the cdylib installs into the
+// `Kernel.federation` slot at boot.  Lives in kernel for now (the
+// Phase H follow-up moves it to `nexus_raft::federation_provider`
+// once the `kernel -> raft` Cargo edge flips).
+pub mod raft_federation_provider;
+
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
 // proxies all syscalls over gRPC to a remote `nexusd`).  `pub` so

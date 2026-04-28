@@ -876,6 +876,13 @@ impl Kernel {
         *self.self_address.write() = Some(addr.to_string());
     }
 
+    /// Get the federation self-address (peer-reachable `host:port`)
+    /// previously set by `set_self_address`.  `None` until federation
+    /// init populates it.
+    pub fn self_address_string(&self) -> Option<String> {
+        self.self_address.read().clone()
+    }
+
     // ── MetaStore wiring ──────────────────────────────────────────────
 
     /// Wire LocalMetaStore by path — Rust kernel opens redb directly.
@@ -3120,7 +3127,7 @@ impl Kernel {
     /// directly, but kernel no longer depends on the high-level
     /// transport crate (cycle break); the cdylib boot drains the
     /// slot and installs the fetcher.
-    fn stash_blob_fetcher_slot(&self, slot: Box<dyn std::any::Any + Send + Sync>) {
+    pub(crate) fn stash_blob_fetcher_slot(&self, slot: Box<dyn std::any::Any + Send + Sync>) {
         *self.pending_blob_fetcher_slot.lock() = Some(slot);
     }
 

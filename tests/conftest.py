@@ -217,11 +217,13 @@ def make_test_nexus(
             import nexus_kernel as _nk
 
             _nk.install_transport_wiring(_kernel)
+            _nk.install_federation_wiring(_kernel)
         except Exception as _wiring_exc:
             import logging as _logging
 
             _logging.getLogger(__name__).debug(
-                "install_transport_wiring failed in test fixture: %s", _wiring_exc
+                "install_transport_wiring/install_federation_wiring failed in test fixture: %s",
+                _wiring_exc,
             )
         metadata_store = RustMetastoreProxy(_kernel, str(tmp_path / "metastore.redb"))
 

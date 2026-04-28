@@ -233,10 +233,12 @@ class NexusFS(  # type: ignore[misc]
                         import nexus_kernel as _nk
 
                         _nk.install_transport_wiring(self._kernel)
+                        _nk.install_federation_wiring(self._kernel)
                     except Exception as _wiring_exc:
                         logger.warning(
-                            "install_transport_wiring failed (federation peer-blob "
-                            "fetch will fall back to Noop): %s",
+                            "install_transport_wiring/install_federation_wiring "
+                            "failed (federation peer-blob fetch will fall back "
+                            "to Noop): %s",
                             _wiring_exc,
                         )
                     metadata_store._kernel = self._kernel

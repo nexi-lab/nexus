@@ -184,12 +184,16 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
             import nexus_kernel as _nk
 
             _nk.install_transport_wiring(kernel)
+            # Phase 5 anchor: replace the kernel's NoopFederationProvider
+            # with RaftFederationProvider so federation-aware syscalls
+            # dispatch through the trait.
+            _nk.install_federation_wiring(kernel)
         except Exception as _wiring_exc:
             import logging as _logging
 
             _logging.getLogger(__name__).warning(
-                "install_transport_wiring failed (federation peer-blob "
-                "fetch will fall back to Noop): %s",
+                "install_transport_wiring/install_federation_wiring failed "
+                "(federation peer-blob fetch will fall back to Noop): %s",
                 _wiring_exc,
             )
 
@@ -522,12 +526,14 @@ def connect(
                 import nexus_kernel as _nk
 
                 _nk.install_transport_wiring(_early_kernel)
+                _nk.install_federation_wiring(_early_kernel)
             except Exception as _wiring_exc:
                 import logging as _logging
 
                 _logging.getLogger(__name__).warning(
-                    "install_transport_wiring failed (federation peer-blob "
-                    "fetch will fall back to Noop): %s",
+                    "install_transport_wiring/install_federation_wiring "
+                    "failed (federation peer-blob fetch will fall back to "
+                    "Noop): %s",
                     _wiring_exc,
                 )
     except Exception as _early_kernel_exc:

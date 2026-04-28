@@ -80,4 +80,12 @@ class AcpAdapter:
     def _dispatch(self, method: str, payload: bytes) -> bytes:
         import nexus_kernel
 
-        return nexus_kernel.nx_acp_dispatch(self._kernel, method, payload)
+        # Goes through the same Kernel::dispatch_rust_call lookup the
+        # tonic Call handler uses -- single dispatch primitive, no
+        # per-service shortcut. None means the registered service
+        # rejected the lookup; surface as RuntimeError because the
+        # dispatch_consumer's worker spawn would be broken by that.
+        result = nexus_kernel.nx_kernel_dispatch_rust_call(self._kernel, "acp", method, payload)
+        if result is None:
+            raise RuntimeError("AcpService not installed (call nx_acp_install first)")
+        return result

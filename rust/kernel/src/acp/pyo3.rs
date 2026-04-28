@@ -1,6 +1,6 @@
-//! Hand-written PyO3 surface for AcpService.
+//! Hand-written PyO3 surface for AcpService boot wiring.
 //!
-//! Three free functions exposed from the cdylib (registered in
+//! Two boot-only functions exposed from the cdylib (registered in
 //! `lib.rs`'s `#[pymodule]`):
 //!
 //!   * `nx_acp_install(py_kernel, default_zone)` — installs an
@@ -19,6 +19,15 @@
 //!     — appends a Python callback fired with the terminating pid;
 //!     used by the permission-lease table to revoke leases.
 //!
+//! There is intentionally NO per-service dispatch hook here. In-process
+//! callers reach `acp_call` (and any other Rust service) through the
+//! generic `nx_kernel_dispatch_rust_call` exposed in `lib.rs` — the
+//! same `Kernel::dispatch_rust_call` surface the tonic Call handler
+//! uses. Keeping a single lookup primitive avoids the audit-bypass
+//! risk a `nx_acp_dispatch` shortcut would introduce (every new
+//! service would copy the pattern, audit hooks would have to fire in
+//! N places).
+//!
 //! `PyAgentRegistry` bridges the trait by acquiring the GIL inside
 //! each method via `Python::attach`. AcpService sees a normal Rust
 //! trait object; the Py<PyAny> indirection is invisible to it.
@@ -28,7 +37,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyDict, PyList};
 
 use super::service::{AcpService, AgentDescriptor, AgentRegistry, OnTerminateCallback};
 use crate::generated_pyo3::PyKernel;
@@ -52,31 +61,6 @@ pub(crate) fn nx_acp_set_agent_registry(
     let svc = lookup_acp(&py_kernel)?;
     svc.set_agent_registry(Arc::new(PyAgentRegistry::new(registry)) as Arc<dyn AgentRegistry>);
     Ok(())
-}
-
-/// In-process dispatch entry point for Python callers. Routes
-/// through the registered AcpService's `RustService::dispatch`
-/// without a tonic round-trip. Returns the raw JSON bytes; callers
-/// (e.g. the task_manager adapter) parse with `json.loads`.
-#[pyfunction]
-pub(crate) fn nx_acp_dispatch<'py>(
-    py: Python<'py>,
-    py_kernel: PyRef<'_, PyKernel>,
-    method: &str,
-    payload: &[u8],
-) -> PyResult<Bound<'py, PyBytes>> {
-    let svc = lookup_acp(&py_kernel)?;
-    // RustService::dispatch is sync but call_agent runs an async
-    // tokio block_on internally; release the GIL so other Python
-    // tasks can run while we wait.
-    let bytes = py
-        .detach(|| {
-            <super::service::AcpService as crate::service_registry::RustService>::dispatch(
-                &svc, method, payload,
-            )
-        })
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    Ok(PyBytes::new(py, &bytes))
 }
 
 /// Register a Python callback fired with the terminating pid when

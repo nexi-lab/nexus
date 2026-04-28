@@ -36,6 +36,8 @@ use crate::service_registry::RustService;
 
 pub(crate) mod agent_config;
 pub(crate) mod paths;
+#[cfg(unix)]
+pub(crate) mod subprocess;
 
 /// Rust-flavoured ACP service. Today's responsibilities are limited
 /// to registration; `call_agent` and the admin RPCs land in commits

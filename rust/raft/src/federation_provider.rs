@@ -318,16 +318,6 @@ impl FederationProvider for RaftFederationProvider {
         wire_mount_impl(self, kernel, parent_zone, mount_path, target_zone)
     }
 
-    fn start_replication_scanner(
-        &self,
-        _kernel: &Kernel,
-        _zone_id: &str,
-        _policies_json: &str,
-        _interval_ms: u64,
-    ) -> FederationResult<Box<dyn std::any::Any + Send + Sync>> {
-        Err("start_replication_scanner: not yet wired through trait".into())
-    }
-
     fn stash_blob_fetcher_slot(&self, kernel: &Kernel, slot: BlobFetcherSlot) {
         kernel.stash_blob_fetcher_slot(slot);
     }

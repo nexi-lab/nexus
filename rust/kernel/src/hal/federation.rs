@@ -116,15 +116,6 @@ pub trait FederationProvider: Send + Sync + 'static {
         target_zone: &str,
     ) -> FederationResult<()>;
 
-    /// Start the EC replication scanner for the given zone.
-    fn start_replication_scanner(
-        &self,
-        kernel: &crate::kernel::Kernel,
-        zone_id: &str,
-        policies_json: &str,
-        interval_ms: u64,
-    ) -> FederationResult<Box<dyn std::any::Any + Send + Sync>>;
-
     /// Stash a transport-tier blob-fetcher slot.  Drained by
     /// `transport::blob::fetcher::install` at cdylib boot.
     fn stash_blob_fetcher_slot(&self, kernel: &crate::kernel::Kernel, slot: BlobFetcherSlot);
@@ -272,16 +263,6 @@ impl FederationProvider for NoopFederationProvider {
         _mount_path: &str,
         _target_zone: &str,
     ) -> FederationResult<()> {
-        Err("FederationProvider not installed".into())
-    }
-
-    fn start_replication_scanner(
-        &self,
-        _kernel: &crate::kernel::Kernel,
-        _zone_id: &str,
-        _policies_json: &str,
-        _interval_ms: u64,
-    ) -> FederationResult<Box<dyn std::any::Any + Send + Sync>> {
         Err("FederationProvider not installed".into())
     }
 

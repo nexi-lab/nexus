@@ -982,6 +982,10 @@ def generate_stubs(
     lines.append(
         "def federation_zone_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ..."
     )
+    lines.append(
+        "def federation_start_replication_scanner("
+        "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
+    )
     lines.append("")
 
     return "\n".join(lines)

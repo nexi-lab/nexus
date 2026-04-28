@@ -840,6 +840,10 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(federation_lookup_share_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_zone_links_count_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_zone_cluster_info_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        federation_start_replication_scanner_py,
+        m
+    )?)?;
     Ok(())
 }
 
@@ -1014,6 +1018,29 @@ fn federation_zone_cluster_info_py<'py>(
         dict.set_item(key, py_val)?;
     }
     Ok(dict)
+}
+
+/// Federation control-plane: spawn a `ReplicationScanner` for `zone_id`
+/// against `policies_json`.  Replaces the previous `kernel.start_replication_scanner`
+/// PyKernel method — sits at the raft control-plane surface (parallel
+/// to `register_share` / `lookup_share`) since the kernel never invokes
+/// the scanner directly; Python boot opts in per zone+mount.
+///
+/// The returned scanner runs in a dedicated thread until process exit.
+/// (Stop semantics are exposed via `ReplicationScanner::stop()`; not yet
+/// surfaced to Python — the scanner ends with the process.)
+#[pyfunction]
+#[pyo3(name = "federation_start_replication_scanner")]
+fn federation_start_replication_scanner_py(
+    kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
+    zone_id: &str,
+    policies_json: &str,
+    interval_ms: u64,
+) -> PyResult<()> {
+    let kernel_arc = kernel.kernel_arc();
+    crate::replication_scanner::install_for_zone(kernel_arc, zone_id, policies_json, interval_ms)
+        .map(|_| ())
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 
 /// Minimal serde_json::Value → PyAny converter for the cluster_info

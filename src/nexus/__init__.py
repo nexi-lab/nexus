@@ -797,7 +797,9 @@ def _start_replication_scanners(nx_fs: "NexusFS") -> None:
         target: dict = {"type": "all_voters"}
         policies_json = _json.dumps([{"path_prefix": mount_point, "target": target}])
         try:
-            kernel.start_replication_scanner(zone_id, policies_json, 2000)
+            import nexus_runtime as _nk
+
+            _nk.federation_start_replication_scanner(kernel, zone_id, policies_json, 2000)
             logger.info(
                 "Started replication scanner: zone=%s mount=%s policy=%s",
                 zone_id,

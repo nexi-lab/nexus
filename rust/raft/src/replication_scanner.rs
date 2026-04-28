@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 /// Where replicated content should be sent / pulled from.
 #[allow(dead_code)]
-pub(crate) enum ReplicationTarget {
+pub enum ReplicationTarget {
     /// Replicate to / pull from all Raft voters in the zone.
     AllVoters,
     /// Replicate to / pull from specific peer VFS addresses (host:port).
@@ -26,7 +26,7 @@ pub(crate) enum ReplicationTarget {
 
 /// Replication policy for a single path prefix.
 #[allow(dead_code)]
-pub(crate) struct MountReplicationPolicy {
+pub struct MountReplicationPolicy {
     /// VFS path prefix this policy applies to (e.g. `/zone1/data`).
     pub path_prefix: String,
     /// Target for replication.
@@ -51,7 +51,7 @@ fn resolve_policy<'a>(
 // ── Scanner ─────────────────────────────────────────────────────────────────
 
 /// Replication scanner — scans metastore for entries needing replication.
-pub(crate) struct ReplicationScanner {
+pub struct ReplicationScanner {
     /// Scan interval in milliseconds.
     #[allow(dead_code)]
     interval_ms: u64,
@@ -75,11 +75,7 @@ impl ReplicationScanner {
     /// order on every scan; callers supply the full list (Python side reads
     /// mount configs and serialises them as JSON).
     #[allow(dead_code)]
-    pub(crate) fn new(
-        interval_ms: u64,
-        zone_id: &str,
-        policies: Vec<MountReplicationPolicy>,
-    ) -> Self {
+    pub fn new(interval_ms: u64, zone_id: &str, policies: Vec<MountReplicationPolicy>) -> Self {
         Self {
             interval_ms,
             zone_id: zone_id.to_string(),
@@ -105,10 +101,7 @@ impl ReplicationScanner {
     ///
     /// Returns `(scanned, replicated, errors)`.
     #[allow(dead_code)]
-    pub(crate) fn scan_and_replicate(
-        &self,
-        kernel: &kernel::kernel::Kernel,
-    ) -> (usize, usize, usize) {
+    pub fn scan_and_replicate(&self, kernel: &kernel::kernel::Kernel) -> (usize, usize, usize) {
         let prefix = format!("/{}/", self.zone_id);
         let entries = match kernel.metastore_list(&prefix) {
             Ok(entries) => entries,
@@ -192,7 +185,7 @@ impl ReplicationScanner {
     /// The thread holds an `Arc<Self>` so the scanner stays alive until `stop()`
     /// is called and the current sleep expires.
     #[allow(dead_code)]
-    pub(crate) fn start(self: &Arc<Self>, kernel: Arc<kernel::kernel::Kernel>) {
+    pub fn start(self: &Arc<Self>, kernel: Arc<kernel::kernel::Kernel>) {
         if self.running.swap(true, Ordering::SeqCst) {
             return; // Already running
         }
@@ -214,19 +207,19 @@ impl ReplicationScanner {
 
     /// Check if the scanner is running.
     #[allow(dead_code)]
-    pub(crate) fn is_running(&self) -> bool {
+    pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
 
     /// Signal the scanner to stop (takes effect after the current sleep expires).
     #[allow(dead_code)]
-    pub(crate) fn stop(&self) {
+    pub fn stop(&self) {
         self.running.store(false, Ordering::Relaxed);
     }
 
     /// Get stats: (scanned, replicated, errors, last_scan_ms).
     #[allow(dead_code)]
-    pub(crate) fn stats(&self) -> (u64, u64, u64, u64) {
+    pub fn stats(&self) -> (u64, u64, u64, u64) {
         (
             self.scanned_count.load(Ordering::Relaxed),
             self.replicated_count.load(Ordering::Relaxed),
@@ -234,4 +227,82 @@ impl ReplicationScanner {
             self.last_scan_ms.load(Ordering::Relaxed),
         )
     }
+}
+
+// ── Policy JSON parser ──────────────────────────────────────────────────────
+
+/// Parse `policies_json` — a JSON array of `{path_prefix, target}` objects
+/// where `target` is one of:
+/// `{"type":"mount","mount":"/p"}`, `{"type":"nodes","nodes":["host:port",..]}`,
+/// `{"type":"all_voters"}`.
+fn parse_policies(policies_json: &str) -> Result<Vec<MountReplicationPolicy>, String> {
+    use serde_json::Value;
+    let v: Value =
+        serde_json::from_str(policies_json).map_err(|e| format!("policies_json parse: {e}"))?;
+    let arr = v
+        .as_array()
+        .ok_or_else(|| "policies_json must be an array".to_string())?;
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        let path_prefix = item
+            .get("path_prefix")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "policy entry missing 'path_prefix'".to_string())?
+            .to_string();
+        let target_obj = item
+            .get("target")
+            .ok_or_else(|| "policy entry missing 'target'".to_string())?;
+        let ty = target_obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "policy target missing 'type'".to_string())?;
+        let target = match ty {
+            "mount" => {
+                let mount = target_obj
+                    .get("mount")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "mount target missing 'mount'".to_string())?
+                    .to_string();
+                ReplicationTarget::Mount(mount)
+            }
+            "nodes" => {
+                let nodes_v = target_obj
+                    .get("nodes")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| "nodes target missing 'nodes' array".to_string())?;
+                let nodes: Vec<String> = nodes_v
+                    .iter()
+                    .filter_map(|n| n.as_str().map(str::to_string))
+                    .collect();
+                ReplicationTarget::Nodes(nodes)
+            }
+            "all_voters" => ReplicationTarget::AllVoters,
+            other => return Err(format!("unknown target type '{other}'")),
+        };
+        out.push(MountReplicationPolicy {
+            path_prefix,
+            target,
+        });
+    }
+    Ok(out)
+}
+
+/// Construct + start a `ReplicationScanner` for `zone_id` with the parsed
+/// `policies_json`.  Returns the running scanner as an opaque handle so
+/// callers can drop it / read stats / call `stop()`.
+///
+/// Surfaced as a federation control-plane entry, not part of the
+/// `FederationProvider` HAL trait — kernel never invokes the scanner;
+/// the Python boot path opts in per zone+mount via the cdylib's
+/// `federation_start_replication_scanner` PyO3 binding.
+pub fn install_for_zone(
+    kernel: Arc<kernel::kernel::Kernel>,
+    zone_id: &str,
+    policies_json: &str,
+    interval_ms: u64,
+) -> Result<Arc<ReplicationScanner>, String> {
+    let policies = parse_policies(policies_json)?;
+    let scanner = Arc::new(ReplicationScanner::new(interval_ms, zone_id, policies));
+    scanner.start(kernel);
+    Ok(scanner)
 }

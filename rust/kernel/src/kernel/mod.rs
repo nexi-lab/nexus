@@ -1506,31 +1506,31 @@ impl Kernel {
             2 => {
                 // DT_MOUNT — full mount lifecycle via DLC.
                 //
-                // R20.6 option B: snapshot the raft handle BEFORE it's
-                // consumed by ``dlc.mount`` so we can install the
-                // apply-side dcache coherence callback after routing is
-                // wired. Install is keyed on the state machine's
-                // ``coherence_id``, not on the per-mount MetaStore Arc,
-                // so crosslinks of the same zone share one callback
-                // that fans out across every surface via VFSRouter's
-                // reverse lookup.
+                // Phase H zone-create-on-mount: when the caller did not
+                // supply a `metastore` AND federation is active, ask the
+                // FederationProvider to materialise (auto-create) the
+                // target zone's raft group and hand back an
+                // `Arc<dyn MetaStore>` backed by the per-zone state
+                // machine.  Service-tier callers therefore reach
+                // federation through the standard `sys_setattr DT_MOUNT`
+                // syscall — no separate `kernel.zone_create` surface.
                 //
-                // R20.18.3: zone-create-on-mount. If the caller didn't
-                // supply metastore + raft_backend (neither `py_zone_handle`
-                // nor `metastore_path` in the Python shim) AND federation
-                // is active (zone_manager installed by
-                // `init_federation_from_env`), auto-resolve: ensure the
-                // zone's raft group exists on this node, then build a
-                // ZoneMetaStore over it. This replaces the Python
-                // `_mount_via_kernel` chain — every DT_MOUNT becomes a
-                // federation-wired mount when federation is active,
-                // without any Python-side ZoneManager orchestration.
-                // Phase H of the rust-workspace restructure: federation
-                // wiring (per-zone metastore resolution + dcache
-                // coherence) is owned by the RaftFederationProvider in
-                // the raft crate.  Sys_setattr DT_MOUNT performs the
-                // basic DLC mount; the provider's apply-cb wires the
-                // federation-specific surface for replicated mounts.
+                // R20.6 option B preserved: install the apply-side
+                // dcache coherence callback after routing is wired
+                // (handled by the provider's `wire_mount` follow-up
+                // below).  Install is keyed on the state machine's
+                // ``coherence_id``, not on the per-mount MetaStore Arc,
+                // so crosslinks of the same zone share one callback.
+                let provider = self.federation_arc();
+                let metastore = match metastore {
+                    Some(m) => Some(m),
+                    None if provider.is_initialized(self) && !zone_id.is_empty() => {
+                        // Auto-create + resolve.
+                        let _ = provider.create_zone(self, zone_id);
+                        provider.metastore_for_zone(self, zone_id).ok()
+                    }
+                    None => None,
+                };
                 self.dlc.mount(
                     self,
                     path,
@@ -1541,6 +1541,12 @@ impl Kernel {
                     raft_backend,
                     is_external,
                 )?;
+                // Federation wire-mount: register apply-cb + replicate
+                // the DT_MOUNT entry so peers see the mount via raft
+                // commit.  No-op when federation is inactive.
+                if provider.is_initialized(self) && !zone_id.is_empty() {
+                    let _ = provider.wire_mount(self, "root", path, zone_id);
+                }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),
                     created: true,
@@ -2030,6 +2036,69 @@ impl Kernel {
         Arc::clone(&self.federation.read())
     }
 
+    /// Federation procfs: synthesise a `StatResult` for paths under the
+    /// `/__sys__/zones/` virtual namespace.  Read-only — like Linux
+    /// `/proc`, you cannot create / remove a zone by writing to this
+    /// path.  Returns `Some` for `/__sys__/zones/` (directory marker)
+    /// and `/__sys__/zones/<id>` (per-zone synthesised entry); `None`
+    /// otherwise so the caller falls through to normal routing.
+    pub(crate) fn zones_procfs_stat(&self, path: &str) -> Option<StatResult> {
+        let suffix = path.strip_prefix("/__sys__/zones")?;
+        let provider = self.federation_arc();
+        // Directory marker.
+        if suffix.is_empty() || suffix == "/" {
+            return Some(StatResult {
+                path: path.to_string(),
+                size: 4096,
+                content_id: None,
+                mime_type: "inode/directory".to_string(),
+                is_directory: true,
+                entry_type: crate::dcache::DT_DIR,
+                mode: 0o555, // r-x — read-only namespace
+                version: 0,
+                zone_id: Some("root".to_string()),
+                created_at_ms: None,
+                modified_at_ms: None,
+                last_writer_address: None,
+                lock: None,
+            });
+        }
+        // /__sys__/zones/<id>: synthesise from federation list.
+        let zone_id = suffix.trim_start_matches('/');
+        if zone_id.is_empty() || zone_id.contains('/') {
+            return None;
+        }
+        if !provider.list_zones(self).iter().any(|z| z == zone_id) {
+            return None;
+        }
+        Some(StatResult {
+            path: path.to_string(),
+            size: 0,
+            content_id: None,
+            mime_type: "application/x-nexus-zone".to_string(),
+            is_directory: false,
+            entry_type: crate::dcache::DT_REG,
+            mode: 0o444,
+            version: 0,
+            zone_id: Some(zone_id.to_string()),
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: provider.bind_address(self),
+            lock: None,
+        })
+    }
+
+    /// Federation procfs: list zones for `/__sys__/zones/` directory
+    /// reads.  Returns `None` for paths outside the namespace so the
+    /// caller falls through to normal routing.
+    pub(crate) fn zones_procfs_readdir(&self, path: &str) -> Option<Vec<String>> {
+        let suffix = path.strip_prefix("/__sys__/zones")?;
+        if !suffix.is_empty() && suffix != "/" {
+            return None;
+        }
+        Some(self.federation_arc().list_zones(self))
+    }
+
     /// Stash the transport-tier blob-fetcher slot.  Drained by
     /// `transport::blob::fetcher::install` at cdylib boot.  Phase 5
     /// types this as `Box<dyn Any>` so kernel does not name the
@@ -2211,6 +2280,12 @@ impl Kernel {
     pub fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
         if validate_path_fast(path).is_err() {
             return Vec::new();
+        }
+        // Federation procfs: /__sys__/zones/ enumerates loaded zones
+        // (read-only namespace, like Linux /proc).  Returns the zone-id
+        // list verbatim — caller may format with trailing-slash etc.
+        if let Some(zones) = self.zones_procfs_readdir(path) {
+            return zones;
         }
         let normalized = if path != "/" && path.ends_with('/') {
             path.trim_end_matches('/')

@@ -830,7 +830,23 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyTofuTrustStore>()?;
         m.add_class::<PyTrustedZone>()?;
     }
+    m.add_function(wrap_pyfunction!(install_federation_wiring_py, m)?)?;
     Ok(())
+}
+
+/// Python-facing one-shot install: replaces the kernel's
+/// `NoopFederationProvider` with the real `RaftFederationProvider` and
+/// runs `init_from_env` so the ZoneManager bootstraps from
+/// `NEXUS_PEERS` / `NEXUS_HOSTNAME` / `NEXUS_BIND_ADDR` /
+/// `NEXUS_ADVERTISE_ADDR` / `NEXUS_DATA_DIR` / `NEXUS_RAFT_TLS`.
+/// Idempotent — re-imports observe the already-initialised state.
+#[pyfunction]
+#[pyo3(name = "install_federation_wiring")]
+fn install_federation_wiring_py(
+    kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
+) -> PyResult<()> {
+    crate::federation_provider::install(kernel.kernel_ref())
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 
 // =============================================================================

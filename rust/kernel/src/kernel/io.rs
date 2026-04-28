@@ -586,6 +586,15 @@ impl Kernel {
             return None;
         }
 
+        // 2.5 Federation procfs: /__sys__/zones/<id> exposes raft cluster
+        // status as a synthesised file entry; /__sys__/zones/ exposes the
+        // zone-id directory.  This is the read side of the kernel's
+        // virtual federation namespace — service-tier callers read zone
+        // state through `sys_stat` instead of a direct PyKernel surface.
+        if let Some(stat) = self.zones_procfs_stat(path) {
+            return Some(stat);
+        }
+
         // 3. Route
         let route = self.vfs_router.route(path, zone_id).ok()?;
 

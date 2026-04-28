@@ -396,11 +396,12 @@ impl FederationProvider for RaftFederationProvider {
         ])
     }
 
-    fn append_stream_entry(
+    fn append_wal_entry(
         &self,
         _kernel: &Kernel,
         zone_id: &str,
-        stream_id: &str,
+        entry_type: u8,
+        vfs_path: &str,
         seq: u64,
         entry: Vec<u8>,
     ) -> FederationResult<u64> {
@@ -410,20 +411,18 @@ impl FederationProvider for RaftFederationProvider {
             .get_node(zone_id)
             .ok_or_else(|| format!("zone {zone_id} not loaded"))?;
         let runtime = self.runtime.get().cloned().ok_or("runtime missing")?;
-        // `stream_id` already carries the namespace prefix (`__wal_stream__/<id>`
-        // or `__wal_pipe__/<id>`) from WalStreamCore / WalPipeCore so pipe
-        // and stream entries share TREE_STREAM_ENTRIES without colliding.
-        let key = format!("{stream_id}/{seq}");
+        let key = encode_wal_key(entry_type, vfs_path, seq);
         let wal = crate::wal_stream_backend::RaftWalConsensus::new(consensus, runtime);
         crate::wal_stream_backend::WalConsensus::append(&wal, &key, &entry)?;
         Ok(seq)
     }
 
-    fn get_stream_entry(
+    fn get_wal_entry(
         &self,
         _kernel: &Kernel,
         zone_id: &str,
-        stream_id: &str,
+        entry_type: u8,
+        vfs_path: &str,
         seq: u64,
     ) -> FederationResult<Option<Vec<u8>>> {
         let zm = self.zm().ok_or("federation not active")?;
@@ -432,10 +431,22 @@ impl FederationProvider for RaftFederationProvider {
             .get_node(zone_id)
             .ok_or_else(|| format!("zone {zone_id} not loaded"))?;
         let runtime = self.runtime.get().cloned().ok_or("runtime missing")?;
-        let key = format!("{stream_id}/{seq}");
+        let key = encode_wal_key(entry_type, vfs_path, seq);
         let wal = crate::wal_stream_backend::RaftWalConsensus::new(consensus, runtime);
         crate::wal_stream_backend::WalConsensus::get(&wal, &key)
     }
+}
+
+/// Encode `(entry_type, vfs_path, seq)` into a redb key.  The
+/// `entry_type` byte tags the keyspace (DT_PIPE vs DT_STREAM) so pipe
+/// and stream entries at distinct VFS paths share `TREE_STREAM_ENTRIES`
+/// without ever colliding — defense in depth even though the VFS
+/// invariant (path is pipe XOR stream) already prevents collision at
+/// the same path.  Format: `"<entry_type>:<vfs_path>:<seq>"` —
+/// human-readable for debugging; `entry_type` rendered as decimal so
+/// the prefix range stays adjacent in lexicographic order.
+fn encode_wal_key(entry_type: u8, vfs_path: &str, seq: u64) -> String {
+    format!("{entry_type}:{vfs_path}:{seq}")
 }
 
 /// Install `RaftFederationProvider` into the kernel's federation slot

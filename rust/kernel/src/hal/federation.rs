@@ -218,36 +218,43 @@ pub trait FederationProvider: Send + Sync + 'static {
         zone_id: &str,
     ) -> FederationResult<Vec<(String, serde_json::Value)>>;
 
-    /// Append `entry` at `(zone_id, stream_id, seq)` to the raft-replicated
-    /// WAL stream and return the committed sequence number.  Used by both
-    /// DT_STREAM (`io_profile="wal"`) and DT_PIPE (`io_profile="wal"`)
-    /// backends — `stream_id` carries the kernel-side namespace prefix
-    /// (`__wal_stream__/<id>` or `__wal_pipe__/<id>`) so pipe and stream
-    /// entries share `TREE_STREAM_ENTRIES` without colliding.
+    /// Append `entry` at `(zone_id, entry_type, vfs_path, seq)` to the
+    /// raft-replicated WAL log and return the committed sequence number.
+    /// Used by DT_STREAM (`io_profile="wal"`) and DT_PIPE
+    /// (`io_profile="wal"`) backends — `entry_type` is the DT_*
+    /// constant from `core::dcache` (`DT_PIPE` = 2, `DT_STREAM` = 4).
+    /// VFS guarantees a path is pipe XOR stream (entry_type immutable
+    /// in metastore), but the trait still threads `entry_type` so the
+    /// implementation can encode it into the redb keyspace tag and
+    /// keep separate WAL keyspaces — defense in depth + future-proofing
+    /// for snapshot/restore separation.
     ///
     /// Read-your-writes semantics: a successful append is observable to a
-    /// subsequent `get_stream_entry` from the same node before the entry
+    /// subsequent `get_wal_entry` from the same node before the entry
     /// flushes to disk.  Implementations achieve this via an inflight
     /// cache; the trait surface does not surface the cache directly.
-    fn append_stream_entry(
+    fn append_wal_entry(
         &self,
         kernel: &crate::kernel::Kernel,
         zone_id: &str,
-        stream_id: &str,
+        entry_type: u8,
+        vfs_path: &str,
         seq: u64,
         entry: Vec<u8>,
     ) -> FederationResult<u64>;
 
-    /// Read the entry at `(zone_id, stream_id, seq)`.  Returns
-    /// `Ok(None)` when the entry has not been written yet (cursor ahead
-    /// of writer).  Returns `Err` when the stream is closed AND the
-    /// offset is out of range — callers can distinguish "not yet"
-    /// (retry / wait) from "permanently absent" (replay finished).
-    fn get_stream_entry(
+    /// Read the entry at `(zone_id, entry_type, vfs_path, seq)`.
+    /// Returns `Ok(None)` when the entry has not been written yet
+    /// (cursor ahead of writer).  Returns `Err` when the stream is
+    /// closed AND the offset is out of range — callers can distinguish
+    /// "not yet" (retry / wait) from "permanently absent" (replay
+    /// finished).
+    fn get_wal_entry(
         &self,
         kernel: &crate::kernel::Kernel,
         zone_id: &str,
-        stream_id: &str,
+        entry_type: u8,
+        vfs_path: &str,
         seq: u64,
     ) -> FederationResult<Option<Vec<u8>>>;
 }
@@ -409,22 +416,24 @@ impl FederationProvider for NoopFederationProvider {
         Err("FederationProvider not installed".into())
     }
 
-    fn append_stream_entry(
+    fn append_wal_entry(
         &self,
         _kernel: &crate::kernel::Kernel,
         _zone_id: &str,
-        _stream_id: &str,
+        _entry_type: u8,
+        _vfs_path: &str,
         _seq: u64,
         _entry: Vec<u8>,
     ) -> FederationResult<u64> {
         Err("FederationProvider not installed".into())
     }
 
-    fn get_stream_entry(
+    fn get_wal_entry(
         &self,
         _kernel: &crate::kernel::Kernel,
         _zone_id: &str,
-        _stream_id: &str,
+        _entry_type: u8,
+        _vfs_path: &str,
         _seq: u64,
     ) -> FederationResult<Option<Vec<u8>>> {
         Ok(None)

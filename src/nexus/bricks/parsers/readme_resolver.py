@@ -64,14 +64,16 @@ class ReadmePathResolver:
         mount_point, rel, backend = match
 
         if rel == "README.md":
-            return backend.generate_readme(mount_point).encode()
+            text: str = backend.generate_readme(mount_point)
+            return text.encode()
 
         if rel.startswith("schemas/") and rel.endswith(".yaml"):
             op_name = rel[len("schemas/") : -len(".yaml")]
             gen = backend.get_doc_generator()
             schema = gen.get_schema(op_name)
             if schema is not None:
-                return gen.generate_schema_yaml(op_name, schema).encode()
+                yaml_text: str = gen.generate_schema_yaml(op_name, schema)
+                return yaml_text.encode()
 
         return None
 

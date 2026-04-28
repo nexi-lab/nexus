@@ -491,24 +491,48 @@ struct NativeHookEntry {
 #[allow(dead_code)]
 pub(crate) struct NativeHookRegistry {
     hooks: Vec<NativeHookEntry>,
+    /// Suffixes declared by registered mutating hooks (via
+    /// `NativeInterceptHook::mutating_path_suffix`). Populated on
+    /// register; consulted by `has_mutating_match` so the kernel can
+    /// decide whether to clone write content into `WriteHookCtx`. An
+    /// empty Vec is the steady state today (no mutating hooks
+    /// registered) — the call site short-circuits before any path
+    /// comparison.
+    mutating_suffixes: Vec<&'static str>,
 }
 
 #[allow(dead_code)]
 impl NativeHookRegistry {
     pub(crate) fn new() -> Self {
-        Self { hooks: Vec::new() }
+        Self {
+            hooks: Vec::new(),
+            mutating_suffixes: Vec::new(),
+        }
     }
 
     pub(crate) fn register(&mut self, hook: Box<dyn NativeInterceptHook>) {
+        if let Some(suffix) = hook.mutating_path_suffix() {
+            self.mutating_suffixes.push(suffix);
+        }
         self.hooks.push(NativeHookEntry { hook });
     }
 
-    /// Dispatch pre-hooks. Returns Err on first abort.
-    pub(crate) fn dispatch_pre(&self, ctx: &HookContext) -> Result<(), String> {
+    /// Dispatch pre-hooks. Returns Err on first abort. The
+    /// `HookOutcome::Replace` variant is propagated to the caller via
+    /// the returned bytes; today only `sys_write` honours it, other
+    /// syscalls drop the replacement.
+    pub(crate) fn dispatch_pre(
+        &self,
+        ctx: &HookContext,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let mut replacement: Option<Vec<u8>> = None;
         for entry in &self.hooks {
-            entry.hook.on_pre(ctx)?;
+            match entry.hook.on_pre(ctx)? {
+                crate::dispatch::HookOutcome::Pass => {}
+                crate::dispatch::HookOutcome::Replace(bytes) => replacement = Some(bytes),
+            }
         }
-        Ok(())
+        Ok(replacement)
     }
 
     /// Dispatch post-hooks (fire-and-forget).
@@ -520,6 +544,17 @@ impl NativeHookRegistry {
 
     pub(crate) fn count(&self) -> usize {
         self.hooks.len()
+    }
+
+    /// Returns true when at least one registered hook declared a
+    /// mutating path suffix that matches `path`. Cheap (linear scan
+    /// over a Vec that today has at most a handful of entries); the
+    /// steady state (no mutating hooks) returns false on the
+    /// empty-Vec check before any string comparison.
+    pub(crate) fn has_mutating_match(&self, path: &str) -> bool {
+        self.mutating_suffixes
+            .iter()
+            .any(|suffix| path.ends_with(suffix))
     }
 }
 

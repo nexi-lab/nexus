@@ -28,8 +28,12 @@ impl Kernel {
         if registry.count() == 0 {
             return Ok(());
         }
+        // The hook chain may return a HookOutcome::Replace; today only
+        // sys_write threads it through (separate dispatch entry point).
+        // For accept/reject hooks we drop the replacement.
         registry
             .dispatch_pre(ctx)
+            .map(|_replacement| ())
             .map_err(KernelError::PermissionDenied)
     }
 

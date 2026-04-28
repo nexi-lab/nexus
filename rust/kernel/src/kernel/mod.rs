@@ -85,6 +85,7 @@ mod dispatch;
 mod io;
 mod ipc;
 mod locks;
+mod mount;
 mod observability;
 
 // ── KernelError ────────────────────────────────────────────────────────────
@@ -1440,125 +1441,10 @@ impl Kernel {
     }
 
     // ── Router proxy methods ───────────────────────────────────────────
-
-    /// Register a mount point.
-    ///
-    /// Backend resolution:
-    ///   - `backend` provided → uses it directly.
-    ///   - `backend` is None → no backend (sys_read returns miss).
-    ///
-    /// Caller provides an optional pre-built `MetaStore` impl (e.g.
-    /// `LocalMetaStore` for standalone, `ZoneMetaStore` for federation).
-    /// Kernel just installs it — it doesn't know or care which impl.
-    ///
-    /// When `raft_backend` is `Some` **and** `zone_id` is the root zone,
-    /// the kernel automatically upgrades its `LockManager` to distributed
-    /// mode (federation DI).
-    ///
-    /// Visibility: ``pub(crate)`` — ``DLC::mount`` is the sole intended
-    /// caller (R20.5). Python-driven mounts flow ``sys_setattr(DT_MOUNT)
-    /// → DLC::mount → add_mount``; bypassing DLC skips the metastore
-    /// DT_MOUNT write + dcache seed + mount-info bookkeeping.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn add_mount(
-        &self,
-        mount_point: &str,
-        zone_id: &str,
-        backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
-        metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
-        raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
-        is_external: bool,
-    ) -> Result<(), KernelError> {
-        self.vfs_router
-            .add_mount(mount_point, zone_id, backend.clone(), is_external);
-        // Install per-mount metastore if provided. Must come AFTER the
-        // entry is inserted so `install_metastore` finds it.
-        if let Some(ms) = metastore {
-            let canonical = canonicalize(mount_point, zone_id);
-            self.vfs_router.install_metastore(&canonical, ms);
-        }
-        // Boot-order fix: on restart, `reconcile_mounts_from_zones` runs
-        // before Python mounts root, so every federation mount it
-        // replays gets `backend=None`. Once root lands with its CAS
-        // backend, propagate it back into those stranded federation
-        // mounts so sys_write stops silently missing.
-        if mount_point == "/" && zone_id == contracts::ROOT_ZONE_ID {
-            if let Some(ref root_backend) = backend {
-                let rebound = self.vfs_router.rebind_missing_backends(root_backend);
-                if rebound > 0 {
-                    tracing::info!(
-                        rebound_count = rebound,
-                        "add_mount(/): rebound {} federation mounts that replayed before root",
-                        rebound,
-                    );
-                }
-            }
-        }
-        // Phase H of the rust-workspace restructure: the federation
-        // distributed-lock install moved to the trait surface
-        // (`FederationProvider::locks_for_zone`).  RaftFederationProvider
-        // — installed by the cdylib boot path — wires the
-        // `DistributedLocks` backend the first time a federated mount
-        // lands.  Kernel sees only `Box<dyn Any>` here so the raft
-        // edge stays inverted.
-        let _ = raft_backend;
-        Ok(())
-    }
-
-    /// Remove a mount point (and its per-mount metastore if any).
-    /// Called by DLC.unmount() — not directly exposed to Python.
-    #[allow(dead_code)]
-    pub fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        self.vfs_router.remove(mount_point, zone_id)
-    }
-
-    /// Wire a per-mount `MetaStore` impl into the kernel's mount table.
-    ///
-    /// Used by code that constructs a `MetaStore` *outside* the kernel and
-    /// wants the kernel's syscall fallback path to delegate to it for
-    /// dcache misses on this mount. The canonical example is `rust/raft`'s
-    /// `ZoneMetaStore`, which wraps a `ZoneConsensus` state machine and is
-    /// constructed by the raft crate, then handed to the kernel via this
-    /// method (see `PyZoneHandle::attach_to_kernel_mount`).
-    ///
-    /// `canonical_key` must match what `Kernel::add_mount(mount_point,
-    /// zone_id, …)` produces internally — i.e. `/{zone_id}{mount_point}`
-    /// after normalization. Use the `canonicalize` helper on the kernel
-    /// side to compute it consistently.
-    #[allow(dead_code)]
-    pub fn install_mount_metastore(
-        &self,
-        canonical_key: String,
-        ms: Arc<dyn crate::meta_store::MetaStore>,
-    ) {
-        self.vfs_router.install_metastore(&canonical_key, ms);
-    }
-
-    /// Compute the zone-canonical key for a (mount_point, zone_id) pair.
-    ///
-    /// Exposed publicly so external crates (e.g. `rust/raft`) can compute
-    /// the same key the kernel uses internally without duplicating the
-    /// normalization rules.
-    pub fn canonical_mount_key(mount_point: &str, zone_id: &str) -> String {
-        canonicalize(mount_point, zone_id)
-    }
-
-    /// Zone-canonical LPM routing.
-    pub fn route(&self, path: &str, zone_id: &str) -> Result<RustRouteResult, KernelError> {
-        self.vfs_router
-            .route(path, zone_id)
-            .map_err(KernelError::from)
-    }
-
-    /// Check if a mount exists.
-    pub fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        self.vfs_router.has(mount_point, zone_id)
-    }
-
-    /// List all mount points (zone-canonical keys, sorted).
-    pub fn get_mount_points(&self) -> Vec<String> {
-        self.vfs_router.canonical_keys()
-    }
+    // (Mount-table primitives moved to `kernel::mount` submodule —
+    // Phase G of Phase 3 restructure.  Federation-mount apply
+    // wiring moved to `nexus_raft::federation_provider` —
+    // Phase H of the same plan.)
 
     /// Install the apply-side dcache invalidation callback for a
     /// federation mount (R20.6 option B — coherence-key fanout).

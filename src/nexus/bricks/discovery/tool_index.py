@@ -9,9 +9,10 @@ Issue: #484
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import bm25s
+if TYPE_CHECKING:
+    import bm25s
 
 
 @dataclass
@@ -71,7 +72,7 @@ class ToolIndex:
         # BM25S index state
         self._tool_names: list[str] = []
         self._corpus_tokens: list[list[str]] = []
-        self._retriever: bm25s.BM25 | None = None
+        self._retriever: "bm25s.BM25 | None" = None
         self._dirty: bool = False
 
     def add_tool(self, tool: ToolInfo) -> None:
@@ -126,6 +127,8 @@ class ToolIndex:
             self._dirty = False
             return
 
+        import bm25s
+
         self._retriever = bm25s.BM25(k1=self.k1, b=self.b)
         self._retriever.index(self._corpus_tokens)
         self._dirty = False
@@ -144,6 +147,8 @@ class ToolIndex:
         query_tokens = self._tokenize(query)
         if not query_tokens:
             return []
+
+        import bm25s
 
         k = min(top_k, len(self._tool_names))
         query_tokenized = bm25s.tokenize([" ".join(query_tokens)])

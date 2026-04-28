@@ -286,19 +286,29 @@ def _boot_independent_bricks(
         logger.debug("[BOOT:BRICK] MCP/Manifest brick disabled by profile")
 
     # --- Tool Namespace Middleware (Issue #1272) ---
-    tool_namespace_middleware = None
+    # Stored as a deferred callable so brick boot does not import fastmcp /
+    # mcp / beartype unless an MCP server is actually started. Consumers in
+    # ``nexus.bricks.mcp.server`` materialize via ``_resolve_tool_ns_middleware``.
+    tool_namespace_middleware: Any = None
     if _on("mcp"):
-        try:
+        _rebac_manager = system["rebac_manager"]
+        _zone_id = ctx.zone_id
+        _cache_ttl = ctx.cache_ttl_seconds or 300
+
+        def _build_tool_namespace_middleware() -> Any:
             from nexus.bricks.mcp.middleware import ToolNamespaceMiddleware
 
-            tool_namespace_middleware = ToolNamespaceMiddleware(
-                rebac_manager=system["rebac_manager"],
-                zone_id=ctx.zone_id,
-                cache_ttl=ctx.cache_ttl_seconds or 300,
+            return ToolNamespaceMiddleware(
+                rebac_manager=_rebac_manager,
+                zone_id=_zone_id,
+                cache_ttl=_cache_ttl,
             )
-            logger.debug("[BOOT:BRICK] ToolNamespaceMiddleware created (zone_id=%s)", ctx.zone_id)
-        except ImportError as _e:
-            logger.debug("[BOOT:BRICK] ToolNamespaceMiddleware unavailable: %s", _e)
+
+        tool_namespace_middleware = _build_tool_namespace_middleware
+        logger.debug(
+            "[BOOT:BRICK] ToolNamespaceMiddleware factory registered (zone_id=%s, deferred)",
+            ctx.zone_id,
+        )
 
     # --- Chunked Upload Service (Issue #788) ---
     chunked_upload_service: Any = None

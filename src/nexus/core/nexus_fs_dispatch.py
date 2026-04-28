@@ -146,16 +146,19 @@ class DispatchMixin:
         listed virtual entry is also stat-visible). Resolvers that do not
         implement ``try_stat`` are skipped.
         """
-        if self._kernel is None:
+        kernel = getattr(self, "_kernel", None)
+        trie = getattr(self, "_trie_resolvers", None)
+        fallback = getattr(self, "_fallback_resolvers", None)
+        if kernel is None or trie is None or fallback is None:
             return False, None
-        idx = self._kernel.trie_lookup(path)
+        idx = kernel.trie_lookup(path)
         if idx is not None:
-            resolver = self._trie_resolvers.get(idx)
+            resolver = trie.get(idx)
             if resolver is not None and hasattr(resolver, "try_stat"):
                 result = resolver.try_stat(path, context=context)
                 if result is not None:
                     return True, result
-        for r in self._fallback_resolvers:
+        for r in fallback:
             if not hasattr(r, "try_stat"):
                 continue
             result = r.try_stat(path, context=context)
@@ -174,16 +177,19 @@ class DispatchMixin:
         resolvers may emit nested children when supported. Resolvers that
         do not implement ``try_list`` are skipped.
         """
-        if self._kernel is None:
+        kernel = getattr(self, "_kernel", None)
+        trie = getattr(self, "_trie_resolvers", None)
+        fallback = getattr(self, "_fallback_resolvers", None)
+        if kernel is None or trie is None or fallback is None:
             return False, None
-        idx = self._kernel.trie_lookup(path)
+        idx = kernel.trie_lookup(path)
         if idx is not None:
-            resolver = self._trie_resolvers.get(idx)
+            resolver = trie.get(idx)
             if resolver is not None and hasattr(resolver, "try_list"):
                 result = resolver.try_list(path, context=context, recursive=recursive)
                 if result is not None:
                     return True, result
-        for r in self._fallback_resolvers:
+        for r in fallback:
             if not hasattr(r, "try_list"):
                 continue
             result = r.try_list(path, context=context, recursive=recursive)

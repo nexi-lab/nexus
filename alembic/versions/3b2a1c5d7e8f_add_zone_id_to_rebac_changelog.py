@@ -15,7 +15,7 @@ root zone sentinel, then enforces NOT NULL with the model's default and
 creates the supporting index. SQLite is handled via batch_alter_table.
 
 Revision ID: 3b2a1c5d7e8f
-Revises: 04188c0bbb28
+Revises: 2163141d44c5
 Create Date: 2026-04-27 19:30:00.000000
 """
 
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "3b2a1c5d7e8f"
-down_revision: str | Sequence[str] | None = "04188c0bbb28"
+down_revision: str | Sequence[str] | None = "2163141d44c5"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

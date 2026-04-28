@@ -24,12 +24,12 @@
 
 use std::sync::Arc;
 
+use crate::prelude::{Command, FullStateMachine, ZoneConsensus};
+use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
 use contracts::VFS_ROOT;
-use nexus_raft::prelude::{Command, FullStateMachine, ZoneConsensus};
-use nexus_raft::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
 use prost::Message;
 
-use crate::meta_store::{FileMetadata as KernelFileMetadata, MetaStore, MetaStoreError};
+use kernel::meta_store::{FileMetadata as KernelFileMetadata, MetaStore, MetaStoreError};
 
 /// ``kernel::MetaStore`` impl backed by a single ``ZoneConsensus``.
 ///
@@ -221,8 +221,8 @@ impl MetaStore for ZoneMetaStore {
             .block_on(self.node.propose(cmd))
             .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.put({path}): {e}")))?;
         match result {
-            nexus_raft::prelude::CommandResult::Success => {}
-            nexus_raft::prelude::CommandResult::Error(e) => {
+            crate::prelude::CommandResult::Success => {}
+            crate::prelude::CommandResult::Error(e) => {
                 return Err(MetaStoreError::IOError(format!(
                     "ZoneMetaStore.put({path}) rejected: {e}"
                 )));
@@ -257,10 +257,7 @@ impl MetaStore for ZoneMetaStore {
             .runtime
             .block_on(self.node.propose(cmd))
             .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.delete({path}): {e}")))?;
-        Ok(matches!(
-            result,
-            nexus_raft::prelude::CommandResult::Success
-        ))
+        Ok(matches!(result, crate::prelude::CommandResult::Success))
     }
 
     fn list(&self, prefix: &str) -> Result<Vec<KernelFileMetadata>, MetaStoreError> {

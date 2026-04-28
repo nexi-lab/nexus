@@ -7,7 +7,7 @@
 //!
 //! Launched as a background thread; stop via `ReplicationScanner::stop()`.
 
-use crate::kernel::OperationContext;
+use kernel::kernel::OperationContext;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -107,7 +107,7 @@ impl ReplicationScanner {
     #[allow(dead_code)]
     pub(crate) fn scan_and_replicate(
         &self,
-        kernel: &crate::kernel::Kernel,
+        kernel: &kernel::kernel::Kernel,
     ) -> (usize, usize, usize) {
         let prefix = format!("/{}/", self.zone_id);
         let entries = match kernel.metastore_list(&prefix) {
@@ -147,11 +147,9 @@ impl ReplicationScanner {
                 }
 
                 ReplicationTarget::Nodes(addrs) => {
-                    // Phase 4 (full): peer_client is now a
-                    // `RwLock<Arc<dyn PeerBlobClient>>`.  Clone the trait
-                    // object out so the lock is dropped before issuing
-                    // network calls inside `find_map`.
-                    let peer_client = Arc::clone(&kernel.peer_client.read());
+                    // Use the public peer_client_arc() accessor since
+                    // raft is a downstream crate now.
+                    let peer_client = kernel.peer_client_arc();
                     let fetched: Option<Vec<u8>> = addrs
                         .iter()
                         .find_map(|addr| peer_client.fetch(addr, &entry.path).ok());
@@ -194,7 +192,7 @@ impl ReplicationScanner {
     /// The thread holds an `Arc<Self>` so the scanner stays alive until `stop()`
     /// is called and the current sleep expires.
     #[allow(dead_code)]
-    pub(crate) fn start(self: &Arc<Self>, kernel: Arc<crate::kernel::Kernel>) {
+    pub(crate) fn start(self: &Arc<Self>, kernel: Arc<kernel::kernel::Kernel>) {
         if self.running.swap(true, Ordering::SeqCst) {
             return; // Already running
         }

@@ -25,7 +25,10 @@
 //   core/stream/shm.rs      — SharedMemoryStream  (was kernel/src/shm_stream.rs)
 //   core/stream/stdio.rs    — StdioStreamBackend  (was kernel/src/stdio_stream.rs)
 //   core/stream/remote.rs   — RemoteStreamBackend (was kernel/src/remote_stream.rs)
-//   core/stream/wal.rs      — WalStreamCore       (was kernel/src/wal_stream.rs)
+// Phase H of the rust-workspace restructure moved the WAL-replicated
+// stream backend out of kernel into the raft crate
+// (`nexus_raft::wal_stream_backend`) so the kernel→raft Cargo edge can
+// be inverted to raft→kernel.
 pub mod backend;
 pub mod manager;
 pub mod observer;
@@ -33,7 +36,6 @@ pub mod remote;
 #[cfg(unix)]
 pub mod shm;
 pub mod stdio;
-pub mod wal;
 
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -79,7 +81,7 @@ unsafe impl Sync for MemoryStreamBackend {}
 // throughout the kernel keep resolving without per-caller churn.
 // ---------------------------------------------------------------------------
 
-pub(crate) use backend::{StreamBackend, StreamError};
+pub use backend::{StreamBackend, StreamError};
 
 // ---------------------------------------------------------------------------
 // StreamBackend impl for MemoryStreamBackend

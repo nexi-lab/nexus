@@ -13,7 +13,7 @@
 //! captures exactly two `::`-separated segments, so a 3-segment
 //! `crate::shm_pipe::Foo` silently drops out of the generated stubs.
 
-use crate::{generated_kernel_abi_pyo3, raft_federation_provider, semaphore};
+use crate::{generated_kernel_abi_pyo3, semaphore};
 #[cfg(unix)]
 use crate::{shm_pipe, shm_stream, stdio_stream};
 use pyo3::prelude::*;
@@ -38,22 +38,5 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
-    // Phase 5 anchor — install RaftFederationProvider into the kernel's
-    // federation slot. Mirrors transport::install_transport_wiring.
-    m.add_function(wrap_pyfunction!(install_federation_wiring, m)?)?;
-    Ok(())
-}
-
-/// One-shot install: replace the kernel's `NoopFederationProvider`
-/// with `RaftFederationProvider` so federation-aware syscalls
-/// dispatch through the trait.  Idempotent — safe to call from
-/// `nexus.__init__`'s boot path even after Python re-imports the
-/// module.
-#[pyfunction]
-#[pyo3(name = "install_federation_wiring")]
-fn install_federation_wiring(
-    kernel: PyRef<'_, generated_kernel_abi_pyo3::PyKernel>,
-) -> PyResult<()> {
-    raft_federation_provider::install(kernel.kernel_ref());
     Ok(())
 }

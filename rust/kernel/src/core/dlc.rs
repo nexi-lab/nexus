@@ -51,7 +51,8 @@ impl DriverLifecycleCoordinator {
     /// - `backend_name` — backend identifier string
     /// - `backend` — optional Rust backend (None = Python-side backend)
     /// - `metastore` — optional per-mount metastore (ZoneMetaStore or LocalMetaStore)
-    /// - `raft_backend` — optional (ZoneConsensus, Handle) for federation DI
+    /// - `raft_backend` — opaque raft handle for federation DI; downcast by
+    ///   the `RaftFederationProvider` impl when wiring distributed locks.
     #[allow(clippy::too_many_arguments)]
     pub fn mount(
         &self,
@@ -61,10 +62,7 @@ impl DriverLifecycleCoordinator {
         backend_name: &str,
         backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
-        raft_backend: Option<(
-            nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-            tokio::runtime::Handle,
-        )>,
+        raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
         is_external: bool,
     ) -> Result<(), KernelError> {
         // 1. Routing table + per-mount metastore + lock manager upgrade

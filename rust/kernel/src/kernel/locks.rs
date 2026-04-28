@@ -1,11 +1,16 @@
-//! Advisory lock syscalls — `sys_lock`, `sys_unlock`, lock listing, federation install.
+//! Advisory lock syscalls — `sys_lock`, `sys_unlock`, lock listing.
 //!
 //! Phase G of Phase 3 restructure plan extracted these methods from the
 //! monolithic `kernel.rs` into a dedicated submodule.  The methods are
 //! still members of [`Kernel`] via `impl Kernel { ... }` blocks — the
 //! split is a file-organization change, not an API change.
-
-use std::sync::Arc;
+//!
+//! Phase H of the same plan moved the federation distributed-lock
+//! install (`install_federation_locks` — formerly here) into the raft
+//! crate's `RaftFederationProvider` impl, where it can name
+//! `nexus_raft::federation::DistributedLocks` directly.  Kernel-side
+//! callers reach the install through the `FederationProvider` trait
+//! dispatch.
 
 use super::{Kernel, KernelError};
 
@@ -76,30 +81,5 @@ impl Kernel {
         self.lock_manager
             .list_locks(prefix, limit)
             .map_err(|e| KernelError::IOError(format!("metastore_list_locks({prefix}): {e}")))
-    }
-
-    /// Install a federation advisory-lock backend (R20.7 DI).
-    ///
-    /// Replaces the old ``upgrade_lock_manager``. First-wins per
-    /// process: subsequent calls short-circuit BEFORE constructing a
-    /// new ``DistributedLocks`` (which does a ``runtime.block_on``).
-    /// Keeping the no-op fast matters for bootstrap paths that replay
-    /// every mount — each replay would otherwise pay the block_on
-    /// cost on the main thread.
-    #[allow(dead_code)]
-    pub fn install_federation_locks(
-        &self,
-        node: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-        runtime: tokio::runtime::Handle,
-    ) {
-        if self.lock_manager.locks_installed() {
-            return;
-        }
-        let kernel_state = self.lock_manager.advisory_state_arc();
-        let (backend, shared_state) =
-            nexus_raft::federation::DistributedLocks::new(node, runtime, kernel_state);
-        let _installed = self
-            .lock_manager
-            .install_locks(Arc::new(backend), shared_state);
     }
 }

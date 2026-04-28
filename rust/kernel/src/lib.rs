@@ -53,7 +53,7 @@ pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]
 pub(crate) use core::pipe::stdio as stdio_pipe;
 pub(crate) use core::service_registry;
-pub(crate) use core::stream;
+pub use core::stream;
 pub use core::stream::manager as stream_manager;
 #[cfg(unix)]
 pub(crate) use core::stream::shm as shm_stream;
@@ -66,7 +66,7 @@ pub(crate) use core::stream::shm as shm_stream;
 // are emitted) compiles fine.
 #[cfg(unix)]
 pub(crate) use core::stream::stdio as stdio_stream;
-pub(crate) use core::stream::wal as wal_stream;
+// Phase H: WAL stream backend moved to nexus_raft::wal_stream_backend.
 
 // ── Kernel-owned primitives ──────────────────────────────────────────
 // CAS (content-addressed storage) — the kernel's storage primitive
@@ -92,27 +92,13 @@ pub mod kernel;
 pub mod generated_kernel_abi_pyo3;
 pub use generated_kernel_abi_pyo3 as generated_pyo3;
 
-// Raft-backed MetaStore + EC replication scanner.  Both reach into
-// `nexus_raft::ZoneManager` for the per-zone Raft cluster and the
-// `Arc<dyn hal::peer::PeerBlobClient>` slot for cross-node fetch,
-// so they live alongside `kernel::Kernel` (which already owns the
-// ZoneManager) inside the kernel rlib.
-//
-// Phase 5 in flight: the `kernel::hal::federation::FederationProvider`
-// trait (committed alongside this module) is the abstraction that
-// will let these two files plus `core/stream/wal.rs` move out into
-// the raft crate.  The migration unblocks the `kernel -> raft` Cargo
-// edge inversion needed for the file moves; until then, both modules
-// keep their direct `nexus_raft::*` references.
-pub mod raft_meta_store;
-pub mod replication;
-
-// Phase 5 anchor (Phase H of Phase 3 restructure plan): concrete
-// `FederationProvider` impl that the cdylib installs into the
-// `Kernel.federation` slot at boot.  Lives in kernel for now (the
-// Phase H follow-up moves it to `nexus_raft::federation_provider`
-// once the `kernel -> raft` Cargo edge flips).
-pub mod raft_federation_provider;
+// Phase H of the rust-workspace restructure inverted the kernel↔raft
+// Cargo edge.  Raft state-machine impls (zone_meta_store,
+// replication_scanner, wal_stream_backend) and the
+// `RaftFederationProvider` trait impl live in the raft crate now.
+// Kernel reaches them through the
+// `kernel::hal::federation::FederationProvider` trait dispatch
+// installed by the cdylib boot path.
 
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that

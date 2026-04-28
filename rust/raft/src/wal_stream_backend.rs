@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 
-use nexus_raft::prelude::{Command, CommandResult, FullStateMachine, ZoneConsensus};
+use crate::prelude::{Command, CommandResult, FullStateMachine, ZoneConsensus};
 use parking_lot::RwLock;
 
 /// Minimal consensus surface the WAL needs — lets unit tests swap in
@@ -252,18 +252,18 @@ impl WalStreamCore {
 // dispatch goes through the standard stream syscalls.
 // ---------------------------------------------------------------------------
 
-impl crate::stream::StreamBackend for WalStreamCore {
-    fn push(&self, data: &[u8]) -> Result<usize, crate::stream::StreamError> {
+impl kernel::stream::StreamBackend for WalStreamCore {
+    fn push(&self, data: &[u8]) -> Result<usize, kernel::stream::StreamError> {
         self.write_nowait(data)
             .map(|seq| seq as usize)
-            .map_err(|_| crate::stream::StreamError::Closed("wal stream closed"))
+            .map_err(|_| kernel::stream::StreamError::Closed("wal stream closed"))
     }
 
-    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), crate::stream::StreamError> {
+    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), kernel::stream::StreamError> {
         match WalStreamCore::read_at(self, offset as u64) {
             Ok(Some(data)) => Ok((data, offset + 1)),
-            Ok(None) => Err(crate::stream::StreamError::Empty),
-            Err(_) => Err(crate::stream::StreamError::ClosedEmpty),
+            Ok(None) => Err(kernel::stream::StreamError::Empty),
+            Err(_) => Err(kernel::stream::StreamError::ClosedEmpty),
         }
     }
 
@@ -271,10 +271,10 @@ impl crate::stream::StreamBackend for WalStreamCore {
         &self,
         offset: usize,
         count: usize,
-    ) -> Result<(Vec<Vec<u8>>, usize), crate::stream::StreamError> {
+    ) -> Result<(Vec<Vec<u8>>, usize), kernel::stream::StreamError> {
         WalStreamCore::read_batch(self, offset as u64, count)
             .map(|(items, next)| (items, next as usize))
-            .map_err(|_| crate::stream::StreamError::ClosedEmpty)
+            .map_err(|_| kernel::stream::StreamError::ClosedEmpty)
     }
 
     fn close(&self) {

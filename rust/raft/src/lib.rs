@@ -105,6 +105,25 @@ pub mod transport;
 #[cfg(feature = "python")]
 pub mod pyo3_bindings;
 
+// Phase H of the rust-workspace restructure (Phase 5 federation DI):
+// state-machine impls + the `FederationProvider` trait impl that
+// previously lived in the kernel crate moved here when the kernel ↔
+// raft Cargo edge was inverted.
+//
+//   federation_provider.rs    — `RaftFederationProvider` impl FederationProvider
+//   zone_meta_store.rs        — Raft-backed `kernel::abc::MetaStore` impl
+//   replication_scanner.rs    — EC replication background scanner
+//   wal_stream_backend.rs     — `kernel::stream::StreamBackend` impl that
+//                               persists each entry through Raft
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod federation_provider;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod replication_scanner;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod wal_stream_backend;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod zone_meta_store;
+
 // Stub module when grpc feature is disabled
 #[cfg(not(feature = "grpc"))]
 pub mod transport {

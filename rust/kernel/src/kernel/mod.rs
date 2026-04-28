@@ -23,7 +23,7 @@ use crate::vfs_router::{
 };
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Extension trait giving parking_lot's two read-lock methods names that
@@ -211,8 +211,8 @@ pub struct SysReadResult {
     pub data: Option<Vec<u8>>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
-    /// Content hash (etag) for post-hook context.
-    pub content_hash: Option<String>,
+    /// Content hash (content_id) for post-hook context.
+    pub content_id: Option<String>,
     /// DT_REG(1), DT_PIPE(3), DT_STREAM(4).
     pub entry_type: u8,
 }
@@ -232,7 +232,7 @@ pub struct SysWriteResult {
     /// True if the file did not exist before this write.
     pub is_new: bool,
     /// Etag (content hash) of the file before this write (None if new file).
-    pub old_etag: Option<String>,
+    pub old_content_id: Option<String>,
     /// Size of the file before this write (None if new file).
     pub old_size: Option<u64>,
     /// Metadata version before this write (None if new file).
@@ -253,7 +253,7 @@ pub struct SysUnlinkResult {
     /// Path that was deleted (for event payload).
     pub path: String,
     /// Etag of deleted file (for event payload).
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     /// Size of deleted file (for event payload).
     pub size: u64,
 }
@@ -269,7 +269,7 @@ pub struct SysRenameResult {
     /// True if the renamed entry is a directory.
     pub is_directory: bool,
     /// Old metadata fields for Python post-hook dispatch (audit trail).
-    pub old_etag: Option<String>,
+    pub old_content_id: Option<String>,
     pub old_size: Option<u64>,
     pub old_version: Option<u32>,
     pub old_modified_at_ms: Option<i64>,
@@ -301,8 +301,8 @@ pub struct SysCopyResult {
     pub post_hook_needed: bool,
     /// Destination path.
     pub dst_path: String,
-    /// Content hash (etag) of the destination file.
-    pub etag: Option<String>,
+    /// Content hash (content_id) of the destination file.
+    pub content_id: Option<String>,
     /// Destination file size.
     pub size: u64,
     /// Metadata version of the destination file.
@@ -349,7 +349,7 @@ pub struct DcacheStats {
 pub struct StatResult {
     pub path: String,
     pub size: u64,
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     pub mime_type: String,
     pub is_directory: bool,
     pub entry_type: u8,
@@ -697,13 +697,6 @@ pub struct Kernel {
     pub(crate) pending_remote_meta_store:
         parking_lot::Mutex<Option<Arc<dyn crate::meta_store::MetaStore>>>,
 
-    /// Phase 4 (full): `init_federation_from_env` used to call
-    /// `wire_blob_fetcher` directly, which constructed a
-    /// `transport::blob::fetcher::KernelBlobFetcher`.  Kernel can no
-    /// longer reference `transport::*` after the Phase-4 crate split,
-    /// so the slot is *stashed* here at federation bootstrap and
-    /// drained by `transport::blob::fetcher::install(&kernel)` —
-    /// invoked from the cdylib boot path once both crates are linked.
     /// Phase 4 (full): blob-fetcher slot stashed by federation init for
     /// the cdylib's transport-tier install hook to drain.
     /// Phase 5: typed as `Box<dyn Any + Send + Sync>` so kernel does not
@@ -711,45 +704,11 @@ pub struct Kernel {
     /// fetcher::install` downcasts to the concrete type at drain time.
     pub(crate) pending_blob_fetcher_slot:
         parking_lot::Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>,
-
-    // ── Federation mount wiring (R20.16.3) ─────────────────────────
-    //
-    // Installed once at federation bootstrap via ``attach_zone_registry``.
-    // Replaces the old Python ``_on_mount_event`` / ``_mount_via_kernel``
-    // / ``_mounts_by_target`` chain with a pure-Rust apply-cb path:
-    //
-    //   FullStateMachine::apply(DT_MOUNT) — mount_apply_cb
-    //     → Kernel::wire_federation_mount(parent, path, target, backend)
-    //       → VFSRouter.add_mount + install_metastore(ZoneMetaStore)
-    //       → DCache.put (seed DT_MOUNT entry so sys_stat sees it)
-    //       → install_federation_dcache_coherence on target consensus
-    //       → cross_zone_mounts.entry(target).push((parent, path, global))
-    //
-    // All three are set once; ``OnceLock`` is idempotent + lock-free read.
-    #[allow(dead_code)]
-    zone_registry: std::sync::OnceLock<Arc<nexus_raft::raft::ZoneRaftRegistry>>,
-    #[allow(dead_code)]
-    zone_runtime: std::sync::OnceLock<tokio::runtime::Handle>,
-    /// R20.18.2: the owning `raft::ZoneManager` — populated by
-    /// `init_federation_from_env()` when federation env vars are set.
-    /// Kernel-internal; never exposed to Python per v20.10 boundary rule.
-    #[allow(dead_code)]
-    zone_manager: std::sync::OnceLock<Arc<nexus_raft::ZoneManager>>,
-    /// Reverse index target_zone_id → [(parent_zone, mount_path,
-    /// global_path)] for ``global_mount_of`` + cascade-unmount.
-    /// Maintained by the apply-side callback: Set inserts, Delete drains.
-    /// SSOT: derived from DT_MOUNT entries in every parent zone's state
-    /// machine. Re-populated at startup by ``reconcile_mounts_from_zones``.
-    #[allow(dead_code)]
-    #[allow(clippy::type_complexity)]
-    cross_zone_mounts: Arc<DashMap<String, Vec<(String, String, String)>>>,
-    /// R20.18.2: set true by `init_federation_from_env` after
-    /// `reconcile_mounts_from_zones` finishes. R20.16.6 /healthz/ready
-    /// and R20.18.4 `/__sys__/zones/root` PathResolver will read this
-    /// as the "federation bootstrap complete, safe to serve traffic"
-    /// signal.
-    #[allow(dead_code)]
-    mount_reconciliation_done: AtomicBool,
+    // Phase H of the rust-workspace restructure: federation state
+    // (zone_manager / zone_registry / zone_runtime / cross_zone_mounts /
+    // mount_reconciliation_done) moved to `RaftFederationProvider` in
+    // the raft crate.  Kernel reaches it through the
+    // `kernel::hal::federation::FederationProvider` trait.
 }
 
 impl Kernel {
@@ -830,11 +789,6 @@ impl Kernel {
             chunk_fetcher,
             pending_remote_meta_store: parking_lot::Mutex::new(None),
             pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
-            zone_registry: std::sync::OnceLock::new(),
-            zone_runtime: std::sync::OnceLock::new(),
-            zone_manager: std::sync::OnceLock::new(),
-            cross_zone_mounts: Arc::new(DashMap::new()),
-            mount_reconciliation_done: AtomicBool::new(false),
         };
         // R20.18.5 activation: federation bootstrap is now driven by
         // `install_federation_wiring` (see `kernel::raft_federation_provider`).
@@ -1039,7 +993,7 @@ impl Kernel {
         zone_id: &str,
         entry_type: u8,
         size: u64,
-        etag: Option<String>,
+        content_id: Option<String>,
         version: u32,
         mime_type: Option<String>,
         created_at_ms: Option<i64>,
@@ -1048,7 +1002,7 @@ impl Kernel {
         crate::meta_store::FileMetadata {
             path: path.to_string(),
             size,
-            etag,
+            content_id,
             version,
             entry_type,
             zone_id: Some(zone_id.to_string()),
@@ -1389,7 +1343,7 @@ impl Kernel {
         size: u64,
         entry_type: u8,
         version: u32,
-        etag: Option<&str>,
+        content_id: Option<&str>,
         zone_id: Option<&str>,
         mime_type: Option<&str>,
         last_writer_address: Option<&str>,
@@ -1398,7 +1352,7 @@ impl Kernel {
             path,
             CachedEntry {
                 size,
-                etag: etag.map(|s| s.to_string()),
+                content_id: content_id.map(|s| s.to_string()),
                 version,
                 entry_type,
                 zone_id: zone_id.map(|s| s.to_string()),
@@ -1512,10 +1466,7 @@ impl Kernel {
         zone_id: &str,
         backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
-        raft_backend: Option<(
-            nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-            tokio::runtime::Handle,
-        )>,
+        raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
         is_external: bool,
     ) -> Result<(), KernelError> {
         self.vfs_router
@@ -1543,28 +1494,14 @@ impl Kernel {
                 }
             }
         }
-        // Federation DI: the presence of `raft_backend` on a mount means
-        // the mount is cross-node replicated (a ZoneConsensus is attached).
-        // Once ANY replicated mount lands in the kernel, locks must also
-        // become cross-node — otherwise sys_lock on a federated path only
-        // sees each node's local BTreeMap and every node accepts the same
-        // acquire.
-        //
-        // LockManager's upgrade is first-wins (idempotent), so the first
-        // replicated mount on each peer picks the backend zone. Because
-        // federation topology is replicated + applied in a deterministic
-        // order on every peer, all nodes converge on the same zone for
-        // lock state. Subsequent mounts keep that backend so live lock
-        // state never migrates between state machines.
-        //
-        // Previously this was gated on `zone_id == ROOT_ZONE_ID`, but
-        // Python-driven federation bootstrap never calls add_mount for
-        // the root zone itself — it only mounts non-root zones under `/`
-        // — so that branch never fired in production and the whole
-        // cluster stayed in local-lock mode.
-        if let Some((node, runtime)) = raft_backend {
-            self.install_federation_locks(node, runtime);
-        }
+        // Phase H of the rust-workspace restructure: the federation
+        // distributed-lock install moved to the trait surface
+        // (`FederationProvider::locks_for_zone`).  RaftFederationProvider
+        // — installed by the cdylib boot path — wires the
+        // `DistributedLocks` backend the first time a federated mount
+        // lands.  Kernel sees only `Box<dyn Any>` here so the raft
+        // edge stays inverted.
+        let _ = raft_backend;
         Ok(())
     }
 
@@ -1645,17 +1582,6 @@ impl Kernel {
     /// Install is idempotent: the slot's ``write().replace()`` is fine
     /// because every install for the same state machine captures the
     /// SAME ``coherence_key``, so overwriting is a no-op semantically —
-    /// kernel gates further installs via
-    /// ``LockManager::locks_installed``-style atomic to avoid the
-    /// ``runtime.block_on`` cost, but correctness does not depend on
-    /// it.
-    fn install_federation_dcache_coherence(
-        &self,
-        consensus: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-    ) {
-        install_federation_dcache_coherence_impl(&self.vfs_router, &self.dcache, &consensus);
-    }
-
     /// Syscall: set attributes on a path. Handles ALL filesystem entry types.
     ///
     /// - `entry_type == 2` (DT_MOUNT) → DLC mount lifecycle
@@ -1674,10 +1600,7 @@ impl Kernel {
         backend_name: &str,
         backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
-        raft_backend: Option<(
-            nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-            tokio::runtime::Handle,
-        )>,
+        raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
         io_profile: &str,
         zone_id: &str,
         // -- DT_MOUNT is_external flag (entry_type == 2) --
@@ -1714,10 +1637,12 @@ impl Kernel {
                 // `_mount_via_kernel` chain — every DT_MOUNT becomes a
                 // federation-wired mount when federation is active,
                 // without any Python-side ZoneManager orchestration.
-                let (metastore, raft_backend) =
-                    self.resolve_federation_mount_backing(zone_id, path, metastore, raft_backend)?;
-
-                let consensus_for_cb = raft_backend.as_ref().map(|(c, _)| c.clone());
+                // Phase H of the rust-workspace restructure: federation
+                // wiring (per-zone metastore resolution + dcache
+                // coherence) is owned by the RaftFederationProvider in
+                // the raft crate.  Sys_setattr DT_MOUNT performs the
+                // basic DLC mount; the provider's apply-cb wires the
+                // federation-specific surface for replicated mounts.
                 self.dlc.mount(
                     self,
                     path,
@@ -1728,9 +1653,6 @@ impl Kernel {
                     raft_backend,
                     is_external,
                 )?;
-                if let Some(consensus) = consensus_for_cb {
-                    self.install_federation_dcache_coherence(consensus);
-                }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),
                     created: true,
@@ -1925,27 +1847,16 @@ impl Kernel {
                 ));
             }
         } else if io_profile == "wal" {
-            // R20.18.6: raft-backed durable stream. Previously constructed
-            // via the deleted `WalStreamBackend` pyclass; now the kernel
-            // picks the zone's consensus off `zone_manager_arc()` directly
-            // so no ZoneHandle crosses the PyO3 boundary.
-            let zm = self.zone_manager_arc().ok_or_else(|| {
-                KernelError::IOError("io_profile=wal requires federation (set NEXUS_PEERS)".into())
-            })?;
-            // Stream inode lives inside the zone whose raft group we use —
-            // for now we wire against the root zone (the only zone Python
-            // currently writes DT_STREAM into). When streams need to
-            // follow the mount tree, swap this for VFSRouter::route(path).
-            let root_zone = "root";
-            let consensus = zm.registry().get_node(root_zone).ok_or_else(|| {
-                KernelError::IOError(format!("io_profile=wal: zone {root_zone} not loaded"))
-            })?;
-            let runtime = zm.runtime_handle();
-            let wal_consensus: Arc<dyn crate::wal_stream::WalConsensus> =
-                Arc::new(crate::wal_stream::RaftWalConsensus::new(consensus, runtime));
-            let backend = crate::wal_stream::WalStreamCore::new(wal_consensus, path.to_string());
+            // R20.18.6: raft-backed durable stream.  Phase H of the
+            // rust-workspace restructure routes the construction through
+            // `FederationProvider::wal_stream_for_zone` so the kernel
+            // does not name raft-side types.
+            let backend = self
+                .federation_arc()
+                .wal_stream_for_zone(self, "root", path, "")
+                .map_err(KernelError::IOError)?;
             self.stream_manager
-                .register(path, Arc::new(backend))
+                .register(path, backend)
                 .map_err(stream_mgr_err)?;
             self.write_stream_inode(path, capacity)?;
             (None, None)
@@ -2231,6 +2142,40 @@ impl Kernel {
         Arc::clone(&self.federation.read())
     }
 
+    /// Stash the transport-tier blob-fetcher slot.  Drained by
+    /// `transport::blob::fetcher::install` at cdylib boot.  Phase 5
+    /// types this as `Box<dyn Any>` so kernel does not name the
+    /// raft-side `BlobFetcherSlot` concrete type.
+    pub fn stash_blob_fetcher_slot(&self, slot: Box<dyn std::any::Any + Send + Sync>) {
+        *self.pending_blob_fetcher_slot.lock() = Some(slot);
+    }
+
+    /// Drain the previously stashed blob-fetcher slot.  Returns
+    /// `None` after the first drain so re-imports of the cdylib
+    /// stay safe.
+    pub fn take_pending_blob_fetcher_slot(&self) -> Option<Box<dyn std::any::Any + Send + Sync>> {
+        self.pending_blob_fetcher_slot.lock().take()
+    }
+
+    /// Borrow the kernel's `peer_client` slot for federation reads.
+    pub fn peer_client_slot(&self) -> Arc<dyn crate::hal::peer::PeerBlobClient> {
+        self.peer_client_arc()
+    }
+
+    /// Clone the VFSRouter `Arc` — used by federation / transport
+    /// install hooks to wire callbacks against the kernel's routing
+    /// table without holding the lock across `.await`.
+    pub fn vfs_router_arc(&self) -> Arc<VFSRouter> {
+        Arc::clone(&self.vfs_router)
+    }
+
+    /// Clone the DCache `Arc` — used by federation / transport install
+    /// hooks to wire invalidation callbacks against the kernel's
+    /// dcache without holding the lock across `.await`.
+    pub fn dcache_arc(&self) -> Arc<DCache> {
+        Arc::clone(&self.dcache)
+    }
+
     /// Prepare a WAL-replicated DT_STREAM for audit / observer use.
     ///
     /// Creates a `WalStreamCore` for `stream_path` using the Raft
@@ -2253,30 +2198,21 @@ impl Kernel {
         &self,
         zone_id: &str,
         stream_path: &str,
-    ) -> Result<Arc<crate::wal_stream::WalStreamCore>, KernelError> {
-        let zm = self.zone_manager_arc().ok_or_else(|| {
-            KernelError::IOError(
-                "prepare_audit_stream: federation not active (set NEXUS_PEERS)".into(),
-            )
-        })?;
-        let consensus = zm.registry().get_node(zone_id).ok_or_else(|| {
-            KernelError::IOError(format!("prepare_audit_stream: zone {zone_id} not loaded"))
-        })?;
-        let runtime = zm.runtime_handle();
-        let wal_consensus: Arc<dyn crate::wal_stream::WalConsensus> =
-            Arc::new(crate::wal_stream::RaftWalConsensus::new(consensus, runtime));
-        let wal_stream = Arc::new(crate::wal_stream::WalStreamCore::new(
-            wal_consensus,
-            stream_path.to_string(),
-        ));
+    ) -> Result<Arc<dyn crate::stream::StreamBackend>, KernelError> {
+        // Phase H of the rust-workspace restructure: WAL stream
+        // construction lives in raft now and surfaces through
+        // `FederationProvider::wal_stream_for_zone`.
+        let backend = self
+            .federation_arc()
+            .wal_stream_for_zone(self, zone_id, stream_path, "")
+            .map_err(KernelError::IOError)?;
         // Register with StreamManager — ignore Exists (idempotent re-call).
-        let _ = self.stream_manager.register(
-            stream_path,
-            Arc::clone(&wal_stream) as Arc<dyn crate::stream::StreamBackend>,
-        );
+        let _ = self
+            .stream_manager
+            .register(stream_path, Arc::clone(&backend));
         // Seed DCache + metastore inode so sys_read can locate the stream.
         let _ = self.write_stream_inode(stream_path, 0);
-        Ok(wal_stream)
+        Ok(backend)
     }
 
     // ── Zone revision counter (§10 A2) ────────────────────────────────
@@ -2375,396 +2311,6 @@ impl Kernel {
     //    sys_rename / sys_copy / sys_mkdir / sys_rmdir) ──────────────────
     // (Moved to `kernel::io` submodule — Phase G of Phase 3 restructure.)
 
-    // ── Tier 2 convenience methods ────────────────────────────────────
-
-    /// Fast access check: validate + route + dcache existence (~100ns).
-    ///
-    /// Returns true if file exists in dcache and path is routable.
-    /// Does NOT check metastore (dcache authoritative for hot-path).
-    pub fn access(&self, path: &str, zone_id: &str) -> bool {
-        if validate_path_fast(path).is_err() {
-            return false;
-        }
-        if self.vfs_router.route(path, zone_id).is_err() {
-            return false;
-        }
-        self.dcache.contains(path)
-    }
-
-    // ── Internal batch functions (not Tier 1 syscalls) ────────────────
-
-    /// Internal: batch write — loops sys_write logic for each item.
-    ///
-    /// NOT a syscall — prefixed with `_`. Called by Python `write_batch` method.
-    /// Each item is (path, content). Returns Vec<SysWriteResult> with per-item results.
-    /// Sorted VFS lock acquisition to avoid deadlocks.
-    /// PRE-hooks are NOT dispatched here (caller handles batch pre-hooks).
-    pub fn _write_batch(
-        &self,
-        items: &[(String, Vec<u8>)],
-        ctx: &OperationContext,
-    ) -> Result<Vec<SysWriteResult>, KernelError> {
-        let mut results = Vec::with_capacity(items.len());
-
-        // 1. Validate all paths (fail-fast)
-        for (path, _) in items {
-            validate_path_fast(path)?;
-        }
-
-        // 2. Route all paths (single lock acquisition on mount table via read lock)
-        let mut routes = Vec::with_capacity(items.len());
-        for (path, _) in items {
-            let route = self.vfs_router.route(path, &ctx.zone_id).ok();
-            routes.push(route);
-        }
-
-        // 3. Sorted VFS lock acquisition for all paths
-        let mut lock_handles: Vec<u64> = vec![0; items.len()];
-        {
-            // Sort indices by path to avoid deadlock
-            let mut indices: Vec<usize> = (0..items.len()).collect();
-            indices.sort_by(|a, b| items[*a].0.cmp(&items[*b].0));
-
-            for idx in indices {
-                if routes[idx].is_some() {
-                    lock_handles[idx] = self.lock_manager.blocking_acquire(
-                        &items[idx].0,
-                        LockMode::Write,
-                        self.vfs_lock_timeout_ms(),
-                    );
-                }
-            }
-        }
-
-        // 4. Write each item — collect metadata for batch put
-        // Tuple: (mount_point, path, FileMetadata) for per-mount metastore support
-        let mut batch_meta: Vec<(String, String, crate::meta_store::FileMetadata)> = Vec::new();
-
-        for (i, ((path, content), route_opt)) in items.iter().zip(routes.iter()).enumerate() {
-            let route = match route_opt {
-                Some(r) => r,
-                None => {
-                    results.push(SysWriteResult {
-                        hit: false,
-                        content_id: None,
-                        post_hook_needed: false,
-                        version: 0,
-                        size: 0,
-                        is_new: false,
-                        old_etag: None,
-                        old_size: None,
-                        old_version: None,
-                        old_modified_at_ms: None,
-                    });
-                    continue;
-                }
-            };
-
-            // Lock timeout check
-            if lock_handles[i] == 0 {
-                results.push(SysWriteResult {
-                    hit: false,
-                    content_id: None,
-                    post_hook_needed: false,
-                    version: 0,
-                    size: 0,
-                    is_new: false,
-                    old_etag: None,
-                    old_size: None,
-                    old_version: None,
-                    old_modified_at_ms: None,
-                });
-                continue;
-            }
-
-            // Backend write. ``sys_write_batch`` keeps per-item error
-            // semantics: a failure only taints that item's result, not the
-            // whole batch. We still surface the full error to the caller by
-            // synthesising a backend-error result via ``hit=false`` so the
-            // observer/post-hook path doesn't fire. The per-item error is
-            // logged for observability but not hoisted to ``Result<..>``.
-            // Backend write error (batch variant): collapse to None so the
-            // per-item result surfaces as hit=false (observer + post-hook
-            // path skipped). Caller inspects ``SysWriteResult.hit`` + retries.
-            let write_result = self
-                .vfs_router
-                .write_content(&route.mount_point, content, &route.backend_path, ctx, 0)
-                .unwrap_or_default();
-
-            match write_result {
-                Some(wr) => {
-                    let batch_old_entry = self.dcache.get_entry(path);
-                    let old_version = batch_old_entry.as_ref().map(|e| e.version).unwrap_or(0);
-                    let new_version = old_version + 1;
-
-                    // Collect metadata for batch put (instead of N individual puts)
-                    let meta = self.build_metadata(
-                        path,
-                        &route.zone_id,
-                        DT_REG,
-                        wr.size,
-                        Some(wr.content_id.clone()),
-                        new_version,
-                        None,
-                        None,
-                        None,
-                    );
-                    // Defer dcache + metastore commit to step 4b so
-                    // we can group raft proposes per mount and mark
-                    // each result hit/miss based on the actual
-                    // commit outcome rather than eagerly lying.
-                    batch_meta.push((route.mount_point.clone(), path.to_string(), meta));
-
-                    results.push(SysWriteResult {
-                        hit: true,
-                        content_id: Some(wr.content_id),
-                        post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0
-                            || self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
-                        version: new_version,
-                        size: wr.size,
-                        is_new: batch_old_entry.is_none(),
-                        old_etag: batch_old_entry.as_ref().and_then(|e| e.etag.clone()),
-                        old_size: batch_old_entry.as_ref().map(|e| e.size),
-                        old_version: batch_old_entry.as_ref().map(|e| e.version),
-                        old_modified_at_ms: batch_old_entry.as_ref().and_then(|e| e.modified_at_ms),
-                    });
-                }
-                None => {
-                    results.push(SysWriteResult {
-                        hit: false,
-                        content_id: None,
-                        post_hook_needed: false,
-                        version: 0,
-                        size: 0,
-                        is_new: false,
-                        old_etag: None,
-                        old_size: None,
-                        old_version: None,
-                        old_modified_at_ms: None,
-                    });
-                }
-            }
-        }
-
-        // 4b. Atomic per-item commit. Per-mount items go through
-        // commit_metadata (raft propose, ms.put then dcache). Global
-        // items (no per-mount metastore) collect into a batch put
-        // since the global LocalMetaStore can do that as one redb
-        // txn — but we still update dcache only after the txn lands.
-        // Failures flip the corresponding result entry from
-        // hit=true → hit=false so the caller learns which items
-        // actually committed.
-        if !batch_meta.is_empty() {
-            let mut global_items: Vec<(String, crate::meta_store::FileMetadata)> = Vec::new();
-            let mut global_idx: Vec<usize> = Vec::new();
-            for (idx, (mp, path, meta)) in batch_meta.into_iter().enumerate() {
-                let has_per_mount = self
-                    .vfs_router
-                    .get_canonical(&mp)
-                    .map(|e| e.metastore.is_some())
-                    .unwrap_or(false);
-                if has_per_mount {
-                    if let Err(_e) = self.commit_metadata(&path, &mp, meta) {
-                        // Mark this batch entry as not-hit so the
-                        // caller knows the propose didn't commit.
-                        if let Some(r) = results.get_mut(idx) {
-                            r.hit = false;
-                        }
-                    }
-                } else {
-                    global_items.push((path, meta));
-                    global_idx.push(idx);
-                }
-            }
-            if !global_items.is_empty() {
-                let dcache_updates: Vec<(String, CachedEntry)> = global_items
-                    .iter()
-                    .map(|(p, m)| (p.clone(), m.into()))
-                    .collect();
-                let put_ok = self
-                    .metastore
-                    .read()
-                    .as_ref()
-                    .map(|ms| ms.put_batch(&global_items).is_ok())
-                    .unwrap_or(false);
-                if put_ok {
-                    for (p, e) in dcache_updates {
-                        self.dcache.put(&p, e);
-                    }
-                } else {
-                    for idx in global_idx {
-                        if let Some(r) = results.get_mut(idx) {
-                            r.hit = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 5. Release all VFS locks
-        for handle in &lock_handles {
-            if *handle > 0 {
-                self.lock_manager.do_release(*handle);
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// Internal: batch read — parallel reads using rayon.
-    ///
-    /// NOT a syscall — prefixed with `_`. Called by Python `read_bulk` method.
-    /// Returns Vec<SysReadResult> with per-path results.
-    /// Safe because Kernel is Sync (DashMap + parking_lot).
-    pub fn _read_batch(
-        &self,
-        paths: &[String],
-        ctx: &OperationContext,
-    ) -> Result<Vec<SysReadResult>, KernelError> {
-        use rayon::prelude::*;
-
-        let results: Vec<SysReadResult> = paths
-            .par_iter()
-            .map(|path| {
-                self.sys_read(path, ctx).unwrap_or(SysReadResult {
-                    data: None,
-                    post_hook_needed: false,
-                    content_hash: None,
-                    entry_type: 0,
-                })
-            })
-            .collect();
-
-        Ok(results)
-    }
-
-    /// Internal: batch delete — full Rust + batch metastore.
-    ///
-    /// NOT a syscall — prefixed with `_`. Called by Python batch delete.
-    /// Returns Vec<SysUnlinkResult> with per-path results.
-    /// Collects hit=true paths for a single metastore.delete_batch() call.
-    pub fn _delete_batch(
-        &self,
-        paths: &[String],
-        ctx: &OperationContext,
-    ) -> Result<Vec<SysUnlinkResult>, KernelError> {
-        let mut results = Vec::with_capacity(paths.len());
-
-        for path in paths {
-            match self.sys_unlink(path, ctx, false) {
-                Ok(r) => results.push(r),
-                Err(_) => results.push(SysUnlinkResult {
-                    hit: false,
-                    entry_type: 0,
-                    post_hook_needed: false,
-                    path: path.clone(),
-                    etag: None,
-                    size: 0,
-                }),
-            }
-        }
-
-        Ok(results)
-    }
-
-    /// List immediate children of a directory path from dcache + metastore.
-    ///
-    /// When `is_admin` is false and `zone_id` is not ROOT_ZONE_ID, entries
-    /// are filtered to only include those belonging to the caller's zone or
-    /// the root zone (global namespace).
-    ///
-    /// Returns Vec of (child_path, entry_type) tuples.
-    pub fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
-        if validate_path_fast(parent_path).is_err() {
-            return Vec::new();
-        }
-        // Callers pass either "/local" or "/local/" — normalize the trailing
-        // slash off before routing so prefix comparisons below don't produce
-        // double slashes (which silently return no children).
-        let normalized = if parent_path != "/" && parent_path.ends_with('/') {
-            parent_path.trim_end_matches('/')
-        } else {
-            parent_path
-        };
-        let route = match self.vfs_router.route(normalized, zone_id) {
-            Ok(r) => r,
-            Err(_) => return Vec::new(),
-        };
-
-        let global_prefix = if normalized == contracts::VFS_ROOT {
-            contracts::VFS_ROOT.to_string()
-        } else {
-            format!("{}/", normalized)
-        };
-
-        let needs_zone_filter = !is_admin && zone_id != contracts::ROOT_ZONE_ID;
-
-        // Merge dcache children with per-mount metastore list.
-        // Track (entry_type, zone_id) so we can zone-filter at the end.
-        let mut seen: std::collections::BTreeMap<String, (u8, Option<String>)> =
-            std::collections::BTreeMap::new();
-        let parent_for_join = if parent_path == contracts::VFS_ROOT {
-            ""
-        } else {
-            parent_path.trim_end_matches('/')
-        };
-        for (child, etype, entry_zone) in self.dcache.list_children(&global_prefix) {
-            let global = format!("{}/{}", parent_for_join, child);
-            seen.insert(global, (etype, entry_zone));
-        }
-
-        if let Some(ms_children) =
-            self.with_metastore(&route.mount_point, |ms| ms.list(&global_prefix).ok())
-        {
-            let parent_depth = global_prefix.matches('/').count();
-            for meta in ms_children.into_iter().flatten() {
-                // Direct children only: same depth as prefix + 1 segment.
-                if meta.path.matches('/').count() != parent_depth {
-                    continue;
-                }
-                if !meta.path.starts_with(&global_prefix) {
-                    continue;
-                }
-                seen.entry(meta.path)
-                    .or_insert((meta.entry_type, meta.zone_id));
-            }
-        }
-
-        // Phase 3: Backend list_dir merge (all backend types uniformly).
-        // CAS/S3/GCS return Err(NotSupported) → ignored.  Path-local
-        // returns disk entries, external connectors return API results.
-        // No ABC leak: kernel treats every backend the same.
-        if let Ok(backend_entries) = self
-            .vfs_router
-            .list_dir(&route.mount_point, &route.backend_path)
-        {
-            for name in backend_entries {
-                let is_dir = name.ends_with('/');
-                let clean = name.trim_end_matches('/');
-                if clean.is_empty() {
-                    continue;
-                }
-                let etype = if is_dir { DT_DIR } else { DT_REG };
-                let child_path = format!("{}/{}", parent_for_join, clean);
-                seen.entry(child_path)
-                    .or_insert((etype, Some(route.zone_id.clone())));
-            }
-        }
-
-        if needs_zone_filter {
-            seen.into_iter()
-                .filter(|(_, (_, entry_zone))| {
-                    let ez = entry_zone.as_deref().unwrap_or(contracts::ROOT_ZONE_ID);
-                    ez == contracts::ROOT_ZONE_ID || ez == zone_id
-                })
-                .map(|(path, (etype, _))| (path, etype))
-                .collect()
-        } else {
-            seen.into_iter()
-                .map(|(path, (etype, _))| (path, etype))
-                .collect()
-        }
-    }
 
     /// Backend-native directory listing for external mounts.
     ///
@@ -3098,705 +2644,6 @@ impl Kernel {
             cas.write_partial(old_hash, buf, offset, origins)
         })
     }
-
-    // ═════════════════════════════════════════════════════════════════
-    // R20.18.2+.3: Federation mount wiring — kernel-internal Rust calls
-    //   (not exposed to Python per v20.10 boundary rule). Invoked by
-    //   Kernel::init_federation_from_env (R20.18.2) + apply-cb installed
-    //   on every loaded zone. All methods below carry #[allow(dead_code)]
-    //   until R20.18.2 wires the env-driven bootstrap that invokes them.
-    // ═════════════════════════════════════════════════════════════════
-
-    /// Install the ``ZoneRaftRegistry`` + tokio runtime the apply-side
-    /// federation mount wiring needs. Idempotent: subsequent calls are
-    /// no-ops (``OnceLock::set`` returns ``Err`` on second call).
-    #[allow(dead_code)]
-    pub fn attach_zone_registry(
-        &self,
-        registry: Arc<nexus_raft::raft::ZoneRaftRegistry>,
-        runtime: tokio::runtime::Handle,
-    ) {
-        let _ = self.zone_registry.set(registry);
-        let _ = self.zone_runtime.set(runtime);
-    }
-
-    /// Phase 4 (full): stash the blob-fetcher slot for later install
-    /// by `transport::blob::fetcher::install`.  Pre-Phase-4 this
-    /// constructed `transport::blob::fetcher::KernelBlobFetcher`
-    /// directly, but kernel no longer depends on the high-level
-    /// transport crate (cycle break); the cdylib boot drains the
-    /// slot and installs the fetcher.
-    pub(crate) fn stash_blob_fetcher_slot(&self, slot: Box<dyn std::any::Any + Send + Sync>) {
-        *self.pending_blob_fetcher_slot.lock() = Some(slot);
-    }
-
-    /// Drain the stashed blob-fetcher slot (called by
-    /// `transport::blob::fetcher::install`).  Returns `None` after
-    /// the first drain so the cdylib boot can be safely re-invoked.
-    pub fn take_pending_blob_fetcher_slot(&self) -> Option<Box<dyn std::any::Any + Send + Sync>> {
-        self.pending_blob_fetcher_slot.lock().take()
-    }
-
-    /// Borrow the kernel's `Arc<VFSRouter>` — exposed so peer crates
-    /// (transport blob fetcher) can construct their own fetchers
-    /// pointed at the kernel's mount table.
-    pub fn vfs_router_arc(&self) -> Arc<VFSRouter> {
-        Arc::clone(&self.vfs_router)
-    }
-
-    /// Borrow the kernel's `Arc<DCache>` — exposed for the same
-    /// reason as `vfs_router_arc`.
-    pub fn dcache_arc(&self) -> Arc<DCache> {
-        Arc::clone(&self.dcache)
-    }
-
-    /// R20.18.2: driven by `Kernel::new()` at startup (post-R20.18.5)
-    /// or from tests. Reads federation env vars, constructs
-    /// `raft::ZoneManager` internally, bootstraps the root raft group,
-    /// creates listed zones, installs per-zone apply-cb, and replays
-    /// persisted DT_MOUNT entries into the VFSRouter.
-    ///
-    /// Env vars read (all optional — absence of `NEXUS_HOSTNAME` is
-    /// the "no federation" signal and the method returns `Ok(())`
-    /// as a no-op):
-    /// - `NEXUS_HOSTNAME`: this node's hostname (required to enable
-    ///   federation; absence disables).
-    /// - `NEXUS_PEERS`: comma-separated `host:port` list.
-    /// - `NEXUS_BIND_ADDR`: defaults to `0.0.0.0:2126`.
-    /// - `NEXUS_DATA_DIR`: base dir for zone redb files; defaults to
-    ///   `<NEXUS_STATE_DIR>/zones` where `NEXUS_STATE_DIR` itself
-    ///   falls back to `~/.nexus`.
-    /// - `NEXUS_FEDERATION_ZONES`: comma-separated zone ids to create
-    ///   at Phase-1 bootstrap (raft group ConfState init only; no
-    ///   data writes).
-    /// - TLS state at `<zones_dir>/tls/`: probed to decide leader vs
-    ///   joiner path. A `join-token` file triggers TLS pre-provision
-    ///   from the cluster leader before ZoneManager construction.
-    ///
-    /// Aligned with Python `federation.py:from_env()` behavior —
-    /// R20.18.5 deletes that Python path and activates this one.
-    #[allow(dead_code)]
-    pub(crate) fn init_federation_from_env(&self) -> Result<(), KernelError> {
-        use std::path::Path;
-        use std::sync::atomic::AtomicBool;
-
-        // Activation signal: NEXUS_PEERS non-empty means federation is
-        // explicitly configured. NEXUS_HOSTNAME defaults to the OS
-        // hostname (docker compose sets `hostname: nexus-1` but not
-        // the env var — Python `federation.py:from_env()` used
-        // `socket.gethostname()` as the same fallback).
-        let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
-        if peers_csv.trim().is_empty() {
-            return Ok(());
-        }
-        let hostname = std::env::var("NEXUS_HOSTNAME").ok().unwrap_or_else(|| {
-            // Best-effort OS hostname — docker sets this to the
-            // container `hostname:` field.
-            #[cfg(unix)]
-            {
-                std::process::Command::new("hostname")
-                    .output()
-                    .ok()
-                    .and_then(|o| String::from_utf8(o.stdout).ok())
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "localhost".to_string())
-            }
-            #[cfg(not(unix))]
-            {
-                std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".to_string())
-            }
-        });
-
-        // R20.18.7: publish self's peer-reachable address so
-        // `origin_backend_name` can encode "{backend}@{host:port}" into
-        // every FileMetadata.backend_name it writes. Follower
-        // `try_remote_fetch` parses that suffix to know where to pull
-        // the blob from; without it, every cross-node read after
-        // metadata-only replication fails with FileNotFound.
-        //
-        // SSOT: `NEXUS_ADVERTISE_ADDR` — the same env var raft uses for
-        // cluster peering. Since R20.18.7 co-locates `ReadBlob` with
-        // `ZoneApiService` on the raft port, one advertised address
-        // covers both planes (etcd / CockroachDB `--advertise-addr`
-        // pattern). Fallback: hostname + raft port parsed from
-        // `NEXUS_BIND_ADDR` (defaults to 2126) so simple smoke-test
-        // setups still publish something reachable.
-        let self_addr = std::env::var(contracts::env::ADVERTISE_ADDR)
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| {
-                let raft_port = std::env::var(contracts::env::BIND_ADDR)
-                    .ok()
-                    .as_deref()
-                    .and_then(|s| s.rsplit_once(':'))
-                    .and_then(|(_, p)| p.parse::<u16>().ok())
-                    .unwrap_or(2126);
-                format!("{}:{}", hostname, raft_port)
-            });
-        self.set_self_address(&self_addr);
-        tracing::info!(
-            self_address = %self_addr,
-            "R20.18.7 init_federation_from_env: self-address published"
-        );
-
-        // Process-wide one-shot guard. Multiple `Kernel::new()` calls in
-        // one process (e.g. `nexus.connect()` + a side embedded store
-        // for OAuth crypto settings) would otherwise each try to bind
-        // the same gRPC port. First kernel wins; later kernels in the
-        // same process run in "federation disabled" mode.
-        static FEDERATION_CLAIMED: AtomicBool = AtomicBool::new(false);
-        if FEDERATION_CLAIMED.swap(true, Ordering::AcqRel) {
-            tracing::debug!(
-                "init_federation_from_env: already claimed by another Kernel in this process, skipping"
-            );
-            return Ok(());
-        }
-
-        let bind_addr =
-            std::env::var("NEXUS_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:2126".to_string());
-
-        // zones_dir: honor NEXUS_DATA_DIR, else <NEXUS_STATE_DIR>/zones,
-        // else ./nexus-zones (last-resort for smoke tests — prod must
-        // set one of the env vars explicitly).
-        let zones_dir = std::env::var("NEXUS_DATA_DIR").unwrap_or_else(|_| {
-            std::env::var("NEXUS_STATE_DIR")
-                .map(|s| format!("{}/zones", s))
-                .unwrap_or_else(|_| "./nexus-zones".to_string())
-        });
-
-        // Parse peers "host:port,host:port" → "id@host:port". `peers_csv`
-        // already read above as part of the activation gate.
-        let peers = parse_peer_list_to_raft_format(&peers_csv)
-            .map_err(|e| KernelError::Federation(format!("NEXUS_PEERS parse: {}", e)))?;
-
-        // TLS dir probe: detect joiner vs leader.
-        let tls_dir = Path::new(&zones_dir).join("tls");
-        let join_token_path = tls_dir.join("join-token");
-        let ca_path = tls_dir.join("ca.pem");
-        let node_cert_path = tls_dir.join("node.pem");
-        let node_key_path = tls_dir.join("node-key.pem");
-
-        // Join-token present + no node.pem → pre-provision TLS by
-        // calling the leader's JoinCluster RPC.
-        if join_token_path.exists() && !node_cert_path.exists() {
-            let join_token = std::fs::read_to_string(&join_token_path)
-                .map_err(|e| KernelError::Federation(format!("read join-token: {}", e)))?;
-            let join_token = join_token.trim();
-            // Pick any peer != self as the join target.
-            let my_id = nexus_raft::transport::hostname_to_node_id(&hostname);
-            let join_peer = peers.iter().find_map(|p| {
-                // "id@host:port" → extract id + "host:port"
-                let (id_str, hostport) = p.split_once('@')?;
-                let id: u64 = id_str.parse().ok()?;
-                (id != my_id).then(|| hostport.to_string())
-            });
-            if let Some(peer_addr) = join_peer {
-                nexus_raft::zone_manager::join_cluster_and_provision_tls(
-                    &peer_addr,
-                    join_token,
-                    &hostname,
-                    &tls_dir.to_string_lossy(),
-                )
-                .map_err(|e| KernelError::Federation(format!("TLS pre-provision: {}", e)))?;
-            } else {
-                return Err(KernelError::Federation(
-                    "Join token found but no peer in NEXUS_PEERS to join".to_string(),
-                ));
-            }
-        }
-
-        // R20.18.7: hand the same on-disk TLS material to the peer blob
-        // client so its `ReadBlob` calls reach the co-located handler on
-        // :2126 over the cluster's mTLS. ZoneManager re-reads these
-        // files internally; reading them twice keeps the kernel's
-        // TLS wiring independent of raft's `TlsFiles` struct and stops
-        // a future raft refactor from silently breaking the client.
-        if ca_path.exists() && node_cert_path.exists() && node_key_path.exists() {
-            let ca_pem = std::fs::read(&ca_path)
-                .map_err(|e| KernelError::Federation(format!("read ca.pem: {}", e)))?;
-            let cert_pem = std::fs::read(&node_cert_path)
-                .map_err(|e| KernelError::Federation(format!("read node.pem: {}", e)))?;
-            let key_pem = std::fs::read(&node_key_path)
-                .map_err(|e| KernelError::Federation(format!("read node-key.pem: {}", e)))?;
-            // Phase 4 (full): trait method takes raw PEM bytes — the
-            // concrete impl in transport reconstitutes the
-            // `transport_primitives::TlsConfig` itself.
-            self.peer_client_arc()
-                .install_tls(&ca_pem, Some(&cert_pem), Some(&key_pem));
-        }
-
-        // TLS config for ZoneManager: present if ca.pem + node.pem +
-        // node-key.pem all exist.
-        let tls = if ca_path.exists() && node_cert_path.exists() && node_key_path.exists() {
-            Some(nexus_raft::TlsFiles {
-                cert_path: node_cert_path.clone(),
-                key_path: node_key_path,
-                ca_path: ca_path.clone(),
-                ca_key_path: tls_dir
-                    .join("ca-key.pem")
-                    .exists()
-                    .then(|| tls_dir.join("ca-key.pem")),
-                join_token_hash: std::env::var("NEXUS_JOIN_TOKEN_HASH").ok(),
-            })
-        } else {
-            None
-        };
-
-        // Construct ZoneManager. This spawns the gRPC server and opens
-        // every previously-persisted zone from disk (R15.e).
-        let zm =
-            nexus_raft::ZoneManager::new(&hostname, &zones_dir, peers.clone(), &bind_addr, tls)
-                .map_err(|e| KernelError::Federation(format!("ZoneManager::new: {}", e)))?;
-
-        // Store Arc + derived handles. OnceLock::set is idempotent but
-        // second call is Err — ignore per attach_zone_registry semantics.
-        let runtime_handle = zm.runtime_handle();
-        let registry = zm.registry();
-        let blob_slot = zm.blob_fetcher_slot();
-        let _ = self.zone_manager.set(zm.clone());
-        let _ = self.zone_registry.set(registry);
-        let _ = self.zone_runtime.set(runtime_handle);
-
-        // R20.18.7: install the kernel-side `BlobFetcher` into the slot
-        // the ZoneManager handed back. The gRPC server is already
-        // running — once this write lands, every peer `ReadBlob`
-        // resolves against the local VFSRouter's backends.
-        self.stash_blob_fetcher_slot(Box::new(blob_slot));
-
-        // Joiner detection — etcd `--initial-cluster-state=existing` equivalent.
-        // Either signal alone is sufficient:
-        //
-        // (a) TLS-enrolled node: ca.pem + node.pem present, join-token
-        //     consumed. Implies the node was enrolled by a CA and is
-        //     restarting into an existing cluster.
-        // (b) Explicit plaintext joiner: ``NEXUS_JOINER_HINT=1``. Used when
-        //     there are no certs (plaintext mode) or when the user wants
-        //     to override cert-based auto-detection. A fresh data dir plus
-        //     this hint means "leader adds me via ConfChange + snapshot",
-        //     avoiding the raft-rs `to_commit N out of range` panic on
-        //     amnesia rejoin.
-        //
-        // Either true → skip local ConfState bootstrap; leader sends the
-        // authoritative voter set via InstallSnapshot.
-        let joiner_hint = std::env::var("NEXUS_JOINER_HINT")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        let has_enrolled_certs =
-            ca_path.exists() && node_cert_path.exists() && !join_token_path.exists();
-        let is_joiner = joiner_hint || has_enrolled_certs;
-
-        // Single bootstrap entry point — respects `is_joiner` uniformly
-        // across the root zone and every `NEXUS_FEDERATION_ZONES` entry.
-        // Previously the root zone honored `is_joiner` but the
-        // `NEXUS_FEDERATION_ZONES` loop hard-coded `create_zone`, so a
-        // joiner would skip bootstrap on root but still clobber other
-        // zones with a locally-computed ConfState.
-        let bootstrap_or_join = |zone_id: &str| -> Result<(), KernelError> {
-            if zm.get_zone(zone_id).is_some() {
-                return Ok(()); // Idempotent — already loaded from disk.
-            }
-            if is_joiner {
-                zm.join_zone(zone_id, peers.clone(), false).map_err(|e| {
-                    KernelError::Federation(format!("join_zone({}): {}", zone_id, e))
-                })?;
-            } else {
-                zm.create_zone(zone_id, peers.clone()).map_err(|e| {
-                    KernelError::Federation(format!("create_zone({}): {}", zone_id, e))
-                })?;
-            }
-            Ok(())
-        };
-
-        // Phase-1 bootstrap: root zone, then any zones declared in
-        // NEXUS_FEDERATION_ZONES. Mounts are handled separately via
-        // reconcile_mounts_from_zones (for persisted DT_MOUNT) + apply-cb
-        // (for new proposals).
-        const ROOT_ZONE_ID: &str = "root";
-        bootstrap_or_join(ROOT_ZONE_ID)?;
-
-        if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
-            for zone_id in zones_csv
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                bootstrap_or_join(zone_id)?;
-            }
-        }
-
-        // Install apply-cb on every loaded zone so future DT_MOUNT
-        // commits fire wire_federation_mount.
-        for zone_id in zm.list_zones() {
-            if let Some(consensus) = zm.registry().get_node(&zone_id) {
-                self.install_federation_mount_coherence(&zone_id, consensus);
-            }
-        }
-
-        // Replay persisted DT_MOUNT entries so VFSRouter is current
-        // before first syscall arrives.
-        self.reconcile_mounts_from_zones()?;
-
-        // Signal: federation bootstrap complete.
-        self.mount_reconciliation_done
-            .store(true, Ordering::Release);
-        tracing::info!("Federation bootstrap complete (hostname={})", hostname);
-        Ok(())
-    }
-
-    /// R20.18.5 Phase B: clone the owning Arc<ZoneManager> so the
-    /// codegen'd PyKernel `zone_*` methods (FederationRPCService
-    /// backend) can reach it without a crate-internal back-reference.
-    /// Returns None when federation isn't active.
-    pub fn zone_manager_arc(&self) -> Option<Arc<nexus_raft::ZoneManager>> {
-        self.zone_manager.get().cloned()
-    }
-
-    /// R20.16.6: snapshot the federation-bootstrap-complete flag.
-    /// `/healthz/ready` and the `/__sys__/zones/<id>` PathResolver
-    /// (R20.18.4) read this as the "safe to serve" signal.
-    ///
-    /// Returns `true` when federation was never bootstrapped (no
-    /// `NEXUS_HOSTNAME`) — the "federation disabled = always ready"
-    /// semantics the health probe relies on. When federation IS
-    /// active, returns the atomic flag flipped by
-    /// `init_federation_from_env` after `reconcile_mounts_from_zones`
-    /// finishes.
-    pub fn mount_reconciliation_done(&self) -> bool {
-        if self.zone_manager.get().is_none() {
-            return true;
-        }
-        self.mount_reconciliation_done.load(Ordering::Acquire)
-    }
-
-    /// R20.18.4: procfs-style virtual namespace for zone state. Read
-    /// path only — any write/delete on `/__sys__/zones/*` must be
-    /// rejected upstream (the underlying state is raft state-machine
-    /// SSOT, not filesystem mutable state). Path format:
-    ///
-    /// - `/__sys__/zones/` → directory; `list_zones_procfs()`
-    ///   enumerates zone ids.
-    /// - `/__sys__/zones/<zone_id>` → synthesized entry with
-    ///   `{is_leader, leader_id, term, commit_index, applied_index,
-    ///   node_id, voter_count, witness_count}` fields read live from
-    ///   `raft::ZoneManager`. Never persisted.
-    ///
-    /// Returns `None` when: federation isn't active; the path
-    /// doesn't fall under `/__sys__/zones/`; or the zone id is
-    /// unknown on this node. R20.18.5 wires this into `sys_stat` so
-    /// Python `nx.sys_stat("/__sys__/zones/root")` reads through.
-    #[allow(dead_code)]
-    pub fn resolve_zones_procfs(&self, path: &str) -> Option<ZonesProcfsEntry> {
-        const PREFIX: &str = "/__sys__/zones";
-        let zm = self.zone_manager.get()?;
-
-        if path == PREFIX || path == "/__sys__/zones/" {
-            return Some(ZonesProcfsEntry {
-                is_directory: true,
-                zone_id: None,
-                node_id: zm.node_id(),
-                has_store: false,
-                is_leader: false,
-                leader_id: 0,
-                term: 0,
-                commit_index: 0,
-                applied_index: 0,
-                voter_count: 0,
-                witness_count: 0,
-                mount_reconciliation_done: self.mount_reconciliation_done(),
-            });
-        }
-
-        // Extract zone id: must match exactly `/__sys__/zones/<id>`
-        // with no trailing subpath.
-        let suffix = path.strip_prefix(&format!("{}/", PREFIX))?;
-        if suffix.is_empty() || suffix.contains('/') {
-            return None;
-        }
-        let zone_id = suffix;
-        let status = zm.cluster_status(zone_id);
-        if !status.has_store {
-            return None;
-        }
-        Some(ZonesProcfsEntry {
-            is_directory: false,
-            zone_id: Some(zone_id.to_string()),
-            node_id: status.node_id,
-            has_store: status.has_store,
-            is_leader: status.is_leader,
-            leader_id: status.leader_id,
-            term: status.term,
-            commit_index: status.commit_index,
-            applied_index: status.applied_index,
-            voter_count: status.voter_count,
-            witness_count: status.witness_count,
-            mount_reconciliation_done: self.mount_reconciliation_done(),
-        })
-    }
-
-    /// R20.18.4: readdir companion for `/__sys__/zones/`. Returns the
-    /// list of zone ids loaded on this node (derived from live
-    /// `raft::ZoneManager::list_zones`), or an empty Vec when
-    /// federation isn't active. Never errors.
-    #[allow(dead_code)]
-    pub fn list_zones_procfs(&self) -> Vec<String> {
-        self.zone_manager
-            .get()
-            .map(|zm| zm.list_zones())
-            .unwrap_or_default()
-    }
-
-    /// R20.18.3: when `sys_setattr(DT_MOUNT)` leader path runs without
-    /// explicit metastore / raft_backend (Python didn't hand in
-    /// `py_zone_handle` or `metastore_path`) AND federation is active,
-    /// auto-resolve the zone raft group and build a `ZoneMetaStore`
-    /// over it.
-    ///
-    /// Behavior matrix:
-    /// - `metastore` OR `raft_backend` already supplied → passthrough.
-    /// - No zone_manager attached (no federation) → passthrough (None, None).
-    /// - Federation active, zone_id unknown locally →
-    ///   `zone_manager.get_or_create_zone` creates the raft group
-    ///   (Phase-1 ConfState bootstrap, idempotent).
-    /// - Federation active, zone_id already loaded → reuse handle.
-    ///
-    /// In every federation-active branch, the returned tuple is
-    /// `(Some(ZoneMetaStore), Some((consensus, runtime)))` so
-    /// `dlc.mount` wires a raft-backed mount identically to the
-    /// old Python `_mount_via_kernel` path.
-    #[allow(clippy::type_complexity)]
-    fn resolve_federation_mount_backing(
-        &self,
-        zone_id: &str,
-        mount_path: &str,
-        metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
-        raft_backend: Option<(
-            nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-            tokio::runtime::Handle,
-        )>,
-    ) -> Result<
-        (
-            Option<Arc<dyn crate::meta_store::MetaStore>>,
-            Option<(
-                nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-                tokio::runtime::Handle,
-            )>,
-        ),
-        KernelError,
-    > {
-        // Explicit caller-supplied backing wins; never clobber it.
-        if metastore.is_some() || raft_backend.is_some() {
-            return Ok((metastore, raft_backend));
-        }
-
-        let Some(zm) = self.zone_manager.get() else {
-            // No federation — local-only mount (metastore_path /
-            // MemoryMetaStore fallback handled upstream).
-            return Ok((None, None));
-        };
-
-        let handle = zm.get_or_create_zone(zone_id).map_err(|e| {
-            KernelError::Federation(format!("get_or_create_zone({}): {}", zone_id, e))
-        })?;
-        let consensus = handle.consensus_node();
-        let runtime = handle.runtime_handle();
-        let ms: Arc<dyn crate::meta_store::MetaStore> =
-            crate::raft_meta_store::ZoneMetaStore::new_arc(
-                consensus.clone(),
-                runtime.clone(),
-                mount_path.to_string(),
-            );
-        // Ensure this zone has the mount-apply callback installed
-        // (idempotent — OnceLock-backed). Matters when
-        // init_federation_from_env ran before this zone was created,
-        // so the bootstrap-time install loop didn't see it.
-        self.install_federation_mount_coherence(zone_id, consensus.clone());
-        Ok((Some(ms), Some((consensus, runtime))))
-    }
-
-    /// Look up a target zone's global VFS mount path on this node —
-    /// R20.16.3 Rust port of Python ``_global_mount_of``.
-    ///
-    /// Returns the lexicographically smallest global path under which
-    /// ``target_zone_id`` is currently mounted locally, or ``None`` if
-    /// the zone has no local mount. Reads the apply-cb-maintained
-    /// ``cross_zone_mounts`` reverse index (SSOT: DT_MOUNT entries in
-    /// each parent zone's state machine).
-    #[allow(dead_code)]
-    pub fn global_mount_of(&self, target_zone_id: &str) -> Option<String> {
-        let bucket = self.cross_zone_mounts.get(target_zone_id)?;
-        bucket.iter().map(|(_, _, g)| g.clone()).min()
-    }
-
-    /// Snapshot the reverse-index entries for a target zone — used by
-    /// Python ``remove_zone(force=True)`` to iterate cascade-unmount
-    /// candidates (PyO3 surface returns this as a list of 3-tuples).
-    #[allow(dead_code)]
-    pub fn list_cross_zone_mounts(&self, target_zone_id: &str) -> Vec<(String, String, String)> {
-        self.cross_zone_mounts
-            .get(target_zone_id)
-            .map(|v| v.clone())
-            .unwrap_or_default()
-    }
-
-    /// Wire a federation child-zone mount into the local VFSRouter
-    /// (R20.16.3). Invoked by the apply-side ``mount_apply_cb`` on
-    /// every replica — leader and followers alike — after a DT_MOUNT
-    /// Set commits in the parent zone's state machine. Safe to call
-    /// before ``attach_zone_registry`` (returns Ok no-op).
-    #[allow(dead_code)]
-    pub fn wire_federation_mount(
-        &self,
-        parent_zone_id: &str,
-        mount_path: &str,
-        target_zone_id: &str,
-    ) -> Result<(), KernelError> {
-        let (Some(registry), Some(runtime)) = (self.zone_registry.get(), self.zone_runtime.get())
-        else {
-            // Not yet attached — startup replay will re-drive this.
-            return Ok(());
-        };
-        wire_federation_mount_impl(
-            &self.vfs_router,
-            &self.dcache,
-            &self.lock_manager,
-            registry,
-            runtime,
-            &self.cross_zone_mounts,
-            parent_zone_id,
-            mount_path,
-            target_zone_id,
-        )
-    }
-
-    /// Install the apply-side DT_MOUNT callback that drives
-    /// ``wire_federation_mount`` for every DT_MOUNT commit in
-    /// ``consensus`` (R20.16.4). Mirrors the ``invalidate_cb``
-    /// pattern — the closure captures cloned ``Arc``s of everything it
-    /// needs so the state-machine callback stays a pure Fn with no
-    /// ``&Kernel`` back-reference.
-    #[allow(dead_code)]
-    pub fn install_federation_mount_coherence(
-        &self,
-        parent_zone_id: &str,
-        consensus: nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-    ) {
-        tracing::info!(parent_zone_id = %parent_zone_id, "R20.18.5 install_federation_mount_coherence");
-        let Some(slot) = consensus.mount_apply_cb_slot() else {
-            tracing::warn!(parent_zone_id = %parent_zone_id, "install_federation_mount_coherence: mount_apply_cb_slot returned None");
-            return;
-        };
-        let (Some(registry), Some(runtime)) = (self.zone_registry.get(), self.zone_runtime.get())
-        else {
-            tracing::warn!(parent_zone_id = %parent_zone_id, "install_federation_mount_coherence: zone_registry or zone_runtime not set");
-            return;
-        };
-        let vfs_router = self.vfs_router_handle();
-        let dcache = self.dcache_handle();
-        let lock_manager = Arc::clone(&self.lock_manager);
-        let registry = Arc::clone(registry);
-        let runtime = runtime.clone();
-        let cross_zone_mounts = Arc::clone(&self.cross_zone_mounts);
-        let parent_zone_id_owned = parent_zone_id.to_string();
-        let log_parent_zone_id = parent_zone_id_owned.clone();
-
-        use nexus_raft::raft::MountApplyEvent;
-        let cb: Arc<dyn Fn(&MountApplyEvent) + Send + Sync> =
-            Arc::new(move |event: &MountApplyEvent| match event {
-                MountApplyEvent::Set {
-                    key,
-                    target_zone_id,
-                } => {
-                    let _ = wire_federation_mount_impl(
-                        &vfs_router,
-                        &dcache,
-                        &lock_manager,
-                        &registry,
-                        &runtime,
-                        &cross_zone_mounts,
-                        &parent_zone_id_owned,
-                        key,
-                        target_zone_id,
-                    );
-                }
-                MountApplyEvent::Delete { key } => {
-                    unwire_federation_mount_impl(
-                        &vfs_router,
-                        &dcache,
-                        &cross_zone_mounts,
-                        &parent_zone_id_owned,
-                        key,
-                    );
-                }
-            });
-        *slot.write() = Some(cb);
-        tracing::info!(parent_zone_id = %log_parent_zone_id, "R20.18.5 install_federation_mount_coherence: slot set");
-    }
-
-    /// Startup replay (R20.16.4): iterate every currently-loaded zone's
-    /// DT_MOUNT entries, wire each one, and install the apply-cb so
-    /// future DT_MOUNT commits fire ``wire_federation_mount``.
-    /// Topological: repeats the pass until no progress (parent not
-    /// wired yet → child mount deferred one round).
-    #[allow(dead_code)]
-    pub fn reconcile_mounts_from_zones(&self) -> Result<(), KernelError> {
-        let Some(registry) = self.zone_registry.get() else {
-            return Ok(());
-        };
-
-        let zone_ids = registry.list_zones();
-        // Install callbacks first so any fresh commits arriving during
-        // the scan are captured directly instead of being missed.
-        for zone_id in &zone_ids {
-            if let Some(node) = registry.get_node(zone_id) {
-                self.install_federation_mount_coherence(zone_id, node);
-            }
-        }
-
-        // Collect every DT_MOUNT entry across all zones.
-        let mut pending: Vec<(String, String, String)> = Vec::new();
-        for zone_id in &zone_ids {
-            let Some(node) = registry.get_node(zone_id) else {
-                continue;
-            };
-            let entries = node.iter_dt_mount_entries().unwrap_or_default();
-            for (key, target_zone_id) in entries {
-                pending.push((zone_id.clone(), key, target_zone_id));
-            }
-        }
-
-        // Topological wire: loop until no progress. Cap iterations to
-        // zone_count + 1 so a misconfigured cycle errors instead of
-        // looping forever.
-        let max_rounds = pending.len() + 1;
-        for _ in 0..max_rounds {
-            if pending.is_empty() {
-                break;
-            }
-            let mut progressed = false;
-            pending.retain(|(parent, key, target)| {
-                match self.wire_federation_mount(parent, key, target) {
-                    Ok(()) => {
-                        // Check whether actually wired (cross_zone_mounts
-                        // updated). If parent still unknown, the impl
-                        // returns Ok but doesn't insert — retry.
-                        if self.cross_zone_mounts.contains_key(target) {
-                            progressed = true;
-                            false
-                        } else {
-                            true
-                        }
-                    }
-                    Err(_) => false, // give up on permanent failures
-                }
-            });
-            if !progressed {
-                break;
-            }
-        }
-        Ok(())
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -3805,269 +2652,6 @@ impl Kernel {
 // back-reference to ``Kernel`` itself.
 // ─────────────────────────────────────────────────────────────────────
 
-fn install_federation_dcache_coherence_impl(
-    vfs_router: &Arc<VFSRouter>,
-    dcache: &Arc<DCache>,
-    consensus: &nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-) {
-    let Some(slot) = consensus.invalidate_cb_slot() else {
-        return;
-    };
-    let coherence_key = consensus.coherence_id();
-    let dcache = Arc::clone(dcache);
-    let vfs_router = Arc::clone(vfs_router);
-    let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
-        let trimmed = zone_relative_key.trim_start_matches('/');
-        for mp in vfs_router.mount_points_for_coherence_key(coherence_key) {
-            let global = if trimmed.is_empty() {
-                mp.clone()
-            } else if mp.ends_with('/') {
-                format!("{}{}", mp, trimmed)
-            } else {
-                format!("{}/{}", mp, trimmed)
-            };
-            dcache.evict(&global);
-        }
-    });
-    *slot.write() = Some(cb);
-}
-
-/// R20.18.2: parse a comma-separated `host:port` peer list (the
-/// `NEXUS_PEERS` env-var format) into the `id@host:port` form
-/// `raft::ZoneManager::new` expects. Node IDs are derived via the
-/// raft crate's `hostname_to_node_id` SHA-256 helper — identical
-/// to Python `PeerAddress.parse` so both sides agree on IDs during
-/// the transition window.
-#[allow(dead_code)]
-fn parse_peer_list_to_raft_format(peers_csv: &str) -> Result<Vec<String>, String> {
-    if peers_csv.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    peers_csv
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            let (host, port_str) = s
-                .rsplit_once(':')
-                .ok_or_else(|| format!("expected 'host:port', got '{}'", s))?;
-            let _port: u16 = port_str
-                .parse()
-                .map_err(|_| format!("invalid port in '{}'", s))?;
-            let node_id = nexus_raft::transport::hostname_to_node_id(host);
-            Ok(format!("{}@{}", node_id, s))
-        })
-        .collect()
-}
-
-#[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
-fn wire_federation_mount_impl(
-    vfs_router: &Arc<VFSRouter>,
-    dcache: &Arc<DCache>,
-    lock_manager: &Arc<LockManager>,
-    registry: &Arc<nexus_raft::raft::ZoneRaftRegistry>,
-    runtime: &tokio::runtime::Handle,
-    cross_zone_mounts: &DashMap<String, Vec<(String, String, String)>>,
-    parent_zone_id: &str,
-    mount_path: &str,
-    target_zone_id: &str,
-) -> Result<(), KernelError> {
-    tracing::info!(
-        parent_zone_id = %parent_zone_id,
-        mount_path = %mount_path,
-        target_zone_id = %target_zone_id,
-        "R20.18.5 wire_federation_mount_impl entered"
-    );
-    // 1. Look up target zone. Not-yet-local is a no-op — reconcile
-    //    loop and future apply events will re-drive.
-    let Some(target_consensus) = registry.get_node(target_zone_id) else {
-        tracing::warn!(target_zone_id = %target_zone_id, "wire_federation_mount: target zone not loaded locally");
-        return Ok(());
-    };
-
-    // 2. Reconstruct the global VFS path for this mount (Python
-    //    ``_on_mount_event`` did the same prefix logic on
-    //    ``_mounts_by_target``).
-    let global_path = match reconstruct_global_path(cross_zone_mounts, parent_zone_id, mount_path) {
-        Some(g) => g,
-        None => {
-            tracing::warn!(parent_zone_id = %parent_zone_id, mount_path = %mount_path, "wire_federation_mount: reconstruct_global_path returned None");
-            return Ok(());
-        }
-    };
-    tracing::info!(global_path = %global_path, "wire_federation_mount: will add to VFSRouter");
-
-    // 3. Build a ZoneMetaStore rooted at global_path targeting the
-    //    target's state machine. Reuses the root mount's backend (Arc
-    //    clone), so every federation mount shares the CAS backend on
-    //    this node.
-    let metastore: Arc<dyn crate::meta_store::MetaStore> =
-        crate::raft_meta_store::ZoneMetaStore::new_arc(
-            target_consensus.clone(),
-            runtime.clone(),
-            global_path.clone(),
-        );
-    let root_canonical = canonicalize("/", contracts::ROOT_ZONE_ID);
-    let root_backend = vfs_router
-        .get_canonical(&root_canonical)
-        .and_then(|e| e.backend.clone());
-
-    // 4. Install into VFSRouter (routing + backend + metastore) under
-    //    the root zone — federation mounts live in the root zone's path
-    //    space on every node. Tag the entry with `target_zone_id` so
-    //    routing carries the destination zone (not the caller's ambient)
-    //    — fixes `sys_write` tagging files with `zone_id=root` for
-    //    paths under `/corp/eng` (owning zone is `corp-eng`) and lets
-    //    `federation_share` derive zone-relative prefix from a global
-    //    path via the existing `RouteResult`.
-    vfs_router.add_federation_mount(
-        &global_path,
-        contracts::ROOT_ZONE_ID,
-        root_backend,
-        target_zone_id,
-        false,
-    );
-    let canonical = canonicalize(&global_path, contracts::ROOT_ZONE_ID);
-    vfs_router.install_metastore(&canonical, metastore);
-
-    // 5. LockManager upgrade on first federated mount — idempotent.
-    //    Bind distributed locks to the ROOT zone's consensus, not this
-    //    mount's `target_consensus`. Root is the one zone every
-    //    federation peer always has loaded, so every node agrees on
-    //    which state machine holds lock state. Binding to the caller's
-    //    target meant reconcile-order differences (DashMap iteration,
-    //    restart replay) picked different zones on different nodes —
-    //    locks then lived in disjoint state machines and cross-node
-    //    `lock_acquire` couldn't see each other, letting two peers
-    //    "acquire" the same path concurrently (test_contended_write_ordering).
-    if !lock_manager.locks_installed() {
-        match registry.get_node(contracts::ROOT_ZONE_ID) {
-            Some(root_consensus) => {
-                tracing::info!(
-                    parent_zone = %parent_zone_id,
-                    mount_path = %mount_path,
-                    "wire_federation_mount: installing distributed locks bound to ROOT zone"
-                );
-                let kernel_state = lock_manager.advisory_state_arc();
-                let (backend, shared_state) = nexus_raft::federation::DistributedLocks::new(
-                    root_consensus,
-                    runtime.clone(),
-                    kernel_state,
-                );
-                lock_manager.install_locks(Arc::new(backend), shared_state);
-            }
-            None => {
-                tracing::warn!(
-                    "wire_federation_mount: root zone not loaded — distributed locks NOT installed; sys_lock will stay local-only until next mount"
-                );
-            }
-        }
-    }
-
-    // 6. DCache seed so sys_stat on the mount point resolves locally
-    //    without a metastore round-trip.
-    dcache.put(
-        &global_path,
-        CachedEntry {
-            size: 0,
-            etag: None,
-            version: 1,
-            entry_type: 2, // DT_MOUNT
-            zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
-            mime_type: None,
-            created_at_ms: None,
-            modified_at_ms: None,
-            last_writer_address: None,
-        },
-    );
-
-    // 7. Install apply-side dcache coherence on the target consensus
-    //    (idempotent — replays overwrite with an equivalent closure).
-    install_federation_dcache_coherence_impl(vfs_router, dcache, &target_consensus);
-
-    // 8. Update reverse index (target → [(parent, mount_path, global)]).
-    //    Dedup so replayed apply events don't double-register.
-    let mut bucket = cross_zone_mounts
-        .entry(target_zone_id.to_string())
-        .or_default();
-    let tuple = (
-        parent_zone_id.to_string(),
-        mount_path.to_string(),
-        global_path,
-    );
-    if !bucket.contains(&tuple) {
-        bucket.push(tuple);
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn unwire_federation_mount_impl(
-    vfs_router: &Arc<VFSRouter>,
-    dcache: &Arc<DCache>,
-    cross_zone_mounts: &DashMap<String, Vec<(String, String, String)>>,
-    parent_zone_id: &str,
-    mount_path: &str,
-) {
-    // Find the matching entry via the reverse index, then drop the
-    // VFSRouter slot + evict the DCache seed. Scans all targets
-    // because the apply-cb only knows (parent, mount_path), not target.
-    let mut remove_empty: Option<String> = None;
-    let mut unwired_global: Option<String> = None;
-    for mut entry in cross_zone_mounts.iter_mut() {
-        let bucket = entry.value_mut();
-        if let Some(pos) = bucket
-            .iter()
-            .position(|(p, m, _)| p == parent_zone_id && m == mount_path)
-        {
-            let (_, _, global) = bucket.remove(pos);
-            unwired_global = Some(global);
-            if bucket.is_empty() {
-                remove_empty = Some(entry.key().clone());
-            }
-            break;
-        }
-    }
-    if let Some(target) = remove_empty {
-        cross_zone_mounts.remove(&target);
-    }
-    if let Some(global) = unwired_global {
-        vfs_router.remove(&global, contracts::ROOT_ZONE_ID);
-        dcache.evict(&global);
-        dcache.evict_prefix(&format!("{}/", global.trim_end_matches('/')));
-    }
-}
-
-/// Reconstruct the global VFS path for a DT_MOUNT apply event. Port of
-/// Python ``_on_mount_event`` prefix logic — root-zone parents already
-/// publish global paths; non-root parents need the parent's own global
-/// prepended (looked up via ``cross_zone_mounts``).
-#[allow(dead_code)]
-fn reconstruct_global_path(
-    cross_zone_mounts: &DashMap<String, Vec<(String, String, String)>>,
-    parent_zone_id: &str,
-    mount_path: &str,
-) -> Option<String> {
-    if parent_zone_id == contracts::ROOT_ZONE_ID || parent_zone_id.is_empty() {
-        return Some(mount_path.to_string());
-    }
-    let parent_global = cross_zone_mounts
-        .get(parent_zone_id)
-        .and_then(|v| v.iter().map(|(_, _, g)| g.clone()).min())?;
-    if mount_path == parent_global || mount_path.starts_with(&format!("{}/", parent_global)) {
-        Some(mount_path.to_string())
-    } else if mount_path == "/" {
-        Some(parent_global)
-    } else {
-        Some(format!("{}{}", parent_global, mount_path))
-    }
-}
-
-/// Convert `CASError` → `KernelError` with backend + op context baked
-/// into the message. Python side receives either `NexusFileNotFoundError`
-/// (for NotFound) or `BackendError` (for I/O), with enough breadcrumbs to
-/// debug without re-decorating on every call site.
 fn cas_err_to_kernel(e: crate::cas_engine::CASError, mount_point: &str, op: &str) -> KernelError {
     use crate::cas_engine::CASError;
     match e {
@@ -4155,140 +2739,6 @@ pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_peer_list_to_raft_format_empty() {
-        assert_eq!(
-            parse_peer_list_to_raft_format("").unwrap(),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            parse_peer_list_to_raft_format("   ").unwrap(),
-            Vec::<String>::new()
-        );
-    }
-
-    #[test]
-    fn test_parse_peer_list_to_raft_format_single() {
-        let out = parse_peer_list_to_raft_format("nexus-1:2126").unwrap();
-        assert_eq!(out.len(), 1);
-        // "id@host:port" — id derived from SHA-256(hostname), can't hard-code
-        // (it's raft crate's SSOT); just check shape.
-        assert!(out[0].ends_with("@nexus-1:2126"));
-        assert!(out[0].contains('@'));
-    }
-
-    #[test]
-    fn test_parse_peer_list_to_raft_format_multiple() {
-        let out =
-            parse_peer_list_to_raft_format("nexus-1:2126, nexus-2:2126 , nexus-3:2126").unwrap();
-        assert_eq!(out.len(), 3);
-        assert!(out[0].ends_with("@nexus-1:2126"));
-        assert!(out[1].ends_with("@nexus-2:2126"));
-        assert!(out[2].ends_with("@nexus-3:2126"));
-    }
-
-    #[test]
-    fn test_parse_peer_list_to_raft_format_invalid() {
-        assert!(parse_peer_list_to_raft_format("no-colon").is_err());
-        assert!(parse_peer_list_to_raft_format("nexus-1:notanumber").is_err());
-    }
-
-    #[test]
-    fn test_parse_peer_list_to_raft_format_deterministic_ids() {
-        // Same hostname → same ID across calls (SSOT: raft crate's
-        // hostname_to_node_id SHA-256 derivation).
-        let a = parse_peer_list_to_raft_format("nexus-1:2126").unwrap();
-        let b = parse_peer_list_to_raft_format("nexus-1:2126").unwrap();
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn test_init_federation_from_env_no_peers_is_noop() {
-        // Activation gate: NEXUS_PEERS must be non-empty. Without it
-        // the method returns Ok(()) without touching any fields —
-        // the "federation disabled" path. Save + clear + restore so
-        // parallel tests don't collide.
-        let saved_peers = std::env::var("NEXUS_PEERS").ok();
-        // SAFETY: tests run serial on the same process; we restore
-        // before returning and only flip one key.
-        unsafe {
-            std::env::remove_var("NEXUS_PEERS");
-        }
-        let k = Kernel::new();
-        assert!(k.init_federation_from_env().is_ok());
-        assert!(k.zone_manager.get().is_none());
-        // R20.18.5: "federation disabled = always ready" semantics —
-        // mount_reconciliation_done() returns true when zone_manager
-        // is None so /healthz/ready isn't pinned-unhealthy on slim
-        // profile. Verify the "inactive" fast path.
-        assert!(k.mount_reconciliation_done());
-        unsafe {
-            match saved_peers {
-                Some(v) => std::env::set_var("NEXUS_PEERS", v),
-                None => std::env::remove_var("NEXUS_PEERS"),
-            }
-        }
-    }
-
-    #[test]
-    fn test_resolve_federation_mount_backing_passthrough_when_explicit() {
-        // When the caller already supplied a metastore (e.g. Python
-        // passed `metastore_path` → LocalMetaStore), the resolver
-        // must not auto-resolve — preserves the "local-only mount"
-        // path even when federation is active.
-        let k = Kernel::new();
-        let ms: Arc<dyn crate::meta_store::MetaStore> =
-            Arc::new(crate::meta_store::MemoryMetaStore::new());
-        let (out_ms, out_rb) = k
-            .resolve_federation_mount_backing("test-zone", "/test", Some(ms.clone()), None)
-            .expect("resolve");
-        assert!(
-            out_ms.is_some(),
-            "passthrough must preserve caller's metastore"
-        );
-        assert!(out_rb.is_none());
-    }
-
-    #[test]
-    fn test_resolve_federation_mount_backing_no_federation_returns_none_none() {
-        // No zone_manager attached (slim / non-federation profile) →
-        // resolver is a no-op, returns (None, None) so upstream
-        // continues with local-only MemoryMetaStore fallback.
-        let k = Kernel::new();
-        assert!(k.zone_manager.get().is_none());
-        let (out_ms, out_rb) = k
-            .resolve_federation_mount_backing("test-zone", "/test", None, None)
-            .expect("resolve");
-        assert!(out_ms.is_none());
-        assert!(out_rb.is_none());
-    }
-
-    #[test]
-    fn test_resolve_zones_procfs_returns_none_without_federation() {
-        // No zone_manager attached → every `/__sys__/zones/*` query
-        // is None so the caller falls through to regular path routing.
-        let k = Kernel::new();
-        assert!(k.resolve_zones_procfs("/__sys__/zones").is_none());
-        assert!(k.resolve_zones_procfs("/__sys__/zones/").is_none());
-        assert!(k.resolve_zones_procfs("/__sys__/zones/root").is_none());
-        assert_eq!(k.list_zones_procfs(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn test_resolve_zones_procfs_rejects_non_zones_paths() {
-        // Even when federation is active the resolver must only
-        // claim paths under `/__sys__/zones/` — otherwise sys_stat
-        // on unrelated paths would silently short-circuit.
-        let k = Kernel::new();
-        // These should be None regardless of federation state.
-        assert!(k.resolve_zones_procfs("/workspace/file.txt").is_none());
-        assert!(k.resolve_zones_procfs("/__sys__/other/path").is_none());
-        assert!(k
-            .resolve_zones_procfs("/__sys__/zones/root/nested")
-            .is_none());
-        assert!(k.resolve_zones_procfs("/__sys__/zones/").is_none()); // no federation
-    }
 
     #[test]
     fn test_validate_path_fast() {
@@ -4474,7 +2924,7 @@ mod tests {
 
         kernel.dispatch_mutation(FileEventType::FileWrite, "/foo.txt", &ctx, |ev| {
             ev.size = Some(42);
-            ev.etag = Some("abc123".to_string());
+            ev.content_id = Some("abc123".to_string());
             ev.version = Some(1);
             ev.is_new = true;
         });
@@ -4487,7 +2937,7 @@ mod tests {
         assert_eq!(event.user_id.as_deref(), Some("alice"));
         assert_eq!(event.agent_id.as_deref(), Some("agent-42"));
         assert_eq!(event.size, Some(42));
-        assert_eq!(event.etag.as_deref(), Some("abc123"));
+        assert_eq!(event.content_id.as_deref(), Some("abc123"));
         assert_eq!(event.version, Some(1));
         assert!(event.is_new);
     }
@@ -4616,7 +3066,7 @@ mod tests {
             crate::meta_store::FileMetadata {
                 path: "/update-test.txt".to_string(),
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: 0,
                 zone_id: None,

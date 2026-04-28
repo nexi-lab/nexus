@@ -25,6 +25,10 @@ contracts = { workspace = true }
 # (mimalloc allocator, connector HTTP stack, py-hook adapters) off so
 # this rlib stays slim; the cdylib pulls them via its own kernel dep.
 kernel = { workspace = true }
+# Phase H: services depends on raft for the WAL-backed stream backend
+# that AuditHook builds on (`nexus_raft::wal_stream_backend`).  raft
+# moved to the same workspace tier as services post Cargo flip.
+raft = { workspace = true }
 # **HARD INVARIANT** — services ⊥ backends.  Do NOT add `backends` here.
 # Services that need backend behaviour reach it through `kernel.sys_*`
 # syscalls (the same path Python takes), never via direct cross-crate

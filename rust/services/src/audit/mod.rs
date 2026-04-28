@@ -29,7 +29,10 @@ use chrono::SecondsFormat;
 use serde::Serialize;
 
 use kernel::core::dispatch::{HookContext, NativeInterceptHook};
-use kernel::core::stream::wal::WalStreamCore;
+// Phase H of the rust-workspace restructure: WAL stream backend
+// moved to nexus_raft::wal_stream_backend.  AuditHook only uses the
+// trait surface (`kernel::stream::StreamBackend`) at runtime; the
+// concrete WalStreamCore appears in unit tests below.
 use kernel::kernel::{Kernel, KernelError};
 
 /// A single VFS operation record, serialised to JSON and appended to the
@@ -69,8 +72,8 @@ impl AuditHook {
     const CHANNEL_CAP: usize = 8192;
 
     /// Create an AuditHook backed by `stream`. Spawns a background flush thread
-    /// that serialises records to JSON and calls `stream.write_nowait`.
-    pub fn new(stream: Arc<WalStreamCore>) -> Self {
+    /// that serialises records to JSON and calls `stream.push`.
+    pub fn new(stream: Arc<dyn kernel::stream::StreamBackend>) -> Self {
         let (tx, rx) = mpsc::sync_channel::<AuditRecord>(Self::CHANNEL_CAP);
 
         std::thread::Builder::new()
@@ -79,8 +82,8 @@ impl AuditHook {
                 while let Ok(record) = rx.recv() {
                     match serde_json::to_vec(&record) {
                         Ok(json) => {
-                            if let Err(e) = stream.write_nowait(&json) {
-                                tracing::warn!(error = %e, "audit stream write failed");
+                            if let Err(e) = stream.push(&json) {
+                                tracing::warn!(error = ?e, "audit stream write failed");
                             }
                         }
                         Err(e) => {
@@ -174,7 +177,7 @@ pub fn install(kernel: &Kernel, zone_id: &str, stream_path: &str) -> Result<(), 
 mod tests {
     use super::*;
     use kernel::core::dispatch::{HookIdentity, WriteHookCtx};
-    use kernel::core::stream::wal::{WalConsensus, WalStreamCore};
+    use nexus_raft::wal_stream_backend::{WalConsensus, WalStreamCore};
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
@@ -204,7 +207,7 @@ mod tests {
     #[test]
     fn on_post_write_sends_record_to_stream() {
         let stream = Arc::new(WalStreamCore::new(MemConsensus::new(), "audit-test".into()));
-        let hook = AuditHook::new(Arc::clone(&stream));
+        let hook = AuditHook::new(Arc::clone(&stream) as Arc<dyn kernel::stream::StreamBackend>);
 
         let ctx = HookContext::Write(WriteHookCtx {
             path: "/workspace/foo.rs".into(),
@@ -240,7 +243,7 @@ mod tests {
     fn on_post_delete_records_delete_op() {
         use kernel::core::dispatch::{DeleteHookCtx, HookIdentity};
         let stream = Arc::new(WalStreamCore::new(MemConsensus::new(), "audit-del".into()));
-        let hook = AuditHook::new(Arc::clone(&stream));
+        let hook = AuditHook::new(Arc::clone(&stream) as Arc<dyn kernel::stream::StreamBackend>);
 
         let ctx = HookContext::Delete(DeleteHookCtx {
             path: "/workspace/gone.txt".into(),

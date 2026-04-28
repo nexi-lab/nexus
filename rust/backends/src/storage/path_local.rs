@@ -337,10 +337,12 @@ impl crate::addressing::path::PathAddressingEngine for PathLocalBackend {
         Ok(dir_path.is_dir())
     }
 
-    fn read_path(&self, content_id: &str, backend_path: &str) -> Result<Vec<u8>, StorageError> {
+    fn read_path(&self, _content_id: &str, backend_path: &str) -> Result<Vec<u8>, StorageError> {
         // No OperationContext is needed for path-addressed local reads.
+        // For PAS backends content_id and backend_path are equivalent (the
+        // file's location); pass backend_path through as the addressing key.
         let ctx = kernel::kernel::OperationContext::new("", "", false, None, true);
-        self.read_content(content_id, backend_path, &ctx)
+        self.read_content(backend_path, &ctx)
     }
 }
 

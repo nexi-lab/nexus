@@ -315,12 +315,23 @@ async def create_mcp_server(
     # may pass a zero-arg callable that builds the middleware on demand —
     # this defers the fastmcp/beartype import until an MCP server is
     # actually started, keeping ``nexus.connect()`` lightweight.
+    # Preserves the prior guarded-boot failure policy: on ImportError the
+    # optional middleware is skipped with a WARNING rather than failing
+    # MCP server creation outright.
     if (
         tool_namespace_middleware is not None
         and not hasattr(tool_namespace_middleware, "on_call_tool")
         and callable(tool_namespace_middleware)
     ):
-        tool_namespace_middleware = tool_namespace_middleware()
+        try:
+            tool_namespace_middleware = tool_namespace_middleware()
+        except ImportError as _e:
+            logger.warning(
+                "ToolNamespaceMiddleware unavailable (deferred import failed: %s); "
+                "MCP server starting without per-tool ReBAC filtering",
+                _e,
+            )
+            tool_namespace_middleware = None
     if tool_namespace_middleware is not None:
         mcp.add_middleware(tool_namespace_middleware)
 

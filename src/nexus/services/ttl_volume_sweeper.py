@@ -1,6 +1,6 @@
 """TTL volume sweeper — background expiry for TTL-bucketed CAS volumes.
 
-Periodically calls VolumeLocalTransport.expire_ttl_volumes() to remove
+Periodically calls BlobPackLocalTransport.expire_ttl_volumes() to remove
 expired entries from the in-memory index and delete fully-expired volume
 files. Also rotates TTL volumes at their configured intervals.
 
@@ -27,7 +27,7 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+    from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
     from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class TTLVolumeSweeper:
 
     def __init__(
         self,
-        transport: VolumeLocalTransport,
+        transport: BlobPackLocalTransport,
         *,
         metastore: MetastoreABC | None = None,
         interval: float = DEFAULT_SWEEP_INTERVAL,

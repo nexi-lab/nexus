@@ -1,6 +1,6 @@
 """Transport conformance test suite — parametrized across transports.
 
-Verifies that LocalTransport and VolumeLocalTransport both implement
+Verifies that LocalTransport and BlobPackLocalTransport both implement
 the Transport protocol identically from the engine's perspective.
 
 Issue #3403: CAS volume packing — transport conformance.
@@ -19,14 +19,14 @@ def _make_local_transport(tmp_path):
 
 def _make_volume_transport(tmp_path):
     try:
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        return VolumeLocalTransport(root_path=tmp_path, fsync=False)
+        return BlobPackLocalTransport(root_path=tmp_path, fsync=False)
     except Exception:
-        pytest.skip("VolumeLocalTransport not available (nexus_kernel not built)")
+        pytest.skip("BlobPackLocalTransport not available (nexus_kernel not built)")
 
 
-@pytest.fixture(params=["local", "volume"], ids=["LocalTransport", "VolumeLocalTransport"])
+@pytest.fixture(params=["local", "volume"], ids=["LocalTransport", "BlobPackLocalTransport"])
 def transport(request, tmp_path):
     if request.param == "local":
         return _make_local_transport(tmp_path)

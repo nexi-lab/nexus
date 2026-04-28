@@ -1,7 +1,7 @@
 """Tests for TTL volume expiry (Issue #3405).
 
 Tests the BlobPackEngine.expire_ttl_volumes() and put_with_expiry() methods,
-read-time expiry checks, and the VolumeLocalTransport TTL routing layer.
+read-time expiry checks, and the BlobPackLocalTransport TTL routing layer.
 """
 
 from __future__ import annotations
@@ -300,15 +300,15 @@ class TestSnapshotWithExpiry:
 
 
 class TestTransportTTLRouting:
-    """Test VolumeLocalTransport TTL routing (Python layer)."""
+    """Test BlobPackLocalTransport TTL routing (Python layer)."""
 
     def test_store_ttl_routes_to_bucket(self, tmp_path) -> None:
         if not _vol_engine_available():
             pytest.skip("BlobPackEngine not available")
 
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        transport = VolumeLocalTransport(str(tmp_path))
+        transport = BlobPackLocalTransport(str(tmp_path))
         h = make_hash(1)
         key = f"cas/{h[:2]}/{h[2:4]}/{h}"
 
@@ -327,9 +327,9 @@ class TestTransportTTLRouting:
         if not _vol_engine_available():
             pytest.skip("BlobPackEngine not available")
 
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        transport = VolumeLocalTransport(str(tmp_path))
+        transport = BlobPackLocalTransport(str(tmp_path))
         h = make_hash(1)
         key = f"cas/{h[:2]}/{h[2:4]}/{h}"
 
@@ -348,9 +348,9 @@ class TestTransportTTLRouting:
         if not _vol_engine_available():
             pytest.skip("BlobPackEngine not available")
 
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        transport = VolumeLocalTransport(str(tmp_path))
+        transport = BlobPackLocalTransport(str(tmp_path))
         h = make_hash(1)
         key = f"cas/{h[:2]}/{h[2:4]}/{h}"
 

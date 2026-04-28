@@ -349,5 +349,5 @@ class TestCASLocalBackendTieringWiring:
             tiering_config=config,
         )
 
-        # Tiering requires VolumeLocalTransport, not LocalTransport
+        # Tiering requires BlobPackLocalTransport, not LocalTransport
         assert backend._tiering_service is None

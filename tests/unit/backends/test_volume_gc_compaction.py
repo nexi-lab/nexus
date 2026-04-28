@@ -53,12 +53,12 @@ class FakeEntry:
 
 
 class TestGCWithVolumes:
-    """GC should work with VolumeLocalTransport."""
+    """GC should work with BlobPackLocalTransport."""
 
     def _make_engine_and_transport(self, tmp_path):
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        transport = VolumeLocalTransport(root_path=tmp_path, fsync=False)
+        transport = BlobPackLocalTransport(root_path=tmp_path, fsync=False)
         # Build a minimal CASAddressingEngine-like object
         engine = MagicMock()
         engine._transport = transport

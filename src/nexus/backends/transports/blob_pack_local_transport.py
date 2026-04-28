@@ -21,7 +21,7 @@ Cold tiering (Issue #3406):
     - Sealed volumes can be uploaded to cloud storage (S3/GCS)
     - Local .idx retained for O(1) hash → (volume, offset, size)
     - Reads for tiered volumes use HTTP range requests
-    - VolumeLocalTransport intercepts reads and delegates to cloud
+    - BlobPackLocalTransport intercepts reads and delegates to cloud
 
 Crash recovery:
     - Active volumes are .tmp files — deleted on startup
@@ -122,7 +122,7 @@ class BlobPackLocalTransport:
         self._volume_available = False
         self._BlobPackEngine: Any = None  # Class reference for lazy creation
 
-        # VolumeLocalTransport's entire purpose is volume packing — it has no valid
+        # BlobPackLocalTransport's entire purpose is volume packing — it has no valid
         # degraded mode.  Fail closed immediately if VolumeEngine is unavailable so
         # callers get a clear error (with rebuild instructions) rather than silently
         # writing blobs to flat-file layout that VolumeEngine will never find (Issue #3712).

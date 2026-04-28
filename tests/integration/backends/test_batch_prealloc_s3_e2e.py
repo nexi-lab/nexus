@@ -350,17 +350,17 @@ class TestBatchCrashRecovery:
 
 
 class TestStoreBatchTieringE2E:
-    """VolumeLocalTransport.store_batch → seal → tier → read through transport."""
+    """BlobPackLocalTransport.store_batch → seal → tier → read through transport."""
 
     @pytest.mark.asyncio
     async def test_store_batch_through_transport_then_tier(self, tmp_path):
         """Full stack: transport.store_batch → seal → tier → S3 → verify."""
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
         from nexus.backends.transports.s3_transport import S3Transport
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
         from nexus.core.config import TieringConfig
         from nexus.services.volume_tiering import VolumeTieringService
 
-        transport = VolumeLocalTransport(root_path=tmp_path, fsync=False)
+        transport = BlobPackLocalTransport(root_path=tmp_path, fsync=False)
 
         # Write via store_batch (the transport-level batch API)
         items = []

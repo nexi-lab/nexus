@@ -4878,6 +4878,12 @@ impl Kernel {
     /// content via `sys_read`, scan lines with `lib::search::search_lines`,
     /// return up to `max_results` matches.
     ///
+    /// When `disk_paths` is non-empty the walk is skipped: the kernel
+    /// reads each absolute path from disk directly (bypassing the
+    /// metastore) and scans the same way.  Used by the search-tier
+    /// cache fast path where the cached blob's on-disk location is
+    /// already known.
+    ///
     /// Skips:
     ///   * non-regular entries (directories, pipes, streams, mounts)
     ///   * unreadable files (permission errors, missing content)
@@ -4892,14 +4898,37 @@ impl Kernel {
         prefix: &str,
         ignore_case: bool,
         max_results: usize,
+        disk_paths: &[String],
         ctx: &OperationContext,
     ) -> Result<Vec<lib::search::grep::GrepMatch>, KernelError> {
-        validate_path_fast(prefix)?;
         let search_mode = lib::search::build_search_mode(pattern, ignore_case)
             .map_err(|e| KernelError::IOError(format!("sys_grep regex: {e}")))?;
-        let all_paths = self.collect_paths_recursive(prefix)?;
 
         let mut all_matches: Vec<lib::search::grep::GrepMatch> = Vec::new();
+
+        if !disk_paths.is_empty() {
+            // Disk-path mode: read each path directly, no metastore walk.
+            for fpath in disk_paths {
+                if all_matches.len() >= max_results {
+                    break;
+                }
+                let bytes = match std::fs::read(fpath) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+                let content = match std::str::from_utf8(&bytes) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let remaining = max_results.saturating_sub(all_matches.len());
+                let matches = lib::search::search_lines(fpath, content, &search_mode, remaining);
+                all_matches.extend(matches);
+            }
+            return Ok(all_matches);
+        }
+
+        validate_path_fast(prefix)?;
+        let all_paths = self.collect_paths_recursive(prefix)?;
         for fpath in all_paths {
             if all_matches.len() >= max_results {
                 break;

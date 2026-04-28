@@ -2426,7 +2426,13 @@ impl PyKernel {
     /// up to `max_results` matches.  Replaces `nexus.fs._helpers.grep`.
     /// Each match comes back as a `dict` matching the historical
     /// shape: `{file, line, content, match}`.
-    #[pyo3(signature = (pattern, prefix="/", ignore_case=false, max_results=1000, zone_id="root"))]
+    ///
+    /// When `disk_paths` is non-empty the metastore walk is skipped:
+    /// the kernel reads each absolute path from disk directly.  Used
+    /// by the search-tier cache fast path where the cached blob's
+    /// on-disk location is already known.
+    #[pyo3(signature = (pattern, prefix="/", ignore_case=false, max_results=1000, zone_id="root", disk_paths=None))]
+    #[allow(clippy::too_many_arguments)]
     fn sys_grep<'py>(
         &self,
         py: Python<'py>,
@@ -2435,11 +2441,13 @@ impl PyKernel {
         ignore_case: bool,
         max_results: usize,
         zone_id: &str,
+        disk_paths: Option<Vec<String>>,
     ) -> PyResult<Bound<'py, PyList>> {
         let ctx = OperationContext::new("system", zone_id, true, None, true);
+        let paths = disk_paths.unwrap_or_default();
         let matches = self
             .inner
-            .sys_grep(pattern, prefix, ignore_case, max_results, &ctx)
+            .sys_grep(pattern, prefix, ignore_case, max_results, &paths, &ctx)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_grep: {:?}", e)))?;
         let out = PyList::empty(py);
         for m in matches {

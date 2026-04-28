@@ -49,6 +49,12 @@ pub(crate) use core::lock::semaphore;
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
 
+// AcpService — Rust port of the Python `nexus.services.acp` service.
+// Hosts `AgentKind::UNMANAGED` agents (subprocess + ACP-over-stdio).
+// Lives kernel-side in this rebase commit; later commits move it to
+// `rust/services/src/acp/` once the kernel→services dep flip lands.
+mod acp;
+
 // NostrBackend ObjectStore stub — chat-with-me remote-identity leg.
 // Lives kernel-side in this rebase commit; later commits move it to
 // `rust/backends/src/nostr/` (the canonical home for ObjectStore

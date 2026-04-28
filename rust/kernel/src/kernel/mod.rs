@@ -843,15 +843,18 @@ impl Kernel {
         // this seam so non-cdylib callers (Rust tests, embedded) don't
         // pay the federation init cost unless they explicitly install
         // the provider.
-        // Pre-write workspace boundary teaching hook — rejects writes
-        // into /proc/{pid}/workspace/ from non-owner agents with the
-        // structured chat-with-me redirect payload. Stateless, scoped
-        // at on_pre by path prefix so non-workspace writes pay zero
-        // cost. Hook lives kernel-side in this rebase commit; later
-        // commits move it to services/src/managed_agent/.
-        k.register_native_hook(Box::new(
-            crate::managed_agent::workspace_boundary_hook::WorkspaceBoundaryHook::new(),
-        ));
+        // Pre-write managed-agent service: registers itself + its two
+        // hooks (workspace boundary teaching, mailbox stamping) into
+        // the kernel-known registries. The hooks are generic to any
+        // AgentKind::MANAGED agent (any */chat-with-me write, any
+        // /proc/{pid}/workspace/ — not sudo-code-specific). Failure
+        // here would mean every managed-agent write loses identity
+        // safety, so we propagate as a kernel-construction warning;
+        // the kernel itself stays up so non-managed paths (HDFS
+        // half, audit, federation, …) still work.
+        if let Err(e) = crate::managed_agent::ManagedAgentService::install(&k) {
+            tracing::error!("managed_agent service install failed: {e}");
+        }
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.

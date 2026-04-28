@@ -2143,6 +2143,13 @@ impl Kernel {
         Arc::clone(&self.dcache)
     }
 
+    /// Clone the LockManager `Arc` — used by federation install hooks
+    /// to swap the lock backend on first federated mount (distributed
+    /// locks bound to the root zone's consensus).
+    pub fn lock_manager_arc(&self) -> Arc<LockManager> {
+        Arc::clone(&self.lock_manager)
+    }
+
     /// Prepare a WAL-replicated DT_STREAM for audit / observer use.
     ///
     /// Creates a `WalStreamCore` for `stream_path` using the Raft

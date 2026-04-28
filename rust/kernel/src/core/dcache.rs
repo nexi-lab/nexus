@@ -90,15 +90,16 @@ impl DCache {
         self.cache.contains_key(path)
     }
 
-    // ── Write methods (called via Kernel proxy #[pymethods]) ─────────────
+    // ── Write methods (called via Kernel proxy #[pymethods] +
+    //    federation provider's `wire_mount` apply-side coherence) ──
 
     /// Insert or update a cache entry.
-    pub(crate) fn put(&self, path: &str, entry: CachedEntry) {
+    pub fn put(&self, path: &str, entry: CachedEntry) {
         self.cache.insert(path.to_string(), entry);
     }
 
     /// Evict a single path. Returns true if the entry existed.
-    pub(crate) fn evict(&self, path: &str) -> bool {
+    pub fn evict(&self, path: &str) -> bool {
         self.cache.remove(path).is_some()
     }
 

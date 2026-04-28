@@ -27,12 +27,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use contracts::lock_state::Locks;
+use dashmap::DashMap;
 use kernel::abc::meta_store::MetaStore;
+use kernel::core::dcache::CachedEntry;
+use kernel::core::vfs_router::canonicalize_mount_path as canonicalize;
 use kernel::hal::federation::{BlobFetcherSlot, FederationProvider, FederationResult};
 use kernel::kernel::Kernel;
 
 use crate::transport::hostname_to_node_id;
+use crate::zone_meta_store::ZoneMetaStore;
 use crate::{TlsFiles, ZoneManager};
+
+/// Triple keyed by target zone: `(parent_zone_id, mount_path, global_path)`.
+type CrossZoneMountTuple = (String, String, String);
 
 /// Raft-backed `FederationProvider` impl.
 ///
@@ -43,6 +50,12 @@ pub struct RaftFederationProvider {
     zone_manager: OnceLock<Arc<ZoneManager>>,
     runtime: OnceLock<tokio::runtime::Handle>,
     bootstrap_done: AtomicBool,
+    /// Reverse index `target_zone_id → [(parent_zone, mount_path, global_path)]`
+    /// — derived cache for `wire_mount` reconstruction logic, populated as
+    /// federation mounts get wired.  Node-local: replication SSOT lives in
+    /// the DT_MOUNT entries on the metastore, this is only a fast-lookup
+    /// shadow; rebuilt from scratch on process restart by the reconcile loop.
+    cross_zone_mounts: DashMap<String, Vec<CrossZoneMountTuple>>,
 }
 
 impl RaftFederationProvider {
@@ -51,6 +64,7 @@ impl RaftFederationProvider {
             zone_manager: OnceLock::new(),
             runtime: OnceLock::new(),
             bootstrap_done: AtomicBool::new(false),
+            cross_zone_mounts: DashMap::new(),
         }
     }
 
@@ -262,9 +276,20 @@ impl FederationProvider for RaftFederationProvider {
         Ok(store)
     }
 
-    fn locks_for_zone(&self, _kernel: &Kernel, zone_id: &str) -> FederationResult<Arc<dyn Locks>> {
-        let _ = zone_id;
-        Err("locks_for_zone: not yet wired through trait".into())
+    fn locks_for_zone(&self, kernel: &Kernel, zone_id: &str) -> FederationResult<Arc<dyn Locks>> {
+        let zm = self.zm().ok_or("federation not active")?;
+        let runtime = self
+            .runtime
+            .get()
+            .ok_or("federation runtime not initialised")?;
+        let consensus = zm
+            .registry()
+            .get_node(zone_id)
+            .ok_or_else(|| format!("zone '{zone_id}' not loaded locally"))?;
+        let kernel_state = kernel.lock_manager_arc().advisory_state_arc();
+        let (backend, _shared) =
+            crate::federation::DistributedLocks::new(consensus, runtime.clone(), kernel_state);
+        Ok(Arc::new(backend))
     }
 
     fn remote_read_blob(
@@ -285,12 +310,12 @@ impl FederationProvider for RaftFederationProvider {
 
     fn wire_mount(
         &self,
-        _kernel: &Kernel,
-        _parent_zone: &str,
-        _mount_path: &str,
-        _target_zone: &str,
+        kernel: &Kernel,
+        parent_zone: &str,
+        mount_path: &str,
+        target_zone: &str,
     ) -> FederationResult<()> {
-        Err("wire_mount: not yet wired through trait".into())
+        wire_mount_impl(self, kernel, parent_zone, mount_path, target_zone)
     }
 
     fn start_replication_scanner(
@@ -385,6 +410,202 @@ impl FederationProvider for RaftFederationProvider {
             ("witness_count".to_string(), status.witness_count.into()),
         ])
     }
+}
+
+/// Reconstruct the global VFS path for a DT_MOUNT entry.  Root-zone parents
+/// already publish a global path; nested mounts pre-pend the parent's own
+/// global path looked up via `cross_zone_mounts`.
+fn reconstruct_global_path(
+    cross_zone_mounts: &DashMap<String, Vec<CrossZoneMountTuple>>,
+    parent_zone_id: &str,
+    mount_path: &str,
+) -> Option<String> {
+    if parent_zone_id == contracts::ROOT_ZONE_ID || parent_zone_id.is_empty() {
+        return Some(mount_path.to_string());
+    }
+    let parent_global = cross_zone_mounts
+        .get(parent_zone_id)
+        .and_then(|v| v.iter().map(|(_, _, g)| g.clone()).min())?;
+    if mount_path == parent_global || mount_path.starts_with(&format!("{}/", parent_global)) {
+        Some(mount_path.to_string())
+    } else if mount_path == "/" {
+        Some(parent_global)
+    } else {
+        Some(format!("{}{}", parent_global, mount_path))
+    }
+}
+
+/// Install the apply-side dcache invalidation callback for a zone's
+/// state-machine.  Idempotent — same `coherence_id` gets the same closure.
+fn install_dcache_coherence_impl(
+    vfs_router: &Arc<kernel::core::vfs_router::VFSRouter>,
+    dcache: &Arc<kernel::core::dcache::DCache>,
+    consensus: &crate::raft::ZoneConsensus<crate::raft::FullStateMachine>,
+) {
+    let Some(slot) = consensus.invalidate_cb_slot() else {
+        return;
+    };
+    let coherence_key = consensus.coherence_id();
+    let dcache = Arc::clone(dcache);
+    let vfs_router = Arc::clone(vfs_router);
+    let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
+        let trimmed = zone_relative_key.trim_start_matches('/');
+        for mp in vfs_router.mount_points_for_coherence_key(coherence_key) {
+            let global = if trimmed.is_empty() {
+                mp.clone()
+            } else if mp.ends_with('/') {
+                format!("{}{}", mp, trimmed)
+            } else {
+                format!("{}/{}", mp, trimmed)
+            };
+            dcache.evict(&global);
+        }
+    });
+    *slot.write() = Some(cb);
+}
+
+/// Wire a federation mount into the kernel — port of the pre-Phase-5
+/// `kernel::wire_federation_mount_impl`.  Looks up the target zone's
+/// raft consensus, builds a `ZoneMetaStore`, registers the mount in
+/// VFSRouter, swaps the lock backend on first federated mount, seeds
+/// the DCache and installs the apply-side coherence callback.
+fn wire_mount_impl(
+    provider: &RaftFederationProvider,
+    kernel: &Kernel,
+    parent_zone_id: &str,
+    mount_path: &str,
+    target_zone_id: &str,
+) -> FederationResult<()> {
+    tracing::info!(
+        parent_zone_id = %parent_zone_id,
+        mount_path = %mount_path,
+        target_zone_id = %target_zone_id,
+        "wire_mount_impl entered"
+    );
+
+    let zm = provider.zm().ok_or("federation not active")?;
+    let runtime = provider
+        .runtime
+        .get()
+        .ok_or("federation runtime not initialised")?;
+    let registry = zm.registry();
+
+    // 1. Look up target zone — not-yet-local is a no-op (reconcile
+    //    loop / future apply events re-drive when the zone arrives).
+    let Some(target_consensus) = registry.get_node(target_zone_id) else {
+        tracing::warn!(
+            target_zone_id = %target_zone_id,
+            "wire_mount: target zone not loaded locally — deferring"
+        );
+        return Ok(());
+    };
+
+    // 2. Reconstruct the global VFS path.
+    let global_path =
+        match reconstruct_global_path(&provider.cross_zone_mounts, parent_zone_id, mount_path) {
+            Some(g) => g,
+            None => {
+                tracing::warn!(
+                    parent_zone_id = %parent_zone_id,
+                    mount_path = %mount_path,
+                    "wire_mount: reconstruct_global_path returned None"
+                );
+                return Ok(());
+            }
+        };
+
+    // 3. Build a ZoneMetaStore rooted at global_path against the
+    //    target's state machine — reuses the root mount's CAS backend.
+    let vfs_router = kernel.vfs_router_arc();
+    let dcache = kernel.dcache_arc();
+    let lock_manager = kernel.lock_manager_arc();
+    let metastore: Arc<dyn MetaStore> = ZoneMetaStore::new_arc(
+        target_consensus.clone(),
+        runtime.clone(),
+        global_path.clone(),
+    );
+    let root_canonical = canonicalize("/", contracts::ROOT_ZONE_ID);
+    let root_backend = vfs_router
+        .get_canonical(&root_canonical)
+        .and_then(|e| e.backend.clone());
+
+    // 4. Install into VFSRouter under the root zone — federation
+    //    mounts live in the root zone's path space on every node.
+    //    Tag with `target_zone_id` so routing carries the destination
+    //    zone (caller's ambient may differ).
+    vfs_router.add_federation_mount(
+        &global_path,
+        contracts::ROOT_ZONE_ID,
+        root_backend,
+        target_zone_id,
+        false,
+    );
+    let canonical = canonicalize(&global_path, contracts::ROOT_ZONE_ID);
+    vfs_router.install_metastore(&canonical, metastore);
+
+    // 5. LockManager upgrade on first federated mount — distributed
+    //    locks bound to the ROOT zone's consensus (every peer always
+    //    has root, so all nodes agree on which state machine holds
+    //    lock state).  Idempotent via `locks_installed()`.
+    if !lock_manager.locks_installed() {
+        match registry.get_node(contracts::ROOT_ZONE_ID) {
+            Some(root_consensus) => {
+                tracing::info!(
+                    parent_zone = %parent_zone_id,
+                    mount_path = %mount_path,
+                    "wire_mount: installing distributed locks bound to ROOT zone"
+                );
+                let kernel_state = lock_manager.advisory_state_arc();
+                let (backend, shared_state) = crate::federation::DistributedLocks::new(
+                    root_consensus,
+                    runtime.clone(),
+                    kernel_state,
+                );
+                lock_manager.install_locks(Arc::new(backend), shared_state);
+            }
+            None => {
+                tracing::warn!(
+                    "wire_mount: root zone not loaded — distributed locks NOT installed; sys_lock stays local-only until next mount"
+                );
+            }
+        }
+    }
+
+    // 6. DCache seed so sys_stat on the mount point resolves locally
+    //    without a metastore round-trip.
+    dcache.put(
+        &global_path,
+        CachedEntry {
+            size: 0,
+            content_id: None,
+            version: 1,
+            entry_type: 2, // DT_MOUNT
+            zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: None,
+        },
+    );
+
+    // 7. Install apply-side dcache coherence on the target consensus.
+    install_dcache_coherence_impl(&vfs_router, &dcache, &target_consensus);
+
+    // 8. Update reverse index `target_zone → [(parent, mount_path, global)]`.
+    //    Dedup so replayed apply events don't double-register.
+    let mut bucket = provider
+        .cross_zone_mounts
+        .entry(target_zone_id.to_string())
+        .or_default();
+    let tuple = (
+        parent_zone_id.to_string(),
+        mount_path.to_string(),
+        global_path,
+    );
+    if !bucket.contains(&tuple) {
+        bucket.push(tuple);
+    }
+    Ok(())
 }
 
 /// Install `RaftFederationProvider` into the kernel's federation slot

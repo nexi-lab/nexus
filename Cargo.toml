@@ -14,7 +14,7 @@ members = [
     "rust/backends",
     "rust/services",
     "rust/raft",
-    "rust/tasks",
+    # Phase 3 restructure plan #6: rust/tasks folded into rust/services/src/tasks/.
     # Phase 4 (full) — deployment profile binaries get their own folder.
     # Today only `cluster` (Sudowork's `nexusd-cluster` ELF/EXE) lives
     # under `rust/profiles/`; future profiles (slim / full / embedded /

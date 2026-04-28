@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::{Result, TaskError};
-use crate::store::TaskStore;
-use crate::task::{QueueStats, TaskPriority, TaskRecord, TaskStatus};
+use super::error::{Result, TaskError};
+use super::store::TaskStore;
+use super::task::{QueueStats, TaskPriority, TaskRecord, TaskStatus};
 
 /// Core task queue engine. Thread-safe via fjall's internal concurrency.
 pub struct Engine {

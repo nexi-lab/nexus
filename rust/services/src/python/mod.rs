@@ -47,5 +47,9 @@ fn install_audit_hook_py(
 /// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_kernel`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(install_audit_hook_py, m)?)?;
+    // Phase 3 restructure plan #6: tasks pyclasses (PyTaskEngine /
+    // PyTaskRecord / PyQueueStats) folded into nexus_kernel cdylib —
+    // standalone _nexus_tasks.so retired.
+    crate::tasks::register_python(m)?;
     Ok(())
 }

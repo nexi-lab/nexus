@@ -2923,9 +2923,11 @@ dependencies = [
 name = "services"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "chrono",
  "contracts",
  "dashmap",
+ "fjall",
  "kernel",
  "parking_lot",
  "pyo3",
@@ -2933,6 +2935,8 @@ dependencies = [
  "redb",
  "serde",
  "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -3153,20 +3157,6 @@ name = "target-lexicon"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
-
-[[package]]
-name = "tasks"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "fjall",
- "mimalloc",
- "pyo3",
- "serde",
- "tempfile",
- "thiserror 2.0.18",
- "tracing",
-]
 
 [[package]]
 name = "tempfile"

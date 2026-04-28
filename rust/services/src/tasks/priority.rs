@@ -1,4 +1,4 @@
-use crate::task::TaskPriority;
+use super::task::TaskPriority;
 
 /// Composite pending-queue key: [priority: 1 byte][run_at: 8 bytes BE][task_id: 8 bytes BE]
 /// Total: 17 bytes. Natural byte-order sort = highest priority first, then earliest time, then lowest ID.

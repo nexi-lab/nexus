@@ -1,8 +1,10 @@
 """Nexus durable task queue engine (Tier 2).
 
-Provides a durable, priority-aware task queue backed by the Rust nexus_tasks
-crate (fjall storage engine). For ephemeral fire-and-forget tasks, see the
-Tier 1 ARQ integration (#753).
+Provides a durable, priority-aware task queue backed by the Rust task
+engine in `services::tasks` (folded into the unified `nexus_kernel`
+cdylib by Phase 3 restructure plan #6 — the standalone
+`_nexus_tasks.so` is retired).  For ephemeral fire-and-forget tasks,
+see the Tier 1 ARQ integration (#753).
 
 Usage:
     from nexus.tasks import TaskEngine, AsyncTaskRunner
@@ -24,10 +26,10 @@ from typing import TYPE_CHECKING
 _HAS_NEXUS_TASKS = False
 
 if TYPE_CHECKING:
-    from _nexus_tasks import QueueStats, TaskEngine, TaskRecord
+    from nexus_kernel import QueueStats, TaskEngine, TaskRecord
 
 try:
-    from _nexus_tasks import QueueStats, TaskEngine, TaskRecord
+    from nexus_kernel import QueueStats, TaskEngine, TaskRecord
 
     _HAS_NEXUS_TASKS = True
 except ImportError:

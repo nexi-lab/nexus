@@ -26,7 +26,7 @@ class FileMetadata(_message.Message):
     __slots__ = (
         "path",
         "size",
-        "etag",
+        "content_id",
         "mime_type",
         "created_at",
         "modified_at",
@@ -40,7 +40,7 @@ class FileMetadata(_message.Message):
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
     SIZE_FIELD_NUMBER: _ClassVar[int]
-    ETAG_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_ID_FIELD_NUMBER: _ClassVar[int]
     MIME_TYPE_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     MODIFIED_AT_FIELD_NUMBER: _ClassVar[int]
@@ -53,7 +53,7 @@ class FileMetadata(_message.Message):
     LAST_WRITER_ADDRESS_FIELD_NUMBER: _ClassVar[int]
     path: str
     size: int
-    etag: str
+    content_id: str
     mime_type: str
     created_at: str
     modified_at: str
@@ -68,7 +68,7 @@ class FileMetadata(_message.Message):
         self,
         path: str | None = ...,
         size: int | None = ...,
-        etag: str | None = ...,
+        content_id: str | None = ...,
         mime_type: str | None = ...,
         created_at: str | None = ...,
         modified_at: str | None = ...,

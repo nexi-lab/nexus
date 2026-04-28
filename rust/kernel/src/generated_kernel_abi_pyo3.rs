@@ -236,9 +236,7 @@ fn extract_metadata(
             .getattr("size")
             .and_then(|v| v.extract::<u64>())
             .map_err(|e| MetaStoreError::IOError(format!("field size: {e}")))?,
-        // Python field is ``content_id`` (proto/contracts rename); Rust
-        // struct field still ``etag`` until post-PR-3921 commit. Bridge.
-        etag: get_opt_str("content_id")?,
+        content_id: get_opt_str("content_id")?,
         version: obj
             .getattr("version")
             .and_then(|v| v.extract::<u32>())
@@ -283,11 +281,9 @@ fn to_python_metadata<'py>(
     let kwargs = PyDict::new(py);
     kwargs.set_item("path", &meta.path).map_err(err)?;
     kwargs.set_item("size", meta.size).map_err(err)?;
-    // Python FileMetadata field renamed etag → content_id (proto field 5).
-    // Rust struct field is still named ``etag`` until the post-PR-3921
     // commit lands the Rust-side rename — bridge the two names here.
     kwargs
-        .set_item("content_id", meta.etag.as_deref())
+        .set_item("content_id", meta.content_id.as_deref())
         .map_err(err)?;
     kwargs.set_item("version", meta.version).map_err(err)?;
     kwargs
@@ -765,7 +761,7 @@ pub struct PySysWriteResult {
     pub version: u32,
     pub size: u64,
     pub is_new: bool,
-    pub old_etag: Option<String>,
+    pub old_content_id: Option<String>,
     pub old_size: Option<u64>,
     pub old_version: Option<u32>,
     pub old_modified_at_ms: Option<i64>,
@@ -780,7 +776,7 @@ pub struct PySysUnlinkResult {
     pub entry_type: u8,
     pub post_hook_needed: bool,
     pub path: String,
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     pub size: u64,
 }
 
@@ -793,7 +789,7 @@ pub struct PySysRenameResult {
     pub success: bool,
     pub post_hook_needed: bool,
     pub is_directory: bool,
-    pub old_etag: Option<String>,
+    pub old_content_id: Option<String>,
     pub old_size: Option<u64>,
     pub old_version: Option<u32>,
     pub old_modified_at_ms: Option<i64>,
@@ -826,7 +822,7 @@ pub struct PySysCopyResult {
     pub hit: bool,
     pub post_hook_needed: bool,
     pub dst_path: String,
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     pub size: u64,
     pub version: u32,
 }
@@ -1117,8 +1113,8 @@ impl PyKernel {
             .metastore_batch_get_content_ids(&paths)
             .map_err::<PyErr, _>(Into::into)?;
         let dict = PyDict::new(py);
-        for (path, etag) in pairs {
-            dict.set_item(path, etag)?;
+        for (path, content_id) in pairs {
+            dict.set_item(path, content_id)?;
         }
         Ok(dict.into())
     }
@@ -1225,7 +1221,7 @@ impl PyKernel {
 
     // ── DCache proxy methods ─────────────��─────────────────────────────
 
-    #[pyo3(signature = (path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None, last_writer_address=None))]
+    #[pyo3(signature = (path, size, entry_type, version=1, content_id=None, zone_id=None, mime_type=None, last_writer_address=None))]
     #[allow(clippy::too_many_arguments)]
     fn dcache_put(
         &self,
@@ -1233,7 +1229,7 @@ impl PyKernel {
         size: u64,
         entry_type: u8,
         version: u32,
-        etag: Option<&str>,
+        content_id: Option<&str>,
         zone_id: Option<&str>,
         mime_type: Option<&str>,
         last_writer_address: Option<&str>,
@@ -1243,7 +1239,7 @@ impl PyKernel {
             size,
             entry_type,
             version,
-            etag,
+            content_id,
             zone_id,
             mime_type,
             last_writer_address,
@@ -1259,7 +1255,7 @@ impl PyKernel {
             Some(e) => {
                 let dict = PyDict::new(py);
                 dict.set_item("size", e.size)?;
-                dict.set_item("content_id", e.etag.as_deref())?;
+                dict.set_item("content_id", e.content_id.as_deref())?;
                 dict.set_item("version", e.version)?;
                 dict.set_item("entry_type", e.entry_type)?;
                 dict.set_item("zone_id", e.zone_id.as_deref())?;
@@ -2144,7 +2140,7 @@ impl PyKernel {
             version: result.version,
             size: result.size,
             is_new: result.is_new,
-            old_etag: result.old_etag,
+            old_content_id: result.old_content_id,
             old_size: result.old_size,
             old_version: result.old_version,
             old_modified_at_ms: result.old_modified_at_ms,
@@ -2166,8 +2162,7 @@ impl PyKernel {
                 dict.set_item("size", s.size)?;
                 dict.set_item("last_writer_address", s.last_writer_address.as_deref())?;
                 // Python-side public key renamed to ``content_id``;
-                // Rust struct field still named ``etag``. Bridge.
-                dict.set_item("content_id", s.etag.as_deref())?;
+                dict.set_item("content_id", s.content_id.as_deref())?;
                 dict.set_item("mime_type", &s.mime_type)?;
                 set_optional_iso_datetime(py, &dict, "created_at", s.created_at_ms)?;
                 set_optional_iso_datetime(py, &dict, "modified_at", s.modified_at_ms)?;
@@ -2239,7 +2234,7 @@ impl PyKernel {
             entry_type: result.entry_type,
             post_hook_needed: result.post_hook_needed,
             path: result.path,
-            etag: result.etag,
+            content_id: result.content_id,
             size: result.size,
         })
     }
@@ -2279,7 +2274,7 @@ impl PyKernel {
             success: result.success,
             post_hook_needed: result.post_hook_needed,
             is_directory: result.is_directory,
-            old_etag: result.old_etag,
+            old_content_id: result.old_content_id,
             old_size: result.old_size,
             old_version: result.old_version,
             old_modified_at_ms: result.old_modified_at_ms,
@@ -2320,7 +2315,7 @@ impl PyKernel {
             hit: result.hit,
             post_hook_needed: result.post_hook_needed,
             dst_path: result.dst_path,
-            etag: result.etag,
+            content_id: result.content_id,
             size: result.size,
             version: result.version,
         })
@@ -2493,7 +2488,7 @@ impl PyKernel {
                 version: r.version,
                 size: r.size,
                 is_new: r.is_new,
-                old_etag: r.old_etag,
+                old_content_id: r.old_content_id,
                 old_size: r.old_size,
                 old_version: r.old_version,
                 old_modified_at_ms: r.old_modified_at_ms,
@@ -2544,7 +2539,7 @@ impl PyKernel {
                 entry_type: r.entry_type,
                 post_hook_needed: r.post_hook_needed,
                 path: r.path,
-                etag: r.etag,
+                content_id: r.content_id,
                 size: r.size,
             })
             .collect())

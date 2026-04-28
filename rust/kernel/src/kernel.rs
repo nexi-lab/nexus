@@ -200,7 +200,7 @@ pub struct SysReadResult {
     pub data: Option<Vec<u8>>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
-    /// Content hash (etag) for post-hook context.
+    /// Content hash (content_id) for post-hook context.
     pub content_hash: Option<String>,
     /// DT_REG(1), DT_PIPE(3), DT_STREAM(4).
     pub entry_type: u8,
@@ -221,7 +221,7 @@ pub struct SysWriteResult {
     /// True if the file did not exist before this write.
     pub is_new: bool,
     /// Etag (content hash) of the file before this write (None if new file).
-    pub old_etag: Option<String>,
+    pub old_content_id: Option<String>,
     /// Size of the file before this write (None if new file).
     pub old_size: Option<u64>,
     /// Metadata version before this write (None if new file).
@@ -242,7 +242,7 @@ pub struct SysUnlinkResult {
     /// Path that was deleted (for event payload).
     pub path: String,
     /// Etag of deleted file (for event payload).
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     /// Size of deleted file (for event payload).
     pub size: u64,
 }
@@ -258,7 +258,7 @@ pub struct SysRenameResult {
     /// True if the renamed entry is a directory.
     pub is_directory: bool,
     /// Old metadata fields for Python post-hook dispatch (audit trail).
-    pub old_etag: Option<String>,
+    pub old_content_id: Option<String>,
     pub old_size: Option<u64>,
     pub old_version: Option<u32>,
     pub old_modified_at_ms: Option<i64>,
@@ -290,8 +290,8 @@ pub struct SysCopyResult {
     pub post_hook_needed: bool,
     /// Destination path.
     pub dst_path: String,
-    /// Content hash (etag) of the destination file.
-    pub etag: Option<String>,
+    /// Content hash (content_id) of the destination file.
+    pub content_id: Option<String>,
     /// Destination file size.
     pub size: u64,
     /// Metadata version of the destination file.
@@ -338,7 +338,7 @@ pub struct DcacheStats {
 pub struct StatResult {
     pub path: String,
     pub size: u64,
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     pub mime_type: String,
     pub is_directory: bool,
     pub entry_type: u8,
@@ -1025,7 +1025,7 @@ impl Kernel {
         zone_id: &str,
         entry_type: u8,
         size: u64,
-        etag: Option<String>,
+        content_id: Option<String>,
         version: u32,
         mime_type: Option<String>,
         created_at_ms: Option<i64>,
@@ -1034,7 +1034,7 @@ impl Kernel {
         crate::meta_store::FileMetadata {
             path: path.to_string(),
             size,
-            etag,
+            content_id,
             version,
             entry_type,
             zone_id: Some(zone_id.to_string()),
@@ -1465,7 +1465,7 @@ impl Kernel {
         size: u64,
         entry_type: u8,
         version: u32,
-        etag: Option<&str>,
+        content_id: Option<&str>,
         zone_id: Option<&str>,
         mime_type: Option<&str>,
         last_writer_address: Option<&str>,
@@ -1474,7 +1474,7 @@ impl Kernel {
             path,
             CachedEntry {
                 size,
-                etag: etag.map(|s| s.to_string()),
+                content_id: content_id.map(|s| s.to_string()),
                 version,
                 entry_type,
                 zone_id: zone_id.map(|s| s.to_string()),
@@ -2916,10 +2916,10 @@ impl Kernel {
             });
         }
 
-        // Content identifier: CAS backends use etag (hash). Path-addressed
+        // Content identifier: CAS backends use content_id (hash). Path-addressed
         // backends derive their physical path from `path - mount_prefix`
-        // inside the backend itself; the kernel always passes the etag.
-        let content_id = match entry.etag.as_deref().filter(|s| !s.is_empty()) {
+        // inside the backend itself; the kernel always passes the content_id.
+        let content_id = match entry.content_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id,
             None => return Err(not_found()),
         };
@@ -2947,7 +2947,7 @@ impl Kernel {
             Some(data) => Ok(SysReadResult {
                 data: Some(data),
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_hash: entry.etag.clone(),
+                content_hash: entry.content_id.clone(),
                 entry_type: DT_REG,
             }),
             // Local backend miss + metadata exists → federation path:
@@ -3017,7 +3017,7 @@ impl Kernel {
         Ok(SysReadResult {
             data: Some(data),
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-            content_hash: entry.etag.clone(),
+            content_hash: entry.content_id.clone(),
             entry_type: DT_REG,
         })
     }
@@ -3045,7 +3045,7 @@ impl Kernel {
                 version: 0,
                 size: 0,
                 is_new: false,
-                old_etag: None,
+                old_content_id: None,
                 old_size: None,
                 old_version: None,
                 old_modified_at_ms: None,
@@ -3095,7 +3095,7 @@ impl Kernel {
                                 version: 0,
                                 size: n as u64,
                                 is_new: false,
-                                old_etag: None,
+                                old_content_id: None,
                                 old_size: None,
                                 old_version: None,
                                 old_modified_at_ms: None,
@@ -3124,7 +3124,7 @@ impl Kernel {
                                 version: 0,
                                 size: offset as u64,
                                 is_new: false,
-                                old_etag: None,
+                                old_content_id: None,
                                 old_size: None,
                                 old_version: None,
                                 old_modified_at_ms: None,
@@ -3168,7 +3168,7 @@ impl Kernel {
                 .flatten()
             });
             match old_entry {
-                Some(e) => e.etag.unwrap_or_default(),
+                Some(e) => e.content_id.unwrap_or_default(),
                 None => {
                     // Partial write requires an existing file — but
                     // `sys_write` contract says "file must exist" anyway,
@@ -3201,7 +3201,7 @@ impl Kernel {
         let result = match write_result {
             Some(wr) => {
                 // Snapshot old state for OBSERVE event payload + Python
-                // post-hook dispatch (is_new, old_etag, old_size, etc.).
+                // post-hook dispatch (is_new, old_content_id, old_size, etc.).
                 // DCache → metastore fallback ensures accuracy even on cold
                 // dcache (matches the authority that Python metadata.get()
                 // had before this crossing elimination).
@@ -3212,7 +3212,7 @@ impl Kernel {
                     .flatten()
                 });
                 let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
-                let old_etag = old_entry.as_ref().and_then(|e| e.etag.clone());
+                let old_content_id = old_entry.as_ref().and_then(|e| e.content_id.clone());
                 let new_version = old_version + 1;
 
                 // Build FileMetadata and persist via metastore (per-mount or global)
@@ -3248,9 +3248,9 @@ impl Kernel {
                 }
 
                 // Snapshot old_entry fields for the result struct before
-                // dispatch_mutation moves old_etag into its closure.
+                // dispatch_mutation moves old_content_id into its closure.
                 let result_is_new = old_entry.is_none();
-                let result_old_etag = old_etag.clone();
+                let result_old_etag = old_content_id.clone();
                 let result_old_size = old_entry.as_ref().map(|e| e.size);
                 let result_old_version = old_entry.as_ref().map(|e| e.version);
                 let result_old_modified_at_ms = old_entry.as_ref().and_then(|e| e.modified_at_ms);
@@ -3258,14 +3258,14 @@ impl Kernel {
                 // OBSERVE-phase dispatch (§11 Phase 5): queue FileWrite to
                 // the kernel observer ThreadPool. Returns immediately —
                 // observer callbacks run off the syscall hot path.
-                let etag = wr.content_id.clone();
+                let content_id = wr.content_id.clone();
                 let size = wr.size;
                 self.dispatch_mutation(FileEventType::FileWrite, path, ctx, |ev| {
                     ev.size = Some(size);
-                    ev.etag = Some(etag);
+                    ev.content_id = Some(content_id);
                     ev.version = Some(new_version);
                     ev.is_new = old_version == 0;
-                    ev.old_etag = old_etag;
+                    ev.old_content_id = old_content_id;
                 });
 
                 // Native POST hooks (fire-and-forget — AuditHook sends to channel
@@ -3292,7 +3292,7 @@ impl Kernel {
                     version: new_version,
                     size: wr.size,
                     is_new: result_is_new,
-                    old_etag: result_old_etag,
+                    old_content_id: result_old_etag,
                     old_size: result_old_size,
                     old_version: result_old_version,
                     old_modified_at_ms: result_old_modified_at_ms,
@@ -3358,7 +3358,7 @@ impl Kernel {
                             return Some(StatResult {
                                 path: path.to_string(),
                                 size: 4096,
-                                etag: None,
+                                content_id: None,
                                 mime_type: "inode/directory".to_string(),
                                 is_directory: true,
                                 entry_type: DT_DIR,
@@ -3399,7 +3399,7 @@ impl Kernel {
             } else {
                 entry.size
             },
-            etag: entry.etag,
+            content_id: entry.content_id,
             mime_type: mime,
             is_directory: is_dir,
             entry_type: entry.entry_type,
@@ -3433,7 +3433,7 @@ impl Kernel {
                 entry_type: et,
                 post_hook_needed: false,
                 path: path.to_string(),
-                etag: None,
+                content_id: None,
                 size: 0,
             })
         };
@@ -3488,7 +3488,7 @@ impl Kernel {
                     entry_type: DT_PIPE,
                     post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
                     path: path.to_string(),
-                    etag: entry.etag,
+                    content_id: entry.content_id,
                     size: entry.size,
                 });
             }
@@ -3500,7 +3500,7 @@ impl Kernel {
                     entry_type: DT_STREAM,
                     post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
                     path: path.to_string(),
-                    etag: entry.etag,
+                    content_id: entry.content_id,
                     size: entry.size,
                 });
             }
@@ -3514,7 +3514,7 @@ impl Kernel {
                     entry_type: DT_DIR,
                     post_hook_needed: rmdir_result.post_hook_needed,
                     path: path.to_string(),
-                    etag: entry.etag,
+                    content_id: entry.content_id,
                     size: entry.size,
                 });
             }
@@ -3530,7 +3530,7 @@ impl Kernel {
                     entry_type: DT_MOUNT,
                     post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
                     path: path.to_string(),
-                    etag: entry.etag,
+                    content_id: entry.content_id,
                     size: entry.size,
                 });
             }
@@ -3571,11 +3571,11 @@ impl Kernel {
         // 10. OBSERVE-phase dispatch (§11 Phase 5): queue FileDelete.
         // Cloned out of `entry` because the SysUnlinkResult below also
         // moves them.
-        let etag_for_event = entry.etag.clone();
+        let etag_for_event = entry.content_id.clone();
         let size_for_event = entry.size;
         self.dispatch_mutation(FileEventType::FileDelete, path, ctx, |ev| {
             ev.size = Some(size_for_event);
-            ev.etag = etag_for_event;
+            ev.content_id = etag_for_event;
         });
 
         // 11. Return hit=true with metadata for event payload
@@ -3593,7 +3593,7 @@ impl Kernel {
             entry_type: entry.entry_type,
             post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
             path: path.to_string(),
-            etag: entry.etag,
+            content_id: entry.content_id,
             size: entry.size,
         })
     }
@@ -3616,7 +3616,7 @@ impl Kernel {
                 success: false,
                 post_hook_needed: false,
                 is_directory: false,
-                old_etag: None,
+                old_content_id: None,
                 old_size: None,
                 old_version: None,
                 old_modified_at_ms: None,
@@ -3838,13 +3838,13 @@ impl Kernel {
         let (rename_old_etag, rename_old_size, rename_old_version, rename_old_modified_at_ms) =
             match (&old_meta, &old_entry) {
                 (Some(m), _) => (
-                    m.etag.clone(),
+                    m.content_id.clone(),
                     Some(m.size),
                     Some(m.version),
                     m.modified_at_ms,
                 ),
                 (None, Some(e)) => (
-                    e.etag.clone(),
+                    e.content_id.clone(),
                     Some(e.size),
                     Some(e.version),
                     e.modified_at_ms,
@@ -3857,7 +3857,7 @@ impl Kernel {
             success: true,
             post_hook_needed: self.rename_hook_count.load(Ordering::Relaxed) > 0,
             is_directory,
-            old_etag: rename_old_etag,
+            old_content_id: rename_old_etag,
             old_size: rename_old_size,
             old_version: rename_old_version,
             old_modified_at_ms: rename_old_modified_at_ms,
@@ -3885,7 +3885,7 @@ impl Kernel {
                 hit: false,
                 post_hook_needed: false,
                 dst_path: dst_path.to_string(),
-                etag: None,
+                content_id: None,
                 size: 0,
                 version: 0,
             })
@@ -3987,10 +3987,10 @@ impl Kernel {
                 None => {
                     // CAS backend or copy_file not supported — metadata-only copy
                     // (content deduplicated by hash, just create new metastore entry)
-                    let etag = src_meta.etag.clone().unwrap_or_default();
-                    if !etag.is_empty() {
+                    let content_id = src_meta.content_id.clone().unwrap_or_default();
+                    if !content_id.is_empty() {
                         // CAS: same content_id, just new path
-                        Ok((etag, src_meta.size))
+                        Ok((content_id, src_meta.size))
                     } else {
                         // Fallback: read + write
                         self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
@@ -4063,7 +4063,7 @@ impl Kernel {
             hit: true,
             post_hook_needed: self.copy_hook_count.load(Ordering::Relaxed) > 0,
             dst_path: dst_path.to_string(),
-            etag: Some(content_id),
+            content_id: Some(content_id),
             size,
             version: new_version,
         })
@@ -4077,7 +4077,7 @@ impl Kernel {
         src_meta: &CachedEntry,
         ctx: &OperationContext,
     ) -> Result<(String, u64), KernelError> {
-        let content_id = match src_meta.etag.as_deref().filter(|s| !s.is_empty()) {
+        let content_id = match src_meta.content_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id,
             None => {
                 return Err(KernelError::IOError(
@@ -4431,7 +4431,7 @@ impl Kernel {
                         version: 0,
                         size: 0,
                         is_new: false,
-                        old_etag: None,
+                        old_content_id: None,
                         old_size: None,
                         old_version: None,
                         old_modified_at_ms: None,
@@ -4449,7 +4449,7 @@ impl Kernel {
                     version: 0,
                     size: 0,
                     is_new: false,
-                    old_etag: None,
+                    old_content_id: None,
                     old_size: None,
                     old_version: None,
                     old_modified_at_ms: None,
@@ -4503,7 +4503,7 @@ impl Kernel {
                         version: new_version,
                         size: wr.size,
                         is_new: batch_old_entry.is_none(),
-                        old_etag: batch_old_entry.as_ref().and_then(|e| e.etag.clone()),
+                        old_content_id: batch_old_entry.as_ref().and_then(|e| e.content_id.clone()),
                         old_size: batch_old_entry.as_ref().map(|e| e.size),
                         old_version: batch_old_entry.as_ref().map(|e| e.version),
                         old_modified_at_ms: batch_old_entry.as_ref().and_then(|e| e.modified_at_ms),
@@ -4517,7 +4517,7 @@ impl Kernel {
                         version: 0,
                         size: 0,
                         is_new: false,
-                        old_etag: None,
+                        old_content_id: None,
                         old_size: None,
                         old_version: None,
                         old_modified_at_ms: None,
@@ -4638,7 +4638,7 @@ impl Kernel {
                     entry_type: 0,
                     post_hook_needed: false,
                     path: path.clone(),
-                    etag: None,
+                    content_id: None,
                     size: 0,
                 }),
             }
@@ -5922,7 +5922,7 @@ fn wire_federation_mount_impl(
         &global_path,
         CachedEntry {
             size: 0,
-            etag: None,
+            content_id: None,
             version: 1,
             entry_type: 2, // DT_MOUNT
             zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
@@ -6425,7 +6425,7 @@ mod tests {
 
         kernel.dispatch_mutation(FileEventType::FileWrite, "/foo.txt", &ctx, |ev| {
             ev.size = Some(42);
-            ev.etag = Some("abc123".to_string());
+            ev.content_id = Some("abc123".to_string());
             ev.version = Some(1);
             ev.is_new = true;
         });
@@ -6438,7 +6438,7 @@ mod tests {
         assert_eq!(event.user_id.as_deref(), Some("alice"));
         assert_eq!(event.agent_id.as_deref(), Some("agent-42"));
         assert_eq!(event.size, Some(42));
-        assert_eq!(event.etag.as_deref(), Some("abc123"));
+        assert_eq!(event.content_id.as_deref(), Some("abc123"));
         assert_eq!(event.version, Some(1));
         assert!(event.is_new);
     }
@@ -6567,7 +6567,7 @@ mod tests {
             crate::meta_store::FileMetadata {
                 path: "/update-test.txt".to_string(),
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: 0,
                 zone_id: None,

@@ -76,7 +76,7 @@ impl BlobFetcher for KernelBlobFetcher {
             let local_content_id = self
                 .dcache
                 .get_entry(content_id)
-                .and_then(|e| e.etag)
+                .and_then(|e| e.content_id)
                 .unwrap_or_default();
             return self
                 .vfs_router

@@ -1,7 +1,7 @@
 //! DCache — lock-free in-memory dentry cache for kernel hot-path.
 //!
 //! Stores a hot-path projection of FileMetadata fields needed by sys_read/sys_write:
-//! backend_name, physical_path, size, etag, version, entry_type, zone_id.
+//! backend_name, physical_path, size, content_id, version, entry_type, zone_id.
 //!
 //! Design:
 //!   - DashMap<String, CachedEntry> for lock-free concurrent reads (~30ns).
@@ -25,7 +25,7 @@ pub(crate) const DT_STREAM: u8 = 4;
 #[allow(dead_code)]
 pub struct CachedEntry {
     pub size: u64,
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     pub version: u32,
     pub entry_type: u8,
     pub zone_id: Option<String>,
@@ -39,7 +39,7 @@ impl From<&crate::meta_store::FileMetadata> for CachedEntry {
     fn from(m: &crate::meta_store::FileMetadata) -> Self {
         Self {
             size: m.size,
-            etag: m.etag.clone(),
+            content_id: m.content_id.clone(),
             version: m.version,
             entry_type: m.entry_type,
             zone_id: m.zone_id.clone(),
@@ -198,7 +198,7 @@ mod tests {
             "/docs/readme.md",
             CachedEntry {
                 size: 1024,
-                etag: Some("abc123".to_string()),
+                content_id: Some("abc123".to_string()),
                 version: 1,
                 entry_type: DT_REG,
                 zone_id: Some("root".to_string()),
@@ -211,7 +211,7 @@ mod tests {
 
         let entry = dc.get_entry("/docs/readme.md").unwrap();
         assert_eq!(entry.size, 1024);
-        assert_eq!(entry.etag.as_deref(), Some("abc123"));
+        assert_eq!(entry.content_id.as_deref(), Some("abc123"));
         assert_eq!(entry.version, 1);
         assert_eq!(entry.entry_type, DT_REG);
         assert_eq!(entry.zone_id.as_deref(), Some("root"));
@@ -232,7 +232,7 @@ mod tests {
             "/a",
             CachedEntry {
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: DT_DIR,
                 zone_id: None,
@@ -253,7 +253,7 @@ mod tests {
             "/hit",
             CachedEntry {
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: DT_REG,
                 zone_id: None,
@@ -289,7 +289,7 @@ mod tests {
             "/tmp",
             CachedEntry {
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: DT_REG,
                 zone_id: None,
@@ -313,7 +313,7 @@ mod tests {
                 p,
                 CachedEntry {
                     size: 0,
-                    etag: None,
+                    content_id: None,
                     version: 1,
                     entry_type: DT_REG,
                     zone_id: None,
@@ -338,7 +338,7 @@ mod tests {
             "/file",
             CachedEntry {
                 size: 100,
-                etag: Some("hash".to_string()),
+                content_id: Some("hash".to_string()),
                 version: 1,
                 entry_type: DT_REG,
                 zone_id: None,
@@ -361,7 +361,7 @@ mod tests {
             "/a",
             CachedEntry {
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: DT_REG,
                 zone_id: None,
@@ -386,7 +386,7 @@ mod tests {
             "/a",
             CachedEntry {
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: DT_REG,
                 zone_id: None,

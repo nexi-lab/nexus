@@ -72,8 +72,8 @@ impl ObjectStore for RemoteBackend {
             .write(&path, content, "")
             .map_err(|e| StorageError::IOError(std::io::Error::other(e)))?;
         Ok(WriteResult {
-            content_id: result.etag.clone(),
-            version: result.etag,
+            content_id: result.content_id.clone(),
+            version: result.content_id,
             size: result.size,
         })
     }

@@ -165,7 +165,7 @@ impl RpcTransport {
                     }
                     return Ok(ReadResult {
                         content: inner.content.to_vec(),
-                        etag: inner.etag,
+                        content_id: inner.content_id,
                         size: inner.size as u64,
                     });
                 }
@@ -181,16 +181,22 @@ impl RpcTransport {
         }
     }
 
-    /// Typed Write RPC — raw bytes, returns (etag, size).
-    pub fn write(&self, path: &str, content: &[u8], etag: &str) -> Result<WriteRpcResult, String> {
-        self.runtime.block_on(self.write_async(path, content, etag))
+    /// Typed Write RPC — raw bytes, returns (content_id, size).
+    pub fn write(
+        &self,
+        path: &str,
+        content: &[u8],
+        content_id: &str,
+    ) -> Result<WriteRpcResult, String> {
+        self.runtime
+            .block_on(self.write_async(path, content, content_id))
     }
 
     async fn write_async(
         &self,
         path: &str,
         content: &[u8],
-        etag: &str,
+        content_id: &str,
     ) -> Result<WriteRpcResult, String> {
         let mut client = self.client();
         let mut retries = 0u8;
@@ -199,7 +205,7 @@ impl RpcTransport {
                 path: path.to_string(),
                 content: content.to_vec(),
                 auth_token: self.auth_token.clone(),
-                etag: etag.to_string(),
+                content_id: content_id.to_string(),
             });
             match client.write(req).await {
                 Ok(resp) => {
@@ -209,7 +215,7 @@ impl RpcTransport {
                         return Err(format!("Write({path}): server error: {err}"));
                     }
                     return Ok(WriteRpcResult {
-                        etag: inner.etag,
+                        content_id: inner.content_id,
                         size: inner.size as u64,
                     });
                 }
@@ -274,13 +280,13 @@ impl RpcTransport {
 #[allow(dead_code)]
 pub struct ReadResult {
     pub content: Vec<u8>,
-    pub etag: String,
+    pub content_id: String,
     pub size: u64,
 }
 
 /// Result of a typed Write RPC.
 pub struct WriteRpcResult {
-    pub etag: String,
+    pub content_id: String,
     pub size: u64,
 }
 

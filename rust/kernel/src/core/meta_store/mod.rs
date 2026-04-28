@@ -282,7 +282,7 @@ fn fm_composite_key(path: &str, key: &str) -> String {
 ///
 /// Format: [version_tag:u8=2][path_len:u32][path][backend_name_len:u32][backend_name]
 ///         [physical_path_len:u32][physical_path][size:u64]
-///         [has_etag:u8][etag_len:u32][etag][version:u32][entry_type:u8]
+///         [has_etag:u8][etag_len:u32][content_id][version:u32][entry_type:u8]
 ///         [has_zone_id:u8][zone_id_len:u32][zone_id]
 ///         [has_mime_type:u8][mime_type_len:u32][mime_type]
 ///         [has_created_at:u8][created_at:i64]
@@ -325,7 +325,7 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
                  // added last_writer_address as the trailing optional slot.
     write_str(&mut buf, &meta.path);
     buf.extend_from_slice(&meta.size.to_le_bytes());
-    write_opt_str(&mut buf, &meta.etag);
+    write_opt_str(&mut buf, &meta.content_id);
     buf.extend_from_slice(&meta.version.to_le_bytes());
     buf.push(meta.entry_type);
     write_opt_str(&mut buf, &meta.zone_id);
@@ -389,7 +389,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
     let size = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
     pos += 8;
 
-    let etag = read_opt_str(data, &mut pos)?;
+    let content_id = read_opt_str(data, &mut pos)?;
 
     if pos + 4 > data.len() {
         return Err(MetaStoreError::IOError("truncated version".into()));
@@ -433,7 +433,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
     Ok(FileMetadata {
         path,
         size,
-        etag,
+        content_id,
         version,
         entry_type,
         zone_id,
@@ -825,7 +825,7 @@ mod tests {
             FileMetadata {
                 path: "/test/file.txt".to_string(),
                 size: 1024,
-                etag: Some("hash123".to_string()),
+                content_id: Some("hash123".to_string()),
                 version: 3,
                 entry_type: 0, // DT_REG
                 zone_id: Some("root".to_string()),
@@ -837,7 +837,7 @@ mod tests {
             FileMetadata {
                 path: "/mnt/peer".to_string(),
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: 2, // DT_MOUNT
                 zone_id: Some("zone-a".to_string()),
@@ -851,7 +851,7 @@ mod tests {
             let restored = deserialize_metadata(&serialize_metadata(meta)).unwrap();
             assert_eq!(restored.path, meta.path);
             assert_eq!(restored.size, meta.size);
-            assert_eq!(restored.etag, meta.etag);
+            assert_eq!(restored.content_id, meta.content_id);
             assert_eq!(restored.version, meta.version);
             assert_eq!(restored.entry_type, meta.entry_type);
             assert_eq!(restored.zone_id, meta.zone_id);
@@ -864,7 +864,7 @@ mod tests {
         FileMetadata {
             path: path.to_string(),
             size: 0,
-            etag: None,
+            content_id: None,
             version,
             entry_type: 0,
             zone_id: None,
@@ -972,7 +972,7 @@ mod tests {
         let meta = FileMetadata {
             path: "/x".to_string(),
             size: 0,
-            etag: None,
+            content_id: None,
             version: 1,
             entry_type: 0,
             zone_id: None,
@@ -984,7 +984,7 @@ mod tests {
         let data = serialize_metadata(&meta);
         let restored = deserialize_metadata(&data).unwrap();
         assert_eq!(restored.path, "/x");
-        assert!(restored.etag.is_none());
+        assert!(restored.content_id.is_none());
         assert!(restored.zone_id.is_none());
         assert!(restored.mime_type.is_none());
     }

@@ -98,7 +98,7 @@ impl DriverLifecycleCoordinator {
             let meta = crate::meta_store::FileMetadata {
                 path: mount_point.to_string(),
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: 2, // DT_MOUNT
                 zone_id: Some(zone_id.to_string()),
@@ -120,7 +120,7 @@ impl DriverLifecycleCoordinator {
             mount_point,
             CachedEntry {
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: 2, // DT_MOUNT
                 zone_id: Some(zone_id.to_string()),

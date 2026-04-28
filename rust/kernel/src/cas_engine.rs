@@ -135,13 +135,13 @@ impl CASEngine {
         self.fetcher = Some(fetcher);
     }
 
-    /// Read content by etag (content hash). Local-only convenience — use
+    /// Read content by content_id (content hash). Local-only convenience — use
     /// `read_content_with_origins` when the file may have remote-only chunks.
-    pub fn read_content(&self, etag: &str) -> Result<Vec<u8>, CASError> {
-        self.read_content_with_origins(etag, &[])
+    pub fn read_content(&self, content_id: &str) -> Result<Vec<u8>, CASError> {
+        self.read_content_with_origins(content_id, &[])
     }
 
-    /// Read content by etag (content hash) with optional scatter-gather fall-back.
+    /// Read content by content_id (content hash) with optional scatter-gather fall-back.
     ///
     /// If a `ChunkAssembler` is injected, it gets first look at every blob.
     /// Chunked manifests are reassembled transparently; when a chunk is
@@ -149,13 +149,16 @@ impl CASEngine {
     /// `origins` is non-empty, the assembler fans out to the origins.
     pub fn read_content_with_origins(
         &self,
-        etag: &str,
+        content_id: &str,
         origins: &[String],
     ) -> Result<Vec<u8>, CASError> {
-        let data = self.transport.read_blob(etag).map_err(|e| match e.kind() {
-            io::ErrorKind::NotFound => CASError::NotFound(etag.to_string()),
-            _ => CASError::IOError(e),
-        })?;
+        let data = self
+            .transport
+            .read_blob(content_id)
+            .map_err(|e| match e.kind() {
+                io::ErrorKind::NotFound => CASError::NotFound(content_id.to_string()),
+                _ => CASError::IOError(e),
+            })?;
 
         // CDC composition: delegate to ChunkAssembler if present
         if let Some(assembler) = &self.chunk_assembler {
@@ -201,30 +204,32 @@ impl CASEngine {
     ///
     /// Uses bloom filter as fast negative cache: if bloom says "not present",
     /// skip the filesystem stat. False positives fall through to transport.
-    pub fn content_exists(&self, etag: &str) -> bool {
+    pub fn content_exists(&self, content_id: &str) -> bool {
         // Bloom fast-reject: definitely absent → skip I/O.
         if let Ok(bloom) = self.bloom.read() {
-            if !bloom.check(etag) {
+            if !bloom.check(content_id) {
                 return false;
             }
         }
-        self.transport.exists(etag)
+        self.transport.exists(content_id)
     }
 
     /// Get content size by hash.
-    pub fn content_size(&self, etag: &str) -> Result<u64, CASError> {
-        self.transport.blob_size(etag).map_err(|e| match e.kind() {
-            io::ErrorKind::NotFound => CASError::NotFound(etag.to_string()),
-            _ => CASError::IOError(e),
-        })
+    pub fn content_size(&self, content_id: &str) -> Result<u64, CASError> {
+        self.transport
+            .blob_size(content_id)
+            .map_err(|e| match e.kind() {
+                io::ErrorKind::NotFound => CASError::NotFound(content_id.to_string()),
+                _ => CASError::IOError(e),
+            })
     }
 
     /// Delete content by hash.
-    pub fn delete_content(&self, etag: &str) -> Result<(), CASError> {
+    pub fn delete_content(&self, content_id: &str) -> Result<(), CASError> {
         self.transport
-            .remove_blob(etag)
+            .remove_blob(content_id)
             .map_err(|e| match e.kind() {
-                io::ErrorKind::NotFound => CASError::NotFound(etag.to_string()),
+                io::ErrorKind::NotFound => CASError::NotFound(content_id.to_string()),
                 _ => CASError::IOError(e),
             })
     }
@@ -247,11 +252,11 @@ impl CASEngine {
     ///
     /// Fast path: `meta_exists` short-circuits — single-blob content has no
     /// `.meta` sidecar, so this is O(stat).
-    pub fn is_chunked(&self, etag: &str) -> bool {
-        if !self.transport.meta_exists(etag) {
+    pub fn is_chunked(&self, content_id: &str) -> bool {
+        if !self.transport.meta_exists(content_id) {
             return false;
         }
-        let data = match self.transport.read_meta(etag) {
+        let data = match self.transport.read_meta(content_id) {
             Ok(d) => d,
             Err(_) => return false,
         };
@@ -269,27 +274,33 @@ impl CASEngine {
     /// `.meta` sidecar (which records the pre-chunking size). For single
     /// blobs, delegates to `transport.blob_size`. Mirrors Python
     /// `CDCEngine.get_size` + `CASAddressingEngine.get_content_size`.
-    pub fn get_size(&self, etag: &str) -> Result<u64, CASError> {
-        if self.transport.meta_exists(etag) {
-            let data = self.transport.read_meta(etag).map_err(|e| match e.kind() {
-                io::ErrorKind::NotFound => CASError::NotFound(etag.to_string()),
-                _ => CASError::IOError(e),
-            })?;
+    pub fn get_size(&self, content_id: &str) -> Result<u64, CASError> {
+        if self.transport.meta_exists(content_id) {
+            let data = self
+                .transport
+                .read_meta(content_id)
+                .map_err(|e| match e.kind() {
+                    io::ErrorKind::NotFound => CASError::NotFound(content_id.to_string()),
+                    _ => CASError::IOError(e),
+                })?;
             let parsed: Value = serde_json::from_slice(&data)
                 .map_err(|e| CASError::IOError(io::Error::new(io::ErrorKind::InvalidData, e)))?;
             return Ok(parsed.get("size").and_then(|n| n.as_u64()).unwrap_or(0));
         }
-        self.content_size(etag)
+        self.content_size(content_id)
     }
 
     /// Delete chunked content: manifest blob + `.meta` + every chunk blob +
     /// chunk `.meta`. Best-effort (errors swallowed like Python
     /// `contextlib.suppress`) — GC reachability scan is the backstop.
-    pub fn delete_chunked(&self, etag: &str) -> Result<(), CASError> {
-        let manifest_data = self.transport.read_blob(etag).map_err(|e| match e.kind() {
-            io::ErrorKind::NotFound => CASError::NotFound(etag.to_string()),
-            _ => CASError::IOError(e),
-        })?;
+    pub fn delete_chunked(&self, content_id: &str) -> Result<(), CASError> {
+        let manifest_data = self
+            .transport
+            .read_blob(content_id)
+            .map_err(|e| match e.kind() {
+                io::ErrorKind::NotFound => CASError::NotFound(content_id.to_string()),
+                _ => CASError::IOError(e),
+            })?;
         let manifest: Value = serde_json::from_slice(&manifest_data)
             .map_err(|e| CASError::IOError(io::Error::new(io::ErrorKind::InvalidData, e)))?;
 
@@ -302,8 +313,8 @@ impl CASEngine {
             }
         }
 
-        let _ = self.transport.remove_blob(etag);
-        let _ = self.transport.remove_meta(etag);
+        let _ = self.transport.remove_blob(content_id);
+        let _ = self.transport.remove_meta(content_id);
         Ok(())
     }
 
@@ -311,11 +322,11 @@ impl CASEngine {
     /// with an empty origin set.
     pub fn read_chunked_range(
         &self,
-        etag: &str,
+        content_id: &str,
         start: u64,
         end: u64,
     ) -> Result<Vec<u8>, CASError> {
-        self.read_chunked_range_with_origins(etag, start, end, &[])
+        self.read_chunked_range_with_origins(content_id, start, end, &[])
     }
 
     /// Read byte range `[start, end)` from chunked content. Fetches + verifies
@@ -324,7 +335,7 @@ impl CASEngine {
     /// `CDCEngine.read_chunked_range`.
     pub fn read_chunked_range_with_origins(
         &self,
-        etag: &str,
+        content_id: &str,
         start: u64,
         end: u64,
         origins: &[String],
@@ -332,10 +343,13 @@ impl CASEngine {
         if end <= start {
             return Ok(Vec::new());
         }
-        let manifest_data = self.transport.read_blob(etag).map_err(|e| match e.kind() {
-            io::ErrorKind::NotFound => CASError::NotFound(etag.to_string()),
-            _ => CASError::IOError(e),
-        })?;
+        let manifest_data = self
+            .transport
+            .read_blob(content_id)
+            .map_err(|e| match e.kind() {
+                io::ErrorKind::NotFound => CASError::NotFound(content_id.to_string()),
+                _ => CASError::IOError(e),
+            })?;
         let manifest: Value = serde_json::from_slice(&manifest_data)
             .map_err(|e| CASError::IOError(io::Error::new(io::ErrorKind::InvalidData, e)))?;
         let chunks = manifest

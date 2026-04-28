@@ -305,7 +305,7 @@ class PyKernel:
         size: int,
         entry_type: int,
         version: int = 1,
-        etag: str | None = None,
+        content_id: str | None = None,
         zone_id: str | None = None,
         mime_type: str | None = None,
         last_writer_address: str | None = None,
@@ -549,7 +549,7 @@ class PySysWriteResult:
     version: int
     size: int
     is_new: bool
-    old_etag: str | None
+    old_content_id: str | None
     old_size: int | None
     old_version: int | None
     old_modified_at_ms: int | None

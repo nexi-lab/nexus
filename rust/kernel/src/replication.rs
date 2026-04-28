@@ -96,7 +96,7 @@ impl ReplicationScanner {
     ///
     /// Semantics (path-first, matching Python `ContentReplicationService`):
     ///
-    /// 1. `metastore.list(zone_prefix)` — get all entries (no etag skip).
+    /// 1. `metastore.list(zone_prefix)` — get all entries (no content_id skip).
     /// 2. `resolve_policy(entry.path)` — skip entries with no policy.
     /// 3. Dispatch by target type:
     ///    - `Mount(m)`: intra-node `sys_read` → `sys_write` (router picks mount).

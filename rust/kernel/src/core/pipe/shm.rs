@@ -68,6 +68,7 @@ use crate::pipe::PipeError;
 // ---------------------------------------------------------------------------
 
 /// Read a u32 from mmap at the given offset.
+#[cfg(test)]
 #[inline]
 fn read_u32(base: *const u8, off: usize) -> u32 {
     unsafe {
@@ -125,7 +126,13 @@ pub struct SharedMemoryPipeBackend {
     // they are inherited as readable fds)
     notify_data_wr: i32,  // writer writes here after push (wakes reader)
     notify_space_wr: i32, // reader writes here after pop (wakes writer)
+    // `is_creator` + `shm_path` are read only by the test-only `cleanup()`
+    // helper; production kernel cleans up via the tempfile drop semantics
+    // it was constructed with.  Allowed dead so `#[deny(warnings)]` in
+    // release builds doesn't trip.
+    #[allow(dead_code)]
     is_creator: bool,
+    #[allow(dead_code)]
     shm_path: String,
 }
 

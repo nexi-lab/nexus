@@ -56,6 +56,7 @@ use crate::stream::StreamError;
 // Header accessors (same pattern as shm_pipe.rs)
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 #[inline]
 fn read_u32(base: *const u8, off: usize) -> u32 {
     unsafe { (base.add(off) as *const u32).read() }
@@ -95,7 +96,12 @@ pub struct SharedMemoryStreamBackend {
     mmap: memmap2::MmapMut,
     capacity: usize,
     notify_data_wr: i32, // writer writes here after push
+    // `is_creator` + `shm_path` are read only by the test-only `cleanup()`
+    // helper; production kernel cleans up via tempfile drop semantics.
+    // Allowed dead so `#[deny(warnings)]` in release builds doesn't trip.
+    #[allow(dead_code)]
     is_creator: bool,
+    #[allow(dead_code)]
     shm_path: String,
 }
 

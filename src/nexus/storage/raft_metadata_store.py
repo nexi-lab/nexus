@@ -11,12 +11,13 @@ Usage:
     # Without Raft (mode != 'federation'):
     store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
 
-    # With Raft (mode='federation', via ZoneManager + ZoneHandle):
+    # With Raft (mode='federation', via federation control-plane):
     import nexus_runtime
     kernel = nexus_runtime.PyKernel()
-    kernel.zone_create("root", ["2@peer:2126"])
-    handle = mgr.create_zone("root", ["2@peer:2126"])
-    store = RaftMetadataStore(engine=handle, zone_id="root")
+    nexus_runtime.install_federation_wiring(kernel)
+    nexus_runtime.federation_create_zone(kernel, "root")
+    # Reads route through ``kernel.sys_*`` syscalls; federation state
+    # is observable via the ``/__sys__/zones/`` procfs namespace.
 """
 
 import builtins
@@ -105,10 +106,11 @@ class RaftMetadataStore(MetastoreABC):
         store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         store.put(metadata)
 
-        # With Raft (via kernel zone ops + ZoneHandle):
+        # With Raft (via federation control-plane):
         import nexus_runtime
         kernel = nexus_runtime.PyKernel()
-        kernel.zone_create("root", ["2@peer:2126"])
+        nexus_runtime.install_federation_wiring(kernel)
+        nexus_runtime.federation_create_zone(kernel, "root")
         # Construct via embedded(); the kernel wires the per-zone handle
         # internally. Direct ZoneHandle construction is internal API.
         store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")

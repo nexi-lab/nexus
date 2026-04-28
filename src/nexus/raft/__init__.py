@@ -25,13 +25,16 @@ Example (Metastore - embedded mode):
     store.set_metadata("/path/to/file", metadata_bytes)
     metadata = store.get_metadata("/path/to/file")
 
-Example (consensus mode — via kernel zone_* methods):
+Example (consensus mode — via syscalls + federation control-plane):
     import nexus_runtime
     kernel = nexus_runtime.PyKernel()
-    kernel.zone_create("root", ["2@peer:2126"])
-    kernel.zone_mount("root", "/data", "shared-zone")
+    nexus_runtime.install_federation_wiring(kernel)
+    # Mount-tied lifecycle: sys_setattr DT_MOUNT auto-creates zones.
+    kernel.sys_setattr("/data", entry_type=2, backend_name="federation",
+                       zone_id="shared-zone")
     # Read/write through kernel.sys_* like any path; mount routes to the
-    # shared-zone raft group.
+    # shared-zone raft group.  Read federation state via the
+    # ``/__sys__/zones/`` procfs view.
 """
 
 import logging

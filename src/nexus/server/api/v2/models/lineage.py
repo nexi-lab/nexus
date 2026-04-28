@@ -10,7 +10,7 @@ class UpstreamEntry(ApiModel):
 
     path: str
     version: int = 0
-    etag: str = ""
+    content_id: str = ""
     access_type: str = "content"
 
 
@@ -32,7 +32,7 @@ class DownstreamEntry(ApiModel):
     downstream_urn: str
     downstream_path: str | None = None
     upstream_version: int = 0
-    upstream_etag: str = ""
+    upstream_content_id: str = ""
     access_type: str = "content"
     agent_id: str = ""
     created_at: str | None = None
@@ -52,9 +52,9 @@ class StaleEntry(ApiModel):
     downstream_urn: str
     downstream_path: str | None = None
     recorded_version: int = 0
-    recorded_etag: str = ""
+    recorded_content_id: str = ""
     current_version: int = 0
-    current_etag: str = ""
+    current_content_id: str = ""
     agent_id: str = ""
 
 
@@ -63,7 +63,7 @@ class StaleResponse(ApiModel):
 
     upstream_path: str
     current_version: int = 0
-    current_etag: str = ""
+    current_content_id: str = ""
     stale: list[StaleEntry] = []
     total: int = 0
 

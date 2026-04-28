@@ -47,7 +47,7 @@ def session(engine):
 def _make_metadata(
     path: str = "/test/file.txt",
     size: int = 1024,
-    etag: str | None = "sha256-abc123",
+    content_id: str | None = "sha256-abc123",
     mime_type: str | None = "text/plain",
     version: int = 1,
     zone_id: str | None = "root",
@@ -61,7 +61,7 @@ def _make_metadata(
     return FileMetadata(
         path=path,
         size=size,
-        etag=etag,
+        content_id=content_id,
         mime_type=mime_type,
         version=version,
         zone_id=zone_id,
@@ -100,7 +100,7 @@ class TestRecordCreate:
         metadata = _make_metadata(
             path="/zone1/docs/readme.md",
             size=2048,
-            etag="sha256-xyz789",
+            content_id="sha256-xyz789",
             mime_type="text/markdown",
             zone_id="zone1",
             owner_id="user-42",
@@ -119,15 +119,15 @@ class TestRecordCreate:
         # Verify field name translations (proto name -> SQLAlchemy column)
         assert fp.virtual_path == metadata.path  # path -> virtual_path
         assert fp.size_bytes == metadata.size  # size -> size_bytes
-        assert fp.content_hash == metadata.etag  # etag -> content_hash
+        assert fp.content_id == metadata.content_id  # content_id -> content_id
         assert fp.file_type == metadata.mime_type  # mime_type -> file_type
         assert fp.zone_id == metadata.zone_id
         assert fp.posix_uid == metadata.owner_id  # owner_id -> posix_uid
         assert fp.current_version == 1
 
-    def test_creates_version_history_when_etag_present(self, session: Session) -> None:
-        """When etag is set, a VersionHistoryModel entry should be created."""
-        metadata = _make_metadata(etag="sha256-abc")
+    def test_creates_version_history_when_content_id_present(self, session: Session) -> None:
+        """When content_id is set, a VersionHistoryModel entry should be created."""
+        metadata = _make_metadata(content_id="sha256-abc")
         recorder = VersionRecorder(session)
         recorder.record_write(metadata, is_new=True, created_by="user-1")
         session.commit()
@@ -142,14 +142,14 @@ class TestRecordCreate:
 
         assert vh.resource_type == "file"
         assert vh.version_number == 1
-        assert vh.content_hash == "sha256-abc"
+        assert vh.content_id == "sha256-abc"
         assert vh.parent_version_id is None
         assert vh.source_type == "original"
         assert vh.created_by == "user-1"
 
-    def test_no_version_history_when_etag_none(self, session: Session) -> None:
-        """When etag is None, no VersionHistoryModel should be created."""
-        metadata = _make_metadata(etag=None)
+    def test_no_version_history_when_content_id_none(self, session: Session) -> None:
+        """When content_id is None, no VersionHistoryModel should be created."""
+        metadata = _make_metadata(content_id=None)
         recorder = VersionRecorder(session)
         recorder.record_write(metadata, is_new=True)
         session.commit()
@@ -186,7 +186,7 @@ class TestRecordCreate:
         assert deleted is not None
 
         # Create new entry at same path
-        second = _make_metadata(path="/test/reuse.txt", etag="new-hash")
+        second = _make_metadata(path="/test/reuse.txt", content_id="new-hash")
         recorder3 = VersionRecorder(session)
         recorder3.record_write(second, is_new=True)
         session.commit()
@@ -203,11 +203,11 @@ class TestRecordCreate:
             .all()
         )
         assert len(active) == 1
-        assert active[0].content_hash == "new-hash"
+        assert active[0].content_id == "new-hash"
 
     def test_duplicate_create_event_same_hash_is_idempotent(self, session: Session) -> None:
         """A repeated create event for an active path should not violate uniqueness."""
-        metadata = _make_metadata(path="/test/dup.txt", etag="same-hash")
+        metadata = _make_metadata(path="/test/dup.txt", content_id="same-hash")
         recorder = VersionRecorder(session)
         recorder.record_write(metadata, is_new=True)
         session.commit()
@@ -242,8 +242,8 @@ class TestRecordCreate:
 
     def test_create_event_for_existing_path_with_new_hash_updates(self, session: Session) -> None:
         """A create-labeled event for an active path with new content is an update."""
-        first = _make_metadata(path="/test/dup-new-content.txt", etag="hash-1")
-        second = _make_metadata(path="/test/dup-new-content.txt", etag="hash-2", size=2048)
+        first = _make_metadata(path="/test/dup-new-content.txt", content_id="hash-1")
+        second = _make_metadata(path="/test/dup-new-content.txt", content_id="hash-2", size=2048)
         recorder = VersionRecorder(session)
         recorder.record_write(first, is_new=True)
         session.commit()
@@ -258,7 +258,7 @@ class TestRecordCreate:
                 FilePathModel.deleted_at.is_(None),
             )
         ).scalar_one()
-        assert fp.content_hash == "hash-2"
+        assert fp.content_id == "hash-2"
         assert fp.size_bytes == 2048
         assert fp.current_version == 2
 
@@ -271,7 +271,7 @@ class TestRecordCreate:
             .scalars()
             .all()
         )
-        assert [v.content_hash for v in versions] == ["hash-1", "hash-2"]
+        assert [v.content_id for v in versions] == ["hash-1", "hash-2"]
 
     def test_defaults_zone_to_default(self, session: Session) -> None:
         """When zone_id is None, should default to ROOT_ZONE_ID ('root')."""
@@ -287,11 +287,11 @@ class TestRecordCreate:
         assert fp.zone_id == ROOT_ZONE_ID
 
     def test_zero_byte_create_still_gets_version_history(self, session: Session) -> None:
-        """A legitimate empty-file create (size=0, etag present) must still
+        """A legitimate empty-file create (size=0, content_id present) must still
         get current_version=1 and a VersionHistoryModel entry so it is tracked
         in version history.  Regression guard: the FUSE phantom-version fix
         must not suppress version history for all size-0 creates."""
-        metadata = _make_metadata(size=0, etag="blake3-empty")
+        metadata = _make_metadata(size=0, content_id="blake3-empty")
         recorder = VersionRecorder(session)
         recorder.record_write(metadata, is_new=True)
         session.commit()
@@ -308,7 +308,7 @@ class TestRecordCreate:
         ).scalar_one()
 
         assert vh.version_number == 1
-        assert vh.content_hash == "blake3-empty"
+        assert vh.content_id == "blake3-empty"
         assert vh.size_bytes == 0
 
 
@@ -322,7 +322,7 @@ class TestRecordUpdate:
 
     def _create_existing(self, session: Session) -> FilePathModel:
         """Helper to create an existing file for update tests."""
-        metadata = _make_metadata(etag="original-hash")
+        metadata = _make_metadata(content_id="original-hash")
         recorder = VersionRecorder(session)
         recorder.record_write(metadata, is_new=True)
         session.commit()
@@ -336,7 +336,7 @@ class TestRecordUpdate:
 
         updated = _make_metadata(
             size=4096,
-            etag="updated-hash",
+            content_id="updated-hash",
             mime_type="application/json",
         )
         recorder = VersionRecorder(session)
@@ -348,14 +348,14 @@ class TestRecordUpdate:
         ).scalar_one()
 
         assert fp.size_bytes == 4096
-        assert fp.content_hash == "updated-hash"
+        assert fp.content_id == "updated-hash"
         assert fp.file_type == "application/json"
 
     def test_increments_version(self, session: Session) -> None:
-        """Update with etag should increment current_version."""
+        """Update with content_id should increment current_version."""
         self._create_existing(session)
 
-        updated = _make_metadata(etag="v2-hash")
+        updated = _make_metadata(content_id="v2-hash")
         recorder = VersionRecorder(session)
         recorder.record_write(updated, is_new=False)
         session.commit()
@@ -370,7 +370,7 @@ class TestRecordUpdate:
         """Update should create a version entry linked to the previous version."""
         self._create_existing(session)
 
-        updated = _make_metadata(etag="v2-hash")
+        updated = _make_metadata(content_id="v2-hash")
         recorder = VersionRecorder(session)
         recorder.record_write(updated, is_new=False)
         session.commit()
@@ -391,16 +391,16 @@ class TestRecordUpdate:
 
         assert len(versions) == 2
         assert versions[0].version_number == 1
-        assert versions[0].content_hash == "original-hash"
+        assert versions[0].content_id == "original-hash"
         assert versions[1].version_number == 2
-        assert versions[1].content_hash == "v2-hash"
+        assert versions[1].content_id == "v2-hash"
         assert versions[1].parent_version_id == versions[0].version_id
 
-    def test_no_version_bump_without_etag(self, session: Session) -> None:
-        """Update without etag should not increment version or create history."""
+    def test_no_version_bump_without_content_id(self, session: Session) -> None:
+        """Update without content_id should not increment version or create history."""
         self._create_existing(session)
 
-        updated = _make_metadata(etag=None)
+        updated = _make_metadata(content_id=None)
         recorder = VersionRecorder(session)
         recorder.record_write(updated, is_new=False)
         session.commit()
@@ -409,7 +409,7 @@ class TestRecordUpdate:
             select(FilePathModel).where(FilePathModel.virtual_path == "/test/file.txt")
         ).scalar_one()
 
-        # Version should remain at 1 (no etag = no version bump)
+        # Version should remain at 1 (no content_id = no version bump)
         assert fp.current_version == 1
 
         # Only one version history entry (from create)
@@ -425,7 +425,7 @@ class TestRecordUpdate:
     def test_fallback_to_create_when_not_found(self, session: Session) -> None:
         """If file not found in RecordStore, update should fall back to create."""
         # Don't create existing — simulate file exists in Raft but not in PG
-        metadata = _make_metadata(etag="orphan-hash")
+        metadata = _make_metadata(content_id="orphan-hash")
         recorder = VersionRecorder(session)
         recorder.record_write(metadata, is_new=False)  # is_new=False but doesn't exist
         session.commit()
@@ -435,7 +435,7 @@ class TestRecordUpdate:
         ).scalar_one_or_none()
 
         assert fp is not None
-        assert fp.content_hash == "orphan-hash"
+        assert fp.content_id == "orphan-hash"
         assert fp.current_version == 1  # Created as version 1
 
 
@@ -500,8 +500,8 @@ class TestRecordRename:
     def test_rename_to_existing_destination_retires_old_row(self, session: Session) -> None:
         """A delayed rename event should not violate the active path uniqueness index."""
         recorder = VersionRecorder(session)
-        old_metadata = _make_metadata(path="/test/old.txt", etag="old-hash", zone_id="root")
-        new_metadata = _make_metadata(path="/test/new.txt", etag="new-hash", zone_id="root")
+        old_metadata = _make_metadata(path="/test/old.txt", content_id="old-hash", zone_id="root")
+        new_metadata = _make_metadata(path="/test/new.txt", content_id="new-hash", zone_id="root")
         recorder.record_write(old_metadata, is_new=True)
         recorder.record_write(new_metadata, is_new=True)
         session.commit()
@@ -529,7 +529,7 @@ class TestRecordRename:
 
         assert old_row.deleted_at is not None
         assert len(active_new_rows) == 1
-        assert active_new_rows[0].content_hash == "new-hash"
+        assert active_new_rows[0].content_id == "new-hash"
 
 
 # ---------------------------------------------------------------------------

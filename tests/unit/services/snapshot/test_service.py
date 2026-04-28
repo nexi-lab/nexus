@@ -297,7 +297,7 @@ class TestCommit:
 
         # Mock metadata store to return matching hash (no conflict)
         meta = MagicMock()
-        meta.etag = "new-hash"
+        meta.content_id = "new-hash"
         snapshot_service._metadata_store.get.return_value = meta
 
         snapshot_service.registry.register("txn-1")
@@ -344,7 +344,7 @@ class TestCommit:
 
         # Metadata store returns different hash (conflict!)
         meta = MagicMock()
-        meta.etag = "different-hash"
+        meta.content_id = "different-hash"
         snapshot_service._metadata_store.get.return_value = meta
 
         snapshot_service.registry.register("txn-1")
@@ -420,7 +420,7 @@ class TestRollback:
         mock_metadata_store.put.assert_called_once()
         restored = mock_metadata_store.put.call_args[0][0]
         assert restored.path == "/file.txt"
-        assert restored.etag == "original-hash"
+        assert restored.content_id == "original-hash"
 
         # Should release CAS hold
         mock_cas_store.release.assert_called_with("original-hash")

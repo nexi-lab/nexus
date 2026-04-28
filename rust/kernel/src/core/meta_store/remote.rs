@@ -57,7 +57,7 @@ impl MetaStore for RemoteMetaStore {
             "path": path,
             "entry_type": metadata.entry_type,
             "size": metadata.size,
-            "etag": metadata.etag,
+            "content_id": metadata.content_id,
             "version": metadata.version,
             "zone_id": metadata.zone_id,
             "mime_type": metadata.mime_type,
@@ -242,8 +242,8 @@ fn parse_metadata_from_json(value: &serde_json::Value) -> Result<FileMetadata, M
             .unwrap_or("")
             .to_string(),
         size: obj.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
-        etag: obj
-            .get("etag")
+        content_id: obj
+            .get("content_id")
             .or_else(|| obj.get("content_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),

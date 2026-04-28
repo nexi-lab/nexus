@@ -315,7 +315,7 @@ class TestNexusFSFileReader:
         # matches the current bytes.  The caller (``IndexingService``) must
         # fall through to ``read_text`` which validates against the raw-bytes
         # hash; otherwise a cross-zone collision or pre-reindex rewrite can
-        # latch stale markdown against fresh ``indexed_content_hash``.
+        # latch stale markdown against fresh ``indexed_content_id``.
         nx = MagicMock()
         nx.metadata.get_searchable_text = MagicMock(return_value="stale cached markdown")
         reader = _NexusFSFileReader(nx)

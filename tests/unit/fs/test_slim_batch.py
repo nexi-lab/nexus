@@ -4,9 +4,9 @@ Boots a real NexusFS kernel (SQLite + CASLocalBackend) and exercises the kernel
 batch APIs - no mocks, no external server process required.
 
 Verifies:
-- write_batch returns correct metadata (etag, version, size)
+- write_batch returns correct metadata (content_id, version, size)
 - read_batch returns correct content and metadata
-- Round-trip: write then read produces identical bytes and etags
+- Round-trip: write then read produces identical bytes and content_ids
 - Partial mode: missing path returns error item, not exception
 - Strict mode: missing path raises NexusFileNotFoundError
 - Binary content survives round-trip intact
@@ -74,7 +74,7 @@ class TestSlimWriteBatch:
         r = results[0]
         assert r["size"] == 5
         assert r["version"] >= 1
-        assert r.get("etag") is not None
+        assert r.get("content_id") is not None
 
     @pytest.mark.asyncio
     async def test_write_multiple_files(self, slim: NexusFS) -> None:
@@ -191,7 +191,7 @@ class TestSlimReadBatch:
 
 class TestSlimBatchRoundTrip:
     @pytest.mark.asyncio
-    async def test_write_then_read_etag_matches(self, slim: NexusFS) -> None:
+    async def test_write_then_read_content_id_matches(self, slim: NexusFS) -> None:
         write_results = slim.write_batch(
             [
                 ("/files/rt_a.txt", b"payload A"),
@@ -208,9 +208,9 @@ class TestSlimBatchRoundTrip:
         assert read_results[1]["content"] == b"payload B"
 
         # ETags match
-        if write_results[0].get("etag") and read_results[0].get("etag"):
-            assert read_results[0]["etag"] == write_results[0]["etag"]
-            assert read_results[1]["etag"] == write_results[1]["etag"]
+        if write_results[0].get("content_id") and read_results[0].get("content_id"):
+            assert read_results[0]["content_id"] == write_results[0]["content_id"]
+            assert read_results[1]["content_id"] == write_results[1]["content_id"]
 
     @pytest.mark.asyncio
     async def test_large_batch_50_files(self, slim: NexusFS) -> None:

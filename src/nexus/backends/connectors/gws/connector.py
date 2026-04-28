@@ -311,15 +311,15 @@ class DocsConnector(PathCLIBackend):
             )
         raise ValueError(f"Document not found: {name}")
 
-    def read_content(self, content_hash: str, context: Any = None) -> bytes:
+    def read_content(self, content_id: str, context: Any = None) -> bytes:
         """Read a Google Doc by resolving the selected display name back to a document id."""
         from nexus.contracts.exceptions import BackendError
 
         backend_path = ""
         if context and hasattr(context, "backend_path") and context.backend_path:
             backend_path = str(context.backend_path)
-        elif content_hash:
-            backend_path = str(content_hash)
+        elif content_id:
+            backend_path = str(content_id)
 
         try:
             doc_id = self._resolve_doc_id(backend_path, context)
@@ -1127,7 +1127,7 @@ class GmailConnector(PathCLIBackend):
 
     def read_content(
         self,
-        content_hash: str,
+        content_id: str,
         context: Any = None,
     ) -> bytes:
         """Read a Gmail message as YAML via gws CLI.
@@ -1142,10 +1142,10 @@ class GmailConnector(PathCLIBackend):
         from nexus.backends.connectors.gws._gmail_utils import extract_body
         from nexus.contracts.exceptions import BackendError
 
-        # Extract message ID from content_hash or context.backend_path.
+        # Extract message ID from content_id or context.backend_path.
         # Filename format: threadId-msgId.yaml  →  msg_id is the last segment.
-        msg_id = content_hash
-        filename = content_hash
+        msg_id = content_id
+        filename = content_id
         if context and hasattr(context, "backend_path") and context.backend_path:
             filename = context.backend_path.rstrip("/").rsplit("/", 1)[-1]
         # Strip .yaml suffix then take the last "-" segment regardless of source.
@@ -1253,7 +1253,7 @@ class GmailConnector(PathCLIBackend):
                 size=1,
                 mtime=datetime.now(UTC),
                 backend_version=hid,
-                content_hash=f"gmail:{path}",
+                content_id=f"gmail:{path}",
             )
 
         return SimpleNamespace(success=True, data=fi)
@@ -1726,14 +1726,14 @@ class CalendarConnector(PathCLIBackend):
 
     def read_content(
         self,
-        content_hash: str,
+        content_id: str,
         context: Any = None,
     ) -> bytes:
         """Read a calendar event as YAML via gws CLI."""
         from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
-        event_id = content_hash
+        event_id = content_id
         cal_id = "primary"
         try:
             if context and hasattr(context, "backend_path") and context.backend_path:
@@ -1771,7 +1771,7 @@ class CalendarConnector(PathCLIBackend):
         if self.is_directory(path, context):
             fi = FileInfo(size=0, mtime=datetime.now(UTC))
         else:
-            fi = FileInfo(size=1, mtime=datetime.now(UTC), content_hash=f"cal:{path}")
+            fi = FileInfo(size=1, mtime=datetime.now(UTC), content_id=f"cal:{path}")
         return SimpleNamespace(success=True, data=fi)
 
     def is_directory(self, path: str, context: Any = None) -> bool:

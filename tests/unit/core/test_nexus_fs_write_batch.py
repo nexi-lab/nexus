@@ -43,11 +43,11 @@ class TestWriteBatchHappyPath:
             assert results[i]["size"] == len(content)
 
     @pytest.mark.asyncio
-    def test_write_batch_returns_etag(self, nx):
+    def test_write_batch_returns_content_id(self, nx):
         results = nx.write_batch([("/files/a.txt", b"content")])
-        assert "etag" in results[0]
-        assert isinstance(results[0]["etag"], str)
-        assert len(results[0]["etag"]) > 0
+        assert "content_id" in results[0]
+        assert isinstance(results[0]["content_id"], str)
+        assert len(results[0]["content_id"]) > 0
 
     @pytest.mark.asyncio
     def test_write_batch_returns_version(self, nx):
@@ -62,7 +62,7 @@ class TestWriteBatchHappyPath:
 
     @pytest.mark.asyncio
     def test_write_batch_deduplicates_content(self, nx):
-        """Same content written to different paths should share the same hash."""
+        """Same content written to different paths shares the same content version (hash)."""
         content = b"identical content"
         results = nx.write_batch(
             [
@@ -70,7 +70,10 @@ class TestWriteBatchHappyPath:
                 ("/files/b.txt", content),
             ]
         )
-        assert results[0]["etag"] == results[1]["etag"]
+        # content_id is the addressing key (path for PAS, hash for CAS); for
+        # PAS the two paths differ so content_id differs. The CAS-style hash
+        # dedup signal lives in `version` for both backend types.
+        assert results[0]["version"] == results[1]["version"]
 
 
 class TestWriteBatchEmptyInput:

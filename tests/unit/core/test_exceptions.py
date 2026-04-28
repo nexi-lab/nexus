@@ -238,8 +238,8 @@ def test_conflict_error_is_expected() -> None:
     error = ConflictError("/path/file.txt", "etag-old", "etag-new")
     assert error.is_expected is True
     assert error.path == "/path/file.txt"
-    assert error.expected_etag == "etag-old"
-    assert error.current_etag == "etag-new"
+    assert error.expected_content_id == "etag-old"
+    assert error.current_content_id == "etag-new"
 
 
 def test_audit_log_error_is_unexpected() -> None:

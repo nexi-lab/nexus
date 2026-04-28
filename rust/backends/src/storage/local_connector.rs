@@ -114,7 +114,7 @@ impl ObjectStore for LocalConnectorBackend {
             }
             let hash = lib::hash::hash_content(content);
             return Ok(WriteResult {
-                content_id: hash.clone(),
+                content_id: content_id.to_string(),
                 version: hash,
                 size: content.len() as u64,
             });
@@ -145,7 +145,7 @@ impl ObjectStore for LocalConnectorBackend {
         let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
         let hash = lib::hash::hash_content(&final_bytes);
         Ok(WriteResult {
-            content_id: hash.clone(),
+            content_id: content_id.to_string(),
             version: hash,
             size: final_bytes.len() as u64,
         })
@@ -153,20 +153,19 @@ impl ObjectStore for LocalConnectorBackend {
 
     fn read_content(
         &self,
-        _content_id: &str,
-        backend_path: &str,
+        content_id: &str,
         _ctx: &kernel::kernel::OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
-        if backend_path.is_empty() {
+        if content_id.is_empty() {
             return Err(StorageError::IOError(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "LocalConnectorBackend requires backend_path",
+                "LocalConnectorBackend requires content_id",
             )));
         }
-        let file_path = self.resolve_path(backend_path)?;
+        let file_path = self.resolve_path(content_id)?;
         fs::read(&file_path).map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
-                StorageError::NotFound(backend_path.to_string())
+                StorageError::NotFound(content_id.to_string())
             } else {
                 StorageError::IOError(e)
             }
@@ -227,7 +226,7 @@ impl ObjectStore for LocalConnectorBackend {
         let content = fs::read(&dst).map_err(StorageError::IOError)?;
         let hash = lib::hash::hash_content(&content);
         Ok(WriteResult {
-            content_id: hash.clone(),
+            content_id: dst_path.to_string(),
             version: hash,
             size,
         })

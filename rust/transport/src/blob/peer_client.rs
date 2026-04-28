@@ -129,16 +129,20 @@ impl PeerBlobClient {
         Arc::clone(&entry)
     }
 
-    /// Fetch a blob (chunk or manifest) from `address` asynchronously.
+    /// Fetch content from ``address`` asynchronously, using the
+    /// store-and-forward ``ReadBlob`` RPC: send opaque ``content_id``,
+    /// receive bytes. The peer's data plane decides locally whether
+    /// ``content_id`` is a VFS path (federation read) or a CAS hash
+    /// (chunk dedup) — caller doesn't care.
     ///
-    /// Returns `Err(..)` on transport errors OR when the peer reports
-    /// `is_error=true` (blob not found on that peer).
-    pub(crate) async fn fetch_blob_async(
+    /// Returns ``Err(..)`` on transport errors OR when the peer reports
+    /// ``error`` (content not found / not routable on that peer).
+    pub(crate) async fn fetch_async(
         &self,
         address: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<Vec<u8>, String> {
-        // Global cap: total concurrent chunk fetches across all peers.
+        // Global cap: total concurrent fetches across all peers.
         let _global_permit = self
             .global_semaphore
             .clone()
@@ -153,18 +157,17 @@ impl PeerBlobClient {
             .map_err(|e| format!("per-peer semaphore closed: {e}"))?;
 
         let channel = self.channel_for(address).await?;
-        // R20.18.7: ReadBlob now lives on the raft `ZoneApiService`
+        // R20.18.7: ReadBlob lives on the raft ``ZoneApiService``
         // (co-located with consensus on the advertised raft port —
         // inherits cluster mTLS). Message caps match the server:
         // tonic's default 4 MiB decode cap would reject any CAS
         // chunk above that threshold (16 MiB CDC boundary).
-        // SSOT: `contracts::MAX_GRPC_MESSAGE_BYTES`.
+        // SSOT: ``contracts::MAX_GRPC_MESSAGE_BYTES``.
         let mut client = ZoneApiServiceClient::new(channel)
             .max_decoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES)
             .max_encoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES);
         let mut request = tonic::Request::new(ReadBlobRequest {
-            content_hash: content_hash.to_string(),
-            path: String::new(),
+            content_id: content_id.to_string(),
         });
         request.set_timeout(self.timeout);
 
@@ -179,69 +182,10 @@ impl PeerBlobClient {
         Ok(resp.content)
     }
 
-    /// Blocking sync wrapper — drives `fetch_blob_async` via the shared
+    /// Blocking sync wrapper — drives ``fetch_async`` via the shared
     /// runtime. Safe to call from any thread.
-    pub fn fetch_blob(&self, address: &str, content_hash: &str) -> Result<Vec<u8>, String> {
-        let fut = self.fetch_blob_async(address, content_hash);
-        self.runtime.block_on(fut)
-    }
-
-    /// Fetch a file by VFS path from a peer's NexusVFSService gRPC endpoint
-    /// (port 2028).  Used by the path-first replication scanner to pull content
-    /// that has been replicated to a peer's metastore but not yet locally stored.
-    ///
-    /// `peer_vfs_addr` is the peer's VFS gRPC endpoint (`host:port` or
-    /// `scheme://host:port`).  The channel pool is shared with `fetch_blob_async`
-    /// so TLS material installed via `install_tls_config` applies here too.
-    pub(crate) async fn fetch_path_async(
-        &self,
-        peer_vfs_addr: &str,
-        path: &str,
-    ) -> Result<Vec<u8>, String> {
-        let _global_permit = self
-            .global_semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| format!("global semaphore closed: {e}"))?;
-        let per_peer = self.per_peer_semaphore(peer_vfs_addr);
-        let _peer_permit = per_peer
-            .acquire_owned()
-            .await
-            .map_err(|e| format!("per-peer semaphore closed: {e}"))?;
-
-        let channel = self.channel_for(peer_vfs_addr).await?;
-        let mut client =
-            kernel::kernel::vfs_proto::nexus_vfs_service_client::NexusVfsServiceClient::new(
-                channel,
-            )
-            .max_decoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES)
-            .max_encoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES);
-        let mut request = tonic::Request::new(kernel::kernel::vfs_proto::ReadRequest {
-            path: path.to_string(),
-            auth_token: String::new(),
-            content_id: String::new(),
-        });
-        request.set_timeout(self.timeout);
-
-        let resp = client
-            .read(request)
-            .await
-            .map_err(|e| format!("VFS Read {} path {}: {}", peer_vfs_addr, path, e))?
-            .into_inner();
-        if resp.is_error {
-            let msg = String::from_utf8_lossy(&resp.error_payload).to_string();
-            return Err(format!(
-                "VFS Read {} path {} error: {}",
-                peer_vfs_addr, path, msg
-            ));
-        }
-        Ok(resp.content)
-    }
-
-    /// Blocking sync wrapper for `fetch_path_async`. Safe to call from any thread.
-    pub fn fetch_path(&self, peer_vfs_addr: &str, path: &str) -> Result<Vec<u8>, String> {
-        let fut = self.fetch_path_async(peer_vfs_addr, path);
+    pub(crate) fn fetch(&self, address: &str, content_id: &str) -> Result<Vec<u8>, String> {
+        let fut = self.fetch_async(address, content_id);
         self.runtime.block_on(fut)
     }
 }
@@ -264,17 +208,13 @@ pub fn build_kernel_runtime() -> Arc<tokio::runtime::Runtime> {
 // Kernel holds an `Arc<dyn kernel::hal::peer::PeerBlobClient>` (HAL
 // trait declared in kernel since Phase 1).  The concrete impl moved
 // here in Phase 4 (full); the impl block below adapts the inherent
-// `fetch_blob` / `fetch_path` / `install_tls_config` methods to the
-// trait's `fetch_etag` / `fetch_path` / `install_tls` shape.
+// `fetch` / `install_tls_config` methods to the trait's `fetch` /
+// `install_tls` shape.
 
 impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
-    fn fetch_path(&self, addr: &str, path: &str) -> kernel::hal::peer::PeerBlobResult<Vec<u8>> {
+    fn fetch(&self, addr: &str, content_id: &str) -> kernel::hal::peer::PeerBlobResult<Vec<u8>> {
         // Inherent method shadows the trait method — fully-qualify.
-        PeerBlobClient::fetch_path(self, addr, path)
-    }
-
-    fn fetch_etag(&self, addr: &str, etag: &str) -> kernel::hal::peer::PeerBlobResult<Vec<u8>> {
-        PeerBlobClient::fetch_blob(self, addr, etag)
+        PeerBlobClient::fetch(self, addr, content_id)
     }
 
     fn install_tls(&self, ca_pem: &[u8], cert_pem: Option<&[u8]>, key_pem: Option<&[u8]>) {
@@ -332,13 +272,13 @@ mod tests {
     }
 
     #[test]
-    fn test_fetch_blob_unreachable_peer_errors() {
+    fn test_fetch_unreachable_peer_errors() {
         // Use a port we know is unbound so we test the error path without
         // needing a live peer. Short timeout = fast test.
         let rt = build_kernel_runtime();
         let mut client = PeerBlobClient::new(Arc::clone(&rt));
         client.timeout = Duration::from_millis(200);
-        let result = client.fetch_blob(
+        let result = client.fetch(
             "127.0.0.1:1",
             "0000000000000000000000000000000000000000000000000000000000000000",
         );

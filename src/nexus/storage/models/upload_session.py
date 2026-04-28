@@ -55,7 +55,7 @@ class UploadSessionModel(Base):
 
     # Progress
     parts_received: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    content_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -91,7 +91,7 @@ class UploadSessionModel(Base):
             "backend_upload_id": self.backend_upload_id,
             "backend_name": self.backend_name,
             "parts_received": self.parts_received,
-            "content_hash": self.content_hash,
+            "content_id": self.content_id,
         }
 
     @classmethod
@@ -113,7 +113,7 @@ class UploadSessionModel(Base):
             backend_upload_id=session.backend_upload_id,
             backend_name=session.backend_name,
             parts_received=session.parts_received,
-            content_hash=session.content_hash,
+            content_id=session.content_id,
         )
 
     def __repr__(self) -> str:

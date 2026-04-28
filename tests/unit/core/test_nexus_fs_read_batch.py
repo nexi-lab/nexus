@@ -10,7 +10,7 @@ Tests cover:
 - Large batches
 - Path validation (invalid path always raises)
 - Result ordering matches input order
-- Metadata fields (etag, version, modified_at, size)
+- Metadata fields (content_id, version, modified_at, size)
 """
 
 import pytest
@@ -67,10 +67,10 @@ class TestReadBatchHappyPath:
         assert results[2]["content"] == b"second"
 
     @pytest.mark.asyncio
-    def test_read_batch_returns_etag(self, nx):
+    def test_read_batch_returns_content_id(self, nx):
         nx.write("/files/a.txt", b"content")
         results = nx.read_batch(["/files/a.txt"])
-        assert "etag" in results[0]
+        assert "content_id" in results[0]
 
     @pytest.mark.asyncio
     def test_read_batch_returns_version(self, nx):
@@ -85,12 +85,12 @@ class TestReadBatchHappyPath:
         assert results[0]["size"] == 5
 
     @pytest.mark.asyncio
-    def test_read_batch_matches_write_batch_etag(self, nx):
-        """etag from read_batch should match the etag from write_batch."""
+    def test_read_batch_matches_write_batch_content_id(self, nx):
+        """content_id from read_batch should match the content_id from write_batch."""
         write_results = nx.write_batch([("/files/a.txt", b"data")])
         read_results = nx.read_batch(["/files/a.txt"])
-        if write_results[0].get("etag") and read_results[0].get("etag"):
-            assert read_results[0]["etag"] == write_results[0]["etag"]
+        if write_results[0].get("content_id") and read_results[0].get("content_id"):
+            assert read_results[0]["content_id"] == write_results[0]["content_id"]
 
 
 class TestReadBatchEmptyInput:

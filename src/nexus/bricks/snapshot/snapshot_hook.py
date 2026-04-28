@@ -5,8 +5,8 @@ as a proper KernelDispatch hook, eliminating direct kernel coupling
 to the snapshot service.
 
 Data mapping:
-    WriteHookContext.old_metadata  → snapshot_hash (etag), metadata_snapshot
-    WriteHookContext.content_hash  → new content hash
+    WriteHookContext.old_metadata  → snapshot_hash (content_id), metadata_snapshot
+    WriteHookContext.content_id  → new content hash
     DeleteHookContext.metadata     → pre-delete snapshot_hash, metadata_snapshot
 """
 
@@ -45,7 +45,7 @@ class SnapshotWriteHook:
         if txn_id is None:
             return
         old = ctx.old_metadata
-        snapshot_hash = old.etag if old else None
+        snapshot_hash = old.content_id if old else None
         metadata_snapshot: dict[str, Any] | None = None
         if old:
             metadata_snapshot = {
@@ -58,7 +58,7 @@ class SnapshotWriteHook:
             ctx.path,
             snapshot_hash,
             metadata_snapshot,
-            ctx.content_hash,
+            ctx.content_id,
         )
 
     def on_post_delete(self, ctx: DeleteHookContext) -> None:
@@ -68,10 +68,10 @@ class SnapshotWriteHook:
         meta = ctx.metadata  # pre-delete state
         if meta is None:
             return
-        snapshot_hash = meta.etag
+        snapshot_hash = meta.content_id
         # backend_name/physical_path were dropped from FileMetadata; the
         # kernel resolves a file's physical location at read time via the
-        # mount/route layer, so the snapshot only needs etag + path-level
+        # mount/route layer, so the snapshot only needs content_id + path-level
         # facts to restore a file from CAS.
         metadata_snapshot: dict[str, Any] = {
             "size": meta.size,

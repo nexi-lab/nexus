@@ -23,7 +23,7 @@ def hook(mock_svc: MagicMock) -> SnapshotWriteHook:
 
 def _make_meta(**overrides: object) -> MagicMock:
     meta = MagicMock()
-    meta.etag = overrides.get("etag", "old-etag")
+    meta.content_id = overrides.get("content_id", "old-etag")
     meta.size = overrides.get("size", 1024)
     meta.version = overrides.get("version", 3)
     meta.modified_at = overrides.get("modified_at", datetime(2026, 1, 1, tzinfo=UTC))
@@ -57,7 +57,7 @@ class TestOnPostWrite:
             content=b"data",
             context=None,
             old_metadata=old,
-            content_hash="new-hash",
+            content_id="new-hash",
         )
         hook.on_post_write(ctx)
 
@@ -80,7 +80,7 @@ class TestOnPostWrite:
             content=b"data",
             context=None,
             old_metadata=_make_meta(),
-            content_hash="new-hash",
+            content_id="new-hash",
         )
         hook.on_post_write(ctx)
         mock_svc.track_write.assert_not_called()
@@ -94,7 +94,7 @@ class TestOnPostWrite:
             content=b"data",
             context=None,
             old_metadata=None,
-            content_hash="hash-1",
+            content_id="hash-1",
             is_new_file=True,
         )
         hook.on_post_write(ctx)

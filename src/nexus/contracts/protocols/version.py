@@ -6,7 +6,7 @@ creating / restoring workspace-level snapshots.
 
 Storage Affinity: **RecordStore** (version history records) +
                   **ObjectStore** (CAS content blobs per version) +
-                  **Metastore** (file metadata with etag/version pointers).
+                  **Metastore** (file metadata with content_id/version pointers).
 
 References:
     - docs/architecture/ops-scenario-matrix.md  (S3)

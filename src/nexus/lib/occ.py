@@ -74,17 +74,19 @@ async def occ_write(
             if meta is None:
                 raise ConflictError(
                     path=path,
-                    expected_etag=if_match,
-                    current_etag="(file does not exist)",
+                    expected_content_id=if_match,
+                    current_content_id="(file does not exist)",
                 )
-            current_etag = (
-                meta.get("etag") if isinstance(meta, dict) else getattr(meta, "etag", None)
+            current_content_id = (
+                meta.get("content_id")
+                if isinstance(meta, dict)
+                else getattr(meta, "content_id", None)
             )
-            if current_etag != if_match:
+            if current_content_id != if_match:
                 raise ConflictError(
                     path=path,
-                    expected_etag=if_match,
-                    current_etag=current_etag or "(no etag)",
+                    expected_content_id=if_match,
+                    current_content_id=current_content_id or "(no content_id)",
                 )
 
     result: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)

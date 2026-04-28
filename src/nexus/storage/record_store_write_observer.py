@@ -8,7 +8,7 @@ on_mkdir()/on_rmdir() after Metastore mutations. This observer handles
 all RecordStore side-effects in a single synchronous transaction.
 
 The kernel passes kernel-native ``FileMetadata``.  The observer derives
-``snapshot_hash`` (``metadata.etag``) and ``metadata_snapshot``
+``snapshot_hash`` (``metadata.content_id``) and ``metadata_snapshot``
 (``metadata.to_dict()``) internally — these are RecordStore concerns.
 
 Architecture:
@@ -126,7 +126,7 @@ class RecordStoreWriteObserver:
         """Sync a write operation to RecordStore.
 
         metadata_snapshot stores the NEW metadata (for MCL replay).
-        snapshot_hash stores the old etag (for CAS undo).
+        snapshot_hash stores the old content_id (for CAS undo).
         """
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.version_recorder import VersionRecorder
@@ -139,7 +139,7 @@ class RecordStoreWriteObserver:
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    snapshot_hash=old_metadata.etag if old_metadata else None,
+                    snapshot_hash=old_metadata.content_id if old_metadata else None,
                     metadata_snapshot=metadata.to_dict(),
                     status="success",
                     entity_urn=urn,
@@ -193,7 +193,7 @@ class RecordStoreWriteObserver:
                         path=metadata.path,
                         zone_id=zone_id,
                         agent_id=agent_id,
-                        snapshot_hash=metadata.etag,
+                        snapshot_hash=metadata.content_id,
                         metadata_snapshot=metadata.to_dict(),
                         status="success",
                         flush=False,
@@ -254,7 +254,7 @@ class RecordStoreWriteObserver:
                     new_path=new_path,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    snapshot_hash=metadata.etag if metadata else None,
+                    snapshot_hash=metadata.content_id if metadata else None,
                     metadata_snapshot=metadata.to_dict() if metadata else None,
                     status="success",
                     entity_urn=old_urn,
@@ -304,7 +304,7 @@ class RecordStoreWriteObserver:
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    snapshot_hash=metadata.etag if metadata else None,
+                    snapshot_hash=metadata.content_id if metadata else None,
                     metadata_snapshot=metadata.to_dict() if metadata else None,
                     status="success",
                     entity_urn=urn,

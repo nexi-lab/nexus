@@ -29,7 +29,7 @@
 /// - `path` is the authoritative file identifier. Read-side backend dispatch
 ///   uses it (minus the local mount prefix) — there is no separate
 ///   `physical_path` because for path-addressed backends it is just
-///   `path - mount_prefix`, and for content-addressed backends `etag` is
+///   `path - mount_prefix`, and for content-addressed backends `content_id` is
 ///   the key.
 /// - `last_writer_address` records `host:port` of the node that performed
 ///   the most recent write (overwritten on every successful write). Pure
@@ -41,7 +41,7 @@
 pub struct FileMetadata {
     pub path: String,
     pub size: u64,
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     pub version: u32,
     pub entry_type: u8,
     pub zone_id: Option<String>,
@@ -304,12 +304,12 @@ pub trait MetaStore: Send + Sync {
     }
 
     /// Bulk fetch content IDs (etags) for many paths. Default impl
-    /// loops `get` and returns the etag from each record.
+    /// loops `get` and returns the content_id from each record.
     fn batch_get_content_ids(&self, paths: &[String]) -> Result<Vec<PathEtag>, MetaStoreError> {
         let mut out = Vec::with_capacity(paths.len());
         for p in paths {
-            let etag = self.get(p)?.and_then(|m| m.etag);
-            out.push((p.clone(), etag));
+            let content_id = self.get(p)?.and_then(|m| m.content_id);
+            out.push((p.clone(), content_id));
         }
         Ok(out)
     }

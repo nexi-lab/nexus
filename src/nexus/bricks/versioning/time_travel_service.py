@@ -270,15 +270,15 @@ class TimeTravelService:
             current_path = session.execute(path_stmt).scalar_one_or_none()
 
             if current_path:
-                content_hash = current_path.content_hash
-                if content_hash is None:
+                content_id = current_path.content_id
+                if content_id is None:
                     raise NexusFileNotFoundError(f"File {path} has no content hash")
                 if self._backend is not None:
-                    content = self._backend.read_content(content_hash, context=None)
+                    content = self._backend.read_content(content_id, context=None)
                 metadata_dict = {
                     "size": current_path.size_bytes,
                     "version": current_path.current_version,
-                    "etag": current_path.content_hash,
+                    "content_id": current_path.content_id,
                     "modified_at": current_path.updated_at.isoformat()
                     if current_path.updated_at
                     else None,

@@ -2,7 +2,7 @@
 
 Verifies that GC correctly:
 - Deletes unreferenced blobs past grace period
-- Keeps referenced blobs (etag in metastore)
+- Keeps referenced blobs (content_id in metastore)
 - Keeps unreferenced blobs within grace period
 - Expands CDC manifests to keep chunk blobs
 """
@@ -24,15 +24,15 @@ from nexus.backends.engines.cas_gc import CASGarbageCollector
 @dataclass
 class FakeMetaEntry:
     path: str
-    etag: str | None = None
+    content_id: str | None = None
 
 
 class FakeMetastore:
     def __init__(self, entries: list[FakeMetaEntry] | None = None):
         self._entries = entries or []
 
-    def add(self, path: str, etag: str) -> None:
-        self._entries.append(FakeMetaEntry(path=path, etag=etag))
+    def add(self, path: str, content_id: str) -> None:
+        self._entries.append(FakeMetaEntry(path=path, content_id=content_id))
 
     def list(
         self, prefix: str = "", recursive: bool = True, **kwargs: object
@@ -73,7 +73,7 @@ class TestGCReachability:
         assert not engine.content_exists(content_id)
 
     def test_gc_keeps_referenced_blob(self, engine: CASLocalBackend) -> None:
-        """Referenced blob (etag in metastore) → NOT deleted."""
+        """Referenced blob (content_id in metastore) → NOT deleted."""
         result = engine.write_content(b"still in use")
         content_id = result.content_id
 

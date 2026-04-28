@@ -90,9 +90,9 @@ class TestEncryptedRoundtrip:
         plaintext = b"hello world"
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
-        content_hash = write_resp.content_id
+        content_id = write_resp.content_id
 
-        read_resp = wrapper.read_content(content_hash)
+        read_resp = wrapper.read_content(content_id)
         assert read_resp == plaintext
 
     def test_binary_roundtrip(self) -> None:
@@ -174,15 +174,15 @@ class TestEncryptedErrors:
 
         # Write valid content
         write_resp = wrapper.write_content(b"valid data")
-        content_hash = write_resp.content_id
+        content_id = write_resp.content_id
 
         # Corrupt the stored ciphertext
-        stored = storage[content_hash]
-        storage[content_hash] = stored[:10] + b"\xff" * 10 + stored[20:]
+        stored = storage[content_id]
+        storage[content_id] = stored[:10] + b"\xff" * 10 + stored[20:]
 
         # Read should raise ValueError from failed decryption
         with pytest.raises(ValueError):
-            wrapper.read_content(content_hash)
+            wrapper.read_content(content_id)
 
     def test_wrong_key_fails(self) -> None:
         from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
@@ -200,11 +200,11 @@ class TestEncryptedErrors:
 
         # Write with key1
         write_resp = wrapper1.write_content(b"secret data")
-        content_hash = write_resp.content_id
+        content_id = write_resp.content_id
 
         # Read with key2 should raise ValueError
         with pytest.raises(ValueError):
-            wrapper2.read_content(content_hash)
+            wrapper2.read_content(content_id)
 
     def test_inner_read_error_propagated(self) -> None:
         from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig

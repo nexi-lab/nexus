@@ -104,7 +104,7 @@ class MemoryResponse(ApiModel):
 
     memory_id: str
     content: str | dict[str, Any]
-    content_hash: str | None = None
+    content_id: str | None = None
     scope: str
     memory_type: str | None = None
     importance: float | None = None

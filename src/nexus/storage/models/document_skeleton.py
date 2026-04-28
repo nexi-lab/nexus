@@ -8,7 +8,7 @@ Design decisions:
     - path_tokens column dropped (Issue #3725 review, 6A): virtual_path and title
       are fed as separate BM25S fields so the daemon can apply column weights.
       Pre-tokenized text would be redundant and create a rename-sync hazard.
-    - skeleton_content_hash = sha256(first 2048 bytes): skip guard prevents
+    - skeleton_content_id = sha256(first 2048 bytes): skip guard prevents
       redundant title re-extraction when file body changes but header doesn't.
     - Bootstrap from DB rows, not file reads: on daemon restart the BM25S index
       is reconstructed from existing rows without touching the file store.
@@ -51,7 +51,7 @@ class DocumentSkeletonModel(Base):
 
     # sha256(content[:2048]) — skip guard for SkeletonPipeConsumer.
     # If unchanged, title re-extraction is skipped entirely.
-    skeleton_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    skeleton_content_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     indexed_at: Mapped[datetime] = mapped_column(
         DateTime,

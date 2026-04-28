@@ -96,7 +96,7 @@ impl ReplicationScanner {
     ///
     /// Semantics (path-first, matching Python `ContentReplicationService`):
     ///
-    /// 1. `metastore.list(zone_prefix)` — get all entries (no etag skip).
+    /// 1. `metastore.list(zone_prefix)` — get all entries (no content_id skip).
     /// 2. `resolve_policy(entry.path)` — skip entries with no policy.
     /// 3. Dispatch by target type:
     ///    - `Mount(m)`: intra-node `sys_read` → `sys_write` (router picks mount).
@@ -154,7 +154,7 @@ impl ReplicationScanner {
                     let peer_client = Arc::clone(&kernel.peer_client.read());
                     let fetched: Option<Vec<u8>> = addrs
                         .iter()
-                        .find_map(|addr| peer_client.fetch_path(addr, &entry.path).ok());
+                        .find_map(|addr| peer_client.fetch(addr, &entry.path).ok());
                     match fetched {
                         Some(content) => match kernel.sys_write(&entry.path, &ctx, &content, 0) {
                             Ok(r) if r.hit => replicated += 1,

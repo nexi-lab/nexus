@@ -45,7 +45,7 @@ class TestFilePathModel:
         file_path = FilePathModel(
             virtual_path="/test/file.txt",
             size_bytes=1024,
-            content_hash="abc123",
+            content_id="abc123",
             file_type="text/plain",
         )
         session.add(file_path)
@@ -178,7 +178,7 @@ class TestModelIndexes:
         file_paths_indexes = inspector.get_indexes("file_paths")
         index_names = [idx["name"] for idx in file_paths_indexes]
         # v0.5.0: idx_file_paths_zone_id removed - use ReBAC for multi-zone access control
-        assert "idx_file_paths_content_hash" in index_names
+        assert "idx_file_paths_content_id" in index_names
         assert "idx_file_paths_virtual_path" in index_names
 
         # Check file_metadata indexes

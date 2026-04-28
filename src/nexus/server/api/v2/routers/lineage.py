@@ -128,7 +128,7 @@ async def get_downstream(
 async def get_stale(
     path: str = Query(..., description="Upstream file path that changed"),
     current_version: int = Query(..., description="Current version of the upstream file"),
-    current_etag: str = Query(..., description="Current content hash of the upstream file"),
+    current_content_id: str = Query(..., description="Current content hash of the upstream file"),
     lineage_and_zone: tuple[Any, str] = Depends(get_lineage_service),
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
 ) -> StaleResponse:
@@ -138,7 +138,7 @@ async def get_stale(
         results = lineage_svc.check_staleness(
             path,
             current_version=current_version,
-            current_etag=current_etag,
+            current_content_id=current_content_id,
             zone_id=zone_id,
             limit=limit,
         )
@@ -146,7 +146,7 @@ async def get_stale(
         return StaleResponse(
             upstream_path=path,
             current_version=current_version,
-            current_etag=current_etag,
+            current_content_id=current_content_id,
             stale=entries,
             total=len(entries),
         )

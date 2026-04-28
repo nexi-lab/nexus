@@ -104,51 +104,51 @@ class FailingBackend(Backend):
         self._maybe_fail("write_content")
         return self._inner.write_content(content, content_id, offset=offset, context=context)
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         self._maybe_fail("read_content")
-        return self._inner.read_content(content_hash, context)
+        return self._inner.read_content(content_id, context)
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         self._maybe_fail("delete_content")
-        return self._inner.delete_content(content_hash, context)
+        return self._inner.delete_content(content_id, context)
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         self._maybe_fail("content_exists")
-        return self._inner.content_exists(content_hash, context)
+        return self._inner.content_exists(content_id, context)
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         self._maybe_fail("get_content_size")
-        return self._inner.get_content_size(content_hash, context)
+        return self._inner.get_content_size(content_id, context)
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: "OperationContext | None" = None,
         *,
         contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         self._maybe_fail("batch_read_content")
-        return self._inner.batch_read_content(content_hashes, context, contexts=contexts)
+        return self._inner.batch_read_content(content_ids, context, contexts=contexts)
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 8192,
         context: "OperationContext | None" = None,
     ) -> Any:
         self._maybe_fail("stream_content")
-        return self._inner.stream_content(content_hash, chunk_size, context)
+        return self._inner.stream_content(content_id, chunk_size, context)
 
     def stream_range(
         self,
-        content_hash: str,
+        content_id: str,
         start: int,
         end: int,
         chunk_size: int = 8192,
         context: "OperationContext | None" = None,
     ) -> Iterator[bytes]:
         self._maybe_fail("stream_range")
-        return self._inner.stream_range(content_hash, start, end, chunk_size, context)
+        return self._inner.stream_range(content_id, start, end, chunk_size, context)
 
     def write_stream(
         self,

@@ -25,7 +25,7 @@ class TestOperationResult:
 
     def test_degraded_result(self):
         r = OperationResult(
-            value={"etag": "abc"},
+            value={"content_id": "abc"},
             warnings=(OperationWarning("degraded", "tiger_cache", "update failed"),),
         )
         assert r.degraded

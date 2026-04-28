@@ -59,26 +59,26 @@ class _MockBackend(Backend):
             self._ref_counts[h] = 1
         return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash: str, context: Any = None) -> bytes:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return self._content[content_hash]
+    def read_content(self, content_id: str, context: Any = None) -> bytes:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return self._content[content_id]
 
-    def delete_content(self, content_hash: str, context: Any = None) -> None:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        self._ref_counts[content_hash] -= 1
-        if self._ref_counts[content_hash] <= 0:
-            del self._content[content_hash]
-            del self._ref_counts[content_hash]
+    def delete_content(self, content_id: str, context: Any = None) -> None:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        self._ref_counts[content_id] -= 1
+        if self._ref_counts[content_id] <= 0:
+            del self._content[content_id]
+            del self._ref_counts[content_id]
 
-    def content_exists(self, content_hash: str, context: Any = None) -> bool:
-        return content_hash in self._content
+    def content_exists(self, content_id: str, context: Any = None) -> bool:
+        return content_id in self._content
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> int:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return len(self._content[content_hash])
+    def get_content_size(self, content_id: str, context: Any = None) -> int:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return len(self._content[content_id])
 
     def mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
@@ -112,16 +112,16 @@ class _PartialClass:
     ) -> Any:
         return None
 
-    def read_content(self, content_hash: str, context: Any = None) -> Any:
+    def read_content(self, content_id: str, context: Any = None) -> Any:
         return None
 
-    def delete_content(self, content_hash: str, context: Any = None) -> Any:
+    def delete_content(self, content_id: str, context: Any = None) -> Any:
         return None
 
-    def content_exists(self, content_hash: str, context: Any = None) -> Any:
+    def content_exists(self, content_id: str, context: Any = None) -> Any:
         return None
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> Any:
+    def get_content_size(self, content_id: str, context: Any = None) -> Any:
         return None
 
 

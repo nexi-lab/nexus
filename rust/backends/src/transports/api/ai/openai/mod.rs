@@ -122,7 +122,6 @@ impl ObjectStore for OpenAIBackend {
     fn read_content(
         &self,
         content_id: &str,
-        _backend_path: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         self.engine
@@ -190,7 +189,7 @@ mod tests {
         let payload = br#"hello llm backend"#;
         let wr = b.write_content(payload, "", &ctx, 0).unwrap();
         assert_eq!(wr.size, payload.len() as u64);
-        let back = b.read_content(&wr.content_id, "", &ctx).unwrap();
+        let back = b.read_content(&wr.content_id, &ctx).unwrap();
         assert_eq!(back, payload);
     }
 

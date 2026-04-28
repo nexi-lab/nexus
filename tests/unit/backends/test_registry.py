@@ -46,16 +46,16 @@ class DummyBackend(Backend):
     def write_content(self, content, content_id: str = "", *, offset: int = 0, context=None):
         return "hash"
 
-    def read_content(self, content_hash, context=None):
+    def read_content(self, content_id, context=None):
         return b""
 
-    def delete_content(self, content_hash, context=None):
+    def delete_content(self, content_id, context=None):
         pass
 
-    def content_exists(self, content_hash, context=None):
+    def content_exists(self, content_id, context=None):
         return False
 
-    def get_content_size(self, content_hash, context=None):
+    def get_content_size(self, content_id, context=None):
         return 0
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None):

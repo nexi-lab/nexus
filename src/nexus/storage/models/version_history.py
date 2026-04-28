@@ -27,7 +27,7 @@ class VersionHistoryModel(Base):
     - File versions (README.md, documents, etc.)
     - Memory versions (agent memories, facts, etc.)
 
-    CAS-backed: Each version points to immutable content via content_hash.
+    CAS-backed: Each version points to immutable content via content_id.
     """
 
     __tablename__ = "version_history"
@@ -46,7 +46,7 @@ class VersionHistoryModel(Base):
 
     # Version information
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_id: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Content metadata
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -78,7 +78,7 @@ class VersionHistoryModel(Base):
     # Indexes and constraints
     __table_args__ = (
         UniqueConstraint("resource_type", "resource_id", "version_number", name="uq_version"),
-        Index("idx_version_history_content_hash", "content_hash"),
+        Index("idx_version_history_content_id", "content_id"),
         Index("idx_version_history_created_at", "created_at"),
         Index("idx_version_history_parent", "parent_version_id"),
         Index(
@@ -107,8 +107,8 @@ class VersionHistoryModel(Base):
         if self.version_number < 1:
             raise ValidationError(f"version_number must be >= 1, got {self.version_number}")
 
-        if not self.content_hash:
-            raise ValidationError("content_hash is required")
+        if not self.content_id:
+            raise ValidationError("content_id is required")
 
         if self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")

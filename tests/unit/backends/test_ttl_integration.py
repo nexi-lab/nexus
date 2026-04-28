@@ -85,7 +85,7 @@ class TestTTLFullPathIntegration:
         # Write with very small TTL
         ctx = self._make_context(ttl_seconds=0.001)
         result = engine.write_content(b"short lived", context=ctx)
-        content_hash = result.content_id
+        content_id = result.content_id
 
         # Seal so the sweeper can operate
         for eng in transport._ttl_engines.values():
@@ -96,7 +96,7 @@ class TestTTLFullPathIntegration:
 
         # Read should raise NexusFileNotFoundError (expired at read time)
         with pytest.raises(NexusFileNotFoundError):
-            engine.read_content(content_hash)
+            engine.read_content(content_id)
 
         # Run the sweeper
         results = transport.expire_ttl_volumes()

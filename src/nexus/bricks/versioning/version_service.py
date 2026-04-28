@@ -185,7 +185,7 @@ class VersionService:
             raise NexusFileNotFoundError(f"{path} (version {version})")
 
         # Ensure version has content hash
-        if version_meta.etag is None:
+        if version_meta.content_id is None:
             raise NexusFileNotFoundError(f"{path} (version {version}) has no content")
 
         # Read content from backend using DLC
@@ -221,7 +221,7 @@ class VersionService:
                 - created_at: Timestamp when version was created (str)
                 - created_by: User who created the version (str)
                 - size: File size in bytes (int)
-                - etag: Content hash (str)
+                - content_id: Content hash (str)
                 - is_rollback: Whether this is a rollback version (bool)
                 - rollback_from: Original version number if rollback (int|None)
 
@@ -325,13 +325,13 @@ class VersionService:
                 VersionManager.rollback(session, path, version, created_by=created_by)
                 session.commit()
 
-                # Return the target version's content_hash so we can
+                # Return the target version's content_id so we can
                 # update the in-memory metadata store for consistent reads.
                 from sqlalchemy import select
 
                 from nexus.storage.models import FilePathModel
 
-                stmt = select(FilePathModel.content_hash, FilePathModel.size_bytes).where(
+                stmt = select(FilePathModel.content_id, FilePathModel.size_bytes).where(
                     FilePathModel.virtual_path == path,
                     FilePathModel.deleted_at.is_(None),
                 )
@@ -347,7 +347,7 @@ class VersionService:
             if meta is not None:
                 from dataclasses import replace as dc_replace
 
-                updated_meta = dc_replace(meta, etag=new_hash, size=new_size)
+                updated_meta = dc_replace(meta, content_id=new_hash, size=new_size)
                 self.metadata.put(updated_meta)
 
         # Invalidate cache if enabled

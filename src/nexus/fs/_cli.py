@@ -1258,7 +1258,7 @@ def stat(path: str, output_opts: OutputOptions) -> None:
         click.echo(f"  Size:     {d.get('size', 0)}")
         click.echo(f"  Type:     {'directory' if d.get('is_directory') else 'file'}")
         click.echo(f"  MIME:     {d.get('mime_type', '?')}")
-        click.echo(f"  ETag:     {d.get('etag', '?')}")
+        click.echo(f"  Content-ID: {d.get('content_id', '?')}")
         click.echo(f"  Version:  {d.get('version', '?')}")
         if d.get("created_at"):
             click.echo(f"  Created:  {d['created_at']}")

@@ -38,8 +38,18 @@ class TestRecordLineage:
         svc = LineageService(db_session)
         lineage = LineageAspect.from_session_reads(
             reads=[
-                {"path": "/input/a.csv", "version": 3, "etag": "aaa", "access_type": "content"},
-                {"path": "/input/b.csv", "version": 7, "etag": "bbb", "access_type": "content"},
+                {
+                    "path": "/input/a.csv",
+                    "version": 3,
+                    "content_id": "aaa",
+                    "access_type": "content",
+                },
+                {
+                    "path": "/input/b.csv",
+                    "version": 7,
+                    "content_id": "bbb",
+                    "access_type": "content",
+                },
             ],
             agent_id="agent-1",
             agent_generation=1,
@@ -64,7 +74,7 @@ class TestRecordLineage:
         assert len(downstream) == 1
         assert downstream[0]["downstream_urn"] == "urn:nexus:file:root:output123"
         assert downstream[0]["upstream_version"] == 3
-        assert downstream[0]["upstream_etag"] == "aaa"
+        assert downstream[0]["upstream_content_id"] == "aaa"
 
     def test_record_empty_reads_is_noop(self, db_session: Session) -> None:
         svc = LineageService(db_session)
@@ -85,7 +95,7 @@ class TestRecordLineage:
 
         # First write: reads a.csv
         lineage1 = LineageAspect.from_session_reads(
-            reads=[{"path": "/a.csv", "version": 1, "etag": "e1"}],
+            reads=[{"path": "/a.csv", "version": 1, "content_id": "e1"}],
             agent_id="agent-1",
         )
         svc.record_lineage(entity_urn=urn, lineage=lineage1, zone_id=ROOT_ZONE_ID)
@@ -94,7 +104,7 @@ class TestRecordLineage:
 
         # Second write: reads b.csv instead
         lineage2 = LineageAspect.from_session_reads(
-            reads=[{"path": "/b.csv", "version": 2, "etag": "e2"}],
+            reads=[{"path": "/b.csv", "version": 2, "content_id": "e2"}],
             agent_id="agent-1",
         )
         svc.record_lineage(entity_urn=urn, lineage=lineage2, zone_id=ROOT_ZONE_ID)
@@ -116,7 +126,9 @@ class TestGetLineage:
     def test_get_returns_full_payload(self, db_session: Session) -> None:
         svc = LineageService(db_session)
         lineage = LineageAspect(
-            upstream=[{"path": "/in.txt", "version": 1, "etag": "e1", "access_type": "content"}],
+            upstream=[
+                {"path": "/in.txt", "version": 1, "content_id": "e1", "access_type": "content"}
+            ],
             agent_id="agent-x",
             agent_generation=5,
             operation="write_batch",
@@ -144,7 +156,7 @@ class TestFindDownstream:
         svc = LineageService(db_session)
         for i in range(3):
             lineage = LineageAspect.from_session_reads(
-                reads=[{"path": "/shared/config.yaml", "version": 1, "etag": "cfg"}],
+                reads=[{"path": "/shared/config.yaml", "version": 1, "content_id": "cfg"}],
                 agent_id=f"agent-{i}",
             )
             svc.record_lineage(
@@ -168,7 +180,7 @@ class TestFindDownstream:
         svc = LineageService(db_session)
         for zone in ["zone-a", "zone-b"]:
             lineage = LineageAspect.from_session_reads(
-                reads=[{"path": "/shared.txt", "version": 1, "etag": "e1"}],
+                reads=[{"path": "/shared.txt", "version": 1, "content_id": "e1"}],
                 agent_id="agent-1",
             )
             svc.record_lineage(
@@ -187,7 +199,7 @@ class TestFindDownstream:
         svc = LineageService(db_session)
         for i in range(10):
             lineage = LineageAspect.from_session_reads(
-                reads=[{"path": "/popular.txt", "version": 1, "etag": "e1"}],
+                reads=[{"path": "/popular.txt", "version": 1, "content_id": "e1"}],
                 agent_id=f"agent-{i}",
             )
             svc.record_lineage(
@@ -209,12 +221,18 @@ class TestStalenessDetection:
         db_session: Session,
         upstream_path: str,
         upstream_version: int,
-        upstream_etag: str,
+        upstream_content_id: str,
         downstream_urn: str,
     ) -> None:
         svc = LineageService(db_session)
         lineage = LineageAspect.from_session_reads(
-            reads=[{"path": upstream_path, "version": upstream_version, "etag": upstream_etag}],
+            reads=[
+                {
+                    "path": upstream_path,
+                    "version": upstream_version,
+                    "content_id": upstream_content_id,
+                }
+            ],
             agent_id="agent-test",
         )
         svc.record_lineage(
@@ -225,36 +243,36 @@ class TestStalenessDetection:
         )
         db_session.flush()
 
-    def test_not_stale_when_version_and_etag_match(self, db_session: Session) -> None:
+    def test_not_stale_when_version_and_content_id_match(self, db_session: Session) -> None:
         """Upstream unchanged -> not stale."""
         self._setup_lineage(db_session, "/in.csv", 5, "abc123", "urn:nexus:file:root:out1")
         svc = LineageService(db_session)
-        stale = svc.check_staleness("/in.csv", current_version=5, current_etag="abc123")
+        stale = svc.check_staleness("/in.csv", current_version=5, current_content_id="abc123")
         assert len(stale) == 0
 
     def test_stale_when_version_changed(self, db_session: Session) -> None:
         """Upstream version increased -> stale."""
         self._setup_lineage(db_session, "/in.csv", 5, "abc123", "urn:nexus:file:root:out1")
         svc = LineageService(db_session)
-        stale = svc.check_staleness("/in.csv", current_version=6, current_etag="def456")
+        stale = svc.check_staleness("/in.csv", current_version=6, current_content_id="def456")
         assert len(stale) == 1
         assert stale[0]["downstream_urn"] == "urn:nexus:file:root:out1"
         assert stale[0]["recorded_version"] == 5
         assert stale[0]["current_version"] == 6
 
     def test_not_stale_when_identical_content_rewrite(self, db_session: Session) -> None:
-        """Upstream rewritten with identical content (version bumped, etag same) -> not stale.
+        """Upstream rewritten with identical content (version bumped, content_id same) -> not stale.
 
-        Wait — if version changed but etag is same, our check uses AND (both must match).
+        Wait — if version changed but content_id is same, our check uses AND (both must match).
         Version 5 != 6, so it IS stale even though content is same.
         This is correct behavior: we record a mismatch for the user to decide.
-        Actually, per our design: 'Not stale if both version AND etag match'.
-        If version differs but etag is same, it IS flagged as stale.
+        Actually, per our design: 'Not stale if both version AND content_id match'.
+        If version differs but content_id is same, it IS flagged as stale.
         """
         self._setup_lineage(db_session, "/in.csv", 5, "abc123", "urn:nexus:file:root:out1")
         svc = LineageService(db_session)
-        # Same etag but different version
-        stale = svc.check_staleness("/in.csv", current_version=6, current_etag="abc123")
+        # Same content_id but different version
+        stale = svc.check_staleness("/in.csv", current_version=6, current_content_id="abc123")
         # This IS stale because version changed (even though content is the same)
         assert len(stale) == 1
 
@@ -262,7 +280,7 @@ class TestStalenessDetection:
         """Upstream version is OLDER than recorded (rollback) -> stale."""
         self._setup_lineage(db_session, "/in.csv", 10, "abc123", "urn:nexus:file:root:out1")
         svc = LineageService(db_session)
-        stale = svc.check_staleness("/in.csv", current_version=8, current_etag="old_hash")
+        stale = svc.check_staleness("/in.csv", current_version=8, current_content_id="old_hash")
         assert len(stale) == 1
 
     def test_multiple_upstreams_one_stale(self, db_session: Session) -> None:
@@ -270,7 +288,7 @@ class TestStalenessDetection:
         svc = LineageService(db_session)
         # Output A read input at v5
         lineage_a = LineageAspect.from_session_reads(
-            reads=[{"path": "/in.csv", "version": 5, "etag": "e5"}],
+            reads=[{"path": "/in.csv", "version": 5, "content_id": "e5"}],
             agent_id="agent-a",
         )
         svc.record_lineage(
@@ -279,7 +297,7 @@ class TestStalenessDetection:
 
         # Output B read input at v7 (already up to date)
         lineage_b = LineageAspect.from_session_reads(
-            reads=[{"path": "/in.csv", "version": 7, "etag": "e7"}],
+            reads=[{"path": "/in.csv", "version": 7, "content_id": "e7"}],
             agent_id="agent-b",
         )
         svc.record_lineage(
@@ -288,14 +306,14 @@ class TestStalenessDetection:
         db_session.flush()
 
         # Input is now at v7
-        stale = svc.check_staleness("/in.csv", current_version=7, current_etag="e7")
+        stale = svc.check_staleness("/in.csv", current_version=7, current_content_id="e7")
         assert len(stale) == 1
         assert stale[0]["downstream_urn"] == "urn:nexus:file:root:outA"
 
     def test_no_downstream_returns_empty(self, db_session: Session) -> None:
         """No lineage for upstream -> empty stale list."""
         svc = LineageService(db_session)
-        stale = svc.check_staleness("/no/lineage.txt", current_version=1, current_etag="x")
+        stale = svc.check_staleness("/no/lineage.txt", current_version=1, current_content_id="x")
         assert stale == []
 
 
@@ -305,7 +323,7 @@ class TestDeleteLineage:
     def test_delete_removes_aspect_and_reverse_index(self, db_session: Session) -> None:
         svc = LineageService(db_session)
         lineage = LineageAspect.from_session_reads(
-            reads=[{"path": "/in.txt", "version": 1, "etag": "e1"}],
+            reads=[{"path": "/in.txt", "version": 1, "content_id": "e1"}],
             agent_id="agent-1",
         )
         svc.record_lineage(
@@ -342,7 +360,7 @@ class TestAtomicity:
 
         # Record successful lineage first
         lineage = LineageAspect.from_session_reads(
-            reads=[{"path": "/good.txt", "version": 1, "etag": "e1"}],
+            reads=[{"path": "/good.txt", "version": 1, "content_id": "e1"}],
             agent_id="agent-1",
         )
         svc.record_lineage(

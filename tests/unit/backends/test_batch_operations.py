@@ -286,57 +286,57 @@ class MockGCSBackend(Backend):
         self._content[h] = content
         return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash, context=None) -> bytes:
+    def read_content(self, content_id, context=None) -> bytes:
         self.read_count += 1
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return self._content[content_hash]
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return self._content[content_id]
 
     def batch_read_content(
-        self, content_hashes, context=None, *, contexts=None
+        self, content_ids, context=None, *, contexts=None
     ) -> dict[str, bytes | None]:
         """Use the same parallel logic as GCSBackend."""
-        if not content_hashes:
+        if not content_ids:
             return {}
 
         result: dict[str, bytes | None] = {}
 
-        if len(content_hashes) == 1:
+        if len(content_ids) == 1:
             try:
-                data = self.read_content(content_hashes[0], context=context)
-                return {content_hashes[0]: data}
+                data = self.read_content(content_ids[0], context=context)
+                return {content_ids[0]: data}
             except (NexusFileNotFoundError, BackendError):
-                return {content_hashes[0]: None}
+                return {content_ids[0]: None}
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        max_workers = min(self.batch_read_workers, len(content_hashes))
+        max_workers = min(self.batch_read_workers, len(content_ids))
 
-        def read_one(content_hash: str) -> tuple[str, bytes | None]:
+        def read_one(content_id: str) -> tuple[str, bytes | None]:
             try:
-                data = self.read_content(content_hash, context=context)
-                return (content_hash, data)
+                data = self.read_content(content_id, context=context)
+                return (content_id, data)
             except (NexusFileNotFoundError, BackendError):
-                return (content_hash, None)
+                return (content_id, None)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(read_one, h): h for h in content_hashes}
+            futures = {executor.submit(read_one, h): h for h in content_ids}
             for future in as_completed(futures):
                 hash_key, file_content = future.result()
                 result[hash_key] = file_content
 
         return result
 
-    def delete_content(self, content_hash, context=None) -> None:
-        self._content.pop(content_hash, None)
+    def delete_content(self, content_id, context=None) -> None:
+        self._content.pop(content_id, None)
 
-    def content_exists(self, content_hash, context=None) -> bool:
-        return content_hash in self._content
+    def content_exists(self, content_id, context=None) -> bool:
+        return content_id in self._content
 
-    def get_content_size(self, content_hash, context=None) -> int:
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(content_hash)
-        return len(self._content[content_hash])
+    def get_content_size(self, content_id, context=None) -> int:
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(content_id)
+        return len(self._content[content_id])
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
         pass
@@ -443,7 +443,7 @@ class MockS3ConnectorForBatch(PathAddressingEngine):
     def files(self, value: dict[str, bytes]) -> None:
         self._transport.files = value
 
-    def read_content(self, content_hash, context=None) -> bytes:
+    def read_content(self, content_id, context=None) -> bytes:
         """S3-style read that requires context.backend_path."""
         self.read_count += 1
         if not context or not context.backend_path:
@@ -457,36 +457,36 @@ class MockS3ConnectorForBatch(PathAddressingEngine):
         return self._transport.files[blob_path]
 
     def batch_read_content(
-        self, content_hashes, context=None, *, contexts=None
+        self, content_ids, context=None, *, contexts=None
     ) -> dict[str, bytes | None]:
         """S3-style batch read with per-file contexts (mirrors S3ConnectorBackend)."""
-        if not content_hashes:
+        if not content_ids:
             return {}
 
         result: dict[str, bytes | None] = {}
 
-        if len(content_hashes) == 1:
-            ctx = contexts.get(content_hashes[0], context) if contexts else context
+        if len(content_ids) == 1:
+            ctx = contexts.get(content_ids[0], context) if contexts else context
             try:
-                data = self.read_content(content_hashes[0], context=ctx)
-                return {content_hashes[0]: data}
+                data = self.read_content(content_ids[0], context=ctx)
+                return {content_ids[0]: data}
             except (NexusFileNotFoundError, BackendError):
-                return {content_hashes[0]: None}
+                return {content_ids[0]: None}
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        max_workers = min(self.batch_read_workers, len(content_hashes))
+        max_workers = min(self.batch_read_workers, len(content_ids))
 
-        def read_one(content_hash: str) -> tuple[str, bytes | None]:
-            ctx = contexts.get(content_hash, context) if contexts else context
+        def read_one(content_id: str) -> tuple[str, bytes | None]:
+            ctx = contexts.get(content_id, context) if contexts else context
             try:
-                data = self.read_content(content_hash, context=ctx)
-                return (content_hash, data)
+                data = self.read_content(content_id, context=ctx)
+                return (content_id, data)
             except (NexusFileNotFoundError, BackendError):
-                return (content_hash, None)
+                return (content_id, None)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(read_one, h): h for h in content_hashes}
+            futures = {executor.submit(read_one, h): h for h in content_ids}
             for future in as_completed(futures):
                 hash_key, file_content = future.result()
                 result[hash_key] = file_content

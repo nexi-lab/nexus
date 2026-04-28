@@ -39,7 +39,7 @@ class TestFullRoundTrip:
     def test_write_read_delete_cycle(self, backend: IsolatedBackend) -> None:
         data = b"integration-roundtrip"
         wr = backend.write_content(data)
-        assert wr.content_id  # WriteResult with content_hash
+        assert wr.content_id  # WriteResult with content_id
 
         rd = backend.read_content(wr.content_id)
         assert rd == data
@@ -76,10 +76,10 @@ class TestConcurrentRequests:
         # Write one piece of content
         data = b"concurrent-test"
         wr = backend.write_content(data)
-        content_hash = wr.content_id
+        content_id = wr.content_id
 
         def read_one(_: int) -> bool:
-            rd = backend.read_content(content_hash)
+            rd = backend.read_content(content_id)
             return rd == data
 
         with ThreadPoolExecutor(max_workers=5) as tp:
@@ -106,7 +106,7 @@ class TestPoolRestartRecovery:
                         pass
                 # Pool should have restarted — next valid call should work
                 wr = backend.write_content(b"after-restart")
-                assert wr.content_id  # WriteResult with content_hash
+                assert wr.content_id  # WriteResult with content_id
             finally:
                 backend.close()
 

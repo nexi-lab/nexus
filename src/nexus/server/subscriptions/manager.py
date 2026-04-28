@@ -623,7 +623,7 @@ class SubscriptionManager:
         test_data = {
             "file_path": "/test/webhook-test.txt",
             "size": 100,
-            "etag": "test-etag",
+            "content_id": "test-content-id",
             "version": 1,
             "created": True,
             "zone_id": zone_id,

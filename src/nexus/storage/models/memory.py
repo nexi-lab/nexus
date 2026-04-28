@@ -35,7 +35,7 @@ class MemoryModel(Base):
 
     memory_id: Mapped[str] = uuid_pk()
 
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_id: Mapped[str] = mapped_column(String(64), nullable=False)
 
     zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -157,8 +157,8 @@ class MemoryModel(Base):
 
     def validate(self) -> None:
         """Validate memory model before database operations."""
-        if not self.content_hash:
-            raise ValidationError("content_hash is required")
+        if not self.content_id:
+            raise ValidationError("content_id is required")
         valid_scopes = ["agent", "user", "zone", "global"]
         if self.scope not in valid_scopes:
             raise ValidationError(f"scope must be one of {valid_scopes}, got {self.scope}")

@@ -22,7 +22,7 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
     {
         "path",
         "size",
-        "etag",
+        "content_id",
         "mime_type",
         "created_at",
         "modified_at",
@@ -63,7 +63,7 @@ def _utcnow_naive() -> datetime:
 PROTO_TO_SQL: dict[str, str | None] = {
     "path": "virtual_path",
     "size": "size_bytes",
-    "etag": "content_hash",
+    "content_id": "content_id",
     "mime_type": "file_type",
     "created_at": "created_at",
     "modified_at": "updated_at",
@@ -94,7 +94,7 @@ class MetadataMapper:
         return metadata_pb2.FileMetadata(
             path=metadata.path,
             size=metadata.size,
-            etag=metadata.etag or "",
+            content_id=metadata.content_id or "",
             mime_type=metadata.mime_type or "",
             created_at=metadata.created_at.isoformat() if metadata.created_at else "",
             modified_at=metadata.modified_at.isoformat() if metadata.modified_at else "",
@@ -124,7 +124,7 @@ class MetadataMapper:
         return FileMetadata(
             path=proto.path,
             size=proto.size,
-            etag=proto.etag or None,
+            content_id=proto.content_id or None,
             mime_type=proto.mime_type or None,
             created_at=created_at,
             modified_at=modified_at,
@@ -145,7 +145,7 @@ class MetadataMapper:
         return {
             "path": metadata.path,
             "size": metadata.size,
-            "etag": metadata.etag,
+            "content_id": metadata.content_id,
             "mime_type": metadata.mime_type,
             "created_at": metadata.created_at.isoformat() if metadata.created_at else None,
             "modified_at": metadata.modified_at.isoformat() if metadata.modified_at else None,
@@ -193,7 +193,7 @@ class MetadataMapper:
         values: dict[str, Any] = {
             "virtual_path": metadata.path,
             "size_bytes": metadata.size or 0,
-            "content_hash": metadata.etag,
+            "content_id": metadata.content_id,
             "file_type": metadata.mime_type,
             "created_at": _to_naive(metadata.created_at) or _utcnow_naive(),
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
@@ -209,7 +209,7 @@ class MetadataMapper:
         """Convert FileMetadata to dict for UPDATE operations."""
         return {
             "size_bytes": metadata.size or 0,
-            "content_hash": metadata.etag,
+            "content_id": metadata.content_id,
             "file_type": metadata.mime_type,
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
         }

@@ -55,19 +55,19 @@ class BenchMockBackend:
         self._store[h] = content
         return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash: str, context: Any = None) -> bytes:  # noqa: ARG002
-        if content_hash not in self._store:
-            raise FileNotFoundError(f"CAS blob {content_hash} not found")
-        return self._store[content_hash]
+    def read_content(self, content_id: str, context: Any = None) -> bytes:  # noqa: ARG002
+        if content_id not in self._store:
+            raise FileNotFoundError(f"CAS blob {content_id} not found")
+        return self._store[content_id]
 
-    def delete_content(self, content_hash: str, context: Any = None) -> None:  # noqa: ARG002
-        self._store.pop(content_hash, None)
+    def delete_content(self, content_id: str, context: Any = None) -> None:  # noqa: ARG002
+        self._store.pop(content_id, None)
 
-    def content_exists(self, content_hash: str, context: Any = None) -> bool:  # noqa: ARG002
-        return content_hash in self._store
+    def content_exists(self, content_id: str, context: Any = None) -> bool:  # noqa: ARG002
+        return content_id in self._store
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> int:  # noqa: ARG002
-        return len(self._store.get(content_hash, b""))
+    def get_content_size(self, content_id: str, context: Any = None) -> int:  # noqa: ARG002
+        return len(self._store.get(content_id, b""))
 
     def mkdir(
         self,
@@ -132,13 +132,13 @@ def main() -> None:
     # ── Direct baseline ──────────────────────────────────────────────
     direct = BenchMockBackend()
     wr = direct.write_content(data_1kb)
-    content_hash = wr.data
+    content_id = wr.data
 
     print("=== Direct (no isolation) ===")
     n = 1000
     bench("write_content (1KB)", lambda: direct.write_content(data_1kb), n)
-    bench("read_content (1KB)", lambda: direct.read_content(content_hash), n)
-    bench("content_exists", lambda: direct.content_exists(content_hash), n)
+    bench("read_content (1KB)", lambda: direct.read_content(content_id), n)
+    bench("content_exists", lambda: direct.content_exists(content_id), n)
     bench("list_dir", lambda: direct.list_dir("/"), n)
     print()
 

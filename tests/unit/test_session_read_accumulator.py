@@ -15,14 +15,14 @@ class TestBasicOperations:
 
     def test_record_and_consume(self) -> None:
         acc = SessionReadAccumulator()
-        acc.record_read("agent-1", 1, "/a.txt", version=5, etag="abc")
-        acc.record_read("agent-1", 1, "/b.txt", version=3, etag="def")
+        acc.record_read("agent-1", 1, "/a.txt", version=5, content_id="abc")
+        acc.record_read("agent-1", 1, "/b.txt", version=3, content_id="def")
 
         reads = acc.consume("agent-1", 1)
         assert len(reads) == 2
         assert reads[0]["path"] == "/a.txt"
         assert reads[0]["version"] == 5
-        assert reads[0]["etag"] == "abc"
+        assert reads[0]["content_id"] == "abc"
         assert reads[1]["path"] == "/b.txt"
 
     def test_consume_clears_session(self) -> None:

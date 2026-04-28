@@ -34,7 +34,7 @@ def mock_fs() -> MagicMock:
     fs = MagicMock()
     fs.read.return_value = b"hello world"
     fs.write.return_value = {
-        "etag": "abc123",
+        "content_id": "abc123",
         "version": 1,
         "size": 11,
         "modified_at": "2026-02-17T00:00:00Z",
@@ -48,7 +48,7 @@ def mock_fs() -> MagicMock:
     meta = MagicMock()
     meta.path = "/test.txt"
     meta.size = 11
-    meta.etag = "abc123"
+    meta.content_id = "abc123"
     meta.version = 1
     meta.is_dir = False
     meta.created_at = None

@@ -108,15 +108,15 @@ async def rpc_endpoint(
         if_none_match = request.headers.get("If-None-Match")
         if method == "read" and if_none_match and hasattr(params, "path") and state.nexus_fs:
             try:
-                cached_etag = state.nexus_fs.get_etag(params.path, context=context)
-                if cached_etag:
+                cached_content_id = state.nexus_fs.get_content_id(params.path, context=context)
+                if cached_content_id:
                     client_etag = if_none_match.strip('"')
-                    if client_etag == cached_etag:
+                    if client_etag == cached_content_id:
                         logger.debug(f"Early 304: {params.path} (ETag match, no content read)")
                         return Response(
                             status_code=304,
                             headers={
-                                "ETag": f'"{cached_etag}"',
+                                "ETag": f'"{cached_content_id}"',
                                 "Cache-Control": "private, max-age=60",
                             },
                         )
@@ -197,8 +197,8 @@ async def rpc_endpoint(
             str(e),
             data={
                 "path": e.path,
-                "expected_etag": e.expected_etag,
-                "current_etag": e.current_etag,
+                "expected_content_id": e.expected_content_id,
+                "current_content_id": e.current_content_id,
             },
         )
     except DatabaseError as e:
@@ -225,8 +225,8 @@ def get_cache_headers(method: str, result: Any) -> dict[str, str]:
             headers["ETag"] = f'"{etag}"'
             headers["Cache-Control"] = "private, max-age=60"
         elif isinstance(result, dict):
-            if "etag" in result:
-                headers["ETag"] = f'"{result["etag"]}"'
+            if "content_id" in result:
+                headers["ETag"] = f'"{result["content_id"]}"'
             elif "content" in result and isinstance(result["content"], bytes):
                 etag = hash_content(result["content"])
                 headers["ETag"] = f'"{etag}"'

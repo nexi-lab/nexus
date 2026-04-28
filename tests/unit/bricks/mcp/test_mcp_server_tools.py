@@ -503,7 +503,7 @@ class TestEditFileTool:
         )
 
     async def test_edit_file_with_if_match(self, mock_nx_basic):
-        """Test if_match etag passes through correctly."""
+        """Test if_match content_id passes through correctly."""
         server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")

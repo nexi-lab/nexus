@@ -200,11 +200,11 @@ class BundleReader:
         except KeyError:
             logger.debug("Bundle missing %s", BUNDLE_PATHS["permissions"])
 
-    def read_content_blob(self, content_hash: str) -> bytes | None:
+    def read_content_blob(self, content_id: str) -> bytes | None:
         """Read a content blob from the bundle.
 
         Args:
-            content_hash: SHA-256 hash of the content
+            content_id: SHA-256 hash of the content
 
         Returns:
             Content bytes or None if not found
@@ -212,12 +212,12 @@ class BundleReader:
         if self._tar is None:
             raise RuntimeError("Bundle not open. Call open() first.")
 
-        if len(content_hash) < 2:
+        if len(content_id) < 2:
             return None
 
         # CAS path structure: content/cas/ab/abcdef...
-        prefix = content_hash[:2]
-        blob_path = f"{BUNDLE_PATHS['content']}/{prefix}/{content_hash}"
+        prefix = content_id[:2]
+        blob_path = f"{BUNDLE_PATHS['content']}/{prefix}/{content_id}"
 
         try:
             member = self._tar.getmember(blob_path)

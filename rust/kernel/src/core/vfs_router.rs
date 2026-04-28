@@ -521,15 +521,10 @@ impl VFSRouter {
         &self,
         canonical_key: &str,
         content_id: &str,
-        backend_path: &str,
         ctx: &OperationContext,
     ) -> Option<Vec<u8>> {
         let entry = self.entries.get(canonical_key)?;
-        entry
-            .backend
-            .as_ref()?
-            .read_content(content_id, backend_path, ctx)
-            .ok()
+        entry.backend.as_ref()?.read_content(content_id, ctx).ok()
     }
 
     /// Write content to the mount's backend.

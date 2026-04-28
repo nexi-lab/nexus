@@ -173,11 +173,11 @@ class TimeTravelReader:
 
                     current_path = self.session.execute(path_stmt).scalar_one_or_none()
                     if current_path:
-                        content = self.backend.read_content(current_path.content_hash)
+                        content = self.backend.read_content(current_path.content_id)
                         metadata_dict = {
                             "size": current_path.size_bytes,
                             "version": current_path.current_version,
-                            "etag": current_path.content_hash,
+                            "content_id": current_path.content_id,
                             "modified_at": current_path.updated_at.isoformat()
                             if current_path.updated_at
                             else None,

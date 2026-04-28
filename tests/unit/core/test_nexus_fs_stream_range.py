@@ -60,7 +60,7 @@ class _StubFS:
         meta = self.metadata.get(path)
         if meta is None:
             raise NexusFileNotFoundError(path)
-        content = self._test_backend.read_content(meta.etag or "")
+        content = self._test_backend.read_content(meta.content_id or "")
         if offset:
             content = content[offset:]
         if count is not None:
@@ -84,7 +84,7 @@ def stub_fs():
     # Prevent MagicMock hasattr from matching read_content_range
     del backend.read_content_range
     meta_entry = MagicMock()
-    meta_entry.etag = "sha256:abc123"
+    meta_entry.content_id = "sha256:abc123"
     meta_entry.size = 34
     metadata = MagicMock()
     metadata.get.return_value = meta_entry
@@ -143,15 +143,15 @@ class TestReadRange:
             stub_fs.read_range("/test/missing.txt", 0, 10)
 
     @pytest.mark.asyncio
-    def test_file_with_no_etag_reads_via_sys_read(self, stub_fs):
+    def test_file_with_no_content_id_reads_via_sys_read(self, stub_fs):
         """Post-simplification: read_range delegates to sys_read, which reads
-        via backend regardless of etag presence.  A file with metadata but
-        no etag still returns content (the backend call uses the etag value
-        as content_id, and the mock backend returns canned content)."""
+        via backend regardless of content_id presence.  A file with metadata but
+        no content_id still returns content (the backend call uses the content_id value,
+        and the mock backend returns canned content)."""
         meta = MagicMock()
-        meta.etag = None
+        meta.content_id = None
         stub_fs.metadata.get.return_value = meta
-        # sys_read stub calls backend.read_content(meta.etag or "")
+        # sys_read stub calls backend.read_content(meta.content_id or "")
         # which returns the default mock return value
         result = stub_fs.read_range("/test/empty.txt", 0, 10)
         assert isinstance(result, bytes)

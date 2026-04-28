@@ -459,7 +459,7 @@ class TestDisplayPathReadResolution:
         if content is not None and include_metadata:
             result = {
                 "content": content,
-                "etag": None,
+                "content_id": None,
                 "version": None,
                 "modified_at": None,
                 "size": len(content),

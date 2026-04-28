@@ -32,24 +32,24 @@ class _BenchBackend(Backend):
         self._store[h] = content
         return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash, context=None) -> bytes:
-        data = self._store.get(content_hash)
+    def read_content(self, content_id, context=None) -> bytes:
+        data = self._store.get(content_id)
         if data is None:
-            raise NexusFileNotFoundError(path=content_hash, message="Not found")
+            raise NexusFileNotFoundError(path=content_id, message="Not found")
         return data
 
     def batch_read_content(
-        self, content_hashes, context=None, *, contexts=None
+        self, content_ids, context=None, *, contexts=None
     ) -> dict[str, bytes | None]:
-        return {h: self._store.get(h) for h in content_hashes}
+        return {h: self._store.get(h) for h in content_ids}
 
-    def delete_content(self, content_hash, context=None) -> None:
-        self._store.pop(content_hash, None)
+    def delete_content(self, content_id, context=None) -> None:
+        self._store.pop(content_id, None)
 
-    def get_content_size(self, content_hash, context=None) -> int:
-        data = self._store.get(content_hash)
+    def get_content_size(self, content_id, context=None) -> int:
+        data = self._store.get(content_id)
         if data is None:
-            raise NexusFileNotFoundError(path=content_hash, message="Not found")
+            raise NexusFileNotFoundError(path=content_id, message="Not found")
         return len(data)
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
@@ -104,16 +104,16 @@ class TestBackendOverhead:
     def test_read_overhead(self, bench_backend: _BenchBackend) -> None:
         """read_content() overhead: direct bytes return."""
         result = bench_backend.write_content(b"benchmark read payload")
-        content_hash = result.content_id
+        content_id = result.content_id
 
         # Warmup
         for _ in range(100):
-            bench_backend.read_content(content_hash)
+            bench_backend.read_content(content_id)
 
         iterations = 10_000
         start = time.perf_counter()
         for _ in range(iterations):
-            bench_backend.read_content(content_hash)
+            bench_backend.read_content(content_id)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
 
         # read_content() = dict lookup + direct bytes return
@@ -122,15 +122,15 @@ class TestBackendOverhead:
     def test_get_content_size_overhead(self, bench_backend: _BenchBackend) -> None:
         """get_content_size() overhead: direct int return (lightest op)."""
         result = bench_backend.write_content(b"benchmark size payload")
-        content_hash = result.content_id
+        content_id = result.content_id
 
         for _ in range(100):
-            bench_backend.get_content_size(content_hash)
+            bench_backend.get_content_size(content_id)
 
         iterations = 10_000
         start = time.perf_counter()
         for _ in range(iterations):
-            bench_backend.get_content_size(content_hash)
+            bench_backend.get_content_size(content_id)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
 
         assert elapsed_us < 50, f"get_content_size() took {elapsed_us:.2f}us per call"

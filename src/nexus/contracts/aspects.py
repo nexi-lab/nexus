@@ -367,7 +367,7 @@ class LineageAspect(AspectBase):
     ) -> "LineageAspect":
         """Build a LineageAspect from accumulated session reads.
 
-        Each read entry should have: path, version, etag, access_type.
+        Each read entry should have: path, version, content_id, access_type.
         Caps at MAX_UPSTREAM_ENTRIES with a warning.
 
         Args:
@@ -392,7 +392,7 @@ class LineageAspect(AspectBase):
             {
                 "path": r["path"],
                 "version": r.get("version", 0),
-                "etag": r.get("etag", ""),
+                "content_id": r.get("content_id", ""),
                 "access_type": r.get("access_type", "content"),
             }
             for r in reads[: cls.MAX_UPSTREAM_ENTRIES]
@@ -418,7 +418,7 @@ class LineageAspect(AspectBase):
         Used when agents declare their inputs via the REST API.
 
         Args:
-            upstream: List of upstream dicts (path, version, etag required).
+            upstream: List of upstream dicts (path, version, content_id required).
             agent_id: Agent declaring the lineage.
             agent_generation: Session generation counter.
 

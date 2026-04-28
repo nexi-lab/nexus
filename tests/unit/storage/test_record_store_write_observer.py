@@ -44,7 +44,7 @@ def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreWriteObserver:
 def _make_metadata(
     path: str = "/test.txt",
     *,
-    etag: str = "abc123",
+    content_id: str = "abc123",
     size: int = 100,
     version: int = 1,
     zone_id: str = ROOT_ZONE_ID,
@@ -54,7 +54,7 @@ def _make_metadata(
     return FileMetadata(
         path=path,
         size=size,
-        etag=etag,
+        content_id=content_id,
         mime_type="text/plain",
         created_at=datetime.now(UTC),
         modified_at=datetime.now(UTC),
@@ -75,7 +75,7 @@ class TestOnWriteHappyPath:
     def test_new_file_creates_all_records(
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
-        metadata = _make_metadata("/new.txt", etag="hash1")
+        metadata = _make_metadata("/new.txt", content_id="hash1")
         syncer.on_write(metadata, is_new=True, path="/new.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
@@ -87,23 +87,23 @@ class TestOnWriteHappyPath:
             fps = session.query(FilePathModel).filter(FilePathModel.deleted_at.is_(None)).all()
             assert len(fps) == 1
             assert fps[0].virtual_path == "/new.txt"
-            assert fps[0].content_hash == "hash1"
+            assert fps[0].content_id == "hash1"
             assert fps[0].current_version == 1
 
             vhs = session.query(VersionHistoryModel).all()
             assert len(vhs) == 1
             assert vhs[0].version_number == 1
-            assert vhs[0].content_hash == "hash1"
+            assert vhs[0].content_id == "hash1"
 
     def test_update_file_increments_version(
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         # Create initial file
-        m1 = _make_metadata("/file.txt", etag="v1hash")
+        m1 = _make_metadata("/file.txt", content_id="v1hash")
         syncer.on_write(m1, is_new=True, path="/file.txt", zone_id=ROOT_ZONE_ID)
 
         # Update file
-        m2 = _make_metadata("/file.txt", etag="v2hash", version=2)
+        m2 = _make_metadata("/file.txt", content_id="v2hash", version=2)
         syncer.on_write(m2, is_new=False, path="/file.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
@@ -116,7 +116,7 @@ class TestOnWriteHappyPath:
                 .one()
             )
             assert fp.current_version == 2
-            assert fp.content_hash == "v2hash"
+            assert fp.content_id == "v2hash"
 
             vhs = (
                 session.query(VersionHistoryModel)
@@ -140,7 +140,7 @@ class TestOnDeleteHappyPath:
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         # Create file first
-        m = _make_metadata("/del.txt", etag="delhash")
+        m = _make_metadata("/del.txt", content_id="delhash")
         syncer.on_write(m, is_new=True, path="/del.txt", zone_id=ROOT_ZONE_ID)
 
         # Delete it
@@ -215,9 +215,9 @@ class TestOnWriteBatchHappyPath:
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         items = [
-            (_make_metadata("/a.txt", etag="ha"), True),
-            (_make_metadata("/b.txt", etag="hb"), True),
-            (_make_metadata("/c.txt", etag="hc"), True),
+            (_make_metadata("/a.txt", content_id="ha"), True),
+            (_make_metadata("/b.txt", content_id="hb"), True),
+            (_make_metadata("/c.txt", content_id="hc"), True),
         ]
         syncer.on_write_batch(items, zone_id=ROOT_ZONE_ID)
 
@@ -354,8 +354,8 @@ class TestBatchPartialFailure:
         syncer = RecordStoreWriteObserver(record_store)
 
         items = [
-            (_make_metadata("/a.txt", etag="ha"), True),
-            (_make_metadata("/b.txt", etag="hb"), True),
+            (_make_metadata("/a.txt", content_id="ha"), True),
+            (_make_metadata("/b.txt", content_id="hb"), True),
         ]
 
         call_count = 0
@@ -396,7 +396,7 @@ class TestDeliveredColumn:
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
         """on_write() should create operation_log with delivered=FALSE."""
-        metadata = _make_metadata("/outbox.txt", etag="ohash")
+        metadata = _make_metadata("/outbox.txt", content_id="ohash")
         syncer.on_write(metadata, is_new=True, path="/outbox.txt", zone_id=ROOT_ZONE_ID)
 
         with record_store.session_factory() as session:
@@ -436,8 +436,8 @@ class TestDeliveredColumn:
     ) -> None:
         """on_write_batch() should create all records with delivered=FALSE."""
         items = [
-            (_make_metadata("/x.txt", etag="hx"), True),
-            (_make_metadata("/y.txt", etag="hy"), True),
+            (_make_metadata("/x.txt", content_id="hx"), True),
+            (_make_metadata("/y.txt", content_id="hy"), True),
         ]
         syncer.on_write_batch(items, zone_id=ROOT_ZONE_ID)
 
@@ -462,7 +462,7 @@ class TestPostFlushHookSync:
         captured = []
         syncer.register_post_flush_hook(lambda events: captured.extend(events))
 
-        metadata = _make_metadata("/hook.csv", etag="h1")
+        metadata = _make_metadata("/hook.csv", content_id="h1")
         syncer.on_write(metadata, is_new=True, path="/hook.csv", zone_id=ROOT_ZONE_ID)
 
         assert len(captured) == 1
@@ -477,8 +477,8 @@ class TestPostFlushHookSync:
         syncer.register_post_flush_hook(lambda events: captured.extend(events))
 
         items = [
-            (_make_metadata("/a.csv", etag="ha"), True),
-            (_make_metadata("/b.csv", etag="hb"), True),
+            (_make_metadata("/a.csv", content_id="ha"), True),
+            (_make_metadata("/b.csv", content_id="hb"), True),
         ]
         syncer.on_write_batch(items, zone_id=ROOT_ZONE_ID)
 
@@ -492,7 +492,7 @@ class TestPostFlushHookSync:
         """A failing hook must not prevent the audit trail from committing."""
         syncer.register_post_flush_hook(lambda events: (_ for _ in ()).throw(RuntimeError("boom")))
 
-        metadata = _make_metadata("/safe.txt", etag="hs")
+        metadata = _make_metadata("/safe.txt", content_id="hs")
         # Should not raise
         syncer.on_write(metadata, is_new=True, path="/safe.txt", zone_id=ROOT_ZONE_ID)
 

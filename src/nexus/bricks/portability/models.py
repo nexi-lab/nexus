@@ -964,7 +964,7 @@ class FileRecord:
         physical_path: Physical storage path
         file_type: MIME type or file extension
         size_bytes: File size
-        content_hash: SHA-256 hash of content
+        content_id: SHA-256 hash of content
         created_at: Creation timestamp
         updated_at: Last modification timestamp
         deleted_at: Soft deletion timestamp (if deleted)
@@ -980,7 +980,7 @@ class FileRecord:
     physical_path: str
     file_type: str | None = None
     size_bytes: int = 0
-    content_hash: str | None = None
+    content_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     deleted_at: datetime | None = None
@@ -998,7 +998,7 @@ class FileRecord:
             "physical_path": self.physical_path,
             "file_type": self.file_type,
             "size_bytes": self.size_bytes,
-            "content_hash": self.content_hash,
+            "content_id": self.content_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
@@ -1028,7 +1028,7 @@ class FileRecord:
             physical_path=data["physical_path"],
             file_type=data.get("file_type"),
             size_bytes=data.get("size_bytes", 0),
-            content_hash=data.get("content_hash"),
+            content_id=data.get("content_id"),
             created_at=parse_dt(data.get("created_at")),
             updated_at=parse_dt(data.get("updated_at")),
             deleted_at=parse_dt(data.get("deleted_at")),

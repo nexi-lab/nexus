@@ -44,6 +44,8 @@ __all__ = [
     "ExistsBatchParams",
     "FederationClusterInfoParams",
     "FederationCreateZoneParams",
+    "FederationExportZoneParams",
+    "FederationImportZoneParams",
     "FederationJoinParams",
     "FederationListZonesParams",
     "FederationMountParams",
@@ -52,7 +54,7 @@ __all__ = [
     "FederationUnmountParams",
     "FlushWriteObserverParams",
     "GetAgentParams",
-    "GetEtagParams",
+    "GetContentIdParams",
     "GetMountParams",
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
@@ -79,7 +81,6 @@ __all__ = [
     "ListWorkspacesParams",
     "LoadMountParams",
     "LoadWorkspaceConfigParams",
-    "LockAcquireParams",
     "MCPConnectParams",
     "MCPListMountsParams",
     "MCPListToolsParams",
@@ -88,6 +89,7 @@ __all__ = [
     "MCPUnmountParams",
     "MakePrivateParams",
     "MakePublicParams",
+    "MetadataBatchParams",
     "NamespaceDeleteParams",
     "NamespaceListParams",
     "OAuthListCredentialsParams",
@@ -128,6 +130,7 @@ __all__ = [
     "SnapshotListParams",
     "SnapshotRestoreParams",
     "SnapshotRollbackParams",
+    "StatBulkParams",
     "StatParams",
     "SysCopyParams",
     "SysLockParams",
@@ -429,8 +432,33 @@ class FederationCreateZoneParams:
 
 
 @dataclass
+class FederationExportZoneParams:
+    """Parameters for federation_export_zone(): Export a raft-backed zone to a .nexus bundle on the server's"""
+
+    zone_id: str
+    output_path: str
+    include_content: bool = True
+    include_permissions: bool = True
+    include_embeddings: bool = False
+    include_deleted: bool = False
+    path_prefix: str | None = None
+
+
+@dataclass
+class FederationImportZoneParams:
+    """Parameters for federation_import_zone(): Import a zone bundle from the server's filesystem."""
+
+    bundle_path: str
+    target_zone: str | None = None
+    conflict: str = "skip"
+    preserve_timestamps: bool = True
+    import_permissions: bool = True
+    path_prefix_remap: dict[str, str] | None = None
+
+
+@dataclass
 class FederationJoinParams:
-    """Parameters for federation_join() method."""
+    """Parameters for federation_join(): Join a zone advertised by a peer at `remote_path` and mount"""
 
     peer_addr: str
     remote_path: str
@@ -446,7 +474,7 @@ class FederationListZonesParams:
 
 @dataclass
 class FederationMountParams:
-    """Parameters for federation_mount() method."""
+    """Parameters for federation_mount(): Mount ``target_zone`` at ``path`` (global VFS) inside"""
 
     parent_zone: str
     path: str
@@ -463,7 +491,7 @@ class FederationRemoveZoneParams:
 
 @dataclass
 class FederationShareParams:
-    """Parameters for federation_share() method."""
+    """Parameters for federation_share(): Publish `local_path`'s subtree as a standalone federation zone."""
 
     local_path: str
     zone_id: str | None = None
@@ -479,7 +507,7 @@ class FederationUnmountParams:
 
 @dataclass
 class FlushWriteObserverParams:
-    """Parameters for flush_write_observer(): Flush the async write observer so pending version/audit records are committed."""
+    """Parameters for flush_write_observer(): Flush the write observer so pending version/audit records are committed."""
 
     pass
 
@@ -492,8 +520,8 @@ class GetAgentParams:
 
 
 @dataclass
-class GetEtagParams:
-    """Parameters for get_etag(): Get content hash for HTTP If-None-Match checks."""
+class GetContentIdParams:
+    """Parameters for get_content_id(): Get content hash for HTTP If-None-Match checks."""
 
     path: str
 
@@ -598,6 +626,7 @@ class GrepParams:
     after_context: int = 0
     invert_match: bool = False
     files: list[str] | None = None
+    block_type: str | None = None
 
 
 @dataclass
@@ -721,16 +750,6 @@ class LoadWorkspaceConfigParams:
 
 
 @dataclass
-class LockAcquireParams:
-    """Parameters for lock_acquire(): Tier 2: wraps sys_lock with dict return for gRPC Call RPC."""
-
-    path: str
-    mode: str = "exclusive"
-    ttl: float = 30.0
-    max_holders: int = 1
-
-
-@dataclass
 class MakePrivateParams:
     """Parameters for make_private(): Remove public (wildcard) access from a resource."""
 
@@ -806,6 +825,13 @@ class MCPUnmountParams:
     """Parameters for mcp_unmount(): Unmount an MCP server."""
 
     name: str
+
+
+@dataclass
+class MetadataBatchParams:
+    """Parameters for metadata_batch(): Get metadata for multiple paths in a single call (Issue #859)."""
+
+    paths: list[str]
 
 
 @dataclass
@@ -1235,6 +1261,14 @@ class StatParams:
 
 
 @dataclass
+class StatBulkParams:
+    """Parameters for stat_bulk(): Get metadata for multiple files in a single RPC call."""
+
+    paths: list[str]
+    skip_errors: bool = True
+
+
+@dataclass
 class SysCopyParams:
     """Parameters for sys_copy(): Copy a file from src_path to dst_path."""
 
@@ -1279,7 +1313,6 @@ class SysStatParams:
     """Parameters for sys_stat(): Get file metadata without reading content (FUSE getattr)."""
 
     path: str
-    include_lock: bool = False
 
 
 @dataclass
@@ -1434,6 +1467,8 @@ METHOD_PARAMS: dict[str, type] = {
     "exists_batch": ExistsBatchParams,
     "federation_cluster_info": FederationClusterInfoParams,
     "federation_create_zone": FederationCreateZoneParams,
+    "federation_export_zone": FederationExportZoneParams,
+    "federation_import_zone": FederationImportZoneParams,
     "federation_join": FederationJoinParams,
     "federation_list_zones": FederationListZonesParams,
     "federation_mount": FederationMountParams,
@@ -1442,7 +1477,7 @@ METHOD_PARAMS: dict[str, type] = {
     "federation_unmount": FederationUnmountParams,
     "flush_write_observer": FlushWriteObserverParams,
     "get_agent": GetAgentParams,
-    "get_etag": GetEtagParams,
+    "get_content_id": GetContentIdParams,
     "get_mount": GetMountParams,
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
@@ -1469,7 +1504,6 @@ METHOD_PARAMS: dict[str, type] = {
     "list_workspaces": ListWorkspacesParams,
     "load_mount": LoadMountParams,
     "load_workspace_config": LoadWorkspaceConfigParams,
-    "lock_acquire": LockAcquireParams,
     "make_private": MakePrivateParams,
     "make_public": MakePublicParams,
     "mcp_connect": MCPConnectParams,
@@ -1478,6 +1512,7 @@ METHOD_PARAMS: dict[str, type] = {
     "mcp_mount": MCPMountParams,
     "mcp_sync": MCPSyncParams,
     "mcp_unmount": MCPUnmountParams,
+    "metadata_batch": MetadataBatchParams,
     "namespace_delete": NamespaceDeleteParams,
     "namespace_list": NamespaceListParams,
     "oauth_list_credentials": OAuthListCredentialsParams,
@@ -1519,6 +1554,7 @@ METHOD_PARAMS: dict[str, type] = {
     "snapshot_restore": SnapshotRestoreParams,
     "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
+    "stat_bulk": StatBulkParams,
     "sys_copy": SysCopyParams,
     "sys_lock": SysLockParams,
     "sys_readdir": SysReaddirParams,

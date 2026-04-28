@@ -105,7 +105,6 @@ impl ObjectStore for GmailBackend {
     fn read_content(
         &self,
         content_id: &str,
-        _backend_path: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         let token = self.token();

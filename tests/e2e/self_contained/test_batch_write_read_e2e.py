@@ -103,7 +103,7 @@ class TestBatchWriteRealStorage:
         assert result["path"] == "/files/hello.txt"
         assert result["size"] == 5
         assert result["version"] >= 1
-        assert result["etag"] is not None
+        assert result["content_id"] is not None
 
     def test_write_multiple_files_atomic(self, client: TestClient) -> None:
         resp = client.post(
@@ -234,8 +234,8 @@ class TestBatchRoundTripRealStorage:
         assert base64.b64decode(read_results[1]["content_base64"]) == content_b
 
         # ETags from write must match ETags from read
-        assert read_results[0]["etag"] == write_results[0]["etag"]
-        assert read_results[1]["etag"] == write_results[1]["etag"]
+        assert read_results[0]["content_id"] == write_results[0]["content_id"]
+        assert read_results[1]["content_id"] == write_results[1]["content_id"]
 
     def test_overwrite_updates_content(self, client: TestClient) -> None:
         path = "/files/overwrite.txt"

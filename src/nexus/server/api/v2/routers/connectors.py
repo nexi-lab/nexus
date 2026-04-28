@@ -96,7 +96,7 @@ class WriteResponse(BaseModel):
     """Response from write operation."""
 
     success: bool
-    content_hash: str | None = None
+    content_id: str | None = None
     error: str | None = None
 
 
@@ -612,7 +612,7 @@ async def mount_connector(
                                     FileMetadata(
                                         path=dir_path,
                                         size=0,
-                                        etag=None,
+                                        content_id=None,
                                         created_at=datetime.now(UTC),
                                         modified_at=datetime.now(UTC),
                                         version=1,
@@ -922,7 +922,7 @@ async def write_to_connector(
 
         return WriteResponse(
             success=True,
-            content_hash=getattr(result, "content_hash", None) if result else None,
+            content_id=getattr(result, "content_id", None) if result else None,
         )
     except Exception as e:
         return WriteResponse(success=False, error=str(e))

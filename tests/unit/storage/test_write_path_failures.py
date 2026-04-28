@@ -28,7 +28,7 @@ from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
 def _make_metadata(
     path: str = "/test/file.txt",
-    etag: str | None = "sha256-abc",
+    content_id: str | None = "sha256-abc",
     backend_name: str = "local",
     physical_path: str = "/data/abc123",
     size: int = 1024,
@@ -44,7 +44,7 @@ def _make_metadata(
     return FileMetadata(
         path=path,
         size=size,
-        etag=etag,
+        content_id=content_id,
         mime_type=mime_type,
         version=version,
         zone_id=zone_id,
@@ -245,7 +245,7 @@ class TestVersionRecorderEdgeCases:
 
             # Now try to update (not create) — should fall back to create
             recorder3 = VersionRecorder(session)
-            recorder3.record_write(_make_metadata(etag="new-content"), is_new=False)
+            recorder3.record_write(_make_metadata(content_id="new-content"), is_new=False)
             session.commit()
 
             # Should have one active entry
@@ -260,7 +260,7 @@ class TestVersionRecorderEdgeCases:
                 .all()
             )
             assert len(active) == 1
-            assert active[0].content_hash == "new-content"
+            assert active[0].content_id == "new-content"
         finally:
             session.close()
 
@@ -274,7 +274,7 @@ class TestVersionRecorderEdgeCases:
         session = session_factory()
         try:
             recorder = VersionRecorder(session)
-            recorder.record_write(_make_metadata(etag="first"), is_new=True)
+            recorder.record_write(_make_metadata(content_id="first"), is_new=True)
             session.commit()
 
             # Second create at same path (simulates race condition)
@@ -283,7 +283,7 @@ class TestVersionRecorderEdgeCases:
             # or create a duplicate depending on unique constraint
             recorder2 = VersionRecorder(session)
             try:
-                recorder2.record_write(_make_metadata(etag="second"), is_new=True)
+                recorder2.record_write(_make_metadata(content_id="second"), is_new=True)
                 session.commit()
             except Exception:
                 session.rollback()
@@ -298,7 +298,7 @@ class TestVersionRecorderEdgeCases:
 
         session = session_factory()
         try:
-            metadata = _make_metadata(size=0, etag="empty-hash")
+            metadata = _make_metadata(size=0, content_id="empty-hash")
             recorder = VersionRecorder(session)
             recorder.record_write(metadata, is_new=True)
             session.commit()

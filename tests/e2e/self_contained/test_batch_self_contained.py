@@ -22,7 +22,7 @@ def _make_mock_fs() -> MagicMock:
     # Simulate realistic read latency
     fs.read.return_value = b"hello world content here"
     fs.write.return_value = {
-        "etag": "e3b0c44298fc1c14",
+        "content_id": "e3b0c44298fc1c14",
         "version": 1,
         "size": 24,
         "modified_at": "2026-02-17T00:00:00Z",
@@ -36,7 +36,7 @@ def _make_mock_fs() -> MagicMock:
     meta = MagicMock()
     meta.path = "/test.txt"
     meta.size = 24
-    meta.etag = "e3b0c44298fc1c14"
+    meta.content_id = "e3b0c44298fc1c14"
     meta.version = 1
     meta.is_dir = False
     meta.created_at = None
@@ -108,7 +108,7 @@ class TestBatchSelfContainedE2E:
         def tracking_write(*args: Any, **kwargs: Any) -> dict:
             execution_order.append("write")
             return {
-                "etag": "new",
+                "content_id": "new",
                 "version": 1,
                 "size": 5,
                 "modified_at": "2026-02-17T00:00:00Z",

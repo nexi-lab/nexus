@@ -45,9 +45,8 @@ class FakeMetastore:
 
 
 class FakeEntry:
-    def __init__(self, etag):
-        self.etag = etag
-        self.content_id = etag
+    def __init__(self, content_id):
+        self.content_id = content_id
 
 
 # ─── Volume-Aware GC Tests ───────────────────────────────────────────────────

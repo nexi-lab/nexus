@@ -38,11 +38,11 @@ def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     if path:
         content["path"] = path
 
-    # Add conflict-specific data (etag info for optimistic concurrency)
-    expected_etag = getattr(exc, "expected_etag", None)
-    if expected_etag is not None:
-        content["expected_etag"] = expected_etag
-        content["current_etag"] = getattr(exc, "current_etag", None)
+    # Add conflict-specific data (content_id info for optimistic concurrency)
+    expected_content_id = getattr(exc, "expected_content_id", None)
+    if expected_content_id is not None:
+        content["expected_content_id"] = expected_content_id
+        content["current_content_id"] = getattr(exc, "current_content_id", None)
 
     # Add authentication-specific data (provider, account, re-auth URL,
     # and machine-actionable recovery pointer for connector re-auth).

@@ -195,12 +195,11 @@ impl ObjectStore for XBackend {
 
     fn read_content(
         &self,
-        _content_id: &str,
-        backend_path: &str,
+        content_id: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         let token = self.token();
-        let (endpoint, param) = Self::resolve_path(backend_path);
+        let (endpoint, param) = Self::resolve_path(content_id);
 
         self.runtime.block_on(async {
             let client = reqwest::Client::builder()

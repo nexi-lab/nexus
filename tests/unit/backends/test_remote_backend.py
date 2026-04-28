@@ -69,7 +69,7 @@ class TestRemoteBackendRPC:
 
     def test_write_content_uses_typed_rpc(self, backend: RemoteBackend, mock_transport) -> None:
         """write_content should call transport.write_file() (typed RPC)."""
-        mock_transport.write_file.return_value = {"etag": "abc123", "size": 5}
+        mock_transport.write_file.return_value = {"content_id": "abc123", "size": 5}
         ctx = self._make_ctx("/path/to/file.txt", "path/to/file.txt")
         result = backend.write_content(b"hello", context=ctx)
 

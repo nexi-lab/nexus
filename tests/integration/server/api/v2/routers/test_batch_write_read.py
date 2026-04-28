@@ -41,14 +41,14 @@ def mock_fs() -> MagicMock:
         return_value=[
             {
                 "path": "/files/a.txt",
-                "etag": "hash_a",
+                "content_id": "hash_a",
                 "version": 1,
                 "modified_at": None,
                 "size": 5,
             },
             {
                 "path": "/files/b.txt",
-                "etag": "hash_b",
+                "content_id": "hash_b",
                 "version": 1,
                 "modified_at": None,
                 "size": 3,
@@ -60,7 +60,7 @@ def mock_fs() -> MagicMock:
             {
                 "path": "/files/a.txt",
                 "content": b"hello",
-                "etag": "hash_a",
+                "content_id": "hash_a",
                 "version": 1,
                 "modified_at": None,
                 "size": 5,
@@ -68,7 +68,7 @@ def mock_fs() -> MagicMock:
             {
                 "path": "/files/b.txt",
                 "content": b"bye",
-                "etag": "hash_b",
+                "content_id": "hash_b",
                 "version": 1,
                 "modified_at": None,
                 "size": 3,
@@ -130,7 +130,7 @@ class TestBatchWriteEndpoint:
         )
         assert resp.status_code == 200
         result = resp.json()["results"][0]
-        assert "etag" in result
+        assert "content_id" in result
         assert "version" in result
         assert "size" in result
 
@@ -254,7 +254,7 @@ class TestBatchRoundTrip:
     def test_write_then_read_returns_identical_content(
         self, client: TestClient, mock_fs: MagicMock
     ) -> None:
-        """write_batch → read_batch should produce the same content and etag."""
+        """write_batch → read_batch should produce the same content and content_id."""
         content_a = b"atomic write content"
         content_b = b"second file content"
 
@@ -262,14 +262,14 @@ class TestBatchRoundTrip:
             return_value=[
                 {
                     "path": "/rt/a.txt",
-                    "etag": "etag_a",
+                    "content_id": "etag_a",
                     "version": 1,
                     "modified_at": None,
                     "size": len(content_a),
                 },
                 {
                     "path": "/rt/b.txt",
-                    "etag": "etag_b",
+                    "content_id": "etag_b",
                     "version": 1,
                     "modified_at": None,
                     "size": len(content_b),
@@ -293,7 +293,7 @@ class TestBatchRoundTrip:
                 {
                     "path": "/rt/a.txt",
                     "content": content_a,
-                    "etag": "etag_a",
+                    "content_id": "etag_a",
                     "version": 1,
                     "modified_at": None,
                     "size": len(content_a),
@@ -301,7 +301,7 @@ class TestBatchRoundTrip:
                 {
                     "path": "/rt/b.txt",
                     "content": content_b,
-                    "etag": "etag_b",
+                    "content_id": "etag_b",
                     "version": 1,
                     "modified_at": None,
                     "size": len(content_b),
@@ -320,8 +320,8 @@ class TestBatchRoundTrip:
         assert base64.b64decode(read_results[1]["content_base64"]) == content_b
 
         # ETags match
-        assert read_results[0]["etag"] == write_results[0]["etag"]
-        assert read_results[1]["etag"] == write_results[1]["etag"]
+        assert read_results[0]["content_id"] == write_results[0]["content_id"]
+        assert read_results[1]["content_id"] == write_results[1]["content_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +357,7 @@ class TestDiscriminatedUnionSerialization:
                 {
                     "path": "/files/exists.txt",
                     "content": b"data",
-                    "etag": "abc",
+                    "content_id": "abc",
                     "version": 1,
                     "modified_at": None,
                     "size": 4,

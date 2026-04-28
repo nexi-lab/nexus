@@ -163,12 +163,12 @@ class TestConflictDetectionE2E:
 
         edge = OperationState(
             vector_clock=VectorClock(counters={"edge": 3, "cloud": 1}),
-            etag="edge-content-hash",
+            content_id="edge-content-hash",
             timestamp=1000.0,
         )
         cloud = OperationState(
             vector_clock=VectorClock(counters={"edge": 1, "cloud": 3}),
-            etag="cloud-content-hash",
+            content_id="cloud-content-hash",
             timestamp=999.0,
         )
 

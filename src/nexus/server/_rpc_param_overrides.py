@@ -286,6 +286,22 @@ class AInitializeSemanticSearchParams:
     record_store_engine: Any | None = None
 
 
+@dataclass
+class LockAcquireParams:
+    """Parameters for lock_acquire(): Tier 2 wrapper over sys_lock that returns a dict over gRPC.
+
+    No matching Python ``def lock_acquire`` exists — the dispatcher routes
+    `lock_acquire` straight to `handle_lock_acquire` in
+    `server/rpc/handlers/filesystem.py`, which calls `nexus_fs.sys_lock`
+    and shapes the result as ``{"acquired": bool, "lock_id": str}``.
+    """
+
+    path: str
+    mode: str = "exclusive"
+    max_holders: int = 1
+    ttl: float = 30.0
+
+
 # ============================================================
 # Override METHOD_PARAMS entries for all override classes
 # ============================================================
@@ -337,4 +353,9 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     # via RemoteServiceProxy, and without an entry here ``parse_method_params``
     # rejects the RPC as "Unknown method".)
     "ainitialize_semantic_search": AInitializeSemanticSearchParams,
+    # Tier 2 lock_acquire — wraps sys_lock with a dict return for gRPC. There
+    # is no Python `def lock_acquire` decorated with @rpc_expose (the kernel
+    # owns the syscall and the dispatcher maps lock_acquire → handle_lock_acquire),
+    # so the param class lives here as an override to satisfy parse_method_params.
+    "lock_acquire": LockAcquireParams,
 }

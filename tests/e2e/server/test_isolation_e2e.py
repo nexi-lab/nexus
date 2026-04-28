@@ -300,12 +300,12 @@ class TestIsolatedBackendPerformance:
 
             data = b"X" * 1024
             wr = backend.write_content(data)
-            content_hash = wr.data
+            content_id = wr.data
 
             start = time.perf_counter()
             n = 100
             for _ in range(n):
-                backend.content_exists(content_hash)
+                backend.content_exists(content_id)
             elapsed = time.perf_counter() - start
 
             avg_ms = (elapsed / n) * 1000
@@ -338,10 +338,10 @@ class TestIsolatedBackendPerformance:
         try:
             data = b"concurrent-perf"
             wr = backend.write_content(data)
-            content_hash = wr.data
+            content_id = wr.data
 
             def read_one(_: int) -> bool:
-                rd = backend.read_content(content_hash)
+                rd = backend.read_content(content_id)
                 return rd.success and rd.data == data
 
             with ThreadPoolExecutor(max_workers=5) as tp:

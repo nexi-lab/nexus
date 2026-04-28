@@ -393,16 +393,16 @@ class TestAutoDispatchedMethods:
         )
         assert result is True
 
-    def test_get_etag(self, admin_client: NexusFS) -> None:
-        """get_etag via hand-written override with negative cache."""
-        etag = admin_client.get_etag("/workspace/proxy-test.txt")
-        assert etag is not None
-        assert isinstance(etag, str)
+    def test_get_content_id(self, admin_client: NexusFS) -> None:
+        """get_content_id via hand-written override with negative cache."""
+        content_id = admin_client.get_content_id("/workspace/proxy-test.txt")
+        assert content_id is not None
+        assert isinstance(content_id, str)
 
-    def test_get_etag_nonexistent(self, admin_client: NexusFS) -> None:
-        """get_etag for nonexistent file returns None."""
-        etag = admin_client.get_etag("/workspace/does-not-exist-abc.txt")
-        assert etag is None
+    def test_get_content_id_nonexistent(self, admin_client: NexusFS) -> None:
+        """get_content_id for nonexistent file returns None."""
+        content_id = admin_client.get_content_id("/workspace/does-not-exist-abc.txt")
+        assert content_id is None
 
 
 # =============================================================================

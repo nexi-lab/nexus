@@ -25,7 +25,7 @@ class TestGetReadyWork:
                 "/test/path",  # virtual_path
                 "file",  # file_type
                 1024,  # size_bytes
-                "hash123",  # content_hash
+                "hash123",  # content_id
                 "2024-01-01",  # created_at
                 "2024-01-02",  # updated_at
                 json.dumps({"state": "ready"}),  # status
@@ -77,7 +77,7 @@ class TestGetReadyWork:
                 "/test/path",  # virtual_path
                 "file",  # file_type
                 1024,  # size_bytes
-                "hash123",  # content_hash
+                "hash123",  # content_id
                 "2024-01-01",  # created_at
                 "2024-01-02",  # updated_at
                 None,  # status
@@ -124,7 +124,7 @@ class TestGetPendingWork:
                 "/pending/path",  # virtual_path
                 "file",  # file_type
                 2048,  # size_bytes
-                "hash456",  # content_hash
+                "hash456",  # content_id
                 "2024-01-01",  # created_at
                 "2024-01-02",  # updated_at
                 json.dumps({"state": "pending"}),  # status
@@ -188,7 +188,7 @@ class TestGetBlockedWork:
                 "/blocked/path",  # virtual_path
                 "file",  # file_type
                 4096,  # size_bytes
-                "hash789",  # content_hash
+                "hash789",  # content_id
                 "2024-01-01",  # created_at
                 "2024-01-02",  # updated_at
                 json.dumps({"state": "blocked"}),  # status

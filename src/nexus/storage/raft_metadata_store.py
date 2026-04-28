@@ -237,7 +237,7 @@ class RaftMetadataStore(MetastoreABC):
             return {
                 "path": existing.path,
                 "size": existing.size,
-                "etag": existing.etag,
+                "content_id": existing.content_id,
             }
         return None
 
@@ -689,12 +689,12 @@ class RaftMetadataStore(MetastoreABC):
             paths: List of virtual paths
 
         Returns:
-            Dictionary mapping path to content_hash (or None if not found)
+            Dictionary mapping path to content_id (or None if not found)
         """
         if not paths:
             return {}
         batch = self.get_batch(paths)
-        return {path: (meta.etag if meta else None) for path, meta in batch.items()}
+        return {path: (meta.content_id if meta else None) for path, meta in batch.items()}
 
     # =========================================================================
     # Custom File Metadata (key-value pairs per file)

@@ -22,7 +22,7 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     # Proto field -> FilePathModel column (None = not in SQL, by design)
     "path": "virtual_path",
     "size": "size_bytes",
-    "etag": "content_hash",
+    "content_id": "content_id",
     "mime_type": "file_type",
     "created_at": "created_at",
     "modified_at": "updated_at",
@@ -40,7 +40,7 @@ SQL_ONLY_FIELDS: set[str] = {
     "path_id",
     "accessed_at",
     "deleted_at",
-    "indexed_content_hash",
+    "indexed_content_id",
     "last_indexed_at",
     "locked_by",
 }
@@ -128,7 +128,7 @@ class TestRoundtripConsistency:
         metadata = FileMetadata(
             path="/zone1/docs/readme.md",
             size=2048,
-            etag="sha256-xyz789",
+            content_id="sha256-xyz789",
             mime_type="text/markdown",
             created_at=now,
             modified_at=now,
@@ -141,7 +141,7 @@ class TestRoundtripConsistency:
 
         assert values["virtual_path"] == "/zone1/docs/readme.md"
         assert values["size_bytes"] == 2048
-        assert values["content_hash"] == "sha256-xyz789"
+        assert values["content_id"] == "sha256-xyz789"
         assert values["file_type"] == "text/markdown"
         assert values["zone_id"] == "zone1"
         assert values["posix_uid"] == "user-42"
@@ -151,7 +151,7 @@ class TestRoundtripConsistency:
         metadata = FileMetadata(
             path="/test/file.txt",
             size=0,
-            etag=None,
+            content_id=None,
             mime_type=None,
             created_at=None,
             modified_at=None,
@@ -161,7 +161,7 @@ class TestRoundtripConsistency:
 
         values = self._metadata_to_file_path_values(metadata)
 
-        assert values["content_hash"] is None
+        assert values["content_id"] is None
         assert values["file_type"] is None
         assert values["zone_id"] == ROOT_ZONE_ID  # default
         assert values["posix_uid"] is None

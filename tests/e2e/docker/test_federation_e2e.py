@@ -2809,16 +2809,16 @@ class TestFullFailoverRecovery:
 # ===================================================================
 class TestMultiZoneAtomicWrite:
     """Write identical content into /corp/eng and /family — both writes
-    should produce the same ETag (BLAKE3 hash) because CAS is global to
-    the kernel. Then mutate ONE side and verify the ETags diverge while
+    should produce the same content_id (BLAKE3 hash) because CAS is global to
+    the kernel. Then mutate ONE side and verify the content_ids diverge while
     the other side still resolves to the original hash.
 
     Strong causal chain:
-      1. Write payload X to /corp/eng/X.txt → etag_corp_v1.
-      2. Write same payload X to /family/X.txt → etag_family_v1.
-      3. Observation: etag_corp_v1 == etag_family_v1 (CAS-level dedup).
-      4. Mutate /corp/eng/X.txt → etag_corp_v2 ≠ etag_corp_v1.
-      5. /family/X.txt etag still == etag_corp_v1 (isolation — zone-
+      1. Write payload X to /corp/eng/X.txt → content_id_corp_v1.
+      2. Write same payload X to /family/X.txt → content_id_family_v1.
+      3. Observation: content_id_corp_v1 == content_id_family_v1 (CAS-level dedup).
+      4. Mutate /corp/eng/X.txt → content_id_corp_v2 ≠ content_id_corp_v1.
+      5. /family/X.txt content_id still == content_id_corp_v1 (isolation — zone-
          local mutation does not bleed across).
     """
 
@@ -2837,22 +2837,22 @@ class TestMultiZoneAtomicWrite:
         w2 = _grpc_call(grpc1, "write", {"path": family_path, "content": payload}, api_key=api_key)
         assert "error" not in w2, f"family write failed: {w2}"
 
-        # Step 2 — both paths must report the same ETag (CAS dedup).
+        # Step 2 — both paths must report the same content_id (CAS dedup).
         s_corp = _grpc_call(grpc1, "sys_stat", {"path": corp_path}, api_key=api_key)
         s_family = _grpc_call(grpc1, "sys_stat", {"path": family_path}, api_key=api_key)
-        etag_corp_v1 = (s_corp.get("result", {}) or {}).get("etag") or (
+        content_id_corp_v1 = (s_corp.get("result", {}) or {}).get("content_id") or (
             s_corp.get("result", {}) or {}
-        ).get("metadata", {}).get("etag")
-        etag_family_v1 = (s_family.get("result", {}) or {}).get("etag") or (
+        ).get("metadata", {}).get("content_id")
+        content_id_family_v1 = (s_family.get("result", {}) or {}).get("content_id") or (
             s_family.get("result", {}) or {}
-        ).get("metadata", {}).get("etag")
+        ).get("metadata", {}).get("content_id")
 
-        if not etag_corp_v1 or not etag_family_v1:
+        if not content_id_corp_v1 or not content_id_family_v1:
             pytest.skip(
-                f"sys_stat did not expose etag in this build: corp={s_corp}, family={s_family}"
+                f"sys_stat did not expose content_id in this build: corp={s_corp}, family={s_family}"
             )
-        assert etag_corp_v1 == etag_family_v1, (
-            f"CAS dedup broken: {etag_corp_v1} != {etag_family_v1}"
+        assert content_id_corp_v1 == content_id_family_v1, (
+            f"CAS dedup broken: {content_id_corp_v1} != {content_id_family_v1}"
         )
 
         # Step 3 — mutate ONE side.
@@ -2860,24 +2860,26 @@ class TestMultiZoneAtomicWrite:
         wm = _grpc_call(grpc1, "write", {"path": corp_path, "content": mutated}, api_key=api_key)
         assert "error" not in wm, f"corp mutation failed: {wm}"
 
-        # Step 4 — etag on /corp/eng diverges; etag on /family unchanged.
+        # Step 4 — content_id on /corp/eng diverges; content_id on /family unchanged.
         s_corp2 = _grpc_call(grpc1, "sys_stat", {"path": corp_path}, api_key=api_key)
         s_family2 = _grpc_call(grpc1, "sys_stat", {"path": family_path}, api_key=api_key)
-        etag_corp_v2 = (s_corp2.get("result", {}) or {}).get("etag") or (
+        content_id_corp_v2 = (s_corp2.get("result", {}) or {}).get("content_id") or (
             s_corp2.get("result", {}) or {}
-        ).get("metadata", {}).get("etag")
-        etag_family_v2 = (s_family2.get("result", {}) or {}).get("etag") or (
+        ).get("metadata", {}).get("content_id")
+        content_id_family_v2 = (s_family2.get("result", {}) or {}).get("content_id") or (
             s_family2.get("result", {}) or {}
-        ).get("metadata", {}).get("etag")
+        ).get("metadata", {}).get("content_id")
 
-        assert etag_corp_v2 != etag_corp_v1, f"Mutation did not change corp etag: {etag_corp_v1}"
-        assert etag_family_v2 == etag_family_v1, (
-            f"Zone isolation broken: family etag changed {etag_family_v1} -> "
-            f"{etag_family_v2} after corp-only mutation"
+        assert content_id_corp_v2 != content_id_corp_v1, (
+            f"Mutation did not change corp content_id: {content_id_corp_v1}"
+        )
+        assert content_id_family_v2 == content_id_family_v1, (
+            f"Zone isolation broken: family content_id changed {content_id_family_v1} -> "
+            f"{content_id_family_v2} after corp-only mutation"
         )
 
         # Step 5 — the original bytes must still be reachable via the
-        # /family path (the chunk behind etag_family_v1 is still in CAS).
+        # /family path (the chunk behind content_id_family_v1 is still in CAS).
         rf = _grpc_call(grpc1, "read", {"path": family_path}, api_key=api_key)
         assert "error" not in rf, f"family read failed: {rf}"
         assert _decode_content(rf) == payload

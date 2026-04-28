@@ -194,7 +194,7 @@ class PathGCSBackend(PathAddressingEngine):
             size=meta["size"],
             mtime=meta["updated"],
             backend_version=meta["generation"],
-            content_hash=None,
+            content_id=None,
         )
 
     def batch_get_versions(

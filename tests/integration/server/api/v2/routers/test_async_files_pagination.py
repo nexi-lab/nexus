@@ -16,9 +16,9 @@ from nexus.server.dependencies import get_auth_result
 # ---------------------------------------------------------------------------
 
 
-def _make_entry(path: str, size: int = 100, etag: str = "etag1", entry_type: int = 0) -> dict:
+def _make_entry(path: str, size: int = 100, content_id: str = "etag1", entry_type: int = 0) -> dict:
     """Build a details dict as returned by sys_readdir(details=True)."""
-    return {"path": path, "size": size, "etag": etag, "entry_type": entry_type}
+    return {"path": path, "size": size, "content_id": content_id, "entry_type": entry_type}
 
 
 def _encode_cursor(path: str) -> str:
@@ -70,9 +70,9 @@ class TestListPagination:
     ) -> None:
         """Without limit, sys_readdir returns a plain list (backward compat)."""
         mock_fs.sys_readdir.return_value = [
-            _make_entry("/data/a.txt", size=10, etag="e1"),
-            _make_entry("/data/b.txt", size=20, etag="e2"),
-            _make_entry("/data/sub/", size=0, etag="e3", entry_type=1),
+            _make_entry("/data/a.txt", size=10, content_id="e1"),
+            _make_entry("/data/b.txt", size=20, content_id="e2"),
+            _make_entry("/data/sub/", size=0, content_id="e3", entry_type=1),
         ]
 
         resp = client.get("/list", params={"path": "/data"})
@@ -94,8 +94,8 @@ class TestListPagination:
         next_cursor_path = "/data/b.txt"
         mock_fs.sys_readdir.return_value = PaginatedResult(
             items=[
-                _make_entry("/data/a.txt", size=10, etag="e1"),
-                _make_entry("/data/b.txt", size=20, etag="e2"),
+                _make_entry("/data/a.txt", size=10, content_id="e1"),
+                _make_entry("/data/b.txt", size=20, content_id="e2"),
             ],
             next_cursor=next_cursor_path,
             has_more=True,
@@ -122,8 +122,8 @@ class TestListPagination:
 
         mock_fs.sys_readdir.return_value = PaginatedResult(
             items=[
-                _make_entry("/data/c.txt", size=30, etag="e3"),
-                _make_entry("/data/d.txt", size=40, etag="e4"),
+                _make_entry("/data/c.txt", size=30, content_id="e3"),
+                _make_entry("/data/d.txt", size=40, content_id="e4"),
             ],
             next_cursor="/data/d.txt",
             has_more=True,
@@ -146,7 +146,7 @@ class TestListPagination:
         """Last page: has_more=False, next_cursor=None."""
         mock_fs.sys_readdir.return_value = PaginatedResult(
             items=[
-                _make_entry("/data/e.txt", size=50, etag="e5"),
+                _make_entry("/data/e.txt", size=50, content_id="e5"),
             ],
             next_cursor=None,
             has_more=False,

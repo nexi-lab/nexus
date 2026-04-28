@@ -41,14 +41,14 @@ class PathSnapshot:
 
     Attributes:
         path: Virtual path that was snapshotted.
-        content_hash: CAS hash of the content (None if path didn't exist).
+        content_id: CAS hash of the content (None if path didn't exist).
         size: File size in bytes (0 if absent).
         metadata_json: Serialized metadata at snapshot time (None if absent).
         existed: Whether the path existed at snapshot time.
     """
 
     path: str
-    content_hash: str | None
+    content_id: str | None
     size: int
     metadata_json: str | None
     existed: bool

@@ -161,11 +161,10 @@ impl ObjectStore for CLIBackend {
 
     fn read_content(
         &self,
-        _content_id: &str,
-        backend_path: &str,
+        content_id: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
-        let path = backend_path.trim_matches('/');
+        let path = content_id.trim_matches('/');
         let args = if path.is_empty() {
             vec!["list"]
         } else {

@@ -7,7 +7,7 @@ side-effects (audit trail, version recording, etc.) and own their
 own error policy.
 
 The kernel passes kernel-native types only (FileMetadata).  Observers
-derive whatever they need (e.g. snapshot_hash = metadata.etag).
+derive whatever they need (e.g. snapshot_hash = metadata.content_id).
 
 Current implementations:
 - RecordStoreWriteObserver (record_store_write_observer): synchronous audit trail + versioning (strict_mode)
@@ -34,7 +34,7 @@ class WriteObserverProtocol(Protocol):
     version history) and own their error policy.
 
     The kernel passes ``metadata: FileMetadata`` — observers derive
-    ``snapshot_hash`` (``metadata.etag``) and ``metadata_snapshot``
+    ``snapshot_hash`` (``metadata.content_id``) and ``metadata_snapshot``
     (``metadata.to_dict()``) internally.
     """
 

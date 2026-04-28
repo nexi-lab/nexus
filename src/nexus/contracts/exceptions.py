@@ -465,7 +465,7 @@ class ConflictError(NexusError):
         >>> try:
         ...     nx.write(path, content)
         ... except ConflictError as e:
-        ...     print(f"Conflict: expected {e.expected_etag}, got {e.current_etag}")
+        ...     print(f"Conflict: expected {e.expected_content_id}, got {e.current_content_id}")
         ...     # Retry with fresh read
         ...     result = nx.read(path, return_metadata=True)
         ...     nx.write(path, result['content'])
@@ -475,19 +475,20 @@ class ConflictError(NexusError):
     status_code = 409
     error_type = "Conflict"
 
-    def __init__(self, path: str, expected_etag: str, current_etag: str):
+    def __init__(self, path: str, expected_content_id: str, current_content_id: str):
         """Initialize conflict error.
 
         Args:
             path: Virtual file path that had the conflict
-            expected_etag: The etag value that was expected (from if_match)
-            current_etag: The actual current etag value in the database
+            expected_content_id: The content_id (if_match) value that was expected
+            current_content_id: The actual current content_id value in the database
         """
-        self.expected_etag = expected_etag
-        self.current_etag = current_etag
+        self.expected_content_id = expected_content_id
+        self.current_content_id = current_content_id
         message = (
             f"Conflict detected - file was modified by another agent. "
-            f"Expected etag '{expected_etag[:16]}...', but current etag is '{current_etag[:16]}...'"
+            f"Expected content_id '{expected_content_id[:16]}...', "
+            f"but current content_id is '{current_content_id[:16]}...'"
         )
         super().__init__(message, path)
 

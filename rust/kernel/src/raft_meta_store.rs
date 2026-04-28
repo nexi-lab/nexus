@@ -14,7 +14,7 @@
 //! global paths stores one authoritative copy per zone-relative key).
 //!
 //! Field fidelity note: the kernel ``FileMetadata`` struct tracks a
-//! subset of the proto fields (path/backend_name/physical_path/size/etag/
+//! subset of the proto fields (path/backend_name/physical_path/size/content_id/
 //! version/entry_type/zone_id/mime_type). Missing fields (``owner_id``,
 //! ``ttl_seconds`` and the ``created_at``/``modified_at`` ISO-8601
 //! strings — distinct from the ``created_at_ms``/``modified_at_ms``
@@ -132,10 +132,10 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetaSt
     Ok(KernelFileMetadata {
         path: proto.path,
         size: proto.size as u64,
-        etag: if proto.etag.is_empty() {
+        content_id: if proto.content_id.is_empty() {
             None
         } else {
-            Some(proto.etag)
+            Some(proto.content_id)
         },
         version: proto.version as u32,
         entry_type: proto.entry_type as u8,
@@ -168,7 +168,7 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
         size: meta.size as i64,
-        etag: meta.etag.clone().unwrap_or_default(),
+        content_id: meta.content_id.clone().unwrap_or_default(),
         version: meta.version as i32,
         entry_type: meta.entry_type as i32,
         zone_id: meta.zone_id.clone().unwrap_or_default(),
@@ -307,7 +307,7 @@ mod tests {
         let meta = KernelFileMetadata {
             path: "/docs/readme.md".to_string(),
             size: 1024,
-            etag: Some("hash".to_string()),
+            content_id: Some("hash".to_string()),
             version: 3,
             entry_type: 0, // DT_REG
             zone_id: Some("zone-a".to_string()),
@@ -319,7 +319,7 @@ mod tests {
         let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
         assert_eq!(restored.path, meta.path);
         assert_eq!(restored.size, meta.size);
-        assert_eq!(restored.etag, meta.etag);
+        assert_eq!(restored.content_id, meta.content_id);
         assert_eq!(restored.version, meta.version);
         assert_eq!(restored.entry_type, meta.entry_type);
         assert_eq!(restored.zone_id, meta.zone_id);

@@ -201,7 +201,7 @@ impl NexusVfsService for VfsServiceImpl {
                 Ok(Response::new(ReadResponse {
                     size: bytes.len() as i64,
                     content: bytes,
-                    etag: result.content_hash.unwrap_or_default(),
+                    content_id: result.content_id.unwrap_or_default(),
                     is_error: false,
                     error_payload: Vec::new(),
                 }))
@@ -210,7 +210,7 @@ impl NexusVfsService for VfsServiceImpl {
                 let (code, msg) = self.map_kernel_err(err);
                 Ok(Response::new(ReadResponse {
                     content: Vec::new(),
-                    etag: String::new(),
+                    content_id: String::new(),
                     size: 0,
                     is_error: true,
                     error_payload: encode_rpc_error(code, &msg),
@@ -225,16 +225,16 @@ impl NexusVfsService for VfsServiceImpl {
             Ok(c) => c,
             Err(s) => return Ok(Response::new(error_write(s))),
         };
-        // Phase 1 ignores `etag` (OCC) — `Write` traffic is REMOTE-profile
+        // Phase 1 ignores `content_id` (OCC) — `Write` traffic is REMOTE-profile
         // bulk content. OCC writes go through `Call → occ_write` (still
         // Python). When the OCC service migrates to Rust we'll honor
-        // `req.etag` here too.
+        // `req.content_id` here too.
         match self
             .kernel
             .sys_write(&req.path, &ctx, &req.content, /* offset */ 0)
         {
             Ok(result) => Ok(Response::new(WriteResponse {
-                etag: result.content_id.unwrap_or_default(),
+                content_id: result.content_id.unwrap_or_default(),
                 size: result.size as i64,
                 is_error: false,
                 error_payload: Vec::new(),
@@ -242,7 +242,7 @@ impl NexusVfsService for VfsServiceImpl {
             Err(err) => {
                 let (code, msg) = self.map_kernel_err(err);
                 Ok(Response::new(WriteResponse {
-                    etag: String::new(),
+                    content_id: String::new(),
                     size: 0,
                     is_error: true,
                     error_payload: encode_rpc_error(code, &msg),
@@ -488,7 +488,7 @@ fn encode_rpc_error_bytes(code: RpcErrorCode, message: &str) -> Vec<u8> {
 fn error_read(status: Status) -> ReadResponse {
     ReadResponse {
         content: Vec::new(),
-        etag: String::new(),
+        content_id: String::new(),
         size: 0,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),
@@ -497,7 +497,7 @@ fn error_read(status: Status) -> ReadResponse {
 
 fn error_write(status: Status) -> WriteResponse {
     WriteResponse {
-        etag: String::new(),
+        content_id: String::new(),
         size: 0,
         is_error: true,
         error_payload: encode_rpc_error_bytes(status_to_code(&status), status.message()),

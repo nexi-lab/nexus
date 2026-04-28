@@ -353,17 +353,17 @@ DEMO_LINEAGE: list[tuple[str, list[dict[str, str | int]], str]] = [
     (
         "/workspace/demo/plan.md",
         [
-            {"path": "/workspace/demo/notes/architecture.md", "version": 1, "etag": ""},
-            {"path": "/workspace/demo/code/example.py", "version": 1, "etag": ""},
-            {"path": "/workspace/demo/notes/meeting-2026-03.md", "version": 1, "etag": ""},
+            {"path": "/workspace/demo/notes/architecture.md", "version": 1, "content_id": ""},
+            {"path": "/workspace/demo/code/example.py", "version": 1, "content_id": ""},
+            {"path": "/workspace/demo/notes/meeting-2026-03.md", "version": 1, "content_id": ""},
         ],
         "coordinator",
     ),
     (
         "/workspace/demo/data/sample.json",
         [
-            {"path": "/workspace/demo/data/sales.csv", "version": 1, "etag": ""},
-            {"path": "/workspace/demo/data/metrics.json", "version": 1, "etag": ""},
+            {"path": "/workspace/demo/data/sales.csv", "version": 1, "content_id": ""},
+            {"path": "/workspace/demo/data/metrics.json", "version": 1, "content_id": ""},
         ],
         "demo_agent",
     ),

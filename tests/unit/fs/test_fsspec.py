@@ -45,7 +45,7 @@ def mock_kernel():
     k = MagicMock()
     k.sys_read = MagicMock(return_value=b"hello world")
     k.read_range = MagicMock(return_value=b"hello world")
-    k.write = MagicMock(return_value={"path": "/test.txt", "size": 11, "etag": "abc"})
+    k.write = MagicMock(return_value={"path": "/test.txt", "size": 11, "content_id": "abc"})
     k.sys_readdir = MagicMock(
         return_value=[
             {"path": "/dir/file1.txt", "size": 100, "entry_type": 0, "is_directory": False},
@@ -56,7 +56,7 @@ def mock_kernel():
         return_value={
             "path": "/test.txt",
             "size": 11,
-            "etag": "abc123",
+            "content_id": "abc123",
             "is_directory": False,
             "created_at": "2026-01-01T00:00:00",
             "modified_at": "2026-01-01T00:00:00",
@@ -357,7 +357,11 @@ class TestCpFileComprehensive:
 
     def test_cp_file_empty_file(self, nexus_fsspec, mock_kernel):
         """_cp_file works for empty (0-byte) files."""
-        mock_kernel.sys_copy.return_value = {"path": "/dst.txt", "size": 0, "etag": "d41d8cd98f"}
+        mock_kernel.sys_copy.return_value = {
+            "path": "/dst.txt",
+            "size": 0,
+            "content_id": "d41d8cd98f",
+        }
         nexus_fsspec._cp_file("/src.txt", "/dst.txt")
         mock_kernel.sys_copy.assert_called_once()
 

@@ -350,7 +350,7 @@ class TestPipedWriteObserverE2E:
             observer.on_write(
                 MagicMock(
                     path="/workspace/test.txt",
-                    etag="abc",
+                    content_id="abc",
                     to_dict=lambda: {"path": "/workspace/test.txt"},
                 ),
                 is_new=True,
@@ -378,7 +378,7 @@ class TestPipedWriteObserverE2E:
                 observer.on_write(
                     MagicMock(
                         path=f"/workspace/file{i}.txt",
-                        etag=f"e{i}",
+                        content_id=f"e{i}",
                         to_dict=lambda i=i: {"path": f"/workspace/file{i}.txt"},
                     ),
                     is_new=True,
@@ -441,7 +441,9 @@ class TestPipedWriteObserverE2E:
         # Enqueue events directly via on_write/on_delete
         observer.on_write(
             MagicMock(
-                path="/workspace/cli.txt", etag="c1", to_dict=lambda: {"path": "/workspace/cli.txt"}
+                path="/workspace/cli.txt",
+                content_id="c1",
+                to_dict=lambda: {"path": "/workspace/cli.txt"},
             ),
             is_new=True,
             path="/workspace/cli.txt",
@@ -477,7 +479,7 @@ class TestPipedWriteObserverE2E:
             observer.on_write(
                 MagicMock(
                     path="/workspace/metrics.txt",
-                    etag="m1",
+                    content_id="m1",
                     to_dict=lambda: {"path": "/workspace/metrics.txt"},
                 ),
                 is_new=True,

@@ -200,8 +200,8 @@ pub struct SysReadResult {
     pub data: Option<Vec<u8>>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
-    /// Content hash (etag) for post-hook context.
-    pub content_hash: Option<String>,
+    /// Content hash (content_id) for post-hook context.
+    pub content_id: Option<String>,
     /// DT_REG(1), DT_PIPE(3), DT_STREAM(4).
     pub entry_type: u8,
 }
@@ -221,7 +221,7 @@ pub struct SysWriteResult {
     /// True if the file did not exist before this write.
     pub is_new: bool,
     /// Etag (content hash) of the file before this write (None if new file).
-    pub old_etag: Option<String>,
+    pub old_content_id: Option<String>,
     /// Size of the file before this write (None if new file).
     pub old_size: Option<u64>,
     /// Metadata version before this write (None if new file).
@@ -242,7 +242,7 @@ pub struct SysUnlinkResult {
     /// Path that was deleted (for event payload).
     pub path: String,
     /// Etag of deleted file (for event payload).
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     /// Size of deleted file (for event payload).
     pub size: u64,
 }
@@ -258,7 +258,7 @@ pub struct SysRenameResult {
     /// True if the renamed entry is a directory.
     pub is_directory: bool,
     /// Old metadata fields for Python post-hook dispatch (audit trail).
-    pub old_etag: Option<String>,
+    pub old_content_id: Option<String>,
     pub old_size: Option<u64>,
     pub old_version: Option<u32>,
     pub old_modified_at_ms: Option<i64>,
@@ -290,8 +290,8 @@ pub struct SysCopyResult {
     pub post_hook_needed: bool,
     /// Destination path.
     pub dst_path: String,
-    /// Content hash (etag) of the destination file.
-    pub etag: Option<String>,
+    /// Content hash (content_id) of the destination file.
+    pub content_id: Option<String>,
     /// Destination file size.
     pub size: u64,
     /// Metadata version of the destination file.
@@ -338,7 +338,7 @@ pub struct DcacheStats {
 pub struct StatResult {
     pub path: String,
     pub size: u64,
-    pub etag: Option<String>,
+    pub content_id: Option<String>,
     pub mime_type: String,
     pub is_directory: bool,
     pub entry_type: u8,
@@ -1025,7 +1025,7 @@ impl Kernel {
         zone_id: &str,
         entry_type: u8,
         size: u64,
-        etag: Option<String>,
+        content_id: Option<String>,
         version: u32,
         mime_type: Option<String>,
         created_at_ms: Option<i64>,
@@ -1034,7 +1034,7 @@ impl Kernel {
         crate::meta_store::FileMetadata {
             path: path.to_string(),
             size,
-            etag,
+            content_id,
             version,
             entry_type,
             zone_id: Some(zone_id.to_string()),
@@ -1465,7 +1465,7 @@ impl Kernel {
         size: u64,
         entry_type: u8,
         version: u32,
-        etag: Option<&str>,
+        content_id: Option<&str>,
         zone_id: Option<&str>,
         mime_type: Option<&str>,
         last_writer_address: Option<&str>,
@@ -1474,7 +1474,7 @@ impl Kernel {
             path,
             CachedEntry {
                 size,
-                etag: etag.map(|s| s.to_string()),
+                content_id: content_id.map(|s| s.to_string()),
                 version,
                 entry_type,
                 zone_id: zone_id.map(|s| s.to_string()),
@@ -2821,7 +2821,7 @@ impl Kernel {
             path: path.to_string(),
             identity: hook_id,
             content: None,
-            content_hash: None,
+            content_id: None,
         }))?;
 
         // 2. Route (pure Rust LPM)
@@ -2853,14 +2853,13 @@ impl Kernel {
                         // treats every backend the same through ObjectStore trait.
                         if let Some(data) = self.vfs_router.read_content(
                             &route.mount_point,
-                            &route.backend_path, // CAS ignores this (not a hash) → Err → None
-                            &route.backend_path,
+                            &route.backend_path, // PAS uses as path; CAS rejects (not a hash)
                             ctx,
                         ) {
                             return Ok(SysReadResult {
                                 data: Some(data),
                                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                                content_hash: None,
+                                content_id: None,
                                 entry_type: DT_REG,
                             });
                         }
@@ -2878,7 +2877,7 @@ impl Kernel {
                         return Ok(SysReadResult {
                             data: Some(data),
                             post_hook_needed: false,
-                            content_hash: None,
+                            content_id: None,
                             entry_type: DT_PIPE,
                         });
                     }
@@ -2887,7 +2886,7 @@ impl Kernel {
                         return Ok(SysReadResult {
                             data: None,
                             post_hook_needed: false,
-                            content_hash: None,
+                            content_id: None,
                             entry_type: DT_PIPE,
                         });
                     }
@@ -2901,7 +2900,7 @@ impl Kernel {
             return Ok(SysReadResult {
                 data: None,
                 post_hook_needed: false,
-                content_hash: None,
+                content_id: None,
                 entry_type: DT_PIPE,
             });
         }
@@ -2911,15 +2910,15 @@ impl Kernel {
             return Ok(SysReadResult {
                 data: None,
                 post_hook_needed: false,
-                content_hash: None,
+                content_id: None,
                 entry_type: DT_STREAM,
             });
         }
 
-        // Content identifier: CAS backends use etag (hash). Path-addressed
+        // Content identifier: CAS backends use content_id (hash). Path-addressed
         // backends derive their physical path from `path - mount_prefix`
-        // inside the backend itself; the kernel always passes the etag.
-        let content_id = match entry.etag.as_deref().filter(|s| !s.is_empty()) {
+        // inside the backend itself; the kernel always passes the content_id.
+        let content_id = match entry.content_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id,
             None => return Err(not_found()),
         };
@@ -2935,9 +2934,9 @@ impl Kernel {
         }
 
         // 5. Backend read (Rust-native ObjectStore)
-        let content =
-            self.vfs_router
-                .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
+        let content = self
+            .vfs_router
+            .read_content(&route.mount_point, content_id, ctx);
 
         // 6. Release VFS lock (always, even on miss)
         self.lock_manager.do_release(lock_handle);
@@ -2947,7 +2946,7 @@ impl Kernel {
             Some(data) => Ok(SysReadResult {
                 data: Some(data),
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_hash: entry.etag.clone(),
+                content_id: entry.content_id.clone(),
                 entry_type: DT_REG,
             }),
             // Local backend miss + metadata exists → federation path:
@@ -2957,21 +2956,19 @@ impl Kernel {
         }
     }
 
-    /// Federation on-demand content fetch.
+    /// Federation on-demand content fetch (store-and-forward).
     ///
-    /// When local CAS has no blob but metadata does, `last_writer_address`
-    /// names the node that wrote it. The kernel pulls bytes via the
-    /// driver-to-driver `ReadBlob` RPC on that peer:
+    /// When local read of a Raft-replicated entry misses,
+    /// ``last_writer_address`` names the node that wrote it. We send
+    /// the *virtual path* over to that peer's ``ReadBlob`` RPC; the
+    /// peer's ``BlobFetcher::read`` self-routes through its own
+    /// ``VFSRouter`` exactly like a local ``sys_read`` and lets each
+    /// backend interpret the locally-stored ``content_id`` (CAS hash
+    /// or PAS backend_path) however it likes. The kernel performs no
+    /// CAS-vs-PAS dispatch — the peer's mount table answers that.
     ///
-    /// - Entry carries a content hash (CAS backends, S3 etag, …) →
-    ///   peer dedup-fetches by hash.
-    /// - Entry has no content hash (path-addressed mount) → peer reads
-    ///   the file by path through its own `VFSRouter`. Lets PAS-backed
-    ///   federation reads succeed even though the reader has no content
-    ///   to dedup against.
-    ///
-    /// Returns `Err(FileNotFound)` when `last_writer_address` is unset,
-    /// equals `self_address`, or the remote call fails.
+    /// Returns ``Err(FileNotFound)`` when ``last_writer_address`` is
+    /// unset, equals ``self_address``, or the remote call fails.
     fn try_remote_fetch(
         &self,
         path: &str,
@@ -2993,38 +2990,68 @@ impl Kernel {
             }
         }
 
-        // Drive the RPC on the kernel-owned shared runtime — reusing the
-        // pooled tonic Channel from `peer_client`. No more one-shot
-        // `new_current_thread()` per call (that pattern left the runtime
-        // lingering if the future hadn't finished draining; see R11
-        // hypothesis #2).
-        let content_hash = entry.etag.as_deref().filter(|s| !s.is_empty());
-        // Phase 4 (full): peer_client is now `RwLock<Arc<dyn PeerBlobClient>>`.
-        // `peer_client_arc()` clones the Arc out from under the read lock
-        // so the actual fetch happens lock-free.
+        // Drive the RPC on the kernel-owned shared runtime — reusing
+        // the pooled tonic Channel from ``peer_client``. No more one-
+        // shot ``new_current_thread()`` per call (that pattern left
+        // the runtime lingering if the future hadn't finished
+        // draining; see R11 hypothesis #2).
+        //
+        // Pass the file's **content_id** to the peer when we have one
+        // (CAS hash for content-addressed storage, backend_path for
+        // path-addressed storage). The peer's ``BlobFetcher::read``
+        // then either fans out by hash across CAS backends or routes
+        // the path to its own mount table. Falls back to the
+        // user-facing global ``path`` when content_id is unset (cold
+        // dcache or unwritten metadata) — ``BlobFetcher::read`` will
+        // path-route it through the peer's VFSRouter.
+        //
+        // Caching the fetched blob locally is intentionally NOT done
+        // here: that would require kernel-side knowledge of the local
+        // mount's addressing scheme (CAS hash → write_content; PAS →
+        // which backend_path slot), exactly the thing this refactor
+        // moved out. If a follow-up wants opportunistic local caching
+        // it belongs in the local backend's ``write_content`` callable
+        // from the BlobFetcher impl, not here.
+        //
+        // Phase 4 (full): peer_client is now
+        // ``RwLock<Arc<dyn PeerBlobClient>>``. ``peer_client_arc()``
+        // clones the Arc out from under the read lock so the actual
+        // fetch happens lock-free.
+        let fetch_key = entry
+            .content_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(path);
         let client = self.peer_client_arc();
-        let data = match content_hash {
-            Some(hash) => client.fetch_etag(origin, hash),
-            None => client.fetch_path(origin, path),
-        }
-        .map_err(KernelError::IOError)?;
+        let data = client
+            .fetch(origin, fetch_key)
+            .map_err(KernelError::IOError)?;
 
-        // Cache the remote-fetched blob into the local mount backend so
-        // subsequent reads hit locally. Critical for failover: once the
-        // origin goes down, re-fetch would fail but the blob must still
-        // be readable. write_content is idempotent for CAS backends; for
-        // PAS we skip the cache write because the local mount root may
-        // not have the path-addressed slot wired.
-        if let Some(hash) = content_hash {
+        // Cache the fetched blob locally so subsequent reads don't need to
+        // hit the writer node again. Critical for failover: once the
+        // origin goes down, re-fetch would fail (see
+        // `TestLeaderFailover::test_failover_and_recovery`) but the blob
+        // must still be readable from local storage.
+        //
+        // ``write_content`` is idempotent on the addressing key: CAS
+        // backends compute the same hash for the same bytes; PAS
+        // backends overwrite the file at the same backend_path. We pass
+        // through the writer's ``content_id`` (CAS hash or PAS backend_
+        // path — kernel-opaque) so the local backend stores the bytes
+        // under the same key the metastore points at. Failure is
+        // swallowed: the read still returns the bytes, the next read
+        // will simply remote-fetch again.
+        let cache_key = entry.content_id.as_deref().unwrap_or("");
+        if !cache_key.is_empty() {
             let _ = self
                 .vfs_router
-                .write_content(mount_point, &data, hash, ctx, 0);
+                .write_content(mount_point, &data, cache_key, ctx, 0);
         }
 
         Ok(SysReadResult {
             data: Some(data),
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-            content_hash: entry.etag.clone(),
+            content_id: entry.content_id.clone(),
             entry_type: DT_REG,
         })
     }
@@ -3052,7 +3079,7 @@ impl Kernel {
                 version: 0,
                 size: 0,
                 is_new: false,
-                old_etag: None,
+                old_content_id: None,
                 old_size: None,
                 old_version: None,
                 old_modified_at_ms: None,
@@ -3078,7 +3105,7 @@ impl Kernel {
             },
             content: vec![], // no clone — no current hook inspects content
             is_new_file: false,
-            content_hash: None,
+            content_id: None,
             new_version: 0,
             size_bytes: None,
         }))?;
@@ -3102,7 +3129,7 @@ impl Kernel {
                                 version: 0,
                                 size: n as u64,
                                 is_new: false,
-                                old_etag: None,
+                                old_content_id: None,
                                 old_size: None,
                                 old_version: None,
                                 old_modified_at_ms: None,
@@ -3131,7 +3158,7 @@ impl Kernel {
                                 version: 0,
                                 size: offset as u64,
                                 is_new: false,
-                                old_etag: None,
+                                old_content_id: None,
                                 old_size: None,
                                 old_version: None,
                                 old_modified_at_ms: None,
@@ -3175,7 +3202,7 @@ impl Kernel {
                 .flatten()
             });
             match old_entry {
-                Some(e) => e.etag.unwrap_or_default(),
+                Some(e) => e.content_id.unwrap_or_default(),
                 None => {
                     // Partial write requires an existing file — but
                     // `sys_write` contract says "file must exist" anyway,
@@ -3208,7 +3235,7 @@ impl Kernel {
         let result = match write_result {
             Some(wr) => {
                 // Snapshot old state for OBSERVE event payload + Python
-                // post-hook dispatch (is_new, old_etag, old_size, etc.).
+                // post-hook dispatch (is_new, old_content_id, old_size, etc.).
                 // DCache → metastore fallback ensures accuracy even on cold
                 // dcache (matches the authority that Python metadata.get()
                 // had before this crossing elimination).
@@ -3219,7 +3246,7 @@ impl Kernel {
                     .flatten()
                 });
                 let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
-                let old_etag = old_entry.as_ref().and_then(|e| e.etag.clone());
+                let old_content_id = old_entry.as_ref().and_then(|e| e.content_id.clone());
                 let new_version = old_version + 1;
 
                 // Build FileMetadata and persist via metastore (per-mount or global)
@@ -3255,9 +3282,9 @@ impl Kernel {
                 }
 
                 // Snapshot old_entry fields for the result struct before
-                // dispatch_mutation moves old_etag into its closure.
+                // dispatch_mutation moves old_content_id into its closure.
                 let result_is_new = old_entry.is_none();
-                let result_old_etag = old_etag.clone();
+                let result_old_etag = old_content_id.clone();
                 let result_old_size = old_entry.as_ref().map(|e| e.size);
                 let result_old_version = old_entry.as_ref().map(|e| e.version);
                 let result_old_modified_at_ms = old_entry.as_ref().and_then(|e| e.modified_at_ms);
@@ -3265,14 +3292,14 @@ impl Kernel {
                 // OBSERVE-phase dispatch (§11 Phase 5): queue FileWrite to
                 // the kernel observer ThreadPool. Returns immediately —
                 // observer callbacks run off the syscall hot path.
-                let etag = wr.content_id.clone();
+                let content_id = wr.content_id.clone();
                 let size = wr.size;
                 self.dispatch_mutation(FileEventType::FileWrite, path, ctx, |ev| {
                     ev.size = Some(size);
-                    ev.etag = Some(etag);
+                    ev.content_id = Some(content_id);
                     ev.version = Some(new_version);
                     ev.is_new = old_version == 0;
-                    ev.old_etag = old_etag;
+                    ev.old_content_id = old_content_id;
                 });
 
                 // Native POST hooks (fire-and-forget — AuditHook sends to channel
@@ -3287,7 +3314,7 @@ impl Kernel {
                     },
                     content: vec![],
                     is_new_file: result_is_new,
-                    content_hash: None,
+                    content_id: None,
                     new_version: new_version.into(),
                     size_bytes: Some(wr.size),
                 }));
@@ -3299,7 +3326,7 @@ impl Kernel {
                     version: new_version,
                     size: wr.size,
                     is_new: result_is_new,
-                    old_etag: result_old_etag,
+                    old_content_id: result_old_etag,
                     old_size: result_old_size,
                     old_version: result_old_version,
                     old_modified_at_ms: result_old_modified_at_ms,
@@ -3365,7 +3392,7 @@ impl Kernel {
                             return Some(StatResult {
                                 path: path.to_string(),
                                 size: 4096,
-                                etag: None,
+                                content_id: None,
                                 mime_type: "inode/directory".to_string(),
                                 is_directory: true,
                                 entry_type: DT_DIR,
@@ -3406,7 +3433,7 @@ impl Kernel {
             } else {
                 entry.size
             },
-            etag: entry.etag,
+            content_id: entry.content_id,
             mime_type: mime,
             is_directory: is_dir,
             entry_type: entry.entry_type,
@@ -3440,7 +3467,7 @@ impl Kernel {
                 entry_type: et,
                 post_hook_needed: false,
                 path: path.to_string(),
-                etag: None,
+                content_id: None,
                 size: 0,
             })
         };
@@ -3495,7 +3522,7 @@ impl Kernel {
                     entry_type: DT_PIPE,
                     post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
                     path: path.to_string(),
-                    etag: entry.etag,
+                    content_id: entry.content_id,
                     size: entry.size,
                 });
             }
@@ -3507,7 +3534,7 @@ impl Kernel {
                     entry_type: DT_STREAM,
                     post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
                     path: path.to_string(),
-                    etag: entry.etag,
+                    content_id: entry.content_id,
                     size: entry.size,
                 });
             }
@@ -3521,7 +3548,7 @@ impl Kernel {
                     entry_type: DT_DIR,
                     post_hook_needed: rmdir_result.post_hook_needed,
                     path: path.to_string(),
-                    etag: entry.etag,
+                    content_id: entry.content_id,
                     size: entry.size,
                 });
             }
@@ -3537,7 +3564,7 @@ impl Kernel {
                     entry_type: DT_MOUNT,
                     post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
                     path: path.to_string(),
-                    etag: entry.etag,
+                    content_id: entry.content_id,
                     size: entry.size,
                 });
             }
@@ -3578,11 +3605,11 @@ impl Kernel {
         // 10. OBSERVE-phase dispatch (§11 Phase 5): queue FileDelete.
         // Cloned out of `entry` because the SysUnlinkResult below also
         // moves them.
-        let etag_for_event = entry.etag.clone();
+        let etag_for_event = entry.content_id.clone();
         let size_for_event = entry.size;
         self.dispatch_mutation(FileEventType::FileDelete, path, ctx, |ev| {
             ev.size = Some(size_for_event);
-            ev.etag = etag_for_event;
+            ev.content_id = etag_for_event;
         });
 
         // 11. Return hit=true with metadata for event payload
@@ -3600,7 +3627,7 @@ impl Kernel {
             entry_type: entry.entry_type,
             post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
             path: path.to_string(),
-            etag: entry.etag,
+            content_id: entry.content_id,
             size: entry.size,
         })
     }
@@ -3623,7 +3650,7 @@ impl Kernel {
                 success: false,
                 post_hook_needed: false,
                 is_directory: false,
-                old_etag: None,
+                old_content_id: None,
                 old_size: None,
                 old_version: None,
                 old_modified_at_ms: None,
@@ -3845,13 +3872,13 @@ impl Kernel {
         let (rename_old_etag, rename_old_size, rename_old_version, rename_old_modified_at_ms) =
             match (&old_meta, &old_entry) {
                 (Some(m), _) => (
-                    m.etag.clone(),
+                    m.content_id.clone(),
                     Some(m.size),
                     Some(m.version),
                     m.modified_at_ms,
                 ),
                 (None, Some(e)) => (
-                    e.etag.clone(),
+                    e.content_id.clone(),
                     Some(e.size),
                     Some(e.version),
                     e.modified_at_ms,
@@ -3864,7 +3891,7 @@ impl Kernel {
             success: true,
             post_hook_needed: self.rename_hook_count.load(Ordering::Relaxed) > 0,
             is_directory,
-            old_etag: rename_old_etag,
+            old_content_id: rename_old_etag,
             old_size: rename_old_size,
             old_version: rename_old_version,
             old_modified_at_ms: rename_old_modified_at_ms,
@@ -3892,7 +3919,7 @@ impl Kernel {
                 hit: false,
                 post_hook_needed: false,
                 dst_path: dst_path.to_string(),
-                etag: None,
+                content_id: None,
                 size: 0,
                 version: 0,
             })
@@ -3994,10 +4021,10 @@ impl Kernel {
                 None => {
                     // CAS backend or copy_file not supported — metadata-only copy
                     // (content deduplicated by hash, just create new metastore entry)
-                    let etag = src_meta.etag.clone().unwrap_or_default();
-                    if !etag.is_empty() {
+                    let content_id = src_meta.content_id.clone().unwrap_or_default();
+                    if !content_id.is_empty() {
                         // CAS: same content_id, just new path
-                        Ok((etag, src_meta.size))
+                        Ok((content_id, src_meta.size))
                     } else {
                         // Fallback: read + write
                         self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
@@ -4070,7 +4097,7 @@ impl Kernel {
             hit: true,
             post_hook_needed: self.copy_hook_count.load(Ordering::Relaxed) > 0,
             dst_path: dst_path.to_string(),
-            etag: Some(content_id),
+            content_id: Some(content_id),
             size,
             version: new_version,
         })
@@ -4084,7 +4111,7 @@ impl Kernel {
         src_meta: &CachedEntry,
         ctx: &OperationContext,
     ) -> Result<(String, u64), KernelError> {
-        let content_id = match src_meta.etag.as_deref().filter(|s| !s.is_empty()) {
+        let content_id = match src_meta.content_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id,
             None => {
                 return Err(KernelError::IOError(
@@ -4095,12 +4122,7 @@ impl Kernel {
 
         let content = self
             .vfs_router
-            .read_content(
-                &src_route.mount_point,
-                content_id,
-                &src_route.backend_path,
-                ctx,
-            )
+            .read_content(&src_route.mount_point, content_id, ctx)
             .ok_or_else(|| {
                 KernelError::IOError(format!(
                     "sys_copy: failed to read source content at {}",
@@ -4438,7 +4460,7 @@ impl Kernel {
                         version: 0,
                         size: 0,
                         is_new: false,
-                        old_etag: None,
+                        old_content_id: None,
                         old_size: None,
                         old_version: None,
                         old_modified_at_ms: None,
@@ -4456,7 +4478,7 @@ impl Kernel {
                     version: 0,
                     size: 0,
                     is_new: false,
-                    old_etag: None,
+                    old_content_id: None,
                     old_size: None,
                     old_version: None,
                     old_modified_at_ms: None,
@@ -4510,7 +4532,7 @@ impl Kernel {
                         version: new_version,
                         size: wr.size,
                         is_new: batch_old_entry.is_none(),
-                        old_etag: batch_old_entry.as_ref().and_then(|e| e.etag.clone()),
+                        old_content_id: batch_old_entry.as_ref().and_then(|e| e.content_id.clone()),
                         old_size: batch_old_entry.as_ref().map(|e| e.size),
                         old_version: batch_old_entry.as_ref().map(|e| e.version),
                         old_modified_at_ms: batch_old_entry.as_ref().and_then(|e| e.modified_at_ms),
@@ -4524,7 +4546,7 @@ impl Kernel {
                         version: 0,
                         size: 0,
                         is_new: false,
-                        old_etag: None,
+                        old_content_id: None,
                         old_size: None,
                         old_version: None,
                         old_modified_at_ms: None,
@@ -4616,7 +4638,7 @@ impl Kernel {
                 self.sys_read(path, ctx).unwrap_or(SysReadResult {
                     data: None,
                     post_hook_needed: false,
-                    content_hash: None,
+                    content_id: None,
                     entry_type: 0,
                 })
             })
@@ -4645,7 +4667,7 @@ impl Kernel {
                     entry_type: 0,
                     post_hook_needed: false,
                     path: path.clone(),
-                    etag: None,
+                    content_id: None,
                     size: 0,
                 }),
             }
@@ -4889,7 +4911,7 @@ impl Kernel {
     // `content_exists`, `get_content_size`, `is_chunked`, `_write_at_offset`).
     // Each resolves (mount_point, zone_id) → MountEntry → &CASEngine via
     // `ObjectStore::as_cas`; non-CAS backends surface as `InvalidPath`.
-    // Error context enrichment: the backend_name + content_hash are baked
+    // Error context enrichment: the backend_name + content_id are baked
     // into the returned `KernelError` so Python callers see
     // `BackendError("CAS I/O error [mount=cas-local hash=abcd…]: …")`
     // instead of a bare I/O message.
@@ -4950,11 +4972,11 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
         origins: &[String],
     ) -> Result<Vec<u8>, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_read", |cas| {
-            cas.read_content_with_origins(content_hash, origins)
+            cas.read_content_with_origins(content_id, origins)
         })
     }
 
@@ -4964,16 +4986,16 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
         start: u64,
         end: u64,
         origins: &[String],
     ) -> Result<Vec<u8>, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_read_range", |cas| {
-            if cas.is_chunked(content_hash) {
-                cas.read_chunked_range_with_origins(content_hash, start, end, origins)
+            if cas.is_chunked(content_id) {
+                cas.read_chunked_range_with_origins(content_id, start, end, origins)
             } else {
-                let full = cas.read_content_with_origins(content_hash, origins)?;
+                let full = cas.read_content_with_origins(content_id, origins)?;
                 let s = start as usize;
                 let e = (end as usize).min(full.len());
                 if s >= e {
@@ -4990,13 +5012,13 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<(), KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_delete", |cas| {
-            if cas.is_chunked(content_hash) {
-                cas.delete_chunked(content_hash)
+            if cas.is_chunked(content_id) {
+                cas.delete_chunked(content_id)
             } else {
-                cas.delete_content(content_hash)
+                cas.delete_content(content_id)
             }
         })
     }
@@ -5007,10 +5029,10 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<bool, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_exists", |cas| {
-            Ok(cas.content_exists(content_hash))
+            Ok(cas.content_exists(content_id))
         })
     }
 
@@ -5020,29 +5042,29 @@ impl Kernel {
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<u64, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_size", |cas| {
-            cas.get_size(content_hash)
+            cas.get_size(content_id)
         })
     }
 
-    /// True iff this content_hash was stored as a chunked manifest.
+    /// True iff this content_id was stored as a chunked manifest.
     /// Uses the `.meta` sidecar presence as a fast-reject.
     pub fn cas_is_chunked(
         &self,
         mount_point: &str,
         zone_id: &str,
-        content_hash: &str,
+        content_id: &str,
     ) -> Result<bool, KernelError> {
         self.cas_engine_do(mount_point, zone_id, "cas_is_chunked", |cas| {
-            Ok(cas.is_chunked(content_hash))
+            Ok(cas.is_chunked(content_id))
         })
     }
 
     /// Partial write — dispatches to `write_chunked_partial` when the old
     /// blob is chunked, otherwise does a full read-modify-write in Rust.
-    /// Returns the new content_hash.
+    /// Returns the new content_id.
     pub fn cas_write_partial(
         &self,
         mount_point: &str,
@@ -5929,7 +5951,7 @@ fn wire_federation_mount_impl(
         &global_path,
         CachedEntry {
             size: 0,
-            etag: None,
+            content_id: None,
             version: 1,
             entry_type: 2, // DT_MOUNT
             zone_id: Some(contracts::ROOT_ZONE_ID.to_string()),
@@ -6432,7 +6454,7 @@ mod tests {
 
         kernel.dispatch_mutation(FileEventType::FileWrite, "/foo.txt", &ctx, |ev| {
             ev.size = Some(42);
-            ev.etag = Some("abc123".to_string());
+            ev.content_id = Some("abc123".to_string());
             ev.version = Some(1);
             ev.is_new = true;
         });
@@ -6445,7 +6467,7 @@ mod tests {
         assert_eq!(event.user_id.as_deref(), Some("alice"));
         assert_eq!(event.agent_id.as_deref(), Some("agent-42"));
         assert_eq!(event.size, Some(42));
-        assert_eq!(event.etag.as_deref(), Some("abc123"));
+        assert_eq!(event.content_id.as_deref(), Some("abc123"));
         assert_eq!(event.version, Some(1));
         assert!(event.is_new);
     }
@@ -6574,7 +6596,7 @@ mod tests {
             crate::meta_store::FileMetadata {
                 path: "/update-test.txt".to_string(),
                 size: 0,
-                etag: None,
+                content_id: None,
                 version: 1,
                 entry_type: 0,
                 zone_id: None,

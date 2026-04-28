@@ -71,7 +71,7 @@ DATETIME_FIELDS: set[str] = {"created_at", "modified_at"}
 
 # String fields that are nullable (str | None, default None)
 NULLABLE_STRING_FIELDS: set[str] = {
-    "etag",
+    "content_id",
     "mime_type",
     "zone_id",
     "created_by",
@@ -90,7 +90,7 @@ FIELD_DEFAULTS: dict[str, str] = {
 # String fields that get interned in CompactFileMetadata
 INTERNED_FIELDS: list[str] = [
     "path",
-    "etag",
+    "content_id",
     "mime_type",
     "zone_id",
     "created_by",
@@ -102,7 +102,7 @@ INTERNED_FIELDS: list[str] = [
 # Compact field name mapping
 COMPACT_FIELD_NAMES: dict[str, str] = {
     "path": "path_id",
-    "etag": "etag_id",
+    "content_id": "content_id_intern",
     "mime_type": "mime_type_id",
     "zone_id": "zone_id_intern",
     "created_by": "created_by_id",
@@ -731,7 +731,7 @@ def _utcnow_naive() -> datetime:
 PROTO_TO_SQL: dict[str, str | None] = {{
     "path": "virtual_path",
     "size": "size_bytes",
-    "etag": "content_hash",
+    "content_id": "content_id",
     "mime_type": "file_type",
     "created_at": "created_at",
     "modified_at": "updated_at",
@@ -818,7 +818,7 @@ class MetadataMapper:
         values: dict[str, Any] = {{
             "virtual_path": metadata.path,
             "size_bytes": metadata.size or 0,
-            "content_hash": metadata.etag,
+            "content_id": metadata.content_id,
             "file_type": metadata.mime_type,
             "created_at": _to_naive(metadata.created_at) or _utcnow_naive(),
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
@@ -834,7 +834,7 @@ class MetadataMapper:
         """Convert FileMetadata to dict for UPDATE operations."""
         return {{
             "size_bytes": metadata.size or 0,
-            "content_hash": metadata.etag,
+            "content_id": metadata.content_id,
             "file_type": metadata.mime_type,
             "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
         }}

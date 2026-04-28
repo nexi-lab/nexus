@@ -34,13 +34,13 @@ class FileInfo:
             - GCS: generation number (monotonically increasing)
             - S3: version ID (if versioning enabled)
             - Local: inode + mtime as string
-        content_hash: Optional content hash if already computed
+        content_id: Optional content id if already computed
     """
 
     size: int
     mtime: datetime | None = None
     backend_version: str | None = None
-    content_hash: str | None = None
+    content_id: str | None = None
 
 
 @dataclass
@@ -594,7 +594,7 @@ class Backend(ObjectStoreABC):
             context: Operation context for authentication (optional)
 
         Returns:
-            FileInfo with size, mtime, backend_version, content_hash.
+            FileInfo with size, mtime, backend_version, content_id.
 
         Raises:
             NotImplementedError: If backend doesn't support delta sync.

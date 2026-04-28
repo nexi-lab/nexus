@@ -1,7 +1,7 @@
 """CAS Garbage Collector — reachability-based background cleanup.
 
 Two-phase GC:
-  Phase 1 (collect): Scan metastore → build set of all referenced etags.
+  Phase 1 (collect): Scan metastore → build set of all referenced content_ids.
           For CDC manifests, parse manifest → add chunk hashes to referenced set.
   Phase 2 (sweep):   Enumerate CAS blobs via transport.list_content_hashes(),
           delete unreferenced blobs older than grace period.
@@ -110,7 +110,7 @@ class CASGarbageCollector:
     def _collect(self) -> None:
         """Single GC pass — two-phase reachability scan.
 
-        Phase 1: Scan metastore to collect all referenced etags.
+        Phase 1: Scan metastore to collect all referenced content_ids.
                  For CDC manifests, expand to include chunk hashes.
         Phase 2: Enumerate all CAS blobs via transport.list_content_hashes(),
                  delete unreferenced blobs older than grace period.
@@ -125,7 +125,7 @@ class CASGarbageCollector:
         transport = engine._transport
         now = time.time()
 
-        # Phase 1: Collect referenced etags from metastore
+        # Phase 1: Collect referenced content_ids from metastore
         referenced: set[str] = set()
         try:
             self._scan_metastore(referenced)
@@ -203,7 +203,7 @@ class CASGarbageCollector:
         return entries
 
     def _scan_metastore(self, referenced: set[str]) -> None:
-        """Scan metastore to collect all referenced etags.
+        """Scan metastore to collect all referenced content_ids.
 
         For CDC manifests (is_chunked_manifest in .meta), parse the manifest
         blob to add individual chunk hashes to the referenced set.
@@ -212,7 +212,7 @@ class CASGarbageCollector:
         metastore = self._metastore
         assert metastore is not None
 
-        # Scan all entries in metastore for etags
+        # Scan all entries in metastore for content_ids
         try:
             all_entries = metastore.list(prefix="", recursive=True)
         except Exception:
@@ -220,16 +220,16 @@ class CASGarbageCollector:
             return
 
         for entry in all_entries:
-            etag = getattr(entry, "etag", None) or getattr(entry, "content_id", None)
-            if not etag:
+            content_id = getattr(entry, "content_id", None)
+            if not content_id:
                 continue
-            referenced.add(etag)
+            referenced.add(content_id)
 
             # Expand CDC manifests → add chunk hashes
             try:
-                meta = engine._read_meta(etag)
+                meta = engine._read_meta(content_id)
                 if meta.get("is_chunked_manifest"):
-                    self._expand_manifest(etag, referenced)
+                    self._expand_manifest(content_id, referenced)
             except Exception:
                 pass  # Skip broken entries
 

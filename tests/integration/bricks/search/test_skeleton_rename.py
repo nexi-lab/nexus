@@ -93,7 +93,7 @@ async def test_rename_old_path_deleted_new_path_indexed() -> None:
 async def test_rename_title_preserved_via_fresh_extraction() -> None:
     """After rename, the title is freshly extracted from the new path.
 
-    The skeleton_content_hash for the old path is irrelevant — because the
+    The skeleton_content_id for the old path is irrelevant — because the
     path_id is the same but the virtual_path changed, hash comparison is on
     the new content read.  Title should match the module docstring.
     """

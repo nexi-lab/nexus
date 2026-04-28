@@ -109,7 +109,7 @@ def _make_metadata(path: str) -> FileMetadata:
     return FileMetadata(
         path=path,
         size=42,
-        etag="etag123",
+        content_id="etag123",
         mime_type="text/plain",
         created_at=now,
         modified_at=now,

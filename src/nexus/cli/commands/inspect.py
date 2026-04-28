@@ -37,7 +37,7 @@ def info(
     Examples:
         nexus info /workspace/data.txt
         nexus info /workspace/data.txt --json
-        nexus info /workspace/data.txt --json --fields path,size,etag
+        nexus info /workspace/data.txt --json --fields path,size,content_id
     """
     import asyncio
 
@@ -84,7 +84,7 @@ async def _async_info(
             "size": file_meta.size,
             "created_at": created_str,
             "modified_at": modified_str,
-            "etag": file_meta.etag or None,
+            "content_id": file_meta.content_id or None,
             "mime_type": file_meta.mime_type or None,
         }
 
@@ -96,7 +96,7 @@ async def _async_info(
             table.add_row("Size", f"{d['size']:,} bytes")
             table.add_row("Created", d["created_at"])
             table.add_row("Modified", d["modified_at"])
-            table.add_row("ETag", d["etag"] or "N/A")
+            table.add_row("Content-ID", d["content_id"] or "N/A")
             table.add_row("MIME Type", d["mime_type"] or "N/A")
             console.print(table)
 

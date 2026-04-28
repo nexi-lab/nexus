@@ -74,7 +74,7 @@ class MarkdownStructureIndex:
     """Full structural index for a markdown document."""
 
     version: int = SCHEMA_VERSION
-    content_hash: str = ""
+    content_id: str = ""
     tokens_est_method: str = "bytes/4"
     frontmatter: FrontmatterInfo | None = None
     sections: list[SectionInfo] = field(default_factory=list)
@@ -84,7 +84,7 @@ class MarkdownStructureIndex:
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "version": self.version,
-            "content_hash": self.content_hash,
+            "content_id": self.content_id,
             "tokens_est_method": self.tokens_est_method,
             "sections": [_section_to_dict(s) for s in self.sections],
         }
@@ -98,7 +98,7 @@ class MarkdownStructureIndex:
         fm = _frontmatter_from_dict(fm_data) if fm_data else None
         return cls(
             version=data.get("version", SCHEMA_VERSION),
-            content_hash=data.get("content_hash", ""),
+            content_id=data.get("content_id", ""),
             tokens_est_method=data.get("tokens_est_method", "bytes/4"),
             frontmatter=fm,
             sections=[_section_from_dict(s) for s in data.get("sections", [])],
@@ -240,7 +240,7 @@ def _build_line_byte_offsets(content: bytes) -> list[int]:
 
 def parse_markdown_structure(
     content: bytes,
-    content_hash: str = "",
+    content_id: str = "",
 ) -> MarkdownStructureIndex:
     """Parse markdown *content* (UTF-8 bytes) into a structural index.
 
@@ -249,7 +249,7 @@ def parse_markdown_structure(
 
     Args:
         content: Raw UTF-8 bytes of the markdown file.
-        content_hash: Etag / content hash to embed in the index for
+        content_id: Etag / content hash to embed in the index for
             staleness detection on the read path.
 
     Returns:
@@ -261,8 +261,8 @@ def parse_markdown_structure(
         _init_rust_parser()
 
     if _USE_RUST:
-        return _parse_rust(content, content_hash)
-    return _parse_python(content, content_hash)
+        return _parse_rust(content, content_id)
+    return _parse_python(content, content_id)
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ def parse_markdown_structure(
 # ---------------------------------------------------------------------------
 
 
-def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
+def _parse_rust(content: bytes, content_id: str) -> MarkdownStructureIndex:
     text = content.decode("utf-8", errors="replace")
     tree = _md_rust.tree(text)
     line_offsets = _build_line_byte_offsets(content)
@@ -417,7 +417,7 @@ def _parse_rust(content: bytes, content_hash: str) -> MarkdownStructureIndex:
                 _walk(child)
 
     _walk(tree)
-    return _build_index(headings, blocks, frontmatter, line_offsets, content_hash)
+    return _build_index(headings, blocks, frontmatter, line_offsets, content_id)
 
 
 def _byte_to_line(byte_offset: int, line_offsets: list[int]) -> int:
@@ -454,7 +454,7 @@ def _byte_end_to_line_exclusive(byte_end: int, byte_start: int, line_offsets: li
 # ---------------------------------------------------------------------------
 
 
-def _parse_python(content: bytes, content_hash: str) -> MarkdownStructureIndex:
+def _parse_python(content: bytes, content_id: str) -> MarkdownStructureIndex:
     text = content.decode("utf-8", errors="replace")
     md = _get_python_parser()
     tokens = md.parse(text)
@@ -581,7 +581,7 @@ def _parse_python(content: bytes, content_hash: str) -> MarkdownStructureIndex:
 
         i += 1
 
-    return _build_index(headings, blocks, frontmatter, line_offsets, content_hash)
+    return _build_index(headings, blocks, frontmatter, line_offsets, content_id)
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +594,7 @@ def _build_index(
     blocks: list[BlockInfo],
     frontmatter: FrontmatterInfo | None,
     line_offsets: list[int],
-    content_hash: str,
+    content_id: str,
 ) -> MarkdownStructureIndex:
     """Build hierarchical sections from raw headings and blocks."""
     total_lines = len(line_offsets) - 1
@@ -659,7 +659,7 @@ def _build_index(
 
     return MarkdownStructureIndex(
         version=SCHEMA_VERSION,
-        content_hash=content_hash,
+        content_id=content_id,
         frontmatter=frontmatter,
         sections=sections,
     )

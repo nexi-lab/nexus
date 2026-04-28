@@ -186,7 +186,7 @@ class TestCrossBrickIsolation:
         b2 = IsolatedBackend(_cfg())
         try:
             wr1 = b1.write_content(b"only-in-b1")
-            assert wr1.content_id  # WriteResult with content_hash
+            assert wr1.content_id  # WriteResult with content_id
 
             # b2's worker has a fresh MockBackend — it should not have b1's data
             exists = b2.content_exists(wr1.content_id)

@@ -40,10 +40,10 @@ class InMemoryCAS:
     def __init__(self):
         self.blobs: dict[str, bytes] = {}
 
-    def read_content(self, content_hash, context=None):
-        data = self.blobs.get(content_hash)
+    def read_content(self, content_id, context=None):
+        data = self.blobs.get(content_id)
         if data is None:
-            raise FileNotFoundError(f"CAS blob {content_hash} not found")
+            raise FileNotFoundError(f"CAS blob {content_id} not found")
         return data
 
     def write_content(self, data, content_id: str = "", *, offset: int = 0, context=None):
@@ -79,7 +79,7 @@ class FakeWorkspaceManagerE2E:
         manifest = WorkspaceManifest(
             entries={
                 f"file-{self._snap_counter}.txt": ManifestEntry(
-                    content_hash=f"hash-{self._snap_counter}",
+                    content_id=f"hash-{self._snap_counter}",
                     size=100 * self._snap_counter,
                     mime_type="text/plain",
                 )
@@ -450,10 +450,10 @@ class TestE2EThreeWayMerge:
         initial_manifest = WorkspaceManifest(
             entries={
                 "shared.txt": ManifestEntry(
-                    content_hash="hash-shared", size=100, mime_type="text/plain"
+                    content_id="hash-shared", size=100, mime_type="text/plain"
                 ),
                 "common.txt": ManifestEntry(
-                    content_hash="hash-common", size=50, mime_type="text/plain"
+                    content_id="hash-common", size=50, mime_type="text/plain"
                 ),
             }
         )
@@ -485,20 +485,20 @@ class TestE2EThreeWayMerge:
         source_manifest = WorkspaceManifest(
             entries={
                 "shared.txt": ManifestEntry(
-                    content_hash="hash-source-edit", size=200, mime_type="text/plain"
+                    content_id="hash-source-edit", size=200, mime_type="text/plain"
                 ),
                 "common.txt": ManifestEntry(
-                    content_hash="hash-common", size=50, mime_type="text/plain"
+                    content_id="hash-common", size=50, mime_type="text/plain"
                 ),
             }
         )
         target_manifest = WorkspaceManifest(
             entries={
                 "shared.txt": ManifestEntry(
-                    content_hash="hash-target-edit", size=300, mime_type="text/plain"
+                    content_id="hash-target-edit", size=300, mime_type="text/plain"
                 ),
                 "common.txt": ManifestEntry(
-                    content_hash="hash-common", size=50, mime_type="text/plain"
+                    content_id="hash-common", size=50, mime_type="text/plain"
                 ),
             }
         )

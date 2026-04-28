@@ -309,7 +309,7 @@ pub(crate) fn finalize_manifest(
         "total_size": total_size,
         "chunk_count": chunk_count,
         "avg_chunk_size": avg_chunk_size,
-        "content_hash": full_content_hash,
+        "content_id": full_content_hash,
         "chunks": chunk_entries,
     });
     let manifest_bytes =

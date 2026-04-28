@@ -20,7 +20,7 @@ from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
 @dataclass
 class FakeFileMetadata:
     path: str
-    etag: str = "abc123"
+    content_id: str = "abc123"
     version: str = "1"
     size: int = 100
     owner: str = "user"
@@ -30,7 +30,7 @@ class FakeFileMetadata:
 def metadata() -> MagicMock:
     mock = MagicMock()
     # metadata.get returns FakeFileMetadata for existing files, None otherwise
-    mock.get.return_value = FakeFileMetadata(path="/file.xlsx", etag="hash123")
+    mock.get.return_value = FakeFileMetadata(path="/file.xlsx", content_id="hash123")
     mock.exists.return_value = True
     return mock
 

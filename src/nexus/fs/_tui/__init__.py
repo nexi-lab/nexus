@@ -165,7 +165,7 @@ class ContextualNexusFS:
                         "path": full_path,
                         "size": 4096 if is_dir else 0,
                         "is_directory": is_dir,
-                        "etag": None,
+                        "content_id": None,
                         "mime_type": "inode/directory" if is_dir else "application/octet-stream",
                         "created_at": now,
                         "modified_at": now,

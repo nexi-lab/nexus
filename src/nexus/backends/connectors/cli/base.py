@@ -747,7 +747,7 @@ class PathCLIBackend(
 
     def read_content(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> bytes:
         """Read content via CLI get command.
@@ -864,21 +864,21 @@ class PathCLIBackend(
 
     def delete_content(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> None:
         """Content deletion not supported via CLI."""
 
     def content_exists(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> bool:
         return False
 
     def get_content_size(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> int:
         return 0

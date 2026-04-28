@@ -239,12 +239,12 @@ class TestKernelSanity:
         assert meta["is_directory"] is False
 
     @pytest.mark.asyncio
-    async def test_get_etag(self, nx):
+    async def test_get_content_id(self, nx):
         nx.write("/etag.txt", b"etag test")
-        etag = nx.get_etag("/etag.txt")
-        assert etag is not None
-        assert isinstance(etag, str)
-        assert len(etag) > 0
+        content_id = nx.get_content_id("/etag.txt")
+        assert content_id is not None
+        assert isinstance(content_id, str)
+        assert len(content_id) > 0
 
 
 # ---------------------------------------------------------------------------

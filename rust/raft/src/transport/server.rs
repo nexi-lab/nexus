@@ -1074,19 +1074,19 @@ impl ZoneApiService for ZoneApiServiceImpl {
         }))
     }
 
-    /// Serve a peer's blob fetch (R20.18.7).
+    /// Serve a peer's content fetch (R20.18.7 → store-and-forward refactor).
     ///
-    /// Two addressing modes (see `ReadBlobRequest` proto):
-    ///   - `path` set → delegate to `BlobFetcher::read_path`, which
-    ///     drives the local `VFSRouter` exactly like a local sys_read.
-    ///     Used for federation reads against PAS-backed mounts.
-    ///   - `path` empty → CAS lookup by `content_hash` (existing path).
+    /// One addressing mode: ``content_id`` is opaque to the kernel; the
+    /// installed ``BlobFetcher`` impl drives the local read path which
+    /// routes through ``VFSRouter`` exactly like a local ``sys_read``,
+    /// letting each backend interpret ``content_id`` however it likes
+    /// (CAS=hash, PAS=backend_path). No CAS-vs-PAS branch lives here.
     ///
-    /// Delegates to the kernel-installed `BlobFetcher`. The slot is
-    /// late-bound: `ZoneManager::new` spawns the server before the
+    /// Delegates to the kernel-installed ``BlobFetcher``. The slot is
+    /// late-bound: ``ZoneManager::new`` spawns the server before the
     /// kernel's root-mount backend is wired, so early calls arrive
     /// before the slot is populated. We treat every "no fetcher / not
-    /// found" path as a `NotFound` result carried in `error`.
+    /// found" path as a ``NotFound`` result carried in ``error``.
     async fn read_blob(
         &self,
         request: Request<ReadBlobRequest>,
@@ -1102,12 +1102,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
                 error: "blob fetcher not installed".to_string(),
             }));
         };
-        let result = if !req.path.is_empty() {
-            fetcher.read_path(&req.path).await
-        } else {
-            fetcher.read_blob(&req.content_hash).await
-        };
-        match result {
+        match fetcher.read(&req.content_id).await {
             Ok(bytes) => Ok(Response::new(ReadBlobResponse {
                 content: bytes,
                 error: String::new(),

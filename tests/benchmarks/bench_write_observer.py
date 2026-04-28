@@ -34,11 +34,11 @@ WARMUP = 100
 ITERATIONS = 1000
 
 
-def _make_metadata(path: str, *, etag: str = "abc123", size: int = 100) -> FileMetadata:
+def _make_metadata(path: str, *, content_id: str = "abc123", size: int = 100) -> FileMetadata:
     return FileMetadata(
         path=path,
         size=size,
-        etag=etag,
+        content_id=content_id,
         mime_type="text/plain",
         created_at=datetime.now(UTC),
         modified_at=datetime.now(UTC),
@@ -73,13 +73,13 @@ def bench_sync(tmp_dir: Path) -> list[float]:
 
     # Warmup
     for i in range(WARMUP):
-        md = _make_metadata(f"/warmup/{i}.txt", etag=f"w{i}")
+        md = _make_metadata(f"/warmup/{i}.txt", content_id=f"w{i}")
         observer.on_write(md, is_new=True, path=md.path)
 
     # Measure
     times: list[float] = []
     for i in range(ITERATIONS):
-        md = _make_metadata(f"/bench/{i}.txt", etag=f"b{i}")
+        md = _make_metadata(f"/bench/{i}.txt", content_id=f"b{i}")
         t0 = time.perf_counter()
         observer.on_write(md, is_new=True, path=md.path)
         t1 = time.perf_counter()
@@ -167,13 +167,13 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
     try:
         # Warmup
         for i in range(WARMUP):
-            md = _make_metadata(f"/warmup/{i}.txt", etag=f"w{i}")
+            md = _make_metadata(f"/warmup/{i}.txt", content_id=f"w{i}")
             observer.on_write(md, is_new=True, path=md.path)
 
         # Measure
         times: list[float] = []
         for i in range(ITERATIONS):
-            md = _make_metadata(f"/bench/{i}.txt", etag=f"b{i}")
+            md = _make_metadata(f"/bench/{i}.txt", content_id=f"b{i}")
             t0 = time.perf_counter()
             observer.on_write(md, is_new=True, path=md.path)
             t1 = time.perf_counter()

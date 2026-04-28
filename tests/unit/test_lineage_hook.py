@@ -59,8 +59,8 @@ class TestLineageHookIntegration:
 
         # Simulate agent reads
         acc = get_accumulator()
-        acc.record_read("agent-1", 1, "/data/input.csv", version=5, etag="abc123")
-        acc.record_read("agent-1", 1, "/data/config.yaml", version=3, etag="def456")
+        acc.record_read("agent-1", 1, "/data/input.csv", version=5, content_id="abc123")
+        acc.record_read("agent-1", 1, "/data/config.yaml", version=3, content_id="def456")
 
         # Simulate the post-flush event for a write
         events = [
@@ -155,7 +155,7 @@ class TestLineageHookIntegration:
                 "op": "copy",
                 "path": "/output/copy.json",
                 "src_path": "/source/original.json",
-                "src_metadata": {"version": 3, "etag": "src_hash"},
+                "src_metadata": {"version": 3, "content_id": "src_hash"},
                 "zone_id": "root",
                 "agent_id": "agent-copy",
                 "agent_generation": 1,
@@ -186,8 +186,8 @@ class TestLineageHookIntegration:
             registry.register("lineage", LineageAspect, max_versions=5)
 
         acc = get_accumulator()
-        acc.record_read("agent-1", 1, "/shared/input.csv", version=1, etag="e1")
-        acc.record_read("agent-2", 1, "/other/data.csv", version=2, etag="e2")
+        acc.record_read("agent-1", 1, "/shared/input.csv", version=1, content_id="e1")
+        acc.record_read("agent-2", 1, "/other/data.csv", version=2, content_id="e2")
 
         events = [
             {

@@ -333,28 +333,28 @@ class TestEditOperations:
         content = slim_fs.sys_read("/local/fuzzy.py", context=LOCAL_CONTEXT)
         assert b"def compute_sum(items):" in content
 
-    def test_edit_etag_concurrency(self, slim_fs: NexusFS):
-        """Optimistic concurrency: edit with correct etag succeeds."""
+    def test_edit_content_id_concurrency(self, slim_fs: NexusFS):
+        """Optimistic concurrency: edit with correct content_id succeeds."""
         write_result = slim_fs.write("/local/etag.txt", b"version 1\n", context=LOCAL_CONTEXT)
-        etag = write_result["etag"]
+        content_id = write_result["content_id"]
 
         result = slim_fs.edit(
             "/local/etag.txt",
             [("version 1", "version 2")],
             context=LOCAL_CONTEXT,
-            if_match=etag,
+            if_match=content_id,
         )
 
         assert result["success"] is True
         content = slim_fs.sys_read("/local/etag.txt", context=LOCAL_CONTEXT)
         assert content == b"version 2\n"
 
-    def test_edit_stale_etag_fails(self, slim_fs: NexusFS):
-        """Optimistic concurrency: stale etag is rejected."""
+    def test_edit_stale_content_id_fails(self, slim_fs: NexusFS):
+        """Optimistic concurrency: stale content_id is rejected."""
         write_result = slim_fs.write("/local/stale.txt", b"version 1\n", context=LOCAL_CONTEXT)
-        old_etag = write_result["etag"]
+        old_content_id = write_result["content_id"]
 
-        # Overwrite to change the etag
+        # Overwrite to change the content_id
         slim_fs.write("/local/stale.txt", b"version 2\n", context=LOCAL_CONTEXT)
 
         from nexus.contracts.exceptions import ConflictError
@@ -364,7 +364,7 @@ class TestEditOperations:
                 "/local/stale.txt",
                 [("version 2", "version 3")],
                 context=LOCAL_CONTEXT,
-                if_match=old_etag,
+                if_match=old_content_id,
             )
 
     def test_edit_delete_text(self, slim_fs: NexusFS):
@@ -449,7 +449,7 @@ class TestSQLiteMetastore:
         fm = FileMetadata(
             path="/test/file.txt",
             size=42,
-            etag="abc123",
+            content_id="abc123",
             mime_type="text/plain",
             created_at=datetime.now(UTC),
             modified_at=datetime.now(UTC),

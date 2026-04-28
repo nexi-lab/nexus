@@ -120,7 +120,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "unlock",  # Tier 2 alias for sys_unlock (defined in NexusFS)
         "locked",  # Tier 2 async context manager for lock/unlock (defined in NexusFS)
         # Server-side only methods (clients get this via HTTP headers)
-        "get_etag",  # Returns ETag for early 304 check - clients receive ETags via HTTP headers on read
+        "get_content_id",  # Returns content_id for early 304 check - clients receive ETags via HTTP headers on read
         # Async methods - TODO: Add async RPC support
         # Tracked in issue #XXX
         "parse",  # Async - requires async RPC support

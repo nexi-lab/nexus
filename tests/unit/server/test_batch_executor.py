@@ -36,7 +36,7 @@ def mock_fs() -> MagicMock:
     # Default behaviors for each operation
     fs.read.return_value = b"file content"
     fs.write.return_value = {
-        "etag": "abc123",
+        "content_id": "abc123",
         "version": 1,
         "size": 12,
         "modified_at": "2026-02-17T00:00:00Z",
@@ -51,7 +51,7 @@ def mock_fs() -> MagicMock:
     meta = MagicMock()
     meta.path = "/test.txt"
     meta.size = 12
-    meta.etag = "abc123"
+    meta.content_id = "abc123"
     meta.version = 1
     meta.is_dir = False
     meta.created_at = None
@@ -379,7 +379,7 @@ class TestSequentialDependency:
         def tracking_write(path: str, content: Any, **kwargs: Any) -> dict:
             execution_order.append(f"write:{path}")
             return {
-                "etag": "new",
+                "content_id": "new",
                 "version": 1,
                 "size": len(str(content)),
                 "modified_at": "2026-02-17T00:00:00Z",

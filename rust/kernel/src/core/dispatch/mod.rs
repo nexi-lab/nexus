@@ -123,7 +123,7 @@ pub struct FileEvent {
     /// Some test/event consumers also stash a previous path here.
     pub(crate) old_path: Option<String>,
     pub(crate) size: Option<u64>,
-    pub(crate) etag: Option<String>,
+    pub(crate) content_id: Option<String>,
     pub(crate) agent_id: Option<String>,
     pub(crate) vector_clock: Option<String>,
     /// Monotonic ordering within a zone (#2755).
@@ -136,7 +136,7 @@ pub struct FileEvent {
     /// Rename-specific: destination path.
     pub(crate) new_path: Option<String>,
     /// Write-specific: previous content hash (for overwrite detection).
-    pub(crate) old_etag: Option<String>,
+    pub(crate) old_content_id: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -181,8 +181,11 @@ impl FileEvent {
         if let Some(ref v) = self.user_id {
             map.insert("user_id".to_string(), serde_json::Value::String(v.clone()));
         }
-        if let Some(ref v) = self.etag {
-            map.insert("etag".to_string(), serde_json::Value::String(v.clone()));
+        if let Some(ref v) = self.content_id {
+            map.insert(
+                "content_id".to_string(),
+                serde_json::Value::String(v.clone()),
+            );
         }
         if let Some(v) = self.size {
             map.insert("size".to_string(), serde_json::Value::from(v));
@@ -215,7 +218,7 @@ impl FileEvent {
             event_id: new_event_id(),
             old_path: None,
             size: None,
-            etag: None,
+            content_id: None,
             agent_id: None,
             vector_clock: None,
             sequence_number: None,
@@ -223,7 +226,7 @@ impl FileEvent {
             version: None,
             is_new: false,
             new_path: None,
-            old_etag: None,
+            old_content_id: None,
         }
     }
 }
@@ -307,7 +310,7 @@ pub struct ReadHookCtx {
     pub path: String,
     pub identity: HookIdentity,
     pub content: Option<Vec<u8>>,
-    pub content_hash: Option<String>,
+    pub content_id: Option<String>,
 }
 
 /// WriteHookContext — pre/post write intercept.
@@ -321,7 +324,7 @@ pub struct WriteHookCtx {
     /// Use `size_bytes` for byte-count metadata in post-hook context.
     pub content: Vec<u8>,
     pub is_new_file: bool,
-    pub content_hash: Option<String>,
+    pub content_id: Option<String>,
     pub new_version: u64,
     /// Populated in post-hook context; None in pre-hook.
     pub size_bytes: Option<u64>,
@@ -896,7 +899,7 @@ mod tests {
         // All optional fields default to None / false.
         assert!(ev.zone_id.is_none());
         assert!(ev.size.is_none());
-        assert!(ev.etag.is_none());
+        assert!(ev.content_id.is_none());
         assert!(!ev.is_new);
     }
 }

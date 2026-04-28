@@ -261,7 +261,7 @@ class TestMCLProcessorRebuildsAspectStore:
                 {
                     "path": "/data/file.csv",
                     "size": 1024,
-                    "etag": "abc123",
+                    "content_id": "abc123",
                 }
             ),
             zone_id="z1",

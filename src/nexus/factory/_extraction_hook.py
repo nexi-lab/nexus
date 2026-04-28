@@ -6,7 +6,7 @@ backend and runs CatalogService.extract_auto() for supported formats.
 The hook:
     1. Iterates flushed events, filtering for "write" ops
     2. Format-gates: checks extension against registered extractors
-    3. Reads content from the backend via content hash (etag)
+    3. Reads content from the backend via content hash (content_id)
     4. Calls CatalogService.extract_auto() to store aspects
     5. Wraps all extractions in a single DB transaction with savepoints
 
@@ -27,10 +27,10 @@ def _read_content(
     backend: Any,
 ) -> bytes | None:
     """Read file content from CAS backend."""
-    content_hash = metadata.get("etag")
-    if not content_hash:
+    content_id = metadata.get("content_id")
+    if not content_id:
         return None
-    result: bytes | None = backend.read_content(content_hash)
+    result: bytes | None = backend.read_content(content_id)
     return result
 
 
@@ -45,7 +45,7 @@ def make_extraction_hook(
 
     Args:
         session_factory: RecordStore session factory for AspectService.
-        backend: Storage backend with read_content(content_hash).
+        backend: Storage backend with read_content(content_id).
         metastore: Metastore (unused, kept for API compatibility).
         max_extract_bytes: Max file size for auto-extraction (100MB).
 

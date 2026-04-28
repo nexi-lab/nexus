@@ -50,36 +50,36 @@ class MockBackend(Backend):
             self._ref_counts[h] = 1
         return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash, context=None) -> bytes:
+    def read_content(self, content_id, context=None) -> bytes:
         self._last_context = context
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(path=content_hash, message="Content not found")
-        return self._content[content_hash]
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(path=content_id, message="Content not found")
+        return self._content[content_id]
 
     def batch_read_content(
-        self, content_hashes, context=None, *, contexts=None
+        self, content_ids, context=None, *, contexts=None
     ) -> dict[str, bytes | None]:
         self._last_context = context
-        return {h: self._content.get(h) for h in content_hashes}
+        return {h: self._content.get(h) for h in content_ids}
 
-    def delete_content(self, content_hash, context=None) -> None:
+    def delete_content(self, content_id, context=None) -> None:
         self._last_context = context
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(path=content_hash, message="Content not found")
-        self._ref_counts[content_hash] -= 1
-        if self._ref_counts[content_hash] <= 0:
-            del self._content[content_hash]
-            del self._ref_counts[content_hash]
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(path=content_id, message="Content not found")
+        self._ref_counts[content_id] -= 1
+        if self._ref_counts[content_id] <= 0:
+            del self._content[content_id]
+            del self._ref_counts[content_id]
 
-    def content_exists(self, content_hash, context=None) -> bool:
+    def content_exists(self, content_id, context=None) -> bool:
         self._last_context = context
-        return content_hash in self._content
+        return content_id in self._content
 
-    def get_content_size(self, content_hash, context=None) -> int:
+    def get_content_size(self, content_id, context=None) -> int:
         self._last_context = context
-        if content_hash not in self._content:
-            raise NexusFileNotFoundError(path=content_hash, message="Content not found")
-        return len(self._content[content_hash])
+        if content_id not in self._content:
+            raise NexusFileNotFoundError(path=content_id, message="Content not found")
+        return len(self._content[content_id])
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
         return None
@@ -191,14 +191,14 @@ class TestObjectStoreConformance:
 
     def test_delete(self, store: ObjectStoreABC) -> None:
         result = store.write_content(b"delete me")
-        content_hash = result.content_id
+        content_id = result.content_id
         # Verify content exists via read
-        store.read_content(content_hash)
+        store.read_content(content_id)
         # Delete it
-        store.delete_content(content_hash)
+        store.delete_content(content_id)
         # Verify it's gone
         with pytest.raises((NexusFileNotFoundError, BackendError)):
-            store.read_content(content_hash)
+            store.read_content(content_id)
 
     def test_get_content_size(self, store: ObjectStoreABC) -> None:
         content = b"size check"
@@ -267,10 +267,10 @@ class TestEdgeCases:
     def test_batch_read_content_single_item(self, store: ObjectStoreABC) -> None:
         """batch_read_content([hash]) works like read_content()."""
         content = b"single"
-        content_hash = store.write_content(content).content_id
-        result = store.batch_read_content([content_hash])
+        content_id = store.write_content(content).content_id
+        result = store.batch_read_content([content_id])
         assert len(result) == 1
-        assert result[content_hash] == content
+        assert result[content_id] == content
 
     def test_batch_read_content_all_missing(self, store: ObjectStoreABC) -> None:
         """batch_read_content with all missing hashes returns all None."""
@@ -281,10 +281,10 @@ class TestEdgeCases:
     def test_size_consistency_roundtrip(self, store: ObjectStoreABC) -> None:
         """get_content_size() matches len(read_content()) immediately after write_content()."""
         content = b"consistency check content"
-        content_hash = store.write_content(content).content_id
-        assert store.get_content_size(content_hash) == len(content)
-        retrieved = store.read_content(content_hash)
-        assert len(retrieved) == store.get_content_size(content_hash)
+        content_id = store.write_content(content).content_id
+        assert store.get_content_size(content_id) == len(content)
+        retrieved = store.read_content(content_id)
+        assert len(retrieved) == store.get_content_size(content_id)
 
 
 # === Protocol isinstance Tests ===
@@ -440,16 +440,16 @@ class TestBackendOverhead:
     def test_direct_call_overhead_under_50us(self, mock_store: MockBackend) -> None:
         """Measure direct backend call overhead -- should be minimal."""
         result = mock_store.write_content(b"benchmark data")
-        content_hash = result.content_id
+        content_id = result.content_id
 
         # Warmup
         for _ in range(100):
-            mock_store.read_content(content_hash)
+            mock_store.read_content(content_id)
 
         iterations = 10_000
         start = time.perf_counter()
         for _ in range(iterations):
-            mock_store.read_content(content_hash)
+            mock_store.read_content(content_id)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
 
         # Direct backend call should be minimal (under 50us including MockBackend)

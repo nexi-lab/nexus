@@ -90,7 +90,7 @@ def init(path: str) -> None:
 @click.option(
     "--metadata",
     is_flag=True,
-    help="Show file metadata (etag, version) for optimistic concurrency control",
+    help="Show file metadata (content_id, version) for optimistic concurrency control",
 )
 @click.option(
     "--at-operation",
@@ -166,7 +166,7 @@ def cat(
                         content = read_result["content"]
                         meta_data = {
                             "path": path,
-                            "etag": read_result["etag"],
+                            "content_id": read_result["content_id"],
                             "version": read_result["version"],
                             "size": read_result["size"],
                             "modified_at": str(read_result["modified_at"]),
@@ -228,7 +228,7 @@ def cat(
             if metadata and meta_data:
                 console.print("[bold]Metadata:[/bold]")
                 console.print(f"[nexus.muted]Path:[/nexus.muted]     {meta_data['path']}")
-                console.print(f"[nexus.muted]ETag:[/nexus.muted]     {meta_data['etag']}")
+                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {meta_data['content_id']}")
                 console.print(f"[nexus.muted]Version:[/nexus.muted]  {meta_data['version']}")
                 console.print(f"[nexus.muted]Size:[/nexus.muted]     {meta_data['size']} bytes")
                 console.print(f"[nexus.muted]Modified:[/nexus.muted] {meta_data['modified_at']}")
@@ -326,16 +326,16 @@ def _cat_md_section(
         hook = nx.service("md_structure") if hasattr(nx, "service") else None
         if hook is None or not hasattr(hook, "read_section"):
             return None
-        content_hash = ""
+        content_id = ""
         meta = getattr(nx, "metadata", None)
         if meta is not None:
             try:
                 file_meta = meta.get(path)
-                if file_meta and file_meta.etag:
-                    content_hash = file_meta.etag
+                if file_meta and file_meta.content_id:
+                    content_id = file_meta.content_id
             except Exception:
                 pass
-        result: str | None = hook.read_section(path, content, content_hash, section, block_type)
+        result: str | None = hook.read_section(path, content, content_id, section, block_type)
         return result
     except Exception:
         return None
@@ -383,7 +383,7 @@ def _print_content(path: str, content: bytes) -> None:
 @click.option(
     "--show-metadata",
     is_flag=True,
-    help="Show metadata (etag, version) after writing",
+    help="Show metadata (content_id, version) after writing",
 )
 @add_dry_run_option
 @add_backend_options
@@ -461,7 +461,7 @@ def write(
             )
 
             if show_metadata:
-                console.print(f"[nexus.muted]ETag:[/nexus.muted]     {result['etag']}")
+                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {result['content_id']}")
                 console.print(f"[nexus.muted]Version:[/nexus.muted]  {result['version']}")
                 console.print(f"[nexus.muted]Size:[/nexus.muted]     {result['size']} bytes")
                 console.print(f"[nexus.muted]Modified:[/nexus.muted] {result['modified_at']}")
@@ -488,7 +488,7 @@ def write(
 @click.option(
     "--show-metadata",
     is_flag=True,
-    help="Show metadata (etag, version) after appending",
+    help="Show metadata (content_id, version) after appending",
 )
 @add_backend_options
 @add_context_options
@@ -540,7 +540,7 @@ def append(
             )
 
             if show_metadata:
-                console.print(f"[nexus.muted]ETag:[/nexus.muted]     {result['etag']}")
+                console.print(f"[nexus.muted]Content-ID:[/nexus.muted] {result['content_id']}")
                 console.print(f"[nexus.muted]Version:[/nexus.muted]  {result['version']}")
                 console.print(f"[nexus.muted]Size:[/nexus.muted]     {result['size']} bytes")
                 console.print(f"[nexus.muted]Modified:[/nexus.muted] {result['modified_at']}")
@@ -1165,7 +1165,7 @@ def edit(
             applied = result.get("applied_count", 0)
             diff = result.get("diff", "")
             matches = result.get("matches", [])
-            etag = result.get("etag", "")
+            content_id = result.get("content_id", "")
 
             if preview:
                 if success and applied > 0:
@@ -1183,8 +1183,8 @@ def edit(
                 console.print(
                     f"[nexus.success]✓[/nexus.success] {applied} edit(s) applied to [nexus.path]{path}[/nexus.path]"
                 )
-                if etag:
-                    console.print(f"  [nexus.muted]etag: {etag}[/nexus.muted]")
+                if content_id:
+                    console.print(f"  [nexus.muted]content_id: {content_id}[/nexus.muted]")
                 for m in matches:
                     sim = m.get("similarity")
                     method = m.get("method", "exact")

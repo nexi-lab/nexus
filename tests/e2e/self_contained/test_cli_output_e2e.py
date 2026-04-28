@@ -238,7 +238,7 @@ class TestCatE2E:
         result = _run_nexus(["cat", "/workspace/data.txt", "--json", "--metadata"], seeded_data_dir)
         output = _parse_json(result)
         assert "metadata" in output["data"]
-        assert "etag" in output["data"]["metadata"]
+        assert "content_id" in output["data"]["metadata"]
 
     def test_cat_human_with_content(self, seeded_data_dir: str) -> None:
         result = _run_nexus(["cat", "/workspace/data.txt"], seeded_data_dir)
@@ -356,7 +356,7 @@ class TestInfoE2E:
         data = output["data"]
         assert data["path"] == "/workspace/data.txt"
         assert data["size"] > 0
-        assert data["etag"] is not None
+        assert data["content_id"] is not None
 
     def test_info_timing(self, seeded_data_dir: str) -> None:
         result = _run_nexus(["info", "/workspace/data.txt", "--json"], seeded_data_dir)

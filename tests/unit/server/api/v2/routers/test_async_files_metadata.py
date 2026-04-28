@@ -42,7 +42,7 @@ def test_metadata_accepts_sys_stat_dict() -> None:
         return_value={
             "path": "/",
             "size": 0,
-            "etag": None,
+            "content_id": None,
             "version": 1,
             "is_directory": True,
             "created_at": None,
@@ -57,7 +57,7 @@ def test_metadata_accepts_sys_stat_dict() -> None:
     assert resp.json() == {
         "path": "/",
         "size": 0,
-        "etag": None,
+        "content_id": None,
         "version": 1,
         "is_directory": True,
         "created_at": None,

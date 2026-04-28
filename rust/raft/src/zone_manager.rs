@@ -1043,13 +1043,13 @@ impl ZoneManager {
                 (relative, proto.entry_type)
             };
 
-            // Clone every existing field (etag / size / mime_type / timestamps /
+            // Clone every existing field (content_id / size / mime_type / timestamps /
             // permissions) so readers on the new zone can find the CAS blob
             // and serve reads. Only `path`, `zone_id`, and `entry_type` are
             // overridden for the rebased copy. The previous call went through
             // `encode_file_metadata` which took a six-arg subset and dropped
             // every other field — the shared file showed up in sys_stat but
-            // had `etag=None`, so `try_remote_fetch` couldn't look up the
+            // had `content_id=None`, so `try_remote_fetch` couldn't look up the
             // CAS hash and cross-node reads failed with "File not found".
             use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
             use prost::Message;

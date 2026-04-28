@@ -216,7 +216,7 @@ mod tests {
             },
             content: vec![],
             is_new_file: true,
-            content_hash: None,
+            content_id: None,
             new_version: 1,
             size_bytes: Some(1024),
         });

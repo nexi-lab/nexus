@@ -22,15 +22,15 @@ from nexus.bricks.search.indexing_service import IndexingService
 
 def _mock_file_model(
     path_id: str = "pid-1",
-    content_hash: str | None = "abc123",
-    indexed_content_hash: str | None = None,
+    content_id: str | None = "abc123",
+    indexed_content_id: str | None = None,
     virtual_path: str = "test.py",
 ) -> MagicMock:
     """Create a mock FilePathModel with configurable hash fields."""
     model = MagicMock()
     model.path_id = path_id
-    model.content_hash = content_hash
-    model.indexed_content_hash = indexed_content_hash
+    model.content_id = content_id
+    model.indexed_content_id = indexed_content_id
     model.virtual_path = virtual_path
     model.last_indexed_at = None
     return model
@@ -161,8 +161,8 @@ class TestIndexDocument:
         """index_document reads content and delegates to pipeline.index_document."""
         file_model = _mock_file_model(
             path_id="pid-1",
-            content_hash="abc123",
-            indexed_content_hash=None,
+            content_id="abc123",
+            indexed_content_id=None,
         )
         pipeline = _mock_pipeline()
         pipeline.index_document.return_value = IndexResult(
@@ -187,11 +187,11 @@ class TestIndexDocument:
 
     @pytest.mark.asyncio
     async def test_index_document_skips_unchanged_content_hash(self) -> None:
-        """When content_hash == indexed_content_hash, pipeline is NOT called."""
+        """When content_id == indexed_content_id, pipeline is NOT called."""
         file_model = _mock_file_model(
             path_id="pid-1",
-            content_hash="same_hash",
-            indexed_content_hash="same_hash",
+            content_id="same_hash",
+            indexed_content_id="same_hash",
         )
 
         service, pipeline, session, _ = _build_service(
@@ -206,11 +206,11 @@ class TestIndexDocument:
 
     @pytest.mark.asyncio
     async def test_index_document_updates_hash_after_indexing(self) -> None:
-        """After successful indexing, indexed_content_hash and last_indexed_at are set."""
+        """After successful indexing, indexed_content_id and last_indexed_at are set."""
         file_model = _mock_file_model(
             path_id="pid-1",
-            content_hash="new_hash",
-            indexed_content_hash=None,
+            content_id="new_hash",
+            indexed_content_id=None,
         )
         pipeline = _mock_pipeline()
         pipeline.index_document.return_value = IndexResult(
@@ -226,7 +226,7 @@ class TestIndexDocument:
         await service.index_document("test.py")
 
         # session.get() is called in step 5 to retrieve the model, then fields are set
-        assert file_model.indexed_content_hash == "new_hash"
+        assert file_model.indexed_content_id == "new_hash"
         assert file_model.last_indexed_at is not None
         assert isinstance(file_model.last_indexed_at, datetime)
 
@@ -235,8 +235,8 @@ class TestIndexDocument:
         """force=True bypasses content-hash skip logic, pipeline IS called."""
         file_model = _mock_file_model(
             path_id="pid-1",
-            content_hash="same_hash",
-            indexed_content_hash="same_hash",
+            content_id="same_hash",
+            indexed_content_id="same_hash",
         )
         pipeline = _mock_pipeline()
         pipeline.index_document.return_value = IndexResult(
@@ -260,8 +260,8 @@ class TestIndexDocument:
         """Pipeline returns IndexResult(chunks_indexed=0) -> service returns 0."""
         file_model = _mock_file_model(
             path_id="pid-1",
-            content_hash="abc",
-            indexed_content_hash=None,
+            content_id="abc",
+            indexed_content_id=None,
         )
         pipeline = _mock_pipeline()
         pipeline.index_document.return_value = IndexResult(
@@ -282,13 +282,13 @@ class TestIndexDocument:
     @pytest.mark.asyncio
     async def test_index_document_does_not_latch_failed_parse_for_pdf(self) -> None:
         """Parseable binary with empty content (parser down) must NOT advance
-        indexed_content_hash — otherwise the hash-match fast path on the
+        indexed_content_id — otherwise the hash-match fast path on the
         next run skips the file forever and we get a silent search hole.
         """
         file_model = _mock_file_model(
             path_id="pid-pdf",
-            content_hash="abc-pdf",
-            indexed_content_hash=None,
+            content_id="abc-pdf",
+            indexed_content_id=None,
             virtual_path="/doc.pdf",
         )
         pipeline = _mock_pipeline()
@@ -306,7 +306,7 @@ class TestIndexDocument:
         assert result == 0
         # Critical: pipeline must NOT be invoked and hash must NOT advance.
         pipeline.index_document.assert_not_called()
-        assert file_model.indexed_content_hash is None
+        assert file_model.indexed_content_id is None
         assert file_model.last_indexed_at is None
         session.commit.assert_not_called()
 
@@ -320,8 +320,8 @@ class TestIndexDocument:
         """
         file_model = _mock_file_model(
             path_id="pid-pdf-changed",
-            content_hash="new-hash",
-            indexed_content_hash="old-hash",  # was previously indexed with different content
+            content_id="new-hash",
+            indexed_content_id="old-hash",  # was previously indexed with different content
             virtual_path="/changed.pdf",
         )
         pipeline = _mock_pipeline()
@@ -344,13 +344,13 @@ class TestIndexDocument:
         ]
         assert delete_calls, "expected a DELETE on stale document_chunks"
         # Tracking fields must still remain untouched so the next tick retries.
-        assert file_model.indexed_content_hash == "old-hash"
+        assert file_model.indexed_content_id == "old-hash"
         assert file_model.last_indexed_at is None
 
     @pytest.mark.asyncio
     async def test_index_document_advances_hash_on_successful_empty_parse(self) -> None:
         """Image-only / blank PDFs legitimately produce zero searchable text.
-        The indexer must advance ``indexed_content_hash`` with zero chunks in
+        The indexer must advance ``indexed_content_id`` with zero chunks in
         that case — otherwise the file stays perpetually 'unindexed' and we
         burn CPU reparsing it on every tick.  The adapter probes for this
         via ``has_successful_parse`` (matching ``parsed_text_hash``).
@@ -361,8 +361,8 @@ class TestIndexDocument:
         """
         file_model = _mock_file_model(
             path_id="pid-pdf-empty",
-            content_hash="blake3-hash-of-blank-pdf",
-            indexed_content_hash=None,
+            content_id="blake3-hash-of-blank-pdf",
+            indexed_content_id=None,
             virtual_path="/blank.pdf",
         )
         pipeline = _mock_pipeline()
@@ -379,8 +379,8 @@ class TestIndexDocument:
         assert result == 0
         # No pipeline work (nothing to chunk / embed).
         pipeline.index_document.assert_not_called()
-        # But indexed_content_hash MUST advance so we don't retry forever.
-        assert file_model.indexed_content_hash == "blake3-hash-of-blank-pdf"
+        # But indexed_content_id MUST advance so we don't retry forever.
+        assert file_model.indexed_content_id == "blake3-hash-of-blank-pdf"
         session.commit.assert_called_once()
         # DELETE must have been issued so a prior non-empty revision's
         # chunks don't keep serving stale text.
@@ -402,8 +402,8 @@ class TestIndexDocument:
         """
         file_model = _mock_file_model(
             path_id="pid-pdf-broken",
-            content_hash="blake3-hash-of-broken-pdf",
-            indexed_content_hash=None,
+            content_id="blake3-hash-of-broken-pdf",
+            indexed_content_id=None,
             virtual_path="/broken.pdf",
         )
         pipeline = _mock_pipeline()
@@ -420,7 +420,7 @@ class TestIndexDocument:
         assert result == 0
         pipeline.index_document.assert_not_called()
         # Tracking fields stay untouched so the next tick retries.
-        assert file_model.indexed_content_hash is None
+        assert file_model.indexed_content_id is None
         assert file_model.last_indexed_at is None
         session.commit.assert_not_called()
 
@@ -428,7 +428,7 @@ class TestIndexDocument:
     async def test_index_document_skips_stale_delete_when_concurrent_reindex_advanced_hash(
         self,
     ) -> None:
-        """A successful concurrent reindex can advance ``indexed_content_hash``
+        """A successful concurrent reindex can advance ``indexed_content_id``
         between the first session snapshot and the stale-chunk delete session.
         The CAS guard must NOT delete when the re-read hash differs from the
         stale value we observed — otherwise we'd wipe freshly-indexed chunks.
@@ -439,14 +439,14 @@ class TestIndexDocument:
         # (content=new-hash, indexed=new-hash).
         step1_model = _mock_file_model(
             path_id="pid-pdf-cas",
-            content_hash="new-hash",
-            indexed_content_hash="old-hash",
+            content_id="new-hash",
+            indexed_content_id="old-hash",
             virtual_path="/cas.pdf",
         )
         step2_model = _mock_file_model(
             path_id="pid-pdf-cas",
-            content_hash="new-hash",
-            indexed_content_hash="new-hash",  # fresh index landed
+            content_id="new-hash",
+            indexed_content_id="new-hash",  # fresh index landed
             virtual_path="/cas.pdf",
         )
 
@@ -493,8 +493,8 @@ class TestIndexDocument:
         """
         file_model = _mock_file_model(
             path_id="pid-pdf-upper",
-            content_hash="abc",
-            indexed_content_hash=None,
+            content_id="abc",
+            indexed_content_id=None,
             virtual_path="/Report.PDF",
         )
         pipeline = _mock_pipeline()
@@ -508,7 +508,7 @@ class TestIndexDocument:
 
         assert result == 0
         pipeline.index_document.assert_not_called()
-        assert file_model.indexed_content_hash is None
+        assert file_model.indexed_content_id is None
         session.commit.assert_not_called()
 
 
@@ -675,8 +675,8 @@ class TestAtomicReindex:
         """When pipeline.index_document raises, no DELETE is executed on the session."""
         file_model = _mock_file_model(
             path_id="pid-1",
-            content_hash="new_hash",
-            indexed_content_hash="old_hash",
+            content_id="new_hash",
+            indexed_content_id="old_hash",
         )
         pipeline = _mock_pipeline()
         pipeline.index_document.side_effect = ConnectionError("embedding API timeout")
@@ -704,8 +704,8 @@ class TestAtomicReindex:
         """On success, pipeline handles delete+insert atomically (no service-level delete)."""
         file_model = _mock_file_model(
             path_id="pid-1",
-            content_hash="new_hash",
-            indexed_content_hash="old_hash",
+            content_id="new_hash",
+            indexed_content_id="old_hash",
         )
         pipeline = _mock_pipeline()
         pipeline.index_document.return_value = IndexResult(path="test.py", chunks_indexed=10)
@@ -730,11 +730,11 @@ class TestAtomicReindex:
             assert "DELETE" not in stmt_str.upper() or "document_chunks" not in stmt_str
 
     def test_hash_not_updated_on_pipeline_failure(self) -> None:
-        """When pipeline fails, indexed_content_hash must NOT be updated."""
+        """When pipeline fails, indexed_content_id must NOT be updated."""
         file_model = _mock_file_model(
             path_id="pid-1",
-            content_hash="new_hash",
-            indexed_content_hash="old_hash",
+            content_id="new_hash",
+            indexed_content_id="old_hash",
         )
         pipeline = _mock_pipeline()
         pipeline.index_document.side_effect = RuntimeError("chunking error")
@@ -750,8 +750,8 @@ class TestAtomicReindex:
 
         asyncio.run(run())
 
-        # indexed_content_hash should remain unchanged
-        assert file_model.indexed_content_hash == "old_hash"
+        # indexed_content_id should remain unchanged
+        assert file_model.indexed_content_id == "old_hash"
 
 
 class TestGetIndexStats:

@@ -172,7 +172,7 @@ class OperationUndoService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _read_content_from_cas(self, path: str, content_hash: str) -> bytes:
+    def _read_content_from_cas(self, path: str, content_id: str) -> bytes:
         """Read content from CAS via DLC, with optional fallback."""
         try:
             # Read via kernel syscall — sys_read_raw raises on missing path.
@@ -183,6 +183,6 @@ class OperationUndoService:
             return result
         except Exception:
             if self._fallback_backend is not None:
-                fallback_result: bytes = self._fallback_backend.read_content(content_hash)
+                fallback_result: bytes = self._fallback_backend.read_content(content_id)
                 return fallback_result
             raise

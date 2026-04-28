@@ -115,7 +115,6 @@ impl ObjectStore for GcsBackend {
     fn read_content(
         &self,
         content_id: &str,
-        _backend_path: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         let object_name = self.object_name(content_id);

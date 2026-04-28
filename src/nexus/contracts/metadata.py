@@ -41,7 +41,7 @@ class FileMetadata:
 
     path: str
     size: int
-    etag: str | None = None
+    content_id: str | None = None
     mime_type: str | None = None
     created_at: datetime | None = None
     modified_at: datetime | None = None
@@ -86,7 +86,7 @@ class FileMetadata:
         return {
             "path": self.path,
             "size": self.size,
-            "etag": self.etag,
+            "content_id": self.content_id,
             "mime_type": self.mime_type,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "modified_at": self.modified_at.isoformat() if self.modified_at else None,

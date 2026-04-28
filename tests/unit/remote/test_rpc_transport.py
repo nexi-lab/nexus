@@ -233,32 +233,32 @@ class TestRPCTransportTypedMethods:
             transport.read_file("/missing.txt")
 
     def test_write_file_success(self, transport) -> None:
-        """write_file returns etag/size dict from WriteResponse."""
+        """write_file returns content_id/size dict from WriteResponse."""
         mock_response = MagicMock()
         mock_response.is_error = False
-        mock_response.etag = "sha256-abc"
+        mock_response.content_id = "sha256-abc"
         mock_response.size = 100
         transport._mock_stub.Write.return_value = mock_response
 
         result = transport.write_file("/file.txt", b"x" * 100)
 
-        assert result == {"etag": "sha256-abc", "size": 100}
+        assert result == {"content_id": "sha256-abc", "size": 100}
         request = transport._mock_stub.Write.call_args[0][0]
         assert request.path == "/file.txt"
         assert request.content == b"x" * 100
 
-    def test_write_file_with_etag(self, transport) -> None:
-        """write_file passes etag for conditional write."""
+    def test_write_file_with_content_id(self, transport) -> None:
+        """write_file passes content_id for conditional write."""
         mock_response = MagicMock()
         mock_response.is_error = False
-        mock_response.etag = "sha256-new"
+        mock_response.content_id = "sha256-new"
         mock_response.size = 5
         transport._mock_stub.Write.return_value = mock_response
 
-        transport.write_file("/file.txt", b"hello", etag="sha256-old")
+        transport.write_file("/file.txt", b"hello", content_id="sha256-old")
 
         request = transport._mock_stub.Write.call_args[0][0]
-        assert request.etag == "sha256-old"
+        assert request.content_id == "sha256-old"
 
     def test_delete_file_success(self, transport) -> None:
         """delete_file returns True on success."""

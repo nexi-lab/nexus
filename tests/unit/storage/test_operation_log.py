@@ -88,9 +88,9 @@ async def test_write_update_operation_logged(
     content1 = b"Version 1"
     content2 = b"Version 2"
 
-    # Write initial version (use write() to get metadata dict with etag)
+    # Write initial version (use write() to get metadata dict with content_id)
     result1 = nx.write(path, content1)
-    old_hash = result1["etag"]
+    old_hash = result1["content_id"]
 
     # Update file
     nx.write(path, content2)
@@ -281,9 +281,9 @@ async def test_undo_write_update(
     content1 = b"Version 1"
     content2 = b"Version 2"
 
-    # Write initial version (use write() to get metadata dict with etag)
+    # Write initial version (use write() to get metadata dict with content_id)
     result1 = nx.write(path, content1)
-    old_hash = result1["etag"]
+    old_hash = result1["content_id"]
 
     # Update file
     nx.write(path, content2)

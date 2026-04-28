@@ -113,7 +113,7 @@ def _build_write_client(mock_fs: MagicMock, auth: dict[str, Any]) -> tuple[TestC
     def _capturing_write(**kwargs: Any) -> dict[str, Any]:
         captured.append(kwargs.get("context"))
         return {
-            "etag": "etag-1",
+            "content_id": "etag-1",
             "version": 1,
             "size": 11,
             "modified_at": "2026-04-25T00:00:00",
@@ -237,7 +237,7 @@ def _build_list_client(mock_fs: MagicMock, auth: dict[str, Any]) -> tuple[TestCl
 
     mock_fs.sys_readdir = MagicMock(side_effect=_capturing_readdir)
     mock_fs.sys_stat = MagicMock(
-        return_value=MagicMock(is_dir=True, path="/dir", size=0, etag="e", version=1)
+        return_value=MagicMock(is_dir=True, path="/dir", size=0, content_id="e", version=1)
     )
 
     app = FastAPI()

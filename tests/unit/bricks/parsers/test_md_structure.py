@@ -267,8 +267,8 @@ More content.
         assert "Content B" not in content  # H2 "B" is a sibling
 
     def test_content_hash_stored(self) -> None:
-        idx = parse_markdown_structure(SIMPLE_DOC, content_hash="abc123")
-        assert idx.content_hash == "abc123"
+        idx = parse_markdown_structure(SIMPLE_DOC, content_id="abc123")
+        assert idx.content_id == "abc123"
 
     def test_tokens_est(self) -> None:
         idx = parse_markdown_structure(FULL_DOC)
@@ -330,13 +330,13 @@ class TestSectionLookup:
 
 class TestSerialization:
     def test_roundtrip(self) -> None:
-        idx = parse_markdown_structure(FULL_DOC, content_hash="hash123")
+        idx = parse_markdown_structure(FULL_DOC, content_id="hash123")
         d = idx.to_dict()
         json_str = json.dumps(d)
         idx2 = MarkdownStructureIndex.from_dict(json.loads(json_str))
 
         assert idx2.version == idx.version
-        assert idx2.content_hash == idx.content_hash
+        assert idx2.content_id == idx.content_id
         assert idx2.tokens_est_method == idx.tokens_est_method
         assert len(idx2.sections) == len(idx.sections)
         for s1, s2 in zip(idx.sections, idx2.sections):

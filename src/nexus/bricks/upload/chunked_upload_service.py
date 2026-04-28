@@ -298,7 +298,7 @@ class ChunkedUploadService:
                 backend_upload_id=session.backend_upload_id,
                 backend_name=session.backend_name,
                 parts_received=part_number,
-                content_hash=session.content_hash,
+                content_id=session.content_id,
             )
 
             await self._update_session(updated)
@@ -379,7 +379,7 @@ class ChunkedUploadService:
             backend_upload_id=session.backend_upload_id,
             backend_name=session.backend_name,
             parts_received=session.parts_received,
-            content_hash=session.content_hash,
+            content_id=session.content_id,
         )
         await self._update_session(terminated)
 
@@ -537,7 +537,7 @@ class ChunkedUploadService:
                 model.upload_offset = s.upload_offset
                 model.status = s.status.value
                 model.parts_received = s.parts_received
-                model.content_hash = s.content_hash
+                model.content_id = s.content_id
                 model.backend_upload_id = s.backend_upload_id
                 db.commit()
             except Exception:
@@ -593,7 +593,7 @@ class ChunkedUploadService:
         return {
             "etag": chunk_hash,
             "part_number": part_number,
-            "content_hash": result.content_id,
+            "content_id": result.content_id,
         }
 
     async def _assemble_and_write(
@@ -607,13 +607,13 @@ class ChunkedUploadService:
         For others, reads parts and concatenates.
 
         Returns:
-            Updated session with COMPLETED status and content_hash.
+            Updated session with COMPLETED status and content_id.
         """
-        content_hash: str
+        content_id: str
 
         if self._supports_multipart() and session.backend_upload_id:
             mixin = cast("MultipartUpload", self._backend)
-            content_hash = await asyncio.to_thread(
+            content_id = await asyncio.to_thread(
                 mixin.complete_multipart,
                 session.target_path,
                 session.backend_upload_id,
@@ -624,7 +624,7 @@ class ChunkedUploadService:
             sorted_parts = sorted(parts, key=lambda p: p["part_number"])
             assembled = bytearray()
             for part_info in sorted_parts:
-                part_hash = part_info.get("content_hash")
+                part_hash = part_info.get("content_id")
                 if part_hash:
                     content = await asyncio.to_thread(self._backend.read_content, part_hash)
                     assembled.extend(content)
@@ -633,7 +633,7 @@ class ChunkedUploadService:
             content = bytes(assembled)
             _write = self._backend.write_content
             result = await asyncio.to_thread(_write, content)
-            content_hash = result.content_id
+            content_id = result.content_id
 
             # Link content to target_path via metadata store so the file is
             # reachable (multipart backends do this inside complete_multipart).
@@ -643,7 +643,7 @@ class ChunkedUploadService:
                 metadata = FileMetadata(
                     path=session.target_path,
                     size=len(content),
-                    etag=content_hash,
+                    content_id=content_id,
                 )
                 await asyncio.to_thread(self._metadata_store.put, metadata)
 
@@ -663,7 +663,7 @@ class ChunkedUploadService:
             backend_upload_id=session.backend_upload_id,
             backend_name=session.backend_name,
             parts_received=session.parts_received,
-            content_hash=content_hash,
+            content_id=content_id,
         )
         await self._update_session(completed)
 
@@ -676,7 +676,7 @@ class ChunkedUploadService:
             "Upload completed: %s -> %s (hash=%s)",
             session.upload_id,
             session.target_path,
-            content_hash,
+            content_id,
         )
         return completed
 
@@ -713,7 +713,7 @@ class ChunkedUploadService:
             backend_upload_id=session.backend_upload_id,
             backend_name=session.backend_name,
             parts_received=session.parts_received,
-            content_hash=session.content_hash,
+            content_id=session.content_id,
         )
 
         try:

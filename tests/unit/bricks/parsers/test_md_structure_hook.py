@@ -75,12 +75,12 @@ def hook(meta: _StubMetastore) -> MarkdownStructureWriteHook:
     return MarkdownStructureWriteHook(metadata=meta)
 
 
-def _make_write_ctx(path: str, content: bytes, content_hash: str = "hash1") -> WriteHookContext:
+def _make_write_ctx(path: str, content: bytes, content_id: str = "hash1") -> WriteHookContext:
     return WriteHookContext(
         path=path,
         content=content,
         context=None,
-        content_hash=content_hash,
+        content_id=content_id,
     )
 
 
@@ -99,7 +99,7 @@ class TestWriteHook:
         data = json.loads(raw)
         assert data["version"] == 2
         assert len(data["sections"]) >= 3
-        assert data["content_hash"] == "hash1"
+        assert data["content_id"] == "hash1"
 
     def test_skips_non_md_files(
         self, hook: MarkdownStructureWriteHook, meta: _StubMetastore
@@ -111,14 +111,14 @@ class TestWriteHook:
     def test_updates_on_rewrite(
         self, hook: MarkdownStructureWriteHook, meta: _StubMetastore
     ) -> None:
-        ctx1 = _make_write_ctx("/doc.md", b"# V1\nFirst version.\n", content_hash="v1")
+        ctx1 = _make_write_ctx("/doc.md", b"# V1\nFirst version.\n", content_id="v1")
         hook.on_post_write(ctx1)
 
-        ctx2 = _make_write_ctx("/doc.md", b"# V2\nSecond version.\n## New\n", content_hash="v2")
+        ctx2 = _make_write_ctx("/doc.md", b"# V2\nSecond version.\n## New\n", content_id="v2")
         hook.on_post_write(ctx2)
 
         data = json.loads(meta.get_file_metadata("/doc.md", MD_STRUCTURE_KEY))
-        assert data["content_hash"] == "v2"
+        assert data["content_id"] == "v2"
         headings = [s["heading"] for s in data["sections"]]
         assert "V2" in headings
         assert "New" in headings
@@ -154,7 +154,7 @@ class TestWriteHook:
 
 class TestReadPath:
     def test_get_index_after_write(self, hook: MarkdownStructureWriteHook) -> None:
-        ctx = _make_write_ctx("/doc.md", SAMPLE_MD, content_hash="h1")
+        ctx = _make_write_ctx("/doc.md", SAMPLE_MD, content_id="h1")
         hook.on_post_write(ctx)
 
         index = hook.get_index("/doc.md", current_hash="h1")
@@ -162,14 +162,14 @@ class TestReadPath:
         assert len(index.sections) >= 3
 
     def test_stale_index_triggers_reparse(self, hook: MarkdownStructureWriteHook) -> None:
-        """If content_hash doesn't match, re-parse with provided content."""
-        ctx = _make_write_ctx("/doc.md", b"# Old\nOld content.\n", content_hash="old_hash")
+        """If content_id doesn't match, re-parse with provided content."""
+        ctx = _make_write_ctx("/doc.md", b"# Old\nOld content.\n", content_id="old_hash")
         hook.on_post_write(ctx)
 
         new_content = b"# New\nNew content.\n## Added\n"
         index = hook.get_index("/doc.md", current_content=new_content, current_hash="new_hash")
         assert index is not None
-        assert index.content_hash == "new_hash"
+        assert index.content_id == "new_hash"
         headings = [s.heading for s in index.sections]
         assert "New" in headings
         assert "Added" in headings
@@ -178,12 +178,12 @@ class TestReadPath:
         self, hook: MarkdownStructureWriteHook
     ) -> None:
         """If hash mismatches but no content provided, return stale index."""
-        ctx = _make_write_ctx("/doc.md", b"# Old\n", content_hash="old")
+        ctx = _make_write_ctx("/doc.md", b"# Old\n", content_id="old")
         hook.on_post_write(ctx)
 
         index = hook.get_index("/doc.md", current_hash="new")
         assert index is not None  # Returns stale index rather than None
-        assert index.content_hash == "old"
+        assert index.content_id == "old"
 
     def test_no_index_with_content_parses_on_demand(self, hook: MarkdownStructureWriteHook) -> None:
         """No stored index but content provided → parse on demand."""
@@ -211,7 +211,7 @@ class TestReadPath:
 
 class TestSectionRead:
     def _setup(self, hook: MarkdownStructureWriteHook) -> None:
-        ctx = _make_write_ctx("/doc.md", SAMPLE_MD, content_hash="h1")
+        ctx = _make_write_ctx("/doc.md", SAMPLE_MD, content_id="h1")
         hook.on_post_write(ctx)
 
     def test_read_section(self, hook: MarkdownStructureWriteHook) -> None:
@@ -263,7 +263,7 @@ class TestSectionRead:
     def test_read_section_frontmatter_missing(self, hook: MarkdownStructureWriteHook) -> None:
         """section='frontmatter' on a doc without frontmatter returns None."""
         no_fm = b"# Heading\nContent.\n"
-        ctx = _make_write_ctx("/nofm.md", no_fm, content_hash="h2")
+        ctx = _make_write_ctx("/nofm.md", no_fm, content_id="h2")
         hook.on_post_write(ctx)
         result = hook.read_section("/nofm.md", no_fm, "h2", "frontmatter")
         assert result is None
@@ -276,7 +276,7 @@ class TestSectionRead:
 
 class TestStructureListing:
     def test_listing_format(self, hook: MarkdownStructureWriteHook) -> None:
-        ctx = _make_write_ctx("/doc.md", SAMPLE_MD, content_hash="h1")
+        ctx = _make_write_ctx("/doc.md", SAMPLE_MD, content_id="h1")
         hook.on_post_write(ctx)
 
         listing = hook.get_structure_listing("/doc.md")

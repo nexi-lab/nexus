@@ -318,7 +318,7 @@ class BatchExecutor:
             data={
                 "path": meta.path,
                 "size": meta.size,
-                "etag": meta.etag,
+                "content_id": meta.content_id,
                 "version": meta.version,
                 "is_directory": meta.is_dir,
                 "created_at": (meta.created_at.isoformat() if meta.created_at else None),

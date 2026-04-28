@@ -80,4 +80,24 @@ impl Kernel {
         self.service_registry
             .enlist_rust(name, instance, exports, false)
     }
+
+    /// Look up a Rust-flavoured service by canonical name. The
+    /// Rust-callable parallel of the Python-facing `service_lookup`
+    /// (which Python reaches via `nx.service(name)`); both end up at
+    /// the kernel-internal `ServiceRegistry`, but in-crate Rust
+    /// callers go through this Kernel method so `ServiceRegistry`
+    /// stays a kernel primitive (`pub(crate)`, KERNEL-ARCHITECTURE
+    /// §4) — same layering that keeps callers off direct
+    /// `vfs_router` / `lock_manager` / `dispatch` access.
+    ///
+    /// Returns `None` for unknown names and for names registered as
+    /// `ServiceInstance::Python` (Python services are reached via
+    /// `service_lookup`).
+    #[allow(dead_code)]
+    pub(crate) fn service_lookup_rust(
+        &self,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::service_registry::RustService>> {
+        self.service_registry.lookup_rust(name)
+    }
 }

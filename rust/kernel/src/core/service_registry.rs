@@ -218,15 +218,19 @@ impl ServiceRegistry {
         Ok(())
     }
 
-    /// Look up a service instance by name.
+    /// Kernel-internal lookup by name for Python-flavoured services.
+    /// Reached from Python through the `Kernel::service_lookup` PyO3
+    /// method (which `nx.service(name)` delegates to). Rust services
+    /// have a parallel surface — `ServiceRegistry::lookup_rust`,
+    /// reached through `Kernel::service_lookup_rust`. Both `lookup`
+    /// methods are `pub(crate)`: callers always go through `Kernel`,
+    /// not the registry directly (KERNEL-ARCHITECTURE §4 — registry
+    /// is a kernel primitive).
     ///
     /// Returns the Python instance for `Python`-flavoured services;
-    /// returns `None` for `Rust`-flavoured services so `nx.service(name)`
-    /// stays well-typed (Python sees only services it can actually call
-    /// methods on). Rust callers reach Rust services through
-    /// [`lookup_rust`](Self::lookup_rust) — the parallel surface is the
-    /// same shape `add_mount` (Rust) vs `sys_setattr(DT_MOUNT)` (Python)
-    /// pair `Kernel` exposes for backends.
+    /// returns `None` for `Rust`-flavoured services so
+    /// `nx.service(name)` stays well-typed (Python sees only services
+    /// it can call methods on).
     pub(crate) fn lookup(&self, py: Python<'_>, name: &str) -> Option<Py<PyAny>> {
         self.services.get(name).and_then(|e| match &e.instance {
             ServiceInstance::Python(obj) => Some(obj.clone_ref(py)),
@@ -234,9 +238,17 @@ impl ServiceRegistry {
         })
     }
 
-    /// Look up a Rust-flavoured service by name. Rust callers use this
-    /// instead of `lookup`; Python lookup sees `None` for these so the
-    /// two namespaces stay independent.
+    /// Kernel-internal lookup by name for Rust-flavoured services.
+    /// **Not the call surface for in-crate Rust callers** — they go
+    /// through [`Kernel::service_lookup_rust`], the syscall-shaped
+    /// parallel of the Python-facing [`Self::lookup`] (reached from
+    /// Python via `nx.service(name)`). Going through `Kernel` keeps
+    /// `ServiceRegistry` a kernel primitive (KERNEL-ARCHITECTURE §4)
+    /// rather than a directly-poked module.
+    ///
+    /// Returns the registered `Arc<dyn RustService>` for `Rust`-flavoured
+    /// entries; returns `None` for `Python`-flavoured entries (Python
+    /// services are reached via `Self::lookup`) and for unknown names.
     #[allow(dead_code)]
     pub(crate) fn lookup_rust(&self, name: &str) -> Option<Arc<dyn RustService>> {
         self.services.get(name).and_then(|e| match &e.instance {

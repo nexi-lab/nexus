@@ -47,7 +47,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 
 use crate::service_registry::RustService;
-use services::agents::agent_table::{AgentDescriptor, AgentKind, AgentState, AgentTable};
+use crate::core::agents::table::{AgentDescriptor, AgentKind, AgentState, AgentTable};
 
 pub(crate) mod mailbox_stamping_hook;
 pub(crate) mod mailbox_stamping_policy;

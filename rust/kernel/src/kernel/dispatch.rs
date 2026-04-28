@@ -59,4 +59,25 @@ impl Kernel {
     pub fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
         self.native_hooks.write().register(hook);
     }
+
+    /// Register a Rust-flavoured service with the kernel's
+    /// `ServiceRegistry`. The Rust-callable parallel of the
+    /// `sys_setattr("/__sys__/services/X", service=…)` syscall —
+    /// mirrors the way `Kernel::add_mount` is the Rust parallel of
+    /// `sys_setattr(DT_MOUNT)` for backends.
+    ///
+    /// Cdylib boot wiring calls this after the kernel finishes
+    /// constructing itself; for services that pull hooks into the
+    /// `KernelDispatch` chain, register the hooks inside the service's
+    /// `start()` (called by the registry on enlist).
+    #[allow(dead_code)]
+    pub(crate) fn register_rust_service(
+        &self,
+        name: &str,
+        instance: std::sync::Arc<dyn crate::service_registry::RustService>,
+        exports: Vec<String>,
+    ) -> Result<(), String> {
+        self.service_registry
+            .enlist_rust(name, instance, exports, false)
+    }
 }

@@ -1,7 +1,20 @@
 //! ServiceRegistry — Rust kernel service symbol table.
 //!
-//! Manages service instances (Python objects) with DashMap for lock-free
-//! concurrent access. Replaces Python `service_registry.py`.
+//! Manages service instances with DashMap for lock-free concurrent access.
+//! Holds two flavours of service:
+//!
+//!   * `ServiceInstance::Python(Py<PyAny>)` — the original storage; every
+//!     pre-existing nexus service (ReBAC, Mount, Auth, AgentRegistry,
+//!     AcpService, …) is a Python class registered through the
+//!     `sys_setattr("/__sys__/services/X")` syscall. Lifecycle methods
+//!     (`start` / `stop`) are Python coroutines dispatched via
+//!     `asyncio.run`.
+//!   * `ServiceInstance::Rust(Arc<dyn RustService>)` — services
+//!     implemented in Rust (e.g. ManagedAgentService) are registered
+//!     through the Rust-callable `Kernel::register_rust_service`
+//!     surface, mirroring the way `Kernel::add_mount` is the Rust
+//!     parallel of `sys_setattr(DT_MOUNT)`. Lifecycle methods are plain
+//!     Rust trait calls — no PyO3 boundary on start/stop.
 //!
 //! Thread-safe: all methods take `&self` (interior mutability via DashMap/atomics).
 
@@ -12,22 +25,70 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 
-// ── ServiceEntry ────────────────────────────────────────────────────────
+// ── RustService trait ───────────────────────────────────────────────────
 
-/// A registered service: name + Python instance + declared exports.
+/// Surface a Rust-implemented service exposes to ServiceRegistry.
+///
+/// Mirrors the Python `BackgroundService` protocol but with synchronous
+/// Rust signatures — the Rust path skips the asyncio.run trampoline the
+/// Python path needs. `start` / `stop` are still called by
+/// `start_all` / `stop_all`; `name` is the canonical service name used
+/// for `nx.service("…")` lookups.
+///
+/// Implementors live in `rust/kernel/src/<service>/` (or post-3932,
+/// `rust/services/src/<service>/`). They must be `Send + Sync` so the
+/// registry can hand `Arc<dyn RustService>` to multiple consumers.
+pub(crate) trait RustService: Send + Sync {
+    fn name(&self) -> &str;
+
+    /// Start the service. Called once at bootstrap (or at enlist time
+    /// for services registered post-bootstrap). Blocking is fine — the
+    /// Rust path does not run on the asyncio loop.
+    fn start(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Stop the service. Called once at shutdown, in reverse
+    /// registration order.
+    fn stop(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+// ── ServiceInstance + ServiceEntry ──────────────────────────────────────
+
+/// A registered service instance — either a Python class or a Rust
+/// trait object. The two flavours share lookup / refcount / drain
+/// machinery; only the lifecycle dispatch in `start_all` / `stop_all` /
+/// `close_all` branches on the variant.
+pub(crate) enum ServiceInstance {
+    Python(Py<PyAny>),
+    Rust(Arc<dyn RustService>),
+}
+
+impl ServiceInstance {
+    fn clone_inst(&self) -> Self {
+        match self {
+            Self::Python(obj) => Python::attach(|py| ServiceInstance::Python(obj.clone_ref(py))),
+            Self::Rust(svc) => ServiceInstance::Rust(Arc::clone(svc)),
+        }
+    }
+}
+
+/// A registered service: name + instance + declared exports.
 pub(crate) struct ServiceEntry {
     pub name: String,
-    pub instance: Py<PyAny>,
+    pub instance: ServiceInstance,
     pub exports: Vec<String>,
 }
 
 impl Clone for ServiceEntry {
     fn clone(&self) -> Self {
-        Python::attach(|py| ServiceEntry {
+        ServiceEntry {
             name: self.name.clone(),
-            instance: self.instance.clone_ref(py),
+            instance: self.instance.clone_inst(),
             exports: self.exports.clone(),
-        })
+        }
     }
 }
 
@@ -95,7 +156,7 @@ impl ServiceRegistry {
 
         let entry = ServiceEntry {
             name: name.to_string(),
-            instance: instance.clone().unbind(),
+            instance: ServiceInstance::Python(instance.clone().unbind()),
             exports,
         };
 
@@ -121,9 +182,67 @@ impl ServiceRegistry {
         Ok(())
     }
 
+    /// Register a Rust-flavoured service. Rust-callable parallel of
+    /// [`enlist`](Self::enlist); same exports / overwrite semantics, but
+    /// the instance is an `Arc<dyn RustService>` and lifecycle methods
+    /// dispatch via the trait directly (no asyncio.run trampoline).
+    ///
+    /// Auto-starts the service when called post-bootstrap — same
+    /// behaviour as the Python path.
+    pub(crate) fn enlist_rust(
+        &self,
+        name: &str,
+        instance: Arc<dyn RustService>,
+        exports: Vec<String>,
+        allow_overwrite: bool,
+    ) -> Result<(), String> {
+        if !allow_overwrite && self.services.contains_key(name) {
+            return Err(format!("services: {name:?} already registered"));
+        }
+
+        let entry = ServiceEntry {
+            name: name.to_string(),
+            instance: ServiceInstance::Rust(Arc::clone(&instance)),
+            exports,
+        };
+
+        let is_new = !self.services.contains_key(name);
+        self.services.insert(name.to_string(), entry);
+        if is_new {
+            self.insertion_order.lock().push(name.to_string());
+        }
+
+        if self.bootstrapped.load(Ordering::Relaxed) {
+            instance.start()?;
+        }
+        Ok(())
+    }
+
     /// Look up a service instance by name.
+    ///
+    /// Returns the Python instance for `Python`-flavoured services;
+    /// returns `None` for `Rust`-flavoured services so `nx.service(name)`
+    /// stays well-typed (Python sees only services it can actually call
+    /// methods on). Rust callers reach Rust services through
+    /// [`lookup_rust`](Self::lookup_rust) — the parallel surface is the
+    /// same shape `add_mount` (Rust) vs `sys_setattr(DT_MOUNT)` (Python)
+    /// pair `Kernel` exposes for backends.
     pub(crate) fn lookup(&self, py: Python<'_>, name: &str) -> Option<Py<PyAny>> {
-        self.services.get(name).map(|e| e.instance.clone_ref(py))
+        self.services.get(name).and_then(|e| match &e.instance {
+            ServiceInstance::Python(obj) => Some(obj.clone_ref(py)),
+            ServiceInstance::Rust(_) => None,
+        })
+    }
+
+    /// Look up a Rust-flavoured service by name. Rust callers use this
+    /// instead of `lookup`; Python lookup sees `None` for these so the
+    /// two namespaces stay independent.
+    #[allow(dead_code)]
+    pub(crate) fn lookup_rust(&self, name: &str) -> Option<Arc<dyn RustService>> {
+        self.services.get(name).and_then(|e| match &e.instance {
+            ServiceInstance::Rust(svc) => Some(Arc::clone(svc)),
+            ServiceInstance::Python(_) => None,
+        })
     }
 
     /// Check if a service is registered.
@@ -209,7 +328,7 @@ impl ServiceRegistry {
         // Step 3: Atomic replace
         let entry = ServiceEntry {
             name: name.to_string(),
-            instance: new_instance.clone().unbind(),
+            instance: ServiceInstance::Python(new_instance.clone().unbind()),
             exports: final_exports,
         };
         self.services.insert(name.to_string(), entry);
@@ -260,20 +379,32 @@ impl ServiceRegistry {
         let mut started = Vec::new();
         for name in self.names() {
             if let Some(entry) = self.services.get(&name) {
-                let instance = entry.instance.bind(py);
-                if instance.is_instance(&bg_cls)? {
-                    match instance.call_method0("start") {
-                        Ok(coro) => {
-                            if let Err(e) = run_coro(py, &coro, timeout_secs) {
-                                tracing::error!("[COORDINATOR] failed to start {name:?}: {e}");
-                                continue;
+                match &entry.instance {
+                    ServiceInstance::Python(py_obj) => {
+                        let instance = py_obj.bind(py);
+                        if instance.is_instance(&bg_cls)? {
+                            match instance.call_method0("start") {
+                                Ok(coro) => {
+                                    if let Err(e) = run_coro(py, &coro, timeout_secs) {
+                                        tracing::error!(
+                                            "[COORDINATOR] failed to start {name:?}: {e}"
+                                        );
+                                        continue;
+                                    }
+                                    started.push(name);
+                                }
+                                Err(e) => {
+                                    tracing::error!("[COORDINATOR] failed to start {name:?}: {e}");
+                                }
                             }
-                            started.push(name);
                         }
+                    }
+                    ServiceInstance::Rust(svc) => match svc.start() {
+                        Ok(()) => started.push(name),
                         Err(e) => {
                             tracing::error!("[COORDINATOR] failed to start {name:?}: {e}");
                         }
-                    }
+                    },
                 }
             }
         }
@@ -289,20 +420,32 @@ impl ServiceRegistry {
         let mut stopped = Vec::new();
         for name in self.names_reversed() {
             if let Some(entry) = self.services.get(&name) {
-                let instance = entry.instance.bind(py);
-                if instance.is_instance(&bg_cls)? {
-                    match instance.call_method0("stop") {
-                        Ok(coro) => {
-                            if let Err(e) = run_coro(py, &coro, timeout_secs) {
-                                tracing::error!("[COORDINATOR] failed to stop {name:?}: {e}");
-                                continue;
+                match &entry.instance {
+                    ServiceInstance::Python(py_obj) => {
+                        let instance = py_obj.bind(py);
+                        if instance.is_instance(&bg_cls)? {
+                            match instance.call_method0("stop") {
+                                Ok(coro) => {
+                                    if let Err(e) = run_coro(py, &coro, timeout_secs) {
+                                        tracing::error!(
+                                            "[COORDINATOR] failed to stop {name:?}: {e}"
+                                        );
+                                        continue;
+                                    }
+                                    stopped.push(name);
+                                }
+                                Err(e) => {
+                                    tracing::error!("[COORDINATOR] failed to stop {name:?}: {e}");
+                                }
                             }
-                            stopped.push(name);
                         }
+                    }
+                    ServiceInstance::Rust(svc) => match svc.stop() {
+                        Ok(()) => stopped.push(name),
                         Err(e) => {
                             tracing::error!("[COORDINATOR] failed to stop {name:?}: {e}");
                         }
-                    }
+                    },
                 }
             }
         }
@@ -310,14 +453,18 @@ impl ServiceRegistry {
     }
 
     /// Close all services that have a close() method (reverse order).
+    /// Rust services don't expose a close() method — `stop_all` is the
+    /// shutdown hook for them.
     pub(crate) fn close_all(&self, py: Python<'_>) {
         for name in self.names_reversed() {
             if let Some(entry) = self.services.get(&name) {
-                let instance = entry.instance.bind(py);
-                if let Ok(close_fn) = instance.getattr("close") {
-                    if close_fn.is_callable() {
-                        if let Err(e) = close_fn.call0() {
-                            tracing::debug!("[COORDINATOR] close({name:?}) failed: {e}");
+                if let ServiceInstance::Python(py_obj) = &entry.instance {
+                    let instance = py_obj.bind(py);
+                    if let Ok(close_fn) = instance.getattr("close") {
+                        if close_fn.is_callable() {
+                            if let Err(e) = close_fn.call0() {
+                                tracing::debug!("[COORDINATOR] close({name:?}) failed: {e}");
+                            }
                         }
                     }
                 }
@@ -335,13 +482,15 @@ impl ServiceRegistry {
         let mut result = Vec::new();
         for name in self.names() {
             if let Some(entry) = self.services.get(&name) {
-                let type_name = entry
-                    .instance
-                    .bind(py)
-                    .get_type()
-                    .name()
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|_| "?".to_string());
+                let type_name = match &entry.instance {
+                    ServiceInstance::Python(py_obj) => py_obj
+                        .bind(py)
+                        .get_type()
+                        .name()
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|_| "?".to_string()),
+                    ServiceInstance::Rust(svc) => format!("rust::{}", svc.name()),
+                };
                 result.push((name, type_name, entry.exports.clone()));
             }
         }
@@ -375,5 +524,119 @@ mod tests {
         assert!(!reg.bootstrapped.load(Ordering::Relaxed));
         reg.mark_bootstrapped();
         assert!(reg.bootstrapped.load(Ordering::Relaxed));
+    }
+
+    // ── Rust service tests ──────────────────────────────────────────
+
+    use std::sync::atomic::AtomicUsize;
+
+    struct TestRustService {
+        svc_name: String,
+        start_count: AtomicUsize,
+        stop_count: AtomicUsize,
+    }
+
+    impl TestRustService {
+        fn new(name: &str) -> Self {
+            Self {
+                svc_name: name.to_string(),
+                start_count: AtomicUsize::new(0),
+                stop_count: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl RustService for TestRustService {
+        fn name(&self) -> &str {
+            &self.svc_name
+        }
+        fn start(&self) -> Result<(), String> {
+            self.start_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), String> {
+            self.stop_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn rust_enlist_round_trip() {
+        let reg = ServiceRegistry::new();
+        let svc = Arc::new(TestRustService::new("managed_agent"));
+        reg.enlist_rust(
+            "managed_agent",
+            Arc::clone(&svc) as Arc<dyn RustService>,
+            vec![],
+            false,
+        )
+        .expect("enlist_rust should succeed");
+        assert_eq!(reg.count(), 1);
+        assert!(reg.contains("managed_agent"));
+        assert_eq!(reg.names(), vec!["managed_agent".to_string()]);
+
+        let looked = reg.lookup_rust("managed_agent").expect("present");
+        assert_eq!(looked.name(), "managed_agent");
+    }
+
+    #[test]
+    fn rust_enlist_post_bootstrap_auto_starts() {
+        let reg = ServiceRegistry::new();
+        reg.mark_bootstrapped();
+        let svc = Arc::new(TestRustService::new("managed_agent"));
+        reg.enlist_rust(
+            "managed_agent",
+            Arc::clone(&svc) as Arc<dyn RustService>,
+            vec![],
+            false,
+        )
+        .unwrap();
+        assert_eq!(svc.start_count.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn rust_enlist_pre_bootstrap_does_not_auto_start() {
+        let reg = ServiceRegistry::new();
+        let svc = Arc::new(TestRustService::new("managed_agent"));
+        reg.enlist_rust(
+            "managed_agent",
+            Arc::clone(&svc) as Arc<dyn RustService>,
+            vec![],
+            false,
+        )
+        .unwrap();
+        // Pre-bootstrap path defers start to start_all (which the kernel
+        // boot calls explicitly).
+        assert_eq!(svc.start_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn rust_enlist_rejects_duplicate_without_overwrite() {
+        let reg = ServiceRegistry::new();
+        let a = Arc::new(TestRustService::new("managed_agent"));
+        reg.enlist_rust("managed_agent", a as Arc<dyn RustService>, vec![], false)
+            .unwrap();
+        let b = Arc::new(TestRustService::new("managed_agent"));
+        let err = reg
+            .enlist_rust("managed_agent", b as Arc<dyn RustService>, vec![], false)
+            .expect_err("duplicate should be rejected");
+        assert!(err.contains("already registered"));
+    }
+
+    #[test]
+    fn lookup_rust_returns_none_for_unknown() {
+        let reg = ServiceRegistry::new();
+        assert!(reg.lookup_rust("nope").is_none());
+    }
+
+    #[test]
+    fn unregister_drops_rust_service() {
+        let reg = ServiceRegistry::new();
+        let svc = Arc::new(TestRustService::new("managed_agent"));
+        reg.enlist_rust("managed_agent", svc as Arc<dyn RustService>, vec![], false)
+            .unwrap();
+        assert!(reg.unregister("managed_agent"));
+        assert_eq!(reg.count(), 0);
+        assert!(reg.lookup_rust("managed_agent").is_none());
     }
 }

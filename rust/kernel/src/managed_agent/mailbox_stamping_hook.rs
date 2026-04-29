@@ -79,7 +79,7 @@ mod tests {
             },
             content,
             is_new_file: false,
-            content_hash: None,
+            content_id: None,
             new_version: 0,
             size_bytes: None,
         })
@@ -140,7 +140,7 @@ mod tests {
                 is_admin: false,
             },
             content: None,
-            content_hash: None,
+            content_id: None,
         });
         assert!(matches!(h.on_pre(&ctx).unwrap(), HookOutcome::Pass));
     }

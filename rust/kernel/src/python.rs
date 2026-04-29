@@ -42,7 +42,10 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // AgentKind::UNMANAGED agents (subprocess + ACP-over-stdio).
     m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_install, m)?)?;
     m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_set_agent_registry, m)?)?;
-    m.add_function(wrap_pyfunction!(acp::pyo3::nx_acp_register_on_terminate, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        acp::pyo3::nx_acp_register_on_terminate,
+        m
+    )?)?;
     // Generic Rust-service dispatch — same lookup the tonic Call
     // handler uses, exposed for in-process Python callers so we don't
     // grow per-service shortcuts (acp / managed_agent / future

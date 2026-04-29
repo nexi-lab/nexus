@@ -471,10 +471,7 @@ impl NativeHookRegistry {
     /// `HookOutcome::Replace` variant is propagated to the caller via
     /// the returned bytes; today only `sys_write` honours it, other
     /// syscalls drop the replacement.
-    pub(crate) fn dispatch_pre(
-        &self,
-        ctx: &HookContext,
-    ) -> Result<Option<Vec<u8>>, String> {
+    pub(crate) fn dispatch_pre(&self, ctx: &HookContext) -> Result<Option<Vec<u8>>, String> {
         let mut replacement: Option<Vec<u8>> = None;
         for entry in &self.hooks {
             match entry.hook.on_pre(ctx)? {
@@ -1409,9 +1406,9 @@ impl Kernel {
             Err(crate::dcache::LinkResolveError::Chained) => Err(KernelError::PermissionDenied(
                 format!("DT_LINK chain rejected (ELOOP) at {path}"),
             )),
-            Err(crate::dcache::LinkResolveError::SelfLoop) => Err(
-                KernelError::PermissionDenied(format!("DT_LINK self-loop at {path}")),
-            ),
+            Err(crate::dcache::LinkResolveError::SelfLoop) => Err(KernelError::PermissionDenied(
+                format!("DT_LINK self-loop at {path}"),
+            )),
             Err(crate::dcache::LinkResolveError::MissingTarget) => Err(
                 KernelError::PermissionDenied(format!("DT_LINK at {path} has no link_target")),
             ),
@@ -3135,6 +3132,7 @@ mod tests {
             None,  // write_fd
             None,  // mime_type
             None,  // modified_at_ms
+            None,  // link_target
         )
     }
 
@@ -3211,6 +3209,7 @@ mod tests {
                 modified_at_ms: None,
                 last_writer_address: None,
                 target_zone_id: None,
+                link_target: None,
             },
         )
         .unwrap();
@@ -3231,6 +3230,7 @@ mod tests {
                 None,
                 None,
                 Some("text/plain"),
+                None,
                 None,
             )
             .unwrap();
@@ -3294,6 +3294,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
         assert!(r.created);
@@ -3329,6 +3330,7 @@ mod tests {
             "root",
             false,
             0,
+            None,
             None,
             None,
             None,

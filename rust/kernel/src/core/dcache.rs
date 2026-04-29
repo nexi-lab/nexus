@@ -475,7 +475,7 @@ mod tests {
     fn make_link_entry(target: &str) -> CachedEntry {
         CachedEntry {
             size: 0,
-            etag: None,
+            content_id: None,
             version: 1,
             entry_type: DT_LINK,
             zone_id: Some("root".to_string()),
@@ -490,7 +490,7 @@ mod tests {
     fn make_reg_entry() -> CachedEntry {
         CachedEntry {
             size: 0,
-            etag: None,
+            content_id: None,
             version: 1,
             entry_type: DT_REG,
             zone_id: Some("root".to_string()),

@@ -127,7 +127,7 @@ mod tests {
             },
             content: Vec::new(),
             is_new_file: true,
-            content_hash: None,
+            content_id: None,
             new_version: 1,
             size_bytes: None,
         })
@@ -197,7 +197,7 @@ mod tests {
                 is_admin: false,
             },
             content: None,
-            content_hash: None,
+            content_id: None,
         });
         assert!(hook.on_pre(&read).is_ok());
     }

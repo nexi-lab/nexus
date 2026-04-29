@@ -318,6 +318,8 @@ class FederationRPCService(FederationRPCMixin):
             admin_capabilities=[],
             subject_type="user",
             subject_id=None,
+            request_id="",
+            context_zone_id=None,
         )
         with contextlib.suppress(Exception):
             self._kernel.sys_unlink(path, ctx)

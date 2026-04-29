@@ -76,6 +76,33 @@ service ZoneApiService {
   // Used by follower `try_remote_fetch` / scatter-gather chunk fetch when
   // metadata has been replicated ahead of content.
   rpc ReadBlob(ReadBlobRequest) returns (ReadBlobResponse);
+
+  // ReplaceVoterByHostname swaps a voter's node ID without changing its
+  // hostname.  Sent by a node that just wiped its persistent state and
+  // is about to rejoin the cluster with a fresh `compute_node_id` based
+  // on a non-zero incarnation.
+  //
+  // Wipe-rejoin contract — necessary because reusing a node ID across a
+  // wipe violates raft's identity-equals-log invariant: the leader's
+  // in-memory `Progress[old_id]` still records `matched=K` from before
+  // the wipe, so its next heartbeat would carry `commit=K` and panic
+  // the fresh follower at `commit_to(K)` (`raft-0.7.0/raft_log.rs:292`).
+  //
+  // Server-side flow (leader only — followers return a redirect):
+  //   1. Reverse-lookup the existing voter whose hostname matches
+  //      `hostname` in the cluster's peer map.  Authoritative answer
+  //      lives on the leader; the caller does *not* claim what the old
+  //      ID was (post-wipe it has no way to know which incarnation was
+  //      previously persisted).
+  //   2. Propose `ConfChange::RemoveNode(old_id)`, await commit.
+  //   3. Propose `ConfChange::AddNode(new_id)`, await commit.
+  //   4. Caller follows up with the standard `JoinZone` flow under
+  //      `new_id` and receives a snapshot to populate its log.
+  //
+  // No-op fast path: when the lookup finds no matching hostname (fresh
+  // host that was never a voter) the leader proposes `AddNode(new_id)`
+  // alone — a plain join.  Returns `success=true, removed_old_id=null`.
+  rpc ReplaceVoterByHostname(ReplaceVoterByHostnameRequest) returns (ReplaceVoterByHostnameResponse);
 }
 
 // === Search Capability Advertisement (Issue #3147) ===
@@ -318,4 +345,41 @@ message ReadBlobRequest {
 message ReadBlobResponse {
   bytes content = 1;
   string error = 2;
+}
+
+// === ReplaceVoterByHostname (wipe-rejoin ID rotation) ===
+
+// ReplaceVoterByHostnameRequest carries the hostname and the new
+// incarnation-based node ID minted post-wipe.
+message ReplaceVoterByHostnameRequest {
+  // Zone whose voter set should be rotated.  Required; must be a
+  // zone for which the receiver is a voter (leader if known, or any
+  // node if leader is unknown — that node forwards the request).
+  string zone_id = 1;
+  // The wiped node's hostname.  Used by the leader to look up the
+  // prior voter ID in the cluster's peer map; the caller must NOT
+  // pre-compute the old ID itself (post-wipe the caller has no
+  // access to the prior incarnation marker).
+  string hostname = 2;
+  // The wiped node's freshly-minted node ID
+  // (`compute_node_id(hostname, new_incarnation)`).
+  uint64 new_node_id = 3;
+  // The wiped node's gRPC address (e.g., "http://10.0.0.3:2126").
+  // Stored in the cluster peer map for the new ID.
+  string node_address = 4;
+}
+
+// ReplaceVoterByHostnameResponse reports the outcome.  `success=true`
+// means both ConfChanges committed (or only the AddNode in the
+// no-prior-voter fast path) — caller is safe to proceed with
+// JoinZone.
+message ReplaceVoterByHostnameResponse {
+  bool success = 1;
+  optional string error = 2;
+  // If the receiver wasn't the leader, redirect address.  Mirrors
+  // ProposeResponse / JoinZoneResponse.
+  optional string leader_address = 3;
+  // The old voter ID that was removed.  None when no prior voter
+  // matched the supplied hostname (treated as a plain AddNode).
+  optional uint64 removed_old_id = 4;
 }

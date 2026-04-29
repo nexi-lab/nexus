@@ -114,6 +114,15 @@ class NexusAppState:
     # === gRPC server (#1249) ===
     grpc_server: Any = None
 
+    # === Approvals brick (Issue #3790) ===
+    # ApprovalsStack instance from nexus.bricks.approvals.bootstrap.
+    # When NEXUS_APPROVALS_ENABLED is unset (default), .service and .gate are None.
+    approvals_stack: Any = None
+    # PolicyGate instance OR None when approvals are disabled. The MCP egress
+    # hook (Task 18) and hub zone-access hook (Task 19) read this and treat
+    # `None` as "approvals disabled" by contract.
+    policy_gate: Any = None
+
     # === Exposed methods ===
     exposed_methods: dict[str, Any] = field(default_factory=dict)
 

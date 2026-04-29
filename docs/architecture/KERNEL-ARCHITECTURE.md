@@ -797,11 +797,18 @@ syscall implementations across per-family submodules:
 | `kernel/locks.rs`   | Advisory-lock syscalls (`sys_lock`, `sys_unlock`, `metastore_list_locks`, `install_federation_locks`). |
 | `kernel/dispatch.rs`| Native INTERCEPT hook dispatch (`dispatch_native_pre`, `dispatch_native_post`, `register_native_hook`). |
 | `kernel/observability.rs` | Observer registry, file-watch registry, `sys_watch`, `dispatch_mutation` shared helper. |
+| `kernel/mount.rs`   | Mount-table primitives (`add_mount`, `remove_mount`, `install_mount_metastore`, `route`, …). |
+| `kernel/federation.rs` | `DistributedCoordinator` slot accessors, `/__sys__/zones/` procfs synthesisers, blob-fetcher slot plumbing. |
 
 Every submodule writes its methods as `impl Kernel { … }` blocks —
 Rust treats each block as a member set of the same `Kernel` type, so
 `self.method_in_io()` from a submodule reaches `self.method_in_mod()`
 without intermediate trait dispatch.
+
+The split between `kernel/` (syscalls) and `core/` (primitives) follows
+the data type: §4 primitives — concrete data structures like
+`DCache`, `VFSRouter`, `AgentTable`, `LockManager` — live in `core/`;
+the syscall families that operate on them live in `kernel/`.
 
 #### Control-Plane HAL DI surface
 
@@ -820,7 +827,7 @@ Boot wiring:
 | Step | Caller                                                           | Effect                                                                    |
 |------|------------------------------------------------------------------|---------------------------------------------------------------------------|
 | 1    | `Kernel::new`                                                    | Slot defaults to `NoopDistributedCoordinator`                             |
-| 2    | `nexus_raft::distributed_coordinator::install(kernel)`           | Slot is replaced with `RaftDistributedCoordinator`; blob-fetcher slot stashed for transport-tier drain |
+| 2    | `nexus_raft::distributed_coordinator::install(kernel)`           | Slot is replaced with `RaftDistributedCoordinator`; `init_from_env` stashes the blob-fetcher slot, then `blob_fetcher_handler::install` drains it and wires the kernel-backed `KernelBlobFetcher` |
 | 3    | Federation syscalls (`init_federation_from_env`, `create_zone`, …) | Dispatch through `kernel.distributed_coordinator().<method>(kernel, …)`   |
 
 Coordinator methods all take `kernel: &Kernel` so the unit-struct impl

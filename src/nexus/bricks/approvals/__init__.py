@@ -1,5 +1,6 @@
 """Approval decision queue brick (Issue #3790)."""
 
+from nexus.bricks.approvals.config import ApprovalConfig
 from nexus.bricks.approvals.errors import (
     ApprovalDenied,
     ApprovalError,
@@ -16,6 +17,7 @@ from nexus.bricks.approvals.models import (
 )
 
 __all__ = [
+    "ApprovalConfig",
     "ApprovalDenied",
     "ApprovalError",
     "ApprovalTimeout",

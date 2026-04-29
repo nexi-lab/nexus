@@ -309,6 +309,9 @@ def upgrade() -> None:
         _widen_varchar_if_needed(bind, inspector, "file_paths", "content_id", 255)
         _widen_varchar_if_needed(bind, inspector, "file_paths", "indexed_content_id", 255)
 
+    if "version_history" in table_names:
+        _widen_varchar_if_needed(bind, inspector, "version_history", "content_id", 255)
+
     if "tiger_cache" in table_names:
         tiger_cache_columns = set(_table_columns(inspector, "tiger_cache"))
         _add_zone_column(

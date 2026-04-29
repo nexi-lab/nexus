@@ -564,6 +564,7 @@ def ensure_postgres_schema_invariants(engine: Engine) -> None:
             (
                 ("file_paths", "content_id", 255),
                 ("file_paths", "indexed_content_id", 255),
+                ("version_history", "content_id", 255),
             ),
         )
         _ensure_zone_indexes(conn, columns_by_table)

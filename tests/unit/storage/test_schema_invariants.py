@@ -77,6 +77,13 @@ def test_postgres_schema_invariants_repair_zone_schema_gaps(monkeypatch) -> None
                 "backend_id",
                 "physical_path",
             },
+            "version_history": {
+                "version_id",
+                "resource_type",
+                "resource_id",
+                "version_number",
+                "content_id",
+            },
             "rebac_changelog": {
                 "change_id",
                 "subject_id",
@@ -147,6 +154,7 @@ def test_postgres_schema_invariants_repair_zone_schema_gaps(monkeypatch) -> None
     assert (
         "ALTER TABLE file_paths ALTER COLUMN indexed_content_id TYPE VARCHAR(255)" in executed_sql
     )
+    assert "ALTER TABLE version_history ALTER COLUMN content_id TYPE VARCHAR(255)" in executed_sql
     assert "ALTER TABLE file_paths ALTER COLUMN backend_id DROP NOT NULL" in executed_sql
     assert "ALTER TABLE file_paths ALTER COLUMN physical_path DROP NOT NULL" in executed_sql
     assert "ALTER TABLE tiger_cache ADD COLUMN zone_id VARCHAR(255) NOT NULL DEFAULT 'root'" in (

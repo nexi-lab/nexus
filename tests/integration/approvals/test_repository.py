@@ -15,6 +15,7 @@ from nexus.bricks.approvals.db_models import (
 )
 from nexus.bricks.approvals.models import (
     ApprovalKind,
+    ApprovalRequestStatus,
     DecisionScope,
     DecisionSource,
 )
@@ -93,14 +94,14 @@ async def test_decide_pending_to_approved_emits_audit_row(session_factory):
     )
     updated = await repo.transition(
         request_id=req.id,
-        new_status="approved",
+        new_status=ApprovalRequestStatus.APPROVED,
         decided_by="op",
         scope=DecisionScope.ONCE,
         reason="ok",
         source=DecisionSource.GRPC,
         now=now,
     )
-    assert updated is not None and updated.status == "approved"
+    assert updated is not None and updated.status is ApprovalRequestStatus.APPROVED
 
     async with session_factory() as s:
         rows = (await s.execute(_select_decisions(req.id))).scalars().all()
@@ -127,10 +128,22 @@ async def test_transition_returns_none_when_not_pending(session_factory):
         expires_at=now + timedelta(seconds=60),
     )
     await repo.transition(
-        req.id, "approved", "op", DecisionScope.ONCE, None, DecisionSource.GRPC, now
+        request_id=req.id,
+        new_status=ApprovalRequestStatus.APPROVED,
+        decided_by="op",
+        scope=DecisionScope.ONCE,
+        reason=None,
+        source=DecisionSource.GRPC,
+        now=now,
     )
     second = await repo.transition(
-        req.id, "rejected", "op2", DecisionScope.ONCE, None, DecisionSource.GRPC, now
+        request_id=req.id,
+        new_status=ApprovalRequestStatus.REJECTED,
+        decided_by="op2",
+        scope=DecisionScope.ONCE,
+        reason=None,
+        source=DecisionSource.GRPC,
+        now=now,
     )
     assert second is None
 
@@ -152,20 +165,18 @@ async def test_session_allow_round_trip(session_factory):
         decided_at=now,
         request_id=None,
     )
-    found = await repo.find_session_allow(
+    assert await repo.session_allow_exists(
         session_id=sid,
         zone_id=zone,
         kind=ApprovalKind.EGRESS_HOST,
         subject=subject,
     )
-    assert found is not None
-    miss = await repo.find_session_allow(
+    assert not await repo.session_allow_exists(
         session_id=sid,
         zone_id=zone,
         kind=ApprovalKind.EGRESS_HOST,
         subject=f"other:443:{tag}",
     )
-    assert miss is None
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,9 @@ from nexus.bricks.approvals.models import (
 SessionFactory = async_sessionmaker[AsyncSession]
 
 
+# ORM stores enum values as plain strings; domain objects use enum types.
+# Public methods accept/return enums — coercion to `.value` happens at the
+# SQL boundary inside this module.
 def _to_domain(row: ApprovalRequestModel) -> ApprovalRequest:
     return ApprovalRequest(
         id=row.id,
@@ -136,8 +139,9 @@ class ApprovalRepository:
 
     async def transition(
         self,
+        *,
         request_id: str,
-        new_status: str,
+        new_status: ApprovalRequestStatus,
         decided_by: str,
         scope: DecisionScope,
         reason: str | None,
@@ -153,7 +157,7 @@ class ApprovalRepository:
                     ApprovalRequestModel.status == ApprovalRequestStatus.PENDING.value,
                 )
                 .values(
-                    status=new_status,
+                    status=new_status.value,
                     decided_at=now,
                     decided_by=decided_by,
                     decision_scope=scope.value,
@@ -170,7 +174,7 @@ class ApprovalRepository:
                     request_id=request_id,
                     decided_at=now,
                     decided_by=decided_by,
-                    decision=new_status,
+                    decision=new_status.value,
                     scope=scope.value,
                     reason=reason,
                     source=source.value,
@@ -207,22 +211,27 @@ class ApprovalRepository:
             await session.execute(stmt)
             await session.commit()
 
-    async def find_session_allow(
+    async def session_allow_exists(
         self,
         *,
         session_id: str,
         zone_id: str,
         kind: ApprovalKind,
         subject: str,
-    ) -> ApprovalSessionAllowModel | None:
+    ) -> bool:
+        """Check if a session-scoped allow row exists for this 4-tuple."""
         async with self._session_factory() as session:
-            stmt = select(ApprovalSessionAllowModel).where(
-                ApprovalSessionAllowModel.session_id == session_id,
-                ApprovalSessionAllowModel.zone_id == zone_id,
-                ApprovalSessionAllowModel.kind == kind.value,
-                ApprovalSessionAllowModel.subject == subject,
+            stmt = (
+                select(ApprovalSessionAllowModel.id)
+                .where(
+                    ApprovalSessionAllowModel.session_id == session_id,
+                    ApprovalSessionAllowModel.zone_id == zone_id,
+                    ApprovalSessionAllowModel.kind == kind.value,
+                    ApprovalSessionAllowModel.subject == subject,
+                )
+                .limit(1)
             )
-            return (await session.execute(stmt)).scalar_one_or_none()
+            return (await session.execute(stmt)).scalar_one_or_none() is not None
 
     async def sweep_expired(self, now: datetime) -> list[str]:
         """Mark all pending past-expires rows as expired and return their ids."""

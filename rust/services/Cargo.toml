@@ -36,6 +36,10 @@ raft = { workspace = true }
 redb = "2"
 # Phase 3 restructure plan #6: tasks crate folded in here.
 fjall = "3"
+# `acp::subprocess` calls libc::dup() to hand kernel-side OwnedFds
+# alongside the ones tokio::process::Child still owns; #[cfg(unix)]
+# only.
+libc = "0.2"
 bincode = "1.3"
 thiserror = "2.0"
 dashmap = "6.1"

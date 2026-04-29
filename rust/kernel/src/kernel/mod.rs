@@ -1728,7 +1728,7 @@ impl Kernel {
     /// - `"stdio"` → StdioPipeBackend (subprocess fd, newline-framed)
     /// - `"wal"` → WalPipeCore (raft-replicated, cross-node, single-consumer)
     #[allow(unused_variables)]
-    pub(crate) fn setattr_pipe(
+    pub fn setattr_pipe(
         &self,
         path: &str,
         capacity: usize,

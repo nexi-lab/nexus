@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package nexus.approvals.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message ApprovalRequestProto {
+  string id = 1;
+  string zone_id = 2;
+  string kind = 3;       // ApprovalKind value
+  string subject = 4;
+  string agent_id = 5;
+  string token_id = 6;
+  string session_id = 7;
+  string reason = 8;
+  string metadata_json = 9;
+  string status = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp expires_at = 12;
+  google.protobuf.Timestamp decided_at = 13;
+  string decided_by = 14;
+  string decision_scope = 15;
+}
+
+message ListPendingRequest {
+  string zone_id = 1;  // empty = all zones the caller has approvals:read on
+}
+
+message ListPendingResponse {
+  repeated ApprovalRequestProto requests = 1;
+}
+
+message GetRequest { string request_id = 1; }
+
+message DecideRequest {
+  string request_id = 1;
+  string decision = 2;       // approved | denied
+  string scope = 3;          // once | session | persist_sandbox | persist_baseline
+  string reason = 4;
+}
+
+message CancelRequest { string request_id = 1; }
+message CancelResponse {}
+
+message WatchRequest { string zone_id = 1; }
+
+message ApprovalEvent {
+  string type = 1;            // pending | decided
+  string request_id = 2;
+  string zone_id = 3;
+  string decision = 4;        // empty when type=pending
+}
+
+message SubmitRequest {
+  string kind = 1;
+  string subject = 2;
+  string zone_id = 3;
+  string token_id = 4;
+  string session_id = 5;
+  string agent_id = 6;
+  string reason = 7;
+  string metadata_json = 8;
+  double timeout_override_seconds = 9;
+}
+
+message SubmitDecision {
+  string decision = 1;        // approved | denied
+  string request_id = 2;
+}
+
+service ApprovalsV1 {
+  rpc ListPending(ListPendingRequest) returns (ListPendingResponse);
+  rpc Get(GetRequest) returns (ApprovalRequestProto);
+  rpc Decide(DecideRequest) returns (ApprovalRequestProto);
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+  rpc Watch(WatchRequest) returns (stream ApprovalEvent);
+  rpc Submit(SubmitRequest) returns (SubmitDecision);
+}

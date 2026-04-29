@@ -30,6 +30,7 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     "zone_id": "zone_id",
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # DT_MOUNT target, not in SQL
+    "link_target": None,  # DT_LINK target — VFS-internal, not persisted in SQL
     "owner_id": "posix_uid",
     "ttl_seconds": None,  # Storage-layer TTL routing, not persisted in SQL (#3405)
     "last_writer_address": None,  # Federation routing hint, not persisted in SQL
@@ -173,7 +174,13 @@ class TestRoundtripConsistency:
         without an explicit mapping decision.
         """
         none_mapped = {k for k, v in PROTO_TO_SQL_FIELD_MAP.items() if v is None}
-        expected = {"entry_type", "target_zone_id", "ttl_seconds", "last_writer_address"}
+        expected = {
+            "entry_type",
+            "target_zone_id",
+            "link_target",
+            "ttl_seconds",
+            "last_writer_address",
+        }
         assert none_mapped == expected, (
             f"Expected SQL-excluded fields {expected}, got {none_mapped}. "
             f"Did you add/remove a proto field? Update PROTO_TO_SQL_FIELD_MAP."

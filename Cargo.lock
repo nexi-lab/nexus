@@ -2723,6 +2723,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpc"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contracts",
+ "dashmap",
+ "futures",
+ "kernel",
+ "parking_lot",
+ "prost",
+ "pyo3",
+ "raft 0.1.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tracing",
+ "transport-primitives",
+ "uuid",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

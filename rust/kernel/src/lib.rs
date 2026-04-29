@@ -112,9 +112,12 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
-// proxies all syscalls over gRPC to a remote `nexusd`). `pub` so the
-// `ObjectStoreProvider` impl in `backends/` can construct
-// `RpcTransport` for the `"remote"` backend type.
+// proxies all syscalls over gRPC to a remote `nexusd`). The driver-
+// layer `rpc` crate re-exports this module as `rpc::vfs` so peer
+// crates name a single canonical path; the file lives here in the
+// kernel because the kernel-internal `RemoteMetaStore` /
+// `RemotePipeBackend` / `RemoteStreamBackend` wrappers also wrap
+// `RpcTransport` directly.
 pub mod rpc_transport;
 
 // Phase 0 — `#[pymodule] fn nexus_runtime` lives in `rust/nexus-cdylib/`

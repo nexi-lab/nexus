@@ -14,6 +14,12 @@ members = [
     "rust/backends",
     "rust/services",
     "rust/raft",
+    # Driver-outgoing RPC clients: VFS gRPC (RemoteBackend), peer-blob
+    # fetch, federation peer client. Driver-layer crate alongside
+    # `backends/` and `raft/`. The single directed edge between driver-
+    # layer crates is `rpc -> raft` — rpc is the "raft protocol client"
+    # so it references raft's wire-format proto stubs.
+    "rust/rpc",
     # Phase 3 restructure plan #6: rust/tasks folded into rust/services/src/tasks/.
     # Phase 4 (full) — deployment profile binaries get their own folder.
     # Today only `cluster` (Sudowork's `nexusd-cluster` ELF/EXE) lives
@@ -61,6 +67,10 @@ kernel = { path = "rust/kernel", default-features = false }
 # (kernel, etc.) use raft as a workspace dep too; the `python` +
 # `grpc` feature flags here apply uniformly.
 raft = { path = "rust/raft", default-features = false, features = ["python", "grpc"] }
+# Driver-outgoing RPC clients (VFS, peer-blob, federation). The
+# `python` feature unions the PyO3 install hooks into a single
+# `rpc::python::register(m)` entry consumed by the cdylib.
+rpc = { path = "rust/rpc" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = "0.8"

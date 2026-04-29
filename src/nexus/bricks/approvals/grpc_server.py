@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -12,7 +14,7 @@ import grpc
 import grpc.aio
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from nexus.bricks.approvals.errors import GatewayClosed
+from nexus.bricks.approvals.errors import ApprovalDenied, ApprovalTimeout, GatewayClosed
 from nexus.bricks.approvals.models import (
     ApprovalKind,
     ApprovalRequest,
@@ -54,7 +56,7 @@ def _to_pb(req: ApprovalRequest) -> approvals_pb2.ApprovalRequestProto:
         token_id=req.token_id or "",
         session_id=req.session_id or "",
         reason=req.reason,
-        metadata_json=json.dumps(req.metadata),
+        metadata_json=json.dumps(req.metadata, default=str),
         status=req.status.value,
         created_at=_ts(req.created_at),
         expires_at=_ts(req.expires_at),
@@ -93,8 +95,7 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         row = await self._svc.get(request.request_id)
         if row is None:
             await context.abort(grpc.StatusCode.NOT_FOUND, "request not found")
-        # context.abort raises; the assertion below narrows the type for mypy.
-        assert row is not None
+            raise  # unreachable; abort raises. Keeps mypy happy on flow.
         return _to_pb(row)
 
     async def Decide(
@@ -138,15 +139,21 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         self,
         request: approvals_pb2.WatchRequest,
         context: grpc.aio.ServicerContext,
-    ) -> Any:
+    ) -> AsyncIterator[approvals_pb2.ApprovalEvent]:
         await self._auth.authorize(context, "approvals:read")
-        async for ev in self._svc.watch(zone_id=request.zone_id or None):
-            yield approvals_pb2.ApprovalEvent(
-                type=ev.type,
-                request_id=ev.request_id,
-                zone_id=ev.zone_id,
-                decision=ev.decision or "",
-            )
+        try:
+            async for ev in self._svc.watch(zone_id=request.zone_id or None):
+                yield approvals_pb2.ApprovalEvent(
+                    type=ev.type,
+                    request_id=ev.request_id,
+                    zone_id=ev.zone_id,
+                    decision=ev.decision or "",
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("approvals.watch stream errored")
+            return
 
     async def Submit(
         self,
@@ -166,6 +173,12 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
             except json.JSONDecodeError:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "bad metadata_json")
                 raise  # unreachable
+            if not isinstance(metadata, dict):
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "metadata_json must be an object",
+                )
+                raise  # unreachable
         # protobuf double defaults to 0.0; treat that as "no override".
         timeout = request.timeout_override_seconds or None
         request_id = f"req_push_{uuid.uuid4().hex[:12]}"
@@ -182,6 +195,11 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
                 metadata=metadata,
                 timeout_override=timeout,
             )
+        except ApprovalDenied:
+            return approvals_pb2.SubmitDecision(decision="denied", request_id=request_id)
+        except ApprovalTimeout as e:
+            await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, str(e))
+            raise  # unreachable
         except GatewayClosed as e:
             await context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
             raise  # unreachable

@@ -107,6 +107,91 @@ impl RaftFederationProvider {
             &consensus,
         );
     }
+
+    /// Re-wire every DT_MOUNT entry already applied in any zone's state
+    /// machine.  The apply-cb only fires on NEW raft applies, so without
+    /// this replay a restart leaves restored mounts unwired in VFSRouter
+    /// / DCache — followers fail every cross-zone read until the next
+    /// fresh DT_MOUNT lands.  Topological retry handles parent→child
+    /// ordering (a nested mount can't wire until its parent's mount is
+    /// in `cross_zone_mounts`).
+    fn replay_existing_mounts(&self, kernel: &Kernel) {
+        let Some(zm) = self.zm() else {
+            return;
+        };
+        let Some(runtime) = self.runtime.get() else {
+            return;
+        };
+        let registry = zm.registry();
+        let vfs_router = kernel.vfs_router_arc();
+        let dcache = kernel.dcache_arc();
+        let lock_manager = kernel.lock_manager_arc();
+
+        let mut pending: Vec<(String, String, String)> = Vec::new();
+        for zone_id in zm.list_zones() {
+            let Some(consensus) = registry.get_node(&zone_id) else {
+                continue;
+            };
+            let entries = consensus.iter_dt_mount_entries().unwrap_or_default();
+            for (key, target_zone_id) in entries {
+                pending.push((zone_id.clone(), key, target_zone_id));
+            }
+        }
+
+        if pending.is_empty() {
+            return;
+        }
+        tracing::info!(
+            count = pending.len(),
+            "replay_existing_mounts: scanning DT_MOUNT entries"
+        );
+
+        // Topological retry: a nested mount needs its parent's
+        // cross_zone_mounts entry to reconstruct the global path.  Cap
+        // rounds at pending.len()+1 so a misconfigured cycle errors
+        // instead of looping forever.
+        let max_rounds = pending.len() + 1;
+        for _ in 0..max_rounds {
+            if pending.is_empty() {
+                break;
+            }
+            let mut progressed = false;
+            pending.retain(|(parent_zone_id, mount_path, target_zone_id)| {
+                let r = wire_mount_core(
+                    &vfs_router,
+                    &dcache,
+                    &lock_manager,
+                    &registry,
+                    runtime,
+                    &self.cross_zone_mounts,
+                    parent_zone_id,
+                    mount_path,
+                    target_zone_id,
+                );
+                match r {
+                    Ok(()) => {
+                        if self.cross_zone_mounts.contains_key(target_zone_id) {
+                            progressed = true;
+                            false // wired — drop from pending
+                        } else {
+                            true // wire_mount_core deferred (parent not ready) — retry
+                        }
+                    }
+                    Err(_) => false, // permanent failure — give up
+                }
+            });
+            if !progressed {
+                break;
+            }
+        }
+        if !pending.is_empty() {
+            tracing::warn!(
+                pending = pending.len(),
+                "replay_existing_mounts: {} entries left unwired (likely missing parent zone)",
+                pending.len(),
+            );
+        }
+    }
 }
 
 impl Default for RaftFederationProvider {
@@ -266,20 +351,21 @@ impl FederationProvider for RaftFederationProvider {
             }
         }
 
-        // Install the DT_MOUNT apply-cb on every zone bootstrapped above
-        // so raft-applied mount commits fire `wire_mount_core` on every
-        // peer (followers don't go through `sys_setattr`'s leader-side
-        // wire_mount call — they need the apply-cb to wire the mount).
-        self.install_apply_cb_for_zone(kernel, "root");
-        if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
-            for zone_id in zones_csv
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                self.install_apply_cb_for_zone(kernel, zone_id);
-            }
+        // Install the DT_MOUNT apply-cb on every zone the ZoneManager
+        // loaded — root, env-listed federation zones, AND zones restored
+        // from disk after a restart.  Without this, restored zones lose
+        // their wire_mount path on followers and DT_MOUNT replays go
+        // unwired.  Idempotent — re-installation replaces with an
+        // equivalent closure.
+        for zone_id in zm.list_zones() {
+            self.install_apply_cb_for_zone(kernel, &zone_id);
         }
+
+        // Replay scan: each restored zone may already hold DT_MOUNT
+        // entries in its applied state machine.  The apply-cb only
+        // fires on NEW applies, so without this scan a restart leaves
+        // restored mounts unwired in VFSRouter / DCache.
+        self.replay_existing_mounts(kernel);
 
         self.bootstrap_done.store(true, Ordering::Release);
         tracing::info!("federation bootstrap complete (hostname={hostname})");

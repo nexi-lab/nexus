@@ -50,7 +50,7 @@ pub mod zone_persistence;
 #[cfg(feature = "consensus")]
 mod node;
 #[cfg(feature = "consensus")]
-mod storage;
+pub mod storage;
 #[cfg(all(feature = "grpc", has_protos))]
 mod zone_registry;
 

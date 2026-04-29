@@ -219,8 +219,30 @@ impl ZoneManager {
         bind_addr: &str,
         tls: Option<TlsFiles>,
     ) -> Result<Arc<Self>> {
-        let node_id = hostname_to_node_id(hostname);
+        Self::with_node_id(
+            hostname,
+            hostname_to_node_id(hostname),
+            base_path,
+            peers,
+            bind_addr,
+            tls,
+        )
+    }
 
+    /// Create a `ZoneManager` with an explicit node ID.
+    ///
+    /// Used by `RaftFederationProvider::ensure_voter_membership` to
+    /// bind a freshly-minted incarnation-based ID for the post-wipe
+    /// rotation path.  Most callers should use [`Self::new`], which
+    /// computes the cold-start `hostname_to_node_id` automatically.
+    pub fn with_node_id(
+        hostname: &str,
+        node_id: u64,
+        base_path: &str,
+        peers: Vec<String>,
+        bind_addr: &str,
+        tls: Option<TlsFiles>,
+    ) -> Result<Arc<Self>> {
         // Initialize tracing once.
         static TRACING_INIT: std::sync::Once = std::sync::Once::new();
         TRACING_INIT.call_once(|| {
@@ -339,8 +361,9 @@ impl ZoneManager {
         });
 
         tracing::info!(
-            "ZoneManager node {} started (bind={}, tls={})",
+            "ZoneManager node {} hostname={} started (bind={}, tls={})",
             node_id,
+            hostname,
             bind_addr,
             use_tls,
         );

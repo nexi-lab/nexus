@@ -1035,87 +1035,60 @@ impl ZoneApiService for ZoneApiServiceImpl {
             }));
         }
 
-        use raft::eraftpb::ConfChangeType;
-
-        // 1. Remove the prior voter if one matched.  Skipped on the
-        //    no-prior-voter fast path (brand-new host).
-        if let Some(old_id) = old_id_opt {
-            match node
-                .propose_conf_change(ConfChangeType::RemoveNode, old_id, Vec::new())
-                .await
-            {
-                Ok(_) => {
-                    tracing::info!(
-                        zone = req.zone_id,
-                        old_id,
-                        hostname = req.hostname,
-                        "Removed stale voter (wipe-rejoin rotation)",
-                    );
-                }
-                Err(RaftError::NotLeader { leader_hint }) => {
-                    let addr = leader_hint
-                        .and_then(|id| peers.get(&id))
-                        .map(|a| a.endpoint.clone());
-                    return Ok(Response::new(ReplaceVoterByHostnameResponse {
-                        success: false,
-                        error: Some("not leader".to_string()),
-                        leader_address: addr,
-                        removed_old_id: None,
-                    }));
-                }
-                Err(e) => {
-                    return Ok(Response::new(ReplaceVoterByHostnameResponse {
-                        success: false,
-                        error: Some(format!("RemoveNode({old_id}) failed: {e}")),
-                        leader_address: None,
-                        removed_old_id: None,
-                    }));
-                }
-            }
-        }
-
-        // 2. Add the new voter under the freshly-minted ID.
+        // Single atomic ConfChangeV2 — RemoveNode(old_id) + AddNode(new_id)
+        // commit as one entry so the cluster never observes the
+        // transient `voters - {old_id}` state.  Strict raft membership-
+        // swap contract; no transient quorum gap, single round-trip.
+        // When `old_id_opt` is None the V2 reduces to a plain AddNode
+        // (no-prior-voter fast path).
+        let old_id = old_id_opt.unwrap_or(0);
         match node
-            .propose_conf_change(
-                ConfChangeType::AddNode,
-                req.new_node_id,
-                req.node_address.clone().into_bytes(),
-            )
+            .propose_replace_voter(old_id, req.new_node_id, req.node_address.into_bytes())
             .await
         {
-            Ok(_) => Ok(Response::new(ReplaceVoterByHostnameResponse {
-                success: true,
-                error: None,
-                leader_address: None,
-                removed_old_id: old_id_opt,
-            })),
+            Ok(_) => {
+                if let Some(removed) = old_id_opt {
+                    tracing::info!(
+                        zone = req.zone_id,
+                        removed_old_id = removed,
+                        new_node_id = req.new_node_id,
+                        hostname = req.hostname,
+                        "ReplaceVoterByHostname committed (atomic Remove+Add)",
+                    );
+                } else {
+                    tracing::info!(
+                        zone = req.zone_id,
+                        new_node_id = req.new_node_id,
+                        hostname = req.hostname,
+                        "ReplaceVoterByHostname committed (no-prior-voter AddNode)",
+                    );
+                }
+                Ok(Response::new(ReplaceVoterByHostnameResponse {
+                    success: true,
+                    error: None,
+                    leader_address: None,
+                    removed_old_id: old_id_opt,
+                }))
+            }
             Err(RaftError::NotLeader { leader_hint }) => {
                 let addr = leader_hint
                     .and_then(|id| peers.get(&id))
                     .map(|a| a.endpoint.clone());
-                // Partial-progress note: if RemoveNode committed but
-                // AddNode hits NotLeader (rare — quorum loss between
-                // proposals), the cluster is left without this voter.
-                // The next ReplaceVoterByHostname call against the new
-                // leader will re-propose AddNode (the no-prior-voter
-                // fast path) and finish the rotation.  Ack this in the
-                // error message so operators don't double-rotate.
-                let detail = match old_id_opt {
-                    Some(_) => "RemoveNode committed but AddNode redirected — retry on new leader",
-                    None => "AddNode redirected — retry on new leader",
-                };
                 Ok(Response::new(ReplaceVoterByHostnameResponse {
                     success: false,
-                    error: Some(detail.to_string()),
+                    error: Some("not leader".to_string()),
                     leader_address: addr,
-                    removed_old_id: old_id_opt,
+                    removed_old_id: None,
                 }))
             }
             Err(e) => Ok(Response::new(ReplaceVoterByHostnameResponse {
                 success: false,
-                error: Some(format!("AddNode({}) failed: {e}", req.new_node_id)),
+                error: Some(format!(
+                    "ConfChangeV2(Remove={old_id}, Add={}) failed: {e}",
+                    req.new_node_id,
+                )),
                 leader_address: None,
-                removed_old_id: old_id_opt,
+                removed_old_id: None,
             })),
         }
     }

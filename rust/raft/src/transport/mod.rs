@@ -52,8 +52,9 @@ mod transport_loop;
 
 #[cfg(all(feature = "grpc", has_protos))]
 pub use client::{
-    call_join_cluster, ClientConfig, ClusterInfoResult, JoinClusterResult, ProposeResult,
-    QueryResult, RaftApiClient, RaftClient, RaftClientPool,
+    call_join_cluster, call_replace_voter_by_hostname, ClientConfig, ClusterInfoResult,
+    JoinClusterResult, ProposeResult, QueryResult, RaftApiClient, RaftClient, RaftClientPool,
+    ReplaceVoterResult,
 };
 #[cfg(all(feature = "grpc", has_protos))]
 pub use server::{RaftGrpcServer, RaftWitnessServer, ServerConfig, WitnessZoneRegistry};

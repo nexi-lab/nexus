@@ -180,7 +180,12 @@ async def test_session_allow_round_trip(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_sweep_expired_marks_and_returns_ids(session_factory):
+async def test_sweep_expired_marks_past_due_rows(session_factory):
+    """Insert a past-due pending row, then verify sweep_expired drives it to
+    'expired'. Under xdist, a sibling test's running sweeper may expire our row
+    before our manual sweep — assert on the resulting row status, not on
+    membership in this call's return list.
+    """
     repo = await _new_repo(session_factory)
     now = datetime.now(UTC)
     past = now - timedelta(seconds=1)
@@ -199,8 +204,9 @@ async def test_sweep_expired_marks_and_returns_ids(session_factory):
         now=past,
         expires_at=past,
     )
-    swept = await repo.sweep_expired(now=now)
-    assert rid in swept
+    await repo.sweep_expired(now=now)
+    row = await repo.get(rid)
+    assert row is not None and row.status.value == "expired"
 
 
 def _select_decisions(request_id: str):

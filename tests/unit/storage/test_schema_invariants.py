@@ -69,7 +69,14 @@ def test_postgres_schema_invariants_repair_zone_schema_gaps(monkeypatch) -> None
     inspector = _FakeInspector(
         {
             "metadata_change_log": {"sequence_number"},
-            "file_paths": {"path_id", "virtual_path", "content_id"},
+            "file_paths": {
+                "path_id",
+                "virtual_path",
+                "content_id",
+                "indexed_content_id",
+                "backend_id",
+                "physical_path",
+            },
             "rebac_changelog": {
                 "change_id",
                 "subject_id",
@@ -84,7 +91,31 @@ def test_postgres_schema_invariants_repair_zone_schema_gaps(monkeypatch) -> None
                 "subject_zone_id",
                 "object_zone_id",
             },
+            "rebac_group_closure": {
+                "member_type",
+                "member_id",
+                "group_type",
+                "group_id",
+                "tenant_id",
+                "depth",
+            },
             "subscriptions": {"subscription_id", "tenant_id"},
+            "tiger_cache": {
+                "cache_id",
+                "subject_type",
+                "subject_id",
+                "permission",
+                "resource_type",
+                "tenant_id",
+            },
+            "tiger_cache_queue": {
+                "queue_id",
+                "subject_type",
+                "subject_id",
+                "permission",
+                "resource_type",
+                "tenant_id",
+            },
             "tiger_directory_grants": {"grant_id", "tenant_id", "directory_path"},
         }
     )
@@ -112,6 +143,32 @@ def test_postgres_schema_invariants_repair_zone_schema_gaps(monkeypatch) -> None
     assert "ALTER TABLE rebac_tuples ALTER COLUMN object_id TYPE VARCHAR(255)" in executed_sql
     assert "ALTER TABLE rebac_changelog ALTER COLUMN subject_id TYPE VARCHAR(255)" in executed_sql
     assert "ALTER TABLE rebac_changelog ALTER COLUMN object_id TYPE VARCHAR(255)" in executed_sql
+    assert "ALTER TABLE file_paths ALTER COLUMN content_id TYPE VARCHAR(255)" in executed_sql
+    assert (
+        "ALTER TABLE file_paths ALTER COLUMN indexed_content_id TYPE VARCHAR(255)" in executed_sql
+    )
+    assert "ALTER TABLE file_paths ALTER COLUMN backend_id DROP NOT NULL" in executed_sql
+    assert "ALTER TABLE file_paths ALTER COLUMN physical_path DROP NOT NULL" in executed_sql
+    assert "ALTER TABLE tiger_cache ADD COLUMN zone_id VARCHAR(255) NOT NULL DEFAULT 'root'" in (
+        executed_sql
+    )
+    assert (
+        "ALTER TABLE tiger_cache_queue ADD COLUMN zone_id VARCHAR(255) NOT NULL DEFAULT 'root'"
+        in executed_sql
+    )
+    assert (
+        "ALTER TABLE rebac_group_closure ADD COLUMN zone_id VARCHAR(255) NOT NULL DEFAULT 'root'"
+        in executed_sql
+    )
+    assert "ALTER TABLE tiger_cache ALTER COLUMN tenant_id SET DEFAULT 'root'" in executed_sql
+    assert "ALTER TABLE tiger_cache_queue ALTER COLUMN tenant_id SET DEFAULT 'root'" in executed_sql
+    assert (
+        "ALTER TABLE rebac_group_closure ALTER COLUMN tenant_id SET DEFAULT 'root'" in executed_sql
+    )
+    assert "DROP CONSTRAINT uq_tiger_cache" in executed_sql
+    assert "ADD CONSTRAINT uq_tiger_cache UNIQUE" in executed_sql
+    assert "DROP CONSTRAINT IF EXISTS rebac_group_closure_pkey" in executed_sql
+    assert "ADD PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)" in executed_sql
     assert (
         "ALTER TABLE tiger_directory_grants ALTER COLUMN tenant_id SET DEFAULT 'root'"
         in executed_sql

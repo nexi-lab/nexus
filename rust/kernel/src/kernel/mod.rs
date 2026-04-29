@@ -1559,13 +1559,17 @@ impl Kernel {
                 // below).  Install is keyed on the state machine's
                 // ``coherence_id``, not on the per-mount MetaStore Arc,
                 // so crosslinks of the same zone share one callback.
-                let provider = self.distributed_coordinator();
+                let coordinator = self.distributed_coordinator();
+                // Federation activity derives from `list_zones` — empty
+                // before `install()` populates the ZoneManager, populated
+                // after with at least the root zone.
+                let federation_active = !coordinator.list_zones(self).is_empty();
                 let metastore = match metastore {
                     Some(m) => Some(m),
-                    None if provider.is_initialized(self) && !zone_id.is_empty() => {
+                    None if federation_active && !zone_id.is_empty() => {
                         // Auto-create + resolve.
-                        let _ = provider.create_zone(self, zone_id);
-                        provider.metastore_for_zone(self, zone_id).ok()
+                        let _ = coordinator.create_zone(self, zone_id);
+                        coordinator.metastore_for_zone(self, zone_id).ok()
                     }
                     None => None,
                 };
@@ -1582,8 +1586,8 @@ impl Kernel {
                 // Federation wire-mount: register apply-cb + replicate
                 // the DT_MOUNT entry so peers see the mount via raft
                 // commit.  No-op when federation is inactive.
-                if provider.is_initialized(self) && !zone_id.is_empty() {
-                    let _ = provider.wire_mount(self, "root", path, zone_id);
+                if federation_active && !zone_id.is_empty() {
+                    let _ = coordinator.wire_mount(self, "root", path, zone_id);
                 }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),
@@ -2238,7 +2242,7 @@ impl Kernel {
             zone_id: Some(zone_id.to_string()),
             created_at_ms: None,
             modified_at_ms: None,
-            last_writer_address: provider.bind_address(self),
+            last_writer_address: self.self_address_string(),
             lock: None,
             link_target: None,
         })

@@ -835,11 +835,9 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(federation_create_zone_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_remove_zone_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_join_zone_py, m)?)?;
-    m.add_function(wrap_pyfunction!(federation_zone_share_py, m)?)?;
-    m.add_function(wrap_pyfunction!(federation_register_share_py, m)?)?;
+    m.add_function(wrap_pyfunction!(federation_share_zone_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_lookup_share_py, m)?)?;
-    m.add_function(wrap_pyfunction!(federation_zone_links_count_py, m)?)?;
-    m.add_function(wrap_pyfunction!(federation_zone_cluster_info_py, m)?)?;
+    m.add_function(wrap_pyfunction!(federation_cluster_info_py, m)?)?;
     m.add_function(wrap_pyfunction!(
         federation_start_replication_scanner_py,
         m
@@ -853,13 +851,17 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// exists, root zone loaded). Used by
 /// `fastapi_server._federation_rpc_active` to decide whether to mount
 /// the FederationRPCService.
+///
+/// Derives readiness from `list_zones`: federation is active when at
+/// least one zone is loaded, which is true post-`install` (root zone
+/// is the first zone to materialise).
 #[pyfunction]
 #[pyo3(name = "federation_is_initialized")]
 fn federation_is_initialized_py(
     kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
 ) -> PyResult<bool> {
     let k = kernel.kernel_ref();
-    Ok(k.distributed_coordinator().is_initialized(k))
+    Ok(!k.distributed_coordinator().list_zones(k).is_empty())
 }
 
 /// Python-facing one-shot install: replaces the kernel's
@@ -938,40 +940,36 @@ fn federation_join_zone_py(
     Ok(zone_id.to_string())
 }
 
-/// Federation control-plane: copy a subtree from `parent_zone`
-/// (rooted at `prefix`) into `new_zone` as the new zone's content.
-/// Returns the number of entries copied.  Used by federation_share.
+/// Federation control-plane: atomic share — create `new_zone_id`,
+/// copy the subtree under `local_path` into it, and register the
+/// `local_path → new_zone_id` mapping in the raft-replicated share
+/// registry. Single op replaces the prior three-step
+/// `create_zone + zone_share + register_share` orchestration.
+///
+/// Returns a Python dict with `zone_id` and `copied_entries`.
 #[pyfunction]
-#[pyo3(name = "federation_zone_share")]
-fn federation_zone_share_py(
-    kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
-    parent_zone: &str,
-    prefix: &str,
-    new_zone: &str,
-) -> PyResult<u64> {
-    let k = kernel.kernel_ref();
-    k.distributed_coordinator()
-        .zone_share(k, parent_zone, prefix, new_zone)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
-}
-
-/// Federation control-plane: register a `local_path → zone_id`
-/// mapping in the raft-replicated share registry.
-#[pyfunction]
-#[pyo3(name = "federation_register_share")]
-fn federation_register_share_py(
+#[pyo3(name = "federation_share_zone")]
+fn federation_share_zone_py<'py>(
+    py: pyo3::Python<'py>,
     kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
     local_path: &str,
-    zone_id: &str,
-) -> PyResult<()> {
+    new_zone_id: &str,
+) -> PyResult<pyo3::Bound<'py, pyo3::types::PyDict>> {
+    use pyo3::types::PyDict;
     let k = kernel.kernel_ref();
-    k.distributed_coordinator()
-        .register_share(k, local_path, zone_id)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
+    let info = k
+        .distributed_coordinator()
+        .share_zone(k, local_path, new_zone_id)
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+    let dict = PyDict::new(py);
+    dict.set_item("zone_id", info.zone_id)?;
+    dict.set_item("copied_entries", info.copied_entries)?;
+    Ok(dict)
 }
 
 /// Federation control-plane: look up a previously-registered share
-/// by remote path.  Returns `None` if no share is registered.
+/// by remote path. Returns the `zone_id` string when found; `None`
+/// when the path was never shared on any cluster member.
 #[pyfunction]
 #[pyo3(name = "federation_lookup_share")]
 fn federation_lookup_share_py(
@@ -979,46 +977,44 @@ fn federation_lookup_share_py(
     remote_path: &str,
 ) -> PyResult<Option<String>> {
     let k = kernel.kernel_ref();
-    k.distributed_coordinator()
+    let info = k
+        .distributed_coordinator()
         .lookup_share(k, remote_path)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+    Ok(info.map(|i| i.zone_id))
 }
 
-/// Federation introspection: count of mounts pointing at `zone_id`
-/// across the cluster.  `0` for unknown / never-mounted zones.
+/// Federation introspection: bundled cluster status for `zone_id` —
+/// leader identity, raft term, replication counts, mount link count.
+/// Single round-trip for all introspection fields. Returns a Python
+/// dict with zone_id / node_id / leader_id / term / commit_index /
+/// applied_index / voter_count / witness_count / links_count /
+/// has_store / is_leader.
 #[pyfunction]
-#[pyo3(name = "federation_zone_links_count")]
-fn federation_zone_links_count_py(
-    kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
-    zone_id: &str,
-) -> PyResult<i64> {
-    let k = kernel.kernel_ref();
-    k.distributed_coordinator()
-        .zone_links_count(k, zone_id)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
-}
-
-/// Federation introspection: rich cluster status for `zone_id`.
-/// Returns a Python dict with zone_id / node_id / leader_id / term /
-/// commit_index / applied_index / voter_count / witness_count.
-#[pyfunction]
-#[pyo3(name = "federation_zone_cluster_info")]
-fn federation_zone_cluster_info_py<'py>(
+#[pyo3(name = "federation_cluster_info")]
+fn federation_cluster_info_py<'py>(
     py: pyo3::Python<'py>,
     kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
     zone_id: &str,
 ) -> PyResult<pyo3::Bound<'py, pyo3::types::PyDict>> {
     use pyo3::types::PyDict;
     let k = kernel.kernel_ref();
-    let pairs = k
+    let info = k
         .distributed_coordinator()
-        .zone_cluster_info(k, zone_id)
+        .cluster_info(k, zone_id)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
     let dict = PyDict::new(py);
-    for (key, val) in pairs {
-        let py_val = json_value_to_py(py, &val)?;
-        dict.set_item(key, py_val)?;
-    }
+    dict.set_item("zone_id", info.zone_id)?;
+    dict.set_item("node_id", info.node_id)?;
+    dict.set_item("has_store", info.has_store)?;
+    dict.set_item("is_leader", info.is_leader)?;
+    dict.set_item("leader_id", info.leader_id)?;
+    dict.set_item("term", info.term)?;
+    dict.set_item("commit_index", info.commit_index)?;
+    dict.set_item("applied_index", info.applied_index)?;
+    dict.set_item("voter_count", info.voter_count)?;
+    dict.set_item("witness_count", info.witness_count)?;
+    dict.set_item("links_count", info.links_count)?;
     Ok(dict)
 }
 
@@ -1043,48 +1039,6 @@ fn federation_start_replication_scanner_py(
     crate::replication_scanner::install_for_zone(kernel_arc, zone_id, policies_json, interval_ms)
         .map(|_| ())
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
-}
-
-/// Minimal serde_json::Value → PyAny converter for the cluster_info
-/// payload (stays inside this file to avoid pulling in `pythonize`).
-fn json_value_to_py<'py>(
-    py: pyo3::Python<'py>,
-    val: &serde_json::Value,
-) -> PyResult<pyo3::Py<pyo3::PyAny>> {
-    use pyo3::types::{PyDict, PyList};
-    use pyo3::IntoPyObject;
-    Ok(match val {
-        serde_json::Value::Null => py.None(),
-        serde_json::Value::Bool(b) => b.into_pyobject(py)?.to_owned().unbind().into_any(),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                i.into_pyobject(py)?.unbind().into_any()
-            } else if let Some(u) = n.as_u64() {
-                u.into_pyobject(py)?.unbind().into_any()
-            } else {
-                n.as_f64()
-                    .unwrap_or(0.0)
-                    .into_pyobject(py)?
-                    .unbind()
-                    .into_any()
-            }
-        }
-        serde_json::Value::String(s) => s.into_pyobject(py)?.unbind().into_any(),
-        serde_json::Value::Array(arr) => {
-            let list = PyList::empty(py);
-            for v in arr {
-                list.append(json_value_to_py(py, v)?)?;
-            }
-            list.unbind().into_any()
-        }
-        serde_json::Value::Object(map) => {
-            let dict = PyDict::new(py);
-            for (k, v) in map {
-                dict.set_item(k, json_value_to_py(py, v)?)?;
-            }
-            dict.unbind().into_any()
-        }
-    })
 }
 
 // =============================================================================

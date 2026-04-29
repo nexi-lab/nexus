@@ -32,7 +32,7 @@ use kernel::abc::meta_store::MetaStore;
 use kernel::core::dcache::CachedEntry;
 use kernel::core::vfs_router::canonicalize_mount_path as canonicalize;
 use kernel::hal::distributed_coordinator::{
-    BlobFetcherSlot, CoordinatorResult, DistributedCoordinator,
+    ClusterInfo, CoordinatorResult, DistributedCoordinator, ShareInfo,
 };
 use kernel::kernel::Kernel;
 
@@ -549,8 +549,15 @@ impl RaftDistributedCoordinator {
     }
 }
 
-impl DistributedCoordinator for RaftDistributedCoordinator {
-    fn init_from_env(&self, kernel: &Kernel) -> CoordinatorResult<bool> {
+impl RaftDistributedCoordinator {
+    /// Boot-time init from environment variables (`NEXUS_HOSTNAME`,
+    /// `NEXUS_PEERS`, `NEXUS_BIND_ADDR`, `NEXUS_DATA_DIR`,
+    /// `NEXUS_RAFT_TLS`, …). Idempotent — `Ok(false)` when federation
+    /// was already initialised, `Ok(true)` on first successful init.
+    ///
+    /// Inherent (not on trait): boot-time wiring, fires once per
+    /// process from [`install`], outside the runtime trait surface.
+    pub fn init_from_env(&self, kernel: &Kernel) -> CoordinatorResult<bool> {
         // Idempotent — if zone manager already exists, treat as
         // "already initialised" and report no-op.
         if self.zone_manager.get().is_some() {
@@ -750,19 +757,9 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         tracing::info!("federation bootstrap complete (hostname={hostname})");
         Ok(true)
     }
+}
 
-    fn is_initialized(&self, _kernel: &Kernel) -> bool {
-        self.zone_manager.get().is_some()
-    }
-
-    fn bind_address(&self, kernel: &Kernel) -> Option<String> {
-        kernel.self_address_string()
-    }
-
-    fn hostname(&self, kernel: &Kernel) -> Option<String> {
-        kernel.self_address_string()
-    }
-
+impl DistributedCoordinator for RaftDistributedCoordinator {
     fn list_zones(&self, _kernel: &Kernel) -> Vec<String> {
         self.zm().map(|zm| zm.list_zones()).unwrap_or_default()
     }
@@ -808,22 +805,6 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         Ok(Arc::new(backend))
     }
 
-    fn remote_read_blob(
-        &self,
-        kernel: &Kernel,
-        _zone_id: &str,
-        path: &str,
-        content_id: &str,
-    ) -> CoordinatorResult<Vec<u8>> {
-        let client = kernel.peer_client_arc();
-        let key = if !content_id.is_empty() {
-            content_id
-        } else {
-            path
-        };
-        client.fetch("", key)
-    }
-
     fn wire_mount(
         &self,
         kernel: &Kernel,
@@ -834,12 +815,22 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         wire_mount_impl(self, kernel, parent_zone, mount_path, target_zone)
     }
 
-    fn stash_blob_fetcher_slot(&self, kernel: &Kernel, slot: BlobFetcherSlot) {
-        kernel.stash_blob_fetcher_slot(slot);
-    }
-
-    fn take_blob_fetcher_slot(&self, kernel: &Kernel) -> Option<BlobFetcherSlot> {
-        kernel.take_pending_blob_fetcher_slot()
+    fn unwire_mount(
+        &self,
+        kernel: &Kernel,
+        parent_zone: &str,
+        mount_path: &str,
+    ) -> CoordinatorResult<()> {
+        let vfs_router = kernel.vfs_router_arc();
+        let dcache = kernel.dcache_arc();
+        unwire_mount_core(
+            &vfs_router,
+            &dcache,
+            &self.cross_zone_mounts,
+            parent_zone,
+            mount_path,
+        );
+        Ok(())
     }
 
     fn create_zone(&self, kernel: &Kernel, zone_id: &str) -> CoordinatorResult<()> {
@@ -907,71 +898,80 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         Ok(())
     }
 
-    fn zone_share(
+    fn share_zone(
         &self,
-        _kernel: &Kernel,
-        parent_zone: &str,
-        prefix: &str,
-        new_zone: &str,
-    ) -> CoordinatorResult<u64> {
-        let zm = self.zm().ok_or("federation not active")?;
-        let copied = zm
-            .share_subtree_core(parent_zone, prefix, new_zone)
-            .map_err(|e| e.to_string())?;
-        Ok(copied as u64)
-    }
-
-    fn register_share(
-        &self,
-        _kernel: &Kernel,
+        kernel: &Kernel,
         local_path: &str,
-        zone_id: &str,
-    ) -> CoordinatorResult<()> {
+        new_zone_id: &str,
+    ) -> CoordinatorResult<ShareInfo> {
         let zm = self.zm().ok_or("federation not active")?;
-        zm.register_share(local_path, zone_id)
-            .map_err(|e| e.to_string())
+        // Atomic create + copy + register: materialise the zone first
+        // so it is visible to followers before content lands.
+        zm.get_or_create_zone(new_zone_id)
+            .map_err(|e| e.to_string())?;
+        self.install_apply_cb_for_zone(kernel, new_zone_id);
+        // Decompose `local_path` via VFSRouter — the closest mount
+        // point's zone_id is the parent, and the path tail under that
+        // mount is the prefix passed to `share_subtree_core`.
+        let route = kernel
+            .vfs_router_arc()
+            .route(local_path, contracts::ROOT_ZONE_ID)
+            .map_err(|e| format!("share_zone route '{local_path}': {e:?}"))?;
+        let parent_zone = route.zone_id.clone();
+        let prefix = if route.backend_path.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", route.backend_path)
+        };
+        let copied = zm
+            .share_subtree_core(&parent_zone, &prefix, new_zone_id)
+            .map_err(|e| e.to_string())?;
+        zm.register_share(local_path, new_zone_id)
+            .map_err(|e| e.to_string())?;
+        Ok(ShareInfo {
+            zone_id: new_zone_id.to_string(),
+            copied_entries: copied as u64,
+        })
     }
 
     fn lookup_share(
         &self,
         _kernel: &Kernel,
         remote_path: &str,
-    ) -> CoordinatorResult<Option<String>> {
+    ) -> CoordinatorResult<Option<ShareInfo>> {
         let zm = self.zm().ok_or("federation not active")?;
-        zm.lookup_share(remote_path).map_err(|e| e.to_string())
+        let zone_id = zm.lookup_share(remote_path).map_err(|e| e.to_string())?;
+        Ok(zone_id.map(|zid| ShareInfo {
+            zone_id: zid,
+            copied_entries: 0,
+        }))
     }
 
-    fn zone_links_count(&self, _kernel: &Kernel, zone_id: &str) -> CoordinatorResult<i64> {
-        // Count comes from the provider's reverse index (mounts pointing
-        // at `zone_id`).  Node-local cache derived from DT_MOUNT entries —
-        // matches what `wire_mount` populates as apply-cb fires.
-        let count = self
+    fn cluster_info(&self, _kernel: &Kernel, zone_id: &str) -> CoordinatorResult<ClusterInfo> {
+        let zm = self.zm().ok_or("federation not active")?;
+        let status = zm.cluster_status(zone_id);
+        // links_count comes from the coordinator's reverse index
+        // (mounts pointing at `zone_id`). Node-local cache derived
+        // from DT_MOUNT entries — matches what `wire_mount` populates
+        // as apply-cb fires.
+        let links_count = self
             .cross_zone_mounts
             .get(zone_id)
             .map(|v| v.len() as i64)
             .unwrap_or(0);
-        Ok(count)
-    }
-
-    fn zone_cluster_info(
-        &self,
-        _kernel: &Kernel,
-        zone_id: &str,
-    ) -> CoordinatorResult<Vec<(String, serde_json::Value)>> {
-        let zm = self.zm().ok_or("federation not active")?;
-        let status = zm.cluster_status(zone_id);
-        Ok(vec![
-            ("zone_id".to_string(), status.zone_id.into()),
-            ("node_id".to_string(), status.node_id.into()),
-            ("has_store".to_string(), status.has_store.into()),
-            ("is_leader".to_string(), status.is_leader.into()),
-            ("leader_id".to_string(), status.leader_id.into()),
-            ("term".to_string(), status.term.into()),
-            ("commit_index".to_string(), status.commit_index.into()),
-            ("applied_index".to_string(), status.applied_index.into()),
-            ("voter_count".to_string(), status.voter_count.into()),
-            ("witness_count".to_string(), status.witness_count.into()),
-        ])
+        Ok(ClusterInfo {
+            zone_id: status.zone_id,
+            node_id: status.node_id,
+            has_store: status.has_store,
+            is_leader: status.is_leader,
+            leader_id: status.leader_id,
+            term: status.term,
+            commit_index: status.commit_index,
+            applied_index: status.applied_index,
+            voter_count: status.voter_count,
+            witness_count: status.witness_count,
+            links_count,
+        })
     }
 }
 

@@ -354,69 +354,50 @@ class FederationRPCService(FederationRPCMixin):
                 `share-{8-hex}` id is generated.
 
         Returns:
-            ``{"zone_id", "parent_zone_id", "prefix", "entries_copied"}``.
+            ``{"zone_id", "copied_entries"}`` from the atomic
+            ``federation_share_zone`` control-plane helper.
         """
         import uuid
 
         import nexus_runtime as _nr
 
-        # Derive parent_zone_id and prefix via sys_stat.
-        _path_stat = self._kernel.sys_stat(local_path, "root")
-        parent_zone_id = (
-            (_path_stat.get("zone_id") or "root")
-            if _path_stat and isinstance(_path_stat, dict)
-            else "root"
-        )
-        # Find mount point by walking up to nearest DT_MOUNT ancestor.
-        _mp = local_path
-        while _mp != "/":
-            _mp_stat = self._kernel.sys_stat(_mp, "root")
-            if _mp_stat and isinstance(_mp_stat, dict) and _mp_stat.get("entry_type") == 2:
-                break
-            _mp = _mp.rsplit("/", 1)[0] or "/"
-        _tail = local_path[len(_mp) :].lstrip("/") if _mp != local_path else ""
-        prefix = "/" + _tail if _tail else "/"
         new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
-        # Federation control-plane helpers — analogous to Linux
-        # userspace utilities (mkfs, zfs); call kernel internals
-        # (DistributedCoordinator trait) without bypassing layering.
-        _nr.federation_create_zone(self._kernel, new_zone_id)
-        copied = _nr.federation_zone_share(self._kernel, parent_zone_id, prefix, new_zone_id)
-        _nr.federation_register_share(self._kernel, local_path, new_zone_id)
-        return {
-            "zone_id": new_zone_id,
-            "parent_zone_id": parent_zone_id,
-            "prefix": prefix,
-            "entries_copied": copied,
-        }
+        # Atomic create + copy + register through the
+        # DistributedCoordinator trait. Path decomposition (parent
+        # zone, prefix) happens inside the impl via VFSRouter.
+        info: dict[str, Any] = dict(
+            _nr.federation_share_zone(self._kernel, local_path, new_zone_id)
+        )
+        return info
 
     # ── Introspection ──────────────────────────────────────────────
 
-    def _links_count(self, zone_id: str) -> int:
+    def _cluster_info(self, zone_id: str) -> dict[str, Any]:
         try:
             import nexus_runtime as _nr
 
-            return int(_nr.federation_zone_links_count(self._kernel, zone_id))
+            return dict(_nr.federation_cluster_info(self._kernel, zone_id))
         except Exception:
-            return 0
+            return {}
 
     @rpc_expose(admin_only=False)
     def federation_list_zones(self) -> dict[str, Any]:
         # /__sys__/zones/ procfs view — read-only, kernel-internal
         # synthesised entries.
         zone_ids: list[str] = list(self._kernel.sys_readdir_backend("/__sys__/zones/", "root"))
-        zones = [{"zone_id": zid, "links_count": self._links_count(zid)} for zid in zone_ids]
+        zones = [
+            {
+                "zone_id": zid,
+                "links_count": int(self._cluster_info(zid).get("links_count", 0)),
+            }
+            for zid in zone_ids
+        ]
         return {"zones": zones, "node_id": zone_ids}
 
     @rpc_expose(admin_only=False)
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
-        # Rich cluster status (term, commit_index, voters, …) does not
-        # fit StatResult's struct shape — read it through the
-        # federation control-plane helper.  For mere existence /
-        # zone_id checks, ``sys_stat("/__sys__/zones/<id>")`` is the
-        # cheaper read path.
+        # Bundled cluster status (term, commit_index, voters, links_count …)
+        # — single round-trip through the federation control-plane helper.
         import nexus_runtime as _nr
 
-        status: dict[str, Any] = dict(_nr.federation_zone_cluster_info(self._kernel, zone_id))
-        status["links_count"] = self._links_count(zone_id)
-        return status
+        return dict(_nr.federation_cluster_info(self._kernel, zone_id))

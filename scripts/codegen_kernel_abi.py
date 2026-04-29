@@ -972,16 +972,10 @@ def generate_stubs(
         "def federation_join_zone(kernel: Any, zone_id: str, as_learner: bool = False) -> str: ..."
     )
     lines.append(
-        "def federation_zone_share(kernel: Any, parent_zone: str, prefix: str, new_zone: str) -> int: ..."
-    )
-    lines.append(
-        "def federation_register_share(kernel: Any, local_path: str, zone_id: str) -> None: ..."
+        "def federation_share_zone(kernel: Any, local_path: str, new_zone_id: str) -> dict[str, Any]: ..."
     )
     lines.append("def federation_lookup_share(kernel: Any, remote_path: str) -> str | None: ...")
-    lines.append("def federation_zone_links_count(kernel: Any, zone_id: str) -> int: ...")
-    lines.append(
-        "def federation_zone_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ..."
-    )
+    lines.append("def federation_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ...")
     lines.append(
         "def federation_start_replication_scanner("
         "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."

@@ -195,6 +195,7 @@ async def create_zone_endpoint(
 @router.get("/{zone_id}", response_model=ZoneResponse)
 async def get_zone(
     zone_id: str,
+    request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> ZoneResponse:
@@ -205,6 +206,7 @@ async def get_zone(
 
     Args:
         zone_id: Zone identifier
+        request: FastAPI request (for ``app.state.policy_gate`` lookup)
         auth_result: Authenticated identity (JWT, API key, or static admin key)
         auth: Authentication provider for DB session access
 
@@ -213,7 +215,8 @@ async def get_zone(
 
     Raises:
         401: Not authenticated
-        403: User does not have access to this zone
+        403: User does not have access to this zone (after operator deny
+            via PolicyGate, or when no gate is configured)
         404: Zone not found
     """
     user_id = auth_result["subject_id"]
@@ -229,7 +232,19 @@ async def get_zone(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Cannot verify zone membership — ReBAC unavailable",
                 )
-            if not user_belongs_to_zone(rebac_mgr, user_id, zone_id):
+            # Issue #3790, Task 19: route zone-scope misses through the
+            # approval queue. If an operator approves the request, fall
+            # through to the normal lookup path. If the gate is missing,
+            # raises an exception, or the operator denies/times-out, fall
+            # back to the existing 403 response.
+            if not user_belongs_to_zone(
+                rebac_mgr, user_id, zone_id
+            ) and not await _zone_access_approved_via_gate(
+                request=request,
+                zone_id=zone_id,
+                user_id=user_id,
+                auth_result=auth_result,
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Access denied: you are not a member of zone '{zone_id}'",
@@ -243,6 +258,72 @@ async def get_zone(
             )
 
         return _zone_to_response(zone)
+
+
+async def _zone_access_approved_via_gate(
+    request: Request,
+    zone_id: str,
+    user_id: str,
+    auth_result: dict[str, Any],
+) -> bool:
+    """Consult the PolicyGate when a token misses zone scope.
+
+    Issue #3790, Task 19: route zone-scope misses through the approval
+    queue. Returns True iff an operator approved the zone access within
+    the gate's timeout, in which case the caller may proceed as if the
+    membership check had passed. Returns False on missing gate, denial,
+    timeout, or any unexpected gate error (graceful degradation — the
+    caller then re-raises the original 403).
+    """
+    gate = getattr(request.app.state, "policy_gate", None)
+    if gate is None:
+        return False
+
+    # Lazy import keeps this module free of an eager top-level cross-package
+    # import (the call site is in nexus.server, not under nexus.bricks/, so
+    # the brick boundary checker does not apply — but lazy is still cheaper
+    # for the common case where the gate is unset).
+    try:
+        from nexus.bricks.approvals.models import ApprovalKind, Decision
+    except ImportError:
+        logger.warning(
+            "approvals brick unavailable while resolving zone access for %r; falling back to deny",
+            zone_id,
+        )
+        return False
+
+    # Synthesize stable identifiers from the request's auth_result. The
+    # hub's auth_result dict does not currently expose a per-token id, so
+    # use subject_id (user_id) as the token identifier and the request's
+    # auth source as the session identifier — operators can correlate
+    # repeated attempts for the same user/zone in the queue UI.
+    subject_type = auth_result.get("subject_type") or "user"
+    token_id = f"hub:{subject_type}:{user_id}"
+    session_id = f"{token_id}:zone:{zone_id}"
+    try:
+        decision = await gate.check(
+            kind=ApprovalKind.ZONE_ACCESS,
+            subject=zone_id,
+            zone_id=zone_id,
+            token_id=token_id,
+            session_id=session_id,
+            agent_id=None,
+            reason="zone_access",
+            metadata={
+                "requested_zone": zone_id,
+                "user_id": user_id,
+                "subject_type": subject_type,
+            },
+        )
+    except Exception:
+        logger.warning(
+            "approvals gate raised for zone-access user=%r zone=%r; falling back to deny",
+            user_id,
+            zone_id,
+            exc_info=True,
+        )
+        return False
+    return decision is Decision.APPROVED
 
 
 def _get_session_factory(request: Request) -> Any:

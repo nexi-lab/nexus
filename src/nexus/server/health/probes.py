@@ -16,6 +16,7 @@ Failure policy (Issue #3063):
 """
 
 import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -46,10 +47,12 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
         # ``nexus_runtime.federation_is_initialized`` module helper —
         # the kernel itself no longer exposes a ``mount_reconciliation_done``
         # PyO3 method (zone lifecycle is kernel-internal HAL state).
-        # Fails open when the helper is unavailable (slim builds,
-        # federation env vars unset).
+        # Fails open when the helper is unavailable (slim builds) or
+        # federation is disabled by leaving NEXUS_PEERS unset.
         kernel = getattr(nx_fs, "_kernel", None)
         if kernel is None:
+            return True, ""
+        if not os.environ.get("NEXUS_PEERS"):
             return True, ""
         try:
             import nexus_runtime as _nr

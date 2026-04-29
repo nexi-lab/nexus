@@ -2033,8 +2033,11 @@ class ReBACManager:
             Dict mapping object_type -> namespace config
         """
         # Get the standard object types that we need namespace configs for
-        # These are the common object types used in permission checks
-        object_types = ["file", "zone", "user", "group", "agent", "memory"]
+        # These are the common object types used in permission checks.
+        # ``approvals`` is included so ReBACCapabilityAuth (Issue #3790) can
+        # expand viewer/editor/owner relations to read/write/create
+        # permissions on ``("approvals", "global")`` from the Rust path.
+        object_types = ["file", "zone", "user", "group", "agent", "memory", "approvals"]
 
         configs = {}
         for obj_type in object_types:
@@ -2599,7 +2602,7 @@ class ReBACManager:
     def _get_namespace_configs_dict(self) -> dict[str, Any]:
         """Get namespace configs as a dict for Rust interop."""
         configs: dict[str, Any] = {}
-        for obj_type in ["file", "group", "zone", "memory"]:
+        for obj_type in ["file", "group", "zone", "memory", "approvals"]:
             namespace = self.get_namespace(obj_type)
             if namespace and namespace.config:
                 configs[obj_type] = {
@@ -2844,6 +2847,7 @@ class ReBACManager:
     def _initialize_default_namespaces_with_conn(self, conn: Any) -> None:
         """Initialize default namespace configurations with given connection."""
         from nexus.bricks.rebac.default_namespaces import (
+            DEFAULT_APPROVALS_NAMESPACE,
             DEFAULT_FILE_NAMESPACE,
             DEFAULT_GROUP_NAMESPACE,
             DEFAULT_MEMORY_NAMESPACE,
@@ -2859,6 +2863,7 @@ class ReBACManager:
             DEFAULT_PLAYBOOK_NAMESPACE,
             DEFAULT_TRAJECTORY_NAMESPACE,
             DEFAULT_SKILL_NAMESPACE,
+            DEFAULT_APPROVALS_NAMESPACE,
         ]
 
         # Prefer metastore-backed namespace store (Issue #183)

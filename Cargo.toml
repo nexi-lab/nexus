@@ -2,13 +2,13 @@
 resolver = "2"
 members = [
     "rust/contracts",
-    "rust/lib",
-    # Phase 4 (full): split into low-level (transport-primitives —
-    # no kernel dep, raft consumes) + high-level (transport — gRPC
-    # server, IPC, federation, peer blob; depends on kernel +
-    # transport-primitives).  This split is what breaks the
-    # `raft -> transport -> kernel -> raft` cycle.
-    "rust/transport-primitives",
+    # `rust/shared/` holds the workspace's lowest shared layer:
+    # `shared/lib` (algorithms, WASM-clean) + `shared/transport-primitives`
+    # (TLS / pool / addressing / TOFU / PeerBlobClient trait). Every
+    # peer crate depends on these but they never depend on a peer
+    # crate, which is what keeps the workspace dep graph acyclic.
+    "rust/shared/lib",
+    "rust/shared/transport-primitives",
     "rust/transport",
     "rust/kernel",
     "rust/backends",
@@ -34,14 +34,13 @@ exclude = ["nexus-fuse"]
 
 [workspace.dependencies]
 contracts = { path = "rust/contracts" }
-lib = { path = "rust/lib" }
-# Phase 4 (full): two-tier transport split.
-# `transport-primitives` is the low-level shared crate (TLS / pool /
-# peer addressing) — depended on by raft (for re-export) and kernel
-# (for `peer_blob_client::PeerBlobClient` to construct channels).
-# `transport` is the high-level Phase-4 peer crate — depends on
-# kernel + transport-primitives, never depended on by raft (cycle break).
-transport-primitives = { path = "rust/transport-primitives" }
+lib = { path = "rust/shared/lib" }
+# `transport-primitives` lives at the lowest shared layer (TLS / pool /
+# addressing / TOFU trust store / PeerBlobClient trait) — every peer
+# crate depends on it, it depends only on `contracts`.
+# `transport` is the front-door services crate (VFS gRPC server + IPC
+# envelope helpers) — depends on kernel + shared/transport-primitives.
+transport-primitives = { path = "rust/shared/transport-primitives" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
 # Driver impls (Phase 2). The `python` feature is enabled by the

@@ -12,7 +12,6 @@ def _db_url() -> str:
     url = os.environ.get("NEXUS_TEST_DATABASE_URL")
     if not url:
         raise RuntimeError("NEXUS_TEST_DATABASE_URL must be set for approvals integration tests")
-    # SQLAlchemy async wants the +asyncpg dialect token.
     if url.startswith("postgresql://"):
         url = "postgresql+asyncpg://" + url[len("postgresql://") :]
     return url

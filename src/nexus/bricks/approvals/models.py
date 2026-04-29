@@ -7,7 +7,14 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-VALID_STATUSES = frozenset({"pending", "approved", "rejected", "expired"})
+
+class ApprovalRequestStatus(StrEnum):
+    """Lifecycle status of an approval request row."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
 
 
 class ApprovalKind(StrEnum):
@@ -49,22 +56,17 @@ class ApprovalRequest:
     session_id: str | None
     reason: str
     metadata: dict[str, Any]
-    status: str
+    status: ApprovalRequestStatus
     created_at: datetime
     decided_at: datetime | None
     decided_by: str | None
     decision_scope: DecisionScope | None
     expires_at: datetime
 
-    def __post_init__(self) -> None:
-        if self.status not in VALID_STATUSES:
-            raise ValueError(
-                f"ApprovalRequest.status must be one of {sorted(VALID_STATUSES)}, got {self.status!r}"
-            )
-
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["kind"] = self.kind.value
+        d["status"] = self.status.value
         d["decision_scope"] = self.decision_scope.value if self.decision_scope else None
         return d
 
@@ -80,7 +82,7 @@ class ApprovalRequest:
             session_id=d["session_id"],
             reason=d["reason"],
             metadata=d["metadata"],
-            status=d["status"],
+            status=ApprovalRequestStatus(d["status"]),
             created_at=d["created_at"],
             decided_at=d["decided_at"],
             decided_by=d["decided_by"],

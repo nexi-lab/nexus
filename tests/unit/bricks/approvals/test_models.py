@@ -7,6 +7,7 @@ import pytest
 from nexus.bricks.approvals.models import (
     ApprovalKind,
     ApprovalRequest,
+    ApprovalRequestStatus,
     Decision,
     DecisionScope,
     DecisionSource,
@@ -57,7 +58,7 @@ def test_approval_request_round_trips_through_dict():
         session_id="tok_alice:sess_1",
         reason="nexus_fetch",
         metadata={"url": "https://api.stripe.com/v1/charges"},
-        status="pending",
+        status=ApprovalRequestStatus.PENDING,
         created_at=now,
         decided_at=None,
         decided_by=None,
@@ -69,23 +70,6 @@ def test_approval_request_round_trips_through_dict():
     assert again == req
 
 
-def test_approval_request_rejects_unknown_status():
-    now = datetime.now(UTC)
-    with pytest.raises(ValueError, match="status"):
-        ApprovalRequest(
-            id="req_x",
-            zone_id="z",
-            kind=ApprovalKind.ZONE_ACCESS,
-            subject="legal",
-            agent_id=None,
-            token_id="t",
-            session_id=None,
-            reason="",
-            metadata={},
-            status="weird",  # not in {pending, approved, rejected, expired}
-            created_at=now,
-            decided_at=None,
-            decided_by=None,
-            decision_scope=None,
-            expires_at=now + timedelta(seconds=60),
-        )
+def test_approval_request_status_must_be_enum_value():
+    with pytest.raises(ValueError, match="weird"):
+        ApprovalRequestStatus("weird")

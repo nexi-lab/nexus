@@ -16,10 +16,13 @@ When enabled:
   - registers the read-only ``GET /hub/approvals/dump`` diag router
   - starts a process-local Python ``grpc.aio.Server`` carrying the
     ApprovalsV1 servicer on ``NEXUS_APPROVALS_GRPC_PORT`` (default
-    ``2029``) when ``NEXUS_APPROVALS_ADMIN_TOKEN`` is set. The Rust-
-    native VFS server on ``:2028`` is left untouched. The bearer-token
-    auth gates every RPC; ReBAC integration is a follow-up TODO in
-    ``grpc_auth.py``.
+    ``2029``) when either a ReBAC manager OR
+    ``NEXUS_APPROVALS_ADMIN_TOKEN`` is configured. The Rust-native
+    VFS server on ``:2028`` is left untouched. Auth selection (#3790):
+
+      * ReBAC + auth-provider available → ``ReBACCapabilityAuth``,
+        with the admin token wrapped as a fallback when present.
+      * Otherwise admin token only → ``BearerTokenCapabilityAuth``.
 """
 
 from __future__ import annotations
@@ -40,6 +43,43 @@ logger = logging.getLogger(__name__)
 def _approvals_enabled() -> bool:
     """Read NEXUS_APPROVALS_ENABLED — opt-in only, default False."""
     return os.environ.get("NEXUS_APPROVALS_ENABLED", "").lower() in ("true", "1", "yes")
+
+
+def _wire_policy_gate_into_mcp(app: "FastAPI", gate: object) -> None:
+    """Best-effort: attach the PolicyGate to MCP services post-construction.
+
+    The MCP brick is wired by the post-kernel boot tier (factory/_wired.py)
+    long before the approvals lifespan runs, so its services are constructed
+    with ``policy_gate=None``. Once the gate exists we update the existing
+    MCPService instance via its ``set_policy_gate()`` setter — every
+    ``MCPMountManager`` it constructs from this point on consults the gate
+    when SSRF blocks an unlisted host (Issue #3790, Task 18).
+
+    Called from ``startup_approvals`` only when approvals are enabled and the
+    stack built successfully. All errors are swallowed: approvals must never
+    break MCP startup.
+    """
+    nx = getattr(app.state, "nexus_fs", None)
+    if nx is None:
+        logger.debug("[APPROVALS] no NexusFS on app.state; cannot wire MCP policy_gate")
+        return
+    try:
+        mcp_service = nx.service("mcp") if hasattr(nx, "service") else None
+    except Exception as e:
+        logger.debug("[APPROVALS] MCPService lookup failed: %s", e)
+        mcp_service = None
+    if mcp_service is None:
+        logger.debug("[APPROVALS] MCPService not registered; skipping policy_gate wiring")
+        return
+    set_gate = getattr(mcp_service, "set_policy_gate", None)
+    if set_gate is None:
+        logger.debug("[APPROVALS] MCPService has no set_policy_gate(); older build, skipping")
+        return
+    try:
+        set_gate(gate)
+        logger.info("[APPROVALS] PolicyGate wired into MCPService")
+    except Exception as e:
+        logger.warning("[APPROVALS] MCPService.set_policy_gate failed: %s", e, exc_info=True)
 
 
 async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
@@ -130,6 +170,14 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
     app.state.approvals_stack = stack
     app.state.policy_gate = stack.gate
 
+    # Forward the freshly-built PolicyGate into MCP services so SSRF-blocked
+    # egress can route through the approval queue (Issue #3790, Task 18).
+    # MCPService and MCPConnectionManager are constructed by the post-kernel
+    # boot tier *before* the FastAPI lifespan runs, so the gate is wired here
+    # post-hoc via their `set_policy_gate(...)` setters. Failures are logged
+    # but never raised — approvals must not break MCP startup.
+    _wire_policy_gate_into_mcp(app, stack.gate)
+
     # Diag HTTP router — bearer-token-gated by NEXUS_APPROVALS_DIAG_TOKEN.
     if stack.service is not None:
         try:
@@ -146,13 +194,21 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
 
     # Python gRPC server (separate from the Rust-native VFS server on :2028).
     # We bind a fresh `grpc.aio.Server` on `NEXUS_APPROVALS_GRPC_PORT` (default
-    # :2029) and register the ApprovalsV1 servicer behind a bearer-token auth
-    # implementation. Skipped when:
+    # :2029) and register the ApprovalsV1 servicer behind a CapabilityAuth.
+    #
+    # Auth selection (#3790):
+    #   - If a ReBACManager is on app.state, use ReBACCapabilityAuth which
+    #     resolves bearer tokens through the standard auth pipeline and runs
+    #     a ReBAC permission check on the ``approvals`` namespace. The
+    #     admin-token shim is wrapped as a fallback so legacy callers still
+    #     work — set NEXUS_APPROVALS_ADMIN_TOKEN to enable that fallback.
+    #   - If no ReBACManager is present (degraded test/dev startup), fall
+    #     back to BearerTokenCapabilityAuth alone, gated on the env var.
+    #
+    # Skipped entirely when:
     #   - ApprovalService didn't start (stack.service is None)
-    #   - NEXUS_APPROVALS_ADMIN_TOKEN is unset (no auth secret == no gRPC)
-    # TODO(#3790): replace BearerTokenCapabilityAuth with a ReBAC-backed
-    # CapabilityAuth so individual subjects can be granted scoped approvals
-    # capabilities (see grpc_auth.py).
+    #   - Neither ReBAC nor the admin token is configured (no auth ==
+    #     no gRPC).
     if stack.service is not None:
         admin_token = os.environ.get("NEXUS_APPROVALS_ADMIN_TOKEN") or None
         grpc_port_str = os.environ.get("NEXUS_APPROVALS_GRPC_PORT", "2029")
@@ -165,20 +221,26 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
             )
             grpc_port = 0
 
-        if admin_token is None:
-            logger.warning(
-                "[APPROVALS] NEXUS_APPROVALS_ADMIN_TOKEN is unset; "
-                "Python gRPC server NOT started (HTTP diag + in-process PolicyGate "
-                "still work). Set the env var to enable the gRPC surface."
-            )
-        elif grpc_port <= 0:
+        rebac_manager = getattr(app.state, "rebac_manager", None) or svc.rebac_manager
+        auth_provider = getattr(app.state, "auth_provider", None)
+
+        if grpc_port <= 0:
             logger.info(
                 "[APPROVALS] gRPC port disabled (port=%d); Python gRPC server NOT started",
                 grpc_port,
             )
+        elif rebac_manager is None and admin_token is None:
+            logger.warning(
+                "[APPROVALS] No ReBAC manager and no NEXUS_APPROVALS_ADMIN_TOKEN; "
+                "Python gRPC server NOT started (HTTP diag + in-process PolicyGate "
+                "still work). Configure ReBAC or set the env var to enable gRPC."
+            )
         else:
             try:
-                from nexus.bricks.approvals.grpc_auth import BearerTokenCapabilityAuth
+                from nexus.bricks.approvals.grpc_auth import (
+                    BearerTokenCapabilityAuth,
+                    ReBACCapabilityAuth,
+                )
                 from nexus.bricks.approvals.grpc_server_lifespan import start_grpc_server
 
                 bind_all = os.environ.get("NEXUS_APPROVALS_GRPC_BIND_ALL", "").lower() in (
@@ -187,7 +249,30 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
                     "yes",
                 )
                 host = "0.0.0.0" if bind_all else "127.0.0.1"
-                auth = BearerTokenCapabilityAuth(admin_token=admin_token)
+
+                fallback = (
+                    BearerTokenCapabilityAuth(admin_token=admin_token)
+                    if admin_token is not None
+                    else None
+                )
+                auth: BearerTokenCapabilityAuth | ReBACCapabilityAuth
+                auth_mode: str
+                if rebac_manager is not None and auth_provider is not None:
+                    auth = ReBACCapabilityAuth(
+                        auth_service=auth_provider,
+                        rebac_manager=rebac_manager,
+                        admin_fallback=fallback,
+                    )
+                    auth_mode = "rebac+admin-fallback" if fallback is not None else "rebac"
+                elif fallback is not None:
+                    # Strict admin-token mode (no ReBAC available).
+                    auth = fallback
+                    auth_mode = "admin-token"
+                else:
+                    # Defensive: shouldn't be reachable due to the outer
+                    # guard, but keeps the type checker happy.
+                    raise RuntimeError("no usable approvals auth backend")
+
                 grpc_server = await start_grpc_server(
                     stack.service,
                     auth,
@@ -196,9 +281,10 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
                 )
                 app.state._approvals_grpc_server = grpc_server
                 logger.info(
-                    "[APPROVALS] Python gRPC server listening on %s:%d (auth=admin-token)",
+                    "[APPROVALS] Python gRPC server listening on %s:%d (auth=%s)",
                     host,
                     grpc_port,
+                    auth_mode,
                 )
             except Exception as e:
                 logger.warning(

@@ -3567,7 +3567,6 @@ dependencies = [
  "parking_lot",
  "prost",
  "pyo3",
- "raft 0.1.0",
  "rcgen",
  "serde",
  "serde_json",

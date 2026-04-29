@@ -17,10 +17,10 @@
 //!
 //! Direction: `transport -> {kernel, shared/transport-primitives}`.
 //! Driver-outgoing RPC clients (peer-blob, federation, VFS) live in
-//! the `rpc` crate alongside other driver-layer impls; `nexus_raft::*`
-//! references stay outside transport so the orthogonality invariant
-//! `services ⊥ backends ⊥ transport ⊥ raft` reads directly off the
-//! dep graph.
+//! the `rpc` crate alongside other driver-layer impls. Transport
+//! keeps zero `nexus_raft::*` references so the orthogonality
+//! invariant `services ⊥ backends ⊥ transport ⊥ raft` reads
+//! directly off the dep graph.
 
 pub mod grpc;
 pub mod ipc;

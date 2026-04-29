@@ -34,12 +34,30 @@ use kernel::core::vfs_router::canonicalize_mount_path as canonicalize;
 use kernel::hal::federation::{BlobFetcherSlot, FederationProvider, FederationResult};
 use kernel::kernel::Kernel;
 
-use crate::raft::storage::RaftStorage;
 use crate::transport::{
     call_replace_voter_by_hostname, compute_node_id, hostname_to_node_id, NodeAddress,
 };
 use crate::zone_meta_store::ZoneMetaStore;
 use crate::{TlsFiles, ZoneManager};
+
+/// Node-level incarnation marker filename.
+///
+/// Lives at `{NEXUS_DATA_DIR}/.node_incarnation` — one file per
+/// daemon, not per zone.  Identity is a node-level concept (one
+/// `ZoneManager` owns one `node_id` for every zone it serves), so
+/// the SSOT is also node-level.  Format: a single big-endian u64 in
+/// 8 bytes.  Absent file = fresh daemon (first boot or post-wipe);
+/// present file = recovery (existing identity).
+///
+/// Stored alongside `<zone>/raft/raft.redb` so a `rm -rf
+/// $NEXUS_DATA_DIR` resets identity AND raft state together — the
+/// only state-pair that matters for the wipe-rejoin contract.  Using
+/// a flat file (not redb) avoids the `open_existing_zones_from_disk`
+/// confusion: that scanner enumerates `<zones_dir>/<zone>/raft/`
+/// dirs, so creating a fake "incarnation zone" with raft.redb would
+/// trigger spurious zone bootstrap with skip_bootstrap=true and a
+/// missing ConfState, blocking leader election forever.
+const NODE_INCARNATION_FILE: &str = ".node_incarnation";
 
 /// Triple keyed by target zone: `(parent_zone_id, mount_path, global_path)`.
 type CrossZoneMountTuple = (String, String, String);
@@ -264,12 +282,84 @@ fn generate_fresh_incarnation() -> u64 {
     }
 }
 
+/// Read the persisted node-level incarnation.  Returns `None` when
+/// the file doesn't exist (fresh daemon).
+fn read_node_incarnation(zones_dir: &str) -> Result<Option<u64>, String> {
+    let path = Path::new(zones_dir).join(NODE_INCARNATION_FILE);
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {
+                format!(
+                    "node incarnation file '{}' is not 8 bytes",
+                    path.display()
+                )
+            })?;
+            Ok(Some(u64::from_be_bytes(arr)))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!(
+            "read node incarnation '{}': {e}",
+            path.display(),
+        )),
+    }
+}
+
+/// Persist the node-level incarnation.  Creates the parent directory
+/// if absent.  Atomic via write-rename — prevents a torn 8-byte file
+/// from a crash between `write_all` and `sync`.
+fn write_node_incarnation(zones_dir: &str, incarnation: u64) -> Result<(), String> {
+    use std::io::Write;
+    let dir = Path::new(zones_dir);
+    std::fs::create_dir_all(dir).map_err(|e| {
+        format!(
+            "create zones dir for node incarnation '{}': {e}",
+            dir.display(),
+        )
+    })?;
+    let final_path = dir.join(NODE_INCARNATION_FILE);
+    let tmp_path = dir.join(format!("{NODE_INCARNATION_FILE}.tmp"));
+    {
+        let mut tmp = std::fs::File::create(&tmp_path).map_err(|e| {
+            format!(
+                "create tmp incarnation file '{}': {e}",
+                tmp_path.display(),
+            )
+        })?;
+        tmp.write_all(&incarnation.to_be_bytes()).map_err(|e| {
+            format!(
+                "write tmp incarnation file '{}': {e}",
+                tmp_path.display(),
+            )
+        })?;
+        tmp.sync_all().map_err(|e| {
+            format!(
+                "sync tmp incarnation file '{}': {e}",
+                tmp_path.display(),
+            )
+        })?;
+    }
+    std::fs::rename(&tmp_path, &final_path).map_err(|e| {
+        format!(
+            "rename '{}' -> '{}': {e}",
+            tmp_path.display(),
+            final_path.display(),
+        )
+    })?;
+    Ok(())
+}
+
 /// Try `ReplaceVoterByHostname` against each peer in turn.  Returns
 /// `true` on the first peer that responds with `success`.  Followers
 /// supply the leader's address in `leader_address`; the caller follows
 /// that redirect once before moving to the next peer.
+///
+/// Takes the owning `Runtime` (not a `Handle`) so we can call
+/// `Runtime::block_on` directly — `Handle::block_on` against a
+/// current_thread runtime from the runtime's own thread deadlocks
+/// (the runtime worker is the caller, so the future never gets
+/// driven).
 fn try_replace_voter_on_peers(
-    runtime: &tokio::runtime::Handle,
+    runtime: &tokio::runtime::Runtime,
     peers: &[NodeAddress],
     self_hostname: &str,
     new_node_id: u64,
@@ -285,6 +375,10 @@ fn try_replace_voter_on_peers(
         let mut endpoint = peer.endpoint.clone();
         let mut redirected_once = false;
         loop {
+            eprintln!(
+                "[ensure_voter_membership] dialing ReplaceVoterByHostname \
+                 endpoint={endpoint} hostname={self_hostname} new_node_id={new_node_id}",
+            );
             let attempt = runtime.block_on(call_replace_voter_by_hostname(
                 &endpoint,
                 "root",
@@ -295,40 +389,33 @@ fn try_replace_voter_on_peers(
             ));
             match attempt {
                 Ok(result) if result.success => {
-                    tracing::info!(
-                        peer = %endpoint,
-                        new_node_id,
-                        removed_old_id = ?result.removed_old_id,
-                        "ReplaceVoterByHostname committed",
+                    eprintln!(
+                        "[ensure_voter_membership] ReplaceVoterByHostname committed \
+                         endpoint={endpoint} new_node_id={new_node_id} \
+                         removed_old_id={:?}",
+                        result.removed_old_id,
                     );
                     return true;
                 }
                 Ok(result) => {
                     if let Some(addr) = result.leader_address.as_ref() {
                         if !redirected_once && !addr.is_empty() && addr != &endpoint {
-                            tracing::info!(
-                                from = %endpoint,
-                                to = %addr,
-                                "ReplaceVoterByHostname redirected to leader",
+                            eprintln!(
+                                "[ensure_voter_membership] redirected from {endpoint} to {addr}",
                             );
                             endpoint = addr.clone();
                             redirected_once = true;
                             continue;
                         }
                     }
-                    tracing::debug!(
-                        peer = %endpoint,
-                        error = ?result.error,
-                        "ReplaceVoterByHostname rejected; trying next peer",
+                    eprintln!(
+                        "[ensure_voter_membership] rejected by {endpoint}: error={:?}",
+                        result.error,
                     );
                     break;
                 }
                 Err(e) => {
-                    tracing::debug!(
-                        peer = %endpoint,
-                        error = %e,
-                        "ReplaceVoterByHostname RPC failed; trying next peer",
-                    );
+                    eprintln!("[ensure_voter_membership] RPC to {endpoint} failed: {e}");
                     break;
                 }
             }
@@ -374,28 +461,17 @@ impl RaftFederationProvider {
         zones_dir: &str,
         peers: &[NodeAddress],
     ) -> Result<VoterMembership, String> {
-        let root_raft_path = Path::new(zones_dir).join("root").join("raft");
-        let root_redb_path = root_raft_path.join("raft.redb");
-
-        // Recovery path — storage already contains a persisted
-        // incarnation (or pre-fix data with no marker, which we treat
-        // as 0 = cold-start ID).
-        if root_redb_path.exists() {
-            let storage = RaftStorage::open(&root_raft_path)
-                .map_err(|e| format!("open root raft storage for incarnation read: {e}"))?;
-            let incarnation = storage
-                .incarnation()
-                .map_err(|e| format!("read incarnation: {e}"))?
-                .unwrap_or(0);
-            // Drop redb handle so ZoneManager::with_node_id can reopen
-            // the same file later.
-            drop(storage);
+        // Recovery path — node-level incarnation file exists from a
+        // prior boot (or pre-fix daemon, which we treat as
+        // incarnation=0 → cold-start ID).
+        if let Some(incarnation) = read_node_incarnation(zones_dir)? {
             let node_id = compute_node_id(hostname, incarnation);
-            tracing::info!(
-                hostname,
-                incarnation,
-                node_id,
-                "ensure_voter_membership: recovery (existing storage)",
+            // Tracing subscriber is not initialised until ZoneManager
+            // construction (a few milliseconds later), so this fn
+            // logs to stderr directly.  Boot-time trace, low volume.
+            eprintln!(
+                "[ensure_voter_membership] recovery: hostname={hostname} \
+                 incarnation={incarnation} node_id={node_id}",
             );
             return Ok(VoterMembership {
                 node_id,
@@ -406,18 +482,30 @@ impl RaftFederationProvider {
         // Fresh path — try wipe-rejoin rotation, fall back to cold start.
         let new_incarnation = generate_fresh_incarnation();
         let new_id = compute_node_id(hostname, new_incarnation);
+        eprintln!(
+            "[ensure_voter_membership] fresh: hostname={hostname} \
+             trying rotation new_incarnation={new_incarnation} new_id={new_id} \
+             peers={}",
+            peers.len(),
+        );
 
         // Spin up a small temporary tokio runtime for the rotation
         // RPCs.  ZoneManager owns the long-lived runtime but we need
         // gRPC dialing *before* the manager is constructed (so that
         // its raft node ID is correct from the first heartbeat).
-        // Single-threaded is sufficient — the calls are sequential.
-        let rotation_runtime = tokio::runtime::Builder::new_current_thread()
+        //
+        // Use a multi-thread runtime with a single worker so `block_on`
+        // on the calling thread doesn't have to drive the event loop
+        // simultaneously — that combination on a current_thread
+        // runtime deadlocks because the worker thread IS the caller.
+        let rotation_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_all()
+            .thread_name("ensure-voter-membership")
             .build()
             .map_err(|e| format!("rotation runtime: {e}"))?;
         let rotated = try_replace_voter_on_peers(
-            &rotation_runtime.handle().clone(),
+            &rotation_runtime,
             peers,
             hostname,
             new_id,
@@ -427,22 +515,15 @@ impl RaftFederationProvider {
 
         // Whether we rotated or fell through to cold-start, persist
         // the chosen incarnation so the next restart hits the recovery
-        // path above.
-        std::fs::create_dir_all(&root_raft_path)
-            .map_err(|e| format!("create root raft dir '{}': {e}", root_raft_path.display()))?;
-        let storage = RaftStorage::open(&root_raft_path)
-            .map_err(|e| format!("open root raft storage for incarnation persist: {e}"))?;
-
+        // path above.  Crucially this lives in a flat node-level file
+        // rather than per-zone redb, so `open_existing_zones_from_disk`
+        // (which scans `<zones_dir>/<zone>/raft/` subtrees) is
+        // unaffected.
         if rotated {
-            storage
-                .set_incarnation(new_incarnation)
-                .map_err(|e| format!("persist new incarnation: {e}"))?;
-            drop(storage);
-            tracing::info!(
-                hostname,
-                incarnation = new_incarnation,
-                node_id = new_id,
-                "ensure_voter_membership: rotated into existing cluster",
+            write_node_incarnation(zones_dir, new_incarnation)?;
+            eprintln!(
+                "[ensure_voter_membership] rotated into existing cluster: \
+                 hostname={hostname} incarnation={new_incarnation} node_id={new_id}",
             );
             Ok(VoterMembership {
                 node_id: new_id,
@@ -452,15 +533,11 @@ impl RaftFederationProvider {
             // Cold-start sentinel — every peer derives the same ID for
             // this hostname so `create_zone` ConfState bootstraps
             // converge without coordination.
-            storage
-                .set_incarnation(0)
-                .map_err(|e| format!("persist cold-start incarnation: {e}"))?;
-            drop(storage);
+            write_node_incarnation(zones_dir, 0)?;
             let cold_id = hostname_to_node_id(hostname);
-            tracing::info!(
-                hostname,
-                node_id = cold_id,
-                "ensure_voter_membership: cold start (no leader reachable)",
+            eprintln!(
+                "[ensure_voter_membership] cold start (no leader reachable): \
+                 hostname={hostname} node_id={cold_id}",
             );
             Ok(VoterMembership {
                 node_id: cold_id,

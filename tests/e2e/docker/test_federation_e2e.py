@@ -3257,3 +3257,190 @@ class TestCrossNodeContentRead:
         pytest.fail(
             f"node-2 did not converge to latest version within 15s: got {last!r}, want {latest!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: fresh-join into running cluster (snapshot install path)
+# ---------------------------------------------------------------------------
+
+
+class TestFreshJoinToRunningCluster:
+    """Regression test for the fresh-join-with-wiped-storage panic.
+
+    Pre-fix symptom: ``thread 'nexus-zone-mgr' panicked at raft_log.rs:292:
+    to_commit N is out of range [last_index 0]`` when a node restarts with
+    empty data dir while keeping its node ID, and a long-running peer
+    (whose in-memory ``Progress[node_id]`` still records ``matched = K > 0``)
+    is leader.  Hit during PR #3933 cross-machine smoke after PR #3932
+    Phase H landed.
+
+    ## Root cause (pre-fix)
+
+    Node ID was derived from ``hostname`` only (``hostname_to_node_id``).
+    After a data wipe on the same host the node rejoined with the SAME ID
+    but ``last_index == 0``.  Meanwhile the leader's in-memory ``Progress``
+    for that ID still had ``matched == K`` from before the wipe (Progress
+    is in-memory only and only resets on leader restart).
+
+    raft-rs's ``Raft::send_heartbeat`` clamps heartbeat ``commit`` to
+    ``min(progress.matched, raft_log.committed)`` — with stale
+    ``pr.matched = K`` it sent ``MsgHeartbeat{commit=K}`` to a follower
+    whose ``last_index == 0``.  raft-rs's ``handle_heartbeat`` calls
+    ``commit_to(m.commit)`` UNCONDITIONALLY (raft-0.7.0 raft.rs:2516), so
+    ``commit_to(K)`` panicked at raft_log.rs:292.  ``Progress::maybe_decr_to``
+    does not reset ``matched`` on AppendResponse rejection, so heartbeats
+    kept panicking the follower indefinitely.
+
+    Reusing a node ID with wiped persistent state violates raft's
+    identity-equals-log invariant.
+
+    ## Fix shape (this PR)
+
+    * ``RaftStorage`` persists a node-incarnation marker — fresh storage
+      mints a new incarnation; existing storage keeps the persisted one.
+    * ``node_id = compute_node_id(hostname, incarnation)`` — wipe-and-restart
+      mints a brand-new ID.
+    * ``ensure_voter_membership`` centralizes the bootstrap-vs-rotate
+      decision: if storage was just created AND a leader is reachable,
+      ask the leader to swap our old voter ID (looked up by hostname in
+      its peer map) for the new one via ConfChange Remove+Add through
+      the ``replace_voter_by_hostname`` RPC.  Cold start (no leader
+      reachable) falls through to standard bootstrap with the
+      default-incarnation ID so all nodes converge on the same voter set.
+
+    ## What this test does
+
+      1. Stop node-1 (n2 + witness keep majority, keep committing).
+      2. Drive writes via node-2 → raft commits accumulate across cluster.
+      3. WIPE node-1 data volume (raft.redb deleted — fresh state).
+      4. Start node-1.
+      5. Assert node-1 reaches healthy without panic AND catches up to the
+         entries written while it was down.
+    """
+
+    # Order-LAST: this test wipes node-1's data dir and rotates its
+    # raft node ID via ReplaceVoterByHostname.  Federation zones
+    # (corp, corp-eng, …) created at runtime by `federation_zones`
+    # are NOT auto-rejoined on the wiped node — that requires a
+    # follow-up "zone discovery on rejoin" feature out of this PR's
+    # scope.  Subsequent tests that assume node-1 hosts those zones
+    # would stall on raft catch-up against the rotated ID, so this
+    # class is positioned LAST in the file (default pytest collection
+    # order is file order).  The explicit `@pytest.mark.order("last")`
+    # is documentation — pytest-ordering may not be installed on every
+    # runner (existing markers in this file already produce
+    # unknown-mark warnings), but file-ordering is sufficient.
+    @pytest.mark.order("last")
+    def test_fresh_join_via_snapshot(self, cluster, api_key, federation_zones):
+        try:
+            import docker as docker_sdk
+
+            docker_client = docker_sdk.from_env(timeout=180)
+            docker_client.ping()
+        except Exception as exc:
+            pytest.skip(f"Docker SDK not available: {exc}")
+
+        n1_container = docker_client.containers.get("nexus-dyn-node-1")
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+        uid = _uid()
+
+        # 1. Stop node-1; n2 + witness retain quorum (2/3).
+        n1_container.stop(timeout=10)
+        _wait_healthy([cluster["node2"]], timeout=30)
+        _wait_leader_elected(grpc2, "corp-eng", api_key, timeout=20)
+
+        # 2. Accumulate raft commits via node-2 in the ROOT zone.
+        #
+        # Scope: this test exercises the wipe-rejoin contract for the
+        # zone that node-1 will rebootstrap at boot — root.  Federation
+        # zones created at runtime (corp, corp-eng, …) are a separate
+        # auto-discovery problem: the wiped node restarts only with
+        # NEXUS_FEDERATION_ZONES (here: empty), so corp/etc. won't be
+        # rejoined on boot regardless of the rotation fix.  Tracking
+        # those into the rotated node requires a follow-up "zone
+        # discovery on rejoin" feature (out of this PR's scope).
+        accumulated: list[tuple[str, str, str]] = []
+        for i in range(20):
+            path = f"/fresh-join-root-{uid}-{i}.txt"
+            content = f"data-root-{i}"
+            w = _grpc_call(
+                grpc2,
+                "write",
+                {"path": path, "content": content},
+                api_key=api_key,
+                timeout=20,
+            )
+            assert "error" not in w, f"write {path} failed: {w}"
+            accumulated.append((path, "/", content))
+
+        # 3. WIPE node-1 data volume (alpine sidecar — same volume mount).
+        wipe = docker_client.containers.run(
+            image="alpine:latest",
+            command="sh -c 'rm -rf /app/data/* /app/data/.* 2>/dev/null; "
+            "ls -A /app/data 2>/dev/null | wc -l'",
+            volumes={"nexus-dyn-node1-data": {"bind": "/app/data", "mode": "rw"}},
+            remove=True,
+            stdout=True,
+            stderr=True,
+        )
+        wipe_count = wipe.decode(errors="replace").strip()
+        assert wipe_count == "0", (
+            f"node-1 data volume not fully wiped (entries remaining: {wipe_count})"
+        )
+
+        # 4. Start node-1 fresh.
+        n1_container.start()
+        n1_container.reload()
+
+        # 5. Assert healthy — fail with REGRESSION marker if panic markers
+        #    appear in logs (covers both exited-due-to-panic and the
+        #    soft-fail "running but unhealthy" path).
+        panic_check_logs = ""
+        try:
+            _wait_healthy([cluster["node1"]], timeout=120)
+        except BaseException as exc:
+            panic_check_logs = n1_container.logs(tail=500, stderr=True).decode(errors="replace")
+            if (
+                "to_commit" in panic_check_logs and "out of range" in panic_check_logs
+            ) or "panicked at" in panic_check_logs.lower():
+                pytest.fail(
+                    "REGRESSION: node-1 fresh-join panicked. raft InstallSnapshot "
+                    "path is broken — commits delivered to follower before snapshot "
+                    "installation, violating raft contract.\n"
+                    f"--- node-1 logs (tail 500) ---\n{panic_check_logs}"
+                )
+            pytest.fail(
+                f"node-1 not healthy within 120s after fresh-join: {exc}\n"
+                f"--- node-1 logs (tail 500) ---\n{panic_check_logs}"
+            )
+
+        # Sanity: even when "healthy", scan logs for panic markers in case
+        # a thread panicked but the process kept going (raft-zone-mgr is a
+        # background thread, healthcheck is the FastAPI uvicorn).
+        recent = n1_container.logs(tail=300, stderr=True).decode(errors="replace")
+        if ("to_commit" in recent and "out of range" in recent) or "panicked at" in recent.lower():
+            pytest.fail(
+                "REGRESSION: node-1 reports healthy but raft thread panicked.\n"
+                f"--- node-1 logs (tail 300) ---\n{recent}"
+            )
+
+        # 6. Catch-up via raft snapshot + log replay (root zone only —
+        #    see step 2 docstring).
+        _wait_nodes_caught_up(
+            [grpc1, grpc2],
+            [ROOT_ZONE_ID],
+            api_key,
+            timeout=120,
+        )
+
+        # Spot-check a few replicated entries are visible on node-1.
+        for path, parent, _content in accumulated[:6]:
+            _wait_replicated(
+                grpc1,
+                parent,
+                path,
+                api_key,
+                msg=f"{path} not visible on freshly-joined node-1",
+                timeout=30,
+            )

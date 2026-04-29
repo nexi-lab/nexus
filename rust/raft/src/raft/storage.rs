@@ -39,6 +39,13 @@ const KEY_FIRST_INDEX: &[u8] = b"first_index";
 ///     ├── snapshot -> Snapshot
 ///     └── first_index -> u64
 /// ```
+///
+/// Node identity (incarnation marker for the wipe-rejoin contract)
+/// is **NOT** stored here — it lives at the node level in
+/// `<NEXUS_DATA_DIR>/.node_incarnation` so a single value covers
+/// every zone this node serves, and so `open_existing_zones_from_disk`
+/// (which scans `<zones_dir>/<zone>/raft/` subtrees) is not confused
+/// by a fake "incarnation zone".
 pub struct RaftStorage {
     /// Underlying redb store.
     store: RedbStore,
@@ -479,6 +486,47 @@ mod tests {
             .entries(5, 11, None, raft::GetEntriesContext::empty(false))
             .unwrap();
         assert_eq!(entries.len(), 6);
+    }
+
+    // ---------------------------------------------------------------
+    // Incarnation marker tests (fresh-join wipe-rejoin fix)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn fresh_storage_reports_just_created() {
+        let (storage, _dir) = create_test_storage();
+        assert!(storage.was_just_created());
+        assert_eq!(storage.incarnation().unwrap(), None);
+    }
+
+    #[test]
+    fn set_incarnation_persists_across_reopen() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().to_path_buf();
+
+        // First open: fresh, mint incarnation.
+        let storage = RaftStorage::open(&path).unwrap();
+        assert!(storage.was_just_created());
+        storage.set_incarnation(0xDEAD_BEEF).unwrap();
+        // Drop to release the redb lock before reopening.
+        drop(storage);
+
+        // Re-open: was_just_created flips to false; incarnation reads back.
+        let reopened = RaftStorage::open(&path).unwrap();
+        assert!(!reopened.was_just_created());
+        assert_eq!(reopened.incarnation().unwrap(), Some(0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn set_incarnation_idempotent() {
+        let (storage, _dir) = create_test_storage();
+        storage.set_incarnation(42).unwrap();
+        storage.set_incarnation(42).unwrap();
+        assert_eq!(storage.incarnation().unwrap(), Some(42));
+        // Overwriting with a different value is allowed at the storage layer
+        // — caller policy (ensure_voter_membership) decides when to rotate.
+        storage.set_incarnation(99).unwrap();
+        assert_eq!(storage.incarnation().unwrap(), Some(99));
     }
 
     // ---------------------------------------------------------------

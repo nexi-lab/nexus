@@ -52,7 +52,7 @@ pub mod python;
 // `crate::TlsConfig` / `crate::create_channel` keep working
 // once they're inside this crate.
 pub use transport_primitives::{
-    create_channel, hostname_to_node_id, ClientConfig, ConnectionPool, NodeAddress, PeerAddress,
-    ServerConfig, TlsConfig, TransportError,
+    compute_node_id, create_channel, hostname_to_node_id, ClientConfig, ConnectionPool,
+    NodeAddress, PeerAddress, ServerConfig, TlsConfig, TransportError,
 };
 pub type Result<T> = transport_primitives::Result<T>;

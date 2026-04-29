@@ -16,8 +16,8 @@ use super::proto::nexus::raft::{
     JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
     NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
     RaftCommand, RaftQueryResponse, RaftResponse, ReadBlobRequest, ReadBlobResponse,
-    ReplicateEntriesRequest, ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest,
-    StepMessageResponse,
+    ReplaceVoterByHostnameRequest, ReplaceVoterByHostnameResponse, ReplicateEntriesRequest,
+    ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest, StepMessageResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::blob_fetcher::BlobFetcherSlot;
@@ -942,6 +942,153 @@ impl ZoneApiService for ZoneApiServiceImpl {
                 error: Some(format!("JoinZone failed: {}", e)),
                 leader_address: None,
                 config: None,
+            })),
+        }
+    }
+
+    /// Handle a ReplaceVoterByHostname request — wipe-rejoin ID rotation.
+    ///
+    /// Leader-only.  Looks up the prior voter ID for `hostname` in the
+    /// cluster's peer map (caller doesn't claim what the old ID was —
+    /// authoritative answer lives here), then proposes ConfChange
+    /// RemoveNode(old_id) + AddNode(new_id) sequentially.  Followers
+    /// return the leader address so the caller can retry.
+    ///
+    /// No-op fast path: when no existing voter has the supplied
+    /// hostname (a brand-new host that was never a voter), only the
+    /// AddNode is proposed — `removed_old_id` is `None`.
+    async fn replace_voter_by_hostname(
+        &self,
+        request: Request<ReplaceVoterByHostnameRequest>,
+    ) -> std::result::Result<Response<ReplaceVoterByHostnameResponse>, Status> {
+        let req = request.into_inner();
+
+        // Reject empty hostname / zero new_id early — both are nonsense
+        // inputs that would otherwise produce a confusing leader-side
+        // error after RPC dispatch.
+        if req.hostname.trim().is_empty() {
+            return Ok(Response::new(ReplaceVoterByHostnameResponse {
+                success: false,
+                error: Some("hostname must not be empty".to_string()),
+                leader_address: None,
+                removed_old_id: None,
+            }));
+        }
+        if req.new_node_id == 0 {
+            return Ok(Response::new(ReplaceVoterByHostnameResponse {
+                success: false,
+                error: Some(
+                    "new_node_id must not be 0 (raft-rs reserves 0 for 'no node')".to_string(),
+                ),
+                leader_address: None,
+                removed_old_id: None,
+            }));
+        }
+
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+
+        // Followers redirect — caller follows leader_address back here.
+        if !node.is_leader() {
+            let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
+            let leader_id = node.leader_id().unwrap_or(0);
+            let leader_addr = peers.get(&leader_id).map(|a| a.endpoint.clone());
+            return Ok(Response::new(ReplaceVoterByHostnameResponse {
+                success: false,
+                error: Some("not leader".to_string()),
+                leader_address: leader_addr,
+                removed_old_id: None,
+            }));
+        }
+
+        tracing::info!(
+            zone = req.zone_id,
+            hostname = req.hostname,
+            new_node_id = req.new_node_id,
+            address = req.node_address,
+            "ReplaceVoterByHostname request received",
+        );
+
+        // Reverse-lookup any existing voter with the same hostname.
+        // We trust the leader's peer-map snapshot — leader-only execution
+        // means no concurrent ConfChange can race this lookup before the
+        // first propose lands.
+        let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
+        let old_id_opt = peers.iter().find_map(|(id, addr)| {
+            if addr.hostname == req.hostname {
+                Some(*id)
+            } else {
+                None
+            }
+        });
+
+        // Idempotency: if peer-map already maps `hostname` to `new_id`,
+        // a previous ReplaceVoterByHostname for this hostname must have
+        // already committed — return success without re-proposing
+        // (re-proposing AddNode for a current voter is a no-op in
+        // raft-rs but still costs a round-trip + log entry).
+        if old_id_opt == Some(req.new_node_id) {
+            return Ok(Response::new(ReplaceVoterByHostnameResponse {
+                success: true,
+                error: None,
+                leader_address: None,
+                removed_old_id: None,
+            }));
+        }
+
+        // Single atomic ConfChangeV2 — RemoveNode(old_id) + AddNode(new_id)
+        // commit as one entry so the cluster never observes the
+        // transient `voters - {old_id}` state.  Strict raft membership-
+        // swap contract; no transient quorum gap, single round-trip.
+        // When `old_id_opt` is None the V2 reduces to a plain AddNode
+        // (no-prior-voter fast path).
+        let old_id = old_id_opt.unwrap_or(0);
+        match node
+            .propose_replace_voter(old_id, req.new_node_id, req.node_address.into_bytes())
+            .await
+        {
+            Ok(_) => {
+                if let Some(removed) = old_id_opt {
+                    tracing::info!(
+                        zone = req.zone_id,
+                        removed_old_id = removed,
+                        new_node_id = req.new_node_id,
+                        hostname = req.hostname,
+                        "ReplaceVoterByHostname committed (atomic Remove+Add)",
+                    );
+                } else {
+                    tracing::info!(
+                        zone = req.zone_id,
+                        new_node_id = req.new_node_id,
+                        hostname = req.hostname,
+                        "ReplaceVoterByHostname committed (no-prior-voter AddNode)",
+                    );
+                }
+                Ok(Response::new(ReplaceVoterByHostnameResponse {
+                    success: true,
+                    error: None,
+                    leader_address: None,
+                    removed_old_id: old_id_opt,
+                }))
+            }
+            Err(RaftError::NotLeader { leader_hint }) => {
+                let addr = leader_hint
+                    .and_then(|id| peers.get(&id))
+                    .map(|a| a.endpoint.clone());
+                Ok(Response::new(ReplaceVoterByHostnameResponse {
+                    success: false,
+                    error: Some("not leader".to_string()),
+                    leader_address: addr,
+                    removed_old_id: None,
+                }))
+            }
+            Err(e) => Ok(Response::new(ReplaceVoterByHostnameResponse {
+                success: false,
+                error: Some(format!(
+                    "ConfChangeV2(Remove={old_id}, Add={}) failed: {e}",
+                    req.new_node_id,
+                )),
+                leader_address: None,
+                removed_old_id: None,
             })),
         }
     }

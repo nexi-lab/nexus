@@ -52,8 +52,9 @@ mod transport_loop;
 
 #[cfg(all(feature = "grpc", has_protos))]
 pub use client::{
-    call_join_cluster, ClientConfig, ClusterInfoResult, JoinClusterResult, ProposeResult,
-    QueryResult, RaftApiClient, RaftClient, RaftClientPool,
+    call_join_cluster, call_replace_voter_by_hostname, ClientConfig, ClusterInfoResult,
+    JoinClusterResult, ProposeResult, QueryResult, RaftApiClient, RaftClient, RaftClientPool,
+    ReplaceVoterResult,
 };
 #[cfg(all(feature = "grpc", has_protos))]
 pub use server::{RaftGrpcServer, RaftWitnessServer, ServerConfig, WitnessZoneRegistry};
@@ -199,7 +200,7 @@ fn proto_result_to_command_result(
 // ---------------------------------------------------------------------------
 #[cfg(feature = "grpc")]
 pub use transport_primitives::{
-    hostname_to_node_id, NodeAddress, PeerAddress, TlsConfig, TransportError,
+    compute_node_id, hostname_to_node_id, NodeAddress, PeerAddress, TlsConfig, TransportError,
 };
 #[cfg(feature = "grpc")]
 pub type Result<T> = transport_primitives::Result<T>;

@@ -241,6 +241,22 @@ pub enum RaftMsg {
         change: ConfChange,
         tx: oneshot::Sender<Result<ConfState>>,
     },
+    /// Propose a multi-change ConfChange (V2 atomic membership swap).
+    ///
+    /// Used by the wipe-rejoin rotation path where a single committed
+    /// entry must atomically `RemoveNode(old_id)` + `AddNode(new_id)`
+    /// so the cluster never observes a transient `voters - {old_id}`
+    /// state — strict raft membership-swap contract.
+    ///
+    /// `register_under_id` is the node_id used as the
+    /// `pending_conf_changes` map key.  Pick one of the IDs the V2
+    /// changes touch (typically the AddNode target); the V2 apply
+    /// loop resolves the tx when that change lands.
+    ProposeConfChangeV2 {
+        change: raft::eraftpb::ConfChangeV2,
+        register_under_id: u64,
+        tx: oneshot::Sender<Result<ConfState>>,
+    },
     /// Campaign to become leader.
     Campaign { tx: oneshot::Sender<Result<()>> },
     /// Linearizable read request (F4 C3.6 — ReadIndex).
@@ -1149,6 +1165,75 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         }
     }
 
+    /// Atomically swap one voter for another in a single committed
+    /// entry — strict raft membership-swap contract.
+    ///
+    /// Builds a `ConfChangeV2` with two changes
+    /// (`RemoveNode(old_id)` + `AddNode(new_id)`) so the cluster goes
+    /// directly from `voters` → `voters - {old_id} + {new_id}` without
+    /// observing the transient `voters - {old_id}` quorum state that
+    /// two sequential `propose_conf_change` calls would expose.
+    ///
+    /// `auto_leave = false` (the V2 default) — this is a single-step
+    /// reconfig rather than full joint consensus, but raft-rs commits
+    /// it as one log entry either way; the atomicity comes from "all
+    /// changes in one entry, applied together".
+    ///
+    /// Used by the wipe-rejoin rotation path
+    /// (`replace_voter_by_hostname` server handler).  When `old_id ==
+    /// 0` the Remove is skipped — fall back to a plain `AddNode`
+    /// (brand-new host that was never a voter).
+    pub async fn propose_replace_voter(
+        &self,
+        old_id: u64,
+        new_id: u64,
+        new_address: Vec<u8>,
+    ) -> Result<ConfState> {
+        if !self.is_leader() {
+            return Err(RaftError::NotLeader {
+                leader_hint: self.leader_id(),
+            });
+        }
+        if new_id == 0 {
+            return Err(RaftError::Raft(
+                "propose_replace_voter: new_id must not be 0".into(),
+            ));
+        }
+
+        use raft::eraftpb::{ConfChangeSingle, ConfChangeV2};
+
+        let mut v2 = ConfChangeV2::default();
+        // Address travels in the V2 envelope's `context` field; the
+        // apply path decodes it as UTF-8 and feeds it into the peer
+        // map for both removed and added entries (Remove ignores it).
+        v2.context = new_address.clone().into();
+        if old_id != 0 && old_id != new_id {
+            let mut remove = ConfChangeSingle::default();
+            remove.set_change_type(ConfChangeType::RemoveNode);
+            remove.node_id = old_id;
+            v2.changes.push(remove);
+        }
+        let mut add = ConfChangeSingle::default();
+        add.set_change_type(ConfChangeType::AddNode);
+        add.node_id = new_id;
+        v2.changes.push(add);
+
+        let (tx, rx) = oneshot::channel();
+        self.msg_tx
+            .try_send(RaftMsg::ProposeConfChangeV2 {
+                change: v2,
+                register_under_id: new_id,
+                tx,
+            })
+            .map_err(channel_try_send_err)?;
+
+        match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(RaftError::ProposalDropped),
+            Err(_) => Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS)),
+        }
+    }
+
     /// Process a message from another node (sends through channel to driver).
     ///
     /// Uses `send().await` (blocking until space is available) instead of
@@ -1242,6 +1327,25 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         Ok(()) => {
                             // Store tx — will be resolved in apply_entries when committed
                             self.pending_conf_changes.insert(target_node_id, tx);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(RaftError::Raft(e.to_string())));
+                        }
+                    }
+                }
+                RaftMsg::ProposeConfChangeV2 {
+                    change,
+                    register_under_id,
+                    tx,
+                } => {
+                    tracing::debug!(
+                        register_under_id,
+                        num_changes = change.changes.len(),
+                        "raft.driver.propose_conf_change_v2",
+                    );
+                    match self.raw_node.propose_conf_change(vec![], change) {
+                        Ok(()) => {
+                            self.pending_conf_changes.insert(register_under_id, tx);
                         }
                         Err(e) => {
                             let _ = tx.send(Err(RaftError::Raft(e.to_string())));

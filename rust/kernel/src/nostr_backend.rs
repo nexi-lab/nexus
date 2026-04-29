@@ -21,7 +21,7 @@
 //! See `OPEN-ITEMS.md / nostr-backend-driver` for the staged plan: relay
 //! client + NIP-04 encrypt/decrypt + FileEvent emission + mount integration.
 
-use crate::backend::{ObjectStore, StorageError, WriteResult};
+use crate::abc::object_store::{ObjectStore, StorageError, WriteResult};
 use crate::kernel::OperationContext;
 
 /// Nostr storage backend — mount carries `npub` (recipient pubkey) plus the
@@ -87,10 +87,8 @@ impl ObjectStore for NostrBackend {
     fn read_content(
         &self,
         _content_id: &str,
-        backend_path: &str,
         _ctx: &OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
-        let _ = backend_path;
         Err(StorageError::NotSupported(
             "NostrBackend.read_content awaits relay client — see OPEN-ITEMS / nostr-backend-driver",
         ))
@@ -137,7 +135,7 @@ mod tests {
         let b = backend();
         let ctx = OperationContext::new("test", "root", false, None, false);
         let err = b
-            .read_content("", "", &ctx)
+            .read_content("", &ctx)
             .expect_err("stub must surface NotSupported");
         match err {
             StorageError::NotSupported(msg) => {

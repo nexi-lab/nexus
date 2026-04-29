@@ -200,6 +200,14 @@ mod tests {
         // Two `WalPipeCore` instances over the same MetaStore — model
         // two replicas.  Each replica owns its head; both should pop
         // every entry independently.
+        //
+        // Reader replicas can only see the writer's pushes after the
+        // bg flush thread has committed them to the shared MetaStore
+        // (each WalPipeCore wraps its own WalStreamCore with its own
+        // inflight map, so the writer's pre-flush state is invisible
+        // to the readers).  Poll briefly to dodge the async-flush race
+        // rather than sleeping a fixed duration.
+        use std::time::{Duration, Instant};
         let store: Arc<dyn MetaStore> = Arc::new(MemKvStore {
             inner: Mutex::new(BTreeMap::new()),
         });
@@ -210,9 +218,23 @@ mod tests {
         for i in 0u8..5 {
             writer.push(&[i]).unwrap();
         }
-        // Each reader pops the full sequence from its own head.
-        let popped_a: Vec<Vec<u8>> = (0..5).map(|_| reader_a.pop().unwrap()).collect();
-        let popped_b: Vec<Vec<u8>> = (0..5).map(|_| reader_b.pop().unwrap()).collect();
+
+        let pop_with_retry = |reader: &WalPipeCore| -> Vec<Vec<u8>> {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut out = Vec::with_capacity(5);
+            while out.len() < 5 {
+                match reader.pop() {
+                    Ok(data) => out.push(data),
+                    Err(PipeError::Empty) if Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    other => panic!("expected pop within 2s, got {other:?}"),
+                }
+            }
+            out
+        };
+        let popped_a = pop_with_retry(&reader_a);
+        let popped_b = pop_with_retry(&reader_b);
         assert_eq!(popped_a, popped_b);
         assert_eq!(popped_a, vec![vec![0], vec![1], vec![2], vec![3], vec![4]]);
     }

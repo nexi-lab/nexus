@@ -85,6 +85,30 @@ class TestReadinessProbe:
         assert body["status"] == "ready"
         assert "uptime_seconds" in body
 
+    def test_200_when_federation_disabled_even_if_kernel_reports_not_ready(
+        self, monkeypatch
+    ) -> None:
+        tracker = StartupTracker()
+        for phase in _REQUIRED_FOR_READY:
+            tracker.complete(phase)
+
+        import sys
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("NEXUS_PEERS", raising=False)
+        fake = SimpleNamespace(federation_is_initialized=lambda _k: False)
+        monkeypatch.setitem(sys.modules, "nexus_runtime", fake)
+
+        mock_fs = MagicMock()
+        mock_fs._kernel = MagicMock()
+
+        app = _make_app(tracker)
+        app.state.nexus_fs = mock_fs
+        client = TestClient(app)
+        resp = client.get("/healthz/ready")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"
+
     def test_503_on_raft_not_ready(self, monkeypatch) -> None:
         tracker = StartupTracker()
         for phase in _REQUIRED_FOR_READY:
@@ -99,6 +123,7 @@ class TestReadinessProbe:
         import sys
         from types import SimpleNamespace
 
+        monkeypatch.setenv("NEXUS_PEERS", "node-a,node-b")
         fake = SimpleNamespace(federation_is_initialized=lambda _k: False)
         monkeypatch.setitem(sys.modules, "nexus_runtime", fake)
 

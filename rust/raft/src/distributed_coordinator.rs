@@ -1304,13 +1304,17 @@ fn wire_mount_impl(
 }
 
 /// Install `RaftDistributedCoordinator` into the kernel's coordinator slot
-/// and run `init_from_env`.
+/// and run `init_from_env`. Also drains the pending blob-fetcher slot
+/// stashed by `init_from_env` and wires the `KernelBlobFetcher`
+/// server-side handler into the raft gRPC fabric — co-locating both
+/// halves keeps transport raft-free.
 ///
 /// Mirrors `transport::blob::peer_client::install` — called once per
-/// process from the cdylib boot path.  Idempotent for re-imports.
+/// process from the cdylib boot path. Idempotent for re-imports.
 pub fn install(kernel: &Kernel) -> Result<(), String> {
     let coordinator = Arc::new(RaftDistributedCoordinator::new());
     kernel.set_distributed_coordinator(coordinator.clone() as Arc<dyn DistributedCoordinator>);
     coordinator.init_from_env(kernel)?;
+    crate::blob_fetcher_handler::install(kernel);
     Ok(())
 }

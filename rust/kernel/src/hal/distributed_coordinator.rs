@@ -41,10 +41,10 @@ use contracts::lock_state::Locks;
 /// the raft / gRPC status messages verbatim from the underlying impl.
 pub type CoordinatorResult<T> = Result<T, String>;
 
-/// Opaque handle stashed by the coordinator install hook for the
-/// transport-tier blob-fetch wiring to drain. Kernel stores and
-/// returns the handle so `transport::blob::fetcher::install` can
-/// downcast to the concrete type at cdylib boot.
+/// Opaque handle stashed by the coordinator install hook so the
+/// raft-tier blob-fetcher handler can drain it. Kernel stores and
+/// returns the handle so `nexus_raft::blob_fetcher_handler::install`
+/// downcasts to the concrete type at cdylib boot.
 pub type BlobFetcherSlot = Box<dyn std::any::Any + Send + Sync>;
 
 /// Bundled cluster status for one zone — typed return from

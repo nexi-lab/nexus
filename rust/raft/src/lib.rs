@@ -111,12 +111,18 @@ pub mod pyo3_bindings;
 //                                Control-Plane HAL §3.B.1 trait
 //   zone_meta_store.rs         — Raft-backed `kernel::abc::MetaStore` impl
 //   replication_scanner.rs     — EC replication background scanner
+//   blob_fetcher_handler.rs    — `KernelBlobFetcher` server-side handler
+//                                co-located with `ZoneApiService` on the
+//                                raft port; reaches kernel data plane
+//                                through `VFSRouter` + `DCache`
 //
 // Distributed state (`ZoneManager`, `ZoneRaftRegistry`, tokio runtime,
 // cross-zone mounts reverse index) lives on the coordinator. WAL stream
 // / pipe backends live in `kernel::core::stream::wal` / `kernel::core::pipe::wal`
 // — kernel primitives that compose whatever distributed `MetaStore` impl
 // the coordinator DI's (typically `ZoneMetaStore` below).
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod blob_fetcher_handler;
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod distributed_coordinator;
 #[cfg(all(feature = "grpc", has_protos))]

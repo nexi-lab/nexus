@@ -2258,10 +2258,10 @@ impl Kernel {
         Some(self.distributed_coordinator().list_zones(self))
     }
 
-    /// Stash the transport-tier blob-fetcher slot.  Drained by
-    /// `transport::blob::fetcher::install` at cdylib boot.  Phase 5
-    /// types this as `Box<dyn Any>` so kernel does not name the
-    /// raft-side `BlobFetcherSlot` concrete type.
+    /// Stash the raft-tier blob-fetcher slot. Drained by
+    /// `nexus_raft::blob_fetcher_handler::install` at cdylib boot.
+    /// Typed as `Box<dyn Any>` so kernel does not name the raft-side
+    /// `BlobFetcherSlot` concrete type.
     pub fn stash_blob_fetcher_slot(&self, slot: Box<dyn std::any::Any + Send + Sync>) {
         *self.pending_blob_fetcher_slot.lock() = Some(slot);
     }

@@ -43,14 +43,17 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
 }
 
 /// Python-facing one-shot install: replaces kernel's `NoopPeerBlobClient`
-/// with the real `transport::blob::peer_client::PeerBlobClient`, and
-/// drains the pending `BlobFetcherSlot` if `init_federation_from_env`
-/// stashed one.  Idempotent — safe to call from `nexus.__init__`'s
-/// boot path even after Python re-imports the module.
+/// with the real `transport::blob::peer_client::PeerBlobClient`.
+/// Idempotent — safe to call from `nexus.__init__`'s boot path even
+/// after Python re-imports the module.
+///
+/// The server-side blob-fetcher handler (KernelBlobFetcher) is installed
+/// separately by the raft crate's own boot hook
+/// (`nexus_raft::blob_fetcher_handler::install`), reached from the
+/// cdylib's `#[pymodule]` body — the transport crate stays raft-free.
 #[pyfunction]
 #[pyo3(name = "install_transport_wiring")]
 fn install_transport_wiring(kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
     crate::blob::peer_client::install(kernel.kernel_ref());
-    crate::blob::fetcher::install(kernel.kernel_ref());
     Ok(())
 }

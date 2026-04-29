@@ -315,7 +315,14 @@ fn register_stdio_pipe(
     write_fd: i32,
 ) -> Result<(), String> {
     kernel
-        .setattr_pipe(path, PIPE_CAPACITY, "stdio", Some(read_fd), Some(write_fd))
+        .setattr_pipe(
+            path,
+            PIPE_CAPACITY,
+            "stdio",
+            Some(read_fd),
+            Some(write_fd),
+            "root",
+        )
         .map(|_| ())
         .map_err(|e: KernelError| format!("{e:?}"))
 }
@@ -325,7 +332,7 @@ fn unlink_quiet(kernel: &Kernel, path: &str) -> Result<(), KernelError> {
         /* user_id */ "system", /* zone_id */ "root", /* is_admin */ true,
         /* agent_id */ None, /* is_system */ true,
     );
-    kernel.sys_unlink(path, &ctx).map(|_| ())
+    kernel.sys_unlink(path, &ctx, false).map(|_| ())
 }
 
 // Drop semantics: tokio's ChildStdin / ChildStdout / ChildStderr

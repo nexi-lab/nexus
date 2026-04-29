@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,8 @@ class ApprovalRequestModel(Base):
     token_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     session_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Python attr suffix avoids DeclarativeBase.metadata collision;
+    # DB column name stays "metadata".
     metadata_: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict
     )
@@ -36,6 +38,16 @@ class ApprovalRequestModel(Base):
     __table_args__ = (
         Index("ix_approval_requests_status_expires", "status", "expires_at"),
         Index("ix_approval_requests_zone_status", "zone_id", "status"),
+        # Load-bearing for request coalescing — only one pending row per
+        # (zone_id, kind, subject). See alembic migration add_approval_decision_queue.
+        Index(
+            "approval_requests_pending_coalesce",
+            "zone_id",
+            "kind",
+            "subject",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
     )
 
 

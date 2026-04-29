@@ -51,3 +51,18 @@ def test_decision_columns_complete():
 def test_session_allow_unique():
     constraints = {c.name for c in ApprovalSessionAllowModel.__table__.constraints}
     assert "uq_approval_session_allow" in constraints
+
+
+def test_indexes_complete():
+    req_idx = {i.name for i in ApprovalRequestModel.__table__.indexes}
+    assert {
+        "ix_approval_requests_status_expires",
+        "ix_approval_requests_zone_status",
+        "approval_requests_pending_coalesce",
+    } <= req_idx
+
+    dec_idx = {i.name for i in ApprovalDecisionModel.__table__.indexes}
+    assert "ix_approval_decisions_request" in dec_idx
+
+    sess_idx = {i.name for i in ApprovalSessionAllowModel.__table__.indexes}
+    assert "ix_approval_session_allow_session" in sess_idx

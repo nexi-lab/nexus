@@ -14,14 +14,13 @@ pub use contracts::ROOT_ZONE_ID;
 // ── §3 / §4 / HAL surface ────────────────────────────────────────────
 // Three-way split inside the kernel crate (see
 // `docs/architecture/KERNEL-ARCHITECTURE.md` §3 / §4 / §6.1):
-//   * `crate::abc`  — §3 ABC pillars (ObjectStore / MetaStore /
-//                     CacheStore). Trait declarations only.
-//   * `crate::hal`  — kernel-defined extension interfaces alongside
-//                     the §3 pillars (LlmStreamingBackend,
-//                     PeerBlobClient, BackendFactory).
+//   * `crate::abc`  — §3.A Storage HAL pillars (ObjectStore / MetaStore
+//                     / CacheStore). Trait declarations only.
+//   * `crate::hal`  — §3.B Control-Plane HAL DI surfaces
+//                     (DistributedCoordinator, ObjectStoreProvider).
 //   * `crate::core` — §4 kernel primitives (vfs_router, dlc, dcache,
 //                     locks, dispatch, in-memory reference impls of
-//                     the §3 pillars).
+//                     the §3.A pillars).
 pub mod abc;
 pub mod core;
 pub mod hal;
@@ -105,8 +104,8 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
-// proxies all syscalls over gRPC to a remote `nexusd`).  `pub` so
-// the `BackendFactory` impl in `backends/` can construct
+// proxies all syscalls over gRPC to a remote `nexusd`). `pub` so the
+// `ObjectStoreProvider` impl in `backends/` can construct
 // `RpcTransport` for the `"remote"` backend type.
 pub mod rpc_transport;
 

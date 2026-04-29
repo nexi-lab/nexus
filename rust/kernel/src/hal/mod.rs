@@ -1,47 +1,50 @@
-//! Kernel HAL — kernel-defined extension interfaces.
+//! Kernel HAL — Control-Plane HAL §3.B (runtime DI surfaces).
 //!
-//! Linux analogue: `security_operations` (LSM hooks) and similar
-//! extension surfaces. These traits are NOT §3 ABC pillars (those live
-//! in `crate::abc::*`); they're additional contracts the kernel
-//! exposes for parallel-crate impls to plug into.
+//! Companion to `crate::abc::*` (Storage HAL §3.A — the 3 ABC pillars).
+//! Where `abc/` declares persistent-data driver contracts, `hal/`
+//! declares runtime DI surfaces: capabilities the kernel needs but
+//! does not own. Same DI shape across both members:
 //!
-//! Current members:
+//! * Trait declared here in the kernel crate.
+//! * Concrete impl in the owner crate (raft, backends).
+//! * `OnceLock` / `RwLock<Arc<dyn Trait>>` slot the cdylib boot wires
+//!   before any syscall fires.
 //!
-//! * [`backend_factory`] — Phase 2 cycle break.  `BackendFactory`
-//!   trait + `BackendArgs` struct + `OnceLock` slot.  Concrete impl
-//!   lives in `backends::python::factory`; cdylib boot installs it
-//!   before any `sys_setattr` call fires.  Required because the 17
-//!   connector backends (anthropic / openai / s3 / gcs / …) live in
-//!   the `backends` crate after Phase 2; kernel can't `use
-//!   backends::*`.
+//! Members:
+//!
+//! * [`distributed_coordinator`] — `DistributedCoordinator` trait
+//!   (§3.B.1). Per-node distributed-namespace topology: zones, mounts,
+//!   share registry, leader/voter introspection, per-zone metastore +
+//!   locks. Concrete impl in `nexus_raft::distributed_coordinator`.
+//! * [`object_store_provider`] — `ObjectStoreProvider` trait (§3.B.2).
+//!   Constructs `Arc<dyn ObjectStore>` for backend types
+//!   (anthropic / openai / s3 / gcs / …) without the kernel naming
+//!   `backends::*`. Concrete impl in `backends::python::factory`.
 //! * [`llm_streaming`] — extension over `ObjectStore` for connector
-//!   backends that want a chunked LLM response stream materialised
-//!   into the CAS pillar (the AI connector path).
-//! * [`peer`] — abstract peer-blob fetch trait. Kernel code holds an
-//!   `Arc<dyn PeerBlobClient>` so the concrete `transport::blob::
-//!   peer_client::PeerBlobClient` impl can move into the `transport`
-//!   crate (Phase 4) without dragging the kernel ↔ transport edge
-//!   across the workspace twice.
+//!   backends that materialise a chunked LLM response stream into
+//!   the CAS pillar.
+//! * [`peer`] — abstract peer-blob fetch trait.
 //!
 //! ## What's intentionally **not** here
 //!
 //! The CAS primitives — `cas_engine`, `cas_chunking`, `cas_remote`
 //! (incl. `RemoteChunkFetcher` + `GrpcChunkFetcher`), `cas_transport`
-//! (`LocalCASTransport`) — stay in the kernel crate.  Linux precedent:
+//! (`LocalCASTransport`) — stay in the kernel crate. Linux precedent:
 //! the kernel-VFS-equivalent storage primitive (CAS engine for our
 //! content-addressed pillar) belongs in the kernel; backends consume
 //! it through `Arc<CASEngine>` to compose `ObjectStore` impls
-//! (`CasLocalBackend` etc.).  Moving the CAS primitives out would
+//! (`CasLocalBackend` etc.). Moving the CAS primitives out would
 //! require either a runtime-dispatched `CasOps` trait (perf hit on
 //! the hot CAS read path) or an ABI-breaking move of the entire
 //! `PyKernel::cas_*` family — neither pays its way given the CAS
 //! engine is conceptually a kernel primitive.
 //!
-//! Phase 1 introduced this directory alongside `abc/`. The two are
-//! intentionally separate: `abc/` is the §3 invariant set (3 pillars,
-//! period), `hal/` is the open-ended extension namespace.
+//! Directory layout enforces the §3.A / §3.B split: `abc/` holds the
+//! 3 §3.A pillar trait files, `hal/` holds the §3.B Control-Plane HAL
+//! traits. Kernel primitives (§4) live in `kernel/src/core/` as
+//! concrete types.
 
-pub mod backend_factory;
 pub mod distributed_coordinator;
 pub mod llm_streaming;
+pub mod object_store_provider;
 pub mod peer;

@@ -675,11 +675,10 @@ pub struct Kernel {
     // Installed on every `CASEngine` via `VFSRouter` on mount
     // registration.
     //
-    // Phase 2: type widened from concrete `Arc<GrpcChunkFetcher>` to
-    // `Arc<dyn RemoteChunkFetcher>` so `BackendFactory` impls in the
-    // backends crate can `Arc::clone(&self.inner.chunk_fetcher)` and
-    // pass it through to `CasLocalBackend::new_with_fetcher` without
-    // an explicit cast.
+    // Type is `Arc<dyn RemoteChunkFetcher>` so `ObjectStoreProvider`
+    // impls in the backends crate `Arc::clone(&self.inner.chunk_fetcher)`
+    // and pass it through to `CasLocalBackend::new_with_fetcher`
+    // without an explicit cast.
     #[allow(dead_code)]
     pub(crate) chunk_fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher>,
     /// Pending remote metastore — set by ``sys_setattr(backend_type="remote")``

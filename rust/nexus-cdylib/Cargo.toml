@@ -30,11 +30,11 @@ raft = { workspace = true }
 # entry points (currently `install_audit_hook`) compose into the
 # single `nexus_runtime.so` cdylib.
 services = { workspace = true, features = ["python"] }
-# Phase 2: backends with the `python` feature enabled so the
-# `BlobPackEngine` pyclass + `DefaultBackendFactory` registration
-# compose into the single `nexus_runtime.so` cdylib.  This is the
-# crate that owns the 17-way `BackendFactory::build` switch the
-# kernel calls through `kernel::hal::backend_factory::get_factory()`.
+# Backends with the `python` feature enabled so the `BlobPackEngine`
+# pyclass + `DefaultObjectStoreProvider` registration compose into
+# the single `nexus_runtime.so` cdylib. Backends owns the 17-way
+# `ObjectStoreProvider::build` switch the kernel calls through
+# `kernel::hal::object_store_provider::get_provider()`.
 backends = { workspace = true, features = ["python"] }
 # Phase 4 (full): transport with `python` feature enabled — registers
 # `PyVfsGrpcServerHandle`, `start_vfs_grpc_server`, `PyFederationClient`

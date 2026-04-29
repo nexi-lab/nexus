@@ -1,7 +1,7 @@
 //! Storage tier — composed `ObjectStore` impls.
 //!
 //! Each module here is a complete `ObjectStore` implementation that
-//! plugs into the kernel via the `BackendFactory`.  The split is
+//! plugs into the kernel via the `ObjectStoreProvider`.  The split is
 //! by addressing strategy + transport flavour:
 //!
 //! * `cas_local`        — CAS addressing + local fs transport

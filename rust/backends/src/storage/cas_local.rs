@@ -5,7 +5,7 @@
 //! ([`kernel::cas_engine::CASEngine`]) with
 //! [`kernel::cas_transport::LocalCASTransport`] for the on-disk
 //! blob layout, exposing the result as an `ObjectStore` impl that
-//! mounts plug into via the `BackendFactory`.
+//! mounts plug into via the `ObjectStoreProvider`.
 
 use std::io;
 use std::path::Path;

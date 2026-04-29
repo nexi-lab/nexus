@@ -40,12 +40,12 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     // `kernel` so PyKernel is in the module's type registry by the
     // time `install_audit_hook` accepts a `PyRef<PyKernel>` parameter.
     services::python::register(m)?;
-    // Phase 2: backends-tier PyO3 entry points (BlobPackEngine pyclass)
-    // **and** the `BackendFactory` registration — `backends::python::
-    // register` calls `kernel::hal::backend_factory::set_factory(
-    // Arc::new(DefaultBackendFactory))` so `PyKernel.sys_setattr` can
-    // construct concrete backends without the kernel ever knowing the
-    // concrete types live in the backends crate.
+    // Backends-tier PyO3 entry points (BlobPackEngine pyclass) **and**
+    // the `ObjectStoreProvider` registration — `backends::python::
+    // register` calls `kernel::hal::object_store_provider::set_provider(
+    // Arc::new(DefaultObjectStoreProvider))` so `PyKernel.sys_setattr`
+    // constructs concrete backends through the §3.B.2 trait without
+    // the kernel reaching into the backends crate.
     backends::python::register(m)?;
     // Phase 4 (full): transport-tier PyO3 surface (gRPC server +
     // federation client) AND the install function that wires the

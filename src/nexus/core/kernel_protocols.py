@@ -143,11 +143,6 @@ class ObjectStore(Protocol):
 
 
 @runtime_checkable
-class BackendFactory(Protocol):
-    def build(self, args: Any) -> Any: ...
-
-
-@runtime_checkable
 class DistributedCoordinator(Protocol):
     def list_zones(self, kernel: Any) -> list[str]: ...
     def cluster_info(self, kernel: Any, zone_id: str) -> Any: ...
@@ -167,6 +162,11 @@ class DistributedCoordinator(Protocol):
 @runtime_checkable
 class LlmStreamingBackend(Protocol):
     def run_streaming(self, request_bytes: bytes, stream_path: str, stream_manager: Any) -> Any: ...
+
+
+@runtime_checkable
+class ObjectStoreProvider(Protocol):
+    def build(self, args: Any) -> Any: ...
 
 
 @runtime_checkable

@@ -10,11 +10,11 @@
 //! 1. **`#[pyclass]` registration** — currently `BlobPackEngine`
 //!    (was `VolumeEngine` Rust-side, anchored in Python under
 //!    `name = "VolumeEngine"`).
-//! 2. **`BackendFactory` registration** — installs
-//!    [`factory::DefaultBackendFactory`] into the kernel's
-//!    `OnceLock<Arc<dyn BackendFactory>>` so `PyKernel::sys_setattr`
-//!    can construct concrete backends on mount creation without
-//!    kernel ever importing `backends`.
+//! 2. **`ObjectStoreProvider` registration** — installs
+//!    [`factory::DefaultObjectStoreProvider`] into the kernel's
+//!    `OnceLock<Arc<dyn ObjectStoreProvider>>` so `PyKernel::sys_setattr`
+//!    constructs concrete backends through the §3.B.2 trait without
+//!    kernel reaching into `backends`.
 
 pub mod factory;
 
@@ -22,7 +22,7 @@ use pyo3::prelude::*;
 use std::sync::Arc;
 
 /// Register every backends-tier PyO3 export into the parent module
-/// **and** install the global `BackendFactory` for `sys_setattr`.
+/// **and** install the global `ObjectStoreProvider` for `sys_setattr`.
 /// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_runtime` after
 /// `kernel::python::register`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
@@ -47,11 +47,13 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
         )?)?;
     }
 
-    // ── BackendFactory boot wiring ──────────────────────────────────
-    // `set_factory` returns Err(existing) when a factory is already
+    // ── ObjectStoreProvider boot wiring ─────────────────────────────
+    // `set_provider` returns Err(existing) when a provider is already
     // registered — Python may re-import the module within the same
     // process during reloads, so swallow the duplicate-set error.
-    let _ = kernel::hal::backend_factory::set_factory(Arc::new(factory::DefaultBackendFactory));
+    let _ = kernel::hal::object_store_provider::set_provider(Arc::new(
+        factory::DefaultObjectStoreProvider,
+    ));
 
     Ok(())
 }

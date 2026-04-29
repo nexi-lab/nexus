@@ -15,6 +15,7 @@ from nexus.bricks.approvals.models import (
     DecisionScope,
     DecisionSource,
 )
+from nexus.bricks.approvals.policy_gate import PolicyGate
 
 __all__ = [
     "ApprovalConfig",
@@ -28,4 +29,5 @@ __all__ = [
     "Decision",
     "DecisionScope",
     "DecisionSource",
+    "PolicyGate",
 ]

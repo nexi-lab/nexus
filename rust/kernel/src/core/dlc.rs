@@ -52,7 +52,7 @@ impl DriverLifecycleCoordinator {
     /// - `backend` — optional Rust backend (None = Python-side backend)
     /// - `metastore` — optional per-mount metastore (ZoneMetaStore or LocalMetaStore)
     /// - `raft_backend` — opaque raft handle for federation DI; downcast by
-    ///   the `RaftFederationProvider` impl when wiring distributed locks.
+    ///   the `RaftDistributedCoordinator` impl when wiring distributed locks.
     #[allow(clippy::too_many_arguments)]
     pub fn mount(
         &self,

@@ -34,12 +34,12 @@ required-features = ["grpc"]
 # ``nexus.contracts.constants``. Pulled in so raft shares one source
 # of truth with the kernel crate instead of hardcoding ``"root"``.
 contracts = { workspace = true }
-# Phase H (Phase 5 federation DI): raft → kernel direction inversion.
-# Lets raft state-machine impls (zone_meta_store, replication_scanner,
-# wal_stream_backend) and the `RaftFederationProvider` trait impl
-# depend on kernel-defined traits (`kernel::abc::MetaStore`,
-# `kernel::hal::federation::FederationProvider`, etc.) without closing
-# a Cargo cycle.
+# raft → kernel direction. Lets raft state-machine impls
+# (zone_meta_store, replication_scanner, wal_stream_backend) and the
+# `RaftDistributedCoordinator` trait impl depend on kernel-defined
+# traits (`kernel::abc::MetaStore`,
+# `kernel::hal::distributed_coordinator::DistributedCoordinator`,
+# etc.) without closing a Cargo cycle.
 kernel = { workspace = true }
 # Embedded KV storage — redb 2.x (stable since 1.0, June 2023).
 # Issue #1330: Replaced sled 0.34 with redb for reliability + maintenance.

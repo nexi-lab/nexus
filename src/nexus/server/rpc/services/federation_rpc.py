@@ -7,13 +7,13 @@ crosses kernel layering.  Federation reads go through the
 
   * ``kernel.sys_setattr(path, DT_MOUNT, target_zone_id=…)`` for
     mount-tied lifecycle (auto-creates the zone via the kernel's
-    `FederationProvider` HAL trait).
+    `DistributedCoordinator` HAL trait).
   * ``kernel.sys_unlink(<mount_path>)`` for unmount.
   * ``nexus_runtime.federation_create_zone / remove_zone / join_zone``
     module-level functions for standalone zone-control operations
     that do not involve a mount path — analogous to Linux userspace
     utilities like ``mkfs`` / ``zfs``: control-plane bridges that
-    reach kernel internals via the FederationProvider trait without
+    reach kernel internals via the DistributedCoordinator trait without
     being kernel methods themselves.
 
 Registered in ``fastapi_server.create_app`` when federation is active.
@@ -191,7 +191,7 @@ class FederationRPCService(FederationRPCMixin):
     def federation_create_zone(self, zone_id: str) -> dict[str, Any]:
         # Standalone create (no mount): use the federation control-plane
         # helper.  Mount-tied creation flows through sys_setattr DT_MOUNT
-        # which auto-creates via the same FederationProvider trait.
+        # which auto-creates via the same DistributedCoordinator trait.
         import nexus_runtime as _nr
 
         created = _nr.federation_create_zone(self._kernel, zone_id)
@@ -199,7 +199,7 @@ class FederationRPCService(FederationRPCMixin):
 
     @rpc_expose(admin_only=True)
     def federation_remove_zone(self, zone_id: str, force: bool = False) -> dict[str, Any]:
-        # Cascade-unmount happens inside the FederationProvider impl.
+        # Cascade-unmount happens inside the DistributedCoordinator impl.
         # `force=true` honors the POSIX-style `unlink while i_links > 0`
         # bypass for replication races on followers.
         import nexus_runtime as _nr
@@ -276,14 +276,14 @@ class FederationRPCService(FederationRPCMixin):
     ) -> dict[str, Any]:
         """Mount ``target_zone`` at ``path`` (global VFS) inside
         ``parent_zone`` via ``sys_setattr(DT_MOUNT)`` — the standard
-        mount syscall.  The kernel's `FederationProvider` HAL trait
+        mount syscall.  The kernel's `DistributedCoordinator` HAL trait
         auto-creates the target zone if it does not yet exist on this
         node and registers the apply-cb so peers see the mount via
         raft.
         """
         # DT_MOUNT entry_type=2 (see rust/kernel/src/core/dcache.rs).
         # Backend params unused for federation mounts — the kernel
-        # resolves the metastore via FederationProvider::metastore_for_zone.
+        # resolves the metastore via DistributedCoordinator::metastore_for_zone.
         self._kernel.sys_setattr(
             path,
             entry_type=2,
@@ -379,7 +379,7 @@ class FederationRPCService(FederationRPCMixin):
         new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
         # Federation control-plane helpers — analogous to Linux
         # userspace utilities (mkfs, zfs); call kernel internals
-        # (FederationProvider trait) without bypassing layering.
+        # (DistributedCoordinator trait) without bypassing layering.
         _nr.federation_create_zone(self._kernel, new_zone_id)
         copied = _nr.federation_zone_share(self._kernel, parent_zone_id, prefix, new_zone_id)
         _nr.federation_register_share(self._kernel, local_path, new_zone_id)

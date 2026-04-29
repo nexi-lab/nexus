@@ -71,13 +71,12 @@ impl Kernel {
                 }
             }
         }
-        // Phase H of the rust-workspace restructure: the federation
-        // distributed-lock install moved to the trait surface
-        // (`FederationProvider::locks_for_zone`).  RaftFederationProvider
-        // — installed by the cdylib boot path — wires the
-        // `DistributedLocks` backend the first time a federated mount
-        // lands.  Kernel sees only `Box<dyn Any>` here so the raft
-        // edge stays inverted.
+        // Federation distributed-lock install lives on the trait
+        // surface (`DistributedCoordinator::locks_for_zone` — §3.B.1).
+        // `RaftDistributedCoordinator`, installed by the cdylib boot
+        // path, wires the `DistributedLocks` backend the first time
+        // a federated mount lands. Kernel sees only `Box<dyn Any>`
+        // here so the raft edge stays inverted.
         let _ = raft_backend;
         Ok(())
     }

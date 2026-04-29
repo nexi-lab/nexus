@@ -96,13 +96,12 @@ pub mod kernel;
 pub mod generated_kernel_abi_pyo3;
 pub use generated_kernel_abi_pyo3 as generated_pyo3;
 
-// Phase H of the rust-workspace restructure inverted the kernel↔raft
-// Cargo edge.  Raft state-machine impls (zone_meta_store,
-// replication_scanner, wal_stream_backend) and the
-// `RaftFederationProvider` trait impl live in the raft crate now.
+// kernel↔raft Cargo edge direction: `raft → kernel`. Raft state-machine
+// impls (zone_meta_store, replication_scanner) and the
+// `RaftDistributedCoordinator` trait impl live in the raft crate.
 // Kernel reaches them through the
-// `kernel::hal::federation::FederationProvider` trait dispatch
-// installed by the cdylib boot path.
+// `kernel::hal::distributed_coordinator::DistributedCoordinator`
+// trait dispatch installed by the cdylib boot path.
 
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that

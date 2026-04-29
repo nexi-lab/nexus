@@ -42,6 +42,6 @@
 //! period), `hal/` is the open-ended extension namespace.
 
 pub mod backend_factory;
-pub mod federation;
+pub mod distributed_coordinator;
 pub mod llm_streaming;
 pub mod peer;

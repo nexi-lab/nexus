@@ -660,15 +660,16 @@ pub struct Kernel {
     // Default at boot is `NoopPeerBlobClient`; nexus-cdylib boot
     // installs the real transport impl via `Kernel::set_peer_client`.
     pub(crate) peer_client: parking_lot::RwLock<Arc<dyn crate::hal::peer::PeerBlobClient>>,
-    // Federation HAL slot (Phase 5).  `Arc<dyn FederationProvider>` so
-    // the kernel's federation surface (init from env, zone listing,
-    // distributed-lock / WAL-stream / Raft-MetaStore construction, mount
-    // wiring, replication scanner) is reachable through a trait boundary
-    // rather than direct `nexus_raft::*` types.  Default at boot is
-    // `NoopFederationProvider`; nexus-cdylib boot installs the real
-    // raft-side impl via `Kernel::set_federation`.  Mirrors the Phase-4
-    // PeerBlobClient DI pattern.
-    pub(crate) federation: parking_lot::RwLock<Arc<dyn crate::hal::federation::FederationProvider>>,
+    // Control-Plane HAL §3.B.1 slot. `Arc<dyn DistributedCoordinator>` so
+    // the kernel's distributed-namespace surface (zone listing, distributed-
+    // lock / WAL-stream / Raft-MetaStore construction, mount wiring,
+    // share registry, cluster introspection) is reachable through a trait
+    // boundary rather than direct `nexus_raft::*` types. Default at boot
+    // is `NoopDistributedCoordinator`; nexus-cdylib boot installs the real
+    // raft-side impl via `Kernel::set_distributed_coordinator`. Mirrors
+    // the Phase-4 PeerBlobClient DI pattern.
+    pub(crate) distributed_coordinator:
+        parking_lot::RwLock<Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator>>,
     // Scatter-gather fetcher: drives bounded fan-out against
     // `backend_name.origins` whenever a local chunk miss occurs.
     // Installed on every `CASEngine` via `VFSRouter` on mount
@@ -695,11 +696,11 @@ pub struct Kernel {
     /// fetcher::install` downcasts to the concrete type at drain time.
     pub(crate) pending_blob_fetcher_slot:
         parking_lot::Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>,
-    // Phase H of the rust-workspace restructure: federation state
-    // (zone_manager / zone_registry / zone_runtime / cross_zone_mounts /
-    // mount_reconciliation_done) moved to `RaftFederationProvider` in
-    // the raft crate.  Kernel reaches it through the
-    // `kernel::hal::federation::FederationProvider` trait.
+    // Distributed state (zone_manager / zone_registry / zone_runtime /
+    // cross_zone_mounts / mount_reconciliation_done) lives on
+    // `RaftDistributedCoordinator` in the raft crate. Kernel reaches it
+    // through the `kernel::hal::distributed_coordinator::DistributedCoordinator`
+    // trait.
 }
 
 impl Kernel {
@@ -774,22 +775,21 @@ impl Kernel {
             self_address: parking_lot::RwLock::new(None),
             runtime,
             peer_client: parking_lot::RwLock::new(peer_client_dyn),
-            federation: parking_lot::RwLock::new(
-                crate::hal::federation::NoopFederationProvider::arc(),
+            distributed_coordinator: parking_lot::RwLock::new(
+                crate::hal::distributed_coordinator::NoopDistributedCoordinator::arc(),
             ),
             chunk_fetcher,
             pending_remote_meta_store: parking_lot::Mutex::new(None),
             pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
         };
-        // R20.18.5 activation: federation bootstrap is now driven by
-        // `install_federation_wiring` (see `kernel::raft_federation_provider`).
-        // The cdylib boot path constructs `Kernel`, then calls
-        // `install_federation_wiring(kernel)` which installs the
-        // `RaftFederationProvider` and dispatches `init_from_env`
-        // through the trait.  Kernel construction stays raft-free at
-        // this seam so non-cdylib callers (Rust tests, embedded) don't
-        // pay the federation init cost unless they explicitly install
-        // the provider.
+        // Distributed-coordinator bootstrap is driven by
+        // `nexus_raft::distributed_coordinator::install`. The cdylib boot
+        // path constructs `Kernel`, then calls `install(kernel)` which
+        // wires the `RaftDistributedCoordinator` and dispatches
+        // `init_from_env` through the trait. Kernel construction stays
+        // raft-free at this seam so non-cdylib callers (Rust tests,
+        // embedded) skip federation init unless they explicitly install
+        // the coordinator.
         // ManagedAgentService is installed by the cdylib boot path
         // (services lives in a peer crate; kernel does NOT depend on
         // services). Python-side: `nexus_runtime.nx_managed_agent_install
@@ -1480,10 +1480,9 @@ impl Kernel {
     }
 
     // ── Router proxy methods ───────────────────────────────────────────
-    // (Mount-table primitives moved to `kernel::mount` submodule —
-    // Phase G of Phase 3 restructure.  Federation-mount apply
-    // wiring moved to `nexus_raft::federation_provider` —
-    // Phase H of the same plan.)
+    // Mount-table primitives live in the `kernel::mount` submodule.
+    // Federation-mount apply wiring lives on
+    // `nexus_raft::distributed_coordinator::RaftDistributedCoordinator`.
 
     /// Install the apply-side dcache invalidation callback for a
     /// federation mount (R20.6 option B — coherence-key fanout).
@@ -1547,7 +1546,7 @@ impl Kernel {
                 //
                 // Phase H zone-create-on-mount: when the caller did not
                 // supply a `metastore` AND federation is active, ask the
-                // FederationProvider to materialise (auto-create) the
+                // DistributedCoordinator to materialise (auto-create) the
                 // target zone's raft group and hand back an
                 // `Arc<dyn MetaStore>` backed by the per-zone state
                 // machine.  Service-tier callers therefore reach
@@ -1560,7 +1559,7 @@ impl Kernel {
                 // below).  Install is keyed on the state machine's
                 // ``coherence_id``, not on the per-mount MetaStore Arc,
                 // so crosslinks of the same zone share one callback.
-                let provider = self.federation_arc();
+                let provider = self.distributed_coordinator();
                 let metastore = match metastore {
                     Some(m) => Some(m),
                     None if provider.is_initialized(self) && !zone_id.is_empty() => {
@@ -1797,13 +1796,13 @@ impl Kernel {
             }
         } else if io_profile == "wal" {
             // Raft-replicated DT_PIPE — composes whatever distributed
-            // `MetaStore` impl federation has DI'd
-            // (`FederationProvider::metastore_for_zone`).  Single-
+            // `MetaStore` impl the coordinator has DI'd
+            // (`DistributedCoordinator::metastore_for_zone`). Single-
             // consumer semantics (each replica owns its head cursor);
             // see `core/pipe/wal.rs` for the contract.  Resolves the
             // metastore from the path's mount entry so per-zone WAL
             // pipes pick up their own zone's raft group.
-            let provider = self.federation_arc();
+            let provider = self.distributed_coordinator();
             let resolve_zone = if zone_id.is_empty() { "root" } else { zone_id };
             let store = provider
                 .metastore_for_zone(self, resolve_zone)
@@ -1886,12 +1885,12 @@ impl Kernel {
         } else if io_profile == "wal" {
             // Raft-replicated durable DT_STREAM.  WalStreamCore is a
             // kernel primitive (`core/stream/wal.rs`); it composes
-            // whatever distributed `MetaStore` impl federation has
-            // DI'd via `metastore_for_zone`.  No per-primitive DI
-            // method on FederationProvider — federation just installs
+            // whatever distributed `MetaStore` impl the coordinator has
+            // DI'd via `metastore_for_zone`. The coordinator installs
             // the storage capability and the kernel constructs the
-            // backend itself, layering preserved.
-            let provider = self.federation_arc();
+            // backend itself — layering preserved without a
+            // per-primitive DI method on the trait.
+            let provider = self.distributed_coordinator();
             let store = provider.metastore_for_zone(self, "root").map_err(|e| {
                 KernelError::IOError(format!(
                     "io_profile=wal requires federation (set NEXUS_PEERS): {e}"
@@ -2167,22 +2166,28 @@ impl Kernel {
         Arc::clone(&self.peer_client.read())
     }
 
-    /// Replace the kernel's `federation` slot with a concrete
-    /// `FederationProvider` impl.  Phase 5 DI: kernel boots with
-    /// `NoopFederationProvider`; the cdylib boot path calls this with
-    /// the real `nexus_raft::federation_provider` impl once per
-    /// kernel.  Mirrors `set_peer_client`.
-    pub fn set_federation(&self, fed: Arc<dyn crate::hal::federation::FederationProvider>) {
-        *self.federation.write() = fed;
+    /// Replace the kernel's coordinator slot with a concrete
+    /// `DistributedCoordinator` impl. Kernel boots with
+    /// `NoopDistributedCoordinator`; the cdylib boot path calls this
+    /// with the real `nexus_raft::distributed_coordinator` impl once
+    /// per kernel. Mirrors `set_peer_client`.
+    pub fn set_distributed_coordinator(
+        &self,
+        coordinator: Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator>,
+    ) {
+        *self.distributed_coordinator.write() = coordinator;
     }
 
-    /// Borrow the current federation provider — read-locked snapshot.
+    /// Borrow the current distributed coordinator — read-locked snapshot.
     /// Internal callers use this to issue federation calls without
-    /// holding the lock across `.await`.  After `set_federation` runs
-    /// (cdylib boot), this returns the real raft-backed impl; before
-    /// then, a `NoopFederationProvider` that errors on every call.
-    pub fn federation_arc(&self) -> Arc<dyn crate::hal::federation::FederationProvider> {
-        Arc::clone(&self.federation.read())
+    /// holding the lock across `.await`. After `set_distributed_coordinator`
+    /// runs (cdylib boot), this returns the real raft-backed impl;
+    /// before then, a `NoopDistributedCoordinator` that errors on every
+    /// call.
+    pub fn distributed_coordinator(
+        &self,
+    ) -> Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator> {
+        Arc::clone(&self.distributed_coordinator.read())
     }
 
     /// Federation procfs: synthesise a `StatResult` for paths under the
@@ -2193,7 +2198,7 @@ impl Kernel {
     /// otherwise so the caller falls through to normal routing.
     pub(crate) fn zones_procfs_stat(&self, path: &str) -> Option<StatResult> {
         let suffix = path.strip_prefix("/__sys__/zones")?;
-        let provider = self.federation_arc();
+        let provider = self.distributed_coordinator();
         // Directory marker.
         if suffix.is_empty() || suffix == "/" {
             return Some(StatResult {
@@ -2247,7 +2252,7 @@ impl Kernel {
         if !suffix.is_empty() && suffix != "/" {
             return None;
         }
-        Some(self.federation_arc().list_zones(self))
+        Some(self.distributed_coordinator().list_zones(self))
     }
 
     /// Stash the transport-tier blob-fetcher slot.  Drained by
@@ -2315,12 +2320,12 @@ impl Kernel {
         stream_path: &str,
     ) -> Result<Arc<crate::core::stream::wal::WalStreamCore>, KernelError> {
         // WAL streams are kernel primitives composing whatever
-        // distributed `MetaStore` federation has DI'd via
-        // `FederationProvider::metastore_for_zone`.  Federation only
+        // distributed `MetaStore` the coordinator has DI'd via
+        // `DistributedCoordinator::metastore_for_zone`. The coordinator
         // installs the storage capability; the kernel constructs the
-        // backend itself, no per-primitive DI methods.
+        // backend itself, with no per-primitive DI methods.
         let store = self
-            .federation_arc()
+            .distributed_coordinator()
             .metastore_for_zone(self, zone_id)
             .map_err(KernelError::IOError)?;
         let core = Arc::new(crate::core::stream::wal::WalStreamCore::new(

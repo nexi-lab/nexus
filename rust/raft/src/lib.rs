@@ -105,18 +105,20 @@ pub mod transport;
 #[cfg(feature = "python")]
 pub mod pyo3_bindings;
 
-// Phase H of the rust-workspace restructure (Phase 5 federation DI):
-// state-machine impls + the `FederationProvider` trait impl that
-// previously lived in the kernel crate moved here when the kernel ↔
-// raft Cargo edge was inverted.
+// Driver-layer impls of kernel HAL surfaces:
 //
-//   federation_provider.rs    — `RaftFederationProvider` impl FederationProvider
-//   zone_meta_store.rs        — Raft-backed `kernel::abc::MetaStore` impl
-//   replication_scanner.rs    — EC replication background scanner
-//   wal_stream_backend.rs     — `kernel::stream::StreamBackend` impl that
-//                               persists each entry through Raft
+//   distributed_coordinator.rs — `RaftDistributedCoordinator` impl of the
+//                                Control-Plane HAL §3.B.1 trait
+//   zone_meta_store.rs         — Raft-backed `kernel::abc::MetaStore` impl
+//   replication_scanner.rs     — EC replication background scanner
+//
+// Distributed state (`ZoneManager`, `ZoneRaftRegistry`, tokio runtime,
+// cross-zone mounts reverse index) lives on the coordinator. WAL stream
+// / pipe backends live in `kernel::core::stream::wal` / `kernel::core::pipe::wal`
+// — kernel primitives that compose whatever distributed `MetaStore` impl
+// the coordinator DI's (typically `ZoneMetaStore` below).
 #[cfg(all(feature = "grpc", has_protos))]
-pub mod federation_provider;
+pub mod distributed_coordinator;
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod replication_scanner;
 // WAL stream / pipe backends moved into the kernel crate

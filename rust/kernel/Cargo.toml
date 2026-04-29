@@ -22,12 +22,12 @@ lib = { workspace = true, features = ["python"] }
 # `services -> kernel`.  The pre-Phase-3 dep was an artefact of
 # AgentTable being miscategorised as service-tier; it moved to
 # `crate::core::agents::table` (kernel SSOT) so the cycle clears.
-# Phase H (Phase 5 federation DI): the `kernel -> raft` edge is
-# inverted — raft now depends on kernel for `kernel::abc::MetaStore`,
-# `kernel::hal::federation::FederationProvider`, etc.  Raft state-
-# machine impls (raft_meta_store, replication_scanner,
-# wal_stream_backend) live in the raft crate alongside the
-# `RaftFederationProvider` trait impl.
+# Kernel depends on `contracts` and `shared/` only; raft depends on
+# kernel for `kernel::abc::MetaStore`,
+# `kernel::hal::distributed_coordinator::DistributedCoordinator`, etc.
+# Raft state-machine impls (zone_meta_store, replication_scanner) live
+# in the raft crate alongside the `RaftDistributedCoordinator` trait
+# impl.
 # `extension-module` lives on the `nexus-cdylib` pyo3 dep only — Cargo
 # unifies pyo3 features at link time, so all transitive users see the
 # cdylib-correct linkage. rlibs must NOT enable it themselves (would

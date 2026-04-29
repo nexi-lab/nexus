@@ -849,30 +849,32 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Federation readiness probe — replacement for the old
 /// `kernel.mount_reconciliation_done` PyO3 method.  Returns `True`
-/// once the FederationProvider has bootstrapped (ZoneManager exists,
-/// root zone loaded).  Used by `fastapi_server._federation_rpc_active`
-/// to decide whether to mount the FederationRPCService.
+/// once the DistributedCoordinator has bootstrapped (ZoneManager
+/// exists, root zone loaded). Used by
+/// `fastapi_server._federation_rpc_active` to decide whether to mount
+/// the FederationRPCService.
 #[pyfunction]
 #[pyo3(name = "federation_is_initialized")]
 fn federation_is_initialized_py(
     kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
 ) -> PyResult<bool> {
     let k = kernel.kernel_ref();
-    Ok(k.federation_arc().is_initialized(k))
+    Ok(k.distributed_coordinator().is_initialized(k))
 }
 
 /// Python-facing one-shot install: replaces the kernel's
-/// `NoopFederationProvider` with the real `RaftFederationProvider` and
-/// runs `init_from_env` so the ZoneManager bootstraps from
-/// `NEXUS_PEERS` / `NEXUS_HOSTNAME` / `NEXUS_BIND_ADDR` /
-/// `NEXUS_ADVERTISE_ADDR` / `NEXUS_DATA_DIR` / `NEXUS_RAFT_TLS`.
-/// Idempotent — re-imports observe the already-initialised state.
+/// `NoopDistributedCoordinator` with the real
+/// `RaftDistributedCoordinator` and runs `init_from_env` so the
+/// ZoneManager bootstraps from `NEXUS_PEERS` / `NEXUS_HOSTNAME` /
+/// `NEXUS_BIND_ADDR` / `NEXUS_ADVERTISE_ADDR` / `NEXUS_DATA_DIR` /
+/// `NEXUS_RAFT_TLS`. Idempotent — re-imports observe the
+/// already-initialised state.
 #[pyfunction]
 #[pyo3(name = "install_federation_wiring")]
 fn install_federation_wiring_py(
     kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
 ) -> PyResult<()> {
-    crate::federation_provider::install(kernel.kernel_ref())
+    crate::distributed_coordinator::install(kernel.kernel_ref())
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 
@@ -894,7 +896,7 @@ fn federation_create_zone_py(
     zone_id: &str,
 ) -> PyResult<String> {
     let k = kernel.kernel_ref();
-    k.federation_arc()
+    k.distributed_coordinator()
         .create_zone(k, zone_id)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
     Ok(zone_id.to_string())
@@ -913,7 +915,7 @@ fn federation_remove_zone_py(
     force: bool,
 ) -> PyResult<()> {
     let k = kernel.kernel_ref();
-    k.federation_arc()
+    k.distributed_coordinator()
         .remove_zone(k, zone_id, force)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
@@ -930,7 +932,7 @@ fn federation_join_zone_py(
     as_learner: bool,
 ) -> PyResult<String> {
     let k = kernel.kernel_ref();
-    k.federation_arc()
+    k.distributed_coordinator()
         .join_zone(k, zone_id, as_learner)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
     Ok(zone_id.to_string())
@@ -948,7 +950,7 @@ fn federation_zone_share_py(
     new_zone: &str,
 ) -> PyResult<u64> {
     let k = kernel.kernel_ref();
-    k.federation_arc()
+    k.distributed_coordinator()
         .zone_share(k, parent_zone, prefix, new_zone)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
@@ -963,7 +965,7 @@ fn federation_register_share_py(
     zone_id: &str,
 ) -> PyResult<()> {
     let k = kernel.kernel_ref();
-    k.federation_arc()
+    k.distributed_coordinator()
         .register_share(k, local_path, zone_id)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
@@ -977,7 +979,7 @@ fn federation_lookup_share_py(
     remote_path: &str,
 ) -> PyResult<Option<String>> {
     let k = kernel.kernel_ref();
-    k.federation_arc()
+    k.distributed_coordinator()
         .lookup_share(k, remote_path)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
@@ -991,7 +993,7 @@ fn federation_zone_links_count_py(
     zone_id: &str,
 ) -> PyResult<i64> {
     let k = kernel.kernel_ref();
-    k.federation_arc()
+    k.distributed_coordinator()
         .zone_links_count(k, zone_id)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
@@ -1009,7 +1011,7 @@ fn federation_zone_cluster_info_py<'py>(
     use pyo3::types::PyDict;
     let k = kernel.kernel_ref();
     let pairs = k
-        .federation_arc()
+        .distributed_coordinator()
         .zone_cluster_info(k, zone_id)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
     let dict = PyDict::new(py);

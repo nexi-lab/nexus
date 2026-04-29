@@ -218,6 +218,23 @@ class ApprovalService:
     async def cancel(self, future: asyncio.Future[Decision]) -> None:
         self._dispatcher.cancel(future)
 
+    async def reconcile_in_flight(self) -> None:
+        """Re-resolve futures for any in-flight request that already terminated.
+
+        Call after a LISTEN reconnect to recover from missed notifications.
+        """
+        for rid in self._dispatcher.in_flight_request_ids():
+            row = await self._repo.get(rid)
+            if row is None:
+                continue
+            if row.status is ApprovalRequestStatus.APPROVED:
+                self._dispatcher.resolve(rid, Decision.APPROVED)
+            elif row.status in (
+                ApprovalRequestStatus.REJECTED,
+                ApprovalRequestStatus.EXPIRED,
+            ):
+                self._dispatcher.resolve(rid, Decision.DENIED)
+
     async def watch(self, zone_id: str | None) -> AsyncIterator[WatchEvent]:
         q: asyncio.Queue[WatchEvent] = asyncio.Queue(maxsize=self._cfg.watch_buffer_size)
         entry = (zone_id, q)

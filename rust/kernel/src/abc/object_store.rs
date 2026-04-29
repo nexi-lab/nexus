@@ -99,16 +99,16 @@ pub trait ObjectStore: Send + Sync {
     }
 
     /// Downcast to a streaming-capable LLM backend. Default returns `None`.
-    /// Only `OpenAIBackend` (and future `AnthropicBackend`) override.
-    /// Consumed by `PyKernel::llm_start_streaming` — any ObjectStore that
-    /// returns `Some` must implement the full SSE → DT_STREAM →
+    /// `OpenAIBackend` and `AnthropicBackend` override. Consumed by
+    /// `PyKernel::llm_start_streaming` — any ObjectStore that returns
+    /// `Some` implements the full SSE → DT_STREAM →
     /// `CASEngine::write_content_tracked` pipeline.
     ///
-    /// Phase 2: trait reached through `crate::hal::llm_streaming` (HAL)
-    /// — the concrete connector backends moved to
-    /// `backends::transports::api::ai::*` and impl this trait through
-    /// the same HAL interface.
-    fn as_llm_streaming(&self) -> Option<&dyn crate::hal::llm_streaming::LlmStreamingBackend> {
+    /// Trait declaration lives at `crate::llm_streaming` — an
+    /// ObjectStore extension hook, distinct from §3.B Control-Plane
+    /// HAL traits in `crate::hal/`. Concrete connector impls live in
+    /// `backends::transports::api::ai::*`.
+    fn as_llm_streaming(&self) -> Option<&dyn crate::llm_streaming::LlmStreamingBackend> {
         None
     }
 

@@ -160,11 +160,6 @@ class DistributedCoordinator(Protocol):
 
 
 @runtime_checkable
-class LlmStreamingBackend(Protocol):
-    def run_streaming(self, request_bytes: bytes, stream_path: str, stream_manager: Any) -> Any: ...
-
-
-@runtime_checkable
 class ObjectStoreProvider(Protocol):
     def build(self, args: Any) -> Any: ...
 

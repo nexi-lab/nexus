@@ -25,6 +25,14 @@ pub mod abc;
 pub mod core;
 pub mod hal;
 
+// §3.A.2 ObjectStore extension hook — connector-backend SSE streaming.
+// Lives at crate root (sibling to abc/, hal/, core/) because it
+// extends a §3.A storage pillar through ObjectStore::as_llm_streaming
+// without declaring a §3.B Control-Plane HAL DI surface. Concrete
+// protocol-specific impls (`OpenAIBackend`, `AnthropicBackend`) live
+// in `backends/src/transports/api/ai/*`.
+pub mod llm_streaming;
+
 // ── Flat re-exports of `core::*` ─────────────────────────────────────
 // `pyclass` registrations in `python.rs` use `m.add_class::<MOD::Name>()`
 // where the codegen `add_class::<MOD::Name>` regex captures exactly two

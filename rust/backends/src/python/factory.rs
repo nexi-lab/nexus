@@ -27,10 +27,7 @@ use kernel::meta_store::MetaStore;
 pub struct DefaultObjectStoreProvider;
 
 impl ObjectStoreProvider for DefaultObjectStoreProvider {
-    fn build(
-        &self,
-        args: &ObjectStoreProviderArgs<'_>,
-    ) -> Result<ObjectStoreBuildResult, String> {
+    fn build(&self, args: &ObjectStoreProviderArgs<'_>) -> Result<ObjectStoreBuildResult, String> {
         let backend_name = args.backend_name;
         let backend_type = args.backend_type;
 

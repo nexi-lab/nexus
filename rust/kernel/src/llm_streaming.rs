@@ -1,12 +1,19 @@
-//! LlmStreamingBackend pillar — object-safe trait the connector backends
-//! opt into so the kernel's `PyKernel::llm_start_streaming` syscall can
-//! drive any protocol-specific SSE pipeline (OpenAI, Anthropic, …).
+//! `LlmStreamingBackend` — object-safe extension hook on §3.A.2
+//! `ObjectStore`. Connector backends opt in so the kernel's
+//! `PyKernel::llm_start_streaming` syscall drives any protocol-specific
+//! SSE pipeline (OpenAI, Anthropic, …).
 //!
-//! Phase D rationale: the trait declaration must live in `kernel/` so
+//! Distinct from §3.B Control-Plane HAL traits: those are runtime DI
+//! surfaces the kernel reaches through trait dispatch
+//! (`DistributedCoordinator`, `ObjectStoreProvider`); this is a
+//! sub-capability ObjectStore impls expose through
+//! [`crate::abc::object_store::ObjectStore::as_llm_streaming`].
+//!
+//! Trait declaration lives in the kernel because the
 //! `ObjectStore::as_llm_streaming() -> Option<&dyn LlmStreamingBackend>`
-//! does not pull a concrete `backends/` type across the kernel boundary.
-//! Every protocol-specific impl (`OpenAIBackend`, future `AnthropicBackend`)
-//! lives in `backends/src/transports/ai/*` and depends on this trait.
+//! method signature references it. Concrete protocol-specific impls
+//! (`OpenAIBackend`, `AnthropicBackend`) live in
+//! `backends/src/transports/api/ai/*`.
 
 use std::sync::Arc;
 

@@ -20,10 +20,11 @@
 //!   Constructs `Arc<dyn ObjectStore>` for backend types
 //!   (anthropic / openai / s3 / gcs / …) without the kernel naming
 //!   `backends::*`. Concrete impl in `backends::python::factory`.
-//! * [`llm_streaming`] — extension over `ObjectStore` for connector
-//!   backends that materialise a chunked LLM response stream into
-//!   the CAS pillar.
 //! * [`peer`] — abstract peer-blob fetch trait.
+//!
+//! ObjectStore extension hooks like [`crate::llm_streaming::LlmStreamingBackend`]
+//! live at the kernel crate root, not under `hal/` — they extend a
+//! §3.A storage pillar rather than declare a §3.B DI surface.
 //!
 //! ## What's intentionally **not** here
 //!
@@ -45,6 +46,5 @@
 //! concrete types.
 
 pub mod distributed_coordinator;
-pub mod llm_streaming;
 pub mod object_store_provider;
 pub mod peer;

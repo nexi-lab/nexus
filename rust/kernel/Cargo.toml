@@ -15,12 +15,10 @@ crate-type = ["rlib"]
 [dependencies]
 contracts = { workspace = true }
 lib = { workspace = true, features = ["python"] }
-# Phase 3: kernel does NOT depend on `services` — direction is one-way
-# `services -> kernel`.  The pre-Phase-3 dep was an artefact of
-# AgentTable being miscategorised as service-tier; it moved to
-# `crate::core::agents::table` (kernel SSOT) so the cycle clears.
-# Kernel depends on `contracts` and `shared/` only; raft depends on
-# kernel for `kernel::abc::MetaStore`,
+# Kernel depends on `contracts` and `shared/` only; the dep direction
+# is one-way `services -> kernel`. AgentTable is the kernel SSOT at
+# `crate::core::agents::table`. Raft depends on kernel for
+# `kernel::abc::MetaStore`,
 # `kernel::hal::distributed_coordinator::DistributedCoordinator`, etc.
 # Raft state-machine impls (zone_meta_store, replication_scanner) live
 # in the raft crate alongside the `RaftDistributedCoordinator` trait
@@ -54,10 +52,10 @@ lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
-# Phase 4 (full): kernel uses `transport-primitives` (the low-level
-# crate after the split) for TlsConfig / connection-pool / peer
-# addressing; the high-level `transport` crate depends on kernel,
-# so we can't depend on it back without closing the cycle.
+# Kernel consumes `transport-primitives` for TlsConfig / connection-pool
+# / peer addressing — the lowest shared transport layer. The high-level
+# `transport` crate depends on kernel, so kernel only takes the
+# primitives crate to keep the dep direction one-way.
 transport-primitives = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
@@ -79,9 +77,9 @@ default = ["mimalloc", "connectors", "py-hook-adapters"]
 mimalloc = ["dep:mimalloc"]
 connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
 nostr = ["dep:tokio-tungstenite", "dep:k256", "dep:sha2", "dep:futures-util"]
-# §11 Phase 14: Python hook/resolver adapters. Enabled by default (POST hooks
-# still use PyInterceptHookAdapter). Disable to compile out all Python-to-Rust
-# adapter bridging — requires ALL hooks to be NativeInterceptHook impls.
+# Python hook/resolver adapters. Enabled by default (POST hooks still use
+# PyInterceptHookAdapter). Disable to compile out all Python-to-Rust adapter
+# bridging — requires ALL hooks to be NativeInterceptHook impls.
 py-hook-adapters = []
 
 [build-dependencies]
@@ -99,4 +97,3 @@ tempfile = "3"
 [[bench]]
 name = "prefix_bench"
 harness = false
-# §11 observer Rust-ification

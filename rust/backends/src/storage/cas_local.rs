@@ -1,6 +1,5 @@
 //! `CasLocalBackend` — CAS-addressed local-disk ObjectStore impl.
 //!
-//! Phase 2 lifted this out of `kernel/src/_backend_impls.rs`.
 //! Composes the kernel's CAS primitive
 //! ([`kernel::cas_engine::CASEngine`]) with
 //! [`kernel::cas_transport::LocalCASTransport`] for the on-disk
@@ -75,7 +74,7 @@ impl ObjectStore for CasLocalBackend {
                 content_id: hash,
             });
         }
-        // R20.10 partial write: splice `content` at `offset` against the
+        // Partial write: splice `content` at `offset` against the
         // OLD CAS object identified by `content_id`. CASEngine handles
         // both chunked (CDC re-chunk affected region) and non-chunked
         // (RMW single blob) cases, and honors POSIX zero-fill when
@@ -337,7 +336,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── R20.10: partial-write (pwrite semantics) tests ────────────────
+    // ── partial-write (pwrite semantics) tests ────────────────────────
 
     #[test]
     fn test_path_local_partial_write_splices_middle() {

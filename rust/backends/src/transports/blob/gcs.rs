@@ -70,7 +70,7 @@ impl ObjectStore for GcsBackend {
         offset: u64,
     ) -> Result<WriteResult, StorageError> {
         if offset != 0 {
-            // R20.10: GCS object upload replaces the whole object; no
+            // GCS object upload replaces the whole object; no
             // native pwrite equivalent (resumable uploads are for append-
             // style streaming, not seekable writes).
             return Err(StorageError::NotSupported(

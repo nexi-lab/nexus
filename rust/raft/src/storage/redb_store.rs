@@ -45,7 +45,7 @@ static LEAKED_TABLE_NAMES: LazyLock<Mutex<HashMap<String, &'static str>>> =
 /// The default table name for SledStore-compatible get/set/delete on the store itself.
 const DEFAULT_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("__default__");
 
-/// Dedicated revision counter table (Phase 3.2: #1330).
+/// Dedicated revision counter table (Issue #1330).
 /// Keyed by zone_id, value is u64 counter.
 const REVISIONS_TABLE: TableDefinition<&str, u64> = TableDefinition::new("revisions");
 
@@ -245,8 +245,9 @@ impl RedbStore {
 
     /// Atomically increment and return the new revision for a zone.
     ///
-    /// Phase 3.2: Dedicated redb table for zone revision counters.
-    /// Single-writer transaction provides atomicity without external locks.
+    /// Backed by a dedicated redb table for zone revision counters;
+    /// single-writer transaction provides atomicity without external
+    /// locks.
     pub fn increment_revision(&self, zone_id: &str) -> Result<u64> {
         let write_txn = self.db.begin_write()?;
         let new_rev;

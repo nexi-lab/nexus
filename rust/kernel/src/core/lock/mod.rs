@@ -21,10 +21,6 @@
 //! path mutates the same `Arc<Mutex<LockState>>`. Reads hit that Arc
 //! directly, so they observe exactly what the local apply committed.
 
-// Phase C nested layout:
-//   core/lock/mod.rs       — was kernel/src/lock_manager.rs
-//   core/lock/locks.rs     — was kernel/src/locks.rs
-//   core/lock/semaphore.rs — was kernel/src/semaphore.rs
 pub mod locks;
 pub mod semaphore;
 
@@ -220,15 +216,13 @@ impl std::fmt::Display for LockError {
 ///
 /// I/O locks live in a local ``Mutex<IOLockState>`` — they never
 /// replicate. Advisory locks go through an ``Arc<dyn Locks>`` backend
-/// (R20.7) — the kernel's default ``LocalLocks`` mutates a shared
+/// — the kernel's default ``LocalLocks`` mutates a shared
 /// ``Arc<Mutex<LockState>>`` directly; federation DI swaps in
 /// ``nexus_raft::federation::DistributedLocks`` via
 /// ``Kernel::install_locks`` (idempotent, first-wins per process).
 ///
-/// Previous design held a concrete
-/// ``Mutex<Option<(ZoneConsensus<FullStateMachine>, Handle)>>`` —
-/// removed to eliminate the kernel's dependency on any raft concrete
-/// type (R20.7 / pre-R20.8).
+/// The trait boundary here keeps the kernel free of any raft concrete
+/// type — the federation backend lives entirely in `nexus_raft`.
 ///
 /// Shared via ``Arc`` between Kernel and VFSLockManager PyO3 wrapper.
 pub struct LockManager {
@@ -278,7 +272,7 @@ impl LockManager {
         }
     }
 
-    /// Install a new advisory backend (federation DI, R20.7).
+    /// Install a new advisory backend (federation DI).
     ///
     /// Idempotent by caller discipline: federation's ``setup_zone``
     /// drives exactly one install per process — the ``installed``

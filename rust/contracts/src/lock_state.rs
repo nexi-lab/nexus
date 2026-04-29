@@ -345,7 +345,7 @@ impl LockState {
     }
 }
 
-// ── Locks backend trait (R20.7) ─────────────────────────────────────
+// ── Locks backend trait ─────────────────────────────────────────────
 //
 // The kernel's ``LockManager`` dispatches advisory-lock operations
 // through this trait instead of holding a concrete

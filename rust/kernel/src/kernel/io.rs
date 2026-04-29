@@ -1,10 +1,8 @@
 //! File I/O syscalls — `sys_read`, `sys_write`, `sys_stat`,
 //! `sys_unlink`, `sys_rename`, `sys_copy`, `sys_mkdir`, `sys_rmdir`.
 //!
-//! Phase G of Phase 3 restructure plan extracted these methods from
-//! the monolithic `kernel.rs`.  The split is a file-organization
-//! change — every method stays a member of [`Kernel`] via the
-//! submodule's `impl Kernel { ... }` block.
+//! Every method stays a member of [`Kernel`] via this submodule's
+//! `impl Kernel { ... }` block.
 
 use std::sync::atomic::Ordering;
 
@@ -40,13 +38,13 @@ impl Kernel {
         let resolved = self.resolve_path_through_link(path)?;
         let path = resolved.as_ref();
 
-        // 1b. Trie-resolved virtual paths (§11 Phase 21) — Python's resolve_read
+        // 1b. Trie-resolved virtual paths (§11 trie resolution) — Python's resolve_read
         // should have handled these before reaching us; treat as missing.
         if self.trie.lookup(path).is_some() {
             return Err(not_found());
         }
 
-        // 1c. Native INTERCEPT PRE hooks (§11 Phase 14) — permission check etc.
+        // 1c. Native INTERCEPT PRE hooks (§11 native hooks) — permission check etc.
         let hook_id = HookIdentity {
             user_id: ctx.user_id.clone(),
             zone_id: ctx.zone_id.clone(),
@@ -227,10 +225,9 @@ impl Kernel {
         }
 
         // Drive the RPC on the kernel-owned shared runtime — reusing
-        // the pooled tonic Channel from ``peer_client``. No more one-
-        // shot ``new_current_thread()`` per call (that pattern left
-        // the runtime lingering if the future hadn't finished
-        // draining; see R11 hypothesis #2).
+        // the pooled tonic Channel from ``peer_client``. Avoid one-shot
+        // ``new_current_thread()`` per call so the runtime does not
+        // linger when the future has not finished draining.
         //
         // Pass the file's **content_id** to the peer when we have one
         // (CAS hash for content-addressed storage, backend_path for
@@ -249,10 +246,9 @@ impl Kernel {
         // it belongs in the local backend's ``write_content`` callable
         // from the BlobFetcher impl, not here.
         //
-        // Phase 4 (full): peer_client is now
-        // ``RwLock<Arc<dyn PeerBlobClient>>``. ``peer_client_arc()``
-        // clones the Arc out from under the read lock so the actual
-        // fetch happens lock-free.
+        // ``peer_client`` is ``RwLock<Arc<dyn PeerBlobClient>>``;
+        // ``peer_client_arc()`` clones the Arc out from under the read
+        // lock so the actual fetch happens lock-free.
         let fetch_key = entry
             .content_id
             .as_deref()
@@ -332,12 +328,12 @@ impl Kernel {
         let resolved = self.resolve_path_through_link(path)?;
         let path = resolved.as_ref();
 
-        // 1b. Trie-resolved virtual paths (§11 Phase 21)
+        // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
             return miss();
         }
 
-        // 1c. Native INTERCEPT PRE hooks (§11 Phase 14)
+        // 1c. Native INTERCEPT PRE hooks (§11 native hooks)
         self.dispatch_native_pre(&HookContext::Write(WriteHookCtx {
             path: path.to_string(),
             identity: HookIdentity {
@@ -501,7 +497,7 @@ impl Kernel {
                     .as_ref()
                     .and_then(|e| e.created_at_ms)
                     .or(Some(now_ms));
-                // R20.3: always pass the full global path. Per-mount
+                // Always pass the full global path. Per-mount
                 // ZoneMetaStore translates at its boundary; the global
                 // fallback stores full paths directly.
                 let meta = self.build_metadata(
@@ -532,7 +528,7 @@ impl Kernel {
                 let result_old_version = old_entry.as_ref().map(|e| e.version);
                 let result_old_modified_at_ms = old_entry.as_ref().and_then(|e| e.modified_at_ms);
 
-                // OBSERVE-phase dispatch (§11 Phase 5): queue FileWrite to
+                // OBSERVE-phase dispatch (§11 OBSERVE): queue FileWrite to
                 // the kernel observer ThreadPool. Returns immediately —
                 // observer callbacks run off the syscall hot path.
                 let content_id = wr.content_id.clone();
@@ -729,12 +725,12 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
-        // 1b. Trie-resolved virtual paths (§11 Phase 21)
+        // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
             return miss(0);
         }
 
-        // 1c. Native INTERCEPT PRE hooks (§11 Phase 14)
+        // 1c. Native INTERCEPT PRE hooks (§11 native hooks)
         self.dispatch_native_pre(&HookContext::Delete(DeleteHookCtx {
             path: path.to_string(),
             identity: HookIdentity {
@@ -856,7 +852,7 @@ impl Kernel {
         // 8. Release VFS lock
         self.lock_manager.do_release(lock_handle);
 
-        // 10. OBSERVE-phase dispatch (§11 Phase 5): queue FileDelete.
+        // 10. OBSERVE-phase dispatch (§11 OBSERVE): queue FileDelete.
         // Cloned out of `entry` because the SysUnlinkResult below also
         // moves them.
         let etag_for_event = entry.content_id.clone();
@@ -915,7 +911,7 @@ impl Kernel {
         validate_path_fast(old_path)?;
         validate_path_fast(new_path)?;
 
-        // 1c. Native INTERCEPT PRE hooks (§11 Phase 14)
+        // 1c. Native INTERCEPT PRE hooks (§11 native hooks)
         self.dispatch_native_pre(&HookContext::Rename(RenameHookCtx {
             old_path: old_path.to_string(),
             new_path: new_path.to_string(),
@@ -1100,7 +1096,7 @@ impl Kernel {
         // 10. Release sorted locks
         release_locks(&self.lock_manager, lock1, lock2);
 
-        // 11. OBSERVE-phase dispatch (§11 Phase 5): queue FileRename.
+        // 11. OBSERVE-phase dispatch (§11 OBSERVE): queue FileRename.
         // Convention (mirrors Python FileEvent for renames): primary
         // `path` is the source, `new_path` is the destination.
         let new_path_owned = new_path.to_string();
@@ -1490,7 +1486,7 @@ impl Kernel {
         // 7. Atomic commit — metastore (raft) first, dcache on success.
         self.commit_metadata(path, &route.mount_point, meta)?;
 
-        // 8. OBSERVE-phase dispatch (§11 Phase 5): queue DirCreate.
+        // 8. OBSERVE-phase dispatch (§11 OBSERVE): queue DirCreate.
         // Only fires on the newly-created path — the early return at
         // step 3 (already-exists branch) does NOT dispatch because no
         // state actually changed. Parent directories created via
@@ -1507,8 +1503,8 @@ impl Kernel {
 
     /// Walk up `path` creating missing parent directory metadata.
     ///
-    /// R20.3: metastore now keyed by full paths, so we walk the global
-    /// path directly — no separate zone_path traversal needed.
+    /// Metastore is keyed by full paths, so we walk the global path
+    /// directly — no separate zone_path traversal needed.
     fn ensure_parent_directories(
         &self,
         path: &str,
@@ -1633,7 +1629,7 @@ impl Kernel {
         let prefix = format!("{}/", path.trim_end_matches('/'));
         self.dcache.evict_prefix(&prefix);
 
-        // 9. OBSERVE-phase dispatch (§11 Phase 5): queue DirDelete.
+        // 9. OBSERVE-phase dispatch (§11 OBSERVE): queue DirDelete.
         // Like sys_mkdir, only the top-level rmdir event fires —
         // recursively-deleted children don't generate individual events
         // (observers needing per-child notifications can list the
@@ -2003,7 +1999,7 @@ impl Kernel {
             }
         }
 
-        // Phase 3: Backend list_dir merge (all backend types uniformly).
+        // Backend list_dir merge (all backend types uniformly).
         // CAS/S3/GCS return Err(NotSupported) → ignored.  Path-local
         // returns disk entries, external connectors return API results.
         // No ABC leak: kernel treats every backend the same.

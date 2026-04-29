@@ -3,11 +3,10 @@
 //! glob / rebac). Compiled only when the `python` feature is on
 //! (kernel cdylib is the sole consumer today).
 //!
-//! Phase H: lifted from `rust/kernel/src/*.rs` so the kernel cdylib's
-//! `#[pymodule]` calls a single delegation point — `lib::python::register(m)`
-//! — instead of registering each function/class itself. Future kernels
-//! / wasm builds that don't need PyO3 disable the `python` feature
-//! and never link pyo3.
+//! The kernel cdylib's `#[pymodule]` calls a single delegation point —
+//! `lib::python::register(m)` — instead of registering each
+//! function/class itself. Kernels / wasm builds that don't need PyO3
+//! disable the `python` feature and never link pyo3.
 
 use pyo3::prelude::*;
 
@@ -77,7 +76,7 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(path_utils::unscope_internal_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::canonicalize_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::extract_zone_id, m)?)?;
-    // Tiger Cache Roaring Bitmap (Phase I — moved from kernel)
+    // Tiger Cache Roaring Bitmap
     m.add_function(wrap_pyfunction!(bitmap::filter_paths_with_tiger_cache, m)?)?;
     m.add_function(wrap_pyfunction!(
         bitmap::filter_paths_with_tiger_cache_parallel,
@@ -92,12 +91,12 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(bitmap::tiger_cache_bitmap_stats, m)?)?;
-    // Hash (Phase I — moved from kernel; lib::hash::* algorithms back the wrappers)
+    // Hash (lib::hash::* algorithms back the wrappers)
     m.add_function(wrap_pyfunction!(hash::hash_content_py, m)?)?;
     m.add_function(wrap_pyfunction!(hash::hash_content_smart_py, m)?)?;
     m.add_function(wrap_pyfunction!(hash::hash_bytes, m)?)?;
-    // BloomFilter pyclass (Phase I — moved from kernel; the lib `Bloom`
-    // pure-Rust impl is a separate WASM-clean module, not surfaced here).
+    // BloomFilter pyclass (the lib `Bloom` pure-Rust impl is a
+    // separate WASM-clean module, not surfaced here).
     m.add_class::<bloom::BloomFilter>()?;
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! Distributed advisory-lock backend (R20.7).
+//! Distributed advisory-lock backend.
 //!
 //! Implements the ``contracts::Locks`` trait on top of a
 //! ``ZoneConsensus<FullStateMachine>``. Write operations propose a

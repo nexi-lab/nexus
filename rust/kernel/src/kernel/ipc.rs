@@ -1,9 +1,7 @@
 //! IPC syscalls — pipe + stream manager delegation.
 //!
-//! Phase G of Phase 3 restructure plan extracted the pipe / stream
-//! method families from the monolithic `kernel.rs`.  The split is a
-//! file-organization change — every method stays a member of
-//! [`Kernel`] via the submodule's `impl Kernel { ... }` block.
+//! Every method stays a member of [`Kernel`] via this submodule's
+//! `impl Kernel { ... }` block.
 
 use crate::dcache::{DT_PIPE, DT_STREAM};
 

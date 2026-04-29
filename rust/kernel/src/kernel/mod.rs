@@ -11,7 +11,7 @@
 //!   - VFS Lock is optionally Arc-shared with VFSLockManager (blocking acquire).
 //!   - MetaStore (Box<dyn MetaStore>) wraps any impl (Python adapter, redb, gRPC).
 //!
-//! Issue #1868: Phase H — kernel boundary collapse.
+//! Kernel struct + syscalls — pure Rust kernel boundary.
 
 #[cfg(test)]
 use crate::dcache::DT_REG;
@@ -69,20 +69,20 @@ impl<T: ?Sized> RwLockExt<T> for RwLock<T> {
 /// blob lives on a remote peer. Generated from `proto/nexus/grpc/vfs/vfs.proto`
 /// (see `build.rs`).
 ///
-/// Phase 4 bumped to `pub` so peer crates (`transport::grpc`,
-/// `transport::federation`) can use the same generated client / server
-/// stubs without re-generating them — proto definitions stay
-/// kernel-owned (the build.rs that compiles `vfs.proto` lives in
-/// kernel) but the generated module surface is shared.
+/// `pub` so peer crates (`transport::grpc`, `transport::federation`)
+/// can use the same generated client / server stubs without
+/// re-generating them — proto definitions stay kernel-owned (the
+/// build.rs that compiles `vfs.proto` lives in kernel) but the
+/// generated module surface is shared.
 pub mod vfs_proto {
     tonic::include_proto!("nexus.grpc.vfs");
 }
 
-// ── Phase G: per-syscall-family submodules ─────────────────────────
+// ── Per-syscall-family submodules ──────────────────────────────────
 //
-// These submodules each carry an `impl Kernel` block over a method
-// subset. The split is a file-organization change — every method
-// remains a member of `Kernel` and is invoked the same way.
+// Each submodule carries an `impl Kernel` block over a method subset.
+// Every method remains a member of `Kernel` and is invoked the same
+// way.
 mod dispatch;
 mod federation;
 mod io;
@@ -122,8 +122,8 @@ pub enum KernelError {
     /// ``nexus.contracts.exceptions.BackendError`` on the Python side so
     /// callers can distinguish storage failures from pure kernel issues.
     BackendError(String),
-    /// R20.18.2: federation bootstrap (env parsing, ZoneManager
-    /// construction, create_zone/join_zone, reconcile) failed.
+    /// Federation bootstrap (env parsing, ZoneManager construction,
+    /// create_zone/join_zone, reconcile) failed.
     Federation(String),
 }
 
@@ -322,15 +322,15 @@ pub struct StatResult {
     pub link_target: Option<String>,
 }
 
-// ── ZonesProcfsEntry — R20.18.4 procfs virtual namespace ──────────────
+// ── ZonesProcfsEntry — procfs virtual namespace ──────────────────────
 
 /// Synthesized entry for `/__sys__/zones/*` virtual paths.
 ///
 /// All fields are read live from `raft::ZoneManager` each call — this
 /// struct carries no persisted state of its own (SSOT: raft state
-/// machine). Returned by `Kernel::resolve_zones_procfs`; R20.18.5
-/// wires it into `sys_stat` so Python callers see zone runtime state
-/// as if it were a filesystem entry.
+/// machine). Returned by `Kernel::resolve_zones_procfs` and consumed
+/// by `sys_stat` so Python callers see zone runtime state as if it
+/// were a filesystem entry.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ZonesProcfsEntry {
@@ -347,8 +347,7 @@ pub struct ZonesProcfsEntry {
     pub applied_index: u64,
     pub voter_count: usize,
     pub witness_count: usize,
-    /// R20.16.6 ready-signal passthrough — saves consumers a
-    /// second Kernel call.
+    /// Ready-signal passthrough — saves consumers a second Kernel call.
     pub mount_reconciliation_done: bool,
 }
 
@@ -357,8 +356,8 @@ pub struct ZonesProcfsEntry {
 /// Observer entry — pure Rust, no PyO3 dependency.
 ///
 /// Stores `Arc<dyn MutationObserver>` so the OBSERVE ThreadPool worker
-/// (§11 Phase 3) can clone the trait object across threads. `event_mask`
-/// bitmask matching happens without external dependency.
+/// can clone the trait object across threads. `event_mask` bitmask
+/// matching happens without external dependency.
 struct KernelObserverEntry {
     observer: Arc<dyn MutationObserver>,
     name: String,
@@ -368,13 +367,9 @@ struct KernelObserverEntry {
 /// Pure Rust observer registry — event-type bitmask filtering lock-free.
 ///
 /// Single dispatch path for all OBSERVE-phase observers. The trait
-/// `MutationObserver` takes `&FileEvent` (post §11 Phase 2); the
-/// to a Python `FileEvent` once per call.
+/// `MutationObserver` takes `&FileEvent`.
 ///
-/// `OBSERVE_INLINE` (the legacy inline-on-caller-thread mode) was deleted
-/// in §11 Phase 2: it overlapped with INTERCEPT POST hooks and violated
-/// dispatch-contract orthogonality. OBSERVE is fire-and-forget by
-/// definition — there is no other mode. Observers needing causal
+/// OBSERVE is fire-and-forget by definition — observers needing causal
 /// ordering or sync blocking belong in INTERCEPT POST, not OBSERVE.
 struct KernelObserverRegistry {
     observers: Vec<KernelObserverEntry>,
@@ -409,10 +404,10 @@ impl KernelObserverRegistry {
 
     /// Return clones of all observers whose event_mask matches `event.event_type`.
     ///
-    /// The dispatch loop (`Kernel::dispatch_observers`, §11 Phase 3) submits
-    /// each clone to the OBSERVE ThreadPool. Returning Arc clones lets the
-    /// pool borrow the registry lock for the minimum possible time — the
-    /// caller releases the lock before doing any per-observer work.
+    /// The dispatch loop (`Kernel::dispatch_observers`) submits each
+    /// clone to the OBSERVE ThreadPool. Returning Arc clones lets the
+    /// pool borrow the registry lock for the minimum possible time —
+    /// the caller releases the lock before doing any per-observer work.
     fn matching(&self, event_type_bit: u32) -> Vec<Arc<dyn MutationObserver>> {
         self.observers
             .iter()
@@ -426,7 +421,7 @@ impl KernelObserverRegistry {
     }
 }
 
-// ── Native Hook Registry (§11 Phase 10) ────────────────────────────────
+// ── Native Hook Registry ───────────────────────────────────────────────
 //
 // Pure Rust hook dispatch — no GIL crossing for Rust-native hooks.
 // Parallel to the PyO3-dependent HookRegistry in hook_registry.rs.
@@ -560,7 +555,7 @@ pub struct Kernel {
     // MetaStore (Box<dyn MetaStore>), behind parking_lot::RwLock so
     // the setter paths (``set_metastore_path`` / ``release_metastores``)
     // don't need ``&mut self`` — lets ``PyKernel`` hold an ``Arc<Kernel>``
-    // for the apply-side federation-mount callback (R20.16.3).
+    // for the apply-side federation-mount callback.
     metastore: parking_lot::RwLock<Option<Box<dyn crate::meta_store::MetaStore>>>,
     // VFS lock timeout for blocking acquire (ms) — ``AtomicU64`` so
     // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
@@ -577,31 +572,16 @@ pub struct Kernel {
     access_hook_count: AtomicU64,
     write_batch_hook_count: AtomicU64,
     // Observer registry (owned by kernel — bitmask matching lock-free).
-    //
-    // Field is accessed only via the `register_observer` / `dispatch_observers`
-    // methods, which have no production caller yet — Phase 5 wires them
-    // into the sys_* methods, Phase 6 wires PyKernel.register_observer to
-    // delegate here. Until then this is intentional pre-built infrastructure.
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
-    //
     // OBSERVE is fire-and-forget by contract: the syscall returns as soon
     // as the event is queued; observer callbacks run on this pool, off
-    // the hot path. There is no other mode — the legacy `OBSERVE_INLINE`
-    // flag was deleted in §11 Phase 2 because inline-on-caller-thread
-    // observers were functionally identical to INTERCEPT POST hooks and
-    // violated dispatch-contract orthogonality.
+    // the hot path.
     //
     // 4 worker threads is enough for the typical workload (a handful of
-    // long-lived observers: FileWatchRegistry, EventBus, etc.). Each worker
-    // when calling Python observers — many parallel Python observers
-    // will serialize on the GIL, but Rust-native observers run truly
-    // parallel.
-    //
-    // No production caller yet — `dispatch_observers` becomes the sole
-    // submitter once Phase 5 wires sys_* call sites. The pool is created
-    // up-front so the cost (4 OS threads, ~8MB stack each) is paid once
-    // at kernel construction.
+    // long-lived observers: FileWatchRegistry, EventBus, etc.). Many
+    // parallel Python observers will serialize on the GIL, but
+    // Rust-native observers run truly parallel.
     #[allow(dead_code)]
     // observer_pool removed — inline dispatch, no background threads.
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
@@ -625,7 +605,7 @@ pub struct Kernel {
     pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
     // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
     pub(crate) stream_manager: Arc<crate::stream_manager::StreamManager>,
-    // Native hook registry — pure Rust hooks dispatched lock-free (§11 Phase 10)
+    // Native hook registry — pure Rust hooks dispatched lock-free.
     #[allow(dead_code)]
     // RwLock (not Mutex) so concurrent + recursive read-locks are allowed.
     // Recursion arises when a hook callback (e.g. ReBAC permission_hook)
@@ -642,24 +622,22 @@ pub struct Kernel {
     self_address: parking_lot::RwLock<Option<String>>,
     /// Kernel-owned tokio runtime — built once at `Kernel::new` and
     /// shared across every async caller (peer RPC fan-out, federation
-    /// remote reads, LLM connector streaming).  Phase 4 (full) lifted
-    /// this off `peer_blob_client::PeerBlobClient` (which moved to
-    /// the transport crate) so kernel-internal callers keep the same
-    /// shared runtime regardless of whether the cdylib has installed
-    /// the real peer client yet.
+    /// remote reads, LLM connector streaming). Kernel owns the runtime
+    /// directly so kernel-internal callers keep the same shared runtime
+    /// regardless of whether the cdylib has installed the real peer
+    /// client yet.
     pub(crate) runtime: Arc<tokio::runtime::Runtime>,
     // Shared tokio runtime — constructed once at Kernel::new and used by
     // every peer RPC (scatter-gather chunk fetch + federation remote
     // reads). Replaces the one-shot `Builder::new_current_thread()` inside
     // `try_remote_fetch` so tokio's workers shut down cleanly on
-    // `release_metastores`/Drop (addresses R11 hypothesis #2 — stuck async
-    // task blocking `docker stop`).
-    // Phase 4 (full): widened from concrete `Arc<PeerBlobClient>`
-    // (kernel::peer_blob_client) to `Arc<dyn hal::peer::PeerBlobClient>`
-    // because the concrete impl moved to
-    // `transport::blob::peer_client::PeerBlobClient` (Phase 4 ship).
-    // Default at boot is `NoopPeerBlobClient`; nexus-cdylib boot
-    // installs the real transport impl via `Kernel::set_peer_client`.
+    // `release_metastores`/Drop so docker stop does not hang on stuck
+    // async tasks.
+    //
+    // Type is `Arc<dyn hal::peer::PeerBlobClient>`; the concrete impl
+    // lives in `transport::blob::peer_client::PeerBlobClient`. Default
+    // at boot is `NoopPeerBlobClient`; nexus-cdylib boot installs the
+    // real transport impl via `Kernel::set_peer_client`.
     pub(crate) peer_client: parking_lot::RwLock<Arc<dyn crate::hal::peer::PeerBlobClient>>,
     // Control-Plane HAL §3.B.1 slot. `Arc<dyn DistributedCoordinator>` so
     // the kernel's distributed-namespace surface (zone listing, distributed-
@@ -667,8 +645,8 @@ pub struct Kernel {
     // share registry, cluster introspection) is reachable through a trait
     // boundary rather than direct `nexus_raft::*` types. Default at boot
     // is `NoopDistributedCoordinator`; nexus-cdylib boot installs the real
-    // raft-side impl via `Kernel::set_distributed_coordinator`. Mirrors
-    // the Phase-4 PeerBlobClient DI pattern.
+    // raft-side impl via `Kernel::set_distributed_coordinator`. Same DI
+    // shape as the PeerBlobClient slot above.
     pub(crate) distributed_coordinator:
         parking_lot::RwLock<Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator>>,
     // Scatter-gather fetcher: drives bounded fan-out against
@@ -689,11 +667,11 @@ pub struct Kernel {
     pub(crate) pending_remote_meta_store:
         parking_lot::Mutex<Option<Arc<dyn crate::meta_store::MetaStore>>>,
 
-    /// Phase 4 (full): blob-fetcher slot stashed by federation init for
-    /// the cdylib's transport-tier install hook to drain.
-    /// Phase 5: typed as `Box<dyn Any + Send + Sync>` so kernel does not
-    /// name the raft-side `BlobFetcherSlot` type — `transport::blob::
-    /// fetcher::install` downcasts to the concrete type at drain time.
+    /// Blob-fetcher slot stashed by federation init for the cdylib's
+    /// transport-tier install hook to drain. Typed as
+    /// `Box<dyn Any + Send + Sync>` so kernel does not name the
+    /// raft-side `BlobFetcherSlot` type — `transport::blob::fetcher::
+    /// install` downcasts to the concrete type at drain time.
     pub(crate) pending_blob_fetcher_slot:
         parking_lot::Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>,
     // Distributed state (zone_manager / zone_registry / zone_runtime /
@@ -708,18 +686,16 @@ impl Kernel {
 
     /// Create an empty kernel. Components wired by wrapper after construction.
     ///
-    /// Phase 3 bumped \`mod kernel\` to \`pub mod kernel\` so peer crates
-    /// can reach \`Kernel::register_native_hook\` etc. — that surfaced
-    /// `clippy::new_without_default` on this constructor.  Suppressed
-    /// rather than auto-impl'd because `new()` does heavy wiring
-    /// (runtime, peer client, dispatch hook registry, mount tables);
-    /// callers should opt in explicitly via `Kernel::new()` rather
-    /// than the implicit `Default::default()` shortcut.
+    /// `pub mod kernel` lets peer crates reach
+    /// `Kernel::register_native_hook` etc. `clippy::new_without_default`
+    /// is suppressed rather than auto-impl'd because `new()` does heavy
+    /// wiring (runtime, peer client, dispatch hook registry, mount
+    /// tables); callers should opt in explicitly via `Kernel::new()`
+    /// rather than the implicit `Default::default()` shortcut.
     #[allow(clippy::new_without_default)]
     #[allow(clippy::let_and_return)]
     pub fn new() -> Self {
-        // Phase 4 (full): kernel owns its tokio runtime now (was on
-        // `PeerBlobClient` pre-Phase-4).  Multi-thread, two workers
+        // Kernel owns its tokio runtime — multi-thread, two workers
         // sized for IO-bound peer RPCs.
         let runtime = Arc::new(
             tokio::runtime::Builder::new_multi_thread()
@@ -729,10 +705,10 @@ impl Kernel {
                 .build()
                 .expect("failed to build kernel tokio runtime"),
         );
-        // Phase 4 (full): peer_blob_client moved to `transport::blob::
-        // peer_client`.  Kernel boots with the no-op fallback; the
-        // cdylib wires the real impl via `Kernel::set_peer_client`
-        // before any federation read fires.
+        // The real peer_blob_client lives in
+        // `transport::blob::peer_client`. Kernel boots with the no-op
+        // fallback; the cdylib wires the real impl via
+        // `Kernel::set_peer_client` before any federation read fires.
         let peer_client_dyn: Arc<dyn crate::hal::peer::PeerBlobClient> =
             crate::hal::peer::NoopPeerBlobClient::arc();
         // GrpcChunkFetcher takes the trait object directly.
@@ -836,7 +812,7 @@ impl Kernel {
     // ── MetaStore wiring ──────────────────────────────────────────────
 
     /// Wire LocalMetaStore by path — Rust kernel opens redb directly.
-    /// Only metastore wiring method (PyMetaStoreAdapter removed in Phase 9).
+    /// Only metastore wiring method.
     pub fn set_metastore_path(&self, path: &str) -> Result<(), KernelError> {
         let ms = LocalMetaStore::open(std::path::Path::new(path))
             .map_err(|e| KernelError::IOError(format!("LocalMetaStore: {e:?}")))?;
@@ -952,7 +928,7 @@ impl Kernel {
 
     // ── MetaStore routing ────────────────────────────────────────────
     //
-    // R20.3: the metastore abstraction owns key translation. Callers
+    // The metastore abstraction owns key translation. Callers
     // pass full global paths; per-mount ``ZoneMetaStore`` impls translate
     // to their zone-relative storage on the way in and back on the way
     // out. The global fallback ``LocalMetaStore`` stores full paths
@@ -973,7 +949,7 @@ impl Kernel {
     /// Build a `FileMetadata` record for `path` under the given zone, with
     /// every other field supplied by the caller.
     ///
-    /// R20.16.7: DRY helper for the ~10 write paths that persist inode
+    /// DRY helper for the ~10 write paths that persist inode
     /// records (sys_write, sys_mkdir, rename destination, pipe/stream
     /// registration, batch write, …). `zone_id` is the destination zone —
     /// callers pass `&route.zone_id` or an explicit zone (e.g.
@@ -1033,7 +1009,7 @@ impl Kernel {
 
     // ── MetaStore proxy methods (for Python RustMetastoreProxy) ────────
     //
-    // F2 C8: these route via ``vfs_router.route(path, ROOT_ZONE_ID, ...)`` so a
+    // These route via ``vfs_router.route(path, ROOT_ZONE_ID, ...)`` so a
     // lookup under a federation mount (e.g. ``/corp/eng/foo.txt``) lands on
     // the corresponding per-mount ``ZoneMetaStore`` installed by
     // ``attach_raft_zone_to_kernel``. Without this, every Python-side
@@ -1141,7 +1117,7 @@ impl Kernel {
             if !under_prefix {
                 continue;
             }
-            // R20.3: ask the child metastore to list its own full-path
+            // Ask the child metastore to list its own full-path
             // root; it translates internally. Returned entries already
             // carry full global paths, so no post-hoc translation needed.
             if let Some(Ok(child_entries)) = self.with_metastore(&canonical, |ms| ms.list(&user_mp))
@@ -1336,7 +1312,7 @@ impl Kernel {
     }
 
     // ── Advisory lock primitive (§4.4) ──────────────────────────
-    // (Moved to `kernel::locks` submodule — Phase G of Phase 3 restructure.)
+    // (Moved to `kernel::locks` submodule.)
 
     // ── DCache proxy methods ───────────────────────────────────────────
 
@@ -1485,7 +1461,7 @@ impl Kernel {
     // `nexus_raft::distributed_coordinator::RaftDistributedCoordinator`.
 
     /// Install the apply-side dcache invalidation callback for a
-    /// federation mount (R20.6 option B — coherence-key fanout).
+    /// federation mount (coherence-key fanout).
     ///
     /// Fires on every committed metadata mutation on ``consensus``'s
     /// state machine — evicts the corresponding DCache entry on every
@@ -1496,7 +1472,7 @@ impl Kernel {
     /// ``sys_read`` from their local dcache after raft applies the
     /// new state — a textbook distributed-cache-coherence hole.
     ///
-    /// Why coherence_key and not Arc identity: R20.3 gave every
+    /// Why coherence_key and not Arc identity: every
     /// crosslink its own ``ZoneMetaStore`` Arc (different
     /// ``mount_point``), so Arc::ptr_eq groups just one surface per
     /// zone. ``coherence_key`` is the state-machine Arc's pointer
@@ -1544,21 +1520,21 @@ impl Kernel {
             2 => {
                 // DT_MOUNT — full mount lifecycle via DLC.
                 //
-                // Phase H zone-create-on-mount: when the caller did not
-                // supply a `metastore` AND federation is active, ask the
+                // Zone-create-on-mount: when the caller did not supply
+                // a `metastore` AND federation is active, ask the
                 // DistributedCoordinator to materialise (auto-create) the
                 // target zone's raft group and hand back an
                 // `Arc<dyn MetaStore>` backed by the per-zone state
-                // machine.  Service-tier callers therefore reach
+                // machine. Service-tier callers therefore reach
                 // federation through the standard `sys_setattr DT_MOUNT`
                 // syscall — no separate `kernel.zone_create` surface.
                 //
-                // R20.6 option B preserved: install the apply-side
-                // dcache coherence callback after routing is wired
-                // (handled by the provider's `wire_mount` follow-up
-                // below).  Install is keyed on the state machine's
-                // ``coherence_id``, not on the per-mount MetaStore Arc,
-                // so crosslinks of the same zone share one callback.
+                // The apply-side dcache coherence callback is installed
+                // after routing is wired (handled by the provider's
+                // `wire_mount` follow-up below). Install is keyed on
+                // the state machine's ``coherence_id``, not on the
+                // per-mount MetaStore Arc, so crosslinks of the same
+                // zone share one callback.
                 let coordinator = self.distributed_coordinator();
                 // Federation activity derives from `list_zones` — empty
                 // before `install()` populates the ZoneManager, populated
@@ -2140,25 +2116,23 @@ impl Kernel {
         }
     }
 
-    // ── Observer registry (§10 Phase 10 / §11 Phase 2) ────────────────
-    // (Moved to `kernel::observability` submodule — Phase G of Phase 3 restructure.)
+    // ── Observer registry ─────────────────────────────────────────────
+    // (Moved to `kernel::observability` submodule.)
 
-    // ── Native INTERCEPT hook dispatch (§11 Phase 14) ─────────────────
-    // (Moved to `kernel::dispatch` submodule — Phase G of Phase 3 restructure.)
+    // ── Native INTERCEPT hook dispatch ────────────────────────────────
+    // (Moved to `kernel::dispatch` submodule.)
 
-    /// Borrow the kernel's shared tokio runtime.  Phase 4 (full):
-    /// kernel owns this Arc directly; peer crates (backends LLM
-    /// connectors, transport gRPC server) clone it for their async
-    /// work.
+    /// Borrow the kernel's shared tokio runtime — kernel owns this Arc
+    /// directly; peer crates (backends LLM connectors, transport gRPC
+    /// server) clone it for their async work.
     pub fn runtime(&self) -> &Arc<tokio::runtime::Runtime> {
         &self.runtime
     }
 
     /// Replace the kernel's `peer_client` slot with a concrete
-    /// implementation.  Phase 4 (full) DI: kernel boots with
-    /// `NoopPeerBlobClient`; the cdylib boot path calls this with
-    /// the real `transport::blob::peer_client::PeerBlobClient` once
-    /// per kernel.
+    /// implementation. Kernel boots with `NoopPeerBlobClient`; the
+    /// cdylib boot path calls this with the real
+    /// `transport::blob::peer_client::PeerBlobClient` once per kernel.
     pub fn set_peer_client(&self, client: Arc<dyn crate::hal::peer::PeerBlobClient>) {
         *self.peer_client.write() = client;
     }
@@ -2206,10 +2180,9 @@ impl Kernel {
     /// (typically `services::audit::install`) can build its own hook
     /// impl from the WAL non-blocking write API (`write_nowait`).
     ///
-    /// Phase 3 split this out of the old `Kernel::start_audit_hook`
-    /// (now lives in `services::audit`).  The kernel half owns only
-    /// the stream-lifecycle work (kernel concern); the hook
-    /// construction + registration belong to the service.
+    /// Hook construction + registration belong to `services::audit`;
+    /// the kernel half owns only the stream-lifecycle work (kernel
+    /// concern).
     ///
     /// Safe to call after `init_federation_from_env` has loaded the
     /// zone.  The `stream_manager.register` step is idempotent — a
@@ -2329,14 +2302,14 @@ impl Kernel {
     }
 
     // ── File watch registry (§10 A3) ──────────────────────────────────
-    // (Moved to `kernel::observability` submodule — Phase G of Phase 3 restructure.)
+    // (Moved to `kernel::observability` submodule.)
 
     // ── IPC Registry — Pipe + Stream methods ────────────────────────────
-    // (Moved to `kernel::ipc` submodule — Phase G of Phase 3 restructure.)
+    // (Moved to `kernel::ipc` submodule.)
 
     // ── File I/O syscalls (sys_read / sys_write / sys_stat / sys_unlink /
     //    sys_rename / sys_copy / sys_mkdir / sys_rmdir) ──────────────────
-    // (Moved to `kernel::io` submodule — Phase G of Phase 3 restructure.)
+    // (Moved to `kernel::io` submodule.)
 
     /// Backend-native directory listing for external mounts.
     ///
@@ -2371,14 +2344,12 @@ impl Kernel {
             .unwrap_or_default()
     }
 
-    // ── Phase 6: sys_grep + sys_glob ───────────────────────────────────────
+    // ── sys_grep + sys_glob ───────────────────────────────────────────
     //
     // Two read-only "search" syscalls that wrap `lib::search` /
     // `lib::glob` algorithms inside the standard syscall pipeline
     // (validate path → walk recursive prefix scan → INTERCEPT-free
-    // since reads are routed through `sys_read`).  Replace the
-    // pre-Phase-6 Python helpers in `nexus.fs._helpers.{grep, glob}`,
-    // which Phase 7 deletes.
+    // since reads are routed through `sys_read`).
 
     /// Glob-match: walk every path under `prefix` recursively and
     /// return the ones matching `pattern` (one of `?`, `*`, `**`,
@@ -2679,8 +2650,8 @@ impl Kernel {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// R20.16.3 free-function helpers — take only ``Arc``-shared kernel state
-// so the apply-side ``mount_apply_cb`` closure can call them without a
+// Free-function helpers — take only ``Arc``-shared kernel state so the
+// apply-side ``mount_apply_cb`` closure can call them without a
 // back-reference to ``Kernel`` itself.
 // ─────────────────────────────────────────────────────────────────────
 
@@ -2785,7 +2756,7 @@ mod tests {
         assert!(validate_path_fast("/..").is_err());
     }
 
-    // ── §11 Phase 3 OBSERVE ThreadPool tests ───────────────────────
+    // ── §11 OBSERVE ThreadPool tests ───────────────────────────────
 
     use crate::dispatch::{FileEvent, FileEventType, MutationObserver};
     use std::sync::atomic::AtomicUsize;
@@ -2917,7 +2888,7 @@ mod tests {
         assert_eq!(kernel.observer_count(), 0);
     }
 
-    // ── §11 Phase 5 dispatch_mutation context propagation tests ────
+    // ── §11 dispatch_mutation context propagation tests ────────────
 
     /// Captures the FileEvent it receives so the test can assert on
     /// every field. Used by the dispatch_mutation context tests below.
@@ -3148,13 +3119,13 @@ mod tests {
         }
     }
 
-    // ── R20.3 metastore-key tests ──────────────────────────────────────
+    // ── Metastore-key tests ────────────────────────────────────────────
     //
-    // Post-R20.3 the kernel passes full global paths to the metastore
-    // trait. ZoneMetaStore (the federation impl) internalizes the
-    // translation to zone-relative — see rust/kernel/src/raft_metastore.rs
-    // for that coverage. These tests use LocalMetaStore (full-path store)
-    // so they exercise the kernel call path without any translation.
+    // The kernel passes full global paths to the metastore trait.
+    // ZoneMetaStore (the federation impl) internalizes the translation
+    // to zone-relative — see rust/kernel/src/raft_metastore.rs for that
+    // coverage. These tests use LocalMetaStore (full-path store) so
+    // they exercise the kernel call path without any translation.
 
     use crate::meta_store::MetaStore as MetastoreTrait;
 
@@ -3168,15 +3139,15 @@ mod tests {
     #[test]
     fn sys_setattr_dir_stores_full_path_key() {
         // Mount "/data" in zone "root" with a shared metastore.
-        // DT_DIR at "/data/sub" now stores metastore key "/data/sub"
-        // (full global path) — R20.3 moved zone-relative translation
-        // into ZoneMetaStore, so generic full-path stores see full keys.
+        // DT_DIR at "/data/sub" stores metastore key "/data/sub" (full
+        // global path). ZoneMetaStore internalizes zone-relative
+        // translation, so generic full-path stores see full keys.
         let k = Kernel::new();
         let ms = temp_metastore();
         k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
             .unwrap();
 
-        // Create DT_DIR via sys_setattr — writes to per-mount metastore
+        // Create DT_DIR via sys_setattr — writes to per-mount metastore.
         let r = k
             .sys_setattr(
                 "/data/sub",
@@ -3198,14 +3169,14 @@ mod tests {
             .unwrap();
         assert!(r.created);
 
-        // R20.3: key is the full global path.
+        // Key is the full global path.
         assert!(
             ms.get("/data/sub").unwrap().is_some(),
             "full path /data/sub must exist"
         );
         assert!(
             ms.get("/sub").unwrap().is_none(),
-            "old zone-relative key /sub must NOT exist post-R20.3"
+            "zone-relative key /sub must NOT exist"
         );
     }
 

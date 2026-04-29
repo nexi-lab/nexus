@@ -1,4 +1,4 @@
-//! Advisory-lock backends for the kernel's ``LockManager`` (R20.7).
+//! Advisory-lock backends for the kernel's ``LockManager``.
 //!
 //! Two impls live in the tree today:
 //!   - ``LocalLocks`` (this file) — direct mutation of the shared
@@ -33,11 +33,10 @@ pub struct LocalLocks {
 impl LocalLocks {
     /// Construct a LocalLocks that shares ``state`` with whoever owns
     /// the Arc (typically the kernel's own ``LockManager``). When the
-    /// backend is later swapped for ``DistributedLocks`` (R20.7
-    /// install), the kernel passes the current state Arc along so
-    /// existing holders are not lost — the federation-side impl
-    /// merges them into the state machine's map under the same mutex
-    /// discipline.
+    /// backend is later swapped for ``DistributedLocks``, the kernel
+    /// passes the current state Arc along so existing holders are not
+    /// lost — the federation-side impl merges them into the state
+    /// machine's map under the same mutex discipline.
     pub fn new(state: Arc<Mutex<LockState>>) -> Self {
         Self { state }
     }

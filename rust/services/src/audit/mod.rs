@@ -5,9 +5,8 @@
 //! (~100–300 ns). JSON serialization and WalStreamCore::write_nowait happen in
 //! a background thread, entirely off the VFS dispatch critical path.
 //!
-//! Phase 3 moved this from `kernel/src/audit_hook.rs` into the services
-//! crate per the architecture's `services` ⊥ `backends` ⊥ `transport` ⊥
-//! `raft` peer-crate split.  Construction + registration is owned by the
+//! Per the architecture's `services` ⊥ `backends` ⊥ `transport` ⊥
+//! `raft` peer-crate split, construction + registration is owned by the
 //! service tier (this module's [`install`] function); the kernel only
 //! exposes [`Kernel::prepare_audit_stream`] and the
 //! [`Kernel::register_native_hook`] in-tree API.

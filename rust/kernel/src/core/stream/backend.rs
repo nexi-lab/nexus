@@ -2,8 +2,7 @@
 //!
 //! In-memory reference impl `MemoryStreamBackend` lives in
 //! `crate::stream`; SHM, stdio, WAL, and remote variants live in
-//! sibling files (and Phase F lifts the remote variant into
-//! `transport::stream`).
+//! sibling files.
 
 #[derive(Debug)]
 #[allow(dead_code)]

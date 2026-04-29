@@ -259,7 +259,7 @@ pub enum RaftMsg {
     },
     /// Campaign to become leader.
     Campaign { tx: oneshot::Sender<Result<()>> },
-    /// Linearizable read request (F4 C3.6 — ReadIndex).
+    /// Linearizable read request (ReadIndex).
     ///
     /// The driver calls `RawNode::read_index` with a unique 8-byte
     /// request context, stores the oneshot sender in
@@ -348,7 +348,7 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     /// Apply-side DT_MOUNT slot — cached at construction so sync
     /// callers (kernel federation-mount install) can swap the callback
     /// without holding the state-machine's async RwLock. Same shape as
-    /// ``invalidate_cb_slot`` (R20.16.2).
+    /// ``invalidate_cb_slot``.
     #[cfg(feature = "grpc")]
     #[allow(clippy::type_complexity)]
     mount_apply_cb_slot: Option<
@@ -410,8 +410,8 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     /// Resolved in `apply_entries` when the ConfChange is committed.
     pending_conf_changes: HashMap<u64, oneshot::Sender<Result<ConfState>>>,
     /// Pending linearizable reads waiting for raft-rs to emit a
-    /// `ReadState` (F4 C3.6), keyed by the 8-byte request context
-    /// we passed to `RawNode::read_index`.
+    /// `ReadState`, keyed by the 8-byte request context we passed to
+    /// `RawNode::read_index`.
     pending_reads_by_ctx: HashMap<u64, oneshot::Sender<Result<()>>>,
     /// Pending linearizable reads that have their `read_index`
     /// assigned but are waiting for `state_machine.last_applied`
@@ -440,7 +440,7 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     #[cfg(all(feature = "grpc", has_protos))]
     peer_map: Option<SharedPeerMap>,
     /// EC replication WAL (shared with handle via Arc).
-    /// Used by the transport loop for Phase C background replication.
+    /// Used by the transport loop for EC background replication.
     replication_log: Option<Arc<ReplicationLog>>,
 }
 
@@ -596,7 +596,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         // async callers can touch it, but ``ZoneConsensus::invalidate_cb_slot``
         // is called from sync contexts (kernel DLC::mount).
         let invalidate_cb_slot = state_machine.invalidate_cb_slot();
-        // Same pattern for the DT_MOUNT apply slot (R20.16.2).
+        // Same pattern for the DT_MOUNT apply slot.
         #[cfg(feature = "grpc")]
         let mount_apply_cb_slot = state_machine.mount_apply_cb_slot();
         // The state machine is the SSOT for applied index — borrow its
@@ -800,7 +800,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
     /// Clone the state-machine's apply-side DT_MOUNT slot so the kernel
     /// (which owns federation mount wiring) can install a callback
-    /// that fires on every committed DT_MOUNT Set / Delete (R20.16.2).
+    /// that fires on every committed DT_MOUNT Set / Delete.
     /// Returns ``None`` for state machines that don't expose a slot
     /// (e.g. witness) — kernel callers skip the install in that case.
     #[cfg(feature = "grpc")]
@@ -818,7 +818,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     }
 
     /// Stable integer identity of the state machine backing this
-    /// ``ZoneConsensus`` (R20.6 option B — dcache coherence fanout).
+    /// ``ZoneConsensus`` (used for dcache coherence fanout).
     ///
     /// Every ``Clone`` of a ``ZoneConsensus`` shares the same state
     /// machine Arc, so this value is equal across clones.
@@ -854,7 +854,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     }
 
     /// Execute a read-only closure against the state machine with
-    /// **linearizable consistency** (F4 C3.6 — ReadIndex).
+    /// **linearizable consistency** (ReadIndex).
     ///
     /// Implements the standard Raft ReadIndex protocol (§8 of the
     /// Raft paper, etcd / TiKV / CockroachDB / Consul all use this
@@ -978,7 +978,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// Forward a proposal to the current leader via gRPC.
     ///
     /// Returns `NotLeader` if no forwarding context, or if no leader is
-    /// known after a bounded wait (R20.11 — transparent initial-election
+    /// known after a bounded wait (transparent initial-election
     /// handling, mirrors etcd's pattern).
     ///
     /// When ``leader_id()`` returns ``None`` we are almost always in the
@@ -1105,7 +1105,8 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         Ok(seq)
     }
 
-    /// Apply an EC entry received from a peer (Phase C receiver side).
+    /// Apply an EC entry received from a peer (background-replication
+    /// receiver side).
     ///
     /// Uses LWW (Last Writer Wins) conflict resolution: compares the incoming
     /// entry's timestamp against the existing metadata to reject stale writes.
@@ -1277,7 +1278,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
     }
 
     /// Get the EC replication log (if present).
-    /// Used by the transport loop for Phase C background replication.
+    /// Used by the transport loop for EC background replication.
     pub fn replication_log(&self) -> Option<&Arc<ReplicationLog>> {
         self.replication_log.as_ref()
     }
@@ -1365,8 +1366,8 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     let _ = tx.send(result);
                 }
                 RaftMsg::ReadIndex { tx } => {
-                    // F4 C3.6: post a ReadIndex request to raft-rs
-                    // and stash the oneshot by request context. The
+                    // Post a ReadIndex request to raft-rs and stash
+                    // the oneshot by request context. The
                     // `ReadState` will appear in a later `advance()`
                     // ready, at which point we move it to
                     // `pending_reads_by_index` (or resolve
@@ -1417,8 +1418,8 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             messages.extend(ready.take_persisted_messages());
         }
 
-        // F4 C3.6: promote any freshly-confirmed ReadIndex requests
-        // to `pending_reads_by_index` (or resolve immediately if the
+        // Promote any freshly-confirmed ReadIndex requests to
+        // `pending_reads_by_index` (or resolve immediately if the
         // local apply pointer already covers the returned index).
         if !ready.read_states().is_empty() {
             let states = ready.take_read_states();
@@ -1475,7 +1476,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         if !committed.is_empty() {
             tracing::debug!(count = committed.len(), "raft.apply");
             self.apply_entries(committed).await?;
-            // F4 C3.6: fresh apply pointer may unblock linearizable reads.
+            // Fresh apply pointer may unblock linearizable reads.
             self.resolve_ready_reads().await;
         }
 
@@ -1755,7 +1756,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         Ok(())
     }
 
-    /// F4 C3.6: process freshly-emitted `ReadState`s.
+    /// Process freshly-emitted `ReadState`s.
     ///
     /// For each state, match the 8-byte `request_ctx` back to a
     /// `pending_reads_by_ctx` entry. If the local state machine's
@@ -1797,7 +1798,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
         }
     }
 
-    /// F4 C3.6: release any parked linearizable reads whose
+    /// Release any parked linearizable reads whose
     /// `read_index` is now covered by the state machine's
     /// `last_applied`. Called after every successful
     /// `apply_entries` pass.
@@ -1839,7 +1840,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
 #[cfg(feature = "grpc")]
 impl ZoneConsensus<super::state_machine::FullStateMachine> {
     /// Sync wrapper around ``FullStateMachine::iter_dt_mount_entries``
-    /// for the kernel's startup replay (R20.16.4). Uses ``try_read`` so
+    /// for the kernel's startup DT_MOUNT replay. Uses ``try_read`` so
     /// a contended lock returns an empty Vec rather than blocking —
     /// the kernel's reconcile loop handles "come back later" naturally.
     pub fn iter_dt_mount_entries(&self) -> super::Result<Vec<(String, String)>> {
@@ -1971,7 +1972,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_three_node_consensus() {
-        // Phase 1: Create all nodes (handles + drivers)
+        // Step 1: create all nodes (handles + drivers)
         let mut handles = Vec::new();
         let mut drivers = Vec::new();
         let mut _dirs = Vec::new();
@@ -1997,7 +1998,7 @@ mod tests {
             _dirs.push(dir);
         }
 
-        // Phase 2: Spawn each driver in its own task (production-like)
+        // Step 2: spawn each driver in its own task (production-like)
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
         for (i, driver) in drivers.into_iter().enumerate() {
             let all_handles = handles.clone();
@@ -2008,7 +2009,7 @@ mod tests {
         // Yield to let spawned driver tasks start
         tokio::task::yield_now().await;
 
-        // Phase 3: Trigger election on node 1
+        // Step 3: trigger election on node 1
         handles[0].campaign().await.unwrap();
 
         // Wait for leader election.
@@ -2034,7 +2035,7 @@ mod tests {
         }
         assert_eq!(leader_count, 1, "Expected exactly 1 leader");
 
-        // Phase 4: Propose a command on the leader
+        // Step 4: propose a command on the leader
         let cmd = Command::SetMetadata {
             key: "/test.txt".into(),
             value: b"hello world".to_vec(),
@@ -2069,7 +2070,7 @@ mod tests {
         }
         assert!(all_replicated, "Replication to all nodes must complete");
 
-        // Phase 5: EC propose — returns immediately without waiting for commit
+        // Step 5: EC propose — returns immediately without waiting for commit
         let ec_cmd = Command::SetMetadata {
             key: "/ec-test.txt".into(),
             value: b"eventual".to_vec(),
@@ -2077,11 +2078,11 @@ mod tests {
         let ec_result = handles[leader_idx].propose_ec(ec_cmd).await;
         assert!(ec_result.is_ok(), "EC propose should return Ok immediately");
 
-        // Phase 6: F4 C3.6 — linearizable read via ReadIndex.
+        // Step 6: linearizable read via ReadIndex.
         // Fire on every node (including followers) so we exercise
         // both the leader-local fast path and the follower
         // forward-to-leader path. Every caller must observe the
-        // write from Phase 4.
+        // write from step 4.
         for (i, handle) in handles.iter().enumerate() {
             let value = handle
                 .read_linearizable(|sm| sm.get_metadata("/test.txt"))

@@ -18,9 +18,9 @@ python = ["dep:pyo3"]
 
 [dependencies]
 contracts = { workspace = true }
-# Phase 3: services depends on kernel (one-way; kernel never depends on
-# services — the in-tree Rust API surface is `Kernel::register_native_hook`
-# / `Kernel::prepare_audit_stream` / `kernel::core::dispatch::*`).
+# services depends on kernel (one-way; kernel never depends on services
+# — the in-tree Rust API surface is `Kernel::register_native_hook` /
+# `Kernel::prepare_audit_stream` / `kernel::core::dispatch::*`).
 # `default-features = false` keeps the kernel runtime defaults
 # (mimalloc allocator, connector HTTP stack, py-hook adapters) off so
 # this rlib stays slim; the cdylib pulls them via its own kernel dep.
@@ -30,7 +30,7 @@ kernel = { workspace = true }
 # syscalls (the same path Python takes), never via direct cross-crate
 # imports. See `services/src/lib.rs` for the rationale.
 redb = "2"
-# Phase 3 restructure plan #6: tasks crate folded in here.
+# Tasks engine storage backend.
 fjall = "3"
 # `acp::subprocess` calls libc::dup() to hand kernel-side OwnedFds
 # alongside the ones tokio::process::Child still owns; #[cfg(unix)]

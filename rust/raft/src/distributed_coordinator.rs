@@ -1,16 +1,15 @@
 //! Concrete `DistributedCoordinator` implementation.
 //!
-//! Phase H of the rust-workspace restructure put the
-//! `RaftDistributedCoordinator` impl in the raft crate (after the `kernel
-//! → raft` Cargo edge flipped to `raft → kernel`).  The kernel
-//! installs an `Arc<dyn DistributedCoordinator>` into its `federation` slot
-//! via the cdylib boot path; federation-aware syscalls dispatch through
-//! the trait.
+//! `RaftDistributedCoordinator` is the raft-crate impl of the
+//! `DistributedCoordinator` trait the kernel exposes. The Cargo edge
+//! runs `raft → kernel`; the kernel installs an
+//! `Arc<dyn DistributedCoordinator>` into its `federation` slot via the
+//! cdylib boot path, and federation-aware syscalls dispatch through the
+//! trait.
 //!
 //! ## Provider shape
 //!
-//! `RaftDistributedCoordinator` owns the federation-side state that pre-Phase-5
-//! lived directly on `Kernel`:
+//! `RaftDistributedCoordinator` owns the federation-side state:
 //!
 //! * `Arc<ZoneManager>` — per-zone Raft groups + gRPC server.
 //! * `Arc<ZoneRaftRegistry>` — zone-id → ZoneConsensus lookup.

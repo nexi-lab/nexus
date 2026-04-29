@@ -19,9 +19,8 @@
 //! crate (`backends/` for object stores, kernel-internal for the
 //! in-memory reference metastore, …).
 //!
-//! Phase 1 lifted these out of `core/traits/`. The relocation
-//! disambiguates the doc invariant — anything inside `abc/` is one of
-//! the three §3 storage pillars; nothing else qualifies.
+//! Doc invariant — anything inside `abc/` is one of the three §3
+//! storage pillars; nothing else qualifies.
 
 pub mod cache_store;
 pub mod meta_store;

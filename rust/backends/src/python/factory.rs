@@ -260,8 +260,7 @@ impl ObjectStoreProvider for DefaultObjectStoreProvider {
         } else if let Some(root) = args.local_root {
             // local_root branch: backend_type ∈ { "local_connector",
             // "path_local", default cas-local }.  The three impls live
-            // in `crate::storage::*` after the Phase 2 split of the
-            // old kernel `_backend_impls.rs`.
+            // in `crate::storage::*`.
             if backend_type == "local_connector" {
                 let b = crate::storage::local_connector::LocalConnectorBackend::new(
                     Path::new(root),
@@ -280,8 +279,7 @@ impl ObjectStoreProvider for DefaultObjectStoreProvider {
                 // chunk_fetcher pre-wired so local chunk misses on this
                 // mount fall through to peer RPCs against
                 // `backend_name.origins`.  The chunk_fetcher Arc is
-                // smuggled in via `args.peer_client.chunk_fetcher_arc()`
-                // (added on Kernel during Phase 2).
+                // smuggled in via `args.peer_client.chunk_fetcher_arc()`.
                 let fetcher: Arc<dyn kernel::cas_remote::RemoteChunkFetcher> =
                     Arc::clone(&args.chunk_fetcher);
                 let b = crate::storage::cas_local::CasLocalBackend::new_with_fetcher(

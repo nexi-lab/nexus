@@ -44,8 +44,8 @@ crc32fast = { workspace = true }
 # kernel cdylib enables those on its own pyo3 dep; cargo unifies to the
 # right featureset at link time.
 pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
-# Phase H deps — needed by `lib::python::*` only. Pure-Rust algorithm
-# files in `lib::*` siblings stay WASM-clean.
+# PyO3 wrapper deps — needed by `lib::python::*` only. Pure-Rust
+# algorithm files in `lib::*` siblings stay WASM-clean.
 rayon = { version = "1.11", optional = true }
 memmap2 = { version = "0.9.9", optional = true }
 simdutf8 = { version = "0.1", optional = true }
@@ -54,10 +54,9 @@ encoding_rs = { version = "0.8.35", optional = true }
 lru = { version = "0.16", optional = true }
 parking_lot = { version = "0.12", optional = true }
 dashmap = { version = "6.1", optional = true }
-# Phase I — kernel/src/bloom.rs PyO3 wrapper used the `bloomfilter`
-# crate; pulled in alongside the move so `BloomFilter` pyclass keeps
-# the same backing impl. (lib's pure-Rust `bloom` algorithm is a
-# separate WASM-clean module.)
+# `BloomFilter` pyclass uses the `bloomfilter` crate as its backing
+# impl. (lib's pure-Rust `bloom` algorithm is a separate WASM-clean
+# module.)
 bloomfilter = { version = "3.0", optional = true }
 # `roaring` is unconditional (lib::bitmap pure-Rust algos use it) — see
 # the `[dependencies]` line above; no extra entry needed for the

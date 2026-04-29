@@ -1,4 +1,4 @@
-//! Per-zone on-disk lifecycle with RAII-backed crash safety (R20.13).
+//! Per-zone on-disk lifecycle with RAII-backed crash safety.
 //!
 //! Disk-dir existence is the authoritative answer to "does this node host
 //! zone X?". The `ZoneRaftRegistry.zones` DashMap is a pure live-handle

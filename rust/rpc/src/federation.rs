@@ -1,8 +1,7 @@
-//! Rust client for federation peer RPCs (R16.5b).
+//! Rust client for federation peer RPCs.
 //!
-//! Replaces the Python ``_discover_mount`` (VFS sys_stat) and
-//! ``_request_membership`` (ZoneApiService.JoinZone) helpers that
-//! previously lived in ``src/nexus/raft/federation.py``. Runs every
+//! Drives ``_discover_mount`` (VFS sys_stat) and
+//! ``_request_membership`` (ZoneApiService.JoinZone) flows. Runs every
 //! gRPC call through a shared tokio runtime and a per-peer tonic
 //! ``Channel`` pool so repeated calls reuse the HTTP/2 connection.
 //!
@@ -507,7 +506,7 @@ mod tests {
     /// Smoke-construct the client so the plumbing (runtime build, TLS
     /// material parse, channel pool init) doesn't regress. End-to-end
     /// discover / join flows are exercised by the federation E2E
-    /// suite gated at R12 — they need a running peer.
+    /// suite — they need a running peer.
     #[test]
     fn client_constructs_with_and_without_tls() {
         let rt = Arc::new(

@@ -1,7 +1,7 @@
 //! BlobFetcher — trait abstracting CAS blob reads so the Raft gRPC
 //! server can serve `ReadBlob` without depending on kernel types.
 //!
-//! R20.18.7 co-locates the driver-to-driver `ReadBlob` RPC with
+//! The driver-to-driver `ReadBlob` RPC is co-located with
 //! `ZoneApiService` on the raft port. The kernel crate provides the
 //! implementation (wired over `VFSRouter`'s root backend); the raft
 //! crate only sees this trait.

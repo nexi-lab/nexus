@@ -16,7 +16,7 @@
 //! alternatives) is the metastore impl's concern, not this struct's.
 //! Federation-tier code never reaches in here directly.
 //!
-//! R20.19: `write_nowait()` is genuinely non-blocking.  Data lands in
+//! `write_nowait()` is genuinely non-blocking. Data lands in
 //! an inflight `BTreeMap` (read-your-writes) and is drained to the
 //! metastore by a dedicated background flush thread.  Hot-path cost:
 //! one parking_lot `RwLock` write + channel `try_send` ≈ 50–200 ns.

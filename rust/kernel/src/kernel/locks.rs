@@ -1,9 +1,6 @@
 //! Advisory lock syscalls — `sys_lock`, `sys_unlock`, lock listing.
 //!
-//! Phase G of Phase 3 restructure plan extracted these methods from the
-//! monolithic `kernel.rs` into a dedicated submodule.  The methods are
-//! still members of [`Kernel`] via `impl Kernel { ... }` blocks — the
-//! split is a file-organization change, not an API change.
+//! Methods stay members of [`Kernel`] via `impl Kernel { ... }` blocks.
 //!
 //! The federation distributed-lock install lives on the raft crate's
 //! `RaftDistributedCoordinator` impl, where it can name

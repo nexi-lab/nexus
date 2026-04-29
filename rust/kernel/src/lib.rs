@@ -120,10 +120,10 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 // `RpcTransport` directly.
 pub mod rpc_transport;
 
-// Phase 0 — `#[pymodule] fn nexus_runtime` lives in `rust/nexus-cdylib/`
-// now (the dedicated cdylib build artifact). Kernel's pyclass /
-// pyfunction surface is registered through `kernel::python::register`,
-// called by the cdylib alongside `lib::python::register`,
-// `nexus_raft::pyo3_bindings::register_python_classes`, and (post-
-// Phase-2/3/4) the parallel-crate registers.
+// `#[pymodule] fn nexus_runtime` lives in `rust/nexus-cdylib/` (the
+// dedicated cdylib build artifact). Kernel's pyclass / pyfunction
+// surface is registered through `kernel::python::register`, called by
+// the cdylib alongside `lib::python::register`,
+// `nexus_raft::pyo3_bindings::register_python_classes`, and the
+// parallel-crate registers.
 pub mod python;

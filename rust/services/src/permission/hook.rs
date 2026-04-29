@@ -1,4 +1,4 @@
-//! PermissionHook — Hybrid Rust/Python permission check hook (§11 Phase 11).
+//! PermissionHook — Hybrid Rust/Python permission check hook (§11).
 //!
 //! Architecture:
 //!   Fast path: Rust DashMap lease table (~100-200ns)
@@ -11,11 +11,10 @@
 //! This mirrors the Python PermissionCheckHook (permission_hook.py) but
 //! moves the hot-path lease check into pure Rust — no GIL for cache hits.
 //!
-//! Phase 3: moved from `kernel/src/permission_hook.rs` into the services
-//! crate.  Currently scaffolding only — `register_native_permission_hook`
-//! wiring on PyKernel was never implemented, so this is dead code today.
-//! Lives here because conceptually it's a service-tier hook (same tier
-//! as `services::audit::AuditHook`) and §11 Phase 11 will wire it up.
+//! Currently scaffolding only — `register_native_permission_hook` wiring
+//! on PyKernel is not implemented, so this is dead code today.
+//! Conceptually a service-tier hook (same tier as
+//! `services::audit::AuditHook`); §11 will wire it up.
 
 use dashmap::DashMap;
 use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};

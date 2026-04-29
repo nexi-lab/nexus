@@ -1,10 +1,8 @@
 //! `PathLocalBackend` — path-addressed local filesystem ObjectStore impl.
 //!
-//! Phase 2 lifted this out of `kernel/src/_backend_impls.rs` along
-//! with `CasLocalBackend` and `LocalConnectorBackend`.  Path-addressed
-//! storage: files live at `root_path/<content_id>` where `content_id`
-//! is the blob path, no CAS hashing.  Used by mounts that want
-//! reference-mode local storage (the data already lives at the path
+//! Path-addressed storage: files live at `root_path/<content_id>` where
+//! `content_id` is the blob path, no CAS hashing.  Used by mounts that
+//! want reference-mode local storage (the data already lives at the path
 //! you give us; we don't move it).
 
 use std::fs;
@@ -93,7 +91,7 @@ impl ObjectStore for PathLocalBackend {
             });
         }
 
-        // R20.10 partial-write slow path: open for rw, extend via
+        // Partial-write slow path: open for rw, extend via
         // set_len so the file system zero-fills the hole when offset >
         // current size (POSIX sparse-file semantics — ext4/xfs/ntfs
         // all honor this), then seek + write_all. `create(true)` so we
@@ -125,7 +123,7 @@ impl ObjectStore for PathLocalBackend {
         // Partial writes only: final bytes differ from `content`, so
         // we must read back to compute the post-splice hash + size.
         // Gated behind offset > 0 so the common full-overwrite path
-        // stays at its pre-R20.10 cost.
+        // skips the readback.
         let final_bytes = fs::read(&file_path).map_err(StorageError::IOError)?;
         let hash = lib::hash::hash_content(&final_bytes);
         // PAS: content_id = backend_path; version carries the hash.

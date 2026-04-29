@@ -2,7 +2,7 @@
 name = "backends"
 version = "0.1.0"
 edition = "2021"
-description = "ObjectStore driver impls — connector backends, CAS local, path local, blob-pack local. Implements kernel::core::traits::ObjectStore. Phase D parallel-layers crate."
+description = "ObjectStore driver impls — connector backends, CAS local, path local, blob-pack local. Implements kernel::core::traits::ObjectStore. Driver-layer crate."
 
 [lib]
 name = "backends"

@@ -51,11 +51,11 @@
 pub mod distributed_coordinator;
 pub mod object_store_provider;
 
-// `PeerBlobClient` lives in `shared/transport-primitives` (Phase C.2 —
-// transport-layer abstraction shared between raft server-side fetcher
-// and rpc client-side fetcher). Re-exported here so existing
-// `kernel::hal::peer::PeerBlobClient` callers keep working through
-// the move.
+// `PeerBlobClient` lives in `shared/transport-primitives` — the
+// transport-layer abstraction shared between the raft server-side
+// fetcher and the rpc client-side fetcher. Re-exported here so
+// `kernel::hal::peer::PeerBlobClient` callers keep their canonical
+// import path.
 pub mod peer {
     pub use transport_primitives::{NoopPeerBlobClient, PeerBlobClient, PeerBlobResult};
 }

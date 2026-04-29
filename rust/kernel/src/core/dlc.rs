@@ -101,10 +101,9 @@ impl DriverLifecycleCoordinator {
             });
         }
 
-        // R20.6: apply-side dcache coherence (the per-zone invalidate
-        // callback that fires on every committed metadata mutation) is
-        // no longer wired here — it's installed by the
-        // ``sys_setattr(DT_MOUNT)`` dispatcher via
+        // Apply-side dcache coherence (the per-zone invalidate callback
+        // that fires on every committed metadata mutation) is installed
+        // by the ``sys_setattr(DT_MOUNT)`` dispatcher via
         // ``Kernel::install_federation_dcache_coherence`` AFTER this
         // mount() returns. DLC stays federation-unaware; the install
         // sees only kernel primitives (dcache handle + metastore Arc

@@ -37,10 +37,9 @@ use crate::meta_store::MetaStore;
 /// Per-mount runtime record.
 ///
 /// `backend` is `Arc` so the root-zone mount's backend can be cheaply
-/// cloned into every federation child-zone mount that reuses it
-/// (R20.16). Before that refactor it was `Box`, because backends were
-/// never shared; federation now needs shared ownership without
-/// re-initialising the backend per child zone.
+/// cloned into every federation child-zone mount that reuses it.
+/// Federation needs shared ownership without re-initialising the
+/// backend per child zone.
 ///
 /// `metastore` is `Arc` because the same metastore instance may be handed
 /// in from a separate crate (e.g. `rust/raft::ZoneMetaStore`) via
@@ -136,8 +135,7 @@ pub enum RouteError {
 /// `mount_point` carries the **zone-canonical key** (`/{zone_id}{user_path}`),
 /// which is the same form `VFSRouter` is keyed by. Pass it straight into
 /// `VFSRouter::{read_content, write_content, get_canonical, …}` without
-/// re-canonicalizing. Historical name inherited from the pre-migration
-/// `router::RustRouteResult`.
+/// re-canonicalizing.
 #[derive(Debug, Clone)]
 pub struct RouteResult {
     /// Zone-canonical key (`/{zone_id}{user_mount_point}`).
@@ -158,8 +156,8 @@ pub struct RouteResult {
     pub is_cas: bool,
 }
 
-/// Legacy alias so kernel/generated code using the pre-migration type name
-/// compiles unchanged. Drop once C8 lands and all callers use `RouteResult`.
+/// Legacy alias retained so callers naming `RustRouteResult` keep
+/// compiling. Prefer `RouteResult` in new code.
 pub type RustRouteResult = RouteResult;
 
 // ---------------------------------------------------------------------------
@@ -324,10 +322,10 @@ impl VFSRouter {
 
     /// Snapshot every non-empty backend registered on the mount table.
     ///
-    /// Used by R20.18.7 `KernelBlobFetcher` to resolve `ReadBlob` by
-    /// content hash without caring which mount the blob originally
-    /// landed on — CAS backends are content-addressed, so any local
-    /// mount with the right blob satisfies the request.
+    /// Used by `KernelBlobFetcher` to resolve `ReadBlob` by content hash
+    /// without caring which mount the blob originally landed on — CAS
+    /// backends are content-addressed, so any local mount with the right
+    /// blob satisfies the request.
     pub fn backends(&self) -> Vec<Arc<dyn ObjectStore>> {
         self.entries
             .iter()
@@ -374,13 +372,11 @@ impl VFSRouter {
     }
 
     /// User-facing mount points whose per-mount metastore reports the
-    /// given ``coherence_key`` (R20.6 option B).
+    /// given ``coherence_key``.
     ///
-    /// Prior impl (``mount_points_for_metastore``) keyed by
-    /// ``Arc::ptr_eq`` on ``Arc<dyn MetaStore>``. R20.3 gave every
-    /// crosslink its own ``ZoneMetaStore`` allocation so Arc identity
-    /// no longer groups crosslinks of the same zone — each zone needs
-    /// a storage-level identity that survives per-mount wrapping.
+    /// Each crosslink has its own ``ZoneMetaStore`` allocation, so Arc
+    /// identity does not group crosslinks of the same zone — each zone
+    /// needs a storage-level identity that survives per-mount wrapping.
     /// ``MetaStore::coherence_key`` exposes that identity (stable
     /// integer; state-machine Arc pointer for raft-backed zones,
     /// ``None`` for standalone ``LocalMetaStore``).
@@ -897,9 +893,9 @@ mod tests {
     #[test]
     fn mount_points_for_coherence_key_finds_direct_and_crosslinks() {
         /// Test stub — reports a caller-configured coherence key.
-        /// R20.6 option B keys on ``usize``, not ``Arc`` identity, so
-        /// two distinct Arcs that report the same key represent two
-        /// surfaces of the same underlying storage.
+        /// Coherence keys are ``usize``, not ``Arc`` identity, so two
+        /// distinct Arcs that report the same key represent two surfaces
+        /// of the same underlying storage.
         struct KeyedStub {
             key: Option<usize>,
         }

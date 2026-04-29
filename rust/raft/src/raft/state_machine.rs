@@ -71,7 +71,7 @@ pub enum Command {
         holder_info: String,
         /// Conflict mode for this acquire (Exclusive or Shared).
         ///
-        /// Added in F4 C1. Pre-F4 snapshots deserialize with
+        /// Older snapshots that predate this field deserialize with
         /// `Exclusive` defaults (see the snapshot version byte in
         /// `FullStateMachine::snapshot` / `restore_snapshot`).
         mode: LockMode,
@@ -294,7 +294,7 @@ pub trait StateMachine: Send + Sync {
         None
     }
 
-    /// Optional apply-side DT_MOUNT slot (R20.16.2).
+    /// Optional apply-side DT_MOUNT slot.
     ///
     /// Symmetric to [`invalidate_cb_slot`] but fires only for DT_MOUNT
     /// Set / Delete commits — the kernel installs a closure that wires
@@ -317,7 +317,7 @@ pub trait StateMachine: Send + Sync {
 }
 
 /// A DT_MOUNT apply event delivered to [`StateMachine::mount_apply_cb_slot`]
-/// callbacks (R20.16.2).
+/// callbacks.
 ///
 /// Fires after the apply write transaction commits. All payload fields
 /// derive from replicated state (raft log `Command` + state-machine
@@ -336,12 +336,11 @@ pub enum MountApplyEvent {
     /// fire time so a subsequent apply to the same key cannot race
     /// the callback into wiring the wrong target.
     ///
-    /// Post-R20.16.8 / R20.16.9 the event does NOT carry io_profile /
-    /// readonly / admin_only — those knobs were retired as YAGNI.
-    /// Post-schema-cleanup the event also stops carrying ``backend_name`` —
-    /// the kernel-side wire path passes a constant label down to the
-    /// router (mount records' backend is supplied separately by the
-    /// router's mount config).
+    /// The event carries only ``key`` and ``target_zone_id``.
+    /// io_profile / readonly / admin_only and ``backend_name`` are
+    /// not carried — the kernel-side wire path passes a constant
+    /// label down to the router, and mount records' backend is
+    /// supplied separately by the router's mount config.
     Set { key: String, target_zone_id: String },
     /// DT_MOUNT delete. No proto payload — the entry was removed inside
     /// the same apply txn, so callers look up the prior mount via their
@@ -600,7 +599,7 @@ pub struct FullStateMachine {
     /// RwLock. The state machine is the SSOT; the Arc is how we
     /// surface it, not a shadow copy.
     last_applied: Arc<AtomicU64>,
-    /// Apply-side DT_MOUNT slot (R20.16.2) — shared
+    /// Apply-side DT_MOUNT slot — shared
     /// ``Arc<RwLock<Option<Arc<Fn(&MountApplyEvent)>>>>`` so the kernel
     /// mount-wiring owner can install / replace the callback *after*
     /// this state machine is moved into ``ZoneConsensus``.
@@ -717,7 +716,7 @@ impl FullStateMachine {
     /// Peek at a key's current committed value and decide whether it's
     /// a DT_MOUNT entry. Used by ``apply`` as a pre-read before the
     /// write txn to capture the pre-delete payload-classification for
-    /// ``DeleteMetadata`` commands (R20.16.2).
+    /// ``DeleteMetadata`` commands.
     ///
     /// Apply is serial, so no concurrent writer can mutate ``key``
     /// between this pre-read and the write txn that performs the
@@ -742,8 +741,7 @@ impl FullStateMachine {
         }
     }
 
-    /// Fire the apply-side DT_MOUNT callback for a committed command
-    /// (R20.16.2).
+    /// Fire the apply-side DT_MOUNT callback for a committed command.
     ///
     /// Set path: decode the ``SetMetadata`` value; if it's a DT_MOUNT
     /// with non-empty ``target_zone_id``, build a snapshot event from
@@ -794,9 +792,9 @@ impl FullStateMachine {
                         target_zone_id: proto.target_zone_id,
                     }
                 } else if let Some(k) = delete_mount_key {
-                    // R20.18.5: overwrite of prior DT_MOUNT with a
-                    // non-mount entry (e.g. federation_unmount writes
-                    // DT_DIR at the mount path). Fire Delete so
+                    // Overwrite of prior DT_MOUNT with a non-mount
+                    // entry (e.g. federation_unmount writes DT_DIR at
+                    // the mount path). Fire Delete so
                     // wire_federation_mount_impl removes this mount
                     // from the local VFSRouter.
                     if k == *key {
@@ -1123,7 +1121,7 @@ impl FullStateMachine {
     }
 
     /// Iterate every DT_MOUNT entry in this state machine, returning
-    /// ``(key, target_zone_id)`` pairs (R20.16.4).
+    /// ``(key, target_zone_id)`` pairs.
     ///
     /// Used by the kernel's startup replay to re-drive every historic
     /// federation mount through ``wire_federation_mount`` — apply-cb
@@ -1546,18 +1544,18 @@ impl StateMachine for FullStateMachine {
             return Ok(CommandResult::Success);
         }
 
-        // R20.16.2: capture pre-delete DT_MOUNT classification BEFORE
-        // the write txn removes the entry. Apply is serial, so no
+        // Capture pre-delete DT_MOUNT classification BEFORE the
+        // write txn removes the entry. Apply is serial, so no
         // concurrent writer can slip in between this read and the txn
         // that performs the delete. Only DeleteMetadata needs the
         // pre-capture — for SetMetadata the proto is on the command
         // itself, accessible from emit_mount_apply_event.
         //
-        // R20.18.5: federation_unmount writes a DT_DIR at the mount
-        // path to replace the DT_MOUNT entry — that's a SetMetadata,
-        // not a DeleteMetadata. We need to detect "previous entry
-        // was DT_MOUNT but the new one isn't" and fire a Delete
-        // event so wire_federation_mount_impl removes the mount from
+        // federation_unmount also writes a DT_DIR at the mount path
+        // to replace the DT_MOUNT entry — that's a SetMetadata, not a
+        // DeleteMetadata. We detect "previous entry was DT_MOUNT but
+        // the new one isn't" and fire a Delete event so
+        // wire_federation_mount_impl removes the mount from
         // VFSRouter on every node.
         #[cfg(feature = "grpc")]
         let delete_mount_key: Option<String> = match command {
@@ -1651,11 +1649,11 @@ impl StateMachine for FullStateMachine {
         // value also sees the metadata write that preceded it.
         self.last_applied.store(index, Ordering::Release);
 
-        // R20.16.2: fire the DT_MOUNT apply-side callback *after*
-        // commit. Any failure is caught (catch_unwind on panic; no-op
-        // on missing callback) — returning Err from apply poisons the
-        // state machine per raft's "apply must not fail" invariant,
-        // and the callback is strictly a side-effect.
+        // Fire the DT_MOUNT apply-side callback *after* commit. Any
+        // failure is caught (catch_unwind on panic; no-op on missing
+        // callback) — returning Err from apply poisons the state
+        // machine per raft's "apply must not fail" invariant, and the
+        // callback is strictly a side-effect.
         #[cfg(feature = "grpc")]
         self.emit_mount_apply_event(command, delete_mount_key.as_deref());
 
@@ -1800,7 +1798,7 @@ impl StateMachine for FullStateMachine {
     /// Return the shared apply-side DT_MOUNT slot so downstream
     /// holders (``ZoneConsensus``, kernel federation wiring) can
     /// install a callback that fires on every committed DT_MOUNT
-    /// Set / Delete (R20.16.2).
+    /// Set / Delete.
     #[cfg(feature = "grpc")]
     fn mount_apply_cb_slot(
         &self,
@@ -1873,9 +1871,9 @@ mod tests {
         }
     }
 
-    /// R20.16.2 apply-side DT_MOUNT callback — one flow covering every
-    /// branch: DT_MOUNT Set with an installed callback fires exactly
-    /// one Set event with the right payload; DT_DIR Set never fires;
+    /// Apply-side DT_MOUNT callback — one flow covering every branch:
+    /// DT_MOUNT Set with an installed callback fires exactly one Set
+    /// event with the right payload; DT_DIR Set never fires;
     /// DT_MOUNT Delete fires a Delete event; DT_REG Delete never fires;
     /// a state machine with no callback applies normally (callback is
     /// pure side-effect — apply must be unaffected).
@@ -2665,7 +2663,7 @@ mod tests {
     }
 
     // ───────────────────────────────────────────────────────────────
-    // F4 C1 — LockMode + RW semantics
+    // LockMode + RW semantics
     // ───────────────────────────────────────────────────────────────
 
     /// Helper: build an AcquireLock command with the given mode.

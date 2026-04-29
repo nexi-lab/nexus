@@ -79,10 +79,10 @@ pub struct ObjectStoreProviderArgs<'a> {
     pub chunk_fetcher: Arc<dyn RemoteChunkFetcher>,
     /// Kernel's tokio runtime — backends that issue async network IO
     /// (anthropic / openai SSE, RPC transport for remote backends)
-    /// share this runtime instead of building their own.  Phase 4
-    /// (full): the HAL `PeerBlobClient` trait is sync-only, so
-    /// runtime ownership stays with the kernel struct and gets
-    /// threaded through here for the rare async-needing backends.
+    /// share this runtime instead of building their own. The HAL
+    /// `PeerBlobClient` trait is sync-only, so runtime ownership stays
+    /// with the kernel struct and gets threaded through here for the
+    /// rare async-needing backends.
     pub runtime: &'a Arc<tokio::runtime::Runtime>,
 }
 

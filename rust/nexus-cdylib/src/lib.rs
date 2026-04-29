@@ -6,12 +6,13 @@
 //! across the workspace and pulls together the rlibs that compose
 //! the runtime:
 //!
-//! * [`lib`]              — pure-Rust algorithms (libc analogue)
-//! * [`kernel`]           — pillars + primitives + syscalls
-//! * [`nexus_raft`]       — Raft / federation
-//! * (Phase 2)             `backends`  — driver impls
-//! * (Phase 3)             `services`  — audit / permission / agents / tasks
-//! * (Phase 4)             `transport` — gRPC / RPC / IPC / federation client / blob fetch
+//! * [`lib`]         — pure-Rust algorithms (libc analogue)
+//! * [`kernel`]      — pillars + primitives + syscalls
+//! * [`nexus_raft`]  — Raft / federation
+//! * `backends`      — driver impls
+//! * `services`      — post-syscall hooks (audit / permission / agents / tasks)
+//! * `transport`     — front-door VFS gRPC server + IPC envelope helpers
+//! * `rpc`           — driver-outgoing RPC clients (VFS / peer-blob / federation)
 //!
 //! Each peer rlib exposes its own `python::register(&Bound<PyModule>)`
 //! function; this cdylib is just the envelope that calls all of them.
@@ -34,11 +35,11 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     kernel::python::register(m)?;
     // Raft / federation — ZoneManager / ZoneHandle / MetaStore.
     nexus_raft::pyo3_bindings::register_python_classes(m)?;
-    // Phase 3: services-tier PyO3 entry points (install_audit_hook,
-    // PyTaskEngine / PyTaskRecord / PyQueueStats — task-queue pyclasses
-    // folded in by Phase 3 restructure plan #6).  Registered after
-    // `kernel` so PyKernel is in the module's type registry by the
-    // time `install_audit_hook` accepts a `PyRef<PyKernel>` parameter.
+    // Services-tier PyO3 entry points (install_audit_hook +
+    // PyTaskEngine / PyTaskRecord / PyQueueStats task-queue pyclasses).
+    // Registered after `kernel` so PyKernel is in the module's type
+    // registry by the time `install_audit_hook` accepts a
+    // `PyRef<PyKernel>` parameter.
     services::python::register(m)?;
     // Backends-tier PyO3 entry points (BlobPackEngine pyclass) **and**
     // the `ObjectStoreProvider` registration — `backends::python::

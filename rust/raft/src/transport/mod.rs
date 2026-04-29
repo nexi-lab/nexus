@@ -136,8 +136,8 @@ pub(crate) async fn forward_propose(
 
             // Decode the typed RaftResponse so lock/metadata commands see
             // the same CommandResult variant the leader computed. Without
-            // this, AcquireLock/ReleaseLock/ExtendLock hit the
-            // "Unexpected result type" branch in PyZoneHandle (Issue F2 C7).
+            // this, AcquireLock/ReleaseLock/ExtendLock would hit an
+            // "Unexpected result type" branch on the caller side.
             Ok(proto_result_to_command_result(resp.result))
         }
         Err(e) => {
@@ -171,9 +171,8 @@ fn proto_result_to_command_result(
                     lock_id: String::new(),
                     holder_info: lr.current_holder.clone().unwrap_or_default(),
                     // Witness-path gRPC response has no per-holder
-                    // mode field — predates F4 C1. Default to
-                    // Exclusive (the only mode witnesses could
-                    // observe before F4).
+                    // mode field; default to Exclusive (the mode the
+                    // witness wire protocol assumes).
                     mode: LockMode::Exclusive,
                     acquired_at: 0,
                     expires_at: (lr.expires_at_ms / 1000) as u64,

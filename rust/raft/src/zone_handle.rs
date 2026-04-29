@@ -1,15 +1,9 @@
 //! Pure-Rust `ZoneHandle` — per-zone raft node handle.
 //!
-//! Extracted from `PyZoneHandle` (pyo3_bindings.rs) in R20.18.1 so the
-//! kernel crate can use zone handles without going through the PyO3
-//! boundary. `PyZoneHandle` in pyo3_bindings.rs is now a thin wrapper
-//! that holds `Arc<ZoneHandle>` and converts errors to `PyErr`.
-//!
-//! Per v20.10 boundary rule: `ZoneHandle` is kernel-internal and MUST
-//! NOT be exposed to Python directly — only syscalls / dispatch hooks /
-//! 4-pillar storage traits cross the PyO3 boundary. The `PyZoneHandle`
-//! wrapper is transitional — R20.18.6 deletes it after Python callers
-//! are cut over to syscalls in R20.18.5.
+//! Kernel-internal: only syscalls / dispatch hooks / 4-pillar storage
+//! traits cross the PyO3 boundary, so `ZoneHandle` is never exposed to
+//! Python directly. The kernel crate uses zone handles without going
+//! through the PyO3 boundary.
 
 #![cfg(all(feature = "grpc", has_protos))]
 

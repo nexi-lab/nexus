@@ -1,16 +1,13 @@
 //! PeerBlobClient — shared gRPC infrastructure for CAS-level peer fetch.
 //!
-//! Owns a single multi-threaded tokio runtime plus a tonic `Channel` pool
-//! (one per peer address) so every peer RPC reuses its channel instead of
-//! building an HTTP/2 connection per call. Supersedes the one-shot
-//! `tokio::runtime::Builder::new_current_thread()` that used to live inline in
-//! `Kernel::try_remote_fetch` and the Python `nexus.remote.peer_blob_client`
-//! module (which `R10f` deletes).
+//! Owns a single multi-threaded tokio runtime plus a tonic `Channel`
+//! pool (one per peer address) so every peer RPC reuses its channel
+//! instead of building an HTTP/2 connection per call.
 //!
 //! The runtime is constructed once at `Kernel::new` and handed out as
 //! `Arc<Runtime>`. `Kernel::shutdown` drops the owning Arc so tokio's
-//! background workers shut down cleanly (addresses R11 hypothesis #2 — a
-//! stuck tokio task blocking `docker stop`).
+//! background workers shut down cleanly (avoiding stuck tokio tasks
+//! that block `docker stop`).
 //!
 //! Thread-safety: `DashMap` guards the channel pool; per-peer + global
 //! semaphores cap concurrent RPCs.
@@ -45,7 +42,7 @@ pub struct PeerBlobClient {
     global_semaphore: Arc<Semaphore>,
     timeout: Duration,
     per_peer_permits: usize,
-    /// R20.18.7: late-bound mTLS material. Populated by the kernel via
+    /// Late-bound mTLS material. Populated by the kernel via
     /// `install_tls_config` once `init_federation_from_env` reads the
     /// on-disk `ca.pem` / `node.pem` / `node-key.pem` triplet. When
     /// present, peer channels are built as `https://…` with full mTLS
@@ -157,11 +154,11 @@ impl PeerBlobClient {
             .map_err(|e| format!("per-peer semaphore closed: {e}"))?;
 
         let channel = self.channel_for(address).await?;
-        // R20.18.7: ReadBlob lives on the raft ``ZoneApiService``
-        // (co-located with consensus on the advertised raft port —
-        // inherits cluster mTLS). Message caps match the server:
-        // tonic's default 4 MiB decode cap would reject any CAS
-        // chunk above that threshold (16 MiB CDC boundary).
+        // ReadBlob lives on the raft ``ZoneApiService`` (co-located
+        // with consensus on the advertised raft port — inherits
+        // cluster mTLS). Message caps match the server: tonic's
+        // default 4 MiB decode cap would reject any CAS chunk above
+        // that threshold (16 MiB CDC boundary).
         // SSOT: ``contracts::MAX_GRPC_MESSAGE_BYTES``.
         let mut client = ZoneApiServiceClient::new(channel)
             .max_decoding_message_size(contracts::MAX_GRPC_MESSAGE_BYTES)
@@ -203,13 +200,11 @@ pub fn build_kernel_runtime() -> Arc<tokio::runtime::Runtime> {
     Arc::new(rt)
 }
 
-// ── Phase 4 (full) HAL trait wiring ──────────────────────────────────
+// ── HAL trait wiring ─────────────────────────────────────────────────
 //
-// Kernel holds an `Arc<dyn kernel::hal::peer::PeerBlobClient>` (HAL
-// trait declared in kernel since Phase 1).  The concrete impl moved
-// here in Phase 4 (full); the impl block below adapts the inherent
-// `fetch` / `install_tls_config` methods to the trait's `fetch` /
-// `install_tls` shape.
+// Kernel holds an `Arc<dyn kernel::hal::peer::PeerBlobClient>`. The
+// impl block adapts the inherent `fetch` / `install_tls_config`
+// methods to the trait's `fetch` / `install_tls` shape.
 
 impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
     fn fetch(&self, addr: &str, content_id: &str) -> kernel::hal::peer::PeerBlobResult<Vec<u8>> {
@@ -218,11 +213,11 @@ impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
     }
 
     fn install_tls(&self, ca_pem: &[u8], cert_pem: Option<&[u8]>, key_pem: Option<&[u8]>) {
-        // Phase 4 (full): mTLS requires *both* a client cert and key — if
-        // either is missing the trait caller is in CA-only / server-auth
-        // mode, which the underlying `transport_primitives::TlsConfig`
+        // mTLS requires *both* a client cert and key — if either is
+        // missing the trait caller is in CA-only / server-auth mode,
+        // which the underlying `transport_primitives::TlsConfig`
         // does not yet model (its `cert_pem`/`key_pem` are `Vec<u8>`,
-        // not `Option<Vec<u8>>`).  Drop the install in that case so the
+        // not `Option<Vec<u8>>`). Drop the install in that case so the
         // peer client stays plaintext rather than constructing an
         // invalid mTLS bundle with empty client cert/key.
         let (Some(cert), Some(key)) = (cert_pem, key_pem) else {
@@ -243,10 +238,10 @@ impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
     }
 }
 
-/// Phase 4 (full) install hook.  Built by `nexus-cdylib`'s `#[pymodule]`
-/// boot — constructs a `PeerBlobClient` on the kernel-owned tokio
-/// runtime and installs it via `Kernel::set_peer_client`, replacing
-/// the `NoopPeerBlobClient` default.
+/// Install hook called from `nexus-cdylib`'s `#[pymodule]` boot —
+/// constructs a `PeerBlobClient` on the kernel-owned tokio runtime
+/// and installs it via `Kernel::set_peer_client`, replacing the
+/// `NoopPeerBlobClient` default.
 pub fn install(kernel: &kernel::kernel::Kernel) {
     let client = Arc::new(PeerBlobClient::new(Arc::clone(kernel.runtime())));
     kernel.set_peer_client(client as Arc<dyn kernel::hal::peer::PeerBlobClient>);

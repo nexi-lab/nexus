@@ -9,8 +9,7 @@
 //!
 //! Concrete impls (`CasLocalBackend`, `PathLocalBackend`,
 //! `LocalConnectorBackend`, plus the connector-feature ones) sit in
-//! `_backend_impls.rs` until Phase D lifts them into the parallel
-//! `backends/` crate.
+//! `_backend_impls.rs`.
 
 use std::io;
 
@@ -26,10 +25,10 @@ pub enum StorageError {
     NotSupported(&'static str),
 }
 
-// Phase 2: `From<CASError> for StorageError` lives in
-// `kernel/src/cas_engine.rs` (next to `CASError`) — both types stay
-// kernel-local so the orphan rule is satisfied; the conversion lives
-// with its canonical `CASError` site.
+// `From<CASError> for StorageError` lives in `kernel/src/cas_engine.rs`
+// (next to `CASError`) — both types stay kernel-local so the orphan
+// rule is satisfied; the conversion lives with its canonical
+// `CASError` site.
 
 /// Result of a write operation (equivalent to Python `WriteResult`).
 ///
@@ -122,9 +121,7 @@ pub trait ObjectStore: Send + Sync {
     /// - `ctx`: Operation context (carries backend_path, auth, TTL).
     /// - `offset`: POSIX `pwrite(2)` semantics.
     ///
-    ///   `offset == 0` is a full-file write (truncate + write) — current
-    ///   behavior for every caller that predates the partial-write wiring
-    ///   (R20.10).
+    ///   `offset == 0` is a full-file write (truncate + write).
     ///
     ///   `offset > 0` splices `content` starting at `offset`, preserving
     ///   bytes before `offset` and after `offset + content.len()`. When

@@ -1,10 +1,8 @@
 //! Observability syscalls — observer registry, file watch registry,
 //! `sys_watch`, and the shared `dispatch_mutation` helper.
 //!
-//! Phase G of Phase 3 restructure plan extracted these methods from
-//! the monolithic `kernel.rs`.  The split is a file-organization
-//! change — every method stays a member of [`Kernel`] via the
-//! submodule's `impl Kernel { ... }` block.
+//! Every method stays a member of [`Kernel`] via this submodule's
+//! `impl Kernel { ... }` block.
 
 use std::sync::Arc;
 
@@ -13,25 +11,11 @@ use crate::dispatch::{FileEvent, FileEventType, MutationObserver};
 use super::{Kernel, OperationContext};
 
 impl Kernel {
-    // ── Observer registry (§10 Phase 10 / §11 Phase 2) ────────────────
-    //
-    // These methods are pre-built infrastructure for §11 Phases 3/5/6:
-    //   - Phase 3: replaces the inline loop with a `ThreadPool::execute()`
-    //     submission so observers run off the syscall hot path.
-    //   - Phase 5: kernel sys_* methods call `dispatch_observers` after
-    //     each successful mutation.
-    //   - Phase 6: PyKernel.register_observer rewires from the legacy
-    //     `Py<PyAny>`-based ObserverRegistry to this Rust-typed registry,
-    //     and the legacy registry is deleted.
-    //
-    // No production caller exists yet, hence #[allow(dead_code)] — the
-    // attribute is removed when Phase 5 wires the first call site.
+    // ── Observer registry ─────────────────────────────────────────────
 
-    ///
-    /// `OBSERVE_INLINE` was deleted in §11 Phase 2 — all OBSERVE callbacks
-    /// run on `observer_pool` (the kernel's background ThreadPool). There
-    /// is no other mode. Observers needing synchronous-blocking semantics
-    /// must be moved to INTERCEPT POST.
+    /// All OBSERVE callbacks run on `observer_pool` (the kernel's
+    /// background ThreadPool). Observers needing synchronous-blocking
+    /// semantics must be moved to INTERCEPT POST.
     #[allow(dead_code)]
     pub fn register_observer(
         &self,

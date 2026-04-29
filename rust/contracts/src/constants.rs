@@ -54,8 +54,8 @@ pub mod env {
     /// Peer-reachable address this node publishes (host:port).
     ///
     /// SSOT for "where can other nodes reach me?". Raft transport uses
-    /// it for cluster peering; R20.18.7 reuses it for the co-located
-    /// `ReadBlob` RPC on the raft port. Follows the etcd
+    /// it for cluster peering and the co-located `ReadBlob` RPC on the
+    /// raft port. Follows the etcd
     /// `--initial-advertise-peer-urls` / CockroachDB `--advertise-addr`
     /// convention: inter-node services share one advertised address.
     pub const ADVERTISE_ADDR: &str = "NEXUS_ADVERTISE_ADDR";

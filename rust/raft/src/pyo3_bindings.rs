@@ -56,7 +56,7 @@ fn validate_consistency(consistency: &str) -> PyResult<()> {
     }
 }
 
-/// Python lock-mode string constants (F4 C2).
+/// Python lock-mode string constants.
 const LOCK_MODE_EXCLUSIVE: &str = "exclusive";
 const LOCK_MODE_SHARED: &str = "shared";
 
@@ -94,10 +94,10 @@ pub struct PyHolderInfo {
     pub lock_id: String,
     #[pyo3(get)]
     pub holder_info: String,
-    /// Per-holder conflict mode (F4 C2): `"exclusive"` or
-    /// `"shared"`. Not to be confused with the lock-level display
-    /// label ("mutex"/"semaphore"), which is computed from
-    /// `max_holders` on the Python side and never stored.
+    /// Per-holder conflict mode: `"exclusive"` or `"shared"`. Not to
+    /// be confused with the lock-level display label
+    /// ("mutex"/"semaphore"), which is computed from `max_holders` on
+    /// the Python side and never stored.
     #[pyo3(get)]
     pub mode: String,
     #[pyo3(get)]
@@ -576,7 +576,7 @@ impl PyMetaStore {
     }
 
     // =========================================================================
-    // Revision Counter Operations (Issue #1330, Phase 4.2)
+    // Revision Counter Operations (Issue #1330)
     // =========================================================================
 
     /// Atomically increment and return the new revision for a zone.
@@ -665,21 +665,6 @@ impl PyMetaStore {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to apply command: {}", e)))
     }
 }
-
-// =============================================================================
-// R20.18.6: PyZoneManager + PyZoneHandle pyclass shells deleted.
-//
-// Both wrappers previously existed only to let Python construct /
-// interact with raft zones. R20.18.2-R20.18.5 moved federation
-// bootstrap into Kernel::init_federation_from_env and cut every
-// Python caller over to PyKernel syscalls + zone_* thin shims. The
-// pure-Rust `crate::zone_manager::ZoneManager` and
-// `crate::zone_handle::ZoneHandle` types remain as kernel-internal
-// SSOT; nothing crosses the PyO3 boundary as a ZoneHandle any more.
-//
-// `parse_consistency` helper was only used by the deleted pymethods;
-// it went with them.
-// =============================================================================
 
 // =============================================================================
 // Standalone join_cluster function (K3s-style pre-provision)
@@ -805,20 +790,18 @@ fn hostname_to_node_id(hostname: &str) -> u64 {
 
 /// Register raft's PyO3 classes on the calling crate's Python module.
 ///
-/// F2 C8 (Option A): raft is an rlib inside the ``nexus_runtime`` cdylib
-/// now — the old ``#[pymodule] fn _nexus_raft`` is gone. Kernel's own
-/// ``#[pymodule]`` calls this function to expose ``MetaStore`` /
-/// ``ZoneManager`` / ``ZoneHandle`` from the single ``nexus_runtime``
-/// Python module. Kept ``pub`` so ``kernel::lib::nexus_runtime`` can
-/// reach it via the ``nexus_raft_lib::register_python_classes`` path.
+/// Raft is an rlib inside the ``nexus_runtime`` cdylib; kernel's own
+/// ``#[pymodule]`` calls this function to expose ``MetaStore`` and the
+/// federation wiring helpers from the single ``nexus_runtime`` Python
+/// module. Kept ``pub`` so ``kernel::lib::nexus_runtime`` can reach
+/// it via the ``nexus_raft_lib::register_python_classes`` path.
 pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMetaStore>()?;
     m.add_class::<PyLockState>()?;
     m.add_class::<PyLockInfo>()?;
     m.add_class::<PyHolderInfo>()?;
-    // R20.18.6: PyZoneManager + PyZoneHandle pyclass registrations removed
-    // with the pyclasses themselves. Python drives zones via kernel's
-    // zone_* PyO3 methods + federation_rpc shim.
+    // Python drives zones via kernel's zone_* PyO3 methods +
+    // federation_rpc shim — no PyZoneManager / PyZoneHandle pyclasses.
     #[cfg(all(feature = "grpc", has_protos))]
     m.add_function(wrap_pyfunction!(join_cluster, m)?)?;
     #[cfg(all(feature = "grpc", has_protos))]
@@ -1042,13 +1025,13 @@ fn federation_start_replication_scanner_py(
 }
 
 // =============================================================================
-// Unit tests: federation mount helpers (R16.1b)
+// Unit tests: federation mount helpers
 // =============================================================================
 //
 // End-to-end mount success / idempotent / auto-create paths need a full
 // ZoneConsensus + tokio runtime; those are exercised by the federation
-// E2E suite (docker) gated at R12. Here we cover the pure helper
-// surface that backs those flows — encoder, decoder, and field fidelity.
+// E2E docker suite. Here we cover the pure helper surface that backs
+// those flows — encoder, decoder, and field fidelity.
 
 #[cfg(all(test, feature = "grpc", has_protos))]
 mod mount_helpers_tests {
@@ -1085,10 +1068,10 @@ mod mount_helpers_tests {
         assert_ne!(m.target_zone_id, d.target_zone_id);
     }
 
-    /// R16.3 boundary: accepts self + descendants separated by ``/``,
-    /// rejects siblings with shared stems and non-descendants, matches
-    /// everything when the normalized prefix is empty (share-the-whole-
-    /// zone path). Covered in one table-driven test.
+    /// Prefix-match boundary: accepts self + descendants separated by
+    /// ``/``, rejects siblings with shared stems and non-descendants,
+    /// matches everything when the normalized prefix is empty
+    /// (share-the-whole-zone path). Covered in one table-driven test.
     #[test]
     fn path_matches_prefix_matrix() {
         let cases: &[(&str, &str, bool)] = &[

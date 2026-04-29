@@ -6,9 +6,9 @@
 //! ``propose`` (Raft consensus); reads hit the local state machine
 //! directly.
 //!
-//! R20.3: ``ZoneMetaStore`` owns the full↔zone-relative path
-//! translation. The trait boundary always sees full global paths; the
-//! state machine always sees zone-relative keys. This keeps
+//! ``ZoneMetaStore`` owns the full↔zone-relative path translation.
+//! The trait boundary always sees full global paths; the state
+//! machine always sees zone-relative keys. This keeps
 //! ``FileMetadata.path`` consistent with callers' worldview while
 //! preserving the crosslink invariant (a zone mounted at multiple
 //! global paths stores one authoritative copy per zone-relative key).
@@ -43,7 +43,7 @@ use kernel::meta_store::{FileMetadata as KernelFileMetadata, MetaStore, MetaStor
 /// mount of the same zone has a different ``mount_point`` but shares
 /// the SAME ``coherence_id``, which is how
 /// ``VFSRouter::mount_points_for_coherence_key`` fans out apply-side
-/// dcache invalidation across all surfaces of the zone (R20.6 option B).
+/// dcache invalidation across all surfaces of the zone.
 pub struct ZoneMetaStore {
     node: ZoneConsensus<FullStateMachine>,
     runtime: tokio::runtime::Handle,
@@ -55,9 +55,8 @@ impl ZoneMetaStore {
     /// Construct from a running ``ZoneConsensus`` + its tokio runtime
     /// + the VFS mount point this zone surfaces under.
     ///
-    /// ``mount_point`` is mandatory post-R19.1b': every remaining
-    /// caller is a VFS mount (WAL streams took the non-VFS escape
-    /// hatch out). The value should be the canonical form
+    /// ``mount_point`` is mandatory: every caller is a VFS mount.
+    /// The value should be the canonical form
     /// (e.g. ``"/corp"``, ``"/"`` for the root zone) — the same key
     /// ``Kernel::with_metastore`` routes against.
     pub fn new(
@@ -372,9 +371,9 @@ mod tests {
         assert_eq!(restored.last_writer_address, meta.last_writer_address);
     }
 
-    /// R20.3: pure-function translation is unit-testable without a
-    /// live ZoneConsensus — build a stub struct literal and exercise
-    /// the helpers directly. (Field-level construction isn't possible
+    /// Pure-function translation is unit-testable without a live
+    /// ZoneConsensus — build a stub struct literal and exercise the
+    /// helpers directly. (Field-level construction isn't possible
     /// because ZoneConsensus is opaque; instead we test the helpers
     /// by decomposition: any path whose translation is independent
     /// of consensus can be covered here.)

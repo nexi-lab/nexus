@@ -1,4 +1,4 @@
-//! `backends` — ObjectStore driver impls (Phase 2 parallel-layers crate).
+//! `backends` — ObjectStore driver impls (driver-layer crate).
 //!
 //! Per `docs/architecture/KERNEL-ARCHITECTURE.md` §1 / §3 the driver
 //! layer sits parallel to the kernel: it implements

@@ -18,13 +18,7 @@
 //! Error encoding: Rust raises `RuntimeError("StreamFull:…")` etc. Python
 //! translates to the matching exception class.
 
-// Phase C nested layout (§4.2 — DT_STREAM pillar):
-//   core/stream/mod.rs      — MemoryStreamBackend (was kernel/src/stream.rs)
-//   core/stream/manager.rs  — StreamManager       (was kernel/src/stream_manager.rs)
-//   core/stream/observer.rs — StreamObserver      (was kernel/src/stream_observer.rs)
-//   core/stream/shm.rs      — SharedMemoryStream  (was kernel/src/shm_stream.rs)
-//   core/stream/stdio.rs    — StdioStreamBackend  (was kernel/src/stdio_stream.rs)
-//   core/stream/remote.rs   — RemoteStreamBackend (was kernel/src/remote_stream.rs)
+// §4.2 — DT_STREAM pillar.
 // `wal.rs` — WAL-replicated stream backend.  Kernel primitive that
 // composes whatever distributed `MetaStore` impl federation has DI'd
 // (typically `ZoneMetaStore` from the raft crate) — kernel does not
@@ -73,13 +67,13 @@ unsafe impl Send for MemoryStreamBackend {}
 unsafe impl Sync for MemoryStreamBackend {}
 
 // ---------------------------------------------------------------------------
-// StreamBackend / StreamError live in this directory's `backend.rs` sub-file
-// (Phase 1 — moved out of the now-deleted `core/traits/`).  The trait is
-// kernel-internal — not a §3 ABC pillar, just an abstraction for the IPC
-// subsystem — so it sits with its primitive impl rather than under
-// `crate::abc/` or `crate::hal/`.  Re-exported here so
-// `crate::stream::StreamBackend` / `crate::stream::StreamError` paths used
-// throughout the kernel keep resolving without per-caller churn.
+// StreamBackend / StreamError live in this directory's `backend.rs`.
+// The trait is kernel-internal — not a §3 ABC pillar, just an
+// abstraction for the IPC subsystem — so it sits with its primitive
+// impl rather than under `crate::abc/` or `crate::hal/`. Re-exported
+// here so `crate::stream::StreamBackend` / `crate::stream::StreamError`
+// paths used throughout the kernel keep resolving without per-caller
+// churn.
 // ---------------------------------------------------------------------------
 
 pub use backend::{StreamBackend, StreamError};

@@ -1,9 +1,7 @@
-//! Rust-native gRPC server for `NexusVFSService` (Phase 1 of the
-//! Python→Rust VFS server migration).
+//! Rust-native gRPC server for `NexusVFSService`.
 //!
-//! Closes the asymmetry between Federation gRPC (server in Rust) and VFS
-//! gRPC (server in Python until now). The :2028 socket is now owned by
-//! tonic; Python's `grpc.aio.server` is gone.
+//! Owns the :2028 socket via tonic. Symmetric with the Federation
+//! gRPC server (also Rust-native).
 //!
 //! Per-RPC architecture:
 //!
@@ -249,10 +247,10 @@ impl NexusVfsService for VfsServiceImpl {
                 "federation token: use Call dispatch (sys_write RPC) — typed Write bypasses zone authorization",
             ))));
         }
-        // Phase 1 ignores `content_id` (OCC) — `Write` traffic is REMOTE-profile
+        // Ignores `content_id` (OCC) — `Write` traffic is REMOTE-profile
         // bulk content. OCC writes go through `Call → occ_write` (still
-        // Python). When the OCC service migrates to Rust we'll honor
-        // `req.content_id` here too.
+        // Python). When the OCC service migrates to Rust this site
+        // will honor `req.content_id` too.
         match self
             .kernel
             .sys_write(&req.path, &ctx, &req.content, /* offset */ 0)
@@ -856,11 +854,9 @@ pub fn start_vfs_grpc_server(
         dispatch_call,
     };
 
-    // Phase 4: file moved from `kernel/src/grpc_server.rs` into
-    // `transport/src/grpc.rs`; `kernel.inner` is `pub(crate)` so the
-    // pre-Phase-4 direct field access broke at the crate boundary.
-    // Replaced with the `kernel_arc()` accessor (codegen-emitted on
-    // PyKernel) — same Arc clone, just goes through a `pub fn`.
+    // `kernel.inner` is `pub(crate)`; the `kernel_arc()` accessor
+    // (codegen-emitted on PyKernel) clones the inner Arc through a
+    // `pub fn` so this transport-side caller can reach it.
     let kernel_arc = kernel.borrow().kernel_arc();
     let handle = spawn(kernel_arc, cfg, bridge).map_err(PyRuntimeError::new_err)?;
 

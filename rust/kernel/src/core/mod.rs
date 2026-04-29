@@ -14,12 +14,12 @@
 //!   in-memory reference impls of the §3.A pillars that are too small
 //!   to justify their own crate).
 //!
-//! The `lib.rs` crate root still exposes the pre-Phase-C flat names
+//! The `lib.rs` crate root re-exposes the flat names
 //! (`crate::vfs_router::*`, `crate::pipe::*`, `crate::stream::*`, …)
-//! via `pub use core::… as <flat>` shims, so callers do not churn;
-//! later phases retire the shims as impls migrate to parallel crates.
+//! via `pub use core::… as <flat>` shims, so callers can name a single
+//! canonical path regardless of the internal `core/` nesting.
 
-// §4.0 — agent table SSOT (Phase 3 moved here from services/).
+// §4.0 — agent table SSOT.
 pub mod agents;
 
 // §4.1 — VFS routing + dcache + DLC mount lifecycle.
@@ -38,9 +38,8 @@ pub mod lock;
 pub mod dispatch;
 
 // §4.6 — metastore primitive impls (MemoryMetaStore + LocalMetaStore +
-// remote proxy).  The trait declaration itself lives in
-// `crate::abc::meta_store` after Phase 1; this module only holds the
-// kernel-internal concrete impls.
+// remote proxy). The trait declaration lives in `crate::abc::meta_store`;
+// this module only holds the kernel-internal concrete impls.
 pub mod meta_store;
 
 // §4.2 — DT_PIPE / DT_STREAM IPC pillars.

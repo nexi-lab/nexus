@@ -27,12 +27,11 @@ use std::sync::Arc;
 /// `kernel::python::register`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // ── #[pyclass] registrations ────────────────────────────────────
-    // Phase 2 / Phase 0.5: BlobPackEngine pyclass — anchored to
-    // Python name "VolumeEngine" for ABI compat.
+    // BlobPackEngine pyclass — anchored to Python name "VolumeEngine"
+    // for ABI compat.
     m.add_class::<crate::storage::blob_pack::BlobPackEngine>()?;
 
-    // OpenAI inference (§10 D3) — GIL-free HTTP calls, was registered
-    // in `kernel::python::register` pre-Phase-2.  Now lives in
+    // OpenAI inference (§10 D3) — GIL-free HTTP calls, lives in
     // `backends::transports::api::ai::openai::inference`.
     #[cfg(feature = "connectors")]
     {

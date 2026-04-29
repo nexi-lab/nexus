@@ -1,10 +1,8 @@
 //! Mount-table primitives — router proxy methods that compose into
 //! the `sys_setattr(DT_MOUNT)` syscall.
 //!
-//! Phase G of the Phase 3 restructure plan extracted these methods
-//! from the monolithic `kernel.rs` into a dedicated submodule.  The
-//! split is a file-organization change — every method stays a member
-//! of [`Kernel`] via the submodule's `impl Kernel { ... }` block.
+//! Every method stays a member of [`Kernel`] via this submodule's
+//! `impl Kernel { ... }` block.
 //!
 //! Mount-related responsibilities split across three layers:
 //!
@@ -33,8 +31,8 @@ impl Kernel {
     /// federation mounts that replayed before the root mount landed.
     ///
     /// Visibility: ``pub(crate)`` — ``DLC::mount`` is the sole intended
-    /// caller (R20.5). Python-driven mounts flow ``sys_setattr(DT_MOUNT)
-    /// → DLC::mount → add_mount``; bypassing DLC skips the metastore
+    /// caller. Python-driven mounts flow ``sys_setattr(DT_MOUNT) →
+    /// DLC::mount → add_mount``; bypassing DLC skips the metastore
     /// DT_MOUNT write + dcache seed + mount-info bookkeeping.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn add_mount(

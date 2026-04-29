@@ -19,6 +19,26 @@ const KEY_HARD_STATE: &[u8] = b"hard_state";
 const KEY_CONF_STATE: &[u8] = b"conf_state";
 const KEY_SNAPSHOT: &[u8] = b"snapshot";
 const KEY_FIRST_INDEX: &[u8] = b"first_index";
+/// Per-storage node-incarnation marker (Issue: fresh-join panic).
+///
+/// Persisted ONCE on the first ``RaftStorage::new`` against a fresh redb;
+/// thereafter read on every restart.  Wiping the data dir resets the
+/// marker, which lets ``ensure_voter_membership`` mint a new node ID
+/// instead of reusing the prior one — avoiding raft-rs's
+/// ``handle_heartbeat`` panic when a wiped node rejoins a running
+/// cluster (leader's in-memory ``Progress[old_id].matched`` is stale and
+/// would cause ``commit_to(K)`` against ``last_index=0``).
+const KEY_INCARNATION: &[u8] = b"incarnation";
+
+/// Default incarnation used during cold-start cluster bootstrap.
+///
+/// All nodes converge on this value at first boot so the IDs they each
+/// derive from ``compute_node_id(hostname, DEFAULT_INCARNATION)`` match
+/// across the cluster's ConfState.  Only used when no leader is
+/// reachable (``ensure_voter_membership`` cold-start path); a wiped
+/// node that finds an existing leader mints a fresh u64 instead.
+#[allow(dead_code)] // Wired up in the ensure_voter_membership commit on this branch.
+pub const DEFAULT_INCARNATION: u64 = 0;
 
 /// Raft storage backed by redb.
 ///
@@ -37,7 +57,8 @@ const KEY_FIRST_INDEX: &[u8] = b"first_index";
 ///     ├── hard_state -> HardState (term, vote, commit)
 ///     ├── conf_state -> ConfState (voters, learners)
 ///     ├── snapshot -> Snapshot
-///     └── first_index -> u64
+///     ├── first_index -> u64
+///     └── incarnation -> u64  (set on first ::new, never overwritten)
 /// ```
 pub struct RaftStorage {
     /// Underlying redb store.
@@ -46,6 +67,14 @@ pub struct RaftStorage {
     entries: RedbTree,
     /// Tree for raft state.
     state: RedbTree,
+    /// Whether this storage was just initialized (no prior incarnation).
+    ///
+    /// Set to ``true`` when ``new`` runs against a fresh redb (no
+    /// ``KEY_INCARNATION`` row); ``false`` when reopening an existing
+    /// store.  ``ensure_voter_membership`` reads this to decide whether
+    /// to attempt the wipe-rejoin rotation flow vs. a normal recovery.
+    /// In-memory only — recomputed every process start from on-disk state.
+    was_just_created: bool,
 }
 
 impl RaftStorage {
@@ -57,10 +86,18 @@ impl RaftStorage {
         let entries = store.tree(TREE_ENTRIES)?;
         let state = store.tree(TREE_STATE)?;
 
+        // Detect fresh-vs-existing redb by probing for an incarnation
+        // marker.  Absent → first ::new on this store: the bootstrap
+        // path will write ``DEFAULT_INCARNATION`` once it knows whether
+        // this is cold-start or wipe-rejoin.  Present → recovery; the
+        // marker stays as-is.
+        let was_just_created = state.get(KEY_INCARNATION)?.is_none();
+
         let storage = Self {
             store,
             entries,
             state,
+            was_just_created,
         };
 
         // Initialize first_index if not set
@@ -78,6 +115,41 @@ impl RaftStorage {
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let store = RedbStore::open(path.as_ref().join("raft.redb"))?;
         Self::new(store)
+    }
+
+    /// Whether this `RaftStorage` was opened against a freshly-created
+    /// redb (no prior incarnation marker on disk).
+    ///
+    /// Reset on every process boot from durable state — ``true`` on the
+    /// first ``new`` after a wipe (or first boot ever), ``false`` after
+    /// any subsequent ``set_incarnation`` persists the marker.
+    pub fn was_just_created(&self) -> bool {
+        self.was_just_created
+    }
+
+    /// Read the persisted incarnation marker, or ``None`` if this is a
+    /// freshly-created storage that hasn't been bootstrapped yet.
+    pub fn incarnation(&self) -> Result<Option<u64>> {
+        match self.state.get(KEY_INCARNATION)? {
+            Some(bytes) => {
+                let arr: [u8; 8] = bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| RaftError::Storage("invalid incarnation marker".into()))?;
+                Ok(Some(u64::from_be_bytes(arr)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Persist the incarnation marker.  Idempotent: callers may call
+    /// repeatedly with the same value (e.g. on every restart with the
+    /// existing value re-asserted).  Once written, the marker survives
+    /// until the redb file is wiped.
+    pub fn set_incarnation(&self, incarnation: u64) -> Result<()> {
+        self.state
+            .set(KEY_INCARNATION, &incarnation.to_be_bytes())?;
+        Ok(())
     }
 
     /// Get the first index in the log.
@@ -479,6 +551,47 @@ mod tests {
             .entries(5, 11, None, raft::GetEntriesContext::empty(false))
             .unwrap();
         assert_eq!(entries.len(), 6);
+    }
+
+    // ---------------------------------------------------------------
+    // Incarnation marker tests (fresh-join wipe-rejoin fix)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn fresh_storage_reports_just_created() {
+        let (storage, _dir) = create_test_storage();
+        assert!(storage.was_just_created());
+        assert_eq!(storage.incarnation().unwrap(), None);
+    }
+
+    #[test]
+    fn set_incarnation_persists_across_reopen() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().to_path_buf();
+
+        // First open: fresh, mint incarnation.
+        let storage = RaftStorage::open(&path).unwrap();
+        assert!(storage.was_just_created());
+        storage.set_incarnation(0xDEAD_BEEF).unwrap();
+        // Drop to release the redb lock before reopening.
+        drop(storage);
+
+        // Re-open: was_just_created flips to false; incarnation reads back.
+        let reopened = RaftStorage::open(&path).unwrap();
+        assert!(!reopened.was_just_created());
+        assert_eq!(reopened.incarnation().unwrap(), Some(0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn set_incarnation_idempotent() {
+        let (storage, _dir) = create_test_storage();
+        storage.set_incarnation(42).unwrap();
+        storage.set_incarnation(42).unwrap();
+        assert_eq!(storage.incarnation().unwrap(), Some(42));
+        // Overwriting with a different value is allowed at the storage layer
+        // — caller policy (ensure_voter_membership) decides when to rotate.
+        storage.set_incarnation(99).unwrap();
+        assert_eq!(storage.incarnation().unwrap(), Some(99));
     }
 
     // ---------------------------------------------------------------

@@ -190,14 +190,33 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
 
     admin_token = f"e2e-{uuid.uuid4().hex}"
     zone = f"z-e2e-{uuid.uuid4().hex[:8]}"
-    grpc_port = int(os.environ.get("NEXUS_APPROVALS_GRPC_PORT", "2029"))
+    # Resolve the host-side approvals gRPC port. Honor an explicit
+    # NEXUS_APPROVALS_GRPC_PORT override (lets ops pin a known port for
+    # interactive debugging), otherwise pick a free ephemeral port so
+    # parallel xdist workers and stale `nexus down` leftovers don't fight
+    # over :2029. We export the resolved port back to up_env below so the
+    # docker compose ${...:-2029} substitution and the lifespan's
+    # NEXUS_APPROVALS_GRPC_PORT pickup line agree on the same number.
+    port_override = os.environ.get("NEXUS_APPROVALS_GRPC_PORT")
+    grpc_port = int(port_override) if port_override else _find_free_port()
+
+    # Resolve the `nexus` binary from the active interpreter's venv. When the
+    # venv is not on $PATH (common under pytest, which spawns Python from
+    # `.venv/bin/python` without exporting the venv into the child env), a
+    # bare `nexus` lookup picks up an older system-installed CLI whose
+    # presets differ from this checkout (e.g. v0.9.20's demo preset adds
+    # `zoekt` to services, which the worktree's compose file does not
+    # provide — `nexus up` then times out waiting on a service that never
+    # exists). Always invoke the venv-local CLI to keep init/up/down
+    # consistent with the source tree.
+    nexus_bin = str(Path(sys.executable).parent / "nexus")
 
     # nexus init writes nexus.yaml; we then export the approvals env vars
     # via the user's shell environment so docker compose picks them up.
     init_env = os.environ.copy()
     init_result = subprocess.run(
         [
-            "nexus",
+            nexus_bin,
             "init",
             "--preset",
             "demo",
@@ -223,7 +242,7 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     up_env["NEXUS_APPROVALS_GRPC_PORT"] = str(grpc_port)
 
     up_result = subprocess.run(
-        ["nexus", "up", "--build"],
+        [nexus_bin, "up", "--build"],
         capture_output=True,
         text=True,
         timeout=600,
@@ -231,8 +250,18 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
         env=up_env,
     )
     if up_result.returncode != 0:
+        # Persist full stdout/stderr to a debug file so we can diagnose
+        # subprocess-only failures (e.g. terminal-detection or buffer
+        # flush quirks that don't surface on interactive runs).
+        debug_path = project_dir / "nexus-up-debug.log"
+        debug_path.write_text(
+            f"returncode={up_result.returncode}\n\n"
+            f"--- stdout ---\n{up_result.stdout}\n\n"
+            f"--- stderr ---\n{up_result.stderr}\n"
+        )
         pytest.skip(
-            f"nexus up failed (likely missing build deps or docker quota): {up_result.stderr[:400]}"
+            f"nexus up failed (rc={up_result.returncode}, full log: {debug_path}): "
+            f"stderr_tail={up_result.stderr[-400:]!r}"
         )
 
     # Re-read config — `nexus up` may have resolved port conflicts and
@@ -263,7 +292,7 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     if not healthy:
         # Best-effort teardown then skip — the test cluster isn't usable.
         subprocess.run(
-            ["nexus", "down"],
+            [nexus_bin, "down"],
             capture_output=True,
             text=True,
             timeout=120,
@@ -283,7 +312,7 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
         yield handle
     finally:
         subprocess.run(
-            ["nexus", "down"],
+            [nexus_bin, "down"],
             capture_output=True,
             text=True,
             timeout=180,

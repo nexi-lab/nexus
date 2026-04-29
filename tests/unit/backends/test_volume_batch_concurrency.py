@@ -13,14 +13,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytest
 
 try:
-    from nexus_kernel import BlobPackEngine
+    from nexus_runtime import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
     HAS_VOLUME_ENGINE = False
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_runtime.BlobPackEngine not available"
 )
 
 

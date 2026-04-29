@@ -3,9 +3,9 @@ requires = ["maturin>=1.7,<3.0"]
 build-backend = "maturin"
 
 [project]
-name = "nexus-kernel"
+name = "nexus-runtime"
 version = "0.10.0"
-description = "Nexus Python entry-point cdylib (kernel + lib + raft composed into nexus_kernel.so)"
+description = "Nexus Python entry-point cdylib (kernel + lib + raft + backends + services + transport composed into nexus_runtime.so)"
 requires-python = ">=3.14"
 classifiers = [
     "Programming Language :: Rust",
@@ -13,4 +13,4 @@ classifiers = [
 ]
 
 [tool.maturin]
-module-name = "nexus_kernel"
+module-name = "nexus_runtime"

@@ -6,7 +6,7 @@ and security validation to eliminate DRY violations across the codebase
 
 All functions are pure and return immutable results (tuples).
 
-# RUST_FALLBACK: path_utils — all functions have Rust equivalents in nexus_kernel.
+# RUST_FALLBACK: path_utils — all functions have Rust equivalents in nexus_runtime.
 # When Rust is available, every public function delegates to the Rust impl
 # (~50ns vs ~1μs Python).  ``grep RUST_FALLBACK src/`` finds all fallback sites.
 """

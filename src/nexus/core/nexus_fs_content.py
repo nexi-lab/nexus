@@ -107,7 +107,7 @@ class ContentMixin:
         # backends — no Python re-routing needed.
         # DT_PIPE / DT_STREAM: entry_type signals IPC dispatch below.
         #
-        # Slim-package mode: ``nexus-fs`` can ship without ``nexus_kernel``,
+        # Slim-package mode: ``nexus-fs`` can ship without ``nexus_runtime``,
         # in which case ``self._kernel`` is None.
         if self._kernel is None:
             raise NexusFileNotFoundError(path)

@@ -100,7 +100,7 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
     record_store = SQLAlchemyRecordStore(db_path=str(db_path))
 
     # Create Rust kernel for IPC pipe operations
-    from nexus_kernel import PyKernel
+    from nexus_runtime import PyKernel
 
     kernel = PyKernel()
 

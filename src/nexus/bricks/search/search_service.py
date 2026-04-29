@@ -22,13 +22,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 
-from nexus.bricks.search.primitives import glob_fast, grep_fast, trigram_fast
+from nexus.bricks.search.primitives import glob_helpers, trigram_fast
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
 from nexus.contracts.search_types import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
-    GREP_PARALLEL_THRESHOLD,
     GREP_PARALLEL_WORKERS,
     GREP_SEQUENTIAL_THRESHOLD,
     GREP_TRIGRAM_THRESHOLD,
@@ -1709,7 +1708,7 @@ class SearchService:
         # Phase 1: Directory-level pruning (Issue #929: DIRECTORY_PRUNED strategy)
         search_path = path
         if path == "/" or path == "":
-            static_prefix = glob_fast.extract_static_prefix(pattern)
+            static_prefix = glob_helpers.extract_static_prefix(pattern)
             if static_prefix:
                 search_path = (
                     static_prefix.rstrip("/")
@@ -1773,15 +1772,9 @@ class SearchService:
 
         if strategy in (GlobStrategy.RUST_BULK, GlobStrategy.DIRECTORY_PRUNED):
             rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
-            rust_matches = glob_fast.glob_match_bulk([rust_pattern], accessible_files)
-            if rust_matches is not None:
-                matches = rust_matches
-            else:
-                strategy = (
-                    GlobStrategy.REGEX_COMPILED
-                    if "**" in full_pattern
-                    else GlobStrategy.FNMATCH_SIMPLE
-                )
+            from nexus._rust_compat import glob_match_bulk
+
+            matches = glob_match_bulk([rust_pattern], accessible_files)
 
         if strategy == GlobStrategy.REGEX_COMPILED and not matches:
             matches = self._glob_regex_match(full_pattern, accessible_files)
@@ -1876,20 +1869,9 @@ class SearchService:
                     full_pattern = base_path + pattern
 
                 rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
-                rust_matches = glob_fast.glob_match_bulk([rust_pattern], accessible_files)
-                if rust_matches is not None:
-                    results[pattern] = sorted(rust_matches)
-                elif "**" in full_pattern:
-                    results[pattern] = sorted(
-                        self._glob_regex_match(full_pattern, accessible_files)
-                    )
-                else:
-                    matches = []
-                    for file_path in accessible_files:
-                        path_for_match = file_path[1:] if file_path.startswith("/") else file_path
-                        if fnmatch.fnmatch(path_for_match, full_pattern):
-                            matches.append(file_path)
-                    results[pattern] = sorted(matches)
+                from nexus._rust_compat import glob_match_bulk
+
+                results[pattern] = sorted(glob_match_bulk([rust_pattern], accessible_files))
             except Exception:
                 logger.debug("glob_batch pattern failed: %s", pattern, exc_info=True)
                 results[pattern] = []
@@ -2424,47 +2406,43 @@ class SearchService:
         # Try mmap-accelerated grep first (Issue #893). Skipped when the
         # caller asked for context/invert flags — mmap doesn't honour
         # them and would silently drop them.
-        if not force_python_path and grep_fast.is_mmap_available():
+        if not force_python_path:
             try:
                 zone_id, _, _ = self._extract_zone_info(context)
                 if zone_id and self._file_cache is not None:
                     file_cache = self._file_cache
                     disk_paths = file_cache.get_disk_paths_bulk(zone_id, files_needing_raw)
                     if disk_paths:
+                        from nexus._rust_compat import grep_files_mmap
+
                         disk_to_virtual = {dp: vp for vp, dp in disk_paths.items()}
-                        mmap_results = grep_fast.grep_files_mmap(
+                        mmap_results = grep_files_mmap(
                             pattern,
                             list(disk_paths.values()),
                             ignore_case=ignore_case,
                             max_results=remaining_results,
                         )
-                        if mmap_results is not None:
-                            for match in mmap_results:
-                                disk_path = match.get("file", "")
-                                match["file"] = disk_to_virtual.get(disk_path, disk_path)
-                            results.extend(mmap_results)
-                            mmap_used = True
-                            files_needing_raw = [
-                                f for f in files_needing_raw if f not in disk_paths
-                            ]
-                            remaining_results = remaining_results - len(results)
+                        for match in mmap_results:
+                            disk_path = match.get("file", "")
+                            match["file"] = disk_to_virtual.get(disk_path, disk_path)
+                        results.extend(mmap_results)
+                        mmap_used = True
+                        files_needing_raw = [f for f in files_needing_raw if f not in disk_paths]
+                        remaining_results = remaining_results - len(results)
             except Exception as e:
                 logger.debug(f"[GREP] Mmap optimization failed: {e}")
 
         # Rust-accelerated grep for remaining
-        if (
-            strategy == SearchStrategy.RUST_BULK
-            and grep_fast.is_available()
-            and remaining_results > 0
-            and files_needing_raw
-        ):
+        if strategy == SearchStrategy.RUST_BULK and remaining_results > 0 and files_needing_raw:
             bulk_results = self._read_bulk(files_needing_raw, context=context, skip_errors=True)
             file_contents: dict[str, bytes] = {
                 fp: content
                 for fp, content in bulk_results.items()
                 if content is not None and isinstance(content, bytes)
             }
-            rust_results = grep_fast.grep_bulk(
+            from nexus._rust_compat import grep_bulk
+
+            rust_results = grep_bulk(
                 pattern,
                 file_contents,
                 ignore_case=ignore_case,
@@ -2549,7 +2527,7 @@ class SearchService:
                 return None
 
             if file_pattern:
-                matches = [m for m in matches if glob_fast.glob_match(m.file, [file_pattern])]
+                matches = [m for m in matches if glob_helpers.glob_match(m.file, [file_pattern])]
 
             unique_files = list({m.file for m in matches})
             if self._permission_enforcer and context:
@@ -2870,19 +2848,15 @@ class SearchService:
             if zoekt_available:
                 return SearchStrategy.ZOEKT_INDEX
         # Issue #3711: Rust bulk (400x) >> Python parallel pool (4x).
-        # PARALLEL_POOL is only useful when Rust is unavailable.
-        if grep_fast.is_available():
-            return SearchStrategy.RUST_BULK
-        if GREP_PARALLEL_THRESHOLD <= file_count <= 10000:
-            return SearchStrategy.PARALLEL_POOL
-        return SearchStrategy.SEQUENTIAL
+        # Rust grep is always available (kernel binary is mandatory).
+        return SearchStrategy.RUST_BULK
 
     def _select_glob_strategy(self, pattern: str, file_count: int) -> GlobStrategy:
         """Select optimal glob strategy (Issue #929)."""
-        static_prefix = glob_fast.extract_static_prefix(pattern)
+        static_prefix = glob_helpers.extract_static_prefix(pattern)
         if static_prefix:
             return GlobStrategy.DIRECTORY_PRUNED
-        if file_count > GLOB_RUST_THRESHOLD and glob_fast.is_available():
+        if file_count > GLOB_RUST_THRESHOLD:
             return GlobStrategy.RUST_BULK
         if "**" in pattern:
             return GlobStrategy.REGEX_COMPILED

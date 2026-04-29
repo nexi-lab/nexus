@@ -25,8 +25,6 @@
 //!
 //! No `head` field — DT_STREAM readers maintain independent cursors externally.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -58,6 +56,7 @@ use crate::stream::StreamError;
 // Header accessors (same pattern as shm_pipe.rs)
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
 #[inline]
 fn read_u32(base: *const u8, off: usize) -> u32 {
     unsafe { (base.add(off) as *const u32).read() }
@@ -88,12 +87,21 @@ unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
 // ---------------------------------------------------------------------------
 
 /// Cross-process append-only buffer backed by mmap + OS pipe notification.
-#[pyclass]
+///
+/// Kernel-internal primitive: constructed by the kernel inside
+/// `sys_setattr` when `io_profile=shared_memory` is requested for a
+/// DT_STREAM inode.  Python callers reach it via `sys_read` /
+/// `sys_write`; there is no PyO3 surface on the type itself.
 pub struct SharedMemoryStreamBackend {
     mmap: memmap2::MmapMut,
     capacity: usize,
     notify_data_wr: i32, // writer writes here after push
+    // `is_creator` + `shm_path` are read only by the test-only `cleanup()`
+    // helper; production kernel cleans up via tempfile drop semantics.
+    // Allowed dead so `#[deny(warnings)]` in release builds doesn't trip.
+    #[allow(dead_code)]
     is_creator: bool,
+    #[allow(dead_code)]
     shm_path: String,
 }
 
@@ -339,47 +347,32 @@ impl SharedMemoryStreamBackend {
 
         Ok((core, shm_path, data_fds[0]))
     }
-}
 
-// ---------------------------------------------------------------------------
-// PyO3 methods
-// ---------------------------------------------------------------------------
-
-#[pymethods]
-impl SharedMemoryStreamBackend {
-    /// Create a new shared stream buffer (PyO3 wrapper over `create_native`).
-    ///
-    /// Returns `(self, shm_path, data_rd_fd)`.
-    #[staticmethod]
-    fn create(capacity: usize) -> PyResult<(Self, String, i32)> {
-        Self::create_native(capacity)
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))
-    }
-
-    /// Attach to an existing shared stream buffer.
-    #[staticmethod]
-    fn attach(shm_path: &str, notify_data_wr: i32) -> PyResult<Self> {
+    /// Attach to an existing shared stream buffer (same-process tests).
+    /// Pure Rust — no PyO3.
+    #[cfg(test)]
+    fn attach(shm_path: &str, notify_data_wr: i32) -> Result<Self, std::io::Error> {
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(shm_path)
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("open: {e}")))?;
+            .open(shm_path)?;
 
-        let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file) }
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("mmap: {e}")))?;
+        let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file) }?;
 
         let base = mmap.as_ptr();
         let magic = read_u32(base, OFF_MAGIC);
         if magic != MAGIC {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "bad magic: expected 0x{MAGIC:08X}, got 0x{magic:08X}"
-            )));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("bad magic: expected 0x{MAGIC:08X}, got 0x{magic:08X}"),
+            ));
         }
         let version = read_u32(base, OFF_VERSION);
         if version != VERSION {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "unsupported version: expected {VERSION}, got {version}"
-            )));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unsupported version: expected {VERSION}, got {version}"),
+            ));
         }
 
         let capacity = read_u32(base, OFF_CAPACITY) as usize;
@@ -393,160 +386,13 @@ impl SharedMemoryStreamBackend {
         })
     }
 
-    /// Push a message. Returns byte offset where the message starts.
-    fn push(&self, _py: Python<'_>, data: &[u8]) -> PyResult<usize> {
-        match self.push_inner(data) {
-            Ok(offset) => {
-                self.notify_data();
-                Ok(offset)
-            }
-            Err(StreamError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("StreamClosed:{msg}"),
-            )),
-            Err(StreamError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("StreamFull:buffer full ({used}/{cap} bytes)"),
-            )),
-            Err(StreamError::Oversized(msg_len, cap)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "message size {msg_len} exceeds buffer capacity {cap}"
-                )))
-            }
-            Err(
-                StreamError::Empty | StreamError::ClosedEmpty | StreamError::InvalidOffset(_, _),
-            ) => {
-                unreachable!()
-            }
-        }
-    }
-
-    /// Read one message at byte_offset. Returns (data, next_offset).
-    fn read_at<'py>(
-        &self,
-        py: Python<'py>,
-        byte_offset: usize,
-    ) -> PyResult<(Bound<'py, PyBytes>, usize)> {
-        match self.read_at_inner(byte_offset) {
-            Ok((start, len, next)) => {
-                let buf = self.data_slice();
-                let data = PyBytes::new(py, &buf[start..start + len]);
-                Ok((data, next))
-            }
-            Err(StreamError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "StreamClosed:read from closed empty stream",
-            )),
-            Err(StreamError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "StreamEmpty:no data at offset",
-            )),
-            Err(StreamError::InvalidOffset(off, tail)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "invalid offset {off} (tail={tail})"
-                )))
-            }
-            Err(
-                StreamError::Closed(_) | StreamError::Full(_, _) | StreamError::Oversized(_, _),
-            ) => {
-                unreachable!()
-            }
-        }
-    }
-
-    /// Read up to `count` messages starting at byte_offset.
-    fn read_batch<'py>(
-        &self,
-        py: Python<'py>,
-        byte_offset: usize,
-        count: usize,
-    ) -> PyResult<(Bound<'py, PyList>, usize)> {
-        let list = PyList::empty(py);
-        let buf = self.data_slice();
-        let tail = self.tail_atomic().load(Ordering::Acquire);
-        let mut pos = byte_offset;
-        let mut read = 0;
-
-        while read < count && pos < tail {
-            if pos + HEADER_SIZE > tail {
-                break;
-            }
-            let mut hdr = [0u8; HEADER_SIZE];
-            hdr.copy_from_slice(&buf[pos..pos + HEADER_SIZE]);
-            let payload_len = u32::from_le_bytes(hdr) as usize;
-            let payload_start = pos + HEADER_SIZE;
-            let next = payload_start + payload_len;
-            if next > tail {
-                break;
-            }
-            let item = PyBytes::new(py, &buf[payload_start..payload_start + payload_len]);
-            list.append(item).expect("append to list");
-            pos = next;
-            read += 1;
-        }
-
-        if read == 0 && byte_offset >= tail {
-            if self.closed_flag().load(Ordering::Acquire) {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "StreamClosed:read from closed empty stream",
-                ));
-            }
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "StreamEmpty:no data at offset",
-            ));
-        }
-
-        Ok((list, pos))
-    }
-
-    /// Close the buffer.
-    fn close(&self) {
-        self.closed_flag().store(true, Ordering::Release);
-        self.notify_data();
-    }
-
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let dict = PyDict::new(py);
-        dict.set_item("tail", self.tail_atomic().load(Ordering::Relaxed))?;
-        dict.set_item("capacity", self.capacity)?;
-        dict.set_item("msg_count", self.msg_count().load(Ordering::Relaxed))?;
-        dict.set_item("closed", self.closed_flag().load(Ordering::Acquire))?;
-        dict.set_item("push_count", self.push_count().load(Ordering::Relaxed))?;
-        Ok(dict.into())
-    }
-
-    #[getter]
-    fn closed(&self) -> bool {
-        self.closed_flag().load(Ordering::Acquire)
-    }
-
-    #[getter]
-    fn size(&self) -> usize {
-        self.tail_atomic().load(Ordering::Relaxed)
-    }
-
-    #[getter]
-    fn capacity_prop(&self) -> usize {
-        self.capacity
-    }
-
-    #[getter]
-    fn msg_count_prop(&self) -> usize {
-        self.msg_count().load(Ordering::Relaxed)
-    }
-
-    #[getter]
-    fn tail(&self) -> usize {
-        self.tail_atomic().load(Ordering::Relaxed)
-    }
-
-    fn cleanup(&self) -> PyResult<()> {
+    /// Remove the shared memory file (creator only).
+    #[cfg(test)]
+    fn cleanup(&self) -> std::io::Result<()> {
         if self.is_creator {
-            std::fs::remove_file(&self.shm_path)
-                .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("cleanup: {e}")))?;
+            std::fs::remove_file(&self.shm_path)?;
         }
         Ok(())
-    }
-
-    #[getter]
-    fn shm_path(&self) -> &str {
-        &self.shm_path
     }
 }
 
@@ -569,7 +415,8 @@ mod tests {
     use super::*;
 
     fn create_pair(cap: usize) -> (SharedMemoryStreamBackend, SharedMemoryStreamBackend) {
-        let (creator, shm_path, data_rd_fd) = SharedMemoryStreamBackend::create(cap).unwrap();
+        let (creator, shm_path, data_rd_fd) =
+            SharedMemoryStreamBackend::create_native(cap).unwrap();
         let attacher = SharedMemoryStreamBackend::attach(&shm_path, -1).unwrap();
         unsafe {
             libc::close(data_rd_fd);
@@ -589,7 +436,8 @@ mod tests {
 
     #[test]
     fn test_create_returns_handles() {
-        let (creator, shm_path, data_rd_fd) = SharedMemoryStreamBackend::create(1024).unwrap();
+        let (creator, shm_path, data_rd_fd) =
+            SharedMemoryStreamBackend::create_native(1024).unwrap();
         assert!(!shm_path.is_empty());
         assert!(data_rd_fd >= 0);
         unsafe {

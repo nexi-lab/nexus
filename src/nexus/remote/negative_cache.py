@@ -49,7 +49,7 @@ class NegativeCache(Protocol):
 
 
 class BloomNegativeCache:
-    """Bloom filter-based negative cache using nexus_kernel.BloomFilter.
+    """Bloom filter-based negative cache using nexus_runtime.BloomFilter.
 
     Space-efficient probabilistic set membership testing. False positives
     are possible (a path may appear absent when it exists), but false
@@ -78,7 +78,7 @@ class BloomNegativeCache:
 class NullNegativeCache:
     """No-op negative cache — always reports cache miss.
 
-    Used when the Bloom filter backend (nexus_kernel) is not available.
+    Used when the Bloom filter backend (nexus_runtime) is not available.
     All lookups miss, so callers always proceed to the server RPC.
     """
 
@@ -96,7 +96,7 @@ def create_negative_cache(
     capacity: int = 100_000,
     fp_rate: float = 0.01,
 ) -> NegativeCache:
-    """Create a NegativeCache backed by nexus_kernel.BloomFilter.
+    """Create a NegativeCache backed by nexus_runtime.BloomFilter.
 
     Args:
         capacity: Maximum number of entries the Bloom filter can hold.
@@ -110,7 +110,7 @@ def create_negative_cache(
 
     if BloomFilter is None:
         logger.debug(
-            "BloomFilter unavailable (stale or absent nexus_kernel) — using no-op negative cache"
+            "BloomFilter unavailable (stale or absent nexus_runtime) — using no-op negative cache"
         )
         return NullNegativeCache()
 

@@ -1,7 +1,7 @@
 """Workflow trigger system.
 
 Zero imports from nexus.core — glob matching is injected via GlobMatchFn.
-Falls back to fnmatch when no Rust glob_fast is available (tests, embedded).
+Falls back to fnmatch when no glob_match function is injected (tests, embedded).
 """
 
 import fnmatch

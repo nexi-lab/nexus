@@ -353,7 +353,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nexus_kernel"
+name = "nexus_runtime"
 version = "0.1.0"
 dependencies = [
  "ahash",

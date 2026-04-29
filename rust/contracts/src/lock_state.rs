@@ -352,7 +352,7 @@ impl LockState {
 // ``ZoneConsensus<FullStateMachine>``. Two concrete impls live in the
 // tree:
 //
-//   - ``nexus_kernel::locks::LocalLocks`` — mutates the shared
+//   - ``nexus_runtime::locks::LocalLocks`` — mutates the shared
 //     ``Arc<Mutex<LockState>>`` directly (pre-federation default,
 //     single-node deployments).
 //   - ``nexus_raft::federation::DistributedLocks`` — proposes a

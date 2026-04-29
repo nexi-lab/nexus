@@ -871,7 +871,7 @@ class VolumeTieringService:
                         entry.volume_id,
                     )
 
-    # ─── Read Support (called by VolumeLocalTransport) ───────────────────
+    # ─── Read Support (called by BlobPackLocalTransport) ───────────────────
 
     def read_range(self, cloud_key: str, offset: int, size: int, volume_id: str = "") -> bytes:
         """Read a byte range from a tiered volume.
@@ -881,7 +881,7 @@ class VolumeTieringService:
             2. Cache miss → cloud range request
             3. After cache miss: check burst → trigger re-download if threshold met
 
-        This is a synchronous call — VolumeLocalTransport.get_blob()
+        This is a synchronous call — BlobPackLocalTransport.get_blob()
         calls this from a synchronous context.
         """
         # 1. Try local cache first

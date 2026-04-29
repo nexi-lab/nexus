@@ -61,7 +61,7 @@ class AgentRegistry:
 
     def __init__(self, kernel: Any | None = None) -> None:
         self._processes: dict[str, AgentDescriptor] = {}
-        self._kernel: Any = kernel  # nexus_kernel.PyKernel — None disables Rust dual-write
+        self._kernel: Any = kernel  # nexus_runtime.PyKernel — None disables Rust dual-write
         self._provisioner: Any = None  # Optional IPC provisioner (AgentProvisioner)
         # asyncio.Event fallback used when no kernel is attached. Production
         # path (factory-wired with the kernel) goes through the Rust condvar

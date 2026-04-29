@@ -173,7 +173,7 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
     _redb_path = Path(metadata_path).with_suffix(".redb")
 
     if kernel is None:
-        from nexus_kernel import PyKernel as _Kernel
+        from nexus_runtime import PyKernel as _Kernel
 
         kernel = _Kernel()
         # Phase 4 (full): drain the federation init's blob-fetcher slot
@@ -181,15 +181,21 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
         # boot-time Noop default).  Idempotent — no-op if the slot
         # was never stashed (federation disabled).
         try:
-            import nexus_kernel as _nk
+            import nexus_runtime as _nk
 
+            # Federation wiring runs FIRST so init_from_env can stash the
+            # raft-side `BlobFetcherSlot` into the kernel; the transport
+            # install hook below drains that slot and installs the real
+            # fetcher.  Reverse order would leave the slot empty when
+            # transport drains, falling back to "blob fetcher not installed".
+            _nk.install_federation_wiring(kernel)
             _nk.install_transport_wiring(kernel)
         except Exception as _wiring_exc:
             import logging as _logging
 
             _logging.getLogger(__name__).warning(
-                "install_transport_wiring failed (federation peer-blob "
-                "fetch will fall back to Noop): %s",
+                "install_transport_wiring/install_federation_wiring failed "
+                "(federation peer-blob fetch will fall back to Noop): %s",
                 _wiring_exc,
             )
 
@@ -519,15 +525,19 @@ def connect(
         if _RUST_AVAILABLE and _Kernel is not None:
             _early_kernel = _Kernel()
             try:
-                import nexus_kernel as _nk
+                import nexus_runtime as _nk
 
+                # Federation wiring first so init_from_env stashes the
+                # blob-fetcher slot before transport drains it.
+                _nk.install_federation_wiring(_early_kernel)
                 _nk.install_transport_wiring(_early_kernel)
             except Exception as _wiring_exc:
                 import logging as _logging
 
                 _logging.getLogger(__name__).warning(
-                    "install_transport_wiring failed (federation peer-blob "
-                    "fetch will fall back to Noop): %s",
+                    "install_transport_wiring/install_federation_wiring "
+                    "failed (federation peer-blob fetch will fall back to "
+                    "Noop): %s",
                     _wiring_exc,
                 )
     except Exception as _early_kernel_exc:
@@ -706,7 +716,7 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     Phase 3 (refactor/rust-workspace-parallel-layers): the audit hook
     moved out of the kernel crate into ``services::audit`` per the
     parallel-layers split. The Python entry point is now a free function
-    on the ``nexus_kernel`` module — ``install_audit_hook(kernel, zone,
+    on the ``nexus_runtime`` module — ``install_audit_hook(kernel, zone,
     stream)`` — instead of a method on the Kernel pyclass. Service-tier
     owns hook lifecycle; kernel only exposes the stream-prep half via
     ``Kernel::prepare_audit_stream`` (Rust API).
@@ -719,9 +729,9 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     audit_stream_path = "/audit/traces/"
 
     try:
-        import nexus_kernel
+        import nexus_runtime
 
-        nexus_kernel.install_audit_hook(kernel, audit_zone, audit_stream_path)
+        nexus_runtime.install_audit_hook(kernel, audit_zone, audit_stream_path)
         logger.info("Audit hook started: zone=%s stream=%s", audit_zone, audit_stream_path)
     except RuntimeError as e:
         # Federation not active or zone not loaded — expected in standalone mode.
@@ -791,7 +801,9 @@ def _start_replication_scanners(nx_fs: "NexusFS") -> None:
         target: dict = {"type": "all_voters"}
         policies_json = _json.dumps([{"path_prefix": mount_point, "target": target}])
         try:
-            kernel.start_replication_scanner(zone_id, policies_json, 2000)
+            import nexus_runtime as _nk
+
+            _nk.federation_start_replication_scanner(kernel, zone_id, policies_json, 2000)
             logger.info(
                 "Started replication scanner: zone=%s mount=%s policy=%s",
                 zone_id,

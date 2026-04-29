@@ -12,7 +12,7 @@ Re-run: python scripts/codegen_kernel_abi.py
 
 from __future__ import annotations
 
-from nexus_kernel import (
+from nexus_runtime import (
     BloomFilter,
     PyFederationClient,
     PyKernel,
@@ -20,9 +20,9 @@ from nexus_kernel import (
     PySysReadResult,
     PySysWriteResult,
     PyVfsGrpcServerHandle,
-    SharedMemoryPipeBackend,
-    SharedMemoryStreamBackend,
-    StdioStreamBackend,
+    QueueStats,
+    TaskEngine,
+    TaskRecord,
     VFSSemaphore,
     any_path_accessible_tiger_cache,
     any_path_starts_with,
@@ -83,9 +83,9 @@ __all__ = [
     "PySysReadResult",
     "PySysWriteResult",
     "PyVfsGrpcServerHandle",
-    "SharedMemoryPipeBackend",
-    "SharedMemoryStreamBackend",
-    "StdioStreamBackend",
+    "QueueStats",
+    "TaskEngine",
+    "TaskRecord",
     "VFSSemaphore",
     "any_path_accessible_tiger_cache",
     "any_path_starts_with",

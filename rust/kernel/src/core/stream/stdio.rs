@@ -1,44 +1,24 @@
-//! StdioStreamBackend — stream backend over OS subprocess pipes.
+//! `StdioStreamCore` — newline-framed accumulation buffer for
+//! DT_STREAM backends that consume OS pipe / subprocess output.
 //!
-//! 1:1 behavior port of Python `StdioStreamBackend`
-//! (src/nexus/core/stdio_stream.py). Newline-framed accumulation
-//! buffer: each call to `feed_bytes` appends bytes; line terminators
-//! split the stream into indexed messages, enabling offset-based
-//! multi-reader access (`read_at` returns the message starting at or
-//! after a given byte offset, non-destructively).
+//! Each call to `feed_bytes` appends bytes; line terminators split
+//! the stream into indexed messages, enabling offset-based multi-
+//! reader access (`read_at` returns the message starting at or after
+//! a given byte offset, non-destructively).  Cross-platform and
+//! unit-testable without any OS pipes via `feed_bytes` / `feed_eof`.
 //!
-//! Architecture choice (plan v18 §R19.1c option B):
-//!   sync I/O + background thread for the pump. Python callers wrap
-//!   the `read_at` / `read_batch` / `write` calls with
-//!   `asyncio.to_thread` — standard pattern in the codebase — to stay
-//!   async-friendly without bridging asyncio ↔ tokio runtimes.
-//!
-//! Core logic (`StdioStreamCore`) is cross-platform and unit-testable
-//! without any OS pipes via `feed_bytes` / `feed_eof`. The PyO3 class
-//! `StdioStreamBackend` is `#[cfg(unix)]` because it drives the pump
-//! via `libc::read` on a raw fd (matches `stdio_pipe.rs` pattern).
+//! Kernel-internal: the core is composed by stream backends inside
+//! the kernel (e.g. for subprocess stdout streams when a future
+//! `io_profile` is added).  No PyO3 surface — Python reaches it via
+//! the DT_STREAM syscalls (`sys_read` / `sys_write`).
 
-#[cfg(unix)]
-use pyo3::exceptions::PyRuntimeError;
-#[cfg(unix)]
-use pyo3::prelude::*;
-#[cfg(unix)]
-use pyo3::types::{PyBytes, PyDict, PyList};
-#[cfg(unix)]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
-use std::sync::Arc;
 use std::sync::{Condvar, Mutex};
 
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
 
-/// Errors returned by `StdioStreamCore`. The PyO3 binding maps these onto
-/// `RuntimeError` with message prefixes matching the Python exceptions
-/// (`StreamEmptyError` / `StreamClosedError`) so error-path tests that
-/// check message contents continue to work after the Python wrapper is
-/// deleted in R19.1e.
+/// Errors returned by `StdioStreamCore`.
 #[cfg_attr(not(any(unix, test)), allow(dead_code))]
 #[derive(Debug)]
 pub enum StdioStreamError {
@@ -148,8 +128,7 @@ impl StdioStreamCore {
         self.wake.notify_all();
     }
 
-    /// Close the stream (no final partial flush — caller sets closed
-    /// explicitly, e.g. via `StdioStreamBackend::close`).
+    /// Close the stream (no final partial flush — caller sets closed explicitly).
     pub fn close(&self) {
         let mut inner = self.inner.lock().unwrap();
         inner.closed = true;
@@ -254,189 +233,6 @@ impl Default for StdioStreamCore {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// ---------------------------------------------------------------------------
-// PyO3 binding (Unix-only — drives pump via libc::read on raw fd)
-// ---------------------------------------------------------------------------
-
-/// Stream backend over OS subprocess pipes.
-///
-/// Constructor takes raw file descriptors (extracted from an asyncio
-/// subprocess via `process.stdout.transport.get_extra_info('pipe').fileno()`
-/// or equivalent). A background thread pumps `read_fd` into the
-/// internal buffer using `libc::read` + newline framing.
-///
-/// Python wrappers that need an async-friendly read should call
-/// `read_at` / `read_batch` from `asyncio.to_thread(...)` — writes via
-/// `write_nowait` are already non-blocking.
-#[cfg(unix)]
-#[pyclass]
-pub struct StdioStreamBackend {
-    core: Arc<StdioStreamCore>,
-    write_fd: i32,
-    pump_running: Arc<AtomicBool>,
-}
-
-#[cfg(unix)]
-#[pymethods]
-impl StdioStreamBackend {
-    /// Create a new StdioStreamBackend from raw fds.
-    ///
-    /// Args:
-    ///     read_fd: fd to read from (-1 for write-only — no pump spawned).
-    ///     write_fd: fd to write to (default -1 = read-only).
-    #[new]
-    #[pyo3(signature = (read_fd, write_fd=-1))]
-    fn new(read_fd: i32, write_fd: i32) -> Self {
-        let core = Arc::new(StdioStreamCore::new());
-        let pump_running = Arc::new(AtomicBool::new(false));
-        if read_fd >= 0 {
-            pump_running.store(true, Ordering::Release);
-            let core_pump = Arc::clone(&core);
-            let running = Arc::clone(&pump_running);
-            std::thread::Builder::new()
-                .name("stdio-stream-pump".into())
-                .spawn(move || {
-                    pump_loop(read_fd, core_pump.as_ref(), running.as_ref());
-                })
-                .expect("spawn stdio-stream-pump");
-        }
-        Self {
-            core,
-            write_fd,
-            pump_running,
-        }
-    }
-
-    /// Write `data` to stdin. Appends `\n` if not present. Returns bytes written.
-    fn write_nowait(&self, py: Python<'_>, data: &[u8]) -> PyResult<usize> {
-        if self.core.is_closed() {
-            return Err(PyRuntimeError::new_err("write to closed stdio stream"));
-        }
-        if self.write_fd < 0 {
-            return Err(PyRuntimeError::new_err("no writer (read-only stream)"));
-        }
-        let fd = self.write_fd;
-        let owned: Vec<u8> = if data.ends_with(b"\n") {
-            data.to_vec()
-        } else {
-            let mut v = Vec::with_capacity(data.len() + 1);
-            v.extend_from_slice(data);
-            v.push(b'\n');
-            v
-        };
-        py.detach(|| {
-            let n = unsafe { libc::write(fd, owned.as_ptr() as *const _, owned.len()) };
-            if n < 0 {
-                Err(PyRuntimeError::new_err("write failed"))
-            } else {
-                Ok(n as usize)
-            }
-        })
-    }
-
-    /// Async-shape alias for `write_nowait`. The `blocking` kwarg is
-    /// accepted for StreamBackend protocol parity; raw-fd writes are
-    /// synchronous either way (caller supplies the async shell via
-    /// `asyncio.to_thread` if needed).
-    #[pyo3(signature = (data, *, blocking=true))]
-    fn write(&self, py: Python<'_>, data: &[u8], blocking: bool) -> PyResult<usize> {
-        let _ = blocking;
-        self.write_nowait(py, data)
-    }
-
-    /// Read one message at `byte_offset`. Returns `(bytes, next_offset)`.
-    /// Raises `RuntimeError` with "no data" (open-tail) or "stream closed"
-    /// (closed-tail) prefixes — matches Python StreamEmptyError /
-    /// StreamClosedError message text.
-    fn read_at<'py>(
-        &self,
-        py: Python<'py>,
-        byte_offset: u64,
-    ) -> PyResult<(Bound<'py, PyBytes>, u64)> {
-        let core = Arc::clone(&self.core);
-        let result = py.detach(move || core.read_at(byte_offset));
-        match result {
-            Ok((data, next)) => Ok((PyBytes::new(py, &data), next)),
-            Err(e) => Err(PyRuntimeError::new_err(e.to_string())),
-        }
-    }
-
-    /// Read up to `count` messages starting at `byte_offset`.
-    #[pyo3(signature = (byte_offset=0, count=10))]
-    fn read_batch<'py>(
-        &self,
-        py: Python<'py>,
-        byte_offset: u64,
-        count: usize,
-    ) -> PyResult<(Bound<'py, PyList>, u64)> {
-        let core = Arc::clone(&self.core);
-        let result = py.detach(move || core.read_batch(byte_offset, count));
-        match result {
-            Ok((items, next)) => {
-                let list = PyList::empty(py);
-                for item in items {
-                    list.append(PyBytes::new(py, &item))?;
-                }
-                Ok((list, next))
-            }
-            Err(e) => Err(PyRuntimeError::new_err(e.to_string())),
-        }
-    }
-
-    fn close(&self) {
-        self.core.close();
-        self.pump_running.store(false, Ordering::Release);
-        if self.write_fd >= 0 {
-            unsafe {
-                libc::close(self.write_fd);
-            }
-        }
-    }
-
-    #[getter]
-    fn closed(&self) -> bool {
-        self.core.is_closed()
-    }
-
-    #[getter]
-    fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let (msg_count, total_bytes, closed) = self.core.stats_snapshot();
-        let dict = PyDict::new(py);
-        dict.set_item("backend", "stdio_stream")?;
-        dict.set_item("msg_count", msg_count)?;
-        dict.set_item("total_bytes", total_bytes)?;
-        dict.set_item("closed", closed)?;
-        Ok(dict)
-    }
-
-    #[getter]
-    fn tail(&self) -> u64 {
-        self.core.tail()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Pump loop (Unix)
-// ---------------------------------------------------------------------------
-
-/// Read from `fd` in 4 KiB chunks, feeding bytes into `core` until the
-/// fd reports EOF (read returns 0) or an error, or until
-/// `running` flips to false.
-#[cfg(unix)]
-fn pump_loop(fd: i32, core: &StdioStreamCore, running: &AtomicBool) {
-    let mut buf = [0u8; 4096];
-    while running.load(Ordering::Acquire) {
-        let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut _, buf.len()) };
-        if n > 0 {
-            core.feed_bytes(&buf[..n as usize]);
-        } else {
-            // 0 == EOF, <0 == error; in both cases the stream is terminal.
-            break;
-        }
-    }
-    core.feed_eof();
 }
 
 // ---------------------------------------------------------------------------

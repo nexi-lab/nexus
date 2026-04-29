@@ -222,7 +222,7 @@ class NexusFS(  # type: ignore[misc]
                     self._kernel = metadata_store._rust_kernel
                     metadata_store._kernel = self._kernel
                 else:
-                    from nexus_kernel import PyKernel as _Kernel
+                    from nexus_runtime import PyKernel as _Kernel
 
                     self._kernel = _Kernel()
                     # Phase 4 (full): drain federation's blob-fetcher
@@ -230,13 +230,17 @@ class NexusFS(  # type: ignore[misc]
                     # Log on failure so a stale wheel surfaces in the
                     # logs rather than silently disabling federation.
                     try:
-                        import nexus_kernel as _nk
+                        import nexus_runtime as _nk
 
+                        # Federation first so init_from_env stashes the
+                        # blob-fetcher slot before transport drains it.
+                        _nk.install_federation_wiring(self._kernel)
                         _nk.install_transport_wiring(self._kernel)
                     except Exception as _wiring_exc:
                         logger.warning(
-                            "install_transport_wiring failed (federation peer-blob "
-                            "fetch will fall back to Noop): %s",
+                            "install_transport_wiring/install_federation_wiring "
+                            "failed (federation peer-blob fetch will fall back "
+                            "to Noop): %s",
                             _wiring_exc,
                         )
                     metadata_store._kernel = self._kernel

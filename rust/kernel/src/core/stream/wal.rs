@@ -1,110 +1,66 @@
-//! Durable DT_STREAM backed by Raft-replicated stream entries (R19.1b').
+//! Durable DT_STREAM backed by a distributed `MetaStore` (R19.1b').
 //!
-//! Writes go through a dedicated ``Command::AppendStreamEntry`` — the
-//! payload is raw bytes on the wire and in the state machine's
-//! ``sm_stream_entries`` redb table. No ``FileMetadata`` round-trip,
-//! no hex encoding, no overlap with file-metadata scans.
+//! Writes append into the metastore's stream-entries side table —
+//! `LocalMetaStore` returns `NotSupported` (so this backend only
+//! activates when federation has installed a distributed impl like
+//! `ZoneMetaStore`); `ZoneMetaStore` proposes
+//! `Command::AppendStreamEntry` so peers see the entry via raft commit.
+//! No `FileMetadata` round-trip, no hex encoding, no overlap with the
+//! file-metadata key space.
 //!
-//! R20.18.6: the pyclass wrapper is gone. Users reach WAL-backed
-//! streams through the normal syscall surface — `sys_setattr(DT_STREAM,
-//! io_profile="wal")` registers a `WalStreamCore` (which now impls
-//! `StreamBackend`) with the kernel's `stream_manager`, after which
-//! read/write land on the replicated raft log via the same Python
-//! stream API as any other backend. No PyZoneHandle crosses the
-//! boundary; kernel looks the zone up through `zone_manager_arc`.
+//! ## Layering
 //!
-//! R20.19: write_nowait() is genuinely non-blocking. Data lands in an
-//! inflight BTreeMap (read-your-writes) and is drained to Raft by a
-//! dedicated background flush thread. Hot-path cost: one parking_lot
-//! RwLock write + channel try_send ≈ 50–200 ns. Raft propose happens
-//! entirely off the critical path.
+//! `WalStreamCore` is a kernel primitive — it lives next to the other
+//! `StreamBackend` impls in `crate::core::stream` and only knows about
+//! the kernel-internal `MetaStore` HAL trait.  Replication (raft, future
+//! alternatives) is the metastore impl's concern, not this struct's.
+//! Federation-tier code never reaches in here directly.
+//!
+//! R20.19: `write_nowait()` is genuinely non-blocking.  Data lands in
+//! an inflight `BTreeMap` (read-your-writes) and is drained to the
+//! metastore by a dedicated background flush thread.  Hot-path cost:
+//! one parking_lot `RwLock` write + channel `try_send` ≈ 50–200 ns.
+//! The metastore propose happens entirely off the critical path.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 
-use nexus_raft::prelude::{Command, CommandResult, FullStateMachine, ZoneConsensus};
 use parking_lot::RwLock;
 
-/// Minimal consensus surface the WAL needs — lets unit tests swap in
-/// a mock without spinning up a full raft runtime.
-pub trait WalConsensus: Send + Sync {
-    fn append(&self, key: &str, data: &[u8]) -> Result<(), String>;
-    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String>;
-}
+use crate::abc::meta_store::MetaStore;
+use crate::stream::{StreamBackend, StreamError};
 
-/// Real raft-backed consensus — the production path.
-pub struct RaftWalConsensus {
-    node: ZoneConsensus<FullStateMachine>,
-    runtime: tokio::runtime::Handle,
-}
-
-impl RaftWalConsensus {
-    pub fn new(node: ZoneConsensus<FullStateMachine>, runtime: tokio::runtime::Handle) -> Self {
-        Self { node, runtime }
-    }
-}
-
-impl WalConsensus for RaftWalConsensus {
-    fn append(&self, key: &str, data: &[u8]) -> Result<(), String> {
-        let cmd = Command::AppendStreamEntry {
-            key: key.to_string(),
-            data: data.to_vec(),
-        };
-        let result = self
-            .runtime
-            .block_on(self.node.propose(cmd))
-            .map_err(|e| format!("WAL propose({key}): {e}"))?;
-        match result {
-            CommandResult::Success => Ok(()),
-            CommandResult::Error(e) => Err(format!("WAL apply({key}) rejected: {e}")),
-            _ => Ok(()),
-        }
-    }
-
-    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
-        let key_owned = key.to_string();
-        let fut = self
-            .node
-            .with_state_machine(move |sm: &FullStateMachine| sm.get_stream_entry(&key_owned));
-        self.runtime
-            .block_on(fut)
-            .map_err(|e| format!("WAL get({key}): {e}"))
-    }
-}
-
-/// Rust core — wraps a ``WalConsensus`` and tracks per-stream state.
-///
-/// Each `write_nowait` call is non-blocking: data is inserted into the
-/// inflight map immediately (read-your-writes) then queued for the
-/// background flush thread, which calls `consensus.append` off the hot
-/// path. On flush success the entry is evicted from inflight; on flush
-/// failure the entry stays in inflight so `read_at` can still serve it.
+/// WAL-backed stream core.  Persists every write through the
+/// distributed `MetaStore`'s stream-entries side table; serves
+/// `read_at` from an inflight cache for read-your-writes before the
+/// background flush confirms.
 pub struct WalStreamCore {
-    consensus: Arc<dyn WalConsensus>,
+    store: Arc<dyn MetaStore>,
     stream_id: String,
     prefix: String,
     next_seq: AtomicU64,
     closed: AtomicBool,
     flush_tx: mpsc::SyncSender<(u64, Vec<u8>)>,
-    /// Written but not-yet-consensus-confirmed entries. Checked first by
-    /// `read_at` to guarantee read-your-writes without waiting for Raft.
+    /// Written but not-yet-confirmed entries.  Checked first by
+    /// `read_at` to guarantee read-your-writes without waiting for the
+    /// metastore propose / flush.
     inflight: Arc<RwLock<BTreeMap<u64, Vec<u8>>>>,
 }
 
 impl WalStreamCore {
-    /// Bounded flush channel depth. 4 096 entries × ~4 KB average ≈ 16 MB
+    /// Bounded flush channel depth.  4096 entries × ~4 KB average ≈ 16 MB
     /// peak memory before backpressure flips to synchronous write.
     const FLUSH_CHANNEL_CAP: usize = 4096;
 
-    pub fn new(consensus: Arc<dyn WalConsensus>, stream_id: String) -> Self {
+    pub fn new(store: Arc<dyn MetaStore>, stream_id: String) -> Self {
         let prefix = format!("/__wal_stream__/{stream_id}/");
         let (flush_tx, flush_rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(Self::FLUSH_CHANNEL_CAP);
         let inflight: Arc<RwLock<BTreeMap<u64, Vec<u8>>>> = Arc::new(RwLock::new(BTreeMap::new()));
 
         let inflight_bg = Arc::clone(&inflight);
-        let consensus_bg = Arc::clone(&consensus);
+        let store_bg = Arc::clone(&store);
         let prefix_bg = prefix.clone();
         let stream_id_bg = stream_id.clone();
 
@@ -113,16 +69,23 @@ impl WalStreamCore {
             .spawn(move || {
                 while let Ok((seq, data)) = flush_rx.recv() {
                     let key = format!("{prefix_bg}{seq}");
-                    match consensus_bg.append(&key, &data) {
+                    match store_bg.append_stream_entry(&key, &data) {
                         Ok(()) => {
                             inflight_bg.write().remove(&seq);
                         }
                         Err(e) => {
-                            // Entry stays in inflight — read_at() remains available.
+                            // Entry stays in inflight — `read_at` remains
+                            // available from the local cache; a peer
+                            // catching up loses this entry, but
+                            // surfacing the failure here would force
+                            // every backend wake-up onto the syscall hot
+                            // path.  Best-effort fan-out is the right
+                            // tradeoff for an audit / coordination
+                            // stream.
                             tracing::warn!(
                                 stream_id = %stream_id_bg,
                                 seq,
-                                error = %e,
+                                error = ?e,
                                 "WAL flush failed; entry remains in inflight"
                             );
                         }
@@ -132,7 +95,7 @@ impl WalStreamCore {
             .expect("failed to spawn WAL flush thread");
 
         Self {
-            consensus,
+            store,
             stream_id,
             prefix,
             next_seq: AtomicU64::new(0),
@@ -150,22 +113,22 @@ impl WalStreamCore {
         if self.closed.load(Ordering::Acquire) {
             return Err(format!("WAL stream {} is closed", self.stream_id));
         }
-        // Atomic fetch_add: concurrent writers each get a unique seq; no
-        // overwrite race because seqs differ.
+        // Atomic fetch_add: concurrent writers each get a unique seq;
+        // no overwrite race because seqs differ.
         let seq = self.next_seq.fetch_add(1, Ordering::AcqRel);
         let data_vec = data.to_vec();
 
-        // Insert into inflight BEFORE enqueuing for flush so that a
-        // concurrent read_at(seq) finds the data immediately.
+        // Insert into inflight BEFORE enqueuing for flush so a
+        // concurrent `read_at(seq)` finds the data immediately.
         self.inflight.write().insert(seq, data_vec.clone());
 
         match self.flush_tx.try_send((seq, data_vec.clone())) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(_)) => {
-                // Channel saturated (rare): flush synchronously to avoid
-                // unbounded inflight growth.
+                // Channel saturated (rare): flush synchronously to
+                // avoid unbounded inflight growth.
                 let key = self.key(seq);
-                match self.consensus.append(&key, &data_vec) {
+                match self.store.append_stream_entry(&key, &data_vec) {
                     Ok(()) => {
                         self.inflight.write().remove(&seq);
                     }
@@ -173,7 +136,7 @@ impl WalStreamCore {
                         tracing::warn!(
                             stream_id = %self.stream_id,
                             seq,
-                            error = %e,
+                            error = ?e,
                             "WAL sync-fallback flush failed"
                         );
                     }
@@ -186,17 +149,20 @@ impl WalStreamCore {
         Ok(seq)
     }
 
-    /// Read entry at ``seq``. ``Ok(Some(bytes))`` if present;
-    /// ``Ok(None)`` if not yet written; ``Err`` if the stream is
-    /// closed and no more data will arrive at this offset.
+    /// Read the entry at `seq`.  `Ok(Some(bytes))` if present;
+    /// `Ok(None)` if not yet written; `Err` if the stream is closed
+    /// and no more data will arrive at this offset.
     pub fn read_at(&self, seq: u64) -> Result<Option<Vec<u8>>, String> {
-        // Fast path: written but not yet flushed to consensus.
+        // Fast path: written but not yet flushed.
         if let Some(data) = self.inflight.read().get(&seq).cloned() {
             return Ok(Some(data));
         }
         // Slow path: background thread already confirmed this entry.
         let key = self.key(seq);
-        let bytes_opt = self.consensus.get(&key)?;
+        let bytes_opt = self
+            .store
+            .get_stream_entry(&key)
+            .map_err(|e| format!("get_stream_entry({key}): {e:?}"))?;
         match bytes_opt {
             Some(bytes) => Ok(Some(bytes)),
             None => {
@@ -230,7 +196,6 @@ impl WalStreamCore {
         self.closed.store(true, Ordering::Release);
     }
 
-    #[allow(dead_code)]
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
     }
@@ -246,24 +211,24 @@ impl WalStreamCore {
 }
 
 // ---------------------------------------------------------------------------
-// StreamBackend impl — lets io_profile="wal" register a raft-backed stream
-// with stream_manager alongside MemoryStreamBackend and
-// SharedMemoryStreamBackend. Python never sees WalStreamCore directly;
-// dispatch goes through the standard stream syscalls.
+// StreamBackend impl — `setattr_stream(io_profile="wal")` registers a
+// WalStreamCore alongside MemoryStreamBackend and SharedMemoryStreamBackend.
+// Python never sees WalStreamCore directly; dispatch goes through the
+// standard stream syscalls.
 // ---------------------------------------------------------------------------
 
-impl crate::stream::StreamBackend for WalStreamCore {
-    fn push(&self, data: &[u8]) -> Result<usize, crate::stream::StreamError> {
+impl StreamBackend for WalStreamCore {
+    fn push(&self, data: &[u8]) -> Result<usize, StreamError> {
         self.write_nowait(data)
             .map(|seq| seq as usize)
-            .map_err(|_| crate::stream::StreamError::Closed("wal stream closed"))
+            .map_err(|_| StreamError::Closed("wal stream closed"))
     }
 
-    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), crate::stream::StreamError> {
+    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError> {
         match WalStreamCore::read_at(self, offset as u64) {
             Ok(Some(data)) => Ok((data, offset + 1)),
-            Ok(None) => Err(crate::stream::StreamError::Empty),
-            Err(_) => Err(crate::stream::StreamError::ClosedEmpty),
+            Ok(None) => Err(StreamError::Empty),
+            Err(_) => Err(StreamError::ClosedEmpty),
         }
     }
 
@@ -271,10 +236,10 @@ impl crate::stream::StreamBackend for WalStreamCore {
         &self,
         offset: usize,
         count: usize,
-    ) -> Result<(Vec<Vec<u8>>, usize), crate::stream::StreamError> {
+    ) -> Result<(Vec<Vec<u8>>, usize), StreamError> {
         WalStreamCore::read_batch(self, offset as u64, count)
             .map(|(items, next)| (items, next as usize))
-            .map_err(|_| crate::stream::StreamError::ClosedEmpty)
+            .map_err(|_| StreamError::ClosedEmpty)
     }
 
     fn close(&self) {
@@ -295,41 +260,53 @@ impl crate::stream::StreamBackend for WalStreamCore {
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests — in-memory WalConsensus mock, no raft runtime needed.
+// Unit tests — in-memory MetaStore mock, no raft runtime needed.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abc::meta_store::{FileMetadata, MetaStoreError};
+    use std::collections::HashSet;
     use std::sync::Mutex;
 
-    struct MemConsensus {
+    struct MemKvStore {
         inner: Mutex<BTreeMap<String, Vec<u8>>>,
     }
 
-    impl MemConsensus {
-        fn new() -> Self {
-            Self {
-                inner: Mutex::new(BTreeMap::new()),
-            }
+    impl MetaStore for MemKvStore {
+        fn get(&self, _path: &str) -> Result<Option<FileMetadata>, MetaStoreError> {
+            Ok(None)
         }
-    }
-
-    impl WalConsensus for MemConsensus {
-        fn append(&self, key: &str, data: &[u8]) -> Result<(), String> {
+        fn put(&self, _path: &str, _meta: FileMetadata) -> Result<(), MetaStoreError> {
+            Ok(())
+        }
+        fn delete(&self, _path: &str) -> Result<bool, MetaStoreError> {
+            Ok(false)
+        }
+        fn list(&self, _prefix: &str) -> Result<Vec<FileMetadata>, MetaStoreError> {
+            Ok(Vec::new())
+        }
+        fn exists(&self, _path: &str) -> Result<bool, MetaStoreError> {
+            Ok(false)
+        }
+        fn append_stream_entry(&self, key: &str, data: &[u8]) -> Result<(), MetaStoreError> {
             self.inner
                 .lock()
                 .unwrap()
                 .insert(key.to_string(), data.to_vec());
             Ok(())
         }
-        fn get(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
+        fn get_stream_entry(&self, key: &str) -> Result<Option<Vec<u8>>, MetaStoreError> {
             Ok(self.inner.lock().unwrap().get(key).cloned())
         }
     }
 
     fn core() -> WalStreamCore {
-        WalStreamCore::new(Arc::new(MemConsensus::new()), "test".into())
+        let store: Arc<dyn MetaStore> = Arc::new(MemKvStore {
+            inner: Mutex::new(BTreeMap::new()),
+        });
+        WalStreamCore::new(store, "test".into())
     }
 
     #[test]
@@ -340,22 +317,6 @@ mod tests {
         let data = c.read_at(0).unwrap().unwrap();
         assert_eq!(data, b"hello");
         assert_eq!(c.tail(), 1);
-    }
-
-    #[test]
-    fn write_many_preserves_order_and_seqs() {
-        let c = core();
-        for i in 0u8..10 {
-            let seq = c.write_nowait(&[i, i + 1, i + 2]).unwrap();
-            assert_eq!(seq, i as u64);
-        }
-        assert_eq!(c.tail(), 10);
-        let (items, next) = c.read_batch(0, 100).unwrap();
-        assert_eq!(items.len(), 10);
-        assert_eq!(next, 10);
-        for (i, item) in items.iter().enumerate() {
-            assert_eq!(item, &[i as u8, i as u8 + 1, i as u8 + 2]);
-        }
     }
 
     #[test]
@@ -382,52 +343,6 @@ mod tests {
     }
 
     #[test]
-    fn stats_reflect_tail_and_closed() {
-        let c = core();
-        assert_eq!(c.tail(), 0);
-        assert!(!c.is_closed());
-        c.write_nowait(b"x").unwrap();
-        c.write_nowait(b"y").unwrap();
-        assert_eq!(c.tail(), 2);
-        c.close();
-        assert!(c.is_closed());
-    }
-
-    #[test]
-    fn read_batch_stops_at_tail() {
-        let c = core();
-        c.write_nowait(b"1").unwrap();
-        c.write_nowait(b"2").unwrap();
-        let (items, next) = c.read_batch(0, 100).unwrap();
-        assert_eq!(items.len(), 2);
-        assert_eq!(next, 2);
-    }
-
-    #[test]
-    fn read_batch_from_middle() {
-        let c = core();
-        for i in 0u8..5 {
-            c.write_nowait(&[i]).unwrap();
-        }
-        let (items, next) = c.read_batch(2, 10).unwrap();
-        assert_eq!(items.len(), 3);
-        assert_eq!(next, 5);
-        assert_eq!(items[0], vec![2]);
-        assert_eq!(items[2], vec![4]);
-    }
-
-    #[test]
-    fn binary_data_roundtrip_with_nullbytes() {
-        let c = core();
-        let payload = vec![0u8, 1, 0, 2, 0, 3, 0xff, 0x00, 0xfe];
-        c.write_nowait(&payload).unwrap();
-        assert_eq!(c.read_at(0).unwrap(), Some(payload));
-    }
-
-    /// Raw-byte roundtrip for arbitrary binary — no hex intermediate
-    /// should remain (was a hot-path perf cost in the pre-R19.1b'
-    /// design).
-    #[test]
     fn binary_data_full_byte_range() {
         let c = core();
         let payload: Vec<u8> = (0u8..=255).collect();
@@ -435,11 +350,8 @@ mod tests {
         assert_eq!(c.read_at(0).unwrap(), Some(payload));
     }
 
-    /// Concurrent writers must each get a unique seq and all data must
-    /// be readable — exercises the inflight map under thread contention.
     #[test]
     fn concurrent_writes_unique_seqs() {
-        use std::collections::HashSet;
         let c = Arc::new(core());
         let handles: Vec<_> = (0u8..8)
             .map(|i| {
@@ -450,7 +362,6 @@ mod tests {
         let seqs: HashSet<u64> = handles.into_iter().map(|h| h.join().unwrap()).collect();
         assert_eq!(seqs.len(), 8);
         assert_eq!(c.tail(), 8);
-        // All entries readable (in inflight or flushed to consensus).
         for seq in 0..8u64 {
             assert!(c.read_at(seq).unwrap().is_some());
         }

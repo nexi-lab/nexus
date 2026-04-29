@@ -6,7 +6,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// Canonical root zone identifier — re-exported from the ``contracts``
 /// crate (the Rust mirror of ``nexus.contracts.constants``) so kernel
-/// users can reach it via ``nexus_kernel::ROOT_ZONE_ID`` without pulling
+/// users can reach it via ``nexus_runtime::ROOT_ZONE_ID`` without pulling
 /// another workspace dep. Prefer this constant over hardcoded ``"root"``
 /// literals.
 pub use contracts::ROOT_ZONE_ID;
@@ -53,20 +53,10 @@ pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]
 pub(crate) use core::pipe::stdio as stdio_pipe;
 pub(crate) use core::service_registry;
-pub(crate) use core::stream;
+pub use core::stream;
 pub use core::stream::manager as stream_manager;
 #[cfg(unix)]
 pub(crate) use core::stream::shm as shm_stream;
-// `core::stream::stdio` only ships its pyclass on Unix (the
-// `StdioStreamBackend` impl is `#[cfg(unix)]`); the cdylib's
-// `m.add_class::<stdio_stream::StdioStreamBackend>` line below is
-// likewise cfg-gated, so the shim must match. Without the shim the
-// Linux build trips `unresolved module \`stdio_stream\`` even though
-// the Windows build (where neither the shim nor the add_class line
-// are emitted) compiles fine.
-#[cfg(unix)]
-pub(crate) use core::stream::stdio as stdio_stream;
-pub(crate) use core::stream::wal as wal_stream;
 
 // ── Kernel-owned primitives ──────────────────────────────────────────
 // CAS (content-addressed storage) — the kernel's storage primitive
@@ -92,20 +82,13 @@ pub mod kernel;
 pub mod generated_kernel_abi_pyo3;
 pub use generated_kernel_abi_pyo3 as generated_pyo3;
 
-// Raft-backed MetaStore + EC replication scanner.  Both reach into
-// `nexus_raft::ZoneManager` for the per-zone Raft cluster and the
-// `Arc<dyn hal::peer::PeerBlobClient>` slot for cross-node fetch,
-// so they live alongside `kernel::Kernel` (which already owns the
-// ZoneManager) inside the kernel rlib.
-//
-// Phase 5 in flight: the `kernel::hal::federation::FederationProvider`
-// trait (committed alongside this module) is the abstraction that
-// will let these two files plus `core/stream/wal.rs` move out into
-// the raft crate.  The migration unblocks the `kernel -> raft` Cargo
-// edge inversion needed for the file moves; until then, both modules
-// keep their direct `nexus_raft::*` references.
-pub mod raft_meta_store;
-pub mod replication;
+// Phase H of the rust-workspace restructure inverted the kernel↔raft
+// Cargo edge.  Raft state-machine impls (zone_meta_store,
+// replication_scanner, wal_stream_backend) and the
+// `RaftFederationProvider` trait impl live in the raft crate now.
+// Kernel reaches them through the
+// `kernel::hal::federation::FederationProvider` trait dispatch
+// installed by the cdylib boot path.
 
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
@@ -114,7 +97,7 @@ pub mod replication;
 // `RpcTransport` for the `"remote"` backend type.
 pub mod rpc_transport;
 
-// Phase 0 — `#[pymodule] fn nexus_kernel` lives in `rust/nexus-cdylib/`
+// Phase 0 — `#[pymodule] fn nexus_runtime` lives in `rust/nexus-cdylib/`
 // now (the dedicated cdylib build artifact). Kernel's pyclass /
 // pyfunction surface is registered through `kernel::python::register`,
 // called by the cdylib alongside `lib::python::register`,

@@ -164,10 +164,10 @@ def _read_oauth_key_from_redb(
         return None
 
     try:
-        from nexus_kernel import PyKernel
+        from nexus_runtime import PyKernel
     except ImportError as exc:
         logger.warning(
-            "Legacy OAuth key migration skipped — nexus_kernel unavailable (%s): %s",
+            "Legacy OAuth key migration skipped — nexus_runtime unavailable (%s): %s",
             path,
             exc,
         )

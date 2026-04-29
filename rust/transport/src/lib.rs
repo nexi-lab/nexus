@@ -20,7 +20,7 @@
 //!   python/
 //!     mod.rs         — register() — installs PyVfsGrpcServerHandle +
 //!                      start_vfs_grpc_server + PyFederationClient on
-//!                      the cdylib's nexus_kernel module.
+//!                      the cdylib's nexus_runtime module.
 //! ```
 //!
 //! Direction: `transport -> {kernel, transport-primitives, raft}`.

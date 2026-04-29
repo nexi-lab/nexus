@@ -1,7 +1,7 @@
 """gRPC server lifecycle — boots the Rust-native VFS gRPC server.
 
 Phase 1 of the Python→Rust VFS server migration: ``:2028`` is now owned by
-a tonic server inside ``nexus_kernel``. This module is a thin lifespan
+a tonic server inside ``nexus_runtime``. This module is a thin lifespan
 hook that:
 
   1. Resolves config (port / bind / TLS / API key) — same env-var contract
@@ -10,7 +10,7 @@ hook that:
      provider so the Rust server can invoke them via PyO3 callbacks for
      the ``Call`` RPC (the typed ``Read`` / ``Write`` / ``Delete`` /
      ``Ping`` paths are pure Rust, zero PyO3 cost).
-  3. Calls ``nexus_kernel.start_vfs_grpc_server(...)``, stores the handle
+  3. Calls ``nexus_runtime.start_vfs_grpc_server(...)``, stores the handle
      on ``app.state`` for shutdown.
 
 Set ``NEXUS_GRPC_PORT=0`` to disable.
@@ -152,9 +152,9 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
     except Exception:
         server_version = "unknown"
 
-    import nexus_kernel
+    import nexus_runtime
 
-    handle = nexus_kernel.start_vfs_grpc_server(
+    handle = nexus_runtime.start_vfs_grpc_server(
         py_kernel,
         bind_addr,
         api_key,

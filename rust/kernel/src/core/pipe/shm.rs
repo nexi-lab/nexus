@@ -31,8 +31,6 @@
 //!
 //! 128-byte slot alignment covers x86 (64B) and Apple M-series (128B).
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -70,6 +68,7 @@ use crate::pipe::PipeError;
 // ---------------------------------------------------------------------------
 
 /// Read a u32 from mmap at the given offset.
+#[cfg(test)]
 #[inline]
 fn read_u32(base: *const u8, off: usize) -> u32 {
     unsafe {
@@ -114,12 +113,11 @@ unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
 
 /// Cross-process SPSC ring buffer backed by mmap + OS pipe notification.
 ///
-/// `create()` allocates a temp file + mmap + two OS pipes.
-/// `attach()` opens the same file + mmap from another process.
-///
-/// Python side uses `loop.add_reader(fd, callback)` on the notification
-/// pipe fds for zero-cost asyncio integration.
-#[pyclass]
+/// Kernel-internal primitive: the kernel constructs one via
+/// [`SharedMemoryPipeBackend::create_native`] inside `sys_setattr` when
+/// `io_profile=shared_memory` is requested for a DT_PIPE inode.  Only
+/// the kernel ever holds the struct; Python reaches it via the
+/// DT_PIPE syscalls (`sys_read` / `sys_write`).
 pub struct SharedMemoryPipeBackend {
     mmap: memmap2::MmapMut,
     ring_cap: usize,
@@ -128,7 +126,13 @@ pub struct SharedMemoryPipeBackend {
     // they are inherited as readable fds)
     notify_data_wr: i32,  // writer writes here after push (wakes reader)
     notify_space_wr: i32, // reader writes here after pop (wakes writer)
+    // `is_creator` + `shm_path` are read only by the test-only `cleanup()`
+    // helper; production kernel cleans up via the tempfile drop semantics
+    // it was constructed with.  Allowed dead so `#[deny(warnings)]` in
+    // release builds doesn't trip.
+    #[allow(dead_code)]
     is_creator: bool,
+    #[allow(dead_code)]
     shm_path: String,
 }
 
@@ -436,54 +440,36 @@ impl SharedMemoryPipeBackend {
 
         Ok((core, shm_path, data_fds[0], space_fds[0]))
     }
-}
 
-// ---------------------------------------------------------------------------
-// PyO3 methods
-// ---------------------------------------------------------------------------
-
-#[pymethods]
-impl SharedMemoryPipeBackend {
-    /// Create a new shared ring buffer (PyO3 wrapper over `create_native`).
-    ///
-    /// Returns `(self, shm_path, data_rd_fd, space_rd_fd)`.
-    #[staticmethod]
-    fn create(capacity: usize) -> PyResult<(Self, String, i32, i32)> {
-        Self::create_native(capacity)
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(e.to_string()))
-    }
-
-    /// Attach to an existing shared ring buffer from another process.
-    ///
-    /// Args:
-    ///     shm_path: Path to the shared memory file.
-    ///     data_wr_fd: Write-end of the data notification pipe (reader notifies writer — unused here,
-    ///                 actually this is the data_rd_fd the reader uses to receive data notifications).
-    ///     space_wr_fd: Write-end of the space notification pipe (reader writes here after pop).
-    #[staticmethod]
-    fn attach(shm_path: &str, notify_data_wr: i32, notify_space_wr: i32) -> PyResult<Self> {
+    /// Attach to an existing shared ring buffer (same-process tests + future
+    /// kernel-internal cross-process attach paths).  Pure Rust — no PyO3.
+    #[cfg(test)]
+    fn attach(
+        shm_path: &str,
+        notify_data_wr: i32,
+        notify_space_wr: i32,
+    ) -> Result<Self, std::io::Error> {
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(shm_path)
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("open: {e}")))?;
+            .open(shm_path)?;
 
-        let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file) }
-            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("mmap: {e}")))?;
+        let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file) }?;
 
-        // Validate magic + version
         let base = mmap.as_ptr();
         let magic = read_u32(base, OFF_MAGIC);
         if magic != MAGIC {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "bad magic: expected 0x{MAGIC:08X}, got 0x{magic:08X}"
-            )));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("bad magic: expected 0x{MAGIC:08X}, got 0x{magic:08X}"),
+            ));
         }
         let version = read_u32(base, OFF_VERSION);
         if version != VERSION {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "unsupported version: expected {VERSION}, got {version}"
-            )));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unsupported version: expected {VERSION}, got {version}"),
+            ));
         }
 
         let ring_cap = read_u32(base, OFF_RING_CAP) as usize;
@@ -500,163 +486,13 @@ impl SharedMemoryPipeBackend {
         })
     }
 
-    /// Push a message into the buffer. Returns bytes written.
-    /// Sends a 1-byte notification on the data pipe after successful push.
-    fn push(&self, _py: Python<'_>, data: &[u8]) -> PyResult<usize> {
-        match self.push_inner(data) {
-            Ok(n) => {
-                self.notify_data();
-                Ok(n)
-            }
-            Err(PipeError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "PipeClosed:{msg}"
-            ))),
-            Err(PipeError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("PipeFull:buffer full ({used}/{cap} bytes)"),
-            )),
-            Err(PipeError::Oversized(msg_len, cap)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "message size {msg_len} exceeds buffer capacity {cap}"
-                )))
-            }
-            Err(PipeError::Empty | PipeError::ClosedEmpty) => unreachable!(),
-        }
-    }
-
-    /// Pop the next message. Returns PyBytes.
-    /// Sends a 1-byte notification on the space pipe after successful pop.
-    fn pop<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        match self.pop_position() {
-            Ok((start, len, advance)) => {
-                let ring = self.ring_slice();
-                let result = PyBytes::new(py, &ring[start..start + len]);
-                self.commit_pop(advance, len);
-                self.notify_space();
-                Ok(result)
-            }
-            Err(PipeError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "PipeClosed:read from closed empty pipe",
-            )),
-            Err(PipeError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "PipeEmpty:buffer empty",
-            )),
-            Err(PipeError::Closed(_) | PipeError::Full(_, _) | PipeError::Oversized(_, _)) => {
-                unreachable!()
-            }
-        }
-    }
-
-    /// Push a u64 value (12-byte frame).
-    fn push_u64(&self, _py: Python<'_>, val: u64) -> PyResult<()> {
-        match self.push_inner(&val.to_le_bytes()) {
-            Ok(_) => {
-                self.notify_data();
-                Ok(())
-            }
-            Err(PipeError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "PipeClosed:{msg}"
-            ))),
-            Err(PipeError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("PipeFull:buffer full ({used}/{cap} bytes)"),
-            )),
-            Err(PipeError::Oversized(msg_len, cap)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "message size {msg_len} exceeds buffer capacity {cap}"
-                )))
-            }
-            Err(PipeError::Empty | PipeError::ClosedEmpty) => unreachable!(),
-        }
-    }
-
-    /// Pop a u64 value.
-    fn pop_u64(&self, _py: Python<'_>) -> PyResult<u64> {
-        match self.pop_position() {
-            Ok((start, len, advance)) => {
-                if len != 8 {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "pop_u64 expects 8-byte payload, got {len}"
-                    )));
-                }
-                let ring = self.ring_slice();
-                let mut buf = [0u8; 8];
-                buf.copy_from_slice(&ring[start..start + 8]);
-                let val = u64::from_le_bytes(buf);
-                self.commit_pop(advance, len);
-                self.notify_space();
-                Ok(val)
-            }
-            Err(PipeError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "PipeClosed:read from closed empty pipe",
-            )),
-            Err(PipeError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "PipeEmpty:buffer empty",
-            )),
-            Err(PipeError::Closed(_) | PipeError::Full(_, _) | PipeError::Oversized(_, _)) => {
-                unreachable!()
-            }
-        }
-    }
-
-    /// Close the buffer. Sends notification on both pipes.
-    fn close(&self) {
-        self.closed_flag().store(true, Ordering::Release);
-        self.notify_data();
-        self.notify_space();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.msg_count().load(Ordering::Relaxed) == 0
-    }
-
-    fn is_full(&self) -> bool {
-        self.used_bytes().load(Ordering::Relaxed) >= self.user_capacity
-    }
-
-    #[getter]
-    fn closed(&self) -> bool {
-        self.closed_flag().load(Ordering::Acquire)
-    }
-
-    #[getter]
-    fn size(&self) -> usize {
-        self.used_bytes().load(Ordering::Relaxed)
-    }
-
-    #[getter]
-    fn capacity(&self) -> usize {
-        self.user_capacity
-    }
-
-    #[getter]
-    fn msg_count_prop(&self) -> usize {
-        self.msg_count().load(Ordering::Relaxed)
-    }
-
-    /// Buffer statistics as a dict.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let dict = PyDict::new(py);
-        dict.set_item("size", self.used_bytes().load(Ordering::Relaxed))?;
-        dict.set_item("capacity", self.user_capacity)?;
-        dict.set_item("msg_count", self.msg_count().load(Ordering::Relaxed))?;
-        dict.set_item("closed", self.closed_flag().load(Ordering::Acquire))?;
-        dict.set_item("push_count", self.push_count().load(Ordering::Relaxed))?;
-        dict.set_item("pop_count", self.pop_count().load(Ordering::Relaxed))?;
-        Ok(dict.into())
-    }
-
-    /// Remove the shared memory file. Only the creator should call this.
-    fn cleanup(&self) -> PyResult<()> {
+    /// Remove the shared memory file (creator only).
+    #[cfg(test)]
+    fn cleanup(&self) -> std::io::Result<()> {
         if self.is_creator {
-            std::fs::remove_file(&self.shm_path)
-                .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("cleanup: {e}")))?;
+            std::fs::remove_file(&self.shm_path)?;
         }
         Ok(())
-    }
-
-    /// Return the shared memory file path.
-    #[getter]
-    fn shm_path(&self) -> &str {
-        &self.shm_path
     }
 }
 
@@ -687,7 +523,7 @@ mod tests {
     /// Same-process create + attach test (valid because MAP_SHARED).
     fn create_pair(cap: usize) -> (SharedMemoryPipeBackend, SharedMemoryPipeBackend) {
         let (creator, shm_path, data_rd_fd, space_rd_fd) =
-            SharedMemoryPipeBackend::create(cap).unwrap();
+            SharedMemoryPipeBackend::create_native(cap).unwrap();
         // For same-process testing: attacher gets the write-ends for notifications
         // In real cross-process: fds would be inherited via subprocess
         // Here we pass notify_data_wr=-1, notify_space_wr=-1 since we don't need
@@ -722,7 +558,7 @@ mod tests {
     #[test]
     fn test_create_returns_valid_handles() {
         let (creator, shm_path, data_rd_fd, space_rd_fd) =
-            SharedMemoryPipeBackend::create(1024).unwrap();
+            SharedMemoryPipeBackend::create_native(1024).unwrap();
         assert!(!shm_path.is_empty());
         assert!(data_rd_fd >= 0);
         assert!(space_rd_fd >= 0);
@@ -736,7 +572,7 @@ mod tests {
 
     #[test]
     fn test_magic_version_validated() {
-        let (creator, shm_path, dfd, sfd) = SharedMemoryPipeBackend::create(64).unwrap();
+        let (creator, shm_path, dfd, sfd) = SharedMemoryPipeBackend::create_native(64).unwrap();
         let attacher = SharedMemoryPipeBackend::attach(&shm_path, -1, -1);
         assert!(attacher.is_ok());
         unsafe {

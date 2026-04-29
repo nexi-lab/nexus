@@ -27,6 +27,11 @@ pub mod remote;
 pub mod shm;
 #[cfg(unix)]
 pub mod stdio;
+// `wal.rs` — durable DT_PIPE backed by a distributed `MetaStore`.
+// Composes `core::stream::wal::WalStreamCore` and adds a per-replica
+// head cursor for single-consumer FIFO semantics.  Kernel primitive;
+// federation just DIs the underlying `MetaStore` (typically the raft
+// crate's `ZoneMetaStore`).
 pub mod wal;
 
 use std::cell::UnsafeCell;

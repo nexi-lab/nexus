@@ -564,7 +564,7 @@ class TestCrashRecovery:
 
 
 class TestTieredReadPath:
-    """Test read interception in VolumeLocalTransport for tiered volumes.
+    """Test read interception in BlobPackLocalTransport for tiered volumes.
 
     Decision 11A: E2E test with mocked cloud transport.
     """

@@ -1,6 +1,6 @@
 """Volume compactor — background compaction for CAS volumes.
 
-Periodically calls VolumeLocalTransport.compact() to reclaim space
+Periodically calls BlobPackLocalTransport.compact() to reclaim space
 from deleted entries in sealed volumes. Compaction copies live entries
 to a fresh volume and atomically deletes the old one.
 
@@ -24,7 +24,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+    from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class VolumeCompactor:
     """Background compactor for CAS volumes.
 
     Args:
-        transport: VolumeLocalTransport to compact.
+        transport: BlobPackLocalTransport to compact.
         interval: Seconds between compaction cycles.
         max_concurrent: Max concurrent compact() calls (default 1).
             Controls I/O pressure — higher values compact faster but
@@ -55,7 +55,7 @@ class VolumeCompactor:
 
     def __init__(
         self,
-        transport: VolumeLocalTransport,
+        transport: BlobPackLocalTransport,
         *,
         interval: float = DEFAULT_COMPACTION_INTERVAL,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT,

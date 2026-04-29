@@ -38,6 +38,12 @@
 
 pub mod agents;
 pub mod audit;
+// `tasks` was previously a standalone `_nexus_tasks.so` cdylib.  Phase
+// 3 restructure plan #6 folded it in here so the runtime ships a
+// single Python wheel; `services::python::register` exposes the
+// PyTaskEngine / PyTaskRecord / PyQueueStats pyclasses.
+#[cfg(feature = "python")]
+pub mod tasks;
 // `permission` is gated behind the `python` feature because its only
 // caller path is `Python::attach(...)` → `PermissionChecker.check(...)`
 // (the slow path).  Pure-Rust builds (e.g. WASM, raft-witness) drop it.

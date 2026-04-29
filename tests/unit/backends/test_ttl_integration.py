@@ -1,6 +1,6 @@
 """Integration test: full write → read → expire → 404 path (Issue #3405).
 
-Tests the complete TTL lifecycle through CASAddressingEngine → VolumeLocalTransport
+Tests the complete TTL lifecycle through CASAddressingEngine → BlobPackLocalTransport
 → BlobPackEngine with real Rust engines (no mocks).
 """
 
@@ -13,7 +13,7 @@ import pytest
 
 def _vol_engine_available() -> bool:
     try:
-        from nexus_kernel import BlobPackEngine  # noqa: F401
+        from nexus_runtime import BlobPackEngine  # noqa: F401
 
         return True
     except ImportError:
@@ -21,20 +21,20 @@ def _vol_engine_available() -> bool:
 
 
 needs_vol_engine = pytest.mark.skipif(
-    not _vol_engine_available(), reason="nexus_kernel.BlobPackEngine not available"
+    not _vol_engine_available(), reason="nexus_runtime.BlobPackEngine not available"
 )
 
 
 @needs_vol_engine
 class TestTTLFullPathIntegration:
-    """End-to-end: CASAddressingEngine → VolumeLocalTransport → BlobPackEngine."""
+    """End-to-end: CASAddressingEngine → BlobPackLocalTransport → BlobPackEngine."""
 
     def _make_engine(self, tmp_path):
-        """Create a CASAddressingEngine backed by VolumeLocalTransport."""
+        """Create a CASAddressingEngine backed by BlobPackLocalTransport."""
         from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        transport = VolumeLocalTransport(str(tmp_path))
+        transport = BlobPackLocalTransport(str(tmp_path))
         engine = CASAddressingEngine(transport=transport, backend_name="test_cas")
         return engine, transport
 
@@ -146,9 +146,9 @@ class TestTTLGCSeparation:
 
     def test_list_content_hashes_excludes_ttl(self, tmp_path) -> None:
         """list_content_hashes() only returns permanent engine hashes."""
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        transport = VolumeLocalTransport(str(tmp_path))
+        transport = BlobPackLocalTransport(str(tmp_path))
 
         # Write to permanent
         h_perm = f"{'a' * 64}"

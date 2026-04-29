@@ -4,11 +4,11 @@ use std::sync::Mutex;
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
 
-use crate::error::{Result, TaskError};
-use crate::priority::{
+use super::error::{Result, TaskError};
+use super::priority::{
     decode_pending_key, decode_running_key, encode_pending_key, encode_running_key,
 };
-use crate::task::{TaskPriority, TaskRecord, TaskStatus};
+use super::task::{TaskPriority, TaskRecord, TaskStatus};
 
 /// Fjall-backed task storage with 5 keyspaces (column families).
 ///
@@ -240,7 +240,7 @@ impl TaskStore {
                 continue;
             };
             if let Some((_, run_at, _)) = decode_pending_key(&key_bytes) {
-                if crate::priority::should_promote_oldest(run_at, now, max_wait_secs) {
+                if super::priority::should_promote_oldest(run_at, now, max_wait_secs) {
                     return Some(key_bytes);
                 }
             }
@@ -420,7 +420,7 @@ impl TaskStore {
         let running_key = self.find_running_key(task_id)?;
         task.error_message = Some(error_message.to_string());
 
-        let dead_lettered = crate::retry::should_dead_letter(task.attempt, task.max_retries);
+        let dead_lettered = super::retry::should_dead_letter(task.attempt, task.max_retries);
 
         let mut batch = self.db.batch();
 
@@ -437,7 +437,7 @@ impl TaskStore {
             batch.insert(&self.tasks, task_id.to_be_bytes(), task_value.clone());
             batch.insert(&self.dead_letter, task_id.to_be_bytes(), task_value);
         } else {
-            let delay = crate::retry::backoff_secs(task.attempt, task_id);
+            let delay = super::retry::backoff_secs(task.attempt, task_id);
             task.status = TaskStatus::Pending;
             task.run_at = now + delay;
             task.claimed_at = None;
@@ -657,8 +657,8 @@ impl TaskStore {
 
     /// Count tasks in each status. Uses atomic counters for O(1) performance
     /// (Issue #3029 / Issue 14).
-    pub fn count_by_status(&self) -> Result<crate::task::QueueStats> {
-        Ok(crate::task::QueueStats {
+    pub fn count_by_status(&self) -> Result<super::task::QueueStats> {
+        Ok(super::task::QueueStats {
             pending: self.pending_count.load(Ordering::Relaxed) as usize,
             running: self.running_count.load(Ordering::Relaxed) as usize,
             completed: self.completed_count.load(Ordering::Relaxed) as usize,
@@ -757,7 +757,7 @@ impl TaskStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{TaskPriority, TaskStatus};
+    use crate::tasks::task::{TaskPriority, TaskStatus};
     use std::collections::HashSet;
     use std::sync::Arc;
     use tempfile::TempDir;

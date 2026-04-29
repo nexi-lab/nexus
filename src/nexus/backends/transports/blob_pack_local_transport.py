@@ -1,6 +1,6 @@
 """Volume-packed local Transport — append-only volume files for CAS.
 
-Wraps the Rust VolumeEngine (nexus_kernel.BlobPackEngine) and implements the
+Wraps the Rust VolumeEngine (nexus_runtime.BlobPackEngine) and implements the
 Transport protocol. Routes CAS blob keys (cas/...) to the volume engine
 and delegates directory operations (dirs/...) to an internal LocalTransport.
 
@@ -21,7 +21,7 @@ Cold tiering (Issue #3406):
     - Sealed volumes can be uploaded to cloud storage (S3/GCS)
     - Local .idx retained for O(1) hash → (volume, offset, size)
     - Reads for tiered volumes use HTTP range requests
-    - VolumeLocalTransport intercepts reads and delegates to cloud
+    - BlobPackLocalTransport intercepts reads and delegates to cloud
 
 Crash recovery:
     - Active volumes are .tmp files — deleted on startup
@@ -122,7 +122,7 @@ class BlobPackLocalTransport:
         self._volume_available = False
         self._BlobPackEngine: Any = None  # Class reference for lazy creation
 
-        # VolumeLocalTransport's entire purpose is volume packing — it has no valid
+        # BlobPackLocalTransport's entire purpose is volume packing — it has no valid
         # degraded mode.  Fail closed immediately if VolumeEngine is unavailable so
         # callers get a clear error (with rebuild instructions) rather than silently
         # writing blobs to flat-file layout that VolumeEngine will never find (Issue #3712).
@@ -130,8 +130,8 @@ class BlobPackLocalTransport:
 
         if _BlobPackEngine is None:
             raise RuntimeError(
-                "BlobPackEngine is unavailable (stale or absent nexus_kernel). "
-                "BlobPackLocalTransport requires a working nexus_kernel binary — "
+                "BlobPackEngine is unavailable (stale or absent nexus_runtime). "
+                "BlobPackLocalTransport requires a working nexus_runtime binary — "
                 "there is no safe degraded mode. "
                 "Rebuild the extension: cd rust/kernel && maturin develop --release"
             )

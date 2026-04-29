@@ -24,12 +24,12 @@
 
 use std::sync::Arc;
 
+use crate::prelude::{Command, FullStateMachine, ZoneConsensus};
+use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
 use contracts::VFS_ROOT;
-use nexus_raft::prelude::{Command, FullStateMachine, ZoneConsensus};
-use nexus_raft::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
 use prost::Message;
 
-use crate::meta_store::{FileMetadata as KernelFileMetadata, MetaStore, MetaStoreError};
+use kernel::meta_store::{FileMetadata as KernelFileMetadata, MetaStore, MetaStoreError};
 
 /// ``kernel::MetaStore`` impl backed by a single ``ZoneConsensus``.
 ///
@@ -156,15 +156,15 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetaSt
         } else {
             Some(proto.last_writer_address)
         },
+        target_zone_id: if proto.target_zone_id.is_empty() {
+            None
+        } else {
+            Some(proto.target_zone_id)
+        },
     })
 }
 
 pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
-    // ``target_zone_id`` is intentionally left at the proto default ("")
-    // — the kernel struct does not carry it. DT_MOUNT writes that need
-    // a target come from federation (``rust/raft/src/pyo3_bindings.rs``
-    // constructs the proto directly); entries written through
-    // ``ZoneMetaStore`` are non-mount kinds whose target is always "".
     let proto = ProtoFileMetadata {
         path: meta.path.clone(),
         size: meta.size as i64,
@@ -174,6 +174,11 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
         zone_id: meta.zone_id.clone().unwrap_or_default(),
         mime_type: meta.mime_type.clone().unwrap_or_default(),
         last_writer_address: meta.last_writer_address.clone().unwrap_or_default(),
+        // For DT_MOUNT entries this carries the cross-zone routing
+        // pointer that federation's `mount_apply_cb` reads on every
+        // replicated SetMetadata to wire the mount on followers.
+        // Empty for non-DT_MOUNT entries.
+        target_zone_id: meta.target_zone_id.clone().unwrap_or_default(),
         ..Default::default()
     };
     proto.encode_to_vec()
@@ -221,8 +226,8 @@ impl MetaStore for ZoneMetaStore {
             .block_on(self.node.propose(cmd))
             .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.put({path}): {e}")))?;
         match result {
-            nexus_raft::prelude::CommandResult::Success => {}
-            nexus_raft::prelude::CommandResult::Error(e) => {
+            crate::prelude::CommandResult::Success => {}
+            crate::prelude::CommandResult::Error(e) => {
                 return Err(MetaStoreError::IOError(format!(
                     "ZoneMetaStore.put({path}) rejected: {e}"
                 )));
@@ -257,10 +262,7 @@ impl MetaStore for ZoneMetaStore {
             .runtime
             .block_on(self.node.propose(cmd))
             .map_err(|e| MetaStoreError::IOError(format!("ZoneMetaStore.delete({path}): {e}")))?;
-        Ok(matches!(
-            result,
-            nexus_raft::prelude::CommandResult::Success
-        ))
+        Ok(matches!(result, crate::prelude::CommandResult::Success))
     }
 
     fn list(&self, prefix: &str) -> Result<Vec<KernelFileMetadata>, MetaStoreError> {
@@ -290,6 +292,38 @@ impl MetaStore for ZoneMetaStore {
     fn coherence_key(&self) -> Option<usize> {
         Some(self.coherence_id)
     }
+
+    fn append_stream_entry(&self, key: &str, data: &[u8]) -> Result<(), MetaStoreError> {
+        // Stream entries skip the zone-key translation `put` does for
+        // FileMetadata — `key` is the full WAL identity (`__wal_stream__/…`
+        // or `__wal_pipe__/…`) and the side-table is zone-scoped at the
+        // raft state-machine layer (this `ZoneMetaStore` is bound to a
+        // single zone via `node`).
+        let cmd = Command::AppendStreamEntry {
+            key: key.to_string(),
+            data: data.to_vec(),
+        };
+        let result = self.runtime.block_on(self.node.propose(cmd)).map_err(|e| {
+            MetaStoreError::IOError(format!("ZoneMetaStore.append_stream_entry({key}): {e}"))
+        })?;
+        match result {
+            crate::prelude::CommandResult::Success => Ok(()),
+            crate::prelude::CommandResult::Error(e) => Err(MetaStoreError::IOError(format!(
+                "ZoneMetaStore.append_stream_entry({key}) rejected: {e}"
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    fn get_stream_entry(&self, key: &str) -> Result<Option<Vec<u8>>, MetaStoreError> {
+        let key_owned = key.to_string();
+        let fut = self
+            .node
+            .with_state_machine(move |sm: &FullStateMachine| sm.get_stream_entry(&key_owned));
+        self.runtime.block_on(fut).map_err(|e| {
+            MetaStoreError::IOError(format!("ZoneMetaStore.get_stream_entry({key}): {e}"))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -298,10 +332,9 @@ mod tests {
 
     /// Proto encode↔decode preserves every field the kernel struct
     /// tracks. ``target_zone_id`` deliberately not asserted here —
-    /// R20.1 removed it from the kernel struct on the principle that
-    /// federation (which authors DT_MOUNT entries) operates on the
-    /// proto directly, so dropping the field from the kernel-side
-    /// mapper is correct.
+    /// `target_zone_id` is now carried on the kernel struct (added back
+    /// for federation's `mount_apply_cb` to read on every replicated
+    /// SetMetadata) and round-trips through the proto.
     #[test]
     fn proto_roundtrip_preserves_kernel_fields() {
         let meta = KernelFileMetadata {
@@ -315,6 +348,7 @@ mod tests {
             created_at_ms: None,
             modified_at_ms: None,
             last_writer_address: Some("nexus-1:2028".to_string()),
+            target_zone_id: None,
         };
         let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
         assert_eq!(restored.path, meta.path);

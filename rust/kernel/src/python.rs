@@ -2,7 +2,7 @@
 //!
 //! [`register`] adds the kernel's `#[pyclass]` / `#[pyfunction]`
 //! exports to the parent module.  `nexus-cdylib`'s `#[pymodule] fn
-//! nexus_kernel` calls this alongside the peer-crate registers
+//! nexus_runtime` calls this alongside the peer-crate registers
 //! (`lib::python::register`, `backends::python::register`,
 //! `services::python::register`, `transport::python::register`,
 //! `nexus_raft::pyo3_bindings::register_python_classes`).
@@ -14,22 +14,19 @@
 //! `crate::shm_pipe::Foo` silently drops out of the generated stubs.
 
 use crate::{generated_kernel_abi_pyo3, semaphore};
-#[cfg(unix)]
-use crate::{shm_pipe, shm_stream, stdio_stream};
 use pyo3::prelude::*;
 
 /// Register kernel-owned `#[pyclass]` / `#[pyfunction]` exports into
 /// the parent module.  Called from `nexus-cdylib`'s
-/// `#[pymodule] fn nexus_kernel`.
+/// `#[pymodule] fn nexus_runtime`.
+///
+/// DT_PIPE / DT_STREAM SHM and stdio backends deliberately do NOT
+/// appear here: they are kernel-internal primitives, only constructed
+/// inside the kernel via `sys_setattr` and reached from Python through
+/// the `sys_read` / `sys_write` syscalls.  Exposing them as pyclasses
+/// would let callers attach to the raw mmap/fd surface and bypass the
+/// kernel — a layering violation.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
-    // Shared-memory IPC primitives — Unix-only because the underlying
-    // SHM impl uses POSIX `shm_open` / `mmap`.
-    #[cfg(unix)]
-    m.add_class::<shm_pipe::SharedMemoryPipeBackend>()?;
-    #[cfg(unix)]
-    m.add_class::<shm_stream::SharedMemoryStreamBackend>()?;
-    #[cfg(unix)]
-    m.add_class::<stdio_stream::StdioStreamBackend>()?;
     // Cross-process semaphore counter (lock-manager–backed).
     m.add_class::<semaphore::VFSSemaphore>()?;
     // PyKernel + supporting context / result types — the syscall

@@ -1,7 +1,7 @@
 //! Shared gRPC transport primitives for the Nexus workspace.
 //!
 //! Provides TLS configuration, peer addressing, connection pooling, and
-//! channel creation utilities. Consumed by `nexus_kernel` (ObjectStore gRPC
+//! channel creation utilities. Consumed by `nexus_runtime` (ObjectStore gRPC
 //! adapter) and `nexus_raft` (Raft transport).
 //!
 //! This crate unifies tonic across the workspace (0.13) and eliminates

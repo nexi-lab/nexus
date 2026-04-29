@@ -768,7 +768,7 @@ start_server() {
     # if command -v maturin &> /dev/null || command -v ~/.local/bin/maturin &> /dev/null; then
     #     echo "Building Rust extension..."
     #     MATURIN_CMD=$(command -v maturin || echo ~/.local/bin/maturin)
-    #     [ -d "rust/nexus_kernel" ] && (cd rust/nexus_kernel && $MATURIN_CMD develop --release --quiet && cd ../..)
+    #     [ -d "rust/nexus_runtime" ] && (cd rust/nexus_runtime && $MATURIN_CMD develop --release --quiet && cd ../..)
     # fi
 
     # Display configuration

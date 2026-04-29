@@ -352,14 +352,9 @@ def _boot_independent_bricks(
     # --- Workflow engine ---
     workflow_engine: Any = None
     if _on("workflows") and ctx.dist.enable_workflows:
-        # Try to get Rust glob_match for performance (falls back to fnmatch)
-        _glob_match_fn: Any = None
-        try:
-            from nexus.bricks.search.primitives import glob_fast
+        from nexus.bricks.search.primitives import glob_helpers
 
-            _glob_match_fn = glob_fast.glob_match
-        except ImportError:
-            pass
+        _glob_match_fn: Any = glob_helpers.glob_match
 
         from nexus.factory._distributed import _create_workflow_engine
 

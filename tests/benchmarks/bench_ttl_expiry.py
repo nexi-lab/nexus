@@ -22,7 +22,7 @@ def make_hash(seed: int) -> str:
 
 
 def run_benchmark(count: int = 100_000) -> None:
-    from nexus_kernel import BlobPackEngine
+    from nexus_runtime import BlobPackEngine
 
     with tempfile.TemporaryDirectory() as d:
         vol_dir = f"{d}/volumes"

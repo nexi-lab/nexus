@@ -527,8 +527,8 @@ jobs:
             -e GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384 \
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
-          import nexus_kernel
-          from nexus_kernel import PyMetaStore
+          import nexus_runtime
+          from nexus_runtime import PyMetaStore
           import txtai
           import pgvector
           import docker

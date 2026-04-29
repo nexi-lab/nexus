@@ -369,7 +369,11 @@ def _wait_zone_ready(
     *,
     timeout: float = 30,
 ) -> None:
-    """Poll ``federation_list_zones`` via gRPC until *zone_id* appears."""
+    """Poll until *zone_id* exists on the target AND its raft group has a
+    leader.  Waiting for leader election is what protects the early
+    workflow tests from timing flakes: the first write to a freshly
+    created zone otherwise blocks 10+ s on raft leader election before
+    the gRPC client deadline trips."""
     deadline = time.time() + timeout
     while True:
         r = _grpc_call(target, "federation_list_zones", {}, api_key=api_key, timeout=5)
@@ -377,7 +381,15 @@ def _wait_zone_ready(
             zones = r.get("result", {}).get("zones", [])
             zone_ids = [z["zone_id"] for z in zones]
             if zone_id in zone_ids:
-                return
+                ci = _grpc_call(
+                    target,
+                    "federation_cluster_info",
+                    {"zone_id": zone_id},
+                    api_key=api_key,
+                    timeout=5,
+                )
+                if "error" not in ci and ci.get("result", {}).get("leader_id"):
+                    return
         if time.time() >= deadline:
             pytest.fail(f"Zone '{zone_id}' not ready on {target} within {timeout}s")
         time.sleep(1)
@@ -2241,7 +2253,7 @@ _SSE_MOCK_SKIP_REASON = (
 def _bootstrap_standalone_fs(tmp_path):
     """Create an in-process NexusFS with a local CAS backend.
 
-    The e2e-runner container carries the full nexus_kernel install, so we
+    The e2e-runner container carries the full nexus_runtime install, so we
     can instantiate a fresh standalone filesystem just like the unit test
     at tests/unit/backends/test_openai_compat_rust.py::_bootstrap does.
     No RPC surface is added — the test drives kernel syscalls in-process

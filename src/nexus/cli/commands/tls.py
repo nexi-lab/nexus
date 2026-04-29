@@ -84,7 +84,7 @@ def show(data_dir: str | None) -> None:
 @click.option("--data-dir", type=click.Path(), default=None)
 def trusted(data_dir: str | None) -> None:
     """List trusted peer zones (TOFU trust store)."""
-    from nexus_kernel import PyTofuTrustStore
+    from nexus_runtime import PyTofuTrustStore
 
     from nexus.security.tls.config import ZoneTlsConfig
 
@@ -108,7 +108,7 @@ def trusted(data_dir: str | None) -> None:
 @click.option("--data-dir", type=click.Path(), default=None)
 def forget_zone(zone_id: str, data_dir: str | None) -> None:
     """Remove a zone from the TOFU trust store (for cert rotation)."""
-    from nexus_kernel import PyTofuTrustStore
+    from nexus_runtime import PyTofuTrustStore
 
     from nexus.security.tls.config import ZoneTlsConfig
 

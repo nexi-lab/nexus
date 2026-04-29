@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.backends.transports.volume_local_transport import TTL_BUCKETS, ceil_bucket
+from nexus.backends.transports.blob_pack_local_transport import TTL_BUCKETS, ceil_bucket
 
 
 class TestCeilBucketBoundaries:

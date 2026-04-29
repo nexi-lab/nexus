@@ -2,7 +2,7 @@
 //!
 //! Mirrors `kernel::python::register`, `services::python::register`,
 //! `backends::python::register` — single entry point the
-//! `nexus-cdylib` `#[pymodule] fn nexus_kernel` invokes.
+//! `nexus-cdylib` `#[pymodule] fn nexus_runtime` invokes.
 //!
 //! Phase 4 (full): `PyVfsGrpcServerHandle` + `start_vfs_grpc_server` +
 //! `PyFederationClient` registered here now that the crate split has

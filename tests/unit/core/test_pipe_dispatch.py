@@ -21,7 +21,7 @@ import pytest
 class TestKernelPipeReadWrite:
     def _make_kernel(self):
         """Create a Rust PyKernel instance for IPC testing."""
-        from nexus_kernel import PyKernel
+        from nexus_runtime import PyKernel
 
         return PyKernel()
 

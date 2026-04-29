@@ -21,7 +21,7 @@ def _create_workflow_engine(
 
     Args:
         record_store: RecordStoreABC instance (has async_session_factory property).
-        glob_match_fn: Optional glob match function (Rust glob_fast in production).
+        glob_match_fn: Optional glob match function (glob_helpers.glob_match in production).
 
     Returns workflow engine or None if unavailable.
     """

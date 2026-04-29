@@ -41,18 +41,22 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
         nx_fs = getattr(request.app.state, "nexus_fs", None)
         if nx_fs is None:
             return True, ""
-        # R20.18.5: federation readiness is now a kernel atomic flipped
-        # by Kernel::init_federation_from_env after reconcile finishes.
-        # When federation env vars are unset, the flag stays false and
-        # this probe is a no-op (fails open via the getattr fallback).
+        # Phase H: federation readiness is observed through the
+        # FederationProvider HAL trait via the
+        # ``nexus_runtime.federation_is_initialized`` module helper —
+        # the kernel itself no longer exposes a ``mount_reconciliation_done``
+        # PyO3 method (zone lifecycle is kernel-internal HAL state).
+        # Fails open when the helper is unavailable (slim builds,
+        # federation env vars unset).
         kernel = getattr(nx_fs, "_kernel", None)
         if kernel is None:
             return True, ""
-        mrd = getattr(kernel, "mount_reconciliation_done", None)
-        if mrd is None:
-            # Old kernel build without the probe — fail open.
+        try:
+            import nexus_runtime as _nr
+
+            ready = bool(_nr.federation_is_initialized(kernel))
+        except Exception:
             return True, ""
-        ready = mrd() if callable(mrd) else bool(mrd)
         if not ready:
             return False, "Raft topology not ready"
         return True, ""

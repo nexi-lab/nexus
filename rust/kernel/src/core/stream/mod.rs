@@ -25,7 +25,10 @@
 //   core/stream/shm.rs      — SharedMemoryStream  (was kernel/src/shm_stream.rs)
 //   core/stream/stdio.rs    — StdioStreamBackend  (was kernel/src/stdio_stream.rs)
 //   core/stream/remote.rs   — RemoteStreamBackend (was kernel/src/remote_stream.rs)
-//   core/stream/wal.rs      — WalStreamCore       (was kernel/src/wal_stream.rs)
+// `wal.rs` — WAL-replicated stream backend.  Kernel primitive that
+// composes whatever distributed `MetaStore` impl federation has DI'd
+// (typically `ZoneMetaStore` from the raft crate) — kernel does not
+// name raft types directly, layering stays clean.
 pub mod backend;
 pub mod manager;
 pub mod observer;
@@ -79,7 +82,7 @@ unsafe impl Sync for MemoryStreamBackend {}
 // throughout the kernel keep resolving without per-caller churn.
 // ---------------------------------------------------------------------------
 
-pub(crate) use backend::{StreamBackend, StreamError};
+pub use backend::{StreamBackend, StreamError};
 
 // ---------------------------------------------------------------------------
 // StreamBackend impl for MemoryStreamBackend

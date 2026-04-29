@@ -7,9 +7,9 @@ import pytest
 
 # Check if Rust module is available
 try:
-    import nexus_kernel
+    import nexus_runtime
 
-    RUST_AVAILABLE = hasattr(nexus_kernel, "batch_prefix_check")
+    RUST_AVAILABLE = hasattr(nexus_runtime, "batch_prefix_check")
 except ImportError:
     RUST_AVAILABLE = False
 
@@ -45,13 +45,13 @@ class TestPrefixPerformance:
         prefixes = _generate_prefixes(50)
         benchmark(_python_batch_prefix_check, paths, prefixes)
 
-    @pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not available")
+    @pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not available")
     @pytest.mark.benchmark(group="prefix_10k_50")
     def test_rust_10k_50(self, benchmark):
         """Rust batch_prefix_check: 10K paths x 50 prefixes."""
         paths = _generate_paths(10_000)
         prefixes = _generate_prefixes(50)
-        benchmark(nexus_kernel.batch_prefix_check, paths, prefixes)
+        benchmark(nexus_runtime.batch_prefix_check, paths, prefixes)
 
     @pytest.mark.benchmark(group="prefix_1k_10")
     def test_python_baseline_1k_10(self, benchmark):
@@ -60,13 +60,13 @@ class TestPrefixPerformance:
         prefixes = _generate_prefixes(10)
         benchmark(_python_batch_prefix_check, paths, prefixes)
 
-    @pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not available")
+    @pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not available")
     @pytest.mark.benchmark(group="prefix_1k_10")
     def test_rust_1k_10(self, benchmark):
         """Rust batch_prefix_check: 1K paths x 10 prefixes."""
         paths = _generate_paths(1_000)
         prefixes = _generate_prefixes(10)
-        benchmark(nexus_kernel.batch_prefix_check, paths, prefixes)
+        benchmark(nexus_runtime.batch_prefix_check, paths, prefixes)
 
     @pytest.mark.benchmark(group="prefix_100k_100")
     def test_python_baseline_100k_100(self, benchmark):
@@ -75,10 +75,10 @@ class TestPrefixPerformance:
         prefixes = _generate_prefixes(100)
         benchmark(_python_batch_prefix_check, paths, prefixes)
 
-    @pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_kernel not available")
+    @pytest.mark.skipif(not RUST_AVAILABLE, reason="nexus_runtime not available")
     @pytest.mark.benchmark(group="prefix_100k_100")
     def test_rust_100k_100(self, benchmark):
         """Rust batch_prefix_check: 100K paths x 100 prefixes."""
         paths = _generate_paths(100_000)
         prefixes = _generate_prefixes(100)
-        benchmark(nexus_kernel.batch_prefix_check, paths, prefixes)
+        benchmark(nexus_runtime.batch_prefix_check, paths, prefixes)

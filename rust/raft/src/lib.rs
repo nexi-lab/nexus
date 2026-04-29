@@ -44,7 +44,7 @@
 //!
 //! Part of Issue #1159: P2P Federation and Consensus Zones
 
-// F2 C8: mimalloc allocator moved to the final cdylib (nexus_kernel).
+// F2 C8: mimalloc allocator moved to the final cdylib (nexus_runtime).
 // An rlib cannot declare ``#[global_allocator]`` — only the final
 // binary (cdylib/bin) can.
 
@@ -98,12 +98,36 @@ pub mod transport;
 
 /// Python bindings via PyO3 (requires `python` feature).
 ///
-/// F2 C8 (Option A): raft is an rlib inside the ``nexus_kernel`` cdylib.
+/// F2 C8 (Option A): raft is an rlib inside the ``nexus_runtime`` cdylib.
 /// The PyO3 classes are registered by calling
 /// ``_nexus_raft::register_python_classes(m)`` from kernel's
 /// ``#[pymodule]`` entry point.
 #[cfg(feature = "python")]
 pub mod pyo3_bindings;
+
+// Phase H of the rust-workspace restructure (Phase 5 federation DI):
+// state-machine impls + the `FederationProvider` trait impl that
+// previously lived in the kernel crate moved here when the kernel ↔
+// raft Cargo edge was inverted.
+//
+//   federation_provider.rs    — `RaftFederationProvider` impl FederationProvider
+//   zone_meta_store.rs        — Raft-backed `kernel::abc::MetaStore` impl
+//   replication_scanner.rs    — EC replication background scanner
+//   wal_stream_backend.rs     — `kernel::stream::StreamBackend` impl that
+//                               persists each entry through Raft
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod federation_provider;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod replication_scanner;
+// WAL stream / pipe backends moved into the kernel crate
+// (`kernel::core::stream::wal`, `kernel::core::pipe::wal`) — they
+// are kernel primitives that compose whatever distributed `MetaStore`
+// federation has DI'd (typically `ZoneMetaStore` below).  Raft no
+// longer ships its own `WalConsensus` trait; the kernel-side
+// `MetaStore::{append_stream_entry, get_stream_entry}` methods are
+// the abstraction.
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod zone_meta_store;
 
 // Stub module when grpc feature is disabled
 #[cfg(not(feature = "grpc"))]

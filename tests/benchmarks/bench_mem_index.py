@@ -27,7 +27,7 @@ def make_hash(seed: int) -> str:
 
 
 def run_benchmark(count: int = 10000, read_iterations: int = 500) -> None:
-    from nexus_kernel import BlobPackEngine
+    from nexus_runtime import BlobPackEngine
 
     with tempfile.TemporaryDirectory() as d:
         vol_dir = os.path.join(d, "volumes")

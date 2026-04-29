@@ -19,7 +19,7 @@ from nexus.services.volume_compactor import VolumeCompactor
 
 
 class MockTransport:
-    """Minimal VolumeLocalTransport stub for compactor testing."""
+    """Minimal BlobPackLocalTransport stub for compactor testing."""
 
     def __init__(self, compact_result=(0, 0, 0)):
         self._compact_result = compact_result

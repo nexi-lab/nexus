@@ -4,7 +4,7 @@ This document describes how to use Rust acceleration for high-performance ReBAC 
 
 ## Overview
 
-The Rust extension (`nexus_kernel`) provides 50-85x speedup for bulk permission checks by implementing the core ReBAC algorithm in Rust using PyO3. This is especially beneficial for:
+The Rust extension (`nexus_runtime`) provides 50-85x speedup for bulk permission checks by implementing the core ReBAC algorithm in Rust using PyO3. This is especially beneficial for:
 
 - **List operations**: Checking read permissions for many files/objects
 - **Batch authorization**: Validating multiple permissions in one call
@@ -29,11 +29,11 @@ The Rust extension (`nexus_kernel`) provides 50-85x speedup for bulk permission 
 ### 1. Build the Rust Extension
 
 ```bash
-cd rust/nexus_kernel
+cd rust/nexus_runtime
 maturin develop --release
 ```
 
-This builds and installs the `nexus_kernel` extension into your Python environment.
+This builds and installs the `nexus_runtime` extension into your Python environment.
 
 ### 2. Verify Installation
 
@@ -304,11 +304,11 @@ If `is_rust_available()` returns `False`:
 
 ```bash
 # Rebuild Rust extension
-cd rust/nexus_kernel
+cd rust/nexus_runtime
 maturin develop --release
 
 # Verify
-python3 -c "import nexus_kernel; print('OK')"
+python3 -c "import nexus_runtime; print('OK')"
 ```
 
 ### Performance Not Improving
@@ -343,7 +343,7 @@ Run included benchmarks:
 
 ```bash
 # Unit tests (fast, no database)
-python3 rust/nexus_kernel/test_nexus_kernel.py
+python3 rust/nexus_runtime/test_nexus_runtime.py
 
 # Integration demo (requires database)
 python3 examples/rebac/demo_rust_acceleration.py
@@ -410,7 +410,7 @@ Planned improvements:
 
 For issues or questions:
 - Check logs: `logging.getLogger("nexus.core.rebac_fast")`
-- Review tests: `rust/nexus_kernel/test_nexus_kernel.py`
+- Review tests: `rust/nexus_runtime/test_nexus_runtime.py`
 - File issue: GitHub repository
 
 ## Summary

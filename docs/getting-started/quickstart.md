@@ -83,14 +83,14 @@ Expected result:
 - Full dev/test environment: `uv sync --extra dev --extra test`
 - txtai/FAISS semantic search stack: `uv sync --extra semantic-search`
 - Optional Rust acceleration from PyPI: `pip install nexus-kernel`
-- Optional Rust acceleration from a checkout: `uv pip install maturin && maturin develop --release -m rust/nexus_kernel/Cargo.toml`
+- Optional Rust acceleration from a checkout: `uv pip install maturin && maturin develop --release -m rust/nexus_runtime/Cargo.toml`
 - Rust metastore / federation extensions: `maturin develop --release -m rust/nexus_raft/Cargo.toml --features python` or `--features full`
 
 ## Common First-Run Fixes
 
 - `ModuleNotFoundError: No module named 'nexus'`: you skipped the editable install step or are using the wrong interpreter.
 - `maturin develop --release` fails at the repo root: point `maturin` at a crate manifest under `rust/`, not the workspace root.
-- `maturin develop ... rust/nexus_kernel/Cargo.toml` uses Anaconda or another wrong interpreter: run it from the same activated `.venv` as Nexus. The package metadata requires Python 3.12+.
+- `maturin develop ... rust/nexus_runtime/Cargo.toml` uses Anaconda or another wrong interpreter: run it from the same activated `.venv` as Nexus. The package metadata requires Python 3.12+.
 - `Rust BLAKE3 extension not available`: this is an optional performance message, not a quickstart failure.
 - `faiss-cpu` resolution fails: the default quickstart above avoids the optional semantic-search stack; only opt into `semantic-search` on platforms with compatible `txtai` and `faiss-cpu` wheels.
 

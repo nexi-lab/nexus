@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RUST_SRC = ROOT / "rust" / "kernel" / "src"
 
-STUBS_PATH = ROOT / "stubs" / "nexus_kernel" / "__init__.pyi"
+STUBS_PATH = ROOT / "stubs" / "nexus_runtime" / "__init__.pyi"
 EXPORTS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_exports.py"
 PROTOCOLS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_protocols.py"
 API_GROUPS_PATH = ROOT / "src" / "nexus" / "_kernel_api_groups.py"
@@ -62,14 +62,11 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
     "remote_meta_store": "core/meta_store/remote.rs",
     "pipe": "core/pipe/mod.rs",
     "pipe_manager": "core/pipe/manager.rs",
-    "shm_pipe": "core/pipe/shm.rs",
     "stdio_pipe": "core/pipe/stdio.rs",
     "remote_pipe": "core/pipe/remote.rs",
     "stream": "core/stream/mod.rs",
     "stream_manager": "core/stream/manager.rs",
     "stream_observer": "core/stream/observer.rs",
-    "shm_stream": "core/stream/shm.rs",
-    "stdio_stream": "core/stream/stdio.rs",
     "remote_stream": "core/stream/remote.rs",
     "wal_stream": "core/stream/wal.rs",
     "vfs_router": "core/vfs_router.rs",
@@ -77,6 +74,11 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
     "dcache": "core/dcache.rs",
     "service_registry": "core/service_registry.rs",
     "file_watch": "core/file_watch.rs",
+    # Phase G: kernel.rs split — moved to kernel/mod.rs as the entry
+    # point.  Per-syscall-family submodules (kernel/io.rs, mount.rs,
+    # dispatch.rs, ipc.rs, federation.rs, agents.rs, locks.rs,
+    # observability.rs) live alongside.
+    "kernel": "kernel/mod.rs",
 }
 
 # Phase H/I: PyO3 wrappers for the lib algorithms now live in
@@ -172,7 +174,7 @@ class ClassDef:
     # when PyO3 does not rename the class — PyKernel, for example, is
     # exposed to Python as ``Kernel`` via ``#[pyclass(name = "Kernel")]``
     # and must appear as ``class Kernel:`` in the generated stub so
-    # ``from nexus_kernel import Kernel`` type-checks.
+    # ``from nexus_runtime import Kernel`` type-checks.
     py_name: str = ""
 
 
@@ -211,11 +213,6 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
         "unscope_internal_path",
     ),
     "hash": ("hash_content_py", "hash_content_smart_py"),
-    "ipc": (
-        "SharedMemoryPipeBackend",
-        "SharedMemoryStreamBackend",
-        "StdioStreamBackend",
-    ),
     "io": ("read_file", "read_files_bulk"),
     "search": ("grep_bulk", "grep_files_mmap", "glob_match_bulk"),
     "storage": (
@@ -255,21 +252,9 @@ RETURN_OVERRIDES: dict[str, str] = {
     "StreamBufferCore.stats": "dict[str, Any]",
     "StreamBufferCore.read_at": "bytes",
     "StreamBufferCore.read_batch": "tuple[list[bytes], int]",
-    "SharedMemoryPipeBackend.create": "tuple[SharedMemoryPipeBackend, str, int, int]",
-    "SharedMemoryPipeBackend.attach": "SharedMemoryPipeBackend",
-    "SharedMemoryPipeBackend.pop": "bytes",
-    "SharedMemoryPipeBackend.stats": "dict[str, Any]",
-    "SharedMemoryStreamBackend.create": "tuple[SharedMemoryStreamBackend, str, int]",
-    "SharedMemoryStreamBackend.attach": "SharedMemoryStreamBackend",
-    "SharedMemoryStreamBackend.read_at": "bytes",
-    "SharedMemoryStreamBackend.read_batch": "tuple[list[bytes], int]",
-    "SharedMemoryStreamBackend.stats": "dict[str, Any]",
     "WalStreamBackend.read_at": "tuple[bytes, int]",
     "WalStreamBackend.read_batch": "tuple[list[bytes], int]",
     "WalStreamBackend.stats": "dict[str, Any]",
-    "StdioStreamBackend.read_at": "tuple[bytes, int]",
-    "StdioStreamBackend.read_batch": "tuple[list[bytes], int]",
-    "StdioStreamBackend.stats": "dict[str, Any]",
     "Kernel.dcache_stats": "dict[str, Any]",
     "Kernel.dcache_get_full": "dict[str, Any] | None",
     "Kernel.sys_read": "SysReadResult",
@@ -840,7 +825,7 @@ def generate_stubs(
         MARKER,
         "# Source: rust/kernel/src/*.rs",
         "",
-        '"""Type stubs for nexus_kernel — Rust-accelerated PyO3 extension module.',
+        '"""Type stubs for nexus_runtime — Rust-accelerated PyO3 extension module.',
         "",
         "Auto-generated from rust/kernel/src/*.rs exports.",
         "Re-run: python scripts/codegen_kernel_abi.py",
@@ -941,16 +926,16 @@ def generate_stubs(
 
     # ------------------------------------------------------------------
     # Symbols registered by nexus-raft's ``register_python_classes`` —
-    # the ``nexus_kernel`` module re-exports them, but the codegen's
+    # the ``nexus_runtime`` module re-exports them, but the codegen's
     # ``lib.rs`` parser only sees kernel-side ``add_class!`` /
     # ``wrap_pyfunction!`` calls. Until the parser is extended to follow
     # ``register_python_classes``, declare these by hand so mypy can
     # type-check imports like::
     #
-    #     from nexus_kernel import TofuTrustStore, hostname_to_node_id
+    #     from nexus_runtime import TofuTrustStore, hostname_to_node_id
     # ------------------------------------------------------------------
     lines.append("# " + "-" * 75)
-    lines.append("# Raft-side classes re-exported via nexus_kernel")
+    lines.append("# Raft-side classes re-exported via nexus_runtime")
     lines.append("# (rust/raft/src/federation/tofu.rs, rust/raft/src/pyo3_bindings.rs)")
     lines.append("# " + "-" * 75)
     lines.append("")
@@ -974,6 +959,33 @@ def generate_stubs(
     lines.append("    def path(self) -> str: ...")
     lines.append("")
     lines.append("def hostname_to_node_id(hostname: str) -> int: ...")
+    lines.append("")
+    # Federation control-plane (kernel-internal HAL bridges, exposed to
+    # Python as module-level functions — analogue to mkfs / zfs admin).
+    lines.append("def install_federation_wiring(kernel: Any) -> None: ...")
+    lines.append("def federation_is_initialized(kernel: Any) -> bool: ...")
+    lines.append("def federation_create_zone(kernel: Any, zone_id: str) -> str: ...")
+    lines.append(
+        "def federation_remove_zone(kernel: Any, zone_id: str, force: bool = False) -> None: ..."
+    )
+    lines.append(
+        "def federation_join_zone(kernel: Any, zone_id: str, as_learner: bool = False) -> str: ..."
+    )
+    lines.append(
+        "def federation_zone_share(kernel: Any, parent_zone: str, prefix: str, new_zone: str) -> int: ..."
+    )
+    lines.append(
+        "def federation_register_share(kernel: Any, local_path: str, zone_id: str) -> None: ..."
+    )
+    lines.append("def federation_lookup_share(kernel: Any, remote_path: str) -> str | None: ...")
+    lines.append("def federation_zone_links_count(kernel: Any, zone_id: str) -> int: ...")
+    lines.append(
+        "def federation_zone_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ..."
+    )
+    lines.append(
+        "def federation_start_replication_scanner("
+        "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
+    )
     lines.append("")
 
     return "\n".join(lines)
@@ -1060,7 +1072,7 @@ def generate_exports(all_names: list[str]) -> str:
         '"""',
         "from __future__ import annotations",
         "",
-        "from nexus_kernel import (",
+        "from nexus_runtime import (",
     ]
 
     for name in static_names:
@@ -1070,7 +1082,7 @@ def generate_exports(all_names: list[str]) -> str:
     lines.append("")
 
     # Feature-gated functions (behind #[cfg]) are NOT re-exported here.
-    # Import directly from nexus_kernel when needed.
+    # Import directly from nexus_runtime when needed.
 
     # __all__ for clean star imports (excludes feature-gated names)
     lines.append("__all__ = [")
@@ -1104,7 +1116,7 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
         MARKER,
         "# Source: rust/kernel/src/kernel.rs (PyKernel methods)",
         "",
-        '"""Auto-generated API surface groups for nexus_kernel version validation.',
+        '"""Auto-generated API surface groups for nexus_runtime version validation.',
         "",
         "Used by nexus._rust_compat to validate the installed binary against the",
         "expected API surface at import time.  Re-run: python scripts/codegen_kernel_abi.py",
@@ -1126,7 +1138,7 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
     lines += [
         "}",
         "",
-        "# All public methods that must exist on nexus_kernel.PyKernel.",
+        "# All public methods that must exist on nexus_runtime.PyKernel.",
         "# Auto-derived from #[pymethods] in rust/kernel/src/kernel.rs.",
         "# A stale binary missing any of these triggers an actionable ImportError.",
         "KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset({",
@@ -1492,6 +1504,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         '        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),',
         '        modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),',
         '        last_writer_address: get_opt_str("last_writer_address")?,',
+        '        target_zone_id: get_opt_str("target_zone_id")?,',
         "    })",
         "}",
         "",
@@ -1523,7 +1536,6 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "    let kwargs = PyDict::new(py);",
         '    kwargs.set_item("path", &meta.path).map_err(err)?;',
         '    kwargs.set_item("size", meta.size).map_err(err)?;',
-        "    // commit lands the Rust-side rename — bridge the two names here.",
         '    kwargs.set_item("content_id", meta.content_id.as_deref()).map_err(err)?;',
         '    kwargs.set_item("version", meta.version).map_err(err)?;',
         "    kwargs",
@@ -2354,6 +2366,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '        created_at_ms: extract_opt_datetime_ms(obj, "created_at"),',
             '        modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),',
             '        last_writer_address: get_opt_str("last_writer_address")?,',
+            '        target_zone_id: get_opt_str("target_zone_id")?,',
             "    })",
             "}",
             "",
@@ -2385,7 +2398,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    let kwargs = PyDict::new(py);",
             '    kwargs.set_item("path", &meta.path).map_err(err)?;',
             '    kwargs.set_item("size", meta.size).map_err(err)?;',
-            "    // commit lands the Rust-side rename — bridge the two names here.",
             '    kwargs.set_item("content_id", meta.content_id.as_deref()).map_err(err)?;',
             '    kwargs.set_item("version", meta.version).map_err(err)?;',
             "    kwargs",
@@ -3952,7 +3964,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '                dict.set_item("path", &s.path)?;',
             '                dict.set_item("size", s.size)?;',
             '                dict.set_item("last_writer_address", s.last_writer_address.as_deref())?;',
-            "                // Python-side public key renamed to ``content_id``;",
             '                dict.set_item("content_id", s.content_id.as_deref())?;',
             '                dict.set_item("mime_type", &s.mime_type)?;',
             "                set_optional_iso_datetime(",
@@ -4199,7 +4210,13 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    /// up to `max_results` matches.  Replaces `nexus.fs._helpers.grep`.",
             "    /// Each match comes back as a `dict` matching the historical",
             "    /// shape: `{file, line, content, match}`.",
-            '    #[pyo3(signature = (pattern, prefix="/", ignore_case=false, max_results=1000, zone_id="root"))]',
+            "    ///",
+            "    /// When `disk_paths` is non-empty the metastore walk is skipped:",
+            "    /// the kernel reads each absolute path from disk directly.  Used",
+            "    /// by the search-tier cache fast path where the cached blob's",
+            "    /// on-disk location is already known.",
+            '    #[pyo3(signature = (pattern, prefix="/", ignore_case=false, max_results=1000, zone_id="root", disk_paths=None))]',
+            "    #[allow(clippy::too_many_arguments)]",
             "    fn sys_grep<'py>(",
             "        &self,",
             "        py: Python<'py>,",
@@ -4208,10 +4225,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        ignore_case: bool,",
             "        max_results: usize,",
             "        zone_id: &str,",
+            "        disk_paths: Option<Vec<String>>,",
             "    ) -> PyResult<Bound<'py, PyList>> {",
             '        let ctx = OperationContext::new("system", zone_id, true, None, true);',
+            "        let paths = disk_paths.unwrap_or_default();",
             "        let matches = self.inner",
-            "            .sys_grep(pattern, prefix, ignore_case, max_results, &ctx)",
+            "            .sys_grep(pattern, prefix, ignore_case, max_results, &paths, &ctx)",
             '            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("sys_grep: {:?}", e)))?;',
             "        let out = PyList::empty(py);",
             "        for m in matches {",
@@ -4614,302 +4633,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        }",
             "        Ok(result)",
             "    }",
-            "",
-            "    /// R20.16.6 readiness probe: true when federation bootstrap",
-            "    /// is complete (or when federation is disabled). /healthz/ready",
-            "    /// reads this via `nx._kernel.mount_reconciliation_done()`.",
-            "    fn mount_reconciliation_done(&self) -> bool {",
-            "        self.inner.mount_reconciliation_done()",
-            "    }",
-            "",
-            "    // ── R20.18.5 Phase B: tolerated-tech-debt zone_* accessors ──",
-            "    // Back the Python FederationRPCService shim that serves the",
-            "    // federation_* RPCs used by the docker E2E suite. Boundary-rule",
-            "    // cleanup (convert to /__sys__/zones/ procfs via sys_stat) is",
-            "    // tracked as a post-merge follow-up.",
-            "",
-            "    /// Create a raft zone on this node. Idempotent when the zone",
-            "    /// already exists (returns the existing zone id).",
-            "    ///",
-            "    /// Phase 3: the optional audit-hook auto-wiring branch was",
-            "    /// removed — the audit hook is a service concern and lives in",
-            "    /// `services::audit`.  Callers that want audit on a zone call",
-            "    /// `nexus_kernel.install_audit_hook(kernel, zone_id, stream_path)`",
-            "    /// after this method returns.",
-            "    fn zone_create(&self, zone_id: &str) -> PyResult<String> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            "            pyo3::exceptions::PyRuntimeError::new_err(",
-            '                "federation not active — set NEXUS_PEERS to enable",',
-            "            )",
-            "        })?;",
-            "        zm.get_or_create_zone(zone_id)",
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;",
-            "        // R20.18.5: newly-created zones need the apply-cb installed so",
-            "        // that DT_MOUNT events on this zone propagate to the kernel",
-            "        // VFSRouter + Python DLC. Without this, nested federation",
-            "        // mounts (e.g. family zone seeded by share_subtree) never wire",
-            "        // up on the leader.",
-            "        if let Some(consensus) = zm.registry().get_node(zone_id) {",
-            "            self.inner.install_federation_mount_coherence(zone_id, consensus);",
-            "        }",
-            "        Ok(zone_id.to_string())",
-            "    }",
-            "",
-            "    /// Remove a raft zone and delete its on-disk directory.",
-            "    /// Cascade-unmounts every mount pointing to this zone first,",
-            "    /// consulting the kernel's reverse index (`cross_zone_mounts`)",
-            "    /// so routing stays consistent — reads through a removed",
-            "    /// zone's mount path correctly fail post-remove.",
-            "    ///",
-            "    /// `force=true` honors the POSIX-style ``unlink while i_links",
-            "    /// > 0`` bypass that ``remove_zone`` already supports — used",
-            "    /// by ``federation_remove_zone(force=true)`` callers when the",
-            "    /// cascade above can't drain references in time (race with",
-            "    /// in-flight raft replication, partial unmount on a follower,",
-            "    /// …) and the caller knows it's safe to drop anyway.",
-            "    #[pyo3(signature = (zone_id, force=false))]",
-            "    fn zone_remove(&self, zone_id: &str, force: bool) -> PyResult<()> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        for (parent_zone, mount_path, _global_path) in",
-            "            self.inner.list_cross_zone_mounts(zone_id)",
-            "        {",
-            "            if let Err(e) = zm.unmount(&parent_zone, &mount_path) {",
-            '                tracing::warn!("cascade unmount {parent_zone}{mount_path} failed: {e}");',
-            "            }",
-            "        }",
-            "        zm.remove_zone(zone_id, force)",
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))",
-            "    }",
-            "",
-            "    /// List every zone loaded on this node.",
-            "    fn zone_list(&self) -> Vec<String> {",
-            "        self.inner",
-            "            .zone_manager_arc()",
-            "            .map(|zm| zm.list_zones())",
-            "            .unwrap_or_default()",
-            "    }",
-            "",
-            "    /// Cluster status snapshot for one zone.",
-            "    fn zone_cluster_info<'py>(",
-            "        &self,",
-            "        py: Python<'py>,",
-            "        zone_id: &str,",
-            "    ) -> PyResult<Bound<'py, pyo3::types::PyDict>> {",
-            "        use pyo3::types::PyDict;",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        let status = zm.cluster_status(zone_id);",
-            "        let dict = PyDict::new(py);",
-            '        dict.set_item("zone_id", status.zone_id)?;',
-            '        dict.set_item("node_id", status.node_id)?;',
-            '        dict.set_item("has_store", status.has_store)?;',
-            '        dict.set_item("is_leader", status.is_leader)?;',
-            '        dict.set_item("leader_id", status.leader_id)?;',
-            '        dict.set_item("term", status.term)?;',
-            '        dict.set_item("commit_index", status.commit_index)?;',
-            '        dict.set_item("applied_index", status.applied_index)?;',
-            '        dict.set_item("voter_count", status.voter_count)?;',
-            '        dict.set_item("witness_count", status.witness_count)?;',
-            "        Ok(dict)",
-            "    }",
-            "",
-            "    /// Mount target zone at a path in parent zone (NFS-style).",
-            "    #[pyo3(signature = (parent_zone_id, mount_path, target_zone_id, increment_links=true))]",
-            "    fn zone_mount(",
-            "        &self,",
-            "        parent_zone_id: &str,",
-            "        mount_path: &str,",
-            "        target_zone_id: &str,",
-            "        increment_links: bool,",
-            "    ) -> PyResult<()> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        zm.mount(parent_zone_id, mount_path, target_zone_id, increment_links)",
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))",
-            "    }",
-            "",
-            "    /// Remove a mount point, restoring DT_DIR. Returns former",
-            "    /// target zone id or None.",
-            "    fn zone_unmount(",
-            "        &self,",
-            "        parent_zone_id: &str,",
-            "        mount_path: &str,",
-            "    ) -> PyResult<Option<String>> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        zm.unmount(parent_zone_id, mount_path)",
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))",
-            "    }",
-            "",
-            "    /// Copy subtree under prefix from parent zone to new zone",
-            "    /// (R16.3 share_subtree_core).",
-            "    fn zone_share(",
-            "        &self,",
-            "        parent_zone_id: &str,",
-            "        prefix: &str,",
-            "        new_zone_id: &str,",
-            "    ) -> PyResult<usize> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        zm.share_subtree_core(parent_zone_id, prefix, new_zone_id)",
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))",
-            "    }",
-            "",
-            "    /// Register `origin_path → zone_id` in root zone's share",
-            "    /// registry (SSOT for federation_join peer discovery).",
-            "    fn register_share(&self, origin_path: &str, zone_id: &str) -> PyResult<()> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        zm.register_share(origin_path, zone_id)",
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))",
-            "    }",
-            "",
-            "    /// Resolve `origin_path` to the zone id advertised by a",
-            "    /// peer. `None` when no share is registered (caller surfaces",
-            '    /// "zone not advertised"). Reads this node\'s replicated',
-            "    /// root-zone state — no peer RPC required.",
-            "    fn lookup_share(&self, origin_path: &str) -> PyResult<Option<String>> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        zm.lookup_share(origin_path)",
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))",
-            "    }",
-            "",
-            "    /// Join an existing zone as a new Voter or Learner.",
-            "    ///",
-            "    /// Phase 3: the optional audit-hook auto-wiring branch was",
-            "    /// removed — see `zone_create` for rationale.  Callers wanting",
-            "    /// audit on the joined zone call",
-            "    /// `nexus_kernel.install_audit_hook(kernel, zone_id, stream_path)`",
-            "    /// after this method returns.",
-            "    fn zone_join(&self, zone_id: &str, as_learner: bool) -> PyResult<String> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        let peers = zm.default_peers().to_vec();",
-            "        zm.join_zone(zone_id, peers, as_learner)",
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;",
-            "        // R20.18.5: joined zones need the apply-cb installed so that",
-            "        // DT_MOUNT events replicated from the leader propagate here.",
-            "        if let Some(consensus) = zm.registry().get_node(zone_id) {",
-            "            self.inner.install_federation_mount_coherence(zone_id, consensus);",
-            "        }",
-            "        Ok(zone_id.to_string())",
-            "    }",
-            "",
-            "    /// Read the `__i_links_count__` counter for a zone (POSIX",
-            "    /// nlink semantics — bumped by zone_mount, decremented by",
-            "    /// zone_unmount). 0 if zone not loaded or counter missing.",
-            "    fn zone_links_count(&self, zone_id: &str) -> PyResult<i64> {",
-            "        let zm = self.inner.zone_manager_arc().ok_or_else(|| {",
-            '            pyo3::exceptions::PyRuntimeError::new_err("federation not active")',
-            "        })?;",
-            "        let Some(handle) = zm.get_zone(zone_id) else {",
-            "            return Ok(0);",
-            "        };",
-            '        let bytes_opt = handle.get_metadata("__i_links_count__")',
-            "            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;",
-            "        let Some(bytes) = bytes_opt else {",
-            "            return Ok(0);",
-            "        };",
-            "        let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {",
-            "            pyo3::exceptions::PyRuntimeError::new_err(",
-            '                "invalid counter encoding for __i_links_count__",',
-            "            )",
-            "        })?;",
-            "        Ok(i64::from_be_bytes(arr))",
-            "    }",
-            "",
-            "    // ── Replication scanner ─────────────────────────────────────────────",
-            "",
-            "    /// Start a background replication scanner for `zone_id`.",
-            "    ///",
-            "    /// `policies_json` is a JSON array:",
-            '    /// `[{"path_prefix":"/p","target":{"type":"all_voters"}}]`',
-            '    /// target.type: `"all_voters"` | `"mount"` (+ `"mount"` field) | `"nodes"` (+ `"addrs"` list).',
-            "    ///",
-            "    /// Returns `True` on success, raises `ValueError` on bad JSON.",
-            "    fn start_replication_scanner(",
-            "        &self,",
-            "        zone_id: &str,",
-            "        policies_json: &str,",
-            "        interval_ms: u64,",
-            "    ) -> PyResult<bool> {",
-            "        use crate::replication::{MountReplicationPolicy, ReplicationScanner, ReplicationTarget};",
-            "        use serde_json::Value;",
-            "",
-            "        let raw: Vec<Value> = serde_json::from_str(policies_json).map_err(|e| {",
-            "            pyo3::exceptions::PyValueError::new_err(format!(",
-            '                "start_replication_scanner: invalid policies_json: {e}"',
-            "            ))",
-            "        })?;",
-            "",
-            "        let mut policies = Vec::with_capacity(raw.len());",
-            "        for item in raw {",
-            '            let prefix = item["path_prefix"]',
-            "                .as_str()",
-            "                .ok_or_else(|| {",
-            "                    pyo3::exceptions::PyValueError::new_err(",
-            '                        "start_replication_scanner: missing path_prefix",',
-            "                    )",
-            "                })?",
-            "                .to_string();",
-            '            let target_obj = &item["target"];',
-            '            let target_type = target_obj["type"].as_str().unwrap_or("all_voters");',
-            "            let target = match target_type {",
-            '                "mount" => {',
-            '                    let mount = target_obj["mount"].as_str().unwrap_or("").to_string();',
-            "                    ReplicationTarget::Mount(mount)",
-            "                }",
-            '                "nodes" => {',
-            '                    let addrs = target_obj["addrs"]',
-            "                        .as_array()",
-            "                        .map(|a| {",
-            "                            a.iter()",
-            "                                .filter_map(|v| v.as_str().map(str::to_string))",
-            "                                .collect()",
-            "                        })",
-            "                        .unwrap_or_default();",
-            "                    ReplicationTarget::Nodes(addrs)",
-            "                }",
-            "                _ => ReplicationTarget::AllVoters,",
-            "            };",
-            "            policies.push(MountReplicationPolicy {",
-            "                path_prefix: prefix,",
-            "                target,",
-            "            });",
-            "        }",
-            "",
-            "        let scanner = std::sync::Arc::new(ReplicationScanner::new(",
-            "            interval_ms,",
-            "            zone_id,",
-            "            policies,",
-            "        ));",
-            "        scanner.start(std::sync::Arc::clone(&self.inner));",
-            "        Ok(true)",
-            "    }",
-            "",
-            "    // Phase 3: `start_audit_hook` PyO3 method removed from PyKernel —",
-            "    // hook construction is service responsibility now.  Python entry",
-            "    // point lives at `nexus_kernel.install_audit_hook(kernel, zone_id,",
-            "    // stream_path)` and is registered by `services::python::register`.",
-            "    // Kernel side keeps `prepare_audit_stream` (stream lifecycle is a",
-            "    // kernel concern); services build + register the AuditHook on top.",
             "}",
-        ]
-    )
-
-    # ── Section 8: Private hook dispatch ───────────────────────────────
-    lines.extend(
-        [
             "",
             "// ── Private: hook dispatch (wrapper-only) ───────────────────────────────",
             "",
@@ -4977,7 +4701,7 @@ def collect_all() -> tuple[
 
     Returns (module_functions, classes, class_order, traits, all_export_names).
     """
-    # Phase 0: kernel/src/lib.rs's `#[pymodule] fn nexus_kernel` body
+    # Phase 0: kernel/src/lib.rs's `#[pymodule] fn nexus_runtime` body
     # moved to kernel/src/python.rs (`pub fn register`). The cdylib
     # itself now lives in rust/nexus-cdylib/src/lib.rs and just delegates
     # into per-crate `python::register` fns.
@@ -4996,7 +4720,7 @@ def collect_all() -> tuple[
     if lib_python_mod.exists():
         lib_python_text = lib_python_mod.read_text()
     # Phase 4 (full): peer-crate `python::register` fns also expose
-    # pyclasses / pyfunctions into the same `nexus_kernel` Python
+    # pyclasses / pyfunctions into the same `nexus_runtime` Python
     # module (the cdylib calls `kernel::python::register`,
     # `lib::python::register`, AND e.g. `transport::python::register`,
     # `backends::python::register`, `services::python::register`).
@@ -5009,6 +4733,18 @@ def collect_all() -> tuple[
         peer_mod = ROOT / "rust" / peer / "src" / "python" / "mod.rs"
         if peer_mod.exists():
             peer_python_texts.append(peer_mod.read_text())
+    # Phase 3 plan #6: tasks pyclasses fold into nexus_runtime cdylib via
+    # `services::python::register` → `crate::tasks::register_python(m)`.
+    # The intra-crate `add_class::<PyTaskEngine>` calls live in
+    # `rust/services/src/tasks/mod.rs`, not the peer's python/mod.rs that
+    # the loop above scans. Tag those calls with their module ("tasks")
+    # so `_resolve_module_path("tasks")` lands on the right file.
+    extra_local_class_exports: list[tuple[str, str]] = []
+    tasks_mod = ROOT / "rust" / "services" / "src" / "tasks" / "mod.rs"
+    if tasks_mod.exists():
+        tasks_text = re.sub(r"//[^\n]*", "", tasks_mod.read_text())
+        for m in re.finditer(r"add_class::<(\w+)>", tasks_text):
+            extra_local_class_exports.append(("tasks", m.group(1)))
     func_exports, class_exports = parse_lib_exports(
         lib_text
         + "\n"
@@ -5018,6 +4754,7 @@ def collect_all() -> tuple[
         + "\n"
         + "\n".join(peer_python_texts)
     )
+    class_exports.extend(extra_local_class_exports)
 
     # Build set of exported function names per module
     exported_names: dict[str, set[str]] = {}

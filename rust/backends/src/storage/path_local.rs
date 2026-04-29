@@ -255,4 +255,118 @@ impl ObjectStore for PathLocalBackend {
     }
 }
 
+// PathAddressingEngine impl: forwards to filesystem primitives.  The
+// trait is a *path-addressed ObjectStore* contract — every method here
+// uses the backend path directly with no CAS hashing.
+impl crate::addressing::path::PathAddressingEngine for PathLocalBackend {
+    fn stream_content(
+        &self,
+        _content_id: &str,
+        backend_path: &str,
+        chunk_size: usize,
+    ) -> Result<crate::addressing::path::ContentStream, StorageError> {
+        self.stream_file(backend_path, chunk_size)
+    }
+
+    fn stream_file(
+        &self,
+        path: &str,
+        chunk_size: usize,
+    ) -> Result<crate::addressing::path::ContentStream, StorageError> {
+        let file_path = self.resolve_path(path)?;
+        let f = fs::File::open(&file_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })?;
+        let chunk = chunk_size.max(1);
+        let iter = ChunkedReader { file: f, chunk };
+        Ok(Box::new(iter))
+    }
+
+    fn write_file_chunked(
+        &self,
+        path: &str,
+        chunks: Box<dyn Iterator<Item = Result<Vec<u8>, StorageError>> + Send>,
+        _content_type: &str,
+    ) -> Result<Option<String>, StorageError> {
+        use std::io::Write;
+        let file_path = self.resolve_path(path)?;
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+        let mut f = fs::File::create(&file_path).map_err(StorageError::IOError)?;
+        for chunk in chunks {
+            let bytes = chunk?;
+            f.write_all(&bytes).map_err(StorageError::IOError)?;
+        }
+        if self.fsync {
+            let _ = f.sync_all();
+        }
+        Ok(None)
+    }
+
+    fn get_size_by_path(&self, backend_path: &str) -> Result<u64, StorageError> {
+        let file_path = self.resolve_path(backend_path)?;
+        fs::metadata(&file_path).map(|m| m.len()).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(backend_path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })
+    }
+
+    fn get_version_by_path(&self, _backend_path: &str) -> Result<Option<String>, StorageError> {
+        // Local filesystem has no versioning.
+        Ok(None)
+    }
+
+    fn content_exists(&self, _content_id: &str, backend_path: &str) -> Result<bool, StorageError> {
+        let file_path = self.resolve_path(backend_path)?;
+        Ok(file_path.exists())
+    }
+
+    fn is_directory(&self, path: &str) -> Result<bool, StorageError> {
+        if path.is_empty() {
+            return Ok(true);
+        }
+        let dir_path = self.resolve_path(path)?;
+        Ok(dir_path.is_dir())
+    }
+
+    fn read_path(&self, _content_id: &str, backend_path: &str) -> Result<Vec<u8>, StorageError> {
+        // No OperationContext is needed for path-addressed local reads.
+        // For PAS backends content_id and backend_path are equivalent (the
+        // file's location); pass backend_path through as the addressing key.
+        let ctx = kernel::kernel::OperationContext::new("", "", false, None, true);
+        self.read_content(backend_path, &ctx)
+    }
+}
+
+/// Iterator over fixed-size chunks read from a file.
+struct ChunkedReader {
+    file: fs::File,
+    chunk: usize,
+}
+
+impl Iterator for ChunkedReader {
+    type Item = Result<Vec<u8>, StorageError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use std::io::Read;
+        let mut buf = vec![0u8; self.chunk];
+        match self.file.read(&mut buf) {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some(Ok(buf))
+            }
+            Err(e) => Some(Err(StorageError::IOError(e))),
+        }
+    }
+}
+
 // ── LocalConnectorBackend ──────────────────────────────────────────

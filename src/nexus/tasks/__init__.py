@@ -1,8 +1,10 @@
 """Nexus durable task queue engine (Tier 2).
 
-Provides a durable, priority-aware task queue backed by the Rust nexus_tasks
-crate (fjall storage engine). For ephemeral fire-and-forget tasks, see the
-Tier 1 ARQ integration (#753).
+Provides a durable, priority-aware task queue backed by the Rust task
+engine in `services::tasks` (folded into the unified `nexus_runtime`
+cdylib by Phase 3 restructure plan #6 — the standalone
+`_nexus_tasks.so` is retired).  For ephemeral fire-and-forget tasks,
+see the Tier 1 ARQ integration (#753).
 
 Usage:
     from nexus.tasks import TaskEngine, AsyncTaskRunner
@@ -19,35 +21,14 @@ Usage:
     await runner.run()
 """
 
-from typing import TYPE_CHECKING
+from nexus_runtime import QueueStats, TaskEngine, TaskRecord
 
-_HAS_NEXUS_TASKS = False
-
-if TYPE_CHECKING:
-    from _nexus_tasks import QueueStats, TaskEngine, TaskRecord
-
-try:
-    from _nexus_tasks import QueueStats, TaskEngine, TaskRecord
-
-    _HAS_NEXUS_TASKS = True
-except ImportError:
-    TaskEngine = None
-    TaskRecord = None
-    QueueStats = None
-
-
-def is_available() -> bool:
-    """Check if the Rust nexus_tasks extension is available."""
-    return _HAS_NEXUS_TASKS
-
-
-# Re-export the async runner (always available, gracefully degrades)
-from nexus.tasks.runner import AsyncTaskRunner  # noqa: E402
+# Re-export the async runner.
+from nexus.tasks.runner import AsyncTaskRunner
 
 __all__ = [
     "AsyncTaskRunner",
     "QueueStats",
     "TaskEngine",
     "TaskRecord",
-    "is_available",
 ]

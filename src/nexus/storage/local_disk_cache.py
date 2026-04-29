@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 # RUST_FALLBACK: BloomFilter
 if TYPE_CHECKING:
-    from nexus_kernel import BloomFilter
+    from nexus_runtime import BloomFilter
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ class LocalDiskCache:
     def _init_bloom_filter(self) -> None:
         """Initialize Bloom filter for fast cache miss detection."""
         # RUST_FALLBACK: BloomFilter
-        from nexus_kernel import BloomFilter
+        from nexus_runtime import BloomFilter
 
         self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
         logger.debug(

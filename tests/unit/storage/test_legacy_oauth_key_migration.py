@@ -5,7 +5,7 @@ OAuth encryption key from the pre-R20.18.5 filesystem-metastore
 location (``~/.nexus/metastore[.redb]``) into the record_store (SQL)
 so the post-R20.18.5 boot path, which reads only from SQL, can find
 it. These tests stub out the redb reader so they don't need a real
-nexus_kernel; the migration function is a pure orchestration layer
+nexus_runtime; the migration function is a pure orchestration layer
 above ``_read_oauth_key_from_redb``.
 """
 

@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 # Brick import via importlib to avoid non-layer tier violation
-glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
+glob_helpers = _il.import_module("nexus.bricks.search.primitives").glob_helpers
 
 logger = logging.getLogger(__name__)
 
@@ -402,7 +402,7 @@ class PathXBackend(
                 for file in cache_path.glob("*.json"):
                     if file.name != "recent.json":
                         available.append(f"/x/timeline/{file.name}")
-            filtered: list[str] = glob_fast.glob_filter(available, include_patterns=[pattern])
+            filtered: list[str] = glob_helpers.glob_filter(available, include_patterns=[pattern])
             return filtered
 
         # Handle posts glob
@@ -427,7 +427,7 @@ class PathXBackend(
                     continue
                 virtual_path = f"/x/search/{query_hash}.json"
                 matches.append(virtual_path)
-            filtered = glob_fast.glob_filter(matches, include_patterns=[pattern])
+            filtered = glob_helpers.glob_filter(matches, include_patterns=[pattern])
             return sorted(set(filtered))
 
         return []

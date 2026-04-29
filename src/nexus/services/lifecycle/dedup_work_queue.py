@@ -33,7 +33,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 if TYPE_CHECKING:
-    from nexus_kernel import PyKernel
+    from nexus_runtime import PyKernel
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ class DedupWorkQueue(Generic[T]):
 
     Usage::
 
-        from nexus_kernel import PyKernel
+        from nexus_runtime import PyKernel
         kernel = PyKernel(...)
         q: DedupWorkQueue[str] = DedupWorkQueue(kernel=kernel)
 

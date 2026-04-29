@@ -1,14 +1,22 @@
 """FederationRPCService — gRPC RPC surface for federation / zone ops.
 
-R20.18.5 Phase B: the pre-R20.18.5 version was a Python wrapper around
-the now-deleted ``ZoneManager`` shim. This rebuild delegates every
-``federation_*`` RPC to the kernel's ``zone_*`` methods (tolerated
-tech debt per v20.10 plan — the boundary-rule-compliant replacement
-is the ``/__sys__/zones/`` procfs view reached through ``sys_stat``
-/ ``sys_readdir``; tracked as a post-merge follow-up).
+Phase H of the rust-workspace restructure: this service no longer
+crosses kernel layering.  Federation reads go through the
+``/__sys__/zones/`` procfs namespace via ``sys_stat`` / ``sys_readdir``
+(read-only, Linux /proc-style).  Federation writes go through:
 
-Registered in ``fastapi_server.create_app`` when federation is active
-(kernel reports ``mount_reconciliation_done()`` once bootstrap finishes).
+  * ``kernel.sys_setattr(path, DT_MOUNT, target_zone_id=…)`` for
+    mount-tied lifecycle (auto-creates the zone via the kernel's
+    `FederationProvider` HAL trait).
+  * ``kernel.sys_unlink(<mount_path>)`` for unmount.
+  * ``nexus_runtime.federation_create_zone / remove_zone / join_zone``
+    module-level functions for standalone zone-control operations
+    that do not involve a mount path — analogous to Linux userspace
+    utilities like ``mkfs`` / ``zfs``: control-plane bridges that
+    reach kernel internals via the FederationProvider trait without
+    being kernel methods themselves.
+
+Registered in ``fastapi_server.create_app`` when federation is active.
 """
 
 from __future__ import annotations
@@ -63,7 +71,8 @@ class FederationRPCMixin:
 
 
 class FederationRPCService(FederationRPCMixin):
-    """Federation CRUD RPCs backed by ``nexus_kernel`` zone_* methods."""
+    """Federation CRUD RPCs backed by syscalls + module-level
+    federation control-plane helpers."""
 
     def __init__(self, kernel: Any, nexus_fs: Any = None) -> None:
         self._kernel = kernel
@@ -147,12 +156,13 @@ class FederationRPCService(FederationRPCMixin):
         # Create the raft zone before loading data into it. Import is a
         # restore-into-zone operation, not a create+restore, so the
         # target zone must exist on the raft side. Idempotent: a
-        # pre-existing zone surfaces from `zone_create` as an "already
-        # exists" error we swallow, keeping the RPC callable twice
-        # with the same args.
+        # pre-existing zone surfaces as an "already exists" error we
+        # swallow, keeping the RPC callable twice with the same args.
         if target_zone:
             try:
-                self._kernel.zone_create(target_zone)
+                import nexus_runtime as _nr
+
+                _nr.federation_create_zone(self._kernel, target_zone)
             except Exception as e:
                 if "already exists" not in str(e).lower():
                     raise
@@ -179,16 +189,22 @@ class FederationRPCService(FederationRPCMixin):
 
     @rpc_expose(admin_only=True)
     def federation_create_zone(self, zone_id: str) -> dict[str, Any]:
-        created = self._kernel.zone_create(zone_id)
+        # Standalone create (no mount): use the federation control-plane
+        # helper.  Mount-tied creation flows through sys_setattr DT_MOUNT
+        # which auto-creates via the same FederationProvider trait.
+        import nexus_runtime as _nr
+
+        created = _nr.federation_create_zone(self._kernel, zone_id)
         return {"zone_id": created}
 
     @rpc_expose(admin_only=True)
     def federation_remove_zone(self, zone_id: str, force: bool = False) -> dict[str, Any]:
-        # Kernel cascade-unmounts in zone_remove() before calling remove_zone.
-        # ``force=true`` is the POSIX-style ``unlink while i_links > 0``
-        # bypass for the case where the cascade can't fully drain references
-        # (e.g. raft replication race on a follower).
-        self._kernel.zone_remove(zone_id, force)
+        # Cascade-unmount happens inside the FederationProvider impl.
+        # `force=true` honors the POSIX-style `unlink while i_links > 0`
+        # bypass for replication races on followers.
+        import nexus_runtime as _nr
+
+        _nr.federation_remove_zone(self._kernel, zone_id, force)
         return {"zone_id": zone_id, "removed": True}
 
     @rpc_expose(admin_only=True)
@@ -210,16 +226,21 @@ class FederationRPCService(FederationRPCMixin):
         """
         del peer_addr  # reserved for out-of-cluster bootstrap; unused in raft mode
 
-        zone_id = self._kernel.lookup_share(remote_path)
+        # Lookup share via /__sys__/shares/ procfs view (read-only
+        # namespace — write happens via federation_share which
+        # publishes to the raft-replicated registry).
+        share_stat = self._kernel.sys_stat(f"/__sys__/shares{remote_path}", "root")
+        zone_id = share_stat.get("zone_id") if share_stat and isinstance(share_stat, dict) else None
         if not zone_id:
             raise LookupError(
                 f"No share registered for '{remote_path}'. "
                 "The sharing node must call federation_share before federation_join."
             )
 
-        # Join the zone's raft group locally (snapshot install happens
-        # inside the kernel apply-cb wired by `install_federation_mount_coherence`).
-        self._kernel.zone_join(zone_id, False)
+        # Join the zone's raft group via the federation control-plane.
+        import nexus_runtime as _nr
+
+        _nr.federation_join_zone(self._kernel, zone_id, False)
 
         # Mount the shared zone at `local_path` so VFS routing reaches
         # it. Derive the local parent zone via sys_stat on the parent
@@ -246,38 +267,6 @@ class FederationRPCService(FederationRPCMixin):
 
     # ── Mount topology ─────────────────────────────────────────────
 
-    def _to_zone_relative(self, parent_zone: str, path: str) -> str:
-        """Translate a VFS-global path to the parent zone's namespace.
-
-        For parent=root the zone key equals the global path.  For nested
-        mounts (parent=corp, path=/corp/sales) corp's namespace is
-        zone-relative (/sales); the Rust raft ``ZoneManager::mount``
-        writes the DT_MOUNT entry at the key we pass, so we must strip
-        the parent's own mount prefix first. Pre-R20.18.5 this lived in
-        ``ZoneManager._resolve_mount_parent`` (Python).
-        """
-        if parent_zone == "root" or not path.startswith("/"):
-            return path
-        # Walk the kernel's zone_list to find where parent_zone is
-        # globally mounted, then strip that prefix.
-        try:
-            zones = list(self._kernel.zone_list())
-        except Exception:
-            return path
-        # Build a "target_zone -> global_path" map by scanning the Rust
-        # mount table via get_mount_points (returns /zone/mount_point
-        # canonical keys).  We don't have direct access, but
-        # has_mount("/corp", "root") is the heuristic signal.  Easiest:
-        # if path starts with "/<parent_zone>/" heuristically, strip it.
-        del zones
-        candidate_prefix = f"/{parent_zone}"
-        if path == candidate_prefix:
-            return "/"
-        if path.startswith(candidate_prefix + "/"):
-            return path[len(candidate_prefix) :]
-        # Fallback: pass through — matches root semantics.
-        return path
-
     @rpc_expose(admin_only=True)
     def federation_mount(
         self,
@@ -286,14 +275,21 @@ class FederationRPCService(FederationRPCMixin):
         target_zone: str,
     ) -> dict[str, Any]:
         """Mount ``target_zone`` at ``path`` (global VFS) inside
-        ``parent_zone``. Uses the legacy kwarg shape (parent_zone /
-        path / target_zone) expected by the docker E2E test suite +
-        CLI callers.
+        ``parent_zone`` via ``sys_setattr(DT_MOUNT)`` — the standard
+        mount syscall.  The kernel's `FederationProvider` HAL trait
+        auto-creates the target zone if it does not yet exist on this
+        node and registers the apply-cb so peers see the mount via
+        raft.
         """
-        zone_relative = self._to_zone_relative(parent_zone, path)
-        self._kernel.zone_mount(parent_zone, zone_relative, target_zone)
-        # Mirror into Python DLC at the VFS-global path so
-        # service-tier callers can resolve the mount.
+        # DT_MOUNT entry_type=2 (see rust/kernel/src/core/dcache.rs).
+        # Backend params unused for federation mounts — the kernel
+        # resolves the metastore via FederationProvider::metastore_for_zone.
+        self._kernel.sys_setattr(
+            path,
+            entry_type=2,
+            backend_name="federation",
+            zone_id=target_zone,
+        )
         self._register_mount_in_python_dlc(path, parent_zone)
         return {
             "parent_zone": parent_zone,
@@ -307,18 +303,35 @@ class FederationRPCService(FederationRPCMixin):
         parent_zone: str,
         path: str,
     ) -> dict[str, Any]:
-        zone_relative = self._to_zone_relative(parent_zone, path)
-        target = self._kernel.zone_unmount(parent_zone, zone_relative)
+        # Standard sys_unlink on a DT_MOUNT entry → unmount.
+        # Already-unmounted / never-mounted is a no-op (matches POSIX
+        # `umount` of a non-mounted path).
+        from nexus_runtime import PyOperationContext as _RustCtx
+
+        ctx = _RustCtx(
+            user_id="federation-rpc",
+            zone_id=parent_zone or "root",
+            is_admin=True,
+            agent_id=None,
+            is_system=True,
+            groups=[],
+            admin_capabilities=[],
+            subject_type="user",
+            subject_id=None,
+            request_id="",
+            context_zone_id=None,
+        )
+        with contextlib.suppress(Exception):
+            self._kernel.sys_unlink(path, ctx)
         # Mirror into Python DLC removal: without this the
-        # unmounted path stays reachable via the mount-registered
-        # path. Matches the pre-R20.18.5 unmount bookkeeping.
+        # unmounted path stays reachable via the mount-registered path.
         nx = self._nexus_fs
         if nx is not None:
             coord = getattr(nx, "_driver_coordinator", None)
             if coord is not None:
                 with contextlib.suppress(Exception):
                     coord.unmount(path, zone_id=parent_zone)
-        return {"parent_zone": parent_zone, "path": path, "target_zone": target}
+        return {"parent_zone": parent_zone, "path": path, "target_zone": None}
 
     @rpc_expose(admin_only=True)
     def federation_share(
@@ -328,15 +341,12 @@ class FederationRPCService(FederationRPCMixin):
     ) -> dict[str, Any]:
         """Publish `local_path`'s subtree as a standalone federation zone.
 
-        Shape matches ``FederationShareParams`` in
-        ``_rpc_params_generated.py``. Server derives the parent zone +
-        zone-relative prefix from the kernel routing table (mount LPM)
-        so callers don't have to know where the path is mounted.
-
-        On success, the new zone id is also written into the root zone's
-        share registry (``/__shares__/<local_path>``) so peers can
-        resolve it via their replicated root-zone state — no extra
-        peer-discovery RPC required.
+        Server derives the parent zone + zone-relative prefix via
+        ``sys_stat`` (§12d: no route() exposure to service tier).
+        On success, the new zone id is also written into the root
+        zone's share registry under ``/__sys__/shares/<local_path>``
+        via the federation control-plane helper so peers can resolve
+        ``local_path → zone_id`` from their replicated state.
 
         Args:
             local_path: VFS-global path of the subtree to share.
@@ -348,9 +358,9 @@ class FederationRPCService(FederationRPCMixin):
         """
         import uuid
 
-        # Derive parent_zone_id and prefix via sys_stat (§12d: no route()
-        # exposure to service tier).  parent_zone_id is the zone that owns
-        # the subtree; prefix is the zone-relative tail.
+        import nexus_runtime as _nr
+
+        # Derive parent_zone_id and prefix via sys_stat.
         _path_stat = self._kernel.sys_stat(local_path, "root")
         parent_zone_id = (
             (_path_stat.get("zone_id") or "root")
@@ -367,13 +377,12 @@ class FederationRPCService(FederationRPCMixin):
         _tail = local_path[len(_mp) :].lstrip("/") if _mp != local_path else ""
         prefix = "/" + _tail if _tail else "/"
         new_zone_id = zone_id or f"share-{uuid.uuid4().hex[:8]}"
-        # Ensure the target zone exists BEFORE share_subtree_core runs
-        # (it requires both parent and new zones to be loaded).
-        self._kernel.zone_create(new_zone_id)
-        copied = self._kernel.zone_share(parent_zone_id, prefix, new_zone_id)
-        # Publish to the raft-replicated share registry so peers can
-        # resolve `local_path → zone_id` without a separate RPC.
-        self._kernel.register_share(local_path, new_zone_id)
+        # Federation control-plane helpers — analogous to Linux
+        # userspace utilities (mkfs, zfs); call kernel internals
+        # (FederationProvider trait) without bypassing layering.
+        _nr.federation_create_zone(self._kernel, new_zone_id)
+        copied = _nr.federation_zone_share(self._kernel, parent_zone_id, prefix, new_zone_id)
+        _nr.federation_register_share(self._kernel, local_path, new_zone_id)
         return {
             "zone_id": new_zone_id,
             "parent_zone_id": parent_zone_id,
@@ -384,23 +393,30 @@ class FederationRPCService(FederationRPCMixin):
     # ── Introspection ──────────────────────────────────────────────
 
     def _links_count(self, zone_id: str) -> int:
-        fn = getattr(self._kernel, "zone_links_count", None)
-        if fn is None:
-            return 0
         try:
-            return int(fn(zone_id))
+            import nexus_runtime as _nr
+
+            return int(_nr.federation_zone_links_count(self._kernel, zone_id))
         except Exception:
             return 0
 
     @rpc_expose(admin_only=False)
     def federation_list_zones(self) -> dict[str, Any]:
-        zone_ids: list[str] = list(self._kernel.zone_list())
+        # /__sys__/zones/ procfs view — read-only, kernel-internal
+        # synthesised entries.
+        zone_ids: list[str] = list(self._kernel.sys_readdir_backend("/__sys__/zones/", "root"))
         zones = [{"zone_id": zid, "links_count": self._links_count(zid)} for zid in zone_ids]
         return {"zones": zones, "node_id": zone_ids}
 
     @rpc_expose(admin_only=False)
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
-        # PyKernel.zone_cluster_info returns a Python dict already.
-        status: dict[str, Any] = dict(self._kernel.zone_cluster_info(zone_id))
+        # Rich cluster status (term, commit_index, voters, …) does not
+        # fit StatResult's struct shape — read it through the
+        # federation control-plane helper.  For mere existence /
+        # zone_id checks, ``sys_stat("/__sys__/zones/<id>")`` is the
+        # cheaper read path.
+        import nexus_runtime as _nr
+
+        status: dict[str, Any] = dict(_nr.federation_zone_cluster_info(self._kernel, zone_id))
         status["links_count"] = self._links_count(zone_id)
         return status

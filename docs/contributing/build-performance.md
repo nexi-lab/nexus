@@ -10,8 +10,8 @@ The project has a tuned `[profile.dev]` in `Cargo.toml` with `opt-level = 1` —
 fast enough for testing, much faster to compile than release builds:
 
 ```bash
-cd rust/nexus_kernel && maturin develop        # ~30s (dev profile)
-cd rust/nexus_kernel && maturin develop --release  # ~5min (release, LTO)
+cd rust/nexus_runtime && maturin develop        # ~30s (dev profile)
+cd rust/nexus_runtime && maturin develop --release  # ~5min (release, LTO)
 ```
 
 Use `--release` only when you need production-grade performance (benchmarking, profiling).

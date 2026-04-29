@@ -51,7 +51,8 @@ impl DriverLifecycleCoordinator {
     /// - `backend_name` — backend identifier string
     /// - `backend` — optional Rust backend (None = Python-side backend)
     /// - `metastore` — optional per-mount metastore (ZoneMetaStore or LocalMetaStore)
-    /// - `raft_backend` — optional (ZoneConsensus, Handle) for federation DI
+    /// - `raft_backend` — opaque raft handle for federation DI; downcast by
+    ///   the `RaftFederationProvider` impl when wiring distributed locks.
     #[allow(clippy::too_many_arguments)]
     pub fn mount(
         &self,
@@ -61,14 +62,43 @@ impl DriverLifecycleCoordinator {
         backend_name: &str,
         backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
         metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
-        raft_backend: Option<(
-            nexus_raft::prelude::ZoneConsensus<nexus_raft::prelude::FullStateMachine>,
-            tokio::runtime::Handle,
-        )>,
+        raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
         is_external: bool,
     ) -> Result<(), KernelError> {
-        // 1. Routing table + per-mount metastore + lock manager upgrade
+        // Resolve the PARENT zone's metastore via longest-prefix routing
+        // (e.g. `/corp` resolves up to the `/` root-zone mount) and write
+        // the DT_MOUNT entry there.  This is the SSOT for federation
+        // routing: the parent zone's raft state machine replicates the
+        // entry to every peer, and federation's `mount_apply_cb` wired
+        // on the parent zone fires on each follower's apply, calling
+        // `wire_mount_core` so cross-zone routing lands on every node.
         //
+        // `with_metastore(mount_point)` does an exact-match lookup, so
+        // it would NOT find the right (parent) zone — use `route()`'s
+        // longest-prefix walk to find the enclosing mount, then write
+        // through that mount's metastore with the full path as the key.
+        let route = kernel.vfs_router_arc().route(mount_point, "root");
+        if let Ok(parent_route) = route {
+            // RouteResult.mount_point is already a canonical key (e.g. "/root").
+            kernel.with_metastore(&parent_route.mount_point, |ms| {
+                let meta = crate::meta_store::FileMetadata {
+                    path: mount_point.to_string(),
+                    size: 0,
+                    content_id: None,
+                    version: 1,
+                    entry_type: 2, // DT_MOUNT
+                    zone_id: Some(parent_route.zone_id.clone()),
+                    mime_type: None,
+                    created_at_ms: None,
+                    modified_at_ms: None,
+                    last_writer_address: None,
+                    // DT_MOUNT routing pointer: the zone this mount points at.
+                    target_zone_id: Some(zone_id.to_string()),
+                };
+                let _ = ms.put(mount_point, meta);
+            });
+        }
+
         // R20.6: apply-side dcache coherence (the per-zone invalidate
         // callback that fires on every committed metadata mutation) is
         // no longer wired here — it's installed by the
@@ -86,33 +116,10 @@ impl DriverLifecycleCoordinator {
             is_external,
         )?;
         let _ = backend_name; // accepted for ABI compat; no longer plumbed.
-
-        // 2. Write DT_MOUNT metadata entry (best-effort).
-        // R20.3: the ZoneMetaStore (per-mount) and LocalMetaStore (global
-        // fallback) both accept full paths at the trait boundary.
-        // ZoneMetaStore translates to its zone-relative root "/" internally;
-        // LocalMetaStore stores the full path directly. Either way the
-        // caller passes ``mount_point`` (the VFS-global DT_MOUNT key).
-        let canonical = canonicalize(mount_point, zone_id);
-        kernel.with_metastore(&canonical, |ms| {
-            let meta = crate::meta_store::FileMetadata {
-                path: mount_point.to_string(),
-                size: 0,
-                content_id: None,
-                version: 1,
-                entry_type: 2, // DT_MOUNT
-                zone_id: Some(zone_id.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-                last_writer_address: None,
-            };
-            let _ = ms.put(mount_point, meta);
-        });
-        // ``backend_name`` (the legacy parameter to this fn) is kept for
-        // API compatibility with callers but no longer persisted in the
-        // metadata record — each node decides the backend from its own
-        // mount table at read time.
+                              // ``backend_name`` (the legacy parameter to this fn) is kept for
+                              // API compatibility with callers but no longer persisted in the
+                              // metadata record — each node decides the backend from its own
+                              // mount table at read time.
         let _ = backend_name;
 
         // 3. DCache entry for mount point
@@ -132,6 +139,7 @@ impl DriverLifecycleCoordinator {
         );
 
         // 4. Store in DLC mounts map
+        let canonical = canonicalize(mount_point, zone_id);
         self.mounts.insert(
             canonical,
             MountInfo {
@@ -149,11 +157,24 @@ impl DriverLifecycleCoordinator {
     pub fn unmount(&self, kernel: &Kernel, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize(mount_point, zone_id);
 
-        // 1. Delete metastore entry (best-effort) — full path
-        // (ZoneMetaStore translates internally to its zone-relative root).
-        kernel.with_metastore(&canonical, |ms| {
-            let _ = ms.delete(mount_point);
-        });
+        // 1. Delete the DT_MOUNT metadata from the PARENT zone (the one
+        //    that "owns" `mount_point`).  Symmetric with `mount()`:
+        //    federation's apply-cb on the parent zone fires
+        //    `unwire_mount_core` on every peer when this raft-replicated
+        //    DeleteMetadata applies, so cross-node routing cleanup
+        //    propagates the same way it was set up.  Looking up via
+        //    `mount_point` itself routes through the new mount (the one
+        //    being unmounted) and lands in the wrong state machine.
+        //    Walk up to the parent path first so longest-prefix routing
+        //    skips this mount and finds the actual parent.
+        let parent_path =
+            lib::python::path_utils::parent_path(mount_point).unwrap_or_else(|| "/".to_string());
+        let route = kernel.vfs_router_arc().route(&parent_path, "root");
+        if let Ok(parent_route) = route {
+            kernel.with_metastore(&parent_route.mount_point, |ms| {
+                let _ = ms.delete(mount_point);
+            });
+        }
 
         // 2. DCache evict — mount point + all children
         kernel.dcache_evict(mount_point);

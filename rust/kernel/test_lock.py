@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Direct tests for the Rust VFSLockManager via nexus_kernel (Issue #1398).
+"""Direct tests for the Rust VFSLockManager via nexus_runtime (Issue #1398).
 
 Run after building with: maturin develop
 Usage: python rust/kernel/test_lock.py
@@ -14,9 +14,9 @@ import time
 
 def main() -> int:
     try:
-        from nexus_kernel import VFSLockManager
+        from nexus_runtime import VFSLockManager
     except ImportError:
-        print("SKIP: nexus_kernel not available (run `maturin develop` first)")
+        print("SKIP: nexus_runtime not available (run `maturin develop` first)")
         return 0
 
     passed = 0

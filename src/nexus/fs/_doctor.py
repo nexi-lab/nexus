@@ -95,12 +95,12 @@ def check_nexus_fs_version() -> DoctorCheckResult:
             )
 
 
-def check_nexus_kernel_version() -> DoctorCheckResult:
+def check_nexus_runtime_version() -> DoctorCheckResult:
     """Check nexus-kernel (Rust/pyo3) availability."""
     try:
-        import nexus_kernel
+        import nexus_runtime
 
-        version = getattr(nexus_kernel, "__version__", "unknown")
+        version = getattr(nexus_runtime, "__version__", "unknown")
         return DoctorCheckResult(
             name="nexus-kernel",
             status=DoctorStatus.PASS,
@@ -301,7 +301,7 @@ async def _run_all_checks_inner(
 ) -> dict[str, list[DoctorCheckResult]]:
     """Core check logic — called within the overall timeout wrapper."""
     # Section 1: Environment (sync checks, run in thread pool)
-    env_checks = [check_python_version, check_nexus_fs_version, check_nexus_kernel_version]
+    env_checks = [check_python_version, check_nexus_fs_version, check_nexus_runtime_version]
     env_coros = [asyncio.to_thread(fn) for fn in env_checks]
 
     # Section 2: Backends (sync checks, run in thread pool)

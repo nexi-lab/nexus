@@ -1,4 +1,4 @@
-# Integration Guide: nexus_kernel with Nexus
+# Integration Guide: nexus_runtime with Nexus
 
 This guide shows how to integrate the high-performance Rust permission checker with the existing Nexus codebase.
 
@@ -13,12 +13,12 @@ Or for production (optimized):
 ```bash
 cd rust/kernel
 maturin build --release
-pip install target/wheels/nexus_kernel-*.whl
+pip install target/wheels/nexus_runtime-*.whl
 ```
 
 ## Step 2: Install `nexus-kernel` in the Target Environment
 
-Nexus loads `nexus_kernel` opportunistically via import when it is present. Keep
+Nexus loads `nexus_runtime` opportunistically via import when it is present. Keep
 the extension as a separately installed package instead of advertising a root
 package extra that points at an unpublished registry artifact during
 development.
@@ -40,7 +40,7 @@ Fast ReBAC permission checking with Rust acceleration.
 from typing import Dict, List, Tuple, Optional, Any
 
 try:
-    import nexus_kernel
+    import nexus_runtime
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
@@ -85,7 +85,7 @@ def check_permissions_bulk(
             checks_rust, tuples_rust, configs_rust = convert_to_rust_format(
                 checks, tuples, namespace_configs
             )
-            return nexus_kernel.compute_permissions_bulk(
+            return nexus_runtime.compute_permissions_bulk(
                 checks_rust, tuples_rust, configs_rust
             )
         except Exception as e:
@@ -219,7 +219,7 @@ The sweet spot is bulk operations with 100-10,000 permissions.
 
 ## When to Use Rust vs Python
 
-**Use Rust (nexus_kernel) for:**
+**Use Rust (nexus_runtime) for:**
 - Bulk permission checks (>10 checks)
 - API endpoints listing many resources
 - Background jobs processing permissions
@@ -244,7 +244,7 @@ If `maturin develop` fails:
 
 ### Import Errors
 
-If `import nexus_kernel` fails:
+If `import nexus_runtime` fails:
 
 1. Verify installation: `pip show nexus-kernel`
 2. Check Python environment: `which python`
@@ -255,7 +255,7 @@ If `import nexus_kernel` fails:
 If Rust and Python produce different results:
 
 1. Enable debug logging
-2. Add print statements in test_nexus_kernel.py
+2. Add print statements in test_nexus_runtime.py
 3. Check namespace config format matches expected JSON structure
 4. File an issue with reproducible test case
 
@@ -318,6 +318,6 @@ async def list_files(user: User = Depends(get_current_user)):
 ## Support
 
 For issues or questions:
-- Check test_nexus_kernel.py for usage examples
+- Check test_nexus_runtime.py for usage examples
 - Review README.md for API documentation
 - File issues in the Nexus GitHub repository

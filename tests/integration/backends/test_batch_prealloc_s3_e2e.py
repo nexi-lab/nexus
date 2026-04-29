@@ -9,7 +9,7 @@ Tests the full lifecycle:
 Requires: AWS credentials with access to the test bucket.
 Run with: pytest tests/integration/backends/test_batch_prealloc_s3_e2e.py -v
 
-Skipped automatically if boto3, nexus_kernel, or S3 credentials are unavailable.
+Skipped automatically if boto3, nexus_runtime, or S3 credentials are unavailable.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ except Exception:
 
 # Skip if Rust BlobPackEngine unavailable
 try:
-    from nexus_kernel import BlobPackEngine
+    from nexus_runtime import BlobPackEngine
 
     HAS_ENGINE = True
 except ImportError:
@@ -41,7 +41,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
     not (HAS_S3 and HAS_ENGINE),
-    reason="Requires S3 credentials and nexus_kernel.BlobPackEngine",
+    reason="Requires S3 credentials and nexus_runtime.BlobPackEngine",
 )
 
 TEST_BUCKET = os.environ.get("NEXUS_TEST_S3_BUCKET", "nexus-888")
@@ -350,17 +350,17 @@ class TestBatchCrashRecovery:
 
 
 class TestStoreBatchTieringE2E:
-    """VolumeLocalTransport.store_batch → seal → tier → read through transport."""
+    """BlobPackLocalTransport.store_batch → seal → tier → read through transport."""
 
     @pytest.mark.asyncio
     async def test_store_batch_through_transport_then_tier(self, tmp_path):
         """Full stack: transport.store_batch → seal → tier → S3 → verify."""
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
         from nexus.backends.transports.s3_transport import S3Transport
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
         from nexus.core.config import TieringConfig
         from nexus.services.volume_tiering import VolumeTieringService
 
-        transport = VolumeLocalTransport(root_path=tmp_path, fsync=False)
+        transport = BlobPackLocalTransport(root_path=tmp_path, fsync=False)
 
         # Write via store_batch (the transport-level batch API)
         items = []

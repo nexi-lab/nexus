@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
-    from nexus_kernel import BlobPackEngine
+    from nexus_runtime import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
@@ -26,7 +26,7 @@ except ImportError:
 from nexus.backends.engines.cas_gc import CASGarbageCollector
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_runtime.BlobPackEngine not available"
 )
 
 
@@ -53,12 +53,12 @@ class FakeEntry:
 
 
 class TestGCWithVolumes:
-    """GC should work with VolumeLocalTransport."""
+    """GC should work with BlobPackLocalTransport."""
 
     def _make_engine_and_transport(self, tmp_path):
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        transport = VolumeLocalTransport(root_path=tmp_path, fsync=False)
+        transport = BlobPackLocalTransport(root_path=tmp_path, fsync=False)
         # Build a minimal CASAddressingEngine-like object
         engine = MagicMock()
         engine._transport = transport

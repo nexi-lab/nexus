@@ -1,6 +1,12 @@
-#[cfg(feature = "mimalloc")]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+//! Durable task queue engine — service-tier impl folded in from the
+//! standalone `rust/tasks/` crate.
+//!
+//! Phase 3 restructure plan #6: `_nexus_tasks.so` standalone cdylib
+//! retired; the PyTaskEngine / PyTaskRecord / PyQueueStats pyclasses
+//! register through `services::python::register` into the unified
+//! `nexus_runtime` cdylib so the runtime ships a single Python wheel
+//! instead of two.  Kernel never names task types — services owns
+//! the boundary.
 
 pub mod engine;
 pub mod error;
@@ -12,8 +18,8 @@ pub mod task;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use crate::engine::Engine;
-use crate::task::{TaskPriority, TaskStatus};
+use self::engine::Engine;
+use self::task::{TaskPriority, TaskStatus};
 
 /// Python-visible task record.
 #[pyclass(frozen, name = "TaskRecord")]
@@ -269,9 +275,11 @@ impl PyTaskEngine {
     }
 }
 
-/// Python module: _nexus_tasks
-#[pymodule]
-fn _nexus_tasks(m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// Register every task pyclass into the parent PyModule.  Called
+/// from `services::python::register` so the `nexus_runtime` cdylib
+/// surfaces task types alongside audit / agents on a single Python
+/// import.
+pub fn register_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTaskEngine>()?;
     m.add_class::<PyTaskRecord>()?;
     m.add_class::<PyQueueStats>()?;

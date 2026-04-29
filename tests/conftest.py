@@ -25,7 +25,7 @@ if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
 # ---------------------------------------------------------------------------
-# Issue #3712: auto-rebuild stale nexus_kernel binary before test runs.
+# Issue #3712: auto-rebuild stale nexus_runtime binary before test runs.
 # Activated only when NEXUS_RUST_EDITABLE=1 (opt-in for local dev).
 # CI pre-builds the binary from source, so the hook is not needed there.
 # ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ def make_test_nexus(
         # kernel + redb file under tmp_path. ``use_raft`` is now redundant
         # but kept for API compatibility.
         del use_raft
-        from nexus_kernel import PyKernel as _Kernel
+        from nexus_runtime import PyKernel as _Kernel
 
         from nexus.core.metastore import RustMetastoreProxy
 
@@ -214,14 +214,16 @@ def make_test_nexus(
         # the real `PeerBlobClient` so cross-node fetches work even
         # inside test fixtures that exercise federation.
         try:
-            import nexus_kernel as _nk
+            import nexus_runtime as _nk
 
             _nk.install_transport_wiring(_kernel)
+            _nk.install_federation_wiring(_kernel)
         except Exception as _wiring_exc:
             import logging as _logging
 
             _logging.getLogger(__name__).debug(
-                "install_transport_wiring failed in test fixture: %s", _wiring_exc
+                "install_transport_wiring/install_federation_wiring failed in test fixture: %s",
+                _wiring_exc,
             )
         metadata_store = RustMetastoreProxy(_kernel, str(tmp_path / "metastore.redb"))
 

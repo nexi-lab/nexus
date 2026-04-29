@@ -15,14 +15,14 @@ from __future__ import annotations
 import pytest
 
 try:
-    from nexus_kernel import BlobPackEngine
+    from nexus_runtime import BlobPackEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
     HAS_VOLUME_ENGINE = False
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_kernel.BlobPackEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_runtime.BlobPackEngine not available"
 )
 
 
@@ -90,16 +90,16 @@ class TestVolumeEngineIntegration:
         engine.close()
 
 
-# ─── VolumeLocalTransport Integration ────────────────────────────────────────
+# ─── BlobPackLocalTransport Integration ────────────────────────────────────────
 
 
-class TestVolumeLocalTransportIntegration:
-    """VolumeLocalTransport wrapping BlobPackEngine."""
+class TestBlobPackLocalTransportIntegration:
+    """BlobPackLocalTransport wrapping BlobPackEngine."""
 
     def _make_transport(self, tmp_path):
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        return VolumeLocalTransport(root_path=tmp_path, fsync=False)
+        return BlobPackLocalTransport(root_path=tmp_path, fsync=False)
 
     def test_cas_and_dir_operations(self, tmp_path):
         """CAS keys go to volumes, dir keys go to filesystem."""
@@ -155,12 +155,12 @@ class TestVolumeLocalTransportIntegration:
 
 
 class TestStoreBatchIntegration:
-    """VolumeLocalTransport.store_batch end-to-end."""
+    """BlobPackLocalTransport.store_batch end-to-end."""
 
     def _make_transport(self, tmp_path):
-        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+        from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
 
-        return VolumeLocalTransport(root_path=tmp_path, fsync=False)
+        return BlobPackLocalTransport(root_path=tmp_path, fsync=False)
 
     def test_store_batch_roundtrip(self, tmp_path):
         """store_batch writes, seal, fetch reads back correctly."""

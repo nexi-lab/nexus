@@ -344,12 +344,12 @@ class PermissionEnforcer:
                     logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
                 return dict.fromkeys(prefixes, False)
 
-            # RUST_FALLBACK: rebac enforcer — nexus_kernel for batch permission checks
+            # RUST_FALLBACK: rebac enforcer — nexus_runtime for batch permission checks
             # Try Rust-accelerated prefix matching (Issue #1565)
             try:
-                import nexus_kernel
+                import nexus_runtime
 
-                results_list = nexus_kernel.batch_prefix_check(
+                results_list = nexus_runtime.batch_prefix_check(
                     list(accessible_paths), list(prefixes)
                 )
                 results = dict(zip(prefixes, results_list, strict=True))

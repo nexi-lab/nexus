@@ -643,22 +643,67 @@ The Rust workspace splits into three roles:
 | Role            | Cargo type   | Purpose                                                                  |
 |-----------------|--------------|--------------------------------------------------------------------------|
 | Library crates  | `rlib`       | Compose into Python wheel + standalone binaries.                         |
-| Wheel artifact  | `cdylib`     | `rust/nexus-cdylib/` — produces `nexus_kernel.so` / `.pyd` for Python.   |
+| Wheel artifact  | `cdylib`     | `rust/nexus-cdylib/` — produces `nexus_runtime.so` / `.pyd` for Python.   |
 | Profile binary  | binary       | `rust/profiles/<name>/` — standalone deployment binaries (see §7.1).     |
 
 The Linux analogue is `make bzImage`: rlibs compile into one of two
 final artifacts (Python wheel or deployment binary) the same way
 `fs/built-in.a` and `kernel/built-in.a` link into `vmlinuz`.
 
+#### Kernel crate composition
+
+`rust/kernel/src/kernel/` hosts the `Kernel` struct and its
+syscall implementations across per-family submodules:
+
+| File                | Owns                                                                           |
+|---------------------|--------------------------------------------------------------------------------|
+| `kernel/mod.rs`     | `Kernel` struct, constructor, wiring, MetaStore + DCache + Router proxies.    |
+| `kernel/io.rs`      | `sys_read` / `sys_write` / `sys_stat` / `sys_unlink` / `sys_rename` / `sys_copy` / `sys_mkdir` / `sys_rmdir`. |
+| `kernel/ipc.rs`     | Pipe + stream registries (`create_pipe`, `pipe_write_nowait`, `stream_read_at`, …). |
+| `kernel/locks.rs`   | Advisory-lock syscalls (`sys_lock`, `sys_unlock`, `metastore_list_locks`, `install_federation_locks`). |
+| `kernel/dispatch.rs`| Native INTERCEPT hook dispatch (`dispatch_native_pre`, `dispatch_native_post`, `register_native_hook`). |
+| `kernel/observability.rs` | Observer registry, file-watch registry, `sys_watch`, `dispatch_mutation` shared helper. |
+
+Every submodule writes its methods as `impl Kernel { … }` blocks —
+Rust treats each block as a member set of the same `Kernel` type, so
+`self.method_in_io()` from a submodule reaches `self.method_in_mod()`
+without intermediate trait dispatch.
+
+#### Federation DI surface
+
+The `Kernel.federation` slot holds an `Arc<dyn FederationProvider>`
+that drives every federation-aware syscall.  Trait surface lives in
+`kernel::hal::federation`; concrete impl (`RaftFederationProvider`)
+lives in the raft crate at `nexus_raft::federation_provider`.  The
+kernel ↔ raft Cargo edge is `raft → kernel` (post Phase H flip), so
+the kernel rlib has zero direct `nexus_raft::*` references — federation
+state (`ZoneManager`, `ZoneRaftRegistry`, `tokio::runtime::Handle`,
+`cross_zone_mounts` reverse index) is owned by the provider, not the
+kernel.
+
+Boot wiring:
+
+| Step | Caller                                       | Effect                                    |
+|------|----------------------------------------------|-------------------------------------------|
+| 1    | `Kernel::new`                                | Slot defaults to `NoopFederationProvider` |
+| 2    | `nexus_runtime.install_federation_wiring(k)`  | Slot is replaced with `RaftFederationProvider` |
+| 3    | Federation syscalls (`init_federation_from_env`, …) | Dispatch through `kernel.federation_arc().<method>(kernel, …)` |
+
+Provider methods all take `kernel: &Kernel` so the unit-struct impl
+forwards into kernel-side primitives without holding back-references.
+The Phase 4 `PeerBlobClient` DI pattern is mirrored exactly:
+`set_federation` / `federation_arc` for the slot, dedicated
+`install_federation_wiring` boot hook for the swap.
+
 #### Wheel composition
 
 `rust/nexus-cdylib/src/lib.rs` is the sole `#[pymodule] fn
-nexus_kernel`; it aggregates each peer's PyO3 surface through that
+nexus_runtime`; it aggregates each peer's PyO3 surface through that
 peer's `python::register` entry:
 
 ```rust
 #[pymodule]
-fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
+fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     lib::python::register(m)?;
     kernel::python::register(m)?;
     nexus_raft::pyo3_bindings::register_python_classes(m)?;
@@ -711,6 +756,24 @@ Edge invariants:
 The first edge keeps lib WASM-clean.  The second is the cycle-break
 that lets transport own kernel-bound code while raft keeps a
 kernel-free dependency footprint.
+
+#### RPC: client side vs server side
+
+The remote-RPC stack splits along the same kernel ↔ peer line as the
+rest of the workspace.
+
+| Side   | Crate          | Module             | Role                                                                                  |
+|--------|----------------|--------------------|---------------------------------------------------------------------------------------|
+| Client | `kernel`       | `rpc_transport`    | gRPC client used by `backends::storage::remote::RemoteBackend` to reach a remote node |
+| Server | `transport`    | `grpc` / `ipc`     | gRPC + IPC server dispatch and the federation fabric                                  |
+| Shared | `transport-primitives` | (whole crate) | TLS, connection pool, addressing — shared by both sides                            |
+
+Client-side RPC sits in `kernel` because `RemoteBackend` constructs it
+through `BackendFactory` and the legal edge from `backends` is to
+`kernel`.  Server-side RPC sits in `transport` because the federation
+dispatch fabric (per-zone routers, peer mesh) is owned there.  Both
+talk through `transport-primitives` types so the wire-format is the
+same on both sides.
 
 ### Placement Decision Tree
 

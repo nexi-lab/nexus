@@ -4,13 +4,13 @@ version = "0.10.0"
 edition = "2021"
 
 [lib]
-# Phase 0 — kernel is rlib-only. The Python cdylib (`nexus_kernel.so`)
+# Phase 0 — kernel is rlib-only. The Python cdylib (`nexus_runtime.so`)
 # now lives in `rust/nexus-cdylib/`, which depends on this rlib plus
 # its peers (lib, raft, …) and owns the `#[pymodule]` envelope. This
 # cycle-breaks `<peer-crate> → kernel` (compile dep) ↔ `kernel →
 # <peer-crate>` (cdylib registration) — the latter is now wholly
 # inside `nexus-cdylib`. Lib name matches the package name (was
-# `nexus_kernel` while kernel was the cdylib; that name belongs to
+# `nexus_runtime` while kernel was the cdylib; that name belongs to
 # the cdylib build artifact now).
 name = "kernel"
 crate-type = ["rlib"]
@@ -22,10 +22,12 @@ lib = { workspace = true, features = ["python"] }
 # `services -> kernel`.  The pre-Phase-3 dep was an artefact of
 # AgentTable being miscategorised as service-tier; it moved to
 # `crate::core::agents::table` (kernel SSOT) so the cycle clears.
-# F2 C8 (Option A): raft rlib pulled in so kernel can impl MetaStore over
-# raft's ZoneConsensus directly, no cross-cdylib Rust trait object
-# dispatch. See rust/kernel/src/raft_meta_store.rs.
-raft = { workspace = true }
+# Phase H (Phase 5 federation DI): the `kernel -> raft` edge is
+# inverted — raft now depends on kernel for `kernel::abc::MetaStore`,
+# `kernel::hal::federation::FederationProvider`, etc.  Raft state-
+# machine impls (raft_meta_store, replication_scanner,
+# wal_stream_backend) live in the raft crate alongside the
+# `RaftFederationProvider` trait impl.
 # `extension-module` lives on the `nexus-cdylib` pyo3 dep only — Cargo
 # unifies pyo3 features at link time, so all transitive users see the
 # cdylib-correct linkage. rlibs must NOT enable it themselves (would

@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-nf = pytest.importorskip("nexus_kernel")
+nf = pytest.importorskip("nexus_runtime")
 VolumeEngine = nf.BlobPackEngine
 
 # 64KB target so spanning happens quickly

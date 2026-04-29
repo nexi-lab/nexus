@@ -52,7 +52,14 @@ async def test_watch_emits_pending_then_decided(approval_service: ApprovalServic
             metadata={},
         )
     )
-    await asyncio.sleep(0.05)
+    # Wait until the pending row is durably committed before deciding.
+    # Sleeping a fixed delay is racy under xdist contention.
+    for _ in range(50):
+        await asyncio.sleep(0.1)
+        if (await approval_service.get(rid)) is not None:
+            break
+    else:
+        raise AssertionError("pending row never landed in DB")
     await approval_service.decide(
         request_id=rid,
         decision=Decision.APPROVED,
@@ -61,8 +68,10 @@ async def test_watch_emits_pending_then_decided(approval_service: ApprovalServic
         reason=None,
         source=DecisionSource.GRPC,
     )
-    await asyncio.wait_for(waiter, 1.0)
-    await asyncio.wait_for(stop.wait(), 1.0)
+    # 5s timeout: under xdist parallel load the LISTEN/NOTIFY round-trip
+    # for watch broadcasts can take >1s.
+    await asyncio.wait_for(waiter, 5.0)
+    await asyncio.wait_for(stop.wait(), 5.0)
     task.cancel()
 
     types = [e[0] for e in events]

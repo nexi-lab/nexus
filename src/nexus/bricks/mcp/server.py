@@ -26,6 +26,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.pagination import build_paginated_list_response
 
 if TYPE_CHECKING:
+    from nexus.bricks.approvals.policy_gate import PolicyGate
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,11 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
         token: The token returned by set_request_api_key()
     """
     _request_api_key.reset(token)
+
+
+def register_policy_gate_dependency(app: Any, gate: PolicyGate) -> None:
+    """Attach PolicyGate to app.state so middlewares can call gate.check()."""
+    app.state.policy_gate = gate
 
 
 async def create_mcp_server(

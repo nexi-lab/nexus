@@ -20,7 +20,10 @@
 //!   Constructs `Arc<dyn ObjectStore>` for backend types
 //!   (anthropic / openai / s3 / gcs / …) without the kernel naming
 //!   `backends::*`. Concrete impl in `backends::python::factory`.
-//! * [`peer`] — abstract peer-blob fetch trait.
+//! * [`peer`] — re-export of `transport_primitives::PeerBlobClient`.
+//!   The trait declaration lives in the `shared/transport-primitives`
+//!   crate so raft (server-side fetcher) and rpc (client-side fetcher)
+//!   reach it without depending on each other.
 //!
 //! ObjectStore extension hooks like [`crate::llm_streaming::LlmStreamingBackend`]
 //! live at the kernel crate root, not under `hal/` — they extend a
@@ -47,4 +50,12 @@
 
 pub mod distributed_coordinator;
 pub mod object_store_provider;
-pub mod peer;
+
+// `PeerBlobClient` lives in `shared/transport-primitives` (Phase C.2 —
+// transport-layer abstraction shared between raft server-side fetcher
+// and rpc client-side fetcher). Re-exported here so existing
+// `kernel::hal::peer::PeerBlobClient` callers keep working through
+// the move.
+pub mod peer {
+    pub use transport_primitives::{NoopPeerBlobClient, PeerBlobClient, PeerBlobResult};
+}

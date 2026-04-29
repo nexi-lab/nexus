@@ -123,7 +123,9 @@ async = ["tokio"]
 
 # Enable Python bindings (PyO3 FFI) — production path. Raft is an rlib
 # crate after F2 C8; mimalloc moves to the final cdylib (nexus_runtime).
-python = ["pyo3"]
+# `transport-primitives/python` brings PyTofuTrustStore + PyTrustedZone
+# pyclasses (TOFU trust store moved out of raft into the shared crate).
+python = ["pyo3", "transport-primitives/python"]
 
 # Enable Raft consensus (tikv/raft-rs) — EXPERIMENTAL, default OFF.
 # Not used in production. Preserved for future multi-node support.

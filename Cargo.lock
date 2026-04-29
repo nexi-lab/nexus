@@ -3558,10 +3558,18 @@ dependencies = [
 name = "transport-primitives"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "dashmap",
  "parking_lot",
+ "pem",
+ "pyo3",
+ "rcgen",
+ "serde",
+ "serde_json",
  "sha2",
+ "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tonic",
  "tracing",

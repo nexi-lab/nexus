@@ -162,11 +162,3 @@ class DistributedCoordinator(Protocol):
 @runtime_checkable
 class ObjectStoreProvider(Protocol):
     def build(self, args: Any) -> Any: ...
-
-
-@runtime_checkable
-class PeerBlobClient(Protocol):
-    def fetch(self, addr: str, content_id: str) -> Any: ...
-    def install_tls(
-        self, _ca_pem: bytes, _cert_pem: bytes | None, _key_pem: bytes | None
-    ) -> None: ...

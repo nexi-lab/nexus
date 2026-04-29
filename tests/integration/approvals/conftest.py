@@ -8,6 +8,11 @@ import asyncpg
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from nexus.bricks.approvals.config import ApprovalConfig
+from nexus.bricks.approvals.events import NotifyBridge
+from nexus.bricks.approvals.repository import ApprovalRepository
+from nexus.bricks.approvals.service import ApprovalService
+
 
 def _db_url() -> str:
     url = os.environ.get("NEXUS_TEST_DATABASE_URL")
@@ -38,3 +43,27 @@ async def asyncpg_pool():
         yield pool
     finally:
         await pool.close()
+
+
+@pytest_asyncio.fixture
+async def approval_service(session_factory, asyncpg_pool):
+    repo = ApprovalRepository(session_factory)
+    bridge = NotifyBridge(asyncpg_pool)
+    svc = ApprovalService(repo, bridge, ApprovalConfig(enabled=True))
+    await svc.start()
+    try:
+        yield svc
+    finally:
+        await svc.stop()
+
+
+@pytest_asyncio.fixture
+async def approval_service_short(session_factory, asyncpg_pool):
+    repo = ApprovalRepository(session_factory)
+    bridge = NotifyBridge(asyncpg_pool)
+    svc = ApprovalService(repo, bridge, ApprovalConfig(enabled=True, auto_deny_after_seconds=0.2))
+    await svc.start()
+    try:
+        yield svc
+    finally:
+        await svc.stop()

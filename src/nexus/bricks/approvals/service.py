@@ -34,6 +34,22 @@ logger = logging.getLogger(__name__)
 CHANNEL_NEW = "approvals_new"
 CHANNEL_DECIDED = "approvals_decided"
 
+# Grace window for inheriting a recent terminal decision when a late-inserted
+# pending row appears for the same coalesce key. The partial unique index
+# `approval_requests_pending_coalesce` is `WHERE status='pending'`, so once a
+# row flips PENDING -> APPROVED the (zone_id, kind, subject) tuple is freed.
+# A caller arriving within this window inherits the prior approval (for
+# session/persist scopes) or, for ONCE scope, is queued normally as a fresh
+# request — preserving operator intent.
+_INHERIT_GRACE_SECONDS = 2.0
+_INHERITABLE_SCOPES: frozenset[DecisionScope] = frozenset(
+    {
+        DecisionScope.SESSION,
+        DecisionScope.PERSIST_SANDBOX,
+        DecisionScope.PERSIST_BASELINE,
+    }
+)
+
 
 @dataclass(frozen=True)
 class WatchEvent:
@@ -113,6 +129,20 @@ class ApprovalService:
         now = datetime.now(UTC)
         expires = now + timedelta(seconds=timeout)
 
+        # Option 2: session-scope cache short-circuit. Mirrors PolicyGate.check
+        # so non-PolicyGate callers (gRPC, HTTP, internal) also benefit and so
+        # callers arriving after the orphan-race window still get APPROVED if a
+        # session_allow row was inserted by the SESSION-scope decide.
+        if session_id is not None:
+            allow = await self._repo.session_allow_exists(
+                session_id=session_id,
+                zone_id=zone_id,
+                kind=kind,
+                subject=subject,
+            )
+            if allow:
+                return Decision.APPROVED
+
         try:
             req = await self._repo.insert_or_fetch_pending(
                 request_id=request_id,
@@ -131,7 +161,25 @@ class ApprovalService:
             raise GatewayClosed("could not insert pending row") from e
 
         # Was it newly inserted under our id, or an existing coalesced row?
-        if req.id == request_id:
+        newly_inserted = req.id == request_id
+        if newly_inserted:
+            # Option 1: late-insert orphan race. If a sibling row for the same
+            # coalesce key was decided in the last `_INHERIT_GRACE_SECONDS`,
+            # propagate the decision instead of stranding this caller until
+            # timeout. Operator intent is honored per scope: ONCE => fresh
+            # prompt, SESSION/PERSIST => inherit. See module-level constant
+            # for the rationale.
+            inherited = await self._maybe_inherit_recent_decision(
+                request_id=req.id,
+                zone_id=zone_id,
+                kind=kind,
+                subject=subject,
+                session_id=session_id,
+                now=now,
+            )
+            if inherited is not None:
+                return inherited
+
             try:
                 await self._notify.notify(
                     CHANNEL_NEW,
@@ -160,6 +208,87 @@ class ApprovalService:
             reason_str = row.decided_by if (row and row.decided_by) else "denied"
             raise ApprovalDenied(req.id, reason_str)
         return result
+
+    async def _maybe_inherit_recent_decision(
+        self,
+        *,
+        request_id: str,
+        zone_id: str,
+        kind: ApprovalKind,
+        subject: str,
+        session_id: str | None,
+        now: datetime,
+    ) -> Decision | None:
+        """Inherit a recent terminal decision for a late-inserted row.
+
+        Returns the propagated Decision, or None to fall through to the normal
+        wait path. Only inherits APPROVED with non-ONCE scope; ONCE scope is
+        skipped on purpose so the operator gets a fresh prompt for each call.
+        REJECTED/EXPIRED are also not inherited — operator intent for a
+        previous attempt should not silently deny a new caller (the late
+        caller may be answering a separate retry). See Issue #3790 follow-up.
+        """
+        since = now - timedelta(seconds=_INHERIT_GRACE_SECONDS)
+        recent = await self._repo.get_recent_decision(
+            zone_id=zone_id,
+            kind=kind,
+            subject=subject,
+            since=since,
+            exclude_request_id=request_id,
+        )
+        if recent is None:
+            return None
+        if recent.status is not ApprovalRequestStatus.APPROVED:
+            return None
+        scope = recent.decision_scope
+        if scope is None or scope not in _INHERITABLE_SCOPES:
+            return None
+
+        # Flip our late-inserted row to APPROVED with the inherited scope.
+        # If the transition fails (already decided by a concurrent operator,
+        # which is possible with Postgres NOTIFY arrival), fall through.
+        decided_by = recent.decided_by or "system"
+        updated = await self._repo.transition(
+            request_id=request_id,
+            new_status=ApprovalRequestStatus.APPROVED,
+            decided_by=decided_by,
+            scope=scope,
+            reason=f"inherited_from_{recent.id}",
+            source=DecisionSource.SYSTEM_INHERITED,
+            now=now,
+        )
+        if updated is None:
+            return None
+
+        # For SESSION scope, also persist a session_allow row so subsequent
+        # callers (with the same session_id) short-circuit at the top of
+        # request_and_wait without round-tripping through this branch.
+        if scope is DecisionScope.SESSION and session_id is not None:
+            await self._repo.insert_session_allow(
+                session_id=session_id,
+                zone_id=zone_id,
+                kind=kind,
+                subject=subject,
+                decided_by=decided_by,
+                decided_at=now,
+                request_id=request_id,
+            )
+
+        # Notify other workers so any in-process futures registered against
+        # our id are resolved promptly. Local dispatcher is idempotent — no
+        # local futures yet (we inherit before register) but be safe.
+        try:
+            await self._notify.notify(
+                CHANNEL_DECIDED,
+                json.dumps({"request_id": request_id, "decision": Decision.APPROVED.value}),
+            )
+        except Exception:
+            logger.warning(
+                "notify(approvals_decided) failed during inherit; row durable",
+                exc_info=True,
+            )
+        self._dispatcher.resolve(request_id, Decision.APPROVED)
+        return Decision.APPROVED
 
     async def decide(
         self,

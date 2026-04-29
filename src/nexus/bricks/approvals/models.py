@@ -41,6 +41,9 @@ class DecisionSource(StrEnum):
     HTTP = "http"
     SYSTEM_TIMEOUT = "system_timeout"
     PUSH_API = "push_api"
+    # Inherited from a recent terminal decision on the same coalesce key.
+    # See ApprovalService._inherit_recent_decision for the late-insert race.
+    SYSTEM_INHERITED = "system_inherited"
 
 
 @dataclass(frozen=True)

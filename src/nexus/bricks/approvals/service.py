@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -31,6 +34,14 @@ CHANNEL_NEW = "approvals_new"
 CHANNEL_DECIDED = "approvals_decided"
 
 
+@dataclass(frozen=True)
+class WatchEvent:
+    type: str  # "pending" | "decided"
+    request_id: str
+    zone_id: str
+    decision: str | None
+
+
 class ApprovalService:
     """Async core service for the approval queue.
 
@@ -50,6 +61,7 @@ class ApprovalService:
         self._notify = notify_bridge
         self._cfg = config
         self._dispatcher = Dispatcher()
+        self._watchers: list[tuple[str | None, asyncio.Queue[WatchEvent]]] = []
 
     @property
     def repository(self) -> ApprovalRepository:
@@ -198,6 +210,18 @@ class ApprovalService:
     async def cancel(self, future: asyncio.Future[Decision]) -> None:
         self._dispatcher.cancel(future)
 
+    async def watch(self, zone_id: str | None) -> AsyncIterator[WatchEvent]:
+        q: asyncio.Queue[WatchEvent] = asyncio.Queue(maxsize=self._cfg.watch_buffer_size)
+        entry = (zone_id, q)
+        self._watchers.append(entry)
+        try:
+            while True:
+                ev = await q.get()
+                yield ev
+        finally:
+            with contextlib.suppress(ValueError):
+                self._watchers.remove(entry)
+
     # ------------------------------------------------------------------
     # NOTIFY handlers
     # ------------------------------------------------------------------
@@ -211,10 +235,31 @@ class ApprovalService:
             logger.warning("bad approvals_decided payload: %s", payload)
             return
         self._dispatcher.resolve(rid, decision)
+        # zone is not on the payload; look it up if we have it.
+        row = await self._repo.get(rid)
+        zone = row.zone_id if row else ""
+        self._broadcast(
+            WatchEvent(type="decided", request_id=rid, zone_id=zone, decision=decision.value)
+        )
 
     async def _on_new_payload(self, payload: str) -> None:
-        # No-op for callers; only Watch-stream needs new-pending events (Task 10).
-        pass
+        try:
+            msg = json.loads(payload)
+            rid = msg["request_id"]
+            zone = msg["zone_id"]
+        except Exception:
+            return
+        self._broadcast(WatchEvent(type="pending", request_id=rid, zone_id=zone, decision=None))
+
+    def _broadcast(self, ev: WatchEvent) -> None:
+        for zone, q in list(self._watchers):
+            if zone is not None and zone != ev.zone_id:
+                continue
+            try:
+                q.put_nowait(ev)
+            except asyncio.QueueFull:
+                # Slow watcher: drop and let it reconcile via list_pending.
+                logger.warning("watch buffer overflow; dropping event for %s", ev.request_id)
 
 
 def _row_to_decision(row: ApprovalRequest, *, timeout: float) -> Decision:

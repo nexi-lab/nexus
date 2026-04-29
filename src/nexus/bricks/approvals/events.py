@@ -45,6 +45,16 @@ class Dispatcher:
     def in_flight_request_ids(self) -> list[str]:
         return list(self._waiters.keys())
 
+    def waiter_count(self, request_id: str) -> int:
+        """Number of futures currently parked on this request_id.
+
+        Public read-only accessor for diagnostics and benchmarks. Returns 0
+        when ``request_id`` is unknown. Callers should treat this strictly
+        as a snapshot — concurrent ``register``/``resolve``/``cancel`` will
+        change the value at any moment.
+        """
+        return len(self._waiters.get(request_id, []))
+
 
 NotifyHandler = Callable[[str], Coroutine[Any, Any, None]]
 

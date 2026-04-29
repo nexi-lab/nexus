@@ -27,6 +27,7 @@ from nexus.bricks.approvals.models import (
     DecisionSource,
 )
 from nexus.bricks.approvals.repository import ApprovalRepository
+from nexus.bricks.approvals.sweeper import Sweeper
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,11 @@ class ApprovalService:
         self._cfg = config
         self._dispatcher = Dispatcher()
         self._watchers: list[tuple[str | None, asyncio.Queue[WatchEvent]]] = []
+        self._sweeper = Sweeper(
+            repository=repository,
+            interval_seconds=config.sweeper_interval_seconds,
+            on_expired=self._on_expired_ids,
+        )
 
     @property
     def repository(self) -> ApprovalRepository:
@@ -79,8 +85,10 @@ class ApprovalService:
                 CHANNEL_NEW: self._on_new_payload,
             }
         )
+        await self._sweeper.start()
 
     async def stop(self) -> None:
+        await self._sweeper.stop()
         await self._notify.stop()
 
     # ------------------------------------------------------------------
@@ -221,6 +229,17 @@ class ApprovalService:
         finally:
             with contextlib.suppress(ValueError):
                 self._watchers.remove(entry)
+
+    # ------------------------------------------------------------------
+    # Sweeper callback
+    # ------------------------------------------------------------------
+
+    def _on_expired_ids(self, ids: list[str]) -> None:
+        for rid in ids:
+            self._dispatcher.resolve(rid, Decision.DENIED)
+            self._broadcast(
+                WatchEvent(type="decided", request_id=rid, zone_id="", decision="expired")
+            )
 
     # ------------------------------------------------------------------
     # NOTIFY handlers

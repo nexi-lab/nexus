@@ -34,75 +34,22 @@ All endpoints are admin-only. Two admission paths:
 
 from __future__ import annotations
 
-import hmac
 import logging
-import os
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from nexus.server.dependencies import resolve_auth
+from nexus.server.api.v2._admin_auth import require_followup_admin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/mcp", tags=["mcp"])
 
 
-# ---------------------------------------------------------------------------
-# Auth helper
-# ---------------------------------------------------------------------------
-
-
-async def _require_mcp_admin(
-    request: Request,
-    authorization: str | None = Header(None, alias="Authorization"),
-    x_agent_id: str | None = Header(None, alias="X-Agent-ID"),
-    x_nexus_subject: str | None = Header(None, alias="X-Nexus-Subject"),
-    x_nexus_zone_id: str | None = Header(None, alias="X-Nexus-Zone-ID"),
-) -> dict[str, Any]:
-    """Admit admin callers via the standard pipeline OR the approvals admin token.
-
-    See module docstring for the auth-design rationale (Issue #3790
-    follow-up E2E needs a fixture-recognised admin token).
-    """
-    client_host = request.client.host if request.client else None
-
-    auth_result = await resolve_auth(
-        app_state=request.app.state,
-        authorization=authorization,
-        x_agent_id=x_agent_id,
-        x_nexus_subject=x_nexus_subject,
-        x_nexus_zone_id=x_nexus_zone_id,
-        client_host=client_host,
-    )
-    # Fall through to the approvals-admin-token fallback before 403, because
-    # the same caller may be presenting a bearer that the standard provider
-    # doesn't recognise as admin but matches the approvals env-var token.
-    if (
-        auth_result is not None
-        and auth_result.get("authenticated")
-        and auth_result.get("is_admin", False)
-    ):
-        return auth_result
-
-    # Approvals-admin-token fallback (#3790).
-    approvals_admin = os.environ.get("NEXUS_APPROVALS_ADMIN_TOKEN") or None
-    if approvals_admin and authorization:
-        token = authorization[7:] if authorization.startswith("Bearer ") else authorization
-        if token and hmac.compare_digest(token, approvals_admin):
-            return {
-                "authenticated": True,
-                "is_admin": True,
-                "subject_type": "user",
-                "subject_id": "approvals-admin",
-                "zone_id": x_nexus_zone_id,
-                "via": "approvals_admin_token",
-            }
-
-    if auth_result is None or not auth_result.get("authenticated"):
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    raise HTTPException(status_code=403, detail="Admin privileges required")
+# Shared two-path admin gate (#3790). Aliased here so existing call sites
+# (and any external imports of ``_require_mcp_admin``) keep working.
+_require_mcp_admin = require_followup_admin
 
 
 # ---------------------------------------------------------------------------

@@ -41,7 +41,7 @@ class FilePathModel(Base):
     # File properties
     file_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    content_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -57,7 +57,7 @@ class FilePathModel(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Semantic search indexing tracking (Issue #865)
-    indexed_content_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    indexed_content_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Locking for concurrent access

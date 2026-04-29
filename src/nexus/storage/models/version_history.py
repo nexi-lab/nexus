@@ -46,7 +46,7 @@ class VersionHistoryModel(Base):
 
     # Version information
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    content_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Content metadata
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

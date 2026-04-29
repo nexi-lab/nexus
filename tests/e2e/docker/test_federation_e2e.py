@@ -3444,6 +3444,3 @@ class TestFreshJoinToRunningCluster:
                 msg=f"{path} not visible on freshly-joined node-1",
                 timeout=30,
             )
-
-
-

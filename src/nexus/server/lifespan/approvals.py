@@ -14,13 +14,12 @@ When enabled:
   - calls ``build_approvals_stack(...)`` which starts the
     NotifyBridge (LISTEN/NOTIFY) and the auto-deny sweeper
   - registers the read-only ``GET /hub/approvals/dump`` diag router
-  - **defers** the ApprovalsServicer gRPC registration: the only Python
-    gRPC server the daemon owns today is the Rust-native VFS server
-    (``nexus_kernel.start_vfs_grpc_server``), which doesn't accept Python
-    `add_*Servicer_to_server` calls; ``app.state.capability_auth`` does
-    not yet exist either. Tasks 21–23 (E2E) currently exercise the brick
-    via ApprovalService directly, not via the gRPC surface — this is
-    deferred until both pieces of plumbing land.
+  - starts a process-local Python ``grpc.aio.Server`` carrying the
+    ApprovalsV1 servicer on ``NEXUS_APPROVALS_GRPC_PORT`` (default
+    ``2029``) when ``NEXUS_APPROVALS_ADMIN_TOKEN`` is set. The Rust-
+    native VFS server on ``:2028`` is left untouched. The bearer-token
+    auth gates every RPC; ReBAC integration is a follow-up TODO in
+    ``grpc_auth.py``.
 """
 
 from __future__ import annotations
@@ -145,13 +144,69 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
         except Exception as e:
             logger.warning("[APPROVALS] failed to register diag router: %s", e, exc_info=True)
 
-    # TODO(#3790 Task 20 follow-up): register ApprovalsServicer onto a Python
-    # grpc.aio server once the daemon owns one + a CapabilityAuth implementation
-    # lives on app.state. The current gRPC surface (port 2028) is the Rust-
-    # native VFS server (`nexus_kernel.start_vfs_grpc_server`) which does not
-    # accept Python `add_ApprovalsV1Servicer_to_server(...)` calls. The brick
-    # E2E tests (Tasks 21–23) drive ApprovalService directly, not via gRPC, so
-    # this is non-blocking for that work.
+    # Python gRPC server (separate from the Rust-native VFS server on :2028).
+    # We bind a fresh `grpc.aio.Server` on `NEXUS_APPROVALS_GRPC_PORT` (default
+    # :2029) and register the ApprovalsV1 servicer behind a bearer-token auth
+    # implementation. Skipped when:
+    #   - ApprovalService didn't start (stack.service is None)
+    #   - NEXUS_APPROVALS_ADMIN_TOKEN is unset (no auth secret == no gRPC)
+    # TODO(#3790): replace BearerTokenCapabilityAuth with a ReBAC-backed
+    # CapabilityAuth so individual subjects can be granted scoped approvals
+    # capabilities (see grpc_auth.py).
+    if stack.service is not None:
+        admin_token = os.environ.get("NEXUS_APPROVALS_ADMIN_TOKEN") or None
+        grpc_port_str = os.environ.get("NEXUS_APPROVALS_GRPC_PORT", "2029")
+        try:
+            grpc_port = int(grpc_port_str)
+        except ValueError:
+            logger.warning(
+                "[APPROVALS] NEXUS_APPROVALS_GRPC_PORT=%r is not an int; gRPC disabled",
+                grpc_port_str,
+            )
+            grpc_port = 0
+
+        if admin_token is None:
+            logger.warning(
+                "[APPROVALS] NEXUS_APPROVALS_ADMIN_TOKEN is unset; "
+                "Python gRPC server NOT started (HTTP diag + in-process PolicyGate "
+                "still work). Set the env var to enable the gRPC surface."
+            )
+        elif grpc_port <= 0:
+            logger.info(
+                "[APPROVALS] gRPC port disabled (port=%d); Python gRPC server NOT started",
+                grpc_port,
+            )
+        else:
+            try:
+                from nexus.bricks.approvals.grpc_auth import BearerTokenCapabilityAuth
+                from nexus.bricks.approvals.grpc_server_lifespan import start_grpc_server
+
+                bind_all = os.environ.get("NEXUS_APPROVALS_GRPC_BIND_ALL", "").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                )
+                host = "0.0.0.0" if bind_all else "127.0.0.1"
+                auth = BearerTokenCapabilityAuth(admin_token=admin_token)
+                grpc_server = await start_grpc_server(
+                    stack.service,
+                    auth,
+                    port=grpc_port,
+                    host=host,
+                )
+                app.state._approvals_grpc_server = grpc_server
+                logger.info(
+                    "[APPROVALS] Python gRPC server listening on %s:%d (auth=admin-token)",
+                    host,
+                    grpc_port,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[APPROVALS] failed to start Python gRPC server: %s",
+                    e,
+                    exc_info=True,
+                )
+                app.state._approvals_grpc_server = None
 
     logger.info("[APPROVALS] enabled — service started, PolicyGate wired to app.state")
     return []
@@ -160,6 +215,19 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
 async def shutdown_approvals(app: "FastAPI", _svc: "LifespanServices") -> None:
     """Stop the approvals service and close its asyncpg pool."""
     from nexus.bricks.approvals.bootstrap import shutdown_approvals_stack
+
+    # Stop the Python gRPC server first so in-flight RPCs drain before the
+    # backing ApprovalService disappears under them.
+    grpc_server = getattr(app.state, "_approvals_grpc_server", None)
+    if grpc_server is not None:
+        try:
+            from nexus.bricks.approvals.grpc_server_lifespan import stop_grpc_server
+
+            await stop_grpc_server(grpc_server)
+            logger.debug("[APPROVALS] Python gRPC server stopped")
+        except Exception as e:
+            logger.warning("[APPROVALS] gRPC server stop failed: %s", e, exc_info=True)
+        app.state._approvals_grpc_server = None
 
     stack = getattr(app.state, "approvals_stack", None)
     if stack is not None:

@@ -157,11 +157,24 @@ impl DriverLifecycleCoordinator {
     pub fn unmount(&self, kernel: &Kernel, mount_point: &str, zone_id: &str) -> bool {
         let canonical = canonicalize(mount_point, zone_id);
 
-        // 1. Delete metastore entry (best-effort) — full path
-        // (ZoneMetaStore translates internally to its zone-relative root).
-        kernel.with_metastore(&canonical, |ms| {
-            let _ = ms.delete(mount_point);
-        });
+        // 1. Delete the DT_MOUNT metadata from the PARENT zone (the one
+        //    that "owns" `mount_point`).  Symmetric with `mount()`:
+        //    federation's apply-cb on the parent zone fires
+        //    `unwire_mount_core` on every peer when this raft-replicated
+        //    DeleteMetadata applies, so cross-node routing cleanup
+        //    propagates the same way it was set up.  Looking up via
+        //    `mount_point` itself routes through the new mount (the one
+        //    being unmounted) and lands in the wrong state machine.
+        //    Walk up to the parent path first so longest-prefix routing
+        //    skips this mount and finds the actual parent.
+        let parent_path =
+            lib::python::path_utils::parent_path(mount_point).unwrap_or_else(|| "/".to_string());
+        let route = kernel.vfs_router_arc().route(&parent_path, "root");
+        if let Ok(parent_route) = route {
+            kernel.with_metastore(&parent_route.mount_point, |ms| {
+                let _ = ms.delete(mount_point);
+            });
+        }
 
         // 2. DCache evict — mount point + all children
         kernel.dcache_evict(mount_point);

@@ -105,7 +105,7 @@ impl DCache {
 
     /// Evict all entries whose path starts with the given prefix.
     /// Returns the number of entries evicted.
-    pub(crate) fn evict_prefix(&self, prefix: &str) -> usize {
+    pub fn evict_prefix(&self, prefix: &str) -> usize {
         let keys: Vec<String> = self
             .cache
             .iter()

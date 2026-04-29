@@ -99,6 +99,24 @@ fn propose_set_metadata(
     }
 }
 
+pub(crate) fn propose_delete_metadata(
+    handle: &tokio::runtime::Handle,
+    node: &ZoneConsensus<FullStateMachine>,
+    key: &str,
+) -> Result<()> {
+    let cmd = Command::DeleteMetadata {
+        key: key.to_string(),
+    };
+    match handle.block_on(node.propose(cmd))? {
+        CommandResult::Success | CommandResult::Value(_) => Ok(()),
+        CommandResult::Error(e) => Err(RaftError::Raft(e)),
+        other => Err(RaftError::InvalidState(format!(
+            "unexpected propose result: {:?}",
+            other
+        ))),
+    }
+}
+
 fn propose_adjust_counter(
     handle: &tokio::runtime::Handle,
     node: &ZoneConsensus<FullStateMachine>,

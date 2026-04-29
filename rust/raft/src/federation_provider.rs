@@ -386,6 +386,46 @@ impl FederationProvider for RaftFederationProvider {
 
     fn remove_zone(&self, _kernel: &Kernel, zone_id: &str, force: bool) -> FederationResult<()> {
         let zm = self.zm().ok_or("federation not active")?;
+        let runtime = self
+            .runtime
+            .get()
+            .ok_or("federation runtime not initialised")?;
+        // Cascade-unmount every DT_MOUNT pointing at `zone_id` BEFORE
+        // dropping the consensus.  Apply-cb on each parent zone fires
+        // `unwire_mount_core` so VFSRouter / DCache cleanup propagates
+        // to every peer via raft.  Without this, parents keep stale
+        // routing entries and reads under the dead mount-point silently
+        // succeed against the (now-orphaned) target consensus Arc.
+        let mounts = self
+            .cross_zone_mounts
+            .get(zone_id)
+            .map(|v| v.clone())
+            .unwrap_or_default();
+        tracing::debug!(
+            zone_id = %zone_id,
+            force = force,
+            mount_count = mounts.len(),
+            "remove_zone cascade-unmount entry"
+        );
+        for (parent_zone_id, mount_path, _global) in &mounts {
+            if let Some(parent) = zm.registry().get_node(parent_zone_id) {
+                if let Err(e) =
+                    crate::zone_manager::propose_delete_metadata(runtime, &parent, mount_path)
+                {
+                    if !force {
+                        return Err(format!(
+                            "cascade-unmount {parent_zone_id}:{mount_path} failed: {e}"
+                        ));
+                    }
+                    tracing::warn!(
+                        parent = %parent_zone_id,
+                        mount = %mount_path,
+                        error = %e,
+                        "remove_zone(force=true): DT_MOUNT delete propose failed; continuing"
+                    );
+                }
+            }
+        }
         zm.remove_zone(zone_id, force).map_err(|e| e.to_string())
     }
 
@@ -660,6 +700,7 @@ fn unwire_mount_core(
     parent_zone_id: &str,
     mount_path: &str,
 ) {
+    tracing::debug!(parent_zone_id = %parent_zone_id, mount_path = %mount_path, "unwire_mount_core entered");
     let mut remove_empty: Option<String> = None;
     let mut unwired_global: Option<String> = None;
     for mut entry in cross_zone_mounts.iter_mut() {
@@ -682,6 +723,15 @@ fn unwire_mount_core(
     if let Some(global) = unwired_global {
         vfs_router.remove(&global, contracts::ROOT_ZONE_ID);
         dcache.evict(&global);
+        // Evict any cached child entries (`<global>/...`) — without this,
+        // reads under the unwired mount route to longest-prefix parent
+        // and hit the stale dcache entry from before unmount.
+        let prefix = if global.ends_with('/') {
+            global.clone()
+        } else {
+            format!("{}/", global)
+        };
+        dcache.evict_prefix(&prefix);
     }
 }
 

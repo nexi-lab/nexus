@@ -264,16 +264,21 @@ class FederationRPCService:
         # Standard sys_unlink on a DT_MOUNT entry → unmount.
         # Already-unmounted / never-mounted is a no-op (matches POSIX
         # `umount` of a non-mounted path).
-        ctx = (
-            self._kernel.context_for_zone(parent_zone)
-            if hasattr(self._kernel, "context_for_zone")
-            else None
+        from nexus_runtime import PyOperationContext as _RustCtx
+
+        ctx = _RustCtx(
+            user_id="federation-rpc",
+            zone_id=parent_zone or "root",
+            is_admin=True,
+            agent_id=None,
+            is_system=True,
+            groups=[],
+            admin_capabilities=[],
+            subject_type="user",
+            subject_id=None,
         )
         with contextlib.suppress(Exception):
-            if ctx is not None:
-                self._kernel.sys_unlink(path, ctx)
-            else:
-                self._kernel.sys_unlink(path)
+            self._kernel.sys_unlink(path, ctx)
         # Mirror into Python DLC removal: without this the
         # unmounted path stays reachable via the mount-registered path.
         nx = self._nexus_fs

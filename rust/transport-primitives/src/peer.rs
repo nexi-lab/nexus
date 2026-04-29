@@ -6,9 +6,44 @@ use crate::error::{Result, TransportError};
 ///
 /// SHA-256 of hostname, first 8 bytes as little-endian u64.
 /// Maps 0 to 1 (raft-rs reserves 0 as "no node").
+///
+/// This is the cold-start ID convention — every node in a freshly
+/// bootstrapped cluster derives identical IDs for each named peer
+/// from their hostnames alone, so initial `ConfState` is consistent
+/// without coordination.  Wipe-rejoin paths use [`compute_node_id`]
+/// with a non-zero incarnation to mint a fresh ID after a data wipe;
+/// see `RaftStorage::set_incarnation` and `ensure_voter_membership`.
 pub fn hostname_to_node_id(hostname: &str) -> u64 {
+    compute_node_id(hostname, 0)
+}
+
+/// Derive a deterministic node ID from a hostname plus an incarnation.
+///
+/// `incarnation == 0` is the cold-start sentinel and returns the same
+/// value as [`hostname_to_node_id`] — every node in a freshly bootstrapped
+/// cluster sees the same IDs without exchanging incarnation values, so
+/// the initial `ConfState` is consistent.
+///
+/// `incarnation > 0` mints a fresh ID space for that hostname:
+/// SHA-256 of `"<hostname>:<incarnation>"` (incarnation as big-endian
+/// u64), first 8 bytes as little-endian u64.  Used after a wipe-rejoin
+/// where the leader's in-memory `Progress[old_id]` is stale and reusing
+/// the prior ID would trigger raft-rs's `to_commit N out of range
+/// [last_index 0]` panic in `handle_heartbeat`.
+///
+/// Same `0 → 1` mapping as [`hostname_to_node_id`] (raft-rs reserves 0
+/// as "no node").
+pub fn compute_node_id(hostname: &str, incarnation: u64) -> u64 {
     use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(hostname.as_bytes());
+    let mut hasher = Sha256::new();
+    hasher.update(hostname.as_bytes());
+    if incarnation != 0 {
+        // Suffix only when non-zero so cold-start path matches the
+        // pre-incarnation `hostname_to_node_id` byte-for-byte.
+        hasher.update(b":");
+        hasher.update(incarnation.to_be_bytes());
+    }
+    let hash = hasher.finalize();
     let mut first_eight = [0u8; 8];
     first_eight.copy_from_slice(&hash[..8]);
     let value = u64::from_le_bytes(first_eight);
@@ -185,6 +220,48 @@ mod tests {
         assert_eq!(hostname_to_node_id("nexus-1"), 14044926161142285152);
         assert_eq!(hostname_to_node_id("nexus-2"), 768242927742468745);
         assert_eq!(hostname_to_node_id("witness"), 10099512703796518074);
+    }
+
+    #[test]
+    fn test_compute_node_id_zero_incarnation_matches_hostname_only() {
+        // Cold-start sentinel: incarnation=0 must equal the prior
+        // hostname-only function byte-for-byte so existing deployments
+        // and the cold-start convergence path keep working unchanged.
+        for h in ["nexus-1", "nexus-2", "witness", "100.64.0.21"] {
+            assert_eq!(compute_node_id(h, 0), hostname_to_node_id(h));
+        }
+    }
+
+    #[test]
+    fn test_compute_node_id_nonzero_incarnation_differs_from_hostname_only() {
+        // After a wipe the same hostname must produce a *different* ID
+        // when paired with a non-zero incarnation — that's the whole
+        // point of the marker.
+        let host = "nexus-1";
+        let cold = hostname_to_node_id(host);
+        let fresh1 = compute_node_id(host, 1);
+        let fresh_max = compute_node_id(host, u64::MAX);
+        assert_ne!(fresh1, cold);
+        assert_ne!(fresh_max, cold);
+        assert_ne!(fresh1, fresh_max);
+    }
+
+    #[test]
+    fn test_compute_node_id_deterministic_per_input() {
+        // Same inputs → same output across calls.
+        for inc in [0u64, 1, 42, u64::MAX] {
+            assert_eq!(compute_node_id("nexus-1", inc), compute_node_id("nexus-1", inc));
+        }
+    }
+
+    #[test]
+    fn test_compute_node_id_avoids_zero() {
+        // raft-rs reserves 0 as "no node"; the helper must never return 0.
+        // Spot-check a range of incarnations to make the property visible.
+        for inc in 0..1000u64 {
+            assert_ne!(compute_node_id("nexus-1", inc), 0);
+            assert_ne!(compute_node_id("witness", inc), 0);
+        }
     }
 
     #[test]

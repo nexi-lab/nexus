@@ -34,5 +34,5 @@ mod pool;
 pub use channel::create_channel;
 pub use config::{ClientConfig, ServerConfig, TlsConfig};
 pub use error::{Result, TransportError};
-pub use peer::{hostname_to_node_id, NodeAddress, PeerAddress};
+pub use peer::{compute_node_id, hostname_to_node_id, NodeAddress, PeerAddress};
 pub use pool::ConnectionPool;

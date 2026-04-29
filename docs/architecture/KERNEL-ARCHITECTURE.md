@@ -733,17 +733,23 @@ Any layer may import from them; they must **not** import from `nexus.core`,
 Both tier-neutral packages have a Rust mirror.  Names match so a reader
 jumping between the two trees finds the same module in the same place.
 
-| Tier-neutral package | Python                | Rust crate         |
-|----------------------|-----------------------|--------------------|
-| `contracts`          | `src/nexus/contracts` | `rust/contracts/`  |
-| `lib`                | `src/nexus/lib`       | `rust/lib/`        |
+| Tier-neutral package | Python                | Rust crate                       |
+|----------------------|-----------------------|----------------------------------|
+| `contracts`          | `src/nexus/contracts` | `rust/contracts/`                |
+| `lib`                | `src/nexus/lib`       | `rust/shared/lib/`               |
 
-`rust/lib/` builds against `wasm32-unknown-unknown` with default features.
-PyO3 wrappers for the algorithms (rebac, search, trigram, glob, io,
-prefix, simd, path_utils, bitmap, bloom, hash) live behind the optional
-`python` feature in `rust/lib/src/python/*.rs`.  `rust/nexus-cdylib`
-enables that feature so the wheel registers them through a single
-`lib::python::register(m)` call.
+`rust/shared/lib/` builds against `wasm32-unknown-unknown` with
+default features. PyO3 wrappers for the algorithms (rebac, search,
+trigram, glob, io, prefix, simd, path_utils, bitmap, bloom, hash) live
+behind the optional `python` feature in `rust/shared/lib/src/python/*.rs`.
+`rust/nexus-cdylib` enables that feature so the wheel registers them
+through a single `lib::python::register(m)` call.
+
+`rust/shared/transport-primitives/` sits next to `shared/lib/` at the
+same lowest dep-graph layer: TLS / pool / addressing / TOFU trust
+store / `PeerBlobClient` trait. Both `shared/` members depend on
+`contracts` only; every peer crate (kernel, raft, backends, rpc,
+transport, services) depends on them.
 
 ### 6.1 Workspace composition
 
@@ -918,8 +924,10 @@ Client and server live in role-distinct crates: `rpc` is a driver-layer crate
 (driver-outgoing calls), `transport` is a front-door services crate
 (in-bound listening), `raft` owns the federation peer fabric. All three talk
 through `shared/transport-primitives` so the wire-format is identical across
-sides. `RemoteBackend` consumes `rpc::vfs::RpcTransport` directly through the
-`backends → rpc` edge.
+sides. The `RpcTransport` type sits in the kernel crate (kernel-internal
+`RemoteMetaStore` / `RemotePipeBackend` / `RemoteStreamBackend` wrappers
+also wrap it directly); `rpc::vfs` re-exports it so peer crates name a
+single canonical path.
 
 ### Placement Decision Tree
 

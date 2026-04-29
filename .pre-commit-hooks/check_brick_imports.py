@@ -92,8 +92,10 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ],
     # Issue #3790: PolicyGate is exposed via app.state.policy_gate so MCP
     # middlewares can call gate.check() during egress/zone-access hooks.
+    # mount.py routes SSRF-blocked egress through the gate (Task 18).
     ("mcp", "approvals"): [
         "nexus.bricks.mcp.server",
+        "nexus.bricks.mcp.mount",
     ],
     # TODO(#2429): Fix parsers->sandbox via DI refactoring.
     ("parsers", "sandbox"): [

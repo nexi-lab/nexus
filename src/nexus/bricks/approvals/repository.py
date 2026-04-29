@@ -233,6 +233,44 @@ class ApprovalRepository:
             )
             return (await session.execute(stmt)).scalar_one_or_none() is not None
 
+    async def get_recent_decision(
+        self,
+        *,
+        zone_id: str,
+        kind: ApprovalKind,
+        subject: str,
+        since: datetime,
+        exclude_request_id: str | None = None,
+    ) -> ApprovalRequest | None:
+        """Return the most recent terminal row for the coalesce key after `since`.
+
+        Used to plug the "late insert orphan" race: once a pending row is
+        flipped to APPROVED/REJECTED/EXPIRED, the partial unique index
+        ``approval_requests_pending_coalesce`` (``WHERE status='pending'``)
+        frees the (zone_id, kind, subject) tuple for re-insertion. A caller
+        arriving milliseconds after the decide may insert a fresh pending row
+        that no operator is watching. The service consults this method to
+        propagate the recent decision (when scope semantics permit) instead
+        of stranding the late caller until timeout.
+        """
+        async with self._session_factory() as session:
+            stmt = (
+                select(ApprovalRequestModel)
+                .where(
+                    ApprovalRequestModel.zone_id == zone_id,
+                    ApprovalRequestModel.kind == kind.value,
+                    ApprovalRequestModel.subject == subject,
+                    ApprovalRequestModel.status != ApprovalRequestStatus.PENDING.value,
+                    ApprovalRequestModel.decided_at >= since,
+                )
+                .order_by(ApprovalRequestModel.decided_at.desc())
+                .limit(1)
+            )
+            if exclude_request_id is not None:
+                stmt = stmt.where(ApprovalRequestModel.id != exclude_request_id)
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            return _to_domain(row) if row else None
+
     async def sweep_expired(self, now: datetime) -> list[str]:
         """Mark all pending past-expires rows as expired and return their ids."""
         async with self._session_factory() as session:

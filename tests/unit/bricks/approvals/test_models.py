@@ -43,6 +43,7 @@ def test_decision_source_values():
         "http",
         "system_timeout",
         "push_api",
+        "system_inherited",
     }
 
 

@@ -21,6 +21,7 @@ from nexus.lib.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.bricks.approvals.policy_gate import PolicyGate
     from nexus.config import SSRFConfig
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
@@ -78,6 +79,7 @@ class MCPService:
         credential_service: Any = None,
         mount_lister: Callable[[], list[tuple[str, str]]] | None = None,
         ssrf_config: "SSRFConfig | None" = None,
+        policy_gate: "PolicyGate | None" = None,
     ):
         """Initialize MCP service.
 
@@ -89,13 +91,29 @@ class MCPService:
                 MCPMountManager so operator settings in
                 ``NexusConfig.security.ssrf`` take effect for SSE/HTTP mount
                 validation (Issue #3792). When None, conservative defaults apply.
+            policy_gate: Optional PolicyGate forwarded into every
+                ``MCPMountManager`` this service constructs so SSRF-blocked
+                egress can route through the approval queue (Issue #3790,
+                Task 18). The gate is normally built later in the FastAPI
+                approvals lifespan, so callers should attach it post-hoc via
+                :meth:`set_policy_gate`. ``None`` preserves fail-closed.
         """
         self._filesystem = filesystem
         self._credential_service = credential_service
         self._mount_lister = mount_lister
         self._ssrf_config = ssrf_config
+        self._policy_gate = policy_gate
 
         logger.info("[MCPService] Initialized")
+
+    def set_policy_gate(self, gate: "PolicyGate | None") -> None:
+        """Attach (or detach) the PolicyGate after construction.
+
+        The approvals lifespan calls this once it has built the gate so that
+        every subsequent ``MCPMountManager`` constructed by this service
+        consults the gate when SSRF blocks an unlisted host (Issue #3790).
+        """
+        self._policy_gate = gate
 
     # =========================================================================
     # Public API: MCP Mount Management
@@ -851,4 +869,8 @@ class MCPService:
         if self._filesystem is None:
             raise RuntimeError("Filesystem not configured for MCPService")
 
-        return MCPMountManager(self._filesystem, ssrf_config=self._ssrf_config)
+        return MCPMountManager(
+            self._filesystem,
+            ssrf_config=self._ssrf_config,
+            policy_gate=self._policy_gate,
+        )

@@ -93,9 +93,20 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     # Issue #3790: PolicyGate is exposed via app.state.policy_gate so MCP
     # middlewares can call gate.check() during egress/zone-access hooks.
     # mount.py routes SSRF-blocked egress through the gate (Task 18).
+    # connection_manager.py and mcp_service.py thread the gate down to
+    # MCPMountManager (Task 18 follow-up) — TYPE_CHECKING-only annotation.
     ("mcp", "approvals"): [
         "nexus.bricks.mcp.server",
         "nexus.bricks.mcp.mount",
+        "nexus.bricks.mcp.connection_manager",
+        "nexus.bricks.mcp.mcp_service",
+    ],
+    # Issue #3790: ReBACCapabilityAuth uses AuthResult as a type-only hint
+    # (TYPE_CHECKING) for the auth-pipeline boundary it adapts. The runtime
+    # surface is duck-typed via a Protocol — no live coupling to the auth
+    # brick's internals.
+    ("approvals", "auth"): [
+        "nexus.bricks.approvals.grpc_auth",
     ],
     # TODO(#2429): Fix parsers->sandbox via DI refactoring.
     ("parsers", "sandbox"): [

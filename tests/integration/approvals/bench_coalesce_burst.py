@@ -7,6 +7,18 @@ Validates:
 
 Expectation: one DB row, one decide call, all callers unblock < 500 ms after notify.
 
+Scope choice: this bench intentionally uses ``DecisionScope.ONCE`` and a
+unique ``session_id`` per caller. With the late-insert orphan-race fix
+(Issue #3790, follow-up item 3), the ONCE scope branch deliberately does
+NOT auto-inherit a recent decision — operator intent for ONCE is one
+prompt per call. The bench sidesteps the late-insert window entirely by
+parking on a barrier until every caller has registered its dispatcher
+future BEFORE the single decide call. Without that barrier, late callers
+would still time out on ONCE scope (correct semantics, but not what this
+bench is measuring). For SESSION/PERSIST scopes the inherit branch makes
+the late-insert window safe in production; see
+``test_late_insert_race.py`` for those semantics.
+
 Co-located with the approvals integration tests so the `approval_service`
 fixture from `conftest.py` is picked up. Sibling tests use the same
 `pytestmark = pytest.mark.integration` marker (see test_grpc_server.py,
@@ -85,20 +97,19 @@ async def test_coalesce_burst_100_callers(approval_service: ApprovalService) -> 
         # point the partial unique index admits a new pending row keyed on
         # their own request_id — and that row is never decided.
         #
-        # Peek at the dispatcher's private waiters dict to count registered
-        # futures. This is intentionally white-box: a public count helper would
-        # only exist for tests, and the alternative (sleeping) is racy. Access
-        # via getattr to avoid mypy attribute warnings on private members.
+        # Use the dispatcher's public waiter_count() accessor to count
+        # registered futures. This is intentionally white-box: the alternative
+        # (sleeping a fixed duration) is racy and depends on cross-task
+        # scheduling order on the event loop.
         dispatcher = approval_service._dispatcher
-        waiters: dict[str, list] = dispatcher._waiters
         for _ in range(100):
-            registered = len(waiters.get(target.id, ()))
+            registered = dispatcher.waiter_count(target.id)
             if registered >= n_callers:
                 break
             await asyncio.sleep(0.05)
         else:
             raise AssertionError(
-                f"only {len(waiters.get(target.id, ()))}/{n_callers} callers "
+                f"only {dispatcher.waiter_count(target.id)}/{n_callers} callers "
                 f"registered before timeout"
             )
 

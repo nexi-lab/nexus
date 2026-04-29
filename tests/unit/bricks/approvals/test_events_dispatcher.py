@@ -42,3 +42,22 @@ async def test_in_flight_request_ids_returns_known_keys():
     d.register("req_a")
     d.register("req_b")
     assert set(d.in_flight_request_ids()) == {"req_a", "req_b"}
+
+
+@pytest.mark.asyncio
+async def test_waiter_count_returns_zero_for_unknown_id():
+    d = Dispatcher()
+    assert d.waiter_count("nope") == 0
+
+
+@pytest.mark.asyncio
+async def test_waiter_count_returns_n_after_n_register_calls():
+    d = Dispatcher()
+    for _ in range(3):
+        d.register("req_c")
+    assert d.waiter_count("req_c") == 3
+    # Other ids remain at zero.
+    assert d.waiter_count("req_d") == 0
+    # Resolve drops the parked futures back to zero.
+    d.resolve("req_c", Decision.APPROVED)
+    assert d.waiter_count("req_c") == 0

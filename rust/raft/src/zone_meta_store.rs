@@ -161,6 +161,11 @@ pub(crate) fn proto_to_kernel(bytes: &[u8]) -> Result<KernelFileMetadata, MetaSt
         } else {
             Some(proto.target_zone_id)
         },
+        link_target: if proto.link_target.is_empty() {
+            None
+        } else {
+            Some(proto.link_target)
+        },
     })
 }
 
@@ -179,6 +184,9 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
         // replicated SetMetadata to wire the mount on followers.
         // Empty for non-DT_MOUNT entries.
         target_zone_id: meta.target_zone_id.clone().unwrap_or_default(),
+        // For DT_LINK entries this carries the link target path the
+        // route() one-hop resolver follows. Empty for non-DT_LINK entries.
+        link_target: meta.link_target.clone().unwrap_or_default(),
         ..Default::default()
     };
     proto.encode_to_vec()
@@ -349,6 +357,7 @@ mod tests {
             modified_at_ms: None,
             last_writer_address: Some("nexus-1:2028".to_string()),
             target_zone_id: None,
+            link_target: None,
         };
         let restored = proto_to_kernel(&kernel_to_proto(&meta)).unwrap();
         assert_eq!(restored.path, meta.path);

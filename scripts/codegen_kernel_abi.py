@@ -987,6 +987,40 @@ def generate_stubs(
         "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
     )
     lines.append("")
+    # ── ManagedAgentService PyO3 surface (services::python) -- hand-written,
+    # not codegen. Boot-installer for AgentKind::MANAGED hooks +
+    # session lifecycle.
+    lines.append("# " + "-" * 75)
+    lines.append("# ManagedAgentService PyO3 surface (rust/services/src/python/mod.rs)")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append("def nx_managed_agent_install(py_kernel: Any) -> None: ...")
+    lines.append("")
+    # ── AcpService PyO3 surface (services::acp::pyo3) — hand-written,
+    # NOT codegen. Hosts AgentKind::UNMANAGED agents via subprocess +
+    # ACP-over-stdio.
+    lines.append("# " + "-" * 75)
+    lines.append("# AcpService PyO3 surface (rust/services/src/acp/pyo3.rs)")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append('def nx_acp_install(py_kernel: Any, default_zone: str = "root") -> None: ...')
+    lines.append("def nx_acp_set_agent_registry(py_kernel: Any, registry: Any) -> None: ...")
+    lines.append(
+        "def nx_acp_register_on_terminate(py_kernel: Any, callback_id: str, callback: Any) -> None: ..."
+    )
+    lines.append("")
+    # ── Generic Rust-service dispatch entry point (services::python) — same
+    # lookup the tonic Call handler uses; in-process callers should
+    # prefer this over per-service shortcuts so audit/permission hooks
+    # can land in one place.
+    lines.append("# " + "-" * 75)
+    lines.append("# Generic Rust-service dispatch (rust/services/src/python/mod.rs)")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append(
+        "def nx_kernel_dispatch_rust_call(py_kernel: Any, service: str, method: str, payload: bytes) -> bytes | None: ..."
+    )
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -1505,6 +1539,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         '        modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),',
         '        last_writer_address: get_opt_str("last_writer_address")?,',
         '        target_zone_id: get_opt_str("target_zone_id")?,',
+        '        link_target: get_opt_str("link_target").ok().flatten(),',
         "    })",
         "}",
         "",
@@ -1549,6 +1584,9 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "        .map_err(err)?;",
         '    set_optional_datetime(py, &kwargs, "created_at", meta.created_at_ms).map_err(err)?;',
         '    set_optional_datetime(py, &kwargs, "modified_at", meta.modified_at_ms).map_err(err)?;',
+        "    if let Some(target) = meta.link_target.as_deref() {",
+        '        kwargs.set_item("link_target", target).map_err(err)?;',
+        "    }",
         "    cls.call((), Some(&kwargs)).map_err(err)",
         "}",
         "",
@@ -2367,6 +2405,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '        modified_at_ms: extract_opt_datetime_ms(obj, "modified_at"),',
             '        last_writer_address: get_opt_str("last_writer_address")?,',
             '        target_zone_id: get_opt_str("target_zone_id")?,',
+            '        link_target: get_opt_str("link_target").ok().flatten(),',
             "    })",
             "}",
             "",
@@ -2411,6 +2450,9 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        .map_err(err)?;",
             '    set_optional_datetime(py, &kwargs, "created_at", meta.created_at_ms).map_err(err)?;',
             '    set_optional_datetime(py, &kwargs, "modified_at", meta.modified_at_ms).map_err(err)?;',
+            "    if let Some(target) = meta.link_target.as_deref() {",
+            '        kwargs.set_item("link_target", target).map_err(err)?;',
+            "    }",
             "    cls.call((), Some(&kwargs)).map_err(err)",
             "}",
             "",
@@ -3364,7 +3406,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    // ── sys_setattr — unified mount/attr syscall ─────────────────────",
             "",
-            '    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, hn_stories_per_feed=None, hn_include_comments=None, cli_command=None, cli_service=None, cli_auth_env_json=None, x_bearer_token=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0))]',
+            '    #[pyo3(signature = (path, entry_type, backend_name="", local_root=None, fsync=false, backend_type="cas", follow_symlinks=true, openai_base_url=None, openai_api_key=None, openai_model=None, openai_blob_root=None, anthropic_base_url=None, anthropic_api_key=None, anthropic_model=None, anthropic_blob_root=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, hn_stories_per_feed=None, hn_include_comments=None, cli_command=None, cli_service=None, cli_auth_env_json=None, x_bearer_token=None, metastore_path=None, io_profile="balanced", zone_id="root", is_external=false, capacity=65536, mime_type=None, modified_at_ms=None, read_fd=None, write_fd=None, server_address=None, remote_auth_token=None, remote_ca_pem=None, remote_cert_pem=None, remote_key_pem=None, remote_timeout=30.0, link_target=None))]',
             "    #[allow(clippy::too_many_arguments)]",
             "    fn sys_setattr<'py>(",
             "        &self,",
@@ -3417,6 +3459,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        remote_cert_pem: Option<&[u8]>,",
             "        remote_key_pem: Option<&[u8]>,",
             "        remote_timeout: f64,",
+            "        link_target: Option<&str>,",
             "    ) -> PyResult<Py<PyAny>> {",
             "        // Phase 2: 17-way backend-type construction moved to",
             "        // `backends::python::factory::DefaultBackendFactory`.  Kernel",
@@ -3493,6 +3536,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "                write_fd,",
             "                mime_type,",
             "                modified_at_ms,",
+            "                link_target,",
             "            )",
             "            .map_err::<PyErr, _>(Into::into)?;",
             "",
@@ -3977,6 +4021,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '                dict.set_item("mode", s.mode)?;',
             '                dict.set_item("version", s.version)?;',
             '                dict.set_item("zone_id", s.zone_id.as_deref())?;',
+            '                dict.set_item("link_target", s.link_target.as_deref())?;',
             "                match &s.lock {",
             "                    Some(lock) => {",
             "                        let lock_dict = PyDict::new(py);",

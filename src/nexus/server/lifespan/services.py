@@ -628,19 +628,16 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     # Fallback: create consumer if not provided by factory (e.g. no record_store)
     if tdc is None and nx is not None:
         try:
+            from nexus.task_manager.acp_adapter import AcpAdapter
             from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
 
             _task_svc = getattr(nx, "_task_manager_service", None)
-            # AcpService lives on AcpRPCService (created in _boot_wired_services)
-            _acp_svc = None
-            _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
-            if _acp_rpc_ref is not None:
-                _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
-                _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
+            _kernel_handle = getattr(nx, "_kernel", None)
+            _acp_adapter = AcpAdapter(_kernel_handle) if _kernel_handle is not None else None
             _proc_tbl = app.state.agent_registry
             if _task_svc is not None:
                 tdc = TaskDispatchPipeConsumer(
-                    acp_service=_acp_svc,
+                    acp_service=_acp_adapter,
                     agent_registry=_proc_tbl,
                 )
                 tdc.set_task_service(_task_svc)

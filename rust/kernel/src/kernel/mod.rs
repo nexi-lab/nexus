@@ -15,7 +15,7 @@
 
 #[cfg(test)]
 use crate::dcache::DT_REG;
-use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM};
+use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
 use crate::dispatch::{MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
@@ -139,63 +139,13 @@ impl From<std::io::Error> for KernelError {
 }
 
 // ── OperationContext — kernel-internal credential ─────────────────────────
-
-/// Syscall credential — carried through every kernel operation.
-///
-/// Constructed by thin wrapper (Python, gRPC, etc.) with identity fields.
-/// Rust kernel uses `zone_id` for routing; hooks use the full context.
-///
-/// Analogous to Linux `struct cred` — immutable after construction.
-#[derive(Clone, Debug)]
-pub struct OperationContext {
-    /// Subject identity (human user or service account).
-    pub user_id: String,
-    /// Routing zone — NexusFS instance zone for mount lookup (always set).
-    pub zone_id: String,
-    /// Admin privilege flag.
-    pub is_admin: bool,
-    /// Agent identity (optional, for agent-initiated operations).
-    pub agent_id: Option<String>,
-    /// System operation flag (bypasses all checks).
-    pub is_system: bool,
-    /// Group memberships for ReBAC.
-    pub groups: Vec<String>,
-    /// Granted admin capabilities (e.g. "MANAGE_ZONES", "READ_ALL").
-    pub admin_capabilities: Vec<String>,
-    /// Subject type for ReBAC (default: "user").
-    pub subject_type: String,
-    /// Subject ID for ReBAC (defaults to user_id).
-    pub subject_id: Option<String>,
-    /// Audit trail correlation ID.
-    pub request_id: String,
-    /// Caller's zone_id (None = no zone restriction). Distinct from routing zone_id.
-    pub context_zone_id: Option<String>,
-}
-
-impl OperationContext {
-    #[allow(dead_code)]
-    pub fn new(
-        user_id: &str,
-        zone_id: &str,
-        is_admin: bool,
-        agent_id: Option<&str>,
-        is_system: bool,
-    ) -> Self {
-        Self {
-            user_id: user_id.to_string(),
-            zone_id: zone_id.to_string(),
-            is_admin,
-            agent_id: agent_id.map(|s| s.to_string()),
-            is_system,
-            groups: Vec::new(),
-            admin_capabilities: Vec::new(),
-            subject_type: "user".to_string(),
-            subject_id: None,
-            request_id: String::new(),
-            context_zone_id: None,
-        }
-    }
-}
+//
+// Struct + impl live in the `contracts` crate so out-of-kernel
+// services (`rust/services/src/{acp,managed_agent,…}/`) can build
+// system-tier contexts without pulling kernel as a dep just for this
+// type. Re-exported here under the historical `kernel::kernel::
+// OperationContext` path so every existing call site keeps compiling.
+pub use contracts::OperationContext;
 
 // ── Strong-typed result types ──────────────────────────────────────────
 
@@ -363,6 +313,12 @@ pub struct StatResult {
     pub modified_at_ms: Option<i64>,
     pub last_writer_address: Option<String>,
     pub lock: Option<crate::lock_manager::KernelLockInfo>,
+    /// DT_LINK target — `Some` only when `entry_type == DT_LINK`.
+    /// `sys_stat` uses lstat semantics (returns the link's own
+    /// metadata, not the target's), so callers that want to follow
+    /// the link compose with the kernel's transparent-follow paths
+    /// or call sys_stat on `link_target` directly.
+    pub link_target: Option<String>,
 }
 
 // ── ZonesProcfsEntry — R20.18.4 procfs virtual namespace ──────────────
@@ -485,24 +441,45 @@ struct NativeHookEntry {
 #[allow(dead_code)]
 pub(crate) struct NativeHookRegistry {
     hooks: Vec<NativeHookEntry>,
+    /// Suffixes declared by registered mutating hooks (via
+    /// `NativeInterceptHook::mutating_path_suffix`). Populated on
+    /// register; consulted by `has_mutating_match` so the kernel can
+    /// decide whether to clone write content into `WriteHookCtx`. An
+    /// empty Vec is the steady state today (no mutating hooks
+    /// registered) — the call site short-circuits before any path
+    /// comparison.
+    mutating_suffixes: Vec<&'static str>,
 }
 
 #[allow(dead_code)]
 impl NativeHookRegistry {
     pub(crate) fn new() -> Self {
-        Self { hooks: Vec::new() }
+        Self {
+            hooks: Vec::new(),
+            mutating_suffixes: Vec::new(),
+        }
     }
 
     pub(crate) fn register(&mut self, hook: Box<dyn NativeInterceptHook>) {
+        if let Some(suffix) = hook.mutating_path_suffix() {
+            self.mutating_suffixes.push(suffix);
+        }
         self.hooks.push(NativeHookEntry { hook });
     }
 
-    /// Dispatch pre-hooks. Returns Err on first abort.
-    pub(crate) fn dispatch_pre(&self, ctx: &HookContext) -> Result<(), String> {
+    /// Dispatch pre-hooks. Returns Err on first abort. The
+    /// `HookOutcome::Replace` variant is propagated to the caller via
+    /// the returned bytes; today only `sys_write` honours it, other
+    /// syscalls drop the replacement.
+    pub(crate) fn dispatch_pre(&self, ctx: &HookContext) -> Result<Option<Vec<u8>>, String> {
+        let mut replacement: Option<Vec<u8>> = None;
         for entry in &self.hooks {
-            entry.hook.on_pre(ctx)?;
+            match entry.hook.on_pre(ctx)? {
+                crate::dispatch::HookOutcome::Pass => {}
+                crate::dispatch::HookOutcome::Replace(bytes) => replacement = Some(bytes),
+            }
         }
-        Ok(())
+        Ok(replacement)
     }
 
     /// Dispatch post-hooks (fire-and-forget).
@@ -514,6 +491,17 @@ impl NativeHookRegistry {
 
     pub(crate) fn count(&self) -> usize {
         self.hooks.len()
+    }
+
+    /// Returns true when at least one registered hook declared a
+    /// mutating path suffix that matches `path`. Cheap (linear scan
+    /// over a Vec that today has at most a handful of entries); the
+    /// steady state (no mutating hooks) returns false on the
+    /// empty-Vec check before any string comparison.
+    pub(crate) fn has_mutating_match(&self, path: &str) -> bool {
+        self.mutating_suffixes
+            .iter()
+            .any(|suffix| path.ends_with(suffix))
     }
 }
 
@@ -623,7 +611,7 @@ pub struct Kernel {
     // the services rlib (rust/services/src/agent_table.rs); the kernel
     // owns an Arc handle so AgentStatusResolver and other kernel-internal
     // consumers can share read access without depending on field layout.
-    pub(crate) agent_table: Arc<crate::core::agents::table::AgentTable>,
+    pub agent_table: Arc<crate::core::agents::table::AgentTable>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `VFSRouter::entries` as
@@ -802,6 +790,12 @@ impl Kernel {
         // this seam so non-cdylib callers (Rust tests, embedded) don't
         // pay the federation init cost unless they explicitly install
         // the provider.
+        // ManagedAgentService is installed by the cdylib boot path
+        // (services lives in a peer crate; kernel does NOT depend on
+        // services). Python-side: `nexus_runtime.nx_managed_agent_install
+        // (kernel)` runs in `_wired.py` after `Kernel::new` returns.
+        // Pure-Rust embedders call `services::managed_agent::ManagedAgentService::install(&k)`
+        // themselves; nothing happens automatically here.
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.
@@ -1017,6 +1011,10 @@ impl Kernel {
             // mkdir, etc.); DT_MOUNT entries are constructed in dlc.rs
             // with the target zone explicitly set.
             target_zone_id: None,
+            // DT_LINK target: sys_setattr's DT_LINK branch passes the
+            // target through a different construction path; non-link
+            // metadata never carries a value here.
+            link_target: None,
         }
     }
 
@@ -1367,6 +1365,7 @@ impl Kernel {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: last_writer_address.map(|s| s.to_string()),
+                link_target: None,
             },
         );
     }
@@ -1374,6 +1373,40 @@ impl Kernel {
     /// Put a pre-built CachedEntry into the dcache. Used by DLC.mount().
     pub(crate) fn dcache_put_entry(&self, path: &str, entry: CachedEntry) {
         self.dcache.put(path, entry);
+    }
+
+    /// Resolve `path` through DT_LINK indirection for content-touching
+    /// syscalls (`sys_read`, `sys_write`, etc.). Non-link paths and
+    /// missing entries borrow the input — zero allocation on the hot
+    /// path. Link entries follow one hop with cycle detection (see
+    /// `DCache::resolve_link`); chain / self-loop / missing-target
+    /// failures surface as `KernelError::PermissionDenied` so the
+    /// existing kernel-error handling chain doesn't need a new variant.
+    ///
+    /// `sys_stat` deliberately bypasses this helper — `lstat` semantics
+    /// require the raw DT_LINK metadata, not the resolved target.
+    pub(crate) fn resolve_path_through_link<'a>(
+        &self,
+        path: &'a str,
+    ) -> Result<std::borrow::Cow<'a, str>, KernelError> {
+        match self.dcache.resolve_link(path) {
+            Ok(resolved) => {
+                if resolved == path {
+                    Ok(std::borrow::Cow::Borrowed(path))
+                } else {
+                    Ok(std::borrow::Cow::Owned(resolved))
+                }
+            }
+            Err(crate::dcache::LinkResolveError::Chained) => Err(KernelError::PermissionDenied(
+                format!("DT_LINK chain rejected (ELOOP) at {path}"),
+            )),
+            Err(crate::dcache::LinkResolveError::SelfLoop) => Err(KernelError::PermissionDenied(
+                format!("DT_LINK self-loop at {path}"),
+            )),
+            Err(crate::dcache::LinkResolveError::MissingTarget) => Err(
+                KernelError::PermissionDenied(format!("DT_LINK at {path} has no link_target")),
+            ),
+        }
     }
 
     /// Get hot-path tuple: (entry_type, last_writer_address).
@@ -1505,6 +1538,8 @@ impl Kernel {
         // -- UPDATE params (entry_type == 0) --
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        // -- DT_LINK params (entry_type == 6) --
+        link_target: Option<&str>,
     ) -> Result<SysSetAttrResult, KernelError> {
         match entry_type {
             2 => {
@@ -1579,10 +1614,110 @@ impl Kernel {
                 // UPDATE or IDEMPOTENT OPEN
                 self.setattr_update(path, mime_type, modified_at_ms)
             }
+            6 => {
+                // DT_LINK — VFS-internal symlink (KERNEL-ARCHITECTURE.md §4.5).
+                let target = link_target.ok_or_else(|| {
+                    KernelError::PermissionDenied(
+                        "sys_setattr(DT_LINK): link_target is required".to_string(),
+                    )
+                })?;
+                self.setattr_create_link(path, zone_id, target)
+            }
             _ => Err(KernelError::PermissionDenied(format!(
                 "sys_setattr: unsupported entry_type={entry_type}"
             ))),
         }
+    }
+
+    /// DT_LINK: create a VFS-internal symlink whose `link_target`
+    /// resolves at `route()` time (one hop, with cycle detection — see
+    /// `DCache::resolve_link`). Self-loops (`link_target == path`) are
+    /// rejected here so the resolver never has to handle them at lookup
+    /// time. Idempotent for an existing DT_LINK at the same path with
+    /// the same target.
+    fn setattr_create_link(
+        &self,
+        path: &str,
+        zone_id: &str,
+        link_target: &str,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        // Reject self-loops at write time; resolver assumes none ever land.
+        if link_target == path {
+            return Err(KernelError::PermissionDenied(format!(
+                "sys_setattr(DT_LINK): self-loop rejected ({path:?})"
+            )));
+        }
+        // Reject relative targets — DT_LINK semantics require absolute
+        // paths so the resolver can route() without a contextual base.
+        if !link_target.starts_with('/') {
+            return Err(KernelError::PermissionDenied(format!(
+                "sys_setattr(DT_LINK): link_target must be absolute, got {link_target:?}"
+            )));
+        }
+        // Idempotent open: existing DT_LINK with the same target is OK.
+        if let Some(existing) = self.metastore_get(path).ok().flatten() {
+            if existing.entry_type == DT_LINK
+                && existing.link_target.as_deref() == Some(link_target)
+            {
+                return Ok(SysSetAttrResult {
+                    path: path.to_string(),
+                    created: false,
+                    entry_type: DT_LINK as i32,
+                    backend_name: None,
+                    capacity: None,
+                    updated: Vec::new(),
+                    shm_path: None,
+                    data_rd_fd: None,
+                    space_rd_fd: None,
+                });
+            }
+            // Existing DT_LINK with a different target — reject so writes
+            // don't silently re-target. Caller must sys_unlink first.
+            if existing.entry_type == DT_LINK {
+                return Err(KernelError::PermissionDenied(format!(
+                    "sys_setattr(DT_LINK): {path:?} already a DT_LINK with different target"
+                )));
+            }
+        }
+        let meta = crate::meta_store::FileMetadata {
+            path: path.to_string(),
+            size: 0,
+            content_id: None,
+            version: 1,
+            entry_type: DT_LINK,
+            zone_id: Some(zone_id.to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: self.self_address.read().clone(),
+            target_zone_id: None,
+            link_target: Some(link_target.to_string()),
+        };
+        self.metastore_put(path, meta)?;
+        let entry = CachedEntry {
+            size: 0,
+            content_id: None,
+            version: 1,
+            entry_type: DT_LINK,
+            zone_id: Some(zone_id.to_string()),
+            mime_type: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            last_writer_address: None,
+            link_target: Some(link_target.to_string()),
+        };
+        self.dcache_put_entry(path, entry);
+        Ok(SysSetAttrResult {
+            path: path.to_string(),
+            created: true,
+            entry_type: DT_LINK as i32,
+            backend_name: None,
+            capacity: None,
+            updated: Vec::new(),
+            shm_path: None,
+            data_rd_fd: None,
+            space_rd_fd: None,
+        })
     }
 
     /// DT_PIPE: create pipe buffer, or idempotent-open if it already exists.
@@ -1593,7 +1728,7 @@ impl Kernel {
     /// - `"stdio"` → StdioPipeBackend (subprocess fd, newline-framed)
     /// - `"wal"` → WalPipeCore (raft-replicated, cross-node, single-consumer)
     #[allow(unused_variables)]
-    fn setattr_pipe(
+    pub fn setattr_pipe(
         &self,
         path: &str,
         capacity: usize,
@@ -2075,6 +2210,7 @@ impl Kernel {
                 modified_at_ms: None,
                 last_writer_address: None,
                 lock: None,
+                link_target: None,
             });
         }
         // /__sys__/zones/<id>: synthesise from federation list.
@@ -2099,6 +2235,7 @@ impl Kernel {
             modified_at_ms: None,
             last_writer_address: provider.bind_address(self),
             lock: None,
+            link_target: None,
         })
     }
 
@@ -2989,6 +3126,7 @@ mod tests {
             None,  // write_fd
             None,  // mime_type
             None,  // modified_at_ms
+            None,  // link_target
         )
     }
 
@@ -3065,6 +3203,7 @@ mod tests {
                 modified_at_ms: None,
                 last_writer_address: None,
                 target_zone_id: None,
+                link_target: None,
             },
         )
         .unwrap();
@@ -3085,6 +3224,7 @@ mod tests {
                 None,
                 None,
                 Some("text/plain"),
+                None,
                 None,
             )
             .unwrap();
@@ -3148,6 +3288,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
         assert!(r.created);
@@ -3183,6 +3324,7 @@ mod tests {
             "root",
             false,
             0,
+            None,
             None,
             None,
             None,
@@ -3371,5 +3513,75 @@ mod tests {
             !k.vfs_router.mount_points().iter().any(|m| m == "/mnt"),
             "mount point should have been removed from the routing table"
         );
+    }
+
+    // ── dispatch_rust_call ─────────────────────────────────────────────
+
+    mod dispatch_rust_call {
+        use super::*;
+        use crate::service_registry::{RustCallError, RustService};
+        use std::sync::Arc;
+
+        struct EchoService;
+
+        impl RustService for EchoService {
+            fn name(&self) -> &str {
+                "echo"
+            }
+            fn dispatch(&self, method: &str, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+                match method {
+                    "echo" => Ok(payload.to_vec()),
+                    _ => Err(RustCallError::NotFound),
+                }
+            }
+        }
+
+        #[test]
+        fn returns_none_for_unknown_service() {
+            let k = Kernel::new();
+            assert!(k.dispatch_rust_call("nope", "any", b"{}").is_none());
+        }
+
+        #[test]
+        fn returns_none_for_python_flavoured_service() {
+            // ServiceRegistry stores Python services through `enlist`;
+            // dispatch_rust_call only routes Rust-flavoured ones, so
+            // Python entries should fall through (None) — caller hands
+            // off to the Python `dispatch_method` path.
+            let k = Kernel::new();
+            assert!(k.dispatch_rust_call("auth_service", "any", b"{}").is_none());
+        }
+
+        #[test]
+        fn routes_through_to_registered_rust_service() {
+            let k = Kernel::new();
+            k.register_rust_service(
+                "echo",
+                Arc::new(EchoService) as Arc<dyn RustService>,
+                vec![],
+            )
+            .unwrap();
+            let out = k
+                .dispatch_rust_call("echo", "echo", b"hello")
+                .unwrap()
+                .unwrap();
+            assert_eq!(out, b"hello");
+        }
+
+        #[test]
+        fn surfaces_method_not_found_from_service() {
+            let k = Kernel::new();
+            k.register_rust_service(
+                "echo",
+                Arc::new(EchoService) as Arc<dyn RustService>,
+                vec![],
+            )
+            .unwrap();
+            let err = k
+                .dispatch_rust_call("echo", "nope", b"{}")
+                .unwrap()
+                .unwrap_err();
+            assert!(matches!(err, RustCallError::NotFound));
+        }
     }
 }

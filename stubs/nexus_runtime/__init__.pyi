@@ -334,6 +334,7 @@ class PyKernel:
         remote_cert_pem: bytes | None,
         remote_key_pem: bytes | None,
         remote_timeout: float,
+        link_target: str | None,
     ) -> Any: ...
     def has_mount(self, mount_point: str, zone_id: str) -> bool: ...
     def get_mount_points(self) -> list[str]: ...
@@ -590,3 +591,25 @@ def federation_zone_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: .
 def federation_start_replication_scanner(
     kernel: Any, zone_id: str, policies_json: str, interval_ms: int
 ) -> None: ...
+
+# ---------------------------------------------------------------------------
+# ManagedAgentService PyO3 surface (rust/services/src/python/mod.rs)
+# ---------------------------------------------------------------------------
+
+def nx_managed_agent_install(py_kernel: Any) -> None: ...
+
+# ---------------------------------------------------------------------------
+# AcpService PyO3 surface (rust/services/src/acp/pyo3.rs)
+# ---------------------------------------------------------------------------
+
+def nx_acp_install(py_kernel: Any, default_zone: str = "root") -> None: ...
+def nx_acp_set_agent_registry(py_kernel: Any, registry: Any) -> None: ...
+def nx_acp_register_on_terminate(py_kernel: Any, callback_id: str, callback: Any) -> None: ...
+
+# ---------------------------------------------------------------------------
+# Generic Rust-service dispatch (rust/services/src/python/mod.rs)
+# ---------------------------------------------------------------------------
+
+def nx_kernel_dispatch_rust_call(
+    py_kernel: Any, service: str, method: str, payload: bytes
+) -> bytes | None: ...

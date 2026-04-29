@@ -194,7 +194,7 @@ Kernel syscalls, all POSIX-aligned, all path-addressed:
 
 `sys_setattr` is the universal creation/management syscall:
 `mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
-`umount` = `rmdir` on DT_MOUNT path.
+`umount` = `rmdir` on DT_MOUNT path, `symlink` = `sys_setattr(entry_type=DT_LINK, link_target=...)`.
 
 Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` pattern):
 - `sys_lock(path, lock_id=None)` — acquire (lock_id=None) or extend TTL (lock_id=existing)
@@ -212,6 +212,9 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
 - **DT_PIPE / DT_STREAM I/O**: Rust dcache detects entry_type early in sys_read/sys_write
   and dispatches to PipeManager/StreamManager inline — no VFS lock, no metastore update,
   no observer dispatch (matching Linux `write(2)` on a pipe not triggering inotify)
+- **DT_LINK**: route() follows the link target one hop with self-loop rejection (§4.5);
+  hooks fire on the resolved target path so audit and access checks behave identically
+  to a direct write
 - **Read**: same pipeline minus FileEvent (reads are not mutations)
 - **Read-only metadata** (stat, access, readdir, is_directory): direct Metastore
   lookup only — no routing, locking, or dispatch
@@ -528,6 +531,32 @@ See `federation-memo.md` §7j for design rationale.
 - **Local**: `VFSSemaphore` (Rust) — exclusive (mutex), shared (RW), counting (semaphore)
 - **Distributed**: `upgrade_to_distributed(ZoneConsensus, Handle)` — advisory locks replicated via Raft
 - **Syscalls**: `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2)
+
+### 4.5 DT_LINK — Path-Internal Symlink
+
+| Property | Value |
+|----------|-------|
+| Linux analogue | `symlink(2)` |
+| Entry type | `DT_LINK = 6` (`proto/nexus/core/metadata.proto`) |
+| Storage | `FileMetadata.link_target` — absolute or workspace-relative VFS path |
+| Resolution | Kernel `route()` follows the link before reaching the backend; one hop only, with self-loop rejection |
+
+A DT_LINK is a metadata-only entry whose `link_target` field carries the path it
+points at. Path resolution treats it as a redirect: every `sys_*` call against a
+DT_LINK path resolves to the equivalent operation on the link target, with hooks
+firing on the resolved target path. `sys_unlink` removes the link without touching
+the target; `sys_stat` reports the entry as a link with its `link_target` filled in.
+
+Cycle handling is bounded by the one-hop rule — if `target` is itself a DT_LINK,
+the resolver returns `ELOOP` rather than chaining. Self-loops (`link → itself`) are
+rejected at `sys_setattr` time.
+
+**Use cases:**
+
+- `/proc/{pid}/agent` → `/agents/{name}/` (runtime back-reference to image; mirrors Linux `/proc/{pid}/exe`)
+- `/proc/{pid}/workspace/chat-with-me` → `/proc/{pid}/chat-with-me` (workspace-anchored mailbox shortcut so agents addressing each other don't have to walk the registry)
+
+See the sudowork integration design doc (`sudowork/docs/tech/nexus-integration-architecture.md`) for the A2A messaging conventions that consume DT_LINK.
 
 ---
 
@@ -852,6 +881,46 @@ FileEvent). Not kernel-owned, but bottom-layer infrastructure.
 | **User Space** | EventBus | CacheStoreABC pub/sub + FileEvent (§4.3) | Fan-out (1:N) |
 
 See `federation-memo.md` §2–§5 for gRPC/consensus details.
+
+### 8.1 NexusVFSService.Call — RPC dispatch order
+
+The tonic `Call(method, payload)` handler resolves the method through
+two dispatch paths in order:
+
+1. **Rust services** — `Kernel::dispatch_rust_call(service, method, payload)`
+   routes to a `RustService::dispatch` impl when the method maps to a
+   Rust-flavoured entry in `ServiceRegistry`. Method names follow one
+   of two shapes:
+   - Dotted: `service.method` (canonical) — split on the first `.`,
+     dispatch the bare method on that service.
+   - Flat backward-compat: methods with the prefix `acp_` or
+     `managed_agent_` route to that service with the full method name
+     preserved (matches Python `@rpc_expose` naming).
+2. **Python `@rpc_expose`** — fallback path when the Rust dispatch
+   returns `None` (no Rust service for that name) or `NotFound`
+   (service exists but doesn't expose the method). The handler hands
+   the original method string to `bridge.dispatch_call`, which runs
+   the existing async `dispatch_method` on the FastAPI loop.
+
+Auth is resolved before either dispatch path so admin-only checks
+apply uniformly. `RustCallError::InvalidArgument` and `Internal`
+short-circuit straight to the wire encoder; no fallback in those
+cases.
+
+### 8.2 Registered Rust services
+
+| Service name | Source | Methods |
+|--------------|--------|---------|
+| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `services::agent_table::AgentTable` directly (no PyO3). |
+| `acp` | `rust/kernel/src/acp/` | `acp_call`, `acp_kill`, `acp_list_agents`, `acp_list_processes`, `acp_set_system_prompt`, `acp_get_system_prompt`, `acp_set_enabled_skills`, `acp_get_enabled_skills`, `acp_history` — stateless coding-agent CLI caller via ACP JSON-RPC. `call_agent` orchestrates `AcpSubprocess` (tokio Command + DT_PIPE) + `AcpConnection` + `AcpSubservice` lifecycle. AgentRegistry stays Python; reached through the `PyAgentRegistry` trait bridge wired by `nx_acp_set_agent_registry`. |
+
+In-process Python callers reach any Rust service through the generic
+`nexus_runtime.nx_kernel_dispatch_rust_call(kernel, service, method,
+payload)` (releases the GIL during the call). One primitive — no
+per-service `nx_<svc>_dispatch` shortcuts — so audit / permission
+hooks added to the dispatch path land in one place. External callers
+come in over the tonic `Call` handler and follow the §8.1 dispatch
+order.
 
 ---
 

@@ -334,6 +334,7 @@ fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     write_opt_i64(&mut buf, meta.modified_at_ms);
     write_opt_str(&mut buf, &meta.last_writer_address);
     write_opt_str(&mut buf, &meta.target_zone_id);
+    write_opt_str(&mut buf, &meta.link_target);
 
     buf
 }
@@ -429,6 +430,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
     // Trailing optional slots may grow over time; missing reads return None.
     let last_writer_address = read_opt_str(data, &mut pos).ok().flatten();
     let target_zone_id = read_opt_str(data, &mut pos).ok().flatten();
+    let link_target = read_opt_str(data, &mut pos).ok().flatten();
 
     let _ = pos;
 
@@ -444,6 +446,7 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
         modified_at_ms,
         target_zone_id,
         last_writer_address,
+        link_target,
     })
 }
 
@@ -834,6 +837,7 @@ mod tests {
                 modified_at_ms: None,
                 last_writer_address: Some("nexus-1:2028".to_string()),
                 target_zone_id: None,
+                link_target: None,
             },
             FileMetadata {
                 path: "/mnt/peer".to_string(),
@@ -847,6 +851,7 @@ mod tests {
                 modified_at_ms: None,
                 last_writer_address: None,
                 target_zone_id: Some("zone-a".to_string()),
+                link_target: None,
             },
         ];
         for meta in &cases {
@@ -876,6 +881,7 @@ mod tests {
             modified_at_ms: None,
             last_writer_address: None,
             target_zone_id: None,
+            link_target: None,
         }
     }
 
@@ -985,6 +991,7 @@ mod tests {
             modified_at_ms: None,
             last_writer_address: None,
             target_zone_id: None,
+            link_target: None,
         };
         let data = serialize_metadata(&meta);
         let restored = deserialize_metadata(&data).unwrap();

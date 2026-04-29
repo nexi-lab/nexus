@@ -32,6 +32,14 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
+        // 1a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // Non-link paths borrow the input; link paths produce an owned
+        // String for the resolved target. The rest of the syscall sees
+        // the resolved path and is otherwise indistinguishable from a
+        // direct read at the target.
+        let resolved = self.resolve_path_through_link(path)?;
+        let path = resolved.as_ref();
+
         // 1b. Trie-resolved virtual paths (§11 Phase 21) — Python's resolve_read
         // should have handled these before reaching us; treat as missing.
         if self.trie.lookup(path).is_some() {
@@ -316,6 +324,13 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
+
+        // 1a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // Same one-hop semantics as sys_read; sys_setattr's link branch
+        // rejects self-loops at write time so the resolver only handles
+        // chain rejection here.
+        let resolved = self.resolve_path_through_link(path)?;
+        let path = resolved.as_ref();
 
         // 1b. Trie-resolved virtual paths (§11 Phase 21)
         if self.trie.lookup(path).is_some() {
@@ -640,6 +655,7 @@ impl Kernel {
                                 modified_at_ms: None,
                                 last_writer_address: None,
                                 lock: None,
+                                link_target: None,
                             });
                         }
                         return None;
@@ -681,6 +697,7 @@ impl Kernel {
             modified_at_ms: entry.modified_at_ms,
             last_writer_address: entry.last_writer_address,
             lock,
+            link_target: entry.link_target,
         })
     }
 
@@ -1165,6 +1182,16 @@ impl Kernel {
         // 1. Validate both paths
         validate_path_fast(src_path)?;
         validate_path_fast(dst_path)?;
+
+        // 1a. DT_LINK transparent follow on src — copy targets the
+        // content the link points at, not the link's metadata entry.
+        // (`cp -P` style "copy the link itself" is intentionally not
+        // the default; sys_unlink and sys_rename keep operating on the
+        // link entry directly.) dst is never a link follow target —
+        // copying INTO an existing link is a write operation that goes
+        // through sys_write's link follow path separately.
+        let src_resolved = self.resolve_path_through_link(src_path)?;
+        let src_path = src_resolved.as_ref();
 
         // 2. Route both (read access for src, write access for dst)
         let src_route = match self.vfs_router.route(src_path, &ctx.zone_id) {

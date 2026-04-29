@@ -2928,7 +2928,9 @@ dependencies = [
  "contracts",
  "dashmap",
  "fjall",
+ "futures",
  "kernel",
+ "libc",
  "parking_lot",
  "pyo3",
  "raft 0.1.0",
@@ -2937,7 +2939,9 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

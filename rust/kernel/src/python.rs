@@ -35,5 +35,9 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
+    // ACP + ManagedAgent service install hooks plus the generic
+    // `nx_kernel_dispatch_rust_call` entry point are registered by
+    // `services::python::register` (services owns those impls now;
+    // kernel just exposes the trait surface they consume).
     Ok(())
 }

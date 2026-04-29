@@ -48,11 +48,25 @@ pub use core::vfs_router;
 pub(crate) use core::lock::semaphore;
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
+
+// NostrBackend ObjectStore stub — chat-with-me remote-identity leg.
+// Lives kernel-side here; later migration commits move it to
+// `rust/backends/src/nostr/` (the canonical home for ObjectStore
+// drivers per the post-#3932 architecture).
+#[cfg(feature = "nostr")]
+mod nostr_backend;
+
+// `acp` and `managed_agent` modules used to live here; both moved to
+// the `services` crate (`rust/services/src/{acp,managed_agent}/`) so
+// the kernel↔services dep direction stays one-way (services depends
+// on kernel, never the reverse). Boot-time installation is wired
+// through PyO3 hooks the cdylib calls (see `services::python::register`).
+
 #[cfg(unix)]
 pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]
 pub(crate) use core::pipe::stdio as stdio_pipe;
-pub(crate) use core::service_registry;
+pub use core::service_registry;
 pub use core::stream;
 pub use core::stream::manager as stream_manager;
 #[cfg(unix)]

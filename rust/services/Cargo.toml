@@ -36,6 +36,10 @@ raft = { workspace = true }
 redb = "2"
 # Phase 3 restructure plan #6: tasks crate folded in here.
 fjall = "3"
+# `acp::subprocess` calls libc::dup() to hand kernel-side OwnedFds
+# alongside the ones tokio::process::Child still owns; #[cfg(unix)]
+# only.
+libc = "0.2"
 bincode = "1.3"
 thiserror = "2.0"
 dashmap = "6.1"
@@ -44,6 +48,17 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 tracing = "0.1"
+# Used by `managed_agent::session` for session_id allocation; mirrors
+# the `kernel/Cargo.toml` choice (v4 only — no system-time dep needed).
+uuid = { version = "1", features = ["v4"] }
+# tokio drives the AcpSubprocess + ACP JSON-RPC connection (Unix-only
+# via #[cfg(unix)]).  `process` for tokio::process::Command, `io-util`
+# for AsyncRead/Write helpers, `time` for `tokio::time::sleep`, `sync`
+# for the oneshot reply channels, `rt-multi-thread` for spawn_blocking
+# inside the gRPC handler that calls into AcpService.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "process", "io-util", "time", "sync", "macros"] }
+# AsyncRead/Write extension traits + BoxFuture used by acp::connection.
+futures = "0.3"
 # pyo3 feature unioned by cargo when nexus-cdylib enables `extension-module`
 # on its own pyo3 dep — services does not need to set extension-module here.
 pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }

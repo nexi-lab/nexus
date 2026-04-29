@@ -201,10 +201,13 @@ def _boot_independent_bricks(
     # --- Task Manager Brick ---
     if _on("task_manager"):
         try:
+            from nexus.task_manager.acp_adapter import AcpAdapter
             from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
 
+            _kernel_handle = system.get("kernel")
+            _acp_adapter = AcpAdapter(_kernel_handle) if _kernel_handle is not None else None
             task_dispatch_consumer = TaskDispatchPipeConsumer(
-                acp_service=system.get("acp_service"),
+                acp_service=_acp_adapter,
                 agent_registry=system.get("agent_registry"),
             )
             # TaskManagerService and TaskWriteHook are registered in _register_vfs_hooks

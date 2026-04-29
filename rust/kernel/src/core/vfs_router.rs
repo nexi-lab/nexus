@@ -338,8 +338,9 @@ impl VFSRouter {
     /// Rebind every federation mount (entries with a metastore but no
     /// backend) to `new_backend`.
     ///
-    /// Fixes a boot-order bug: on node restart, `reconcile_mounts_from_zones`
-    /// replays DT_MOUNT entries BEFORE Python installs the root mount
+    /// Fixes a boot-order bug: on node restart,
+    /// `RaftDistributedCoordinator::replay_existing_mounts` replays
+    /// DT_MOUNT entries BEFORE Python installs the root mount
     /// (which carries this node's CAS backend). Each federation mount
     /// gets cloned with `backend=None` at replay time, so subsequent
     /// writes return `Ok(None)` (miss) — they look like they succeeded

@@ -2960,7 +2960,6 @@ dependencies = [
  "libc",
  "parking_lot",
  "pyo3",
- "raft 0.1.0",
  "redb",
  "serde",
  "serde_json",

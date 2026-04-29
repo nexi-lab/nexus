@@ -2,7 +2,7 @@
 name = "services"
 version = "0.1.0"
 edition = "2021"
-description = "Rust service-tier impls (Phase 3 parallel-layers crate) — agent table + status resolver, AuditHook, PermissionHook scaffolding. Sits parallel to kernel; consumes kernel APIs (NativeInterceptHook, PathResolver, prepare_audit_stream) and the kernel.sys_* syscall surface, never depends on `backends`."
+description = "Post-syscall services tier — audit / agents / permission / tasks. Fired on syscall paths through registered hooks; depends on `kernel` only. Reaches backends and raft through `kernel.sys_*` syscalls (the same path Python takes), never via direct cross-crate imports. The orthogonality invariant is `services ⊥ backends ⊥ transport ⊥ raft`."
 
 [lib]
 name = "services"
@@ -25,14 +25,10 @@ contracts = { workspace = true }
 # (mimalloc allocator, connector HTTP stack, py-hook adapters) off so
 # this rlib stays slim; the cdylib pulls them via its own kernel dep.
 kernel = { workspace = true }
-# Phase H: services depends on raft for the WAL-backed stream backend
-# that AuditHook builds on (`nexus_raft::wal_stream_backend`).  raft
-# moved to the same workspace tier as services post Cargo flip.
-raft = { workspace = true }
-# **HARD INVARIANT** — services ⊥ backends.  Do NOT add `backends` here.
-# Services that need backend behaviour reach it through `kernel.sys_*`
+# **HARD INVARIANT** — services ⊥ backends ⊥ raft. Services that need
+# backend or raft-replicated behaviour reach it through `kernel.sys_*`
 # syscalls (the same path Python takes), never via direct cross-crate
-# imports.  See `services/src/lib.rs` for the rationale.
+# imports. See `services/src/lib.rs` for the rationale.
 redb = "2"
 # Phase 3 restructure plan #6: tasks crate folded in here.
 fjall = "3"

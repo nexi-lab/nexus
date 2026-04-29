@@ -4,14 +4,11 @@ version = "0.10.0"
 edition = "2021"
 
 [lib]
-# Phase 0 — kernel is rlib-only. The Python cdylib (`nexus_runtime.so`)
-# now lives in `rust/nexus-cdylib/`, which depends on this rlib plus
-# its peers (lib, raft, …) and owns the `#[pymodule]` envelope. This
-# cycle-breaks `<peer-crate> → kernel` (compile dep) ↔ `kernel →
-# <peer-crate>` (cdylib registration) — the latter is now wholly
-# inside `nexus-cdylib`. Lib name matches the package name (was
-# `nexus_runtime` while kernel was the cdylib; that name belongs to
-# the cdylib build artifact now).
+# Kernel is rlib-only. The Python cdylib (`nexus_runtime.so`) lives in
+# `rust/nexus-cdylib/`, depends on this rlib plus its peers, and owns
+# the `#[pymodule]` envelope. This cycle-breaks
+# `<peer-crate> → kernel` (compile dep) ↔ `kernel → <peer-crate>`
+# (cdylib registration) — the latter sits wholly inside `nexus-cdylib`.
 name = "kernel"
 crate-type = ["rlib"]
 

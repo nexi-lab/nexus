@@ -48,3 +48,8 @@ futures = "0.3"
 # pyo3 feature unioned by cargo when nexus-cdylib enables `extension-module`
 # on its own pyo3 dep.
 pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+
+[dev-dependencies]
+# federation.rs unit tests generate self-signed CAs and write to tempdirs.
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+tempfile = "3"

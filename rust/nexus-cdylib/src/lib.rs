@@ -47,12 +47,14 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     // constructs concrete backends through the §3.B.2 trait without
     // the kernel reaching into the backends crate.
     backends::python::register(m)?;
-    // Phase 4 (full): transport-tier PyO3 surface (gRPC server +
-    // federation client) AND the install function that wires the
-    // kernel-side `peer_client` slot + `pending_blob_fetcher_slot`
-    // to the real concrete impls in transport.  Python's NexusFS
-    // boot calls `nexus_runtime.install_transport_wiring(kernel)`
-    // exactly once after federation env vars are read.
+    // Front-door services tier: VFS gRPC server pyclass + starter.
     transport::python::register(m)?;
+    // Driver-outgoing RPC clients: PyFederationClient pyclass +
+    // `install_transport_wiring(kernel)` Python entry point that
+    // wires kernel's `peer_client` slot to the real
+    // `rpc::peer_blob::PeerBlobClient` impl. Python's NexusFS boot
+    // calls `nexus_runtime.install_transport_wiring(kernel)` once
+    // after federation env vars are read.
+    rpc::python::register(m)?;
     Ok(())
 }

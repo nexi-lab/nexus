@@ -13,7 +13,6 @@ Re-run: python scripts/codegen_kernel_abi.py
 from __future__ import annotations
 
 from nexus_runtime import (
-    PyFederationClient,
     PyKernel,
     PyOperationContext,
     PySysReadResult,
@@ -27,7 +26,6 @@ from nexus_runtime import (
 )
 
 __all__ = [
-    "PyFederationClient",
     "PyKernel",
     "PyOperationContext",
     "PySysReadResult",

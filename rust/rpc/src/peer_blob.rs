@@ -52,7 +52,7 @@ pub struct PeerBlobClient {
     /// (same cert material that `ZoneManager` uses for raft RPCs — one
     /// trust anchor per cluster). When absent, plaintext HTTP/2 — the
     /// docker federation test intentionally sets `NEXUS_RAFT_TLS=false`.
-    tls: parking_lot::RwLock<Option<crate::TlsConfig>>,
+    tls: parking_lot::RwLock<Option<transport_primitives::TlsConfig>>,
 }
 
 #[allow(dead_code)]
@@ -76,7 +76,7 @@ impl PeerBlobClient {
     /// reconnects over TLS. Called from `Kernel::init_federation_from_env`
     /// once the leader / joiner has resolved the cluster CA + node
     /// cert.
-    pub fn install_tls_config(&self, tls: crate::TlsConfig) {
+    pub fn install_tls_config(&self, tls: transport_primitives::TlsConfig) {
         *self.tls.write() = Some(tls);
         self.channels.clear();
     }
@@ -104,11 +104,11 @@ impl PeerBlobClient {
         } else {
             format!("{}://{}", scheme, address)
         };
-        let client_cfg = crate::ClientConfig {
+        let client_cfg = transport_primitives::ClientConfig {
             tls,
             ..Default::default()
         };
-        let channel = crate::create_channel(&endpoint, &client_cfg)
+        let channel = transport_primitives::create_channel(&endpoint, &client_cfg)
             .await
             .map_err(|e| format!("peer channel {}: {}", address, e))?;
         self.channels
@@ -234,7 +234,7 @@ impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
         };
         PeerBlobClient::install_tls_config(
             self,
-            crate::TlsConfig {
+            transport_primitives::TlsConfig {
                 ca_pem: ca_pem.to_vec(),
                 cert_pem: cert.to_vec(),
                 key_pem: key.to_vec(),

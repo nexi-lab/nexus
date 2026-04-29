@@ -13,11 +13,11 @@
 //! have a bundle path can skip the store lookup and pass raw PEM bytes
 //! directly.
 //!
-//! This module lives in ``kernel`` (not ``raft``) because it needs
-//! access to BOTH proto families — ``vfs.proto`` is built only here
-//! (for the ``ReadBlob`` client used by [`crate::peer_blob_client`]),
-//! and ``transport.proto`` ships in the raft rlib that kernel
-//! already depends on. No cross-crate proto duplication.
+//! This module lives in the ``rpc`` driver-layer crate where both
+//! proto families are reachable: ``vfs.proto`` stubs come through
+//! ``kernel::kernel::vfs_proto`` (kernel re-exports the generated
+//! module) and ``transport.proto`` ships in the raft rlib that rpc
+//! depends on for proto stubs.
 
 use std::sync::Arc;
 use std::time::Duration;

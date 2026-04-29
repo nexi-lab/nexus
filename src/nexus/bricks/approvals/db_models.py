@@ -5,11 +5,28 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.lib.db_base import Base
+
+# Postgres production uses JSONB (indexable, typed). SQLite test fixtures that
+# do `Base.metadata.create_all(...)` (e.g. test_seed_root_zone.py) must be
+# able to compile the schema even though they never query approvals tables —
+# `with_variant` degrades the column to plain JSON on SQLite without
+# affecting the Postgres DDL or runtime ops.
+_JSONB_PORTABLE = JSONB().with_variant(JSON(), "sqlite")
 
 
 class ApprovalRequestModel(Base):
@@ -26,7 +43,7 @@ class ApprovalRequestModel(Base):
     # Python attr suffix avoids DeclarativeBase.metadata collision;
     # DB column name stays "metadata".
     metadata_: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONB, nullable=False, default=dict
+        "metadata", _JSONB_PORTABLE, nullable=False, default=dict
     )
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

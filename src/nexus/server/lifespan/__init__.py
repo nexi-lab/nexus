@@ -132,6 +132,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     down in reverse order during shutdown.
     """
     from nexus.grpc.server import shutdown_grpc, startup_grpc
+    from nexus.server.lifespan.approvals import shutdown_approvals, startup_approvals
     from nexus.server.lifespan.observability import (
         shutdown_observability,
         startup_observability,
@@ -198,6 +199,12 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     bg_tasks.extend(await startup_uploads(app, svc))
     _done(StartupPhase.UPLOADS)
 
+    # Approvals brick — feature-flag-gated by NEXUS_APPROVALS_ENABLED.
+    # When disabled (the default), this is a near-no-op that attaches
+    # `app.state.policy_gate = None` so MCP egress / hub zone-access hooks
+    # treat the absent gate as "approvals disabled" by contract.
+    bg_tasks.extend(await startup_approvals(app, svc))
+
     # IPC lifespan hook + StartupPhase.IPC deleted in Phase M of the
     # parallel-layers PR — `nexus.bricks.ipc` removed; PR #3912 ships
     # the Rust replacement.
@@ -223,6 +230,7 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         logger.debug("Cancelled %d background tasks", len(bg_tasks))
 
     await shutdown_grpc(app, svc)
+    await shutdown_approvals(app, svc)
     await shutdown_search(app, svc)
     await shutdown_services(app, svc)
     await shutdown_realtime(app, svc)

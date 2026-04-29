@@ -148,14 +148,20 @@ class RunningNexus:
         ``/hub/approvals/dump``).
       - ``grpc_addr``: ``host:port`` for the Python ApprovalsV1 gRPC
         server (default ``127.0.0.1:2029``).
-      - ``admin_token``: the bearer secret callers must send as
-        ``authorization: Bearer <token>`` to the gRPC server.
+      - ``admin_token``: the approvals admin token (Bearer secret) callers
+        must send as ``authorization: Bearer <token>`` to the gRPC server
+        when using the approvals-token fallback path.
+      - ``admin_api_key``: the standard admin ``NEXUS_API_KEY`` registered
+        in the daemon's database. Recognised by ``require_admin``-gated
+        HTTP endpoints (e.g. ``POST /api/v2/auth/keys``) and by the
+        ReBACCapabilityAuth gRPC pipeline as ``is_admin=True``.
       - ``zone``: a uuid-prefixed zone id for test isolation.
     """
 
     http_url: str
     grpc_addr: str
     admin_token: str
+    admin_api_key: str
     zone: str
     project_dir: Path
 
@@ -171,10 +177,17 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     Environment knobs set on the daemon process (via ``nexus.yaml``):
       - ``NEXUS_APPROVALS_ENABLED=1`` — enable the brick.
       - ``NEXUS_APPROVALS_ADMIN_TOKEN=<random>`` — gates the Python
-        gRPC server. We surface the same token via ``.admin_token``.
+        gRPC server's approvals-fallback bearer path. We surface the
+        same token via ``.admin_token``.
       - ``NEXUS_APPROVALS_GRPC_PORT=2029`` — pinned for E2E reachability;
         the daemon defaults to this anyway, but we set it explicitly so
         the test contract is obvious.
+      - ``NEXUS_API_KEY=<sk-e2e-...>`` — pinned admin API key registered
+        with the daemon's database via the entrypoint's
+        ``setup_admin_api_key`` step. Surfaced as ``.admin_api_key`` so
+        tests can drive admin-gated HTTP endpoints (e.g.
+        ``POST /api/v2/auth/keys``) and exercise the ReBACCapabilityAuth
+        is_admin bypass on the gRPC path.
     """
     if not _docker_available():
         pytest.skip("nexus up requires docker")
@@ -189,6 +202,13 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
         pytest.skip(f"compose file not found: {compose_file}")
 
     admin_token = f"e2e-{uuid.uuid4().hex}"
+    # Standard admin API key registered with the daemon's database. Used to
+    # drive admin-gated HTTP endpoints (POST /api/v2/auth/keys, etc.) and
+    # as the is_admin path in ReBACCapabilityAuth. Distinct from
+    # admin_token (which gates only the approvals-fallback bearer path).
+    # The leading sk- prefix matches the canonical Nexus key format so the
+    # CLI/auth pipeline parsers don't reject it as malformed.
+    admin_api_key = f"sk-e2e-{uuid.uuid4().hex}"
     zone = f"z-e2e-{uuid.uuid4().hex[:8]}"
     # Resolve the host-side approvals gRPC port. Honor an explicit
     # NEXUS_APPROVALS_GRPC_PORT override (lets ops pin a known port for
@@ -204,11 +224,12 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     # venv is not on $PATH (common under pytest, which spawns Python from
     # `.venv/bin/python` without exporting the venv into the child env), a
     # bare `nexus` lookup picks up an older system-installed CLI whose
-    # presets differ from this checkout (e.g. v0.9.20's demo preset adds
-    # `zoekt` to services, which the worktree's compose file does not
-    # provide — `nexus up` then times out waiting on a service that never
-    # exists). Always invoke the venv-local CLI to keep init/up/down
-    # consistent with the source tree.
+    # presets differ from this checkout. Always invoke the venv-local CLI
+    # to keep init/up/down consistent with the source tree. We additionally
+    # rewrite ``services``/``compose_profiles`` in the post-init nexus.yaml
+    # below so even a stale CLI that lists e.g. ``zoekt`` (no service
+    # definition in the in-tree compose file) cannot make ``nexus up``
+    # hang on a missing service health-check.
     nexus_bin = str(Path(sys.executable).parent / "nexus")
 
     # nexus init writes nexus.yaml; we then export the approvals env vars
@@ -236,10 +257,35 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     if init_result.returncode != 0:
         pytest.skip(f"nexus init failed: {init_result.stderr}")
 
+    # Defensively normalise nexus.yaml after init:
+    #   - Pin api_key to a known value so the test caller can drive
+    #     admin-gated HTTP endpoints with the same secret the daemon's
+    #     database key registry will receive via NEXUS_API_KEY.
+    #   - Restrict services/compose_profiles to the strict three we
+    #     actually launch via the in-tree nexus-stack.yml. Older nexus
+    #     CLI versions or future preset drift could otherwise list a
+    #     service the compose file does not define (e.g. zoekt under
+    #     a "search" profile), which makes `nexus up` hang on the
+    #     missing service's health check.
+    import yaml as _yaml
+
+    with open(config_path) as _cf:
+        _cfg = _yaml.safe_load(_cf) or {}
+    _cfg["api_key"] = admin_api_key
+    _cfg["services"] = ["nexus", "postgres", "dragonfly"]
+    _cfg["compose_profiles"] = ["core", "cache"]
+    with open(config_path, "w") as _cf:
+        _yaml.safe_dump(_cfg, _cf, sort_keys=False)
+
     up_env = os.environ.copy()
     up_env["NEXUS_APPROVALS_ENABLED"] = "1"
     up_env["NEXUS_APPROVALS_ADMIN_TOKEN"] = admin_token
     up_env["NEXUS_APPROVALS_GRPC_PORT"] = str(grpc_port)
+    # Mirror the pinned api_key into NEXUS_API_KEY for the docker compose
+    # subprocess. ``nexus up`` already derives this from nexus.yaml's
+    # ``api_key`` field, but setting it explicitly guards against future
+    # CLI changes that might stop forwarding the YAML value.
+    up_env["NEXUS_API_KEY"] = admin_api_key
 
     up_result = subprocess.run(
         [nexus_bin, "up", "--build"],
@@ -266,10 +312,8 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
 
     # Re-read config — `nexus up` may have resolved port conflicts and
     # persisted new ports back to nexus.yaml.
-    import yaml
-
     with open(config_path) as f:
-        cfg = yaml.safe_load(f) or {}
+        cfg = _yaml.safe_load(f) or {}
     http_port = cfg.get("ports", {}).get("http", 2026)
     http_url = f"http://127.0.0.1:{http_port}"
 
@@ -304,6 +348,7 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
         http_url=http_url,
         grpc_addr=f"127.0.0.1:{grpc_port}",
         admin_token=admin_token,
+        admin_api_key=admin_api_key,
         zone=zone,
         project_dir=project_dir,
     )
@@ -311,10 +356,14 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     try:
         yield handle
     finally:
-        subprocess.run(
-            [nexus_bin, "down"],
-            capture_output=True,
-            text=True,
-            timeout=180,
-            cwd=str(project_dir),
-        )
+        # Operator escape hatch: NEXUS_E2E_KEEP=1 leaves the docker stack
+        # running after the test class so logs can be tailed. Set when
+        # debugging by hand; never on CI.
+        if os.environ.get("NEXUS_E2E_KEEP", "").lower() not in ("1", "true", "yes"):
+            subprocess.run(
+                [nexus_bin, "down"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                cwd=str(project_dir),
+            )

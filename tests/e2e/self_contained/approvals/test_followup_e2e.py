@@ -31,46 +31,35 @@ Follow-up coverage
     a real production mount attempt, not just the gRPC contract.
 
 ``test_b_rebac_capability_auth_pipeline``
-    Follow-up B — drives the new ``POST /api/v2/rebac/tuples`` endpoint
-    (Issue #3790 follow-up) end-to-end against the running daemon and
-    proves the gRPC bearer-token pipeline rejects garbage and accepts
-    the configured admin token. The router admits the
-    ``NEXUS_APPROVALS_ADMIN_TOKEN`` fallback (same two-path admin gate
-    as the MCP-mount router) so the fixture token is sufficient.
+    Follow-up B — drives the FULL ReBACCapabilityAuth happy-path end-to-end
+    against the running daemon. The fixture seeds both
+    ``NEXUS_APPROVALS_ADMIN_TOKEN`` (gates the approvals fallback) and
+    ``NEXUS_API_KEY`` (registered with the daemon's database during
+    entrypoint bootstrap) so this test can mint a non-admin user key via
+    ``POST /api/v2/auth/keys`` and have it recognised by the standard
+    auth pipeline at gRPC time.
 
-    Production wiring exercised by the HTTP grant path:
-      HTTP POST → require_followup_admin → ReBACManager.rebac_write
-      → relationship tuple persisted in postgres → readable via the
-      gRPC ReBACCapabilityAuth check.
+    Production wiring exercised:
+      1. HTTP POST /api/v2/auth/keys (admin api-key) → AuthService key
+         registry → returns a non-admin user API key.
+      2. HTTP POST /api/v2/rebac/tuples (admin api-key) →
+         ReBACManager.rebac_write → tuple persisted in postgres.
+      3. gRPC ListPending with the non-admin user key →
+         ReBACCapabilityAuth.authorize → AuthService.authenticate(token)
+         resolves to the new user → rebac_check(("user", subject_id),
+         "read", ("approvals", "global")) returns True via the granted
+         viewer relation → ListPending returns 200.
+      4. HTTP DELETE /api/v2/rebac/tuples (admin api-key) → tuple removed.
+      5. gRPC ListPending with the same non-admin user key → ReBAC check
+         returns False → AioRpcError(PERMISSION_DENIED).
+      6. Pipeline checks: bogus bearer → UNAUTHENTICATED, missing
+         bearer → UNAUTHENTICATED, admin bearer → ListPending OK.
 
-    Phases:
-      1. POST a tuple ``(user, e2e-grantee) -- viewer --> (approvals, global)``
-         via the new endpoint with the admin bearer.
-      2. GET the same tuple back as a sanity check (proves it landed).
-      3. DELETE it. Proves cleanup works.
-      4. Bogus-bearer / no-bearer / admin-bearer gRPC ListPending
-         assertions (the existing pipeline checks).
-
-    DEFERRED: the *third* leg of the original happy-path — opening a
-    gRPC channel as the granted non-admin user and asserting
-    ListPending succeeds — requires minting a non-admin user token
-    that the daemon's standard auth pipeline recognises. The
-    ``running_nexus`` fixture seeds only ``NEXUS_APPROVALS_ADMIN_TOKEN``
-    (no ``NEXUS_API_KEY`` and no pre-seeded DB key), and
-    ``POST /api/v2/auth/keys`` requires a *standard* admin key (not the
-    approvals fallback), so we can't bootstrap a real user token from
-    inside the test without modifying the fixture. The fixture
-    restriction is intentional — extending the running_nexus fixture
-    to also seed ``NEXUS_API_KEY`` would be a sibling change to the
-    follow-up. Until then we prove the HTTP grant path itself; the
-    gRPC subject-resolution leg is covered by unit tests in
-    ``tests/unit/bricks/approvals/test_grpc_auth.py``.
-
-    See ``src/nexus/bricks/approvals/grpc_auth.py`` for the exact
-    capability-string -> permission mapping the future test must use
-    (``approvals:read`` -> ReBAC ``read`` on ``("approvals", "global")``,
-    granted by the ``viewer`` / ``direct_viewer`` / ``reader`` relations
-    via ``RELATION_TO_PERMISSIONS``).
+    See ``src/nexus/bricks/approvals/grpc_auth.py`` for the capability-
+    string -> permission mapping (``approvals:read`` -> ReBAC ``read``
+    on ``("approvals", "global")``, granted by the ``viewer`` /
+    ``direct_viewer`` / ``reader`` relations via
+    ``RELATION_TO_PERMISSIONS`` in ``src/nexus/bricks/rebac/domain.py``).
 
 ``test_c_late_insert_race_auto_inherit``
     Follow-up C — proves the recent-decision inherit fires under
@@ -322,120 +311,172 @@ class TestFollowupE2E:
 
     @pytest.mark.asyncio
     async def test_b_rebac_capability_auth_pipeline(self, running_nexus) -> None:
-        """Drive the new ``POST /api/v2/rebac/tuples`` endpoint plus the
-        gRPC bearer-token pipeline.
+        """Drive the FULL ReBACCapabilityAuth happy-path end-to-end.
 
         Phases:
-          1. POST a generic ReBAC tuple via the new HTTP endpoint
-             (admin bearer via the ``NEXUS_APPROVALS_ADMIN_TOKEN``
-             fallback). The tuple shape mirrors what
-             ``ReBACCapabilityAuth`` looks up at gRPC time:
-             ``(user, e2e-grantee-<tag>) -- viewer -> (approvals, global)``.
-             ``viewer`` is the canonical relation that grants ``read``
-             permission via ``RELATION_TO_PERMISSIONS`` (see
-             ``src/nexus/bricks/rebac/domain.py``).
-          2. GET the tuple back to confirm it persisted.
-          3. DELETE it.
-          4. Pipeline checks: bogus bearer → UNAUTHENTICATED, missing
-             bearer → UNAUTHENTICATED, admin bearer → ListPending OK.
-
-        DEFERRED — middle leg of the happy-path: opening a gRPC channel
-        with a *non-admin* user token whose subject was just granted
-        ``read`` on ``(approvals, global)`` and asserting ListPending
-        succeeds. The fixture seeds only ``NEXUS_APPROVALS_ADMIN_TOKEN``,
-        so we can't mint a non-admin user token recognised by the
-        standard auth pipeline (``/api/v2/auth/keys`` requires a real
-        admin key, not the approvals fallback). Unit tests in
-        ``tests/unit/bricks/approvals/test_grpc_auth.py`` cover the
-        gRPC subject-resolution leg directly.
+          1. Mint a non-admin user API key via
+             ``POST /api/v2/auth/keys`` (admin api-key bearer). This
+             registers a real subject in the daemon's auth store that
+             the standard auth pipeline (``AuthService.authenticate``)
+             will resolve at gRPC time.
+          2. Grant ``(user, <new-user-id>) -- viewer -> (approvals,
+             global)`` via ``POST /api/v2/rebac/tuples``. The ``viewer``
+             relation maps to ``read`` in
+             ``RELATION_TO_PERMISSIONS``, which is exactly what
+             ``ReBACCapabilityAuth.authorize(approvals:read)`` checks.
+          3. Open a gRPC channel as the new non-admin user (raw API key
+             passed as ``Authorization: Bearer <key>``) and call
+             ``ListPending``. Must return success — proves the full
+             pipeline accepted the user token, looked up the tuple,
+             and granted the read capability.
+          4. DELETE the tuple via ``/api/v2/rebac/tuples``.
+          5. Re-call ``ListPending`` with the same user token. Must
+             abort ``PERMISSION_DENIED`` — proves the ReBAC check is
+             actually consulted on every request (not cached past
+             tuple deletion in a way that masks revocation).
+          6. Pipeline checks: bogus bearer → UNAUTHENTICATED, missing
+             bearer → UNAUTHENTICATED, admin token → ListPending OK.
         """
         tag = _tag()
         zone = running_nexus.zone
-        admin_bearer = f"Bearer {running_nexus.admin_token}"
-        admin_headers = {"Authorization": admin_bearer}
-        grantee_subject_id = f"e2e-grantee-{tag}"
-        rebac_url = f"{running_nexus.http_url}/api/v2/rebac/tuples"
-        # Use ROOT zone for the tuple — ReBACCapabilityAuth checks with
-        # zone_id=None which the manager normalises to "root".
+        approvals_admin_bearer = f"Bearer {running_nexus.admin_token}"
+        admin_api_key_bearer = f"Bearer {running_nexus.admin_api_key}"
+        admin_api_key_headers = {"Authorization": admin_api_key_bearer}
+        # Use ROOT zone for the tuple and the user key — ReBACCapabilityAuth
+        # checks with zone_id=None which the manager normalises to "root".
         tuple_zone = "root"
+        keys_url = f"{running_nexus.http_url}/api/v2/auth/keys"
+        rebac_url = f"{running_nexus.http_url}/api/v2/rebac/tuples"
 
-        tuple_body = {
-            "subject_namespace": "user",
-            "subject_id": grantee_subject_id,
-            "relation": "viewer",
-            "object_namespace": "approvals",
-            "object_id": "global",
-            "zone_id": tuple_zone,
-        }
-
+        # ------------------------------------------------------------------
+        # Phase 1 — mint a non-admin user API key as the test grantee.
+        # ------------------------------------------------------------------
+        grantee_user_id = f"e2e-grantee-{tag}"
         async with httpx.AsyncClient(timeout=15.0) as http:
-            # Phase 1 — POST a tuple (admin via approvals-token fallback).
-            post_resp = await http.post(rebac_url, headers=admin_headers, json=tuple_body)
-            assert post_resp.status_code == 201, (
-                f"POST /api/v2/rebac/tuples failed: status={post_resp.status_code} "
-                f"body={post_resp.text[:300]!r}"
+            create_key_resp = await http.post(
+                keys_url,
+                headers=admin_api_key_headers,
+                json={
+                    "label": f"e2e-followup-b-{tag}",
+                    "user_id": grantee_user_id,
+                    "subject_type": "user",
+                    "subject_id": grantee_user_id,
+                    "zone_id": tuple_zone,
+                    "is_admin": False,
+                },
             )
-            post_body = post_resp.json()
-            assert post_body.get("tuple_id"), f"missing tuple_id in response: {post_body!r}"
-            assert post_body["subject_id"] == grantee_subject_id
-            assert post_body["relation"] == "viewer"
-            tuple_id = post_body["tuple_id"]
+            assert create_key_resp.status_code == 201, (
+                f"POST /api/v2/auth/keys failed: status={create_key_resp.status_code} "
+                f"body={create_key_resp.text[:400]!r}"
+            )
+            create_body = create_key_resp.json()
+            user_api_key: str = create_body.get("key") or create_body.get("raw_key", "")
+            assert user_api_key, f"create-key response missing key: {create_body!r}"
+            user_key_id = create_body.get("key_id") or create_body.get("id")
+            assert user_key_id, f"create-key response missing key_id: {create_body!r}"
+            # Resolve the subject the daemon actually registered. Some setups
+            # canonicalise user_id (e.g. lowercase) — use the response's
+            # subject_id when present, falling back to user_id.
+            registered_subject_id = (
+                create_body.get("subject_id") or create_body.get("user_id") or grantee_user_id
+            )
+
+            tuple_body = {
+                "subject_namespace": "user",
+                "subject_id": registered_subject_id,
+                "relation": "viewer",
+                "object_namespace": "approvals",
+                "object_id": "global",
+                "zone_id": tuple_zone,
+            }
 
             try:
-                # Phase 2 — GET the tuple back as a sanity check.
-                get_resp = await http.get(
-                    rebac_url,
-                    headers=admin_headers,
-                    params={
-                        "subject_namespace": "user",
-                        "subject_id": grantee_subject_id,
-                        "relation": "viewer",
-                        "object_namespace": "approvals",
-                        "object_id": "global",
-                    },
+                # ----------------------------------------------------------
+                # Phase 2 — grant (user, registered_subject) viewer ->
+                #           (approvals, global).
+                # ----------------------------------------------------------
+                grant_resp = await http.post(
+                    rebac_url, headers=admin_api_key_headers, json=tuple_body
                 )
-                assert get_resp.status_code == 200, (
-                    f"GET /api/v2/rebac/tuples failed: status={get_resp.status_code} "
-                    f"body={get_resp.text[:300]!r}"
+                assert grant_resp.status_code == 201, (
+                    f"POST /api/v2/rebac/tuples failed: status={grant_resp.status_code} "
+                    f"body={grant_resp.text[:300]!r}"
                 )
-                get_body = get_resp.json()
-                assert get_body["count"] >= 1, (
-                    f"GET returned no tuples; expected at least the one we wrote: {get_body!r}"
-                )
-                # The GET shouldn't return tuples for *other* subjects
-                # under our filter — sanity-check the subject_id matches.
-                tids = [t["tuple_id"] for t in get_body["tuples"]]
-                assert tuple_id in tids, (
-                    f"freshly-written tuple_id {tuple_id!r} not in GET result: {tids!r}"
-                )
+                grant_body = grant_resp.json()
+                assert grant_body.get("tuple_id"), f"missing tuple_id in response: {grant_body!r}"
 
-                # Phase 3 — DELETE it.
+                # ----------------------------------------------------------
+                # Phase 3 — non-admin user can ListPending via gRPC.
+                # ----------------------------------------------------------
+                user_metadata: tuple = (("authorization", f"Bearer {user_api_key}"),)
+                async with grpc.aio.insecure_channel(running_nexus.grpc_addr) as user_channel:
+                    user_stub = approvals_pb2_grpc.ApprovalsV1Stub(user_channel)
+                    user_resp = await asyncio.wait_for(
+                        user_stub.ListPending(
+                            approvals_pb2.ListPendingRequest(zone_id=zone),
+                            metadata=user_metadata,
+                        ),
+                        timeout=10.0,
+                    )
+                    assert hasattr(user_resp, "requests"), (
+                        f"granted-user ListPending response missing `requests` field: {user_resp!r}"
+                    )
+
+                # ----------------------------------------------------------
+                # Phase 4 — revoke the grant.
+                # ----------------------------------------------------------
                 del_resp = await http.request(
-                    "DELETE", rebac_url, headers=admin_headers, json=tuple_body
+                    "DELETE", rebac_url, headers=admin_api_key_headers, json=tuple_body
                 )
                 assert del_resp.status_code == 200, (
                     f"DELETE /api/v2/rebac/tuples failed: status={del_resp.status_code} "
                     f"body={del_resp.text[:300]!r}"
                 )
-                del_body = del_resp.json()
-                assert del_body["deleted"] >= 1, (
-                    f"DELETE reported zero deletions; expected >=1: {del_body!r}"
+                assert del_resp.json()["deleted"] >= 1, (
+                    f"DELETE reported zero deletions; expected >=1: {del_resp.json()!r}"
                 )
 
-                # Phase 3.5 — DELETE again should be a no-op.
-                del_again = await http.request(
-                    "DELETE", rebac_url, headers=admin_headers, json=tuple_body
-                )
-                assert del_again.status_code == 200
-                assert del_again.json()["deleted"] == 0, (
-                    f"second DELETE should be no-op: {del_again.json()!r}"
-                )
+                # ----------------------------------------------------------
+                # Phase 5 — same user token must now be denied.
+                # The auth pipeline still resolves the token to the
+                # subject (the API key is not revoked), but the ReBAC
+                # check now returns False -> PERMISSION_DENIED.
+                # ----------------------------------------------------------
+                async with grpc.aio.insecure_channel(running_nexus.grpc_addr) as denied_channel:
+                    denied_stub = approvals_pb2_grpc.ApprovalsV1Stub(denied_channel)
+                    with pytest.raises(grpc.aio.AioRpcError) as denied_info:
+                        await asyncio.wait_for(
+                            denied_stub.ListPending(
+                                approvals_pb2.ListPendingRequest(zone_id=zone),
+                                metadata=user_metadata,
+                            ),
+                            timeout=10.0,
+                        )
+                    assert denied_info.value.code() == grpc.StatusCode.PERMISSION_DENIED, (
+                        f"expected PERMISSION_DENIED after grant revoke, got "
+                        f"{denied_info.value.code()!r} "
+                        f"details={denied_info.value.details()!r}"
+                    )
             finally:
-                # Best-effort cleanup if any phase above raised.
+                # Best-effort cleanup: drop tuple + revoke the user key
+                # so the daemon doesn't accumulate test droppings between
+                # runs in the same docker stack lifetime.
                 with contextlib.suppress(Exception):
-                    await http.request("DELETE", rebac_url, headers=admin_headers, json=tuple_body)
+                    await http.request(
+                        "DELETE",
+                        rebac_url,
+                        headers=admin_api_key_headers,
+                        json=tuple_body,
+                    )
+                with contextlib.suppress(Exception):
+                    await http.delete(
+                        f"{keys_url}/{user_key_id}",
+                        headers=admin_api_key_headers,
+                    )
 
-        # Phase 4 — gRPC bearer-token pipeline checks (unchanged).
+        # ------------------------------------------------------------------
+        # Phase 6 — gRPC bearer-token pipeline checks (existing).
+        # ------------------------------------------------------------------
         # Case 1: garbage bearer rejected with UNAUTHENTICATED.
         bad_metadata: tuple = (("authorization", "Bearer not-a-real-token-deadbeef"),)
         async with grpc.aio.insecure_channel(running_nexus.grpc_addr) as bad_channel:
@@ -453,8 +494,9 @@ class TestFollowupE2E:
                 f"{exc_info.value.code()!r} details={exc_info.value.details()!r}"
             )
 
-        # Case 2: admin bearer accepted, ListPending returns a response.
-        admin_metadata: tuple = (("authorization", admin_bearer),)
+        # Case 2: approvals admin bearer accepted (admin-fallback path),
+        # ListPending returns a response.
+        admin_metadata: tuple = (("authorization", approvals_admin_bearer),)
         async with grpc.aio.insecure_channel(running_nexus.grpc_addr) as admin_channel:
             admin_stub = approvals_pb2_grpc.ApprovalsV1Stub(admin_channel)
             resp = await asyncio.wait_for(

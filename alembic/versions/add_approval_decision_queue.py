@@ -1,5 +1,11 @@
 """Add approval decision queue tables (Issue #3790).
 
+Postgres-only: uses JSONB and a partial unique index. The index
+`approval_requests_pending_coalesce` is load-bearing for request
+coalescing semantics — it ensures only one pending row exists for
+any (zone_id, kind, subject) tuple at a time. Do not modify or drop
+without coordinating with the approvals brick.
+
 Revision ID: add_approval_decision_queue
 Revises: 3b2a1c5d7e8f
 Create Date: 2026-04-28
@@ -9,6 +15,7 @@ from collections.abc import Sequence
 from typing import Union
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -31,7 +38,7 @@ def upgrade() -> None:
         sa.Column("reason", sa.Text, nullable=False, server_default=""),
         sa.Column(
             "metadata",
-            sa.dialects.postgresql.JSONB,
+            postgresql.JSONB,
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
@@ -64,7 +71,10 @@ def upgrade() -> None:
         "approval_decisions",
         sa.Column("id", sa.BigInteger, primary_key=True, autoincrement=True),
         sa.Column(
-            "request_id", sa.String(64), sa.ForeignKey("approval_requests.id"), nullable=False
+            "request_id",
+            sa.String(64),
+            sa.ForeignKey("approval_requests.id", ondelete="RESTRICT"),
+            nullable=False,
         ),
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("decided_by", sa.String(255), nullable=False),
@@ -89,7 +99,10 @@ def upgrade() -> None:
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("decided_by", sa.String(255), nullable=False),
         sa.Column(
-            "request_id", sa.String(64), sa.ForeignKey("approval_requests.id"), nullable=True
+            "request_id",
+            sa.String(64),
+            sa.ForeignKey("approval_requests.id", ondelete="RESTRICT"),
+            nullable=True,
         ),
         sa.UniqueConstraint(
             "session_id",

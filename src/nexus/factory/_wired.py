@@ -478,22 +478,33 @@ def _boot_post_kernel_services(
     # tracked separately) and the permission-lease termination callback.
     if _agent_reg is not None:
         try:
-            import nexus_kernel
+            import nexus_runtime
 
             _kernel_handle = getattr(nx, "_kernel", None)
             if _kernel_handle is not None:
-                nexus_kernel.nx_acp_install(_kernel_handle, ROOT_ZONE_ID)
-                nexus_kernel.nx_acp_set_agent_registry(_kernel_handle, _agent_reg)
+                # ManagedAgentService — registers the chat-with-me +
+                # workspace-boundary hooks and enlists the service into
+                # ServiceRegistry. Must run before any AgentKind::MANAGED
+                # agent spawns.
+                nexus_runtime.nx_managed_agent_install(_kernel_handle)
+                logger.debug("[BOOT:WIRED] ManagedAgentService (Rust) installed")
+                # AcpService — host for AgentKind::UNMANAGED agents
+                # (subprocess + ACP-over-stdio). Late-binds the Python
+                # AgentRegistry behind the trait so call_agent can
+                # spawn / kill / list pids until the AgentRegistry
+                # SSOT migration to Rust lands.
+                nexus_runtime.nx_acp_install(_kernel_handle, ROOT_ZONE_ID)
+                nexus_runtime.nx_acp_set_agent_registry(_kernel_handle, _agent_reg)
                 logger.debug("[BOOT:WIRED] AcpService (Rust) installed")
                 _perm_lease_table = getattr(nx, "_permission_lease_table", None)
                 if _perm_lease_table is not None:
-                    nexus_kernel.nx_acp_register_on_terminate(
+                    nexus_runtime.nx_acp_register_on_terminate(
                         _kernel_handle,
                         "perm-lease-revoke",
                         _perm_lease_table.invalidate_agent,
                     )
         except Exception as exc:
-            logger.warning("[BOOT:WIRED] AcpService (Rust) install failed: %s", exc)
+            logger.warning("[BOOT:WIRED] managed_agent / acp Rust install failed: %s", exc)
 
     user_provisioning_service: Any = None
     try:

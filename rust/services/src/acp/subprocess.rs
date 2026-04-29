@@ -38,7 +38,7 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 use super::agent_config::AgentConfig;
 use super::paths;
-use crate::kernel::{Kernel, KernelError, OperationContext};
+use kernel::kernel::{Kernel, KernelError, OperationContext};
 
 const PIPE_CAPACITY: usize = 1 << 20;
 
@@ -438,7 +438,7 @@ mod tests {
     // ── fd-lifecycle integration tests (linux/CI only) ──────────────
 
     use super::AcpSubprocess;
-    use crate::kernel::Kernel;
+    use kernel::kernel::Kernel;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

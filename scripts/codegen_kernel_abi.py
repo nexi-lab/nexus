@@ -987,9 +987,20 @@ def generate_stubs(
         "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
     )
     lines.append("")
-    # ── AcpService PyO3 surface (acp/pyo3.rs) — hand-written, NOT codegen.
+    # ── ManagedAgentService PyO3 surface (services::python) -- hand-written,
+    # not codegen. Boot-installer for AgentKind::MANAGED hooks +
+    # session lifecycle.
     lines.append("# " + "-" * 75)
-    lines.append("# AcpService PyO3 surface (acp/pyo3.rs) -- hand-written, NOT codegen.")
+    lines.append("# ManagedAgentService PyO3 surface (rust/services/src/python/mod.rs)")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append("def nx_managed_agent_install(py_kernel: Any) -> None: ...")
+    lines.append("")
+    # ── AcpService PyO3 surface (services::acp::pyo3) — hand-written,
+    # NOT codegen. Hosts AgentKind::UNMANAGED agents via subprocess +
+    # ACP-over-stdio.
+    lines.append("# " + "-" * 75)
+    lines.append("# AcpService PyO3 surface (rust/services/src/acp/pyo3.rs)")
     lines.append("# " + "-" * 75)
     lines.append("")
     lines.append('def nx_acp_install(py_kernel: Any, default_zone: str = "root") -> None: ...')
@@ -998,12 +1009,12 @@ def generate_stubs(
         "def nx_acp_register_on_terminate(py_kernel: Any, callback_id: str, callback: Any) -> None: ..."
     )
     lines.append("")
-    # ── Generic Rust-service dispatch entry point (lib.rs) — same lookup
-    # the tonic Call handler uses; in-process callers should prefer this
-    # over per-service shortcuts so audit/permission hooks can land in
-    # one place.
+    # ── Generic Rust-service dispatch entry point (services::python) — same
+    # lookup the tonic Call handler uses; in-process callers should
+    # prefer this over per-service shortcuts so audit/permission hooks
+    # can land in one place.
     lines.append("# " + "-" * 75)
-    lines.append("# Generic Rust-service dispatch (lib.rs) -- in-process callers")
+    lines.append("# Generic Rust-service dispatch (rust/services/src/python/mod.rs)")
     lines.append("# " + "-" * 75)
     lines.append("")
     lines.append(

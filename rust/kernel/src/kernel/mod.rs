@@ -611,7 +611,7 @@ pub struct Kernel {
     // the services rlib (rust/services/src/agent_table.rs); the kernel
     // owns an Arc handle so AgentStatusResolver and other kernel-internal
     // consumers can share read access without depending on field layout.
-    pub(crate) agent_table: Arc<crate::core::agents::table::AgentTable>,
+    pub agent_table: Arc<crate::core::agents::table::AgentTable>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `VFSRouter::entries` as
@@ -790,18 +790,12 @@ impl Kernel {
         // this seam so non-cdylib callers (Rust tests, embedded) don't
         // pay the federation init cost unless they explicitly install
         // the provider.
-        // Pre-write managed-agent service: registers itself + its two
-        // hooks (workspace boundary teaching, mailbox stamping) into
-        // the kernel-known registries. The hooks are generic to any
-        // AgentKind::MANAGED agent (any */chat-with-me write, any
-        // /proc/{pid}/workspace/ — not sudo-code-specific). Failure
-        // here would mean every managed-agent write loses identity
-        // safety, so we propagate as a kernel-construction warning;
-        // the kernel itself stays up so non-managed paths (HDFS
-        // half, audit, federation, …) still work.
-        if let Err(e) = crate::managed_agent::ManagedAgentService::install(&k) {
-            tracing::error!("managed_agent service install failed: {e}");
-        }
+        // ManagedAgentService is installed by the cdylib boot path
+        // (services lives in a peer crate; kernel does NOT depend on
+        // services). Python-side: `nexus_runtime.nx_managed_agent_install
+        // (kernel)` runs in `_wired.py` after `Kernel::new` returns.
+        // Pure-Rust embedders call `services::managed_agent::ManagedAgentService::install(&k)`
+        // themselves; nothing happens automatically here.
         // Observers registered on-demand (not at Kernel::new()).
         // FileWatchRegistry + StreamEventObservers are registered by orchestrator
         // at boot time to avoid issues in lightweight test contexts.

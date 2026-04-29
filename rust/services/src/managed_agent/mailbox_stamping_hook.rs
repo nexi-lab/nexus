@@ -11,7 +11,7 @@
 //! (envelope schema, identity guarantee).
 
 use super::mailbox_stamping_policy;
-use crate::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
+use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
 
 /// Path suffix the dispatcher consults to decide when to clone write
 /// content into `WriteHookCtx`. Kept as a constant so the suffix
@@ -66,7 +66,7 @@ impl NativeInterceptHook for MailboxStampingHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dispatch::{HookIdentity, ReadHookCtx, WriteHookCtx};
+    use kernel::core::dispatch::{HookIdentity, ReadHookCtx, WriteHookCtx};
 
     fn write_ctx(path: &str, agent_id: &str, content: Vec<u8>) -> HookContext {
         HookContext::Write(WriteHookCtx {

@@ -47,8 +47,8 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::core::agents::table::{AgentDescriptor, AgentKind, AgentState, AgentTable};
-use crate::service_registry::{RustCallError, RustService};
+use kernel::core::agents::table::{AgentDescriptor, AgentKind, AgentState, AgentTable};
+use kernel::service_registry::{RustCallError, RustService};
 
 pub(crate) mod mailbox_stamping_hook;
 pub(crate) mod mailbox_stamping_policy;
@@ -166,7 +166,7 @@ impl ManagedAgentService {
     /// — the same `Arc` `Kernel` keeps for `AgentStatusResolver` reads —
     /// so `start_session` mutates the same SSOT every other agent
     /// surface reads from.
-    pub(crate) fn install(kernel: &crate::kernel::Kernel) -> Result<(), String> {
+    pub(crate) fn install(kernel: &kernel::kernel::Kernel) -> Result<(), String> {
         kernel.register_native_hook(Box::new(
             workspace_boundary_hook::WorkspaceBoundaryHook::new(),
         ));

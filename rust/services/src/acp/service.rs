@@ -34,8 +34,8 @@ use serde_json::{json, Value};
 
 use super::agent_config::AgentConfig;
 use super::paths;
-use crate::kernel::{Kernel, OperationContext};
-use crate::service_registry::{RustCallError, RustService};
+use kernel::kernel::{Kernel, OperationContext};
+use kernel::service_registry::{RustCallError, RustService};
 
 #[cfg(unix)]
 use super::connection::{AcpConnection, FsRead, FsWrite};

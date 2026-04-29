@@ -40,7 +40,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use super::service::{AcpService, AgentDescriptor, AgentRegistry, OnTerminateCallback};
-use crate::generated_pyo3::PyKernel;
+use kernel::generated_pyo3::PyKernel;
 
 // ── Free PyO3 functions ─────────────────────────────────────────────────
 
@@ -48,7 +48,7 @@ use crate::generated_pyo3::PyKernel;
 #[pyfunction]
 #[pyo3(signature = (py_kernel, default_zone="root"))]
 pub(crate) fn nx_acp_install(py_kernel: PyRef<'_, PyKernel>, default_zone: &str) -> PyResult<()> {
-    AcpService::install(&py_kernel.inner, default_zone).map_err(PyRuntimeError::new_err)
+    AcpService::install(&py_kernel.kernel_arc(), default_zone).map_err(PyRuntimeError::new_err)
 }
 
 /// Late-bind the Python AgentRegistry behind the trait so AcpService

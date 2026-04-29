@@ -17,7 +17,7 @@
 //! advertised mailbox and exists precisely so other agents can write to
 //! it without being inside the workspace.
 
-use crate::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
+use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
 
 /// Path prefix that scopes this hook. Anything under `/proc/{pid}/workspace/`
 /// is governed by the workspace boundary check. Other paths short-circuit
@@ -114,7 +114,7 @@ impl NativeInterceptHook for WorkspaceBoundaryHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dispatch::{HookIdentity, ReadHookCtx, WriteHookCtx};
+    use kernel::core::dispatch::{HookIdentity, ReadHookCtx, WriteHookCtx};
 
     fn ctx(path: &str, caller: &str) -> HookContext {
         HookContext::Write(WriteHookCtx {

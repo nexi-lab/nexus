@@ -49,25 +49,19 @@ pub(crate) use core::lock::semaphore;
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
 
-// AcpService — Rust port of the Python `nexus.services.acp` service.
-// Hosts `AgentKind::UNMANAGED` agents (subprocess + ACP-over-stdio).
-// Lives kernel-side in this rebase commit; later commits move it to
-// `rust/services/src/acp/` once the kernel→services dep flip lands.
-mod acp;
-
 // NostrBackend ObjectStore stub — chat-with-me remote-identity leg.
-// Lives kernel-side in this rebase commit; later commits move it to
+// Lives kernel-side here; later migration commits move it to
 // `rust/backends/src/nostr/` (the canonical home for ObjectStore
 // drivers per the post-#3932 architecture).
 #[cfg(feature = "nostr")]
 mod nostr_backend;
 
-// Managed-agent service hooks + policy.  Collected under one module so
-// the mailbox stamping policy lives alongside the workspace-boundary
-// teaching hook — both are pieces of the same `ManagedAgentService`
-// behavior surface.  Will move to `rust/services/src/managed_agent/`
-// once the kernel→services dep flip lands.
-mod managed_agent;
+// `acp` and `managed_agent` modules used to live here; both moved to
+// the `services` crate (`rust/services/src/{acp,managed_agent}/`) so
+// the kernel↔services dep direction stays one-way (services depends
+// on kernel, never the reverse). Boot-time installation is wired
+// through PyO3 hooks the cdylib calls (see `services::python::register`).
+
 #[cfg(unix)]
 pub(crate) use core::pipe::shm as shm_pipe;
 #[cfg(unix)]

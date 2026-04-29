@@ -1,9 +1,10 @@
 """Thin Python adapter for the Rust AcpService.
 
-After the cutover (commit 22), the Python ``services.acp`` package is
-gone. The dispatch consumer + any other in-process callers that need
-to fire an ACP call go through this adapter, which talks to the Rust
-``AcpService`` through ``nexus_kernel.nx_acp_dispatch``.
+After the cutover, the Python ``services.acp`` package is gone. The
+dispatch consumer + any other in-process callers that need to fire an
+ACP call go through this adapter, which talks to the Rust
+``AcpService`` through the generic
+``nexus_runtime.nx_kernel_dispatch_rust_call`` primitive.
 
 No HTTP loopback — the dispatch path stays in-process and releases the
 GIL while the Rust ``call_agent`` runs the subprocess + ACP session.
@@ -35,7 +36,7 @@ class AcpCallResult:
 
 
 class AcpAdapter:
-    """Calls into the Rust AcpService via ``nx_acp_dispatch``."""
+    """Calls into the Rust AcpService via ``nx_kernel_dispatch_rust_call``."""
 
     def __init__(self, kernel: Any) -> None:
         self._kernel = kernel
@@ -78,14 +79,14 @@ class AcpAdapter:
         )
 
     def _dispatch(self, method: str, payload: bytes) -> bytes:
-        import nexus_kernel
+        import nexus_runtime
 
         # Goes through the same Kernel::dispatch_rust_call lookup the
         # tonic Call handler uses -- single dispatch primitive, no
         # per-service shortcut. None means the registered service
         # rejected the lookup; surface as RuntimeError because the
         # dispatch_consumer's worker spawn would be broken by that.
-        result = nexus_kernel.nx_kernel_dispatch_rust_call(self._kernel, "acp", method, payload)
+        result = nexus_runtime.nx_kernel_dispatch_rust_call(self._kernel, "acp", method, payload)
         if result is None:
             raise RuntimeError("AcpService not installed (call nx_acp_install first)")
         return result

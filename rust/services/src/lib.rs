@@ -12,10 +12,14 @@
 //!
 //! ```text
 //! services/
-//!   agents/       — agent table + procfs-style status resolver
-//!   audit/        — AuditHook (NativeInterceptHook) + factory
-//!   permission/   — PermissionHook scaffolding (§11 Phase 11; dead today)
-//!   python/       — `#[cfg(feature = "python")]` PyO3 sub-module
+//!   acp/             — Rust-port of nexus.services.acp (subprocess +
+//!                      ACP-over-stdio for AgentKind::UNMANAGED agents)
+//!   agents/          — agent table + procfs-style status resolver
+//!   audit/           — AuditHook (NativeInterceptHook) + factory
+//!   managed_agent/   — ManagedAgentService (mailbox + workspace hooks
+//!                      plus session lifecycle for AgentKind::MANAGED)
+//!   permission/      — PermissionHook scaffolding (§11 Phase 11; dead today)
+//!   python/          — `#[cfg(feature = "python")]` PyO3 sub-module
 //! ```
 //!
 //! ## Hard invariant: `services` ⊥ `backends`
@@ -36,8 +40,19 @@
 //!                          +--- backends     (peer; never crosses to services)
 //! ```
 
+// AcpService — subprocess + ACP-over-stdio host for
+// `AgentKind::UNMANAGED` agents (claude / codex / …). PyO3 surface
+// (`pyo3` submodule) is gated behind the `python` feature so
+// pure-Rust builds drop it.
+#[cfg(feature = "python")]
+pub mod acp;
 pub mod agents;
 pub mod audit;
+// ManagedAgentService — first Rust-flavoured service. Owns the
+// chat-with-me mailbox stamping hook, the workspace-boundary
+// teaching hook, and the `start_session_v1` / `cancel_v1` /
+// `get_session_v1` lifecycle for `AgentKind::MANAGED` agents.
+pub mod managed_agent;
 // `tasks` was previously a standalone `_nexus_tasks.so` cdylib.  Phase
 // 3 restructure plan #6 folded it in here so the runtime ships a
 // single Python wheel; `services::python::register` exposes the

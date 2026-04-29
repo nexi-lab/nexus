@@ -71,7 +71,7 @@ impl Kernel {
     /// `KernelDispatch` chain, register the hooks inside the service's
     /// `start()` (called by the registry on enlist).
     #[allow(dead_code)]
-    pub(crate) fn register_rust_service(
+    pub fn register_rust_service(
         &self,
         name: &str,
         instance: std::sync::Arc<dyn crate::service_registry::RustService>,

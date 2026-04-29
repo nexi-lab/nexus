@@ -593,7 +593,13 @@ def federation_start_replication_scanner(
 ) -> None: ...
 
 # ---------------------------------------------------------------------------
-# AcpService PyO3 surface (acp/pyo3.rs) -- hand-written, NOT codegen.
+# ManagedAgentService PyO3 surface (rust/services/src/python/mod.rs)
+# ---------------------------------------------------------------------------
+
+def nx_managed_agent_install(py_kernel: Any) -> None: ...
+
+# ---------------------------------------------------------------------------
+# AcpService PyO3 surface (rust/services/src/acp/pyo3.rs)
 # ---------------------------------------------------------------------------
 
 def nx_acp_install(py_kernel: Any, default_zone: str = "root") -> None: ...
@@ -601,7 +607,7 @@ def nx_acp_set_agent_registry(py_kernel: Any, registry: Any) -> None: ...
 def nx_acp_register_on_terminate(py_kernel: Any, callback_id: str, callback: Any) -> None: ...
 
 # ---------------------------------------------------------------------------
-# Generic Rust-service dispatch (lib.rs) -- in-process callers
+# Generic Rust-service dispatch (rust/services/src/python/mod.rs)
 # ---------------------------------------------------------------------------
 
 def nx_kernel_dispatch_rust_call(

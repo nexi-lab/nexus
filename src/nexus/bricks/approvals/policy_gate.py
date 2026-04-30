@@ -13,7 +13,7 @@ from typing import Any
 
 from nexus.bricks.approvals.errors import ApprovalDenied, ApprovalTimeout, GatewayClosed
 from nexus.bricks.approvals.models import ApprovalKind, Decision
-from nexus.bricks.approvals.service import ApprovalService, _is_fabricated_session_id
+from nexus.bricks.approvals.service import ApprovalService, _has_real_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +49,11 @@ class PolicyGate:
     ) -> Decision:
         # Session-scope cache hit: bypass the queue.
         #
-        # F2 (#3790): server-fabricated session_ids (e.g. ``hub:...`` from
-        # the zone-access hook) are excluded — caching against them would
-        # turn a SESSION-scope grant into a durable persist without the
-        # operator opting in. ``_is_fabricated_session_id`` centralizes the
-        # rule so request_and_wait and decide() apply the same filter.
-        if session_id is not None and not _is_fabricated_session_id(session_id):
+        # F2 (#3790): only use the cache for real session_ids (non-None,
+        # non-empty, non-fabricated). Empty strings and fabricated prefixes
+        # (e.g. ``hub:...``) are excluded — see ``_has_real_session_id``.
+        if _has_real_session_id(session_id):
+            assert session_id is not None  # guaranteed by _has_real_session_id
             allow = await self._service.repository.session_allow_exists(
                 session_id=session_id,
                 zone_id=zone_id,

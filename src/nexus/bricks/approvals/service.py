@@ -62,6 +62,18 @@ def _is_fabricated_session_id(session_id: str | None) -> bool:
     return any(session_id.startswith(p) for p in _FABRICATED_SESSION_ID_PREFIXES)
 
 
+def _has_real_session_id(session_id: str | None) -> bool:
+    """Return True only if ``session_id`` is a non-empty, non-fabricated value.
+
+    Round-6 (#3790): empty strings are not real session identifiers — they
+    carry no session lifetime and must not be eligible for SESSION-scope
+    cache hits or inheritance. This helper replaces the scattered
+    ``session_id is not None and not _is_fabricated_session_id(session_id)``
+    pattern so empty strings are consistently excluded.
+    """
+    return bool(session_id) and not _is_fabricated_session_id(session_id)
+
+
 # Grace window for inheriting a recent terminal decision when a late-inserted
 # pending row appears for the same coalesce key. The partial unique index
 # `approval_requests_pending_coalesce` is `WHERE status='pending'`, so once a
@@ -225,7 +237,8 @@ class ApprovalService:
         # here would turn a SESSION-scope approval into a durable persist
         # without the operator ever asking for it. Falling through means
         # the next call goes back through the queue.
-        if session_id is not None and not _is_fabricated_session_id(session_id):
+        if _has_real_session_id(session_id):
+            assert session_id is not None  # guaranteed by _has_real_session_id
             allow = await self._repo.session_allow_exists(
                 session_id=session_id,
                 zone_id=zone_id,
@@ -277,7 +290,7 @@ class ApprovalService:
                 and _recent.decision_scope in _INHERITABLE_SCOPES
                 and not (
                     _recent.decision_scope is DecisionScope.SESSION
-                    and (session_id is None or _is_fabricated_session_id(session_id))
+                    and (not _has_real_session_id(session_id))
                 )
             ):
                 if (
@@ -510,9 +523,7 @@ class ApprovalService:
         # contract and let the caller re-use the prior operator decision
         # without a fresh queueing. PERSIST_* scopes carry their own
         # lifetime semantics and do not require a session_id.
-        if scope is DecisionScope.SESSION and (
-            session_id is None or _is_fabricated_session_id(session_id)
-        ):
+        if scope is DecisionScope.SESSION and (not _has_real_session_id(session_id)):
             return None
 
         # Flip our late-inserted row to APPROVED with the inherited scope.

@@ -1228,7 +1228,7 @@ impl Kernel {
     /// `MetaStore::rename_path`.
     pub fn metastore_rename_path(&self, old_path: &str, new_path: &str) -> Result<(), KernelError> {
         let old_mp = self.resolve_mount_point(old_path, contracts::ROOT_ZONE_ID);
-        match self.with_metastore(&old_mp, |ms| ms.rename_path(old_path, new_path)) {
+        match self.with_metastore(&old_mp, |ms| ms.rename_path(old_path, new_path, false)) {
             Some(result) => result.map_err(|e| {
                 KernelError::IOError(format!(
                     "metastore_rename_path({old_path} → {new_path}): {e:?}"

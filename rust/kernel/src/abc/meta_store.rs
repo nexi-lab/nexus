@@ -213,7 +213,17 @@ pub trait MetaStore: Send + Sync {
     /// `old_path + "/"` prefix via get → put(new_key) → delete(old_key).
     /// Not atomic under concurrent writers — callers that need
     /// atomicity override (redb uses a single write txn).
-    fn rename_path(&self, old_path: &str, new_path: &str) -> Result<(), MetaStoreError> {
+    ///
+    /// `is_pas`: pass `true` for path-addressed backends (local://, GDrive, etc.)
+    /// so implementations update `content_id` to the new path; pass `false` for
+    /// content-addressed backends (CAS) where `content_id` is a hash and must
+    /// not be rewritten.
+    fn rename_path(
+        &self,
+        old_path: &str,
+        new_path: &str,
+        _is_pas: bool,
+    ) -> Result<(), MetaStoreError> {
         if old_path == new_path {
             return Ok(());
         }

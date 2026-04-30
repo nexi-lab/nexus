@@ -571,18 +571,25 @@ impl VFSRouter {
     }
 
     /// Copy a file via the mount's backend (PAS server-side copy).
+    ///
+    /// Returns `None` when the mount has no Rust backend (Python-side connector).
+    /// Returns `Some(Ok(_))` on success, `Some(Err(_))` on backend error.
+    /// Callers should fall back to read+write only for `StorageError::NotSupported`;
+    /// other errors indicate a real failure and should be propagated.
     pub fn copy_file(
         &self,
         canonical_key: &str,
         src_backend_path: &str,
         dst_backend_path: &str,
-    ) -> Option<crate::abc::object_store::WriteResult> {
+    ) -> Option<Result<crate::abc::object_store::WriteResult, crate::abc::object_store::StorageError>>
+    {
         let entry = self.entries.get(canonical_key)?;
-        entry
-            .backend
-            .as_ref()?
-            .copy_file(src_backend_path, dst_backend_path)
-            .ok()
+        Some(
+            entry
+                .backend
+                .as_ref()?
+                .copy_file(src_backend_path, dst_backend_path),
+        )
     }
 
     /// Create a directory via the mount's backend.

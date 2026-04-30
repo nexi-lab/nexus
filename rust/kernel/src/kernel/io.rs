@@ -1037,7 +1037,19 @@ impl Kernel {
         let is_cross_mount = old_route.mount_point != new_route.mount_point;
 
         if is_cross_mount {
-            // Cross-mount: PUT→new metastore, DELETE→old metastore.
+            // Cross-mount PAS rename is rejected: physically moving bytes across
+            // mount points requires a distributed 2PC (read→write→delete) that is
+            // not atomic and cannot be compensated without a WAL. Callers must use
+            // sys_copy + sys_unlink for cross-mount moves on PAS backends.
+            if !old_route.is_cas {
+                release_locks(&self.lock_manager, lock1, lock2);
+                return Err(KernelError::IOError(
+                    "sys_rename: cross-mount rename not supported for path-addressed backends; \
+                     use copy + delete instead"
+                        .to_string(),
+                ));
+            }
+            // Cross-mount CAS: PUT→new metastore, DELETE→old metastore.
             // Both must commit; if the PUT fails we don't even try
             // the DELETE (entry stays at old path — caller can retry).
             // If PUT succeeds but DELETE fails, the entry exists at
@@ -1046,10 +1058,6 @@ impl Kernel {
             if let Some(old_m) = old_meta.as_ref() {
                 let mut new_m = old_m.clone();
                 new_m.path = new_zone_path.clone();
-                // PAS cross-mount: content_id is the old backend-relative path;
-                // update it to the new backend path so sys_read resolves correctly.
-                use crate::core::meta_store::pas_update_content_id;
-                pas_update_content_id(&mut new_m, &old_zone_path, &new_zone_path);
                 self.commit_metadata(&new_zone_path, &new_route.mount_point, new_m)?;
                 self.commit_delete(&old_zone_path, &old_route.mount_point)?;
             }
@@ -1063,8 +1071,6 @@ impl Kernel {
                     let child_new_path = format!("{}{}", new_zone_path, suffix);
                     let mut child_meta = child.clone();
                     child_meta.path = child_new_path.clone();
-                    use crate::core::meta_store::pas_update_content_id as _pac;
-                    _pac(&mut child_meta, &child.path, &child_new_path);
                     self.commit_metadata(&child_new_path, &new_route.mount_point, child_meta)?;
                     self.commit_delete(&child.path, &old_route.mount_point)?;
                 }
@@ -1085,25 +1091,31 @@ impl Kernel {
             // For PAS backends: rename bytes first so a storage failure never
             // leaves metadata committed to a path where no bytes were moved.
             // CAS backends do not move bytes on rename; drive them after metadata.
-            if !old_route.is_cas {
-                if let Some(Err(e)) = self.vfs_router.rename_file(
+            let backend_renamed = if !old_route.is_cas {
+                match self.vfs_router.rename_file(
                     &old_route.mount_point,
                     &old_route.backend_path,
                     &new_route.backend_path,
                 ) {
-                    release_locks(&self.lock_manager, lock1, lock2);
-                    return Err(KernelError::IOError(format!(
-                        "sys_rename: backend rename failed: {e:?}"
-                    )));
+                    Some(Err(e)) => {
+                        release_locks(&self.lock_manager, lock1, lock2);
+                        return Err(KernelError::IOError(format!(
+                            "sys_rename: backend rename failed: {e:?}"
+                        )));
+                    }
+                    Some(Ok(())) => true,
+                    // None = backend does not implement rename (external connectors);
+                    // fall through to metadata-only rename for those.
+                    None => false,
                 }
-                // None = backend does not implement rename (external connectors);
-                // fall through to metadata-only rename for those.
-            }
+            } else {
+                false
+            };
 
             // Commit metadata after PAS bytes are moved (or immediately for CAS).
             let rename_result = self
                 .with_metastore(&old_route.mount_point, |ms| {
-                    ms.rename_path(&old_zone_path, &new_zone_path)
+                    ms.rename_path(&old_zone_path, &new_zone_path, !old_route.is_cas)
                 })
                 .ok_or_else(|| {
                     KernelError::IOError(format!(
@@ -1111,9 +1123,29 @@ impl Kernel {
                         old_route.mount_point
                     ))
                 })?;
-            rename_result.map_err(|e| {
-                KernelError::IOError(format!("sys_rename: metastore.rename_path: {e:?}"))
-            })?;
+            if let Err(meta_err) = rename_result {
+                // PAS: bytes already moved to new path — try to roll back so the
+                // file is accessible again. If rollback also fails, report both
+                // errors; data is at new backend path but metadata is at old path.
+                if backend_renamed {
+                    if let Some(Err(rollback_err)) = self.vfs_router.rename_file(
+                        &old_route.mount_point,
+                        &new_route.backend_path,
+                        &old_route.backend_path,
+                    ) {
+                        release_locks(&self.lock_manager, lock1, lock2);
+                        return Err(KernelError::IOError(format!(
+                            "sys_rename: metastore failed and storage rollback also failed \
+                             (data at {new_path} is inaccessible): meta={meta_err:?} \
+                             rollback={rollback_err:?}"
+                        )));
+                    }
+                }
+                release_locks(&self.lock_manager, lock1, lock2);
+                return Err(KernelError::IOError(format!(
+                    "sys_rename: metastore.rename_path: {meta_err:?}"
+                )));
+            }
 
             // CAS: drive backend rename (no-op for hash-addressed content) after metadata.
             if old_route.is_cas {
@@ -1334,15 +1366,12 @@ impl Kernel {
                 &src_route.backend_path,
                 &dst_route.backend_path,
             ) {
-                Some(wr) => Ok((wr.content_id, wr.size)),
-                None => {
-                    // Backend returned None: either CAS (copy not meaningful since
-                    // content is hash-addressed) or backend does not implement copy.
-                    // For CAS: metadata-only copy is correct — same content_id,
-                    // different path entry.
-                    // For PAS: None means the backend's copy_file is not implemented;
-                    // fall back to read+write to avoid creating a metadata alias
-                    // pointing at source bytes.
+                Some(Ok(wr)) => Ok((wr.content_id, wr.size)),
+                Some(Err(crate::abc::object_store::StorageError::NotSupported(_))) | None => {
+                    // No backend / operation not supported: fall back per addressing mode.
+                    // For CAS: metadata-only copy is correct — same content_id, different path.
+                    // For PAS: read+write to avoid creating a metadata alias pointing at
+                    // source bytes that haven't been physically duplicated.
                     if src_route.is_cas {
                         let content_id = src_meta.content_id.clone().unwrap_or_default();
                         if !content_id.is_empty() {
@@ -1351,10 +1380,12 @@ impl Kernel {
                             self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
                         }
                     } else {
-                        // PAS backend copy_file returned None (not implemented) —
-                        // read bytes from source and write to destination.
                         self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
                     }
+                }
+                Some(Err(e)) => {
+                    // Real backend error (disk full, permission denied, etc.) — propagate.
+                    Err(KernelError::BackendError(format!("sys_copy: {e:?}")))
                 }
             }
         } else {

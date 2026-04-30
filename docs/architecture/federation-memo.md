@@ -155,16 +155,44 @@ Creates a **new independent zone**. All participants are **equal Voters** (not L
 
 ### 6.3 Peer Discovery: No Custom DNS
 
-Standard OS DNS + static bootstrap + Raft membership exchange covers all scenarios.
+Standard OS DNS + bootstrap + Raft membership exchange covers all scenarios.
 
 | Layer | Mechanism | When |
 |-------|-----------|------|
-| Bootstrap | `NEXUS_PEERS` env var | First cluster formation |
+| Bootstrap | `NEXUS_PEERS` env var (static) **or** `federation_create_zone` + `JoinZone` RPC (dynamic) | First cluster formation |
 | First contact | OS DNS (hostname → IP) | `join_zone(peers=["2@bob:2126"])` |
 | After join | `JoinZoneResponse.ClusterConfig` | Returns all voter NodeInfo |
 | Ongoing | Raft `ConfChange` | Automatic membership propagation |
 
 Path resolution across zones is **all local** (~5us per hop) because mounting = Voter = full local replica. No network hops on the read path.
+
+#### 6.3.1 Bootstrap Modes
+
+Two coexisting cluster-formation contracts, selected per-deployment:
+
+**Static bootstrap** — `NEXUS_PEERS` non-empty.
+
+Every node parses the shared `NEXUS_PEERS` list and seeds the same `ConfState` at boot via `bootstrap_zone("root", NEXUS_PEERS)`. Raft-rs runs election internally once peers reach each other over the network. Standard pattern for declarative deployments (k8s StatefulSet, docker-compose) where the topology is fixed and known at config time. The Federation E2E suite (`docker-compose.dynamic-federation-test.yml` despite its name) uses this mode with a 3-voter `nexus-1, nexus-2, witness` cluster.
+
+Static-mode requirements:
+- `NEXUS_PEERS` must list **every** voter (data nodes + any witness). 2-voter `NEXUS_PEERS=a,b` deployments cannot tolerate a single-node down — the survivor has 1/2 votes, no quorum, no leader. Add a witness for HA.
+- Cold-start node IDs are derived as `hostname_to_node_id(hostname)`. All nodes must agree on hostname-form to converge on identical `ConfState`.
+- `NEXUS_HOSTNAME` of each node must equal **its own** entry in `NEXUS_PEERS` (not someone else's) — otherwise raft sees an extra phantom voter (3 IDs in `ConfState` for what should be 2 actual peers).
+
+**Dynamic bootstrap** — `NEXUS_PEERS` empty.
+
+The daemon brings up the raft transport server but does NOT auto-create the root zone. The cluster is formed by explicit RPC drive, matching the etcd / TiKV operator model:
+
+1. **First node**: invoke `federation_create_zone("root")` (PyO3 entry point: `nexus_runtime.federation_create_zone(kernel, "root")`; equivalent gRPC-side path on `ZoneApiService`). Internally calls `create_zone("root", peers=vec![])` → ConfState=[`self.node_id`], quorum=1, raft-rs `campaign=true` → self-elects leader on first tick.
+2. **Subsequent nodes**: each starts with empty `NEXUS_PEERS`, then invokes `JoinZone` RPC against the leader's address (or any node — followers redirect via `JoinZoneResponse.leader_address`). Leader proposes `ConfChangeV2 AddNode(joiner_id, joiner_addr)`, commits via existing voter quorum, then pushes a snapshot to populate the joiner's `ConfState` and log.
+3. **Subsequent witness**: same as node 2, learner flag may be set if witness should not be a full Voter.
+
+Dynamic-mode use cases:
+- Ad-hoc / agent-driven cluster bring-up where topology emerges over time (multi-tenant SaaS, federated personal devices joining an org cluster, etc.).
+- Heterogeneous environments where setting identical `NEXUS_PEERS` across all nodes is impractical (cross-OS, behind different NAT boundaries).
+- Cluster expansion: an existing static-bootstrapped cluster can absorb a new dynamic-mode joiner without re-deploying every existing node.
+
+Both modes share the same trait surface (`DistributedCoordinator`); choice is signalled by the presence/absence of `NEXUS_PEERS` at boot. There is no separate "mode" env var — the absence of static seed *is* the dynamic signal, keeping the operator config minimal (no shadow SSOT between mode flag and peers list).
 
 ### 6.4 DT_MOUNT Entry Structure
 

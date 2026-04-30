@@ -844,7 +844,15 @@ fn federation_is_initialized_py(
     kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
 ) -> PyResult<bool> {
     let k = kernel.kernel_ref();
-    Ok(!k.distributed_coordinator().list_zones(k).is_empty())
+    // Routes through the trait's `is_initialized` method (RaftDistributedCoordinator
+    // implements this against its `bootstrap_done` atomic).  Previously this helper
+    // shadowed init readiness via `list_zones().is_empty()`, which misclassified
+    // dynamic-bootstrap mode as "not ready" until the first zone gets created —
+    // and `_federation_rpc_active` (the Python health probe) gates RPC method
+    // registration on this signal, so dynamic-mode daemons used to come up with
+    // no `federation_create_zone` RPC exposed and no way for an operator to
+    // create the root zone in the first place.  Trait method is the SSOT now.
+    Ok(k.distributed_coordinator().is_initialized(k))
 }
 
 /// Python-facing one-shot install: replaces the kernel's

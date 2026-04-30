@@ -809,7 +809,7 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     #[cfg(feature = "grpc")]
     {
-        use transport_primitives::{PyTofuTrustStore, PyTrustedZone};
+        use lib::transport_primitives::{PyTofuTrustStore, PyTrustedZone};
         m.add_class::<PyTofuTrustStore>()?;
         m.add_class::<PyTrustedZone>()?;
     }

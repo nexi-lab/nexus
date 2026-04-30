@@ -1,7 +1,7 @@
 //! Channel creation utility — centralized tonic Endpoint configuration.
 
-use crate::config::{ClientConfig, TlsConfig};
-use crate::error::TransportError;
+use super::config::{ClientConfig, TlsConfig};
+use super::error::TransportError;
 
 /// Create a tonic Channel to the given endpoint with optional TLS.
 ///

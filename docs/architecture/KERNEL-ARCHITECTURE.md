@@ -369,10 +369,10 @@ Control-Plane HAL trait files (`DistributedCoordinator`,
 `ObjectStoreProvider`). Kernel primitives (§4) live in `kernel/src/core/`
 as concrete types. Connector-backend protocol extensions (e.g.
 `LlmStreamingBackend`) live in `rust/backends/`; transport-layer
-abstractions (`PeerBlobClient`, TOFU trust store) live in
-`rust/shared/transport-primitives/`. Directory layout enforces the
-three-way split: `abc/` is for §3.A pillars, `hal/` is for §3.B DI
-surfaces, `core/` is for primitives.
+abstractions (`PeerBlobClient`, TOFU trust store) live in the
+tier-neutral `rust/lib/` crate's `transport_primitives` module.
+Directory layout enforces the three-way split: `abc/` is for §3.A
+pillars, `hal/` is for §3.B DI surfaces, `core/` is for primitives.
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars =
 interchangeable drivers (deployment-time config). See `data-storage-matrix.md`.
@@ -733,23 +733,25 @@ Any layer may import from them; they must **not** import from `nexus.core`,
 Both tier-neutral packages have a Rust mirror.  Names match so a reader
 jumping between the two trees finds the same module in the same place.
 
-| Tier-neutral package | Python                | Rust crate                       |
-|----------------------|-----------------------|----------------------------------|
-| `contracts`          | `src/nexus/contracts` | `rust/contracts/`                |
-| `lib`                | `src/nexus/lib`       | `rust/shared/lib/`               |
+| Tier-neutral package | Python                | Rust crate         |
+|----------------------|-----------------------|--------------------|
+| `contracts`          | `src/nexus/contracts` | `rust/contracts/`  |
+| `lib`                | `src/nexus/lib`       | `rust/lib/`        |
 
-`rust/shared/lib/` builds against `wasm32-unknown-unknown` with
-default features. PyO3 wrappers for the algorithms (rebac, search,
-trigram, glob, io, prefix, simd, path_utils, bitmap, bloom, hash) live
-behind the optional `python` feature in `rust/shared/lib/src/python/*.rs`.
+`rust/lib/` builds against `wasm32-unknown-unknown` with default
+features. PyO3 wrappers for the algorithms (rebac, search, trigram,
+glob, io, prefix, simd, path_utils, bitmap, bloom, hash) live behind
+the optional `python` feature in `rust/lib/src/python/*.rs`.
 `rust/nexus-cdylib` enables that feature so the wheel registers them
 through a single `lib::python::register(m)` call.
 
-`rust/shared/transport-primitives/` sits next to `shared/lib/` at the
-same lowest dep-graph layer: TLS / pool / addressing / TOFU trust
-store / `PeerBlobClient` trait. Both `shared/` members depend on
-`contracts` only; every peer crate (kernel, raft, backends, rpc,
-transport, services) depends on them.
+`rust/lib/` also carries the `transport_primitives` module — TLS
+config, peer addressing, connection pooling, channel creation, the
+TOFU trust store, and the `PeerBlobClient` trait. The module sits
+behind the optional `transport` feature so WASM / pure-algo callers
+skip the tonic + tokio dep stack. Every peer crate that speaks raft
+or VFS gRPC (raft, transport, kernel through the peer-client slot)
+enables `lib`'s `transport` feature.
 
 ### 6.1 Workspace composition
 
@@ -773,16 +775,17 @@ graph stay acyclic.
 
 | Role | Crates | Linux analogue | Charter |
 |------|--------|----------------|---------|
-| **OS proper** | `kernel/`, `contracts/` | `kernel/` (vmlinux core) | VFS, syscalls, namespace primitives, HAL trait declarations. Depends on `contracts` and `shared/`. |
-| **Driver layer (kernel-internal)** | `backends/`, `raft/`, `rpc/` | `drivers/` | Implement HAL traits; consume kernel's runtime API. `backends` = local storage drivers (ObjectStore impl). `raft` = distributed storage driver (MetaStore impl + DistributedCoordinator impl). `rpc` = driver-outgoing RPC clients (VFS, peer-blob, federation). |
-| **Front-door services (kernel-external)** | `transport/` | `net/` (front-door socket dispatch) | VFS gRPC server (port 2028) + IPC envelope helpers. Listens for in-bound requests; depends on `kernel` and `shared/transport-primitives`. |
+| **OS proper** | `kernel/`, `contracts/` | `kernel/` (vmlinux core) | VFS, syscalls, namespace primitives, HAL trait declarations. Depends on `contracts` and `lib`. |
+| **Driver layer (kernel-internal)** | `backends/`, `raft/` | `drivers/` | Implement HAL traits; consume kernel's runtime API. `backends` = local storage drivers (ObjectStore impl). `raft` = distributed storage driver (MetaStore impl + DistributedCoordinator impl). |
+| **Network surface (kernel-external)** | `transport/` | `net/` | VFS gRPC server + IPC envelope helpers (in-bound) plus VFS / peer-blob / federation clients (driver-outgoing). One crate covers both directions like Linux's `net/` covers both server sockets and outgoing connections. Depends on `kernel`, `lib`, and `raft` (proto stubs for the federation client). |
 | **Post-syscall services (kernel-internal hooks)** | `services/` | LSM hooks (`security/`) | Audit, agents, permission, tasks. Fired on syscall paths through registered hooks; depends on `kernel`. |
-| **Shared lib** | `shared/lib/`, `shared/transport-primitives/` | `lib/` (libc, libm) | Pure utilities, depend on `contracts` only. `shared/lib` = algorithms (bitmap, bloom, glob, hash, simd, …). `shared/transport-primitives` = TLS, pool, addressing, TOFU trust store, `PeerBlobClient` trait. |
+| **Tier-neutral lib (§6)** | `lib/` | `lib/` (libc, libm) | Pure utilities depending on `contracts` only. Algorithms (bitmap, bloom, glob, hash, simd, …) plus the `transport_primitives` module (TLS, pool, addressing, TOFU trust store, `PeerBlobClient` trait). The §6 mirror of `src/nexus/lib`. |
 
 The role split makes the orthogonality invariants
-**`services ⊥ backends ⊥ transport ⊥ raft`** and **`kernel ⊥ raft`**
-read directly off the table: same role = peers (no edges between);
-different role = directed edge from consumer to provider.
+**`services ⊥ backends ⊥ raft`** (services and backends reach raft
+state through `kernel.sys_*` syscalls, never via Cargo dep) and
+**`kernel ⊥ raft`** (kernel reaches raft only through trait dispatch)
+read directly off the table.
 
 #### Kernel crate composition
 
@@ -850,7 +853,6 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     nexus_raft::pyo3_bindings::register_python_classes(m)?;
     services::python::register(m)?;
     backends::python::register(m)?;
-    rpc::python::register(m)?;
     transport::python::register(m)?;
     Ok(())
 }
@@ -860,81 +862,69 @@ This split lets each peer crate depend on `kernel` (for trait
 declarations: `abc::ObjectStore`, `hal::distributed_coordinator::DistributedCoordinator`,
 …) while the wheel-side dependency `nexus-cdylib → {kernel, peers}`
 flows in only one direction. `PeerBlobClient` lives in
-`shared/transport-primitives` so both raft (server-side handler) and
-rpc (client-side fetch) can depend on it without either depending on
+`lib::transport_primitives` so both raft (server-side handler) and
+transport (client-side fetch) can depend on it without depending on
 each other.
 
 #### Dependency direction
 
 ```text
-                          contracts              (zero deps)
-                              ↑
-                       shared/lib                (depends on contracts)
-                              ↑
-                shared/transport-primitives      (low-level TLS / pool /
-                              ↑                   addressing; owns TOFU
-                              │                   trust store + PeerBlobClient
-                              │                   trait; depends on contracts)
-                           kernel                (depends on contracts +
-                              ↑                   shared/lib +
-                              │                   shared/transport-primitives;
-                              │                   declares HAL traits)
-                ↑    ↑    ↑    ↑    ↑
-                │    │    │    │    │
-          backends raft  rpc transport services  (peer crates — depend on
-                ↑    ↑    ↑    ↑    ↑           kernel + shared/transport-primitives;
-                │    │    │    │    │           rpc additionally depends on raft
-                │    │    │    │    │           for proto stubs)
-                └────┴────┴────┴────┴── nexus-cdylib  (Python wheel sink)
+                       contracts              (zero deps)
+                          ↑
+                         lib                  (depends on contracts;
+                          ↑                    algorithms + transport_primitives
+                          │                    behind opt-in features)
+                       kernel                 (depends on contracts + lib;
+                          ↑                    declares HAL traits)
+              ↑    ↑    ↑    ↑
+              │    │    │    │
+       backends raft transport services       (peer crates — depend on
+              ↑    ↑    ↑    ↑                kernel + lib; transport
+              │    │    │    │                additionally depends on raft
+              │    │    │    │                for federation proto stubs)
+              └────┴────┴────┴── nexus-cdylib  (Python wheel sink)
 
-                                 raft         (used by profile binaries)
-                                  ↑
-                          rust/profiles/cluster  (deployment binary sink)
+                              raft         (used by profile binaries)
+                               ↑
+                       rust/profiles/cluster  (deployment binary sink)
 ```
 
 Edge invariants:
 
-| Edge                                              | Direction                                      |
-|---------------------------------------------------|------------------------------------------------|
-| `services` / `backends` / `transport` / `raft`    | role peers — orthogonal (the role taxonomy invariant) |
-| `kernel ↔ shared/lib`                             | one-way: `kernel → shared/lib`                 |
-| `raft ↔ transport`                                | both consume `shared/transport-primitives` for shared TLS / pool / addressing types |
-| `rpc → raft`                                      | one-way: `rpc` references raft's wire-format proto stubs (same shape as a Postgres client crate referencing libpq) |
-| `kernel → raft`                                   | trait-only: kernel reaches raft through `DistributedCoordinator` dispatch |
-| `nexus-cdylib`                                    | sink (Python wheel)                            |
-| `rust/profiles/<name>`                            | sink (deployment binary)                       |
+| Edge                                          | Direction                                      |
+|-----------------------------------------------|------------------------------------------------|
+| `services` / `backends` / `raft`              | role peers — orthogonal; reach each other via `kernel.sys_*` syscalls |
+| `kernel ↔ lib`                                | one-way: `kernel → lib`                        |
+| `raft ↔ transport`                            | one-way: `transport → raft` for federation client proto stubs (Postgres-client-references-libpq shape) |
+| `kernel → raft`                               | trait-only: kernel reaches raft through `DistributedCoordinator` dispatch |
+| `nexus-cdylib`                                | sink (Python wheel)                            |
+| `rust/profiles/<name>`                        | sink (deployment binary)                       |
 
-`shared/lib` keeps a zero peer-crate footprint so it builds against
-`wasm32-unknown-unknown`. `shared/transport-primitives` is the lowest
-shared layer where TLS / pool / addressing / TOFU trust store / the
-`PeerBlobClient` trait live — both raft (server-side handler) and rpc
-(client-side fetch) consume it, which is what keeps the
-`raft ⊥ transport` and `services ⊥ raft` invariants intact. The
-`rpc → raft` edge is the only directed edge between driver-layer crates:
-`rpc` is the "raft protocol client", so it references raft's wire-format
-types, while raft consumes shared types directly from
-`shared/transport-primitives`.
+`lib` (default features) keeps a zero peer-crate footprint so it builds
+against `wasm32-unknown-unknown`. The `transport_primitives` module
+under lib's `transport` feature houses TLS / pool / addressing / TOFU
+trust store / `PeerBlobClient` trait — both raft (server-side handler)
+and transport (client-side fetch) consume it without depending on
+each other.
 
 #### RPC: client side vs server side
 
-The remote-RPC stack splits along the same kernel ↔ peer line as the
-rest of the workspace.
+The remote-RPC stack lives on the network surface tier `transport/`,
+plus raft for the federation server fabric.
 
-| Side   | Crate                    | Module             | Role                                                                                  |
-|--------|--------------------------|--------------------|---------------------------------------------------------------------------------------|
-| Client | `rpc`                    | `vfs` / `peer_blob` / `federation` | Driver-outgoing RPC clients: VFS gRPC for `RemoteBackend`, peer-blob fetch, federation peer client |
-| Server | `transport`              | `grpc` / `ipc`     | Front-door VFS gRPC server (port 2028) + IPC envelope helpers                         |
-| Server | `raft`                   | `blob_fetcher_handler` / `pyo3_bindings` | Federation peer mesh + per-zone routers + blob-fetcher server handler             |
-| Shared | `shared/transport-primitives` | (whole crate) | TLS, connection pool, addressing, TOFU trust store, `PeerBlobClient` trait — consumed by both sides |
+| Side   | Crate                       | Module                         | Role                                                                                  |
+|--------|-----------------------------|--------------------------------|---------------------------------------------------------------------------------------|
+| Server | `transport`                 | `grpc` / `ipc`                 | VFS gRPC server (port 2028) + IPC envelope helpers                                    |
+| Server | `raft`                      | `blob_fetcher_handler` / `pyo3_bindings` | Federation peer mesh + per-zone routers + blob-fetcher server handler         |
+| Client | `transport`                 | `vfs` / `peer_blob` / `federation` | Driver-outgoing clients: VFS gRPC for `RemoteBackend`, peer-blob fetch, federation peer client |
+| Shared | `lib::transport_primitives` | (whole module)                 | TLS, connection pool, addressing, TOFU trust store, `PeerBlobClient` trait — consumed by both sides |
 
-Client and server live in role-distinct crates: `rpc` is a driver-layer crate
-(driver-outgoing calls), `transport` is a front-door services crate
-(in-bound listening), `raft` owns the federation peer fabric. All three talk
-through `shared/transport-primitives` so the wire-format is identical across
-sides. The `RpcTransport` type sits in the kernel crate (kernel-internal
-`RemoteMetaStore` / `RemotePipeBackend` / `RemoteStreamBackend` wrappers
-also wrap it directly); `rpc::vfs` re-exports it so peer crates name a
-single canonical path.
+`transport/` covers both directions of the network surface (Linux
+`net/` analogue: same crate hosts server sockets and outgoing
+connection helpers). The `RpcTransport` type sits in the kernel crate
+(kernel-internal `RemoteMetaStore` / `RemotePipeBackend` /
+`RemoteStreamBackend` wrappers also wrap it directly); `transport::vfs`
+re-exports it so out-bound callers name a single canonical path.
 
 ### Placement Decision Tree
 

@@ -488,6 +488,19 @@ class PyVfsGrpcServerHandle:
     def shutdown(self) -> None: ...
     def __repr__(self) -> str: ...
 
+class PyFederationClient:
+    def __init__(
+        self,
+        local_ca_pem: bytes | None = None,
+        node_cert_pem: bytes | None = None,
+        node_key_pem: bytes | None = None,
+        tofu_store_path: str | None = None,
+    ) -> None: ...
+    def discover_mount(self, peer_addr: str, path: str) -> dict[str, Any]: ...
+    def request_join_zone(
+        self, peer_addr: str, zone_id: str, node_id: int, node_address: str, as_learner: bool
+    ) -> None: ...
+
 class TaskEngine:
     def __init__(self, db_path: str, max_pending: int = 1000, max_wait_secs: int = 300) -> None: ...
     def submit(

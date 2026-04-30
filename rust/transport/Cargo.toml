@@ -2,7 +2,7 @@
 name = "transport"
 version = "0.1.0"
 edition = "2021"
-description = "Front-door services tier — VFS gRPC server (port 2028) + IPC envelope helpers. Depends on `kernel` + `shared/transport-primitives`. Driver-outgoing RPC clients (peer-blob, federation, VFS) live in the `rpc` driver-layer crate; transport keeps zero `nexus_raft::*` references so the orthogonality invariant `services ⊥ backends ⊥ transport ⊥ raft` reads off the dep graph."
+description = "Network surface tier — VFS gRPC server (port 2028) + IPC envelope helpers (in-bound) plus VFS / peer-blob / federation clients (driver-outgoing). Depends on `kernel`, `lib` (transport_primitives module), and `raft` (proto stubs for the federation client)."
 
 [lib]
 name = "transport"
@@ -11,7 +11,8 @@ crate-type = ["rlib"]
 [features]
 default = []
 # `python` aggregates the PyO3 entry points (`PyVfsGrpcServerHandle`,
-# `start_vfs_grpc_server`) into `transport::python::register(m)`.
+# `start_vfs_grpc_server`, `PyFederationClient`, `install_transport_wiring`)
+# into `transport::python::register(m)`.
 python = ["dep:pyo3"]
 
 [dependencies]
@@ -22,9 +23,14 @@ contracts = { workspace = true }
 # (mimalloc allocator, connectors HTTP, py-hook adapters) off in this
 # rlib; the cdylib pulls them via its own kernel dep.
 kernel = { workspace = true }
-# Shared transport primitives (TLS / pool / addressing) — same low-level
-# types raft and rpc consume.
-transport-primitives = { workspace = true }
+# `lib::transport_primitives` (TLS / pool / addressing / TOFU /
+# PeerBlobClient trait) lives behind lib's `transport` feature.
+lib = { workspace = true, features = ["transport"] }
+# raft for the federation client's wire-format proto stubs
+# (JoinZoneRequest etc.). Transport is the network surface so it
+# names raft's wire types directly, like a Postgres client crate
+# referencing libpq.
+raft = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros"] }
@@ -44,4 +50,4 @@ pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
-rcgen = "0.13"
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }

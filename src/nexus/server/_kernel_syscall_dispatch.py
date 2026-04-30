@@ -29,39 +29,26 @@ from typing import Any
 KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset(
     {
         "access",
-        "delete",
         "exists",
         "list",
         "lock_acquire",
         "read",
-        "rename",
         "sys_copy",
         "sys_lock",
-        "sys_mkdir",
         "sys_read",
-        "sys_rename",
-        "sys_rmdir",
         "sys_setattr",
         "sys_stat",
-        "sys_unlink",
         "sys_unlock",
-        "sys_write",
-        "write",
     }
 )
 
 
 # Wire name → canonical NexusFS method name (see codegen for the why).
 _ALIASES: dict[str, str] = {
-    "delete": "sys_unlink",
     "exists": "access",
     "list": "sys_readdir",
     "lock_acquire": "sys_lock",
     "read": "sys_read",
-    "rename": "sys_rename",
-    "sys_mkdir": "mkdir",
-    "sys_rmdir": "rmdir",
-    "write": "sys_write",
 }
 
 

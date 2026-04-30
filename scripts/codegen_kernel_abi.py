@@ -4951,20 +4951,20 @@ def collect_all() -> tuple[
 
 # Methods on PyKernel that map 1:1 to a NexusFS syscall and should be
 # served by the thin dispatcher.  Names match PyKernel's Python-facing
-# names — alias surface (read/write/delete/exists/list/rename/sys_rmdir
-# /lock_acquire) is wired separately below since some don't have a
-# matching PyKernel symbol.
+# names — alias surface (read/exists/list/lock_acquire) is wired
+# separately below since some don't have a matching PyKernel symbol.
+#
+# Mutation syscalls that fire pub/sub events (sys_write, sys_unlink,
+# sys_rename, sys_mkdir, sys_rmdir) deliberately stay on the legacy
+# `dispatch.py` path until `subscription_manager` is plumbed into the
+# thin dispatcher and event firing moves over.  Tracked as the
+# next migration commit.
 _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
     "sys_read",
-    "sys_write",
     "sys_setattr",
-    "sys_unlink",
-    "sys_rename",
     "sys_copy",
     "sys_stat",
     "sys_readdir",
-    "sys_mkdir",
-    "sys_rmdir",
     "sys_lock",
     "sys_unlock",
     "access",
@@ -4973,27 +4973,16 @@ _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
 
 
 # Wire-name → canonical NexusFS method name.  Two reasons we need this:
-#   1. Aliases (``read`` / ``write`` / ``delete`` / ``exists`` /
-#      ``list`` / ``rename``) are short forms used by nexus-test and
-#      remote clients; canonical NexusFS methods keep the ``sys_``
-#      prefix.
-#   2. PyKernel exposes ``sys_mkdir`` / ``sys_rmdir`` while NexusFS
-#      exposes ``mkdir`` / ``rmdir`` (no sys_ prefix at the FS-level
-#      Tier 2 wrapper).  Backward-compat ``sys_rmdir`` keeps working
-#      for older clients via the alias map.
-#   3. ``lock_acquire`` is the Tier 2 dict-shaped wrapper — see the
+#   1. Aliases (``read`` / ``exists`` / ``list``) are short forms used
+#      by nexus-test and remote clients; canonical NexusFS methods keep
+#      the ``sys_`` prefix.
+#   2. ``lock_acquire`` is the Tier 2 dict-shaped wrapper — see the
 #      Python helper that materializes the ``{acquired, lock_id}``
 #      response from ``sys_lock``.
 _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     "read": "sys_read",
-    "write": "sys_write",
-    "delete": "sys_unlink",
-    "rename": "sys_rename",
     "exists": "access",
     "list": "sys_readdir",
-    # PyKernel says sys_mkdir / sys_rmdir; NexusFS Tier 2 says mkdir / rmdir.
-    "sys_mkdir": "mkdir",
-    "sys_rmdir": "rmdir",
     # Tier 2 lock_acquire dispatches to sys_lock and shapes the result.
     "lock_acquire": "sys_lock",
 }

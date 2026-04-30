@@ -88,13 +88,18 @@ def test_get_accessible_paths_returns_none_when_no_bitmap():
     cache._resource_map.bulk_get_resource_ids.assert_not_called()
 
 
-def test_get_accessible_paths_drops_unresolvable_ids():
-    """If bulk_get_resource_ids omits an int_id (truly orphaned), drop silently."""
+def test_get_accessible_paths_returns_none_on_partial_resolution():
+    """Unresolved int IDs (resource_map degradation) must return None — never cache False.
+
+    Returning a partial set would let DirectoryVisibilityCache cache False for
+    directories that actually have accessible descendants. None forces the
+    caller to fall through to the authoritative slow path.
+    """
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
     resource_map = MagicMock()
-    # int_id 2 omitted — DB also has no row for it
+    # int_id 2 unresolvable (DB also has no row) — partial resolution
     resource_map.bulk_get_resource_ids.return_value = {1: ("file", "/a/file.txt")}
     cache._resource_map = resource_map
     cache.get_accessible_int_ids = MagicMock(return_value={1, 2})
@@ -106,7 +111,27 @@ def test_get_accessible_paths_drops_unresolvable_ids():
         resource_type="file",
     )
 
-    assert paths == {"/a/file.txt"}
+    assert paths is None  # degraded signal — not the partial set
+
+
+def test_get_accessible_paths_returns_none_when_all_unresolved():
+    """Catastrophic degradation (zero IDs resolve) must return None."""
+    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
+
+    cache = TigerCache.__new__(TigerCache)
+    resource_map = MagicMock()
+    resource_map.bulk_get_resource_ids.return_value = {}
+    cache._resource_map = resource_map
+    cache.get_accessible_int_ids = MagicMock(return_value={1, 2, 3})
+
+    paths = cache.get_accessible_paths(
+        subject_type="user",
+        subject_id="alice",
+        permission="read",
+        resource_type="file",
+    )
+
+    assert paths is None
 
 
 def test_get_accessible_paths_large_bitmap_single_bulk_call():

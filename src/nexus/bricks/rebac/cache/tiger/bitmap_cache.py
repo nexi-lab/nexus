@@ -736,6 +736,27 @@ class TigerCache:
         # the DB in a single batched query — otherwise large bitmaps
         # produce N round-trips and saturate the DB on hot auth paths.
         id_to_key = self._resource_map.bulk_get_resource_ids(int_ids)
+
+        # Detect resource-map degradation: bitmap referenced int IDs that
+        # cannot be resolved to (type, path). Callers (DirectoryVisibilityCache)
+        # treat None as "indeterminate, fall back to slow path" and any set
+        # (including empty) as authoritative. Returning a partial set risks
+        # caching a false-negative visibility for a directory that does have
+        # accessible descendants. Surface the degraded state explicitly.
+        unresolved = len(int_ids) - len(id_to_key)
+        if unresolved > 0:
+            logger.warning(
+                "[TIGER-PUSHDOWN] resource_map degraded: %d/%d int IDs unresolved "
+                "(subject=%s:%s, perm=%s, type=%s) — returning None to force authoritative check",
+                unresolved,
+                len(int_ids),
+                subject_type,
+                subject_id,
+                permission,
+                resource_type,
+            )
+            return None
+
         paths: set[str] = {key[1] for key in id_to_key.values() if key[0] == resource_type}
 
         if logger.isEnabledFor(logging.DEBUG):

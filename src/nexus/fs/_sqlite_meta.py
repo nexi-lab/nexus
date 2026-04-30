@@ -1,23 +1,18 @@
-"""``SQLiteMetastore`` compatibility factory (F3 C4).
+"""``SQLiteMetastore`` compatibility factory.
 
-Historical note — this module used to implement a full stdlib-only
-``MetastoreABC`` subclass backed by a local SQLite file, as the
-nexus-fs slim SDK's metadata store for environments that could not
-build the Rust kernel. The kernel has since become the single source
-of truth for metastore state: every ``nfs.sys_*`` write now funnels
-through ``kernel.metastore_put``, so a Python-only SQLite side-store
-was invisible to the kernel and silently dropped writes.
+Historical note — this module used to implement a Python-only
+``MetastoreABC`` subclass backed by a local SQLite file as the slim
+package's metadata store for environments without the Rust kernel.
+The kernel is now the single source of truth for metastore state, and
+``nexus-fs`` declares ``nexus-runtime`` as a required dep, so the
+Python-only path no longer exists.
 
 This file preserves the ``SQLiteMetastore`` import path as a thin
 factory **function** — not a class — that returns a
 ``RustMetastoreProxy`` wired to a fresh bare ``Kernel`` with its
-redb-backed metastore pointed at ``db_path``. The .db suffix is
-rewritten to .redb so an existing sqlite file from a previous run is
-not accidentally overwritten.
-
-Open question from the F3 plan: whether SQLite remains a public
-contract for the slim wheel. For now the public ``SQLiteMetastore``
-call shape keeps working; the on-disk format is redb, not sqlite.
+redb-backed metastore pointed at ``db_path``. The ``.db`` suffix is
+rewritten to ``.redb`` so an existing sqlite file from a previous run
+is not accidentally overwritten.
 """
 
 from __future__ import annotations

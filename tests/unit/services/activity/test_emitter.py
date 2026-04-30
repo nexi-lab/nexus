@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from nexus.services.activity import EventKind, Result, emit, get_emitter, set_emitter
-from nexus.services.activity.emitter import NoopEmitter
+from nexus.services.activity.emitter import NoopEmitter, QueueEmitter
 
 
 @pytest.fixture(autouse=True)
@@ -53,3 +55,59 @@ def test_emit_function_calls_current_emitter() -> None:
     set_emitter(rec)
     emit(kind=EventKind.SEARCH, result=Result.OK)
     assert len(rec.calls) == 1
+
+
+def _drain(q: asyncio.Queue) -> list:
+    out = []
+    while not q.empty():
+        out.append(q.get_nowait())
+    return out
+
+
+def test_queue_emitter_enqueues_event() -> None:
+    q: asyncio.Queue = asyncio.Queue(maxsize=10)
+    emitter = QueueEmitter(queue=q)
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK, subject_zone="eng", latency_ms=5)
+    events = _drain(q)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.kind is EventKind.SEARCH
+    assert ev.subject.zone == "eng"
+    assert ev.latency_ms == 5
+    assert ev.id  # non-empty id
+    assert ev.ts  # non-empty ISO ts
+
+
+def test_queue_emitter_drops_on_overflow() -> None:
+    q: asyncio.Queue = asyncio.Queue(maxsize=2)
+    emitter = QueueEmitter(queue=q)
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)  # overflow → drop
+    assert emitter.drop_count == 1
+    assert q.qsize() == 2
+
+
+def test_queue_emitter_never_raises() -> None:
+    q: asyncio.Queue = asyncio.Queue(maxsize=1)
+    emitter = QueueEmitter(queue=q)
+    for _ in range(5):
+        emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    assert emitter.drop_count == 4
+
+
+def test_queue_emitter_works_without_running_loop() -> None:
+    """Caller may emit from sync context — put_nowait does not require a loop."""
+    q: asyncio.Queue = asyncio.Queue(maxsize=10)
+    emitter = QueueEmitter(queue=q)
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    assert q.qsize() == 1
+
+
+def test_queue_emitter_id_is_unique() -> None:
+    q: asyncio.Queue = asyncio.Queue(maxsize=10)
+    emitter = QueueEmitter(queue=q)
+    for _ in range(5):
+        emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    events = _drain(q)
+    assert len({e.id for e in events}) == 5

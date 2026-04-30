@@ -1,7 +1,16 @@
-"""Read-only HTTP diagnostic dump for ops smoke-testing."""
+"""Read-only HTTP diagnostic dump for ops smoke-testing.
+
+The dump leaks pending-approval rows (subjects, session_ids, agent_ids,
+reasons, metadata). It must always be bearer-token-gated; calling
+``register_diag_router`` with ``allow_subject=None`` is a programming
+error and raises ``ValueError``. The lifespan caller is responsible for
+checking ``NEXUS_APPROVALS_DIAG_TOKEN`` and skipping registration when
+unset.
+"""
 
 from __future__ import annotations
 
+import hmac
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException
@@ -13,17 +22,23 @@ def register_diag_router(
     app: FastAPI,
     service: ApprovalService,
     *,
-    allow_subject: str | None,
+    allow_subject: str,
 ) -> None:
+    if not allow_subject:
+        raise ValueError(
+            "register_diag_router: allow_subject must be a non-empty bearer token; "
+            "the diag dump cannot be exposed unauthenticated."
+        )
+
     router = APIRouter()
 
     def _check_auth(authorization: str | None) -> None:
-        if allow_subject is None:
-            return
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="missing bearer")
         token = authorization.removeprefix("Bearer ").strip()
-        if token != allow_subject:
+        # Constant-time compare: defends against token-length / timing
+        # inference if an attacker is probing for the diag secret.
+        if not hmac.compare_digest(token, allow_subject):
             raise HTTPException(status_code=403, detail="forbidden")
 
     @router.get("/hub/approvals/dump")

@@ -1,13 +1,18 @@
-"""ActivityEvent schema for issue #3791 foundation slice."""
+"""ActivityEvent schema for issue #3791 foundation slice.
+
+Frozen dataclasses + enums. No I/O, no side effects — safe to import from
+any layer. ``actor.token_hash`` is the SHA256[:16] of the raw bearer token
+(matches ``bricks/mcp/middleware_audit.py``); raw tokens are NEVER stored.
+"""
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 
-class EventKind(str, enum.Enum):
+class EventKind(StrEnum):
     SEARCH = "search"
     FETCH = "fetch"
     MCP_TOOL_CALL = "mcp_tool_call"
@@ -16,7 +21,7 @@ class EventKind(str, enum.Enum):
     APPROVAL = "approval"
 
 
-class Result(str, enum.Enum):
+class Result(StrEnum):
     OK = "ok"
     BLOCKED = "blocked"
     PENDING_APPROVAL = "pending_approval"

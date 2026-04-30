@@ -146,7 +146,11 @@ impl PeerAddress {
         }
     }
 
-    /// Parse from "host:port" or "id@host:port" format, deriving node_id from hostname.
+    /// Parse from "host:port" or "id@host:port" format.
+    ///
+    /// Bare host entries derive the node ID from the hostname. Explicit
+    /// `id@...` entries preserve the supplied ID so callers can carry
+    /// incarnation-based IDs through the same peer-list path.
     #[allow(clippy::result_large_err)]
     pub fn parse(s: &str, use_tls: bool) -> Result<Self> {
         let s = s.trim();
@@ -155,14 +159,28 @@ impl PeerAddress {
             .or_else(|| s.strip_prefix("https://"))
             .unwrap_or(s);
 
-        // Strip "id@" prefix if present
-        let addr = match addr.find('@') {
-            Some(pos) => &addr[pos + 1..],
-            None => addr,
+        let (explicit_id, addr) = match addr.find('@') {
+            Some(pos) => {
+                let id_str = &addr[..pos];
+                let id = id_str.parse::<u64>().map_err(|_| {
+                    TransportError::InvalidAddress(format!(
+                        "invalid node id in '{}': '{}'",
+                        s, id_str
+                    ))
+                })?;
+                if id == 0 {
+                    return Err(TransportError::InvalidAddress(format!(
+                        "node id must be non-zero in '{}'",
+                        s
+                    )));
+                }
+                (Some(id), &addr[pos + 1..])
+            }
+            None => (None, addr),
         };
 
         let (hostname, port) = parse_host_port(addr, s)?;
-        let id = hostname_to_node_id(&hostname);
+        let id = explicit_id.unwrap_or_else(|| hostname_to_node_id(&hostname));
 
         let scheme = if use_tls { "https" } else { "http" };
         let endpoint = format!("{}://{}", scheme, format_host_port(&hostname, port));
@@ -265,6 +283,38 @@ mod tests {
             assert_ne!(compute_node_id("nexus-1", inc), 0);
             assert_ne!(compute_node_id("witness", inc), 0);
         }
+    }
+
+    #[test]
+    fn test_parse_honors_explicit_node_id() {
+        let addr = PeerAddress::parse("42@nexus-2:2126", false).unwrap();
+        assert_eq!(addr.id, 42);
+        assert_eq!(addr.hostname, "nexus-2");
+        assert_eq!(addr.port, 2126);
+        assert_eq!(addr.endpoint, "http://nexus-2:2126");
+    }
+
+    #[test]
+    fn test_to_raft_peer_str_round_trips_explicit_node_id() {
+        let original = PeerAddress {
+            hostname: "nexus-2".to_string(),
+            port: 2126,
+            id: 12345,
+            endpoint: "http://nexus-2:2126".to_string(),
+        };
+
+        let parsed = PeerAddress::parse(&original.to_raft_peer_str(), false).unwrap();
+        assert_eq!(parsed.id, original.id);
+        assert_eq!(parsed.hostname, original.hostname);
+        assert_eq!(parsed.port, original.port);
+    }
+
+    #[test]
+    fn test_parse_rejects_zero_explicit_node_id() {
+        assert!(matches!(
+            PeerAddress::parse("0@nexus-2:2126", false),
+            Err(TransportError::InvalidAddress(_))
+        ));
     }
 
     #[test]

@@ -183,6 +183,17 @@ async def test_refresh_indexes_reuses_cached_content_path_id() -> None:
     )
 
 
+def test_refresh_index_lookup_values_cast_rank_for_asyncpg() -> None:
+    values_sql, params = SearchDaemon._build_path_lookup_values(
+        ["/docs/readme.md", "/zone/root/docs/readme.md"]
+    )
+
+    assert "CAST(:rank_0 AS INTEGER)" in values_sql
+    assert "CAST(:rank_1 AS INTEGER)" in values_sql
+    assert params["rank_0"] == 0
+    assert params["rank_1"] == 1
+
+
 @pytest.mark.asyncio
 async def test_txtai_bootstrap_groups_chunks_without_postgres_aggregates() -> None:
     daemon = SearchDaemon()

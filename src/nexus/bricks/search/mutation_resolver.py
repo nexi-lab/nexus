@@ -287,7 +287,7 @@ class MutationResolver:
             params[f"lookup_rank_{idx}"] = lookup_rank
             values_parts.append(
                 f"(:zone_id_{idx}, :virtual_path_{idx}, "
-                f":canonical_virtual_path_{idx}, :lookup_rank_{idx})"
+                f":canonical_virtual_path_{idx}, CAST(:lookup_rank_{idx} AS INTEGER))"
             )
         return ", ".join(values_parts), params
 

@@ -2359,7 +2359,7 @@ class SearchDaemon:
         for idx, candidate in enumerate(candidates):
             params[f"candidate_{idx}"] = candidate
             params[f"rank_{idx}"] = idx
-            values_parts.append(f"(:candidate_{idx}, :rank_{idx})")
+            values_parts.append(f"(:candidate_{idx}, CAST(:rank_{idx} AS INTEGER))")
         return ", ".join(values_parts), params
 
     @staticmethod

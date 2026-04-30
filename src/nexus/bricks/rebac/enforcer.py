@@ -374,7 +374,7 @@ class PermissionEnforcer:
                 )
                 return {}
 
-            from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+            from nexus.lib.prefix_helpers import batch_paths_under_prefixes
 
             results_list = batch_paths_under_prefixes(list(accessible_paths), list(prefixes))
             results = dict(zip(prefixes, results_list, strict=True))

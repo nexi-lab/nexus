@@ -29,7 +29,7 @@ def _make_prefixes(n: int) -> list[str]:
 
 
 def test_any_path_under_prefix_50k_paths_under_500ms():
-    from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+    from nexus.lib.prefix_helpers import any_path_under_prefix
 
     paths = _make_paths(50_000)
     prefix = "/workspace/user_999"  # match near the end
@@ -50,7 +50,7 @@ def test_any_path_under_prefix_50k_paths_early_match_under_50ms():
     Python `any(startswith)` short-circuits on first match — should be far
     under the no-match worst case.
     """
-    from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+    from nexus.lib.prefix_helpers import any_path_under_prefix
 
     paths = _make_paths(50_000)
     # Prepend a guaranteed match so early-exit fires immediately
@@ -71,7 +71,7 @@ def test_any_path_under_prefix_50k_paths_early_match_under_50ms():
 
 
 def test_batch_paths_under_prefixes_100k_paths_50_prefixes_under_500ms():
-    from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+    from nexus.lib.prefix_helpers import batch_paths_under_prefixes
 
     paths = _make_paths(100_000)
     prefixes = _make_prefixes(50)
@@ -89,7 +89,7 @@ def test_batch_paths_under_prefixes_100k_paths_50_prefixes_under_500ms():
 def test_batch_paths_under_prefixes_python_fallback_100k_paths_50_prefixes_under_2000ms(
     monkeypatch,
 ):
-    import nexus.bricks.rebac.cache._prefix_helpers as ph
+    import nexus.lib.prefix_helpers as ph
 
     monkeypatch.setattr(ph, "_rust_batch", None)
 

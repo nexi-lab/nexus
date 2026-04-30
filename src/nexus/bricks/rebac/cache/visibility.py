@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # Issue #3192: Rust-backed TTLCache for lock-free cache internals
 try:
@@ -37,7 +37,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _resolve_paths_with_status(tiger_cache, **kwargs):
+def _resolve_paths_with_status(
+    tiger_cache: "TigerCache", **kwargs: Any
+) -> tuple[set[str] | None, bool]:
     """Call get_accessible_paths_with_status() if available, else fall back
     to legacy get_accessible_paths() and assume fully_resolved=True.
 
@@ -48,7 +50,8 @@ def _resolve_paths_with_status(tiger_cache, **kwargs):
     """
     with_status = getattr(tiger_cache, "get_accessible_paths_with_status", None)
     if with_status is not None:
-        return with_status(**kwargs)
+        result: tuple[set[str] | None, bool] = with_status(**kwargs)
+        return result
     return tiger_cache.get_accessible_paths(**kwargs), True
 
 
@@ -228,7 +231,7 @@ class DirectoryVisibilityCache:
         if accessible_paths is None:
             return None  # cache miss — caller falls through to slow path
 
-        from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+        from nexus.lib.prefix_helpers import any_path_under_prefix
 
         result = any_path_under_prefix(accessible_paths, dir_path) if accessible_paths else False
 
@@ -290,7 +293,7 @@ class DirectoryVisibilityCache:
         if accessible_paths is None:
             return {}  # cache miss
 
-        from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
+        from nexus.lib.prefix_helpers import batch_paths_under_prefixes
 
         visible_flags = (
             batch_paths_under_prefixes(accessible_paths, dir_paths)

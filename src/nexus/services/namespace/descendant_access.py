@@ -316,7 +316,7 @@ class DescendantAccessChecker:
                     zone_id=zone_id,
                 )
                 if accessible_paths:
-                    from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
+                    from nexus.lib.prefix_helpers import any_path_under_prefix
 
                     if any_path_under_prefix(accessible_paths, path):
                         if self._dir_visibility_cache is not None:

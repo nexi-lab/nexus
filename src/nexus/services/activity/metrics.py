@@ -72,7 +72,21 @@ def record_metrics(
     subject_extra: dict[str, Any] | None,
     latency_ms: int | None,
 ) -> None:
-    """Update the Prom catalog for one emitted event."""
+    """Update the Prom catalog for one emitted event.
+
+    APPROVALS_PENDING contract: producers MUST emit exactly one
+    PENDING_APPROVAL when an approval is created and exactly one
+    non-PENDING result (OK | BLOCKED) when it resolves. Across a
+    process restart the gauge may go negative for in-flight approvals
+    that resolve after restart — Task 15 (ApprovalService wiring)
+    should reseed APPROVALS_PENDING from a DB count at startup if
+    accuracy is required.
+
+    MCP_TOOL_CALL contract: producers MUST populate
+    ``subject_extra={"tool": ...}`` for the MCP_TOOL_CALLS counter
+    label to reflect the actual tool name (otherwise it falls back
+    to "unknown").
+    """
     zone = subject_zone or "unknown"
     token = actor_token_hash or "anonymous"
 

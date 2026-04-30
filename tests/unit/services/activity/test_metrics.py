@@ -16,6 +16,7 @@ from nexus.services.activity.metrics import (
     POLICY_BLOCKS,
     SEARCH_LATENCY,
     SEARCH_REQUESTS,
+    record_metrics,
 )
 
 
@@ -83,3 +84,114 @@ async def test_queue_emitter_drops_increment_drop_metric() -> None:
     emitter.emit(kind=EventKind.SEARCH, result=Result.OK)  # overflow → drop
     after = _sample(ACTIVITY_DROPS)
     assert after == before + 1
+
+
+def test_record_metrics_dispatches_search() -> None:
+    before = _sample(SEARCH_REQUESTS, zone="d-eng", token_hash="d-tok", status="ok")
+    record_metrics(
+        kind=EventKind.SEARCH,
+        result=Result.OK,
+        actor_token_hash="d-tok",
+        subject_zone="d-eng",
+        subject_extra=None,
+        latency_ms=10,
+    )
+    after = _sample(SEARCH_REQUESTS, zone="d-eng", token_hash="d-tok", status="ok")
+    assert after == before + 1
+
+
+def test_record_metrics_dispatches_mcp_tool_call() -> None:
+    before = _sample(MCP_TOOL_CALLS, tool="d-tool", status="ok")
+    record_metrics(
+        kind=EventKind.MCP_TOOL_CALL,
+        result=Result.OK,
+        actor_token_hash=None,
+        subject_zone=None,
+        subject_extra={"tool": "d-tool"},
+        latency_ms=None,
+    )
+    after = _sample(MCP_TOOL_CALLS, tool="d-tool", status="ok")
+    assert after == before + 1
+
+
+def test_record_metrics_dispatches_zone_access_blocked() -> None:
+    before = _sample(POLICY_BLOCKS, kind="zone_access")
+    record_metrics(
+        kind=EventKind.ZONE_ACCESS,
+        result=Result.BLOCKED,
+        actor_token_hash=None,
+        subject_zone="d-eng",
+        subject_extra=None,
+        latency_ms=None,
+    )
+    after = _sample(POLICY_BLOCKS, kind="zone_access")
+    assert after == before + 1
+
+
+def test_record_metrics_dispatches_policy_block_blocked() -> None:
+    before = _sample(POLICY_BLOCKS, kind="policy_block")
+    record_metrics(
+        kind=EventKind.POLICY_BLOCK,
+        result=Result.BLOCKED,
+        actor_token_hash=None,
+        subject_zone=None,
+        subject_extra=None,
+        latency_ms=None,
+    )
+    after = _sample(POLICY_BLOCKS, kind="policy_block")
+    assert after == before + 1
+
+
+def test_record_metrics_zone_access_ok_does_not_increment_blocks() -> None:
+    """ZONE_ACCESS with result=OK must NOT increment POLICY_BLOCKS."""
+    before = _sample(POLICY_BLOCKS, kind="zone_access")
+    record_metrics(
+        kind=EventKind.ZONE_ACCESS,
+        result=Result.OK,
+        actor_token_hash=None,
+        subject_zone="d-eng",
+        subject_extra=None,
+        latency_ms=None,
+    )
+    after = _sample(POLICY_BLOCKS, kind="zone_access")
+    assert after == before
+
+
+def test_record_metrics_dispatches_approval_pending_inc() -> None:
+    before = _sample(APPROVALS_PENDING)
+    record_metrics(
+        kind=EventKind.APPROVAL,
+        result=Result.PENDING_APPROVAL,
+        actor_token_hash=None,
+        subject_zone=None,
+        subject_extra=None,
+        latency_ms=None,
+    )
+    after = _sample(APPROVALS_PENDING)
+    assert after == before + 1
+
+
+def test_record_metrics_dispatches_approval_resolved_dec() -> None:
+    before = _sample(APPROVALS_PENDING)
+    record_metrics(
+        kind=EventKind.APPROVAL,
+        result=Result.OK,
+        actor_token_hash=None,
+        subject_zone=None,
+        subject_extra=None,
+        latency_ms=None,
+    )
+    after = _sample(APPROVALS_PENDING)
+    assert after == before - 1
+
+
+def test_record_metrics_fetch_is_noop() -> None:
+    """FETCH currently has no metric — record_metrics must not raise."""
+    record_metrics(
+        kind=EventKind.FETCH,
+        result=Result.OK,
+        actor_token_hash=None,
+        subject_zone=None,
+        subject_extra=None,
+        latency_ms=None,
+    )

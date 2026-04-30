@@ -57,7 +57,7 @@ def render_connector_readme(backend: Any, mount_path: str) -> str:
     except Exception:
         return text
 
-    if callable(getattr(type(generator), "ensure_frontmatter", None)):
+    if isinstance(generator, ReadmeDocGenerator):
         return generator.ensure_frontmatter(text)
     return text
 

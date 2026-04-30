@@ -59,8 +59,14 @@ def setup_activity() -> None:
     retention = RetentionTask(db_path=cfg.db_path, retention_days=cfg.retention_days)
 
     loop = asyncio.get_running_loop()
-    loop.create_task(worker.start())
-    loop.create_task(retention.start())
+    startup_tasks: set[asyncio.Task[None]] = set()
+    t1 = loop.create_task(worker.start())
+    t2 = loop.create_task(retention.start())
+    startup_tasks.add(t1)
+    startup_tasks.add(t2)
+    t1.add_done_callback(startup_tasks.discard)
+    t2.add_done_callback(startup_tasks.discard)
+    _STATE["startup_tasks"] = startup_tasks
 
     set_emitter(QueueEmitter(queue=queue))
 
@@ -75,8 +81,15 @@ def shutdown_activity() -> None:
     worker = _STATE.pop("worker", None)
     retention = _STATE.pop("retention", None)
     _STATE.pop("queue", None)
-    loop = asyncio.get_running_loop()
-    if isinstance(worker, ActivityWorker):
-        loop.create_task(worker.stop(timeout=5.0))
-    if isinstance(retention, RetentionTask):
-        loop.create_task(retention.stop())
+    shutdown_tasks: set[asyncio.Task[None]] = set()
+    if isinstance(worker, ActivityWorker) or isinstance(retention, RetentionTask):
+        loop = asyncio.get_running_loop()
+        if isinstance(worker, ActivityWorker):
+            t = loop.create_task(worker.stop(timeout=5.0))
+            shutdown_tasks.add(t)
+            t.add_done_callback(shutdown_tasks.discard)
+        if isinstance(retention, RetentionTask):
+            t = loop.create_task(retention.stop())
+            shutdown_tasks.add(t)
+            t.add_done_callback(shutdown_tasks.discard)
+    _STATE["shutdown_tasks"] = shutdown_tasks

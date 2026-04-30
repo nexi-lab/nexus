@@ -88,34 +88,47 @@ def test_get_accessible_paths_returns_none_when_no_bitmap():
     cache._resource_map.bulk_get_resource_ids.assert_not_called()
 
 
-def test_get_accessible_paths_returns_none_on_partial_resolution():
-    """Unresolved int IDs (resource_map degradation) must return None — never cache False.
+def test_get_accessible_paths_drops_orphan_ids_silently(caplog):
+    """Orphan int IDs (bitmap row, no resource_map row) are dropped silently.
 
-    Returning a partial set would let DirectoryVisibilityCache cache False for
-    directories that actually have accessible descendants. None forces the
-    caller to fall through to the authoritative slow path.
+    Matches pre-refactor parity (get_resource_id-per-int_id loop also dropped
+    orphans). Returning None would conflate orphan-drop with cache-miss, and
+    the enforcer batch path treats None as fail-closed-all-deny — turning a
+    single stale row into a batch-wide false negative. The drop is logged
+    at WARNING for observability.
     """
+    import logging
+
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
     resource_map = MagicMock()
-    # int_id 2 unresolvable (DB also has no row) — partial resolution
+    # int_id 2 unresolvable (DB also has no row) — orphan / partial resolution
     resource_map.bulk_get_resource_ids.return_value = {1: ("file", "/a/file.txt")}
     cache._resource_map = resource_map
     cache.get_accessible_int_ids = MagicMock(return_value={1, 2})
 
-    paths = cache.get_accessible_paths(
-        subject_type="user",
-        subject_id="alice",
-        permission="read",
-        resource_type="file",
-    )
+    with caplog.at_level(logging.WARNING):
+        paths = cache.get_accessible_paths(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+        )
 
-    assert paths is None  # degraded signal — not the partial set
+    assert paths == {"/a/file.txt"}
+    assert any("resource_map orphans" in r.message for r in caplog.records)
 
 
-def test_get_accessible_paths_returns_none_when_all_unresolved():
-    """Catastrophic degradation (zero IDs resolve) must return None."""
+def test_get_accessible_paths_returns_empty_when_all_unresolved():
+    """All-orphan case returns empty set (pre-refactor parity), not None.
+
+    Empty set lets compute_from_tiger_bitmap cache False for the directory,
+    and lets has_accessible_descendants_batch evaluate the prefix check
+    (yielding all-False) — same as pre-refactor behaviour. None would
+    incorrectly flip the enforcer to fail-closed-all-deny on a single
+    stale row.
+    """
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
@@ -131,7 +144,7 @@ def test_get_accessible_paths_returns_none_when_all_unresolved():
         resource_type="file",
     )
 
-    assert paths is None
+    assert paths == set()
 
 
 def test_get_accessible_paths_large_bitmap_single_bulk_call():

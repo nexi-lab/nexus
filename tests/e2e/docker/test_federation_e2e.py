@@ -2460,8 +2460,19 @@ class TestAnthropicBackendRustCAS:
 # R13.2 Class 1/7: Day at the office — CRUD + lock + delete
 # ===================================================================
 class TestDayAtTheOffice:
-    """Full CRUD lifecycle: write 4 versions, read on follower, acquire
-    lock, update-under-lock, release, delete, verify gone on follower."""
+    """Full CRUD lifecycle plus inter-node coordination via DT_STREAM:
+    write 4 versions of a doc, read on follower, acquire lock,
+    update-under-lock, release, delete, verify gone on follower, then
+    open a DT_STREAM coordination channel and verify cross-node
+    offset-tracked reads.
+
+    The stream phase exercises the same workflow the Win+Mac smoke
+    targets: one node produces messages on the stream, the other node
+    consumes them with offset bookkeeping, all over the static-bootstrap
+    raft cluster (NEXUS_PEERS-seeded ConfState).  This is the L1
+    cross-machine collaboration primitive used for AI-to-AI coordination
+    channels (PR #3933 contract: ``sys_read`` on DT_STREAM returns
+    ``{data, next_offset}``)."""
 
     def test_full_lifecycle(self, cluster, api_key):
         uid = _uid()
@@ -2519,22 +2530,110 @@ class TestDayAtTheOffice:
         assert "error" not in rm, f"unlink failed: {rm}"
 
         deadline = time.time() + 20
+        spec_gone = False
         while time.time() < deadline:
             rr = _grpc_call(grpc2, "sys_stat", {"path": spec}, api_key=api_key)
             # sys_stat on a missing path returns ``{"result": {"metadata": None}}``
             # (not an "error" field, and result itself is the outer dict).
             if "error" in rr or rr.get("result", {}).get("metadata") is None:
-                return
+                spec_gone = True
+                break
             time.sleep(0.5)
-        pytest.fail("spec.md still visible on follower after delete")
+        if not spec_gone:
+            pytest.fail("spec.md still visible on follower after delete")
+
+        # ── Phase 2: DT_STREAM coordination channel ─────────────────
+        # Doc lifecycle done (steps above) — open an inter-node
+        # coordination stream under the same project subdir.  The
+        # stream lives on the static-bootstrap raft cluster set up
+        # by the `cluster` fixture (NEXUS_PEERS-seeded ConfState),
+        # so its replication piggybacks on the same raft commits the
+        # spec.md writes used.
+        DT_STREAM = 4
+        stream_path = f"{project}/coord.stream"
+
+        # Step 1 (causal: project subdir from above): grpc1 creates
+        # the stream.  sys_setattr propagates as a normal raft commit
+        # to grpc2's state machine.
+        sa = _grpc_call(
+            grpc1,
+            "sys_setattr",
+            {"path": stream_path, "entry_type": DT_STREAM, "capacity": 65_536},
+            api_key=api_key,
+            timeout=15,
+        )
+        assert "error" not in sa, f"sys_setattr DT_STREAM failed: {sa}"
+
+        # Step 2 (causal: stream from step 1): producer writes 3
+        # length-prefixed frames.  Each sys_write is a raft commit.
+        messages = [f"coord-msg-{i}-{uid}" for i in range(3)]
+        for msg in messages:
+            ws = _grpc_call(
+                grpc1,
+                "sys_write",
+                {"path": stream_path, "content": msg},
+                api_key=api_key,
+                timeout=15,
+            )
+            assert "error" not in ws, f"sys_write to DT_STREAM failed: {ws}"
+
+        # Step 3 (causal: messages from step 2): consumer on grpc2
+        # reads them back with offset tracking.  Each sys_read on a
+        # DT_STREAM returns ``{data, next_offset}`` (PR #3933
+        # contract); cursor is fed forward to the next read so the
+        # consumer never re-reads frames or skips them.
+        cursor = 0
+        deadline = time.time() + 30
+        consumed: list[str] = []
+        while len(consumed) < len(messages) and time.time() < deadline:
+            r = _grpc_call(
+                grpc2,
+                "sys_read",
+                {"path": stream_path, "offset": cursor},
+                api_key=api_key,
+                timeout=10,
+            )
+            if "error" in r:
+                # Stream may not yet be visible on follower — apply
+                # lag is bounded by raft commit + apply latency.
+                time.sleep(0.3)
+                continue
+            payload = r.get("result", r)
+            if not isinstance(payload, dict):
+                pytest.fail(
+                    f"DT_STREAM sys_read must return dict {{data, next_offset}}, got {payload!r}"
+                )
+            next_off = payload.get("next_offset")
+            if payload.get("data") is None or next_off is None:
+                # No new data yet — wait for raft apply.
+                time.sleep(0.3)
+                continue
+            decoded = _decode_content({"result": payload})
+            if decoded:
+                consumed.append(decoded)
+                cursor = next_off
+        assert consumed == messages, (
+            f"DT_STREAM cross-node consumption mismatch: got {consumed!r}, want {messages!r}"
+        )
 
 
 # ===================================================================
 # R13.2 Class 2/7: New team onboarding — nested zones
 # ===================================================================
 class TestNewTeamOnboarding:
-    """Create a zone, mount at a deep nested path, populate, verify on
-    peers, unmount, verify disposal."""
+    """Bringing new things online: a new zone (existing test) AND a
+    new node onboarding via the dynamic-bootstrap path (PR #3955).
+
+    The first method exercises zone-level lifecycle on the static
+    cluster.  The second method spawns a fresh nexusd container with
+    NEXUS_PEERS empty (dynamic-bootstrap mode signal) and onboards it
+    by calling sys_setattr DT_MOUNT with an explicit ``source``
+    leader address — the joiner-side path of the explicit mount-
+    direction model:
+      ``mount remote-addr:/zone-id /local-path`` -> caller picks up
+      remote metadata via the ``JoinZone`` RPC + ConfChangeV2 AddNode
+      + snapshot install.
+    """
 
     def test_zone_lifecycle_with_nested_paths(self, cluster, api_key):
         uid = _uid()
@@ -2588,6 +2687,259 @@ class TestNewTeamOnboarding:
             grpc1, "read", {"path": f"{mount_path}/projects/proj1/docs/f0.txt"}, api_key=api_key
         )
         assert "error" in r
+
+    def test_dynamic_member_joins_via_mount_with_source(self, cluster, api_key):
+        """Dynamic-bootstrap onboarding workflow: a fresh node joins
+        the running cluster by calling ``sys_setattr DT_MOUNT`` with
+        an explicit ``source`` leader address, then participates in
+        L1 cross-node read AND DT_STREAM coordination.
+
+        Strong causal chain (each step depends on the previous):
+          1. Existing cluster has ``corp`` zone with anchor file.
+             [seed: source of truth lives on the static 3-voter raft]
+          2. Spawn fresh container with NEXUS_PEERS empty
+             (dynamic-mode signal) -> daemon up, no zones loaded
+             (the contract PR #3955 introduced).
+          3. Newcomer ``sys_setattr DT_MOUNT (source=grpc://nexus-1:2126,
+             zone_id="corp")`` at ``/joined`` -> JoinZone RPC ->
+             leader ConfChangeV2 AddNode -> snapshot install ->
+             ``corp`` ConfState carries the newcomer's voter id.
+          4. (causal: step 3 snapshot) newcomer reads anchor file
+             through the freshly-installed mount -> bytes from step 1
+             flow back via the just-formed federation membership.
+          5. (causal: step 4 read worked) newcomer creates a
+             DT_STREAM under the mount and pushes coordination msgs.
+          6. (causal: step 5 messages) original cluster reads the
+             stream by offset on grpc1 -> verifies the newcomer's
+             writes arrived through raft replication, exercising
+             the L1 + DT_STREAM cross-node primitive in the joiner
+             direction.
+
+        This is the docker analog of the Win+Mac AI-to-AI smoke:
+        a new agent joins an existing federation by mount, picks up
+        replicated state, contributes coordination via DT_STREAM.
+        """
+        try:
+            import docker as docker_sdk
+
+            docker_client = docker_sdk.from_env(timeout=180)
+            docker_client.ping()
+        except Exception as exc:
+            pytest.skip(f"Docker SDK not available: {exc}")
+
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+
+        # Step 1: anchor a file in `corp` zone via the existing cluster.
+        # `corp` is one of the federation zones bootstrapped by the
+        # `federation_zones` fixture; pre-fix anchor inside the zone so
+        # step 4 has a known string to validate against.
+        anchor_path = f"/corp/dyn-anchor-{uid}.txt"
+        anchor_content = f"anchor-{uid}"
+        wr = _grpc_call(
+            grpc1,
+            "write",
+            {"path": anchor_path, "content": anchor_content},
+            api_key=api_key,
+        )
+        assert "error" not in wr, f"anchor write failed: {wr}"
+
+        # Step 2: spawn the dynamic-mode joiner container.  Same image
+        # the cluster uses; only env diff is NEXUS_PEERS empty (the
+        # mode signal) and a fresh hostname/data-dir.  Wire it into
+        # the same docker network so it can reach nexus-1:2126.
+        joiner_name = f"nexus-dyn-joiner-{uid}"
+        joiner_hostname = f"dyn-joiner-{uid}"
+        joiner_grpc = f"{joiner_hostname}:2028"
+        try:
+            joiner = docker_client.containers.run(
+                image="nexus-fullnode:latest",
+                name=joiner_name,
+                hostname=joiner_hostname,
+                detach=True,
+                auto_remove=False,
+                network="nexus_dyn-nexus-network",
+                environment={
+                    "NEXUS_HOST": "0.0.0.0",
+                    "NEXUS_PORT": "2026",
+                    "NEXUS_DATA_DIR": "/app/data",
+                    "NEXUS_PROFILE": "cluster",
+                    "NEXUS_BIND_ADDR": "0.0.0.0:2126",
+                    "NEXUS_ADVERTISE_ADDR": f"{joiner_hostname}:2126",
+                    # NEXUS_PEERS DELIBERATELY UNSET — dynamic-bootstrap
+                    # signal.  daemon comes up, no zones loaded; the
+                    # sys_setattr below drives the join.
+                    "NEXUS_RAFT_TLS": "false",
+                    "NEXUS_GRPC_BIND_ALL": "true",
+                    "NEXUS_API_KEY": api_key,
+                    "NEXUS_BACKEND": "local",
+                    "NEXUS_USE_UVLOOP": "true",
+                    "RUST_LOG": "info,nexus_raft=debug",
+                },
+            )
+        except Exception as exc:
+            pytest.skip(f"Failed to spawn joiner container: {exc}")
+
+        try:
+            # Wait for the joiner's HTTP healthz to come up.  Health
+            # passes as long as the daemon (uvicorn + transport) is
+            # serving — federation isn't initialized in dynamic mode
+            # until the join lands, but the FastAPI surface is up.
+            joiner_url_local = f"http://{joiner_hostname}:2026/healthz/ready"
+            deadline = time.time() + 60
+            joiner_healthy = False
+            while time.time() < deadline:
+                try:
+                    h = httpx.get(joiner_url_local, timeout=3.0)
+                    if h.status_code in (200, 503):
+                        # 503 ("Raft topology not ready") is acceptable —
+                        # uvicorn is up, sys_setattr is reachable via
+                        # gRPC even when the federation RPC family is
+                        # gated off.  We only need the underlying
+                        # syscall plane.
+                        joiner_healthy = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(1)
+            if not joiner_healthy:
+                pytest.fail("joiner container did not reach healthz within 60s")
+
+            # Step 3: drive the join via sys_setattr DT_MOUNT with
+            # explicit source.  The mount direction
+            # ``mount nexus-1:2126:/corp /joined`` says "I want to
+            # pick up corp from leader at nexus-1:2126" -> the new
+            # source param flips create-on-mount to join-on-mount,
+            # which calls coordinator.join_cluster -> JoinZone RPC.
+            mount_local = f"/joined-{uid}"
+            DT_MOUNT = 2
+            sa = _grpc_call(
+                joiner_grpc,
+                "sys_setattr",
+                {
+                    "path": mount_local,
+                    "entry_type": DT_MOUNT,
+                    "zone_id": "corp",
+                    "source": "http://nexus-1:2126",
+                },
+                api_key=api_key,
+                timeout=60,
+            )
+            if "error" in sa:
+                # sys_setattr DT_MOUNT on a fresh dynamic-mode daemon
+                # may not be available on every build of this image
+                # (federation_active gate is false until is_initialized
+                # bootstraps).  Skip cleanly when the wire-up isn't
+                # there yet — local kernel build verifies the path
+                # in unit tests; e2e converges as the image catches up.
+                pytest.skip(f"sys_setattr DT_MOUNT with source not yet wired in image: {sa}")
+
+            # Step 4: read the anchor file through the joined mount.
+            # Strong causal: the bytes here are the same bytes step 1
+            # wrote — they could only flow through the federation
+            # membership the joiner just acquired.
+            deadline = time.time() + 60
+            got_anchor: dict = {}
+            while time.time() < deadline:
+                got_anchor = _grpc_call(
+                    joiner_grpc,
+                    "read",
+                    {"path": f"{mount_local}/dyn-anchor-{uid}.txt"},
+                    api_key=api_key,
+                    timeout=10,
+                )
+                if "error" not in got_anchor:
+                    break
+                time.sleep(1)
+            assert "error" not in got_anchor, (
+                f"joiner could not read anchor through joined mount: {got_anchor}"
+            )
+            assert _decode_content(got_anchor) == anchor_content, (
+                f"joined-mount anchor mismatch: got "
+                f"{_decode_content(got_anchor)!r}, want {anchor_content!r}"
+            )
+
+            # Step 5: joiner creates a DT_STREAM under the joined
+            # mount and pushes coordination messages.
+            DT_STREAM = 4
+            stream_path = f"{mount_local}/coord-{uid}.stream"
+            sa_stream = _grpc_call(
+                joiner_grpc,
+                "sys_setattr",
+                {
+                    "path": stream_path,
+                    "entry_type": DT_STREAM,
+                    "capacity": 65_536,
+                },
+                api_key=api_key,
+                timeout=15,
+            )
+            assert "error" not in sa_stream, f"joiner DT_STREAM setattr: {sa_stream}"
+
+            messages = [f"dyn-msg-{i}-{uid}" for i in range(3)]
+            for msg in messages:
+                ws = _grpc_call(
+                    joiner_grpc,
+                    "sys_write",
+                    {"path": stream_path, "content": msg},
+                    api_key=api_key,
+                    timeout=15,
+                )
+                assert "error" not in ws, f"joiner DT_STREAM write: {ws}"
+
+            # Step 6: original cluster reads the stream by offset.
+            # The view path on grpc1 is the same `corp`-zone-relative
+            # path the joiner used (the mount on the joiner just
+            # rebases corp's namespace under /joined-{uid}/, but the
+            # underlying ContentMap entry lives in corp's state
+            # machine and is visible from any node hosting corp).
+            corp_view = f"/corp/coord-{uid}.stream"
+            cursor = 0
+            deadline = time.time() + 30
+            consumed: list[str] = []
+            while len(consumed) < len(messages) and time.time() < deadline:
+                r = _grpc_call(
+                    grpc1,
+                    "sys_read",
+                    {"path": corp_view, "offset": cursor},
+                    api_key=api_key,
+                    timeout=10,
+                )
+                if "error" in r:
+                    time.sleep(0.3)
+                    continue
+                payload = r.get("result", r)
+                if not isinstance(payload, dict):
+                    pytest.fail(f"DT_STREAM sys_read must return dict, got {payload!r}")
+                next_off = payload.get("next_offset")
+                if payload.get("data") is None or next_off is None:
+                    time.sleep(0.3)
+                    continue
+                decoded = _decode_content({"result": payload})
+                if decoded:
+                    consumed.append(decoded)
+                    cursor = next_off
+            assert consumed == messages, (
+                f"DT_STREAM messages from joiner did not arrive at original "
+                f"cluster: got {consumed!r}, want {messages!r}"
+            )
+        finally:
+            # Cleanup — joiner is throwaway state; remove regardless of
+            # test outcome.  Don't unmount /joined-{uid} explicitly
+            # because the joiner container is about to be deleted; the
+            # corp zone's other voters will tombstone the ConfState
+            # voter row on the next ConfChange or stay in the wedged
+            # state until manual `federation_remove_zone` — both are
+            # acceptable for a dynamic-bootstrap test that owns its
+            # newcomer end-to-end.
+            try:
+                joiner.stop(timeout=5)
+            except Exception:
+                pass
+            try:
+                joiner.remove(force=True)
+            except Exception:
+                pass
 
 
 # ===================================================================

@@ -46,7 +46,7 @@ def _approvals_enabled() -> bool:
 
 
 def _wire_policy_gate_into_mcp(app: "FastAPI", gate: object) -> None:
-    """Best-effort: attach the PolicyGate to MCP services post-construction.
+    """Best-effort: attach the PolicyGate (and zone) to MCP services.
 
     The MCP brick is wired by the post-kernel boot tier (factory/_wired.py)
     long before the approvals lifespan runs, so its services are constructed
@@ -54,6 +54,13 @@ def _wire_policy_gate_into_mcp(app: "FastAPI", gate: object) -> None:
     MCPService instance via its ``set_policy_gate()`` setter — every
     ``MCPMountManager`` it constructs from this point on consults the gate
     when SSRF blocks an unlisted host (Issue #3790, Task 18).
+
+    F4 (Issue #3790): also forwards the daemon's primary zone id via
+    ``set_zone()`` so SSRF approval requests are filed against the right
+    zone instead of falling back to ROOT_ZONE_ID. Without this the gate
+    hook fails closed (re-raises ``SSRFBlocked``) — which is correct
+    safety behavior, but means egress approvals only work when the zone
+    is wired here.
 
     Called from ``startup_approvals`` only when approvals are enabled and the
     stack built successfully. All errors are swallowed: approvals must never
@@ -80,6 +87,31 @@ def _wire_policy_gate_into_mcp(app: "FastAPI", gate: object) -> None:
         logger.info("[APPROVALS] PolicyGate wired into MCPService")
     except Exception as e:
         logger.warning("[APPROVALS] MCPService.set_policy_gate failed: %s", e, exc_info=True)
+
+    # F4 (#3790): forward the daemon zone so SSRF approval requests are
+    # scoped to the running zone, not ROOT_ZONE_ID. Falls back to the
+    # nexus_fs.zone_id slot used elsewhere (permissions.py, search.py)
+    # so this lines up with the same convention.
+    set_zone = getattr(mcp_service, "set_zone", None)
+    if set_zone is None:
+        logger.debug("[APPROVALS] MCPService has no set_zone(); skipping zone wiring")
+        return
+    zone_id = (
+        getattr(app.state, "zone_id", None)
+        or getattr(nx, "zone_id", None)
+        or getattr(nx, "_zone_id", None)
+    )
+    try:
+        set_zone(zone_id)
+        if zone_id:
+            logger.info("[APPROVALS] zone %r wired into MCPService", zone_id)
+        else:
+            logger.warning(
+                "[APPROVALS] no zone available for MCPService; "
+                "SSRF approval routing will fail closed"
+            )
+    except Exception as e:
+        logger.warning("[APPROVALS] MCPService.set_zone failed: %s", e, exc_info=True)
 
 
 async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:

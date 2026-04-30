@@ -157,6 +157,7 @@ class MCPMountManager:
         *,
         ssrf_config: "SSRFConfig | None" = None,
         policy_gate: "PolicyGate | None" = None,
+        zone_id: str | None = None,
     ) -> None:
         """Initialize MCP mount manager.
 
@@ -172,10 +173,19 @@ class MCPMountManager:
                 if an operator approves the host the connect proceeds, else
                 the original ``SSRFBlocked`` is re-raised. When None, the
                 manager preserves the existing fail-closed behavior.
+            zone_id: Optional zone identifier for approval-queue
+                attribution (Issue #3790, F4). When set, SSRF-blocked
+                egress requests are filed against this zone; when ``None``
+                the manager fails closed instead of charging the request
+                to ROOT_ZONE_ID. Operators wire this from the daemon's
+                primary zone (or per-mount config when multi-zone is
+                supported in a future revision); see
+                :meth:`set_zone` for post-construction attachment.
         """
         self._filesystem = filesystem
         self._ssrf_config_override = ssrf_config
         self._policy_gate = policy_gate
+        self._zone_id = zone_id
 
         # Active mount configurations (keyed by name, may include tier info)
         self._mounts: dict[str, MCPMount] = {}
@@ -188,6 +198,17 @@ class MCPMountManager:
 
         # Mount configs loaded lazily on first async access (syscalls are async)
         self._mounts_loaded = False
+
+    def set_zone(self, zone_id: str | None) -> None:
+        """Attach (or detach) the daemon zone after construction.
+
+        F4 (Issue #3790): the approvals lifespan determines the daemon's
+        primary zone after MCP services are constructed, so callers may
+        attach the zone post-hoc. ``None`` triggers fail-closed routing
+        in :meth:`_ssrf_blocked_via_gate` (the gate is bypassed entirely
+        and the original ``SSRFBlocked`` is re-raised).
+        """
+        self._zone_id = zone_id
 
     async def _load_mounts_config(self) -> None:
         """Load mount configurations from per-folder mount.json files.
@@ -518,6 +539,14 @@ class MCPMountManager:
         as if SSRF had passed. Returns False on missing gate, denial,
         timeout, or any unexpected gate error (graceful degradation —
         the original ``SSRFBlocked`` is then re-raised by the caller).
+
+        F4 (#3790): the zone is the daemon's configured zone (set via
+        ``__init__`` or :meth:`set_zone`). When the manager has no zone
+        bound, the gate is bypassed and the original ``SSRFBlocked`` is
+        re-raised — this is fail-closed behavior. We do NOT silently
+        charge approvals to ROOT_ZONE_ID, because that would let any
+        operator with root-zone ``approvals:decide`` approve egress for
+        every other zone's traffic.
         """
         gate = self._policy_gate
         if gate is None:
@@ -528,21 +557,24 @@ class MCPMountManager:
             # Cannot derive a meaningful subject — keep fail-closed.
             return False
 
+        # F4 (#3790): require a bound zone. Without one we cannot scope
+        # the approval to a single operator-decide capability set, so
+        # routing the request through the queue would be a privilege
+        # escalation. Fail closed; the caller will re-raise SSRFBlocked.
+        if not self._zone_id:
+            logger.warning(
+                "MCPMountManager has no zone bound (mount=%r); "
+                "skipping approval-queue routing and honoring SSRF block",
+                mount_config.name,
+            )
+            return False
+
         # Lazy imports keep ``mcp`` brick free of an eager top-level
         # cross-brick import (boundary checker enforces this; see
         # `.pre-commit-hooks/check_brick_imports.py`).
         from nexus.bricks.approvals.models import ApprovalKind, Decision
 
-        # Mount-time has no per-call session/agent identity. The mount
-        # itself is administrative; we still scope the request by tier
-        # (or ROOT_ZONE_ID when none) and by mount name as the agent
-        # identifier so operators can distinguish concurrent attempts.
-        from nexus.contracts.constants import ROOT_ZONE_ID
-
-        # Mount-time validation runs at the manager level which is not
-        # bound to a single zone — operators see one queue per host. Task
-        # 20 will plumb a per-call zone where appropriate.
-        zone_id = ROOT_ZONE_ID
+        zone_id = self._zone_id
         # Mount-time admin operations have no agent token. Synthesize a
         # stable token_id from the mount name so operators can correlate
         # repeated requests for the same mount in the queue UI.

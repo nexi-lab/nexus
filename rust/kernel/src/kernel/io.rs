@@ -849,6 +849,9 @@ impl Kernel {
         // 7. Backend delete (best-effort, PAS only) — only after
         // metastore commit succeeded; otherwise we'd orphan the file
         // on the filesystem with no metadata pointing at it.
+        // Failure here is intentionally non-fatal: metadata is already deleted,
+        // so the file is invisible to the kernel; a dangling backend object is
+        // cleaned up by a future GC sweep rather than blocking this unlink.
         let _ = self
             .vfs_router
             .delete_file(&route.mount_point, &route.backend_path);
@@ -1414,13 +1417,18 @@ impl Kernel {
             // Delete the destination bytes to avoid leaving a file that has no
             // committed metadata entry (backend-fallback reads would serve it
             // silently, creating invisible data with no event or stat record).
-            let _ = self
+            let rollback_err = self
                 .vfs_router
                 .delete_file(&dst_route.mount_point, &dst_route.backend_path);
             release_locks(&self.lock_manager, lock1, lock2);
-            return Err(KernelError::IOError(format!(
-                "sys_copy: metastore.put: {e:?}"
-            )));
+            return Err(match rollback_err {
+                Some(Err(del_err)) => KernelError::IOError(format!(
+                    "sys_copy: metastore.put failed ({e:?}) and rollback delete \
+                     also failed ({del_err:?}); destination bytes at {} may remain",
+                    dst_route.backend_path
+                )),
+                _ => KernelError::IOError(format!("sys_copy: metastore.put: {e:?}")),
+            });
         }
         self.dcache.put(dst_path, cache_entry);
 

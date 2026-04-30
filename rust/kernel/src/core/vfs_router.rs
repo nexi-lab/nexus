@@ -553,9 +553,16 @@ impl VFSRouter {
     }
 
     /// Delete a file via the mount's backend.
-    pub fn delete_file(&self, canonical_key: &str, backend_path: &str) -> Option<()> {
+    ///
+    /// Returns `None` when the mount has no Rust backend (Python-side connector).
+    /// Returns `Some(Ok(()))` on success, `Some(Err(_))` on backend error.
+    pub fn delete_file(
+        &self,
+        canonical_key: &str,
+        backend_path: &str,
+    ) -> Option<Result<(), crate::abc::object_store::StorageError>> {
         let entry = self.entries.get(canonical_key)?;
-        entry.backend.as_ref()?.delete_file(backend_path).ok()
+        Some(entry.backend.as_ref()?.delete_file(backend_path))
     }
 
     /// Rename a file via the mount's backend.

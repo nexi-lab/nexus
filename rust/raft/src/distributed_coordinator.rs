@@ -608,31 +608,58 @@ impl RaftDistributedCoordinator {
                 })
             }
             RotationOutcome::PeersReachableRotationFailed { detail } => {
-                // CRITICAL contract enforcement: a live cluster holds
-                // this hostname's stale voter ID.  Falling through to
-                // cold-start would silently rejoin with that stale ID
-                // and panic raft-rs (`to_commit X is out of range
-                // [last_index 0]`) on the leader's first heartbeat.
+                // A live cluster is reachable but rotation didn't
+                // commit (handler timeout, "not leader" with no
+                // usable redirect, or 2-voter quorum deadlock when
+                // the joiner IS the missing voter).
                 //
-                // Surface loud and actionable instead.  Operator picks
-                // remediation; the next boot retries rotation since
-                // we did NOT persist the incarnation.
-                Err(format!(
-                    "wipe-rejoin rotation failed against reachable peer(s): {detail}.\n\
-                     A live cluster holds this hostname's stale voter ID.  Falling \
-                     through to cold-start would silently rejoin with that stale ID \
-                     and panic raft-rs's commit_to assertion on the leader's first \
-                     heartbeat.\n\
-                     Remediation:\n  \
-                       (a) retry boot — leader may need a moment to drive quorum \
-                           after another node restarts;\n  \
-                       (b) 2-voter clusters cannot rotate when one voter is \
-                           missing (the missing voter IS the joiner) — add a 3rd \
-                           voter / witness for HA, or wipe NEXUS_DATA_DIR on every \
-                           peer simultaneously for a coordinated cold start;\n  \
-                       (c) 3+ voter clusters should auto-recover on retry once the \
-                           leader has quorum-of-old-config to commit ConfChangeV2."
-                ))
+                // Cannot use the cold-start sentinel here: that would
+                // rejoin with the hostname-based ID which a live
+                // cluster's ConfState may already hold, and the
+                // leader's first heartbeat with `commit_to=N` would
+                // panic raft-rs (`to_commit X out of range
+                // [last_index 0]`) against our empty log.
+                //
+                // Cannot return Err either: that aborts
+                // `init_from_env` entirely, including ZoneManager /
+                // raft gRPC transport server bring-up.  In static
+                // cold-start this is fatal — the second-to-start
+                // node hits PeersReachable (because the first node
+                // is up but not yet leader, replies "not leader")
+                // and never opens :2126; the first node then has no
+                // peer to form quorum with.  Liveness regression
+                // observed on Federation E2E in 3-voter cold-start.
+                //
+                // Strict-raft answer: mint a fresh non-zero
+                // incarnation, persist it (so retry boots are stable
+                // under the same ID), and return as
+                // `rotated_into_existing_cluster=true` so the caller
+                // uses `join_zone(skip_bootstrap=true)`.  The fresh
+                // ID is NOT in any ConfState yet (rotation didn't
+                // commit), so the leader cannot address AppendEntries
+                // to it — no commit_to panic.  raft-rs boots with
+                // empty ConfState (skip_bootstrap=true) and waits
+                // for a ConfChange that adds us.  In static
+                // cold-start, once the cluster forms quorum a
+                // subsequent retry of the rotation RPC succeeds and
+                // adds us.  Operator sees the loud error below.
+                tracing::error!(
+                    detail = %detail,
+                    new_id = new_id,
+                    "wipe-rejoin rotation pending: fresh ID booted as joiner; \
+                     transport up, raft awaits leader ConfChange. \
+                     2-voter clusters that hit this need either (a) the surviving \
+                     peer to reach quorum (impossible with one voter), or \
+                     (b) coordinated full wipe across all peers, or \
+                     (c) addition of a 3rd voter / witness. \
+                     3+ voter clusters auto-recover on retry once leader has \
+                     quorum-of-old-config to commit ConfChangeV2."
+                );
+                write_node_incarnation(zones_dir, new_incarnation)?;
+                Ok(VoterMembership {
+                    node_id: new_id,
+                    rotated_into_existing_cluster: true,
+                })
             }
         }
     }

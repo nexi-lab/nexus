@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from nexus.backends.connectors.schema_generator import render_connector_readme
+
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
 
@@ -122,7 +124,7 @@ class ReadmePathResolver:
             return None
 
         if rel == "README.md":
-            text: str = backend.generate_readme(mount_point)
+            text = render_connector_readme(backend, mount_point)
             return text.encode()
 
         if rel.startswith("schemas/") and rel.endswith(".yaml"):
@@ -206,7 +208,7 @@ class ReadmePathResolver:
             return None
 
         if rel == "README.md":
-            text: str = backend.generate_readme(mount_point)
+            text = render_connector_readme(backend, mount_point)
             return {
                 "path": path,
                 "size": len(text.encode()),

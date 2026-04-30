@@ -308,6 +308,9 @@ class TestReadmeDocGeneration:
         doc = gmail_backend.generate_readme("/mnt/gmail/")
 
         # Check header - static README.md
+        assert doc.startswith("---\n")
+        assert "title: Gmail" in doc
+        assert "description:" in doc
         assert "# Gmail Connector" in doc
 
         # Check mount path is replaced

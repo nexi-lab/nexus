@@ -131,7 +131,7 @@ class PathHNBackend(
                 .read_text(encoding="utf-8")
             )
             content = content.replace("/mnt/hn/", mount_path)
-            return content
+            return self.get_doc_generator().ensure_frontmatter(content)
         except Exception:
             return super().generate_readme(mount_path)
 

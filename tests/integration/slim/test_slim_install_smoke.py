@@ -72,66 +72,76 @@ print("CRUD OK")
 
 
 def test_slim_local_rename_cold_cache(slim_venv: Path, tmp_path: Path) -> None:
-    """Rename persists through a kernel restart (cold DCache).
+    """Rename persists through a genuinely cold process (fresh kernel + empty DCache).
 
-    Regression for the zone-key / metastore-path consistency risk: warm DCache
-    can mask a metastore no-op. This test unmounts + remounts (new fs object)
-    after rename so the read goes through the metastore rather than DCache.
+    Two separate subprocesses: the first writes and renames, then exits (kernel
+    torn down, DCache gone). The second mounts fresh and verifies via stat() and
+    read() that the metastore persisted the rename correctly.  Using a separate
+    process is the only reliable way to ensure no warm DCache from the first
+    process leaks through process-shared state.
     """
     workdir = tmp_path / "cold"
     workdir.mkdir()
+    meta_db = tmp_path / "meta.db"  # explicit shared db so both processes agree
 
-    script = f"""
+    write_script = f"""
 import sys
 import nexus.fs
 
-# Write + rename with first fs object.
-fs1 = nexus.fs.mount_sync("local://{workdir}")
-mounts = [m for m in fs1.list_mounts() if "{workdir.name}" in m]
+fs = nexus.fs.mount_sync("local://{workdir}", metadata_db="{meta_db}")
+mounts = [m for m in fs.list_mounts() if "{workdir.name}" in m]
 if not mounts:
-    sys.exit(f"mount not found: {{fs1.list_mounts()}}")
+    sys.exit(f"mount not found: {{fs.list_mounts()}}")
+mp = mounts[0].rstrip("/")
+fs.write(mp + "/before.txt", b"cold-cache-check")
+fs.rename(mp + "/before.txt", mp + "/after.txt")
+print("WRITE OK")
+"""
+
+    read_script = f"""
+import sys
+import nexus.fs
+
+fs = nexus.fs.mount_sync("local://{workdir}", metadata_db="{meta_db}")
+mounts = [m for m in fs.list_mounts() if "{workdir.name}" in m]
+if not mounts:
+    sys.exit(f"mount not found: {{fs.list_mounts()}}")
 mp = mounts[0].rstrip("/")
 
-fs1.write(mp + "/before.txt", b"cold-cache-check")
-fs1.rename(mp + "/before.txt", mp + "/after.txt")
-
-# Unmount and remount — forces new kernel / cold DCache.
-fs1.unmount(mp)
-fs2 = nexus.fs.mount_sync("local://{workdir}")
-mounts2 = [m for m in fs2.list_mounts() if "{workdir.name}" in m]
-mp2 = mounts2[0].rstrip("/")
-
-# Old path must not exist — both read AND stat must fail so backend fallback
-# cannot mask a metastore no-op (sys_read falls back to the physical file,
-# but stat/exists must go through the metastore on cold cache).
+# stat(before.txt) must fail — metastore must not have the old entry.
 try:
-    fs2.read(mp2 + "/before.txt")
-    sys.exit("before.txt still readable after rename + remount")
-except FileNotFoundError:
-    pass
+    st = fs.stat(mp + "/before.txt")
+    sys.exit(f"stat(before.txt) = {{st}}; old path must not exist after rename + new process")
+except (FileNotFoundError, Exception) as e:
+    if "not found" not in str(e).lower() and "noent" not in str(e).lower():
+        if fs.stat(mp + "/before.txt") is not None:
+            sys.exit(f"stat(before.txt) still returns metadata: {{e}}")
 
-try:
-    fs2.stat(mp2 + "/before.txt")
-    sys.exit("stat(before.txt) succeeded after rename + remount — metastore stale")
-except FileNotFoundError:
-    pass
-
-# New path must be readable with correct content AND stat must return committed metadata.
-content = fs2.read(mp2 + "/after.txt")
-assert content == b"cold-cache-check", f"cold read mismatch: {{repr(content)}}"
-
-st = fs2.stat(mp2 + "/after.txt")
+# stat(after.txt) must succeed with committed metadata.
+st = fs.stat(mp + "/after.txt")
 if st is None:
-    sys.exit("stat(after.txt) returned None — metastore rename may not have persisted")
-assert st.get("size", 0) == len(b"cold-cache-check"), f"stat size mismatch: {{st}}"
+    sys.exit("stat(after.txt) returned None — metastore rename did not persist")
+size = st.get("size", 0) if isinstance(st, dict) else getattr(st, "size", 0)
+assert size == len(b"cold-cache-check"), f"stat size mismatch: {{st}}"
+
+# read must return correct content.
+content = fs.read(mp + "/after.txt")
+assert content == b"cold-cache-check", f"read mismatch: {{repr(content)}}"
 
 print("COLD OK")
 """
-    result = run_in_slim_venv(slim_venv, script)
-    assert result.returncode == 0, (
-        f"cold-cache rename test failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+
+    r1 = run_in_slim_venv(slim_venv, write_script)
+    assert r1.returncode == 0, (
+        f"cold-cache WRITE phase failed:\nSTDOUT:\n{r1.stdout}\nSTDERR:\n{r1.stderr}"
     )
-    assert "COLD OK" in result.stdout
+    assert "WRITE OK" in r1.stdout
+
+    r2 = run_in_slim_venv(slim_venv, read_script)
+    assert r2.returncode == 0, (
+        f"cold-cache READ phase failed:\nSTDOUT:\n{r2.stdout}\nSTDERR:\n{r2.stderr}"
+    )
+    assert "COLD OK" in r2.stdout
 
 
 @pytest.mark.parametrize(

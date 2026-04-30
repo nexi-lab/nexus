@@ -328,32 +328,24 @@ jobs:
           # verifying the exact version declared in pyproject.toml is resolvable
           # from PyPI. If publish-rust skipped (token absent), this check catches
           # the gap before nexus-fs is uploaded and users encounter a broken dep.
-          RUNTIME_VERSION=$(python -c "
-          import re, pathlib
-          txt = pathlib.Path('packages/nexus-fs/pyproject.toml').read_text()
-          m = re.search(r'nexus-runtime>=([0-9.]+)', txt)
-          print(m.group(1) if m else '')
-          ")
-          echo "Required nexus-runtime >= $RUNTIME_VERSION"
-          python - <<PY
-          import urllib.request, urllib.error, sys
+          # Read the exact version from the nexus-runtime source (nexus-cdylib).
+          EXACT_RUNTIME=$(grep '^version = ' rust/nexus-cdylib/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Exact nexus-runtime version for this release: $EXACT_RUNTIME"
+          python - "$EXACT_RUNTIME" <<'PY'
+          import sys, urllib.request, urllib.error, json
+          exact = sys.argv[1]
+          if not exact:
+              print("FATAL: could not read nexus-runtime version from rust/nexus-cdylib/pyproject.toml", file=sys.stderr)
+              sys.exit(1)
           try:
-              with urllib.request.urlopen("https://pypi.org/pypi/nexus-runtime/json") as r:
-                  import json
-                  data = json.load(r)
-                  releases = data.get("releases", {})
+              with urllib.request.urlopen(f"https://pypi.org/pypi/nexus-runtime/{exact}/json") as r:
+                  json.load(r)  # 200 means the exact version exists
           except urllib.error.HTTPError as e:
               if e.code == 404:
-                  print("FATAL: nexus-runtime is not on PyPI; publish-rust must run first", file=sys.stderr)
+                  print(f"FATAL: nexus-runtime {exact} is not on PyPI; publish-rust must publish first", file=sys.stderr)
                   sys.exit(1)
               raise
-          required = "$RUNTIME_VERSION"
-          from packaging.version import Version
-          latest = max((Version(v) for v in releases), default=None)
-          if latest is None or latest < Version(required):
-              print(f"FATAL: PyPI has nexus-runtime up to {latest} but nexus-fs requires >={required}", file=sys.stderr)
-              sys.exit(1)
-          print(f"OK: nexus-runtime {latest} is on PyPI")
+          print(f"OK: nexus-runtime {exact} is on PyPI")
           PY
 
       - name: Smoke test — install in clean environment

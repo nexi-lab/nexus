@@ -1410,6 +1410,13 @@ impl Kernel {
             }
         };
         if let Err(e) = put_result {
+            // Metastore failed after bytes were written to the destination backend.
+            // Delete the destination bytes to avoid leaving a file that has no
+            // committed metadata entry (backend-fallback reads would serve it
+            // silently, creating invisible data with no event or stat record).
+            let _ = self
+                .vfs_router
+                .delete_file(&dst_route.mount_point, &dst_route.backend_path);
             release_locks(&self.lock_manager, lock1, lock2);
             return Err(KernelError::IOError(format!(
                 "sys_copy: metastore.put: {e:?}"

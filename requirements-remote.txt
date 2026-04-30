@@ -1,8 +1,9 @@
 # Minimal dependencies for NEXUS_PROFILE=remote (SDK/CLI client).
 # Only packages needed by the remote code path (gRPC transport).
 # No SQLAlchemy, no numpy, no FastAPI, no Rust extensions.
-grpcio>=1.68.0
-protobuf>=4.25.0
+# Lower bounds must match pyproject.toml / generated stubs (#3790)
+grpcio>=1.78.0
+protobuf>=6.31.1
 httpx[http2]>=0.28.1
 tenacity>=8.2.0
 pydantic[email]>=2.5.0

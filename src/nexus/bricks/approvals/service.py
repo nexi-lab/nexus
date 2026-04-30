@@ -451,6 +451,15 @@ class ApprovalService:
 
         if result is Decision.DENIED:
             row = await self._repo.get(req.id)
+            # Round-6 (#3790): distinguish expiry from real denials.
+            # The sweeper/NOTIFY path resolves all non-APPROVED futures as
+            # DENIED (dispatcher only knows APPROVED|DENIED). Re-read the
+            # row: EXPIRED status raises ApprovalTimeout, not
+            # ApprovalDenied — matches the semantics a local wait_for
+            # timeout gives and preserves the correct gRPC
+            # DEADLINE_EXCEEDED vs FAILED_PRECONDITION status code.
+            if row is not None and row.status is ApprovalRequestStatus.EXPIRED:
+                raise ApprovalTimeout(req.id, timeout)
             reason_str = row.decided_by if (row and row.decided_by) else "denied"
             raise ApprovalDenied(req.id, reason_str)
         return result

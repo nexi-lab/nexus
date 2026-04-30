@@ -58,46 +58,42 @@ fs.write(path, bytes)
 
 Already correct under contract B. CRUD is verified by the new install-smoke test (see Testing).
 
-### Bricks decoupling (closes #3944)
+### Bricks carve-out (closes #3944)
 
-Slim-needed pure-Python helpers move out of `nexus.bricks.*` into slim-shipped homes; `nexus.bricks.*` keeps its public names as thin re-exports for full-runtime back-compat.
+Plan iteration discovered that the bricks files connectors depend on (`bricks/auth/oauth/{factory,token_manager,base_provider,...}`, `bricks/auth/{profile,credential_pool}`, `bricks/auth/classifiers/google`, `bricks/search/primitives/`) total ~2000 LOC plus a deep web of internal `bricks/auth/*` deps (cache, types, profile_store, …). A wholesale move-and-reexport would be a multi-week refactor of the whole `bricks/auth/` tier.
 
-New units (one focused module per file):
+Instead, the slim wheel **carves the connector-needed bricks subtrees back into the wheel** via Hatchling `force-include`. The `**/bricks/**` exclude stays (so `bricks/server/`, `bricks/raft/`, `bricks/sync/`, etc. remain off slim), but two specific subtrees ship:
 
-| New module (slim-shipped) | Owns | Old home (becomes re-export) |
-|---|---|---|
-| `nexus/utils/glob.py` | `glob_match`, `glob_filter`, `extract_static_prefix` | `nexus.bricks.search.primitives.glob_helpers` |
-| `nexus/lib/auth/oauth_factory.py` | `create_token_manager` factory surface | `nexus.bricks.auth.oauth.factory` |
-| `nexus/lib/auth/profile.py` | `AuthProfile` | `nexus.bricks.auth.profile` |
-| `nexus/lib/auth/classifiers/google.py` | `classify_google_error` | `nexus.bricks.auth.classifiers.google` |
-| `nexus/lib/auth/credential_pool.py` | `CredentialPool` | `nexus.bricks.auth.credential_pool` |
-| `nexus/lib/auth/oauth/token_manager.py` | `TokenManager` | `nexus.bricks.auth.oauth.token_manager` |
+- `nexus/bricks/auth/**` — full subtree; connectors authenticate through it
+- `nexus/bricks/search/primitives/**` — pure-Python glob/grep query helpers
 
-`nexus.lib.oauth` already exists in the slim-shipped tree with overlapping concerns (providers, protocol, pkce, discovery). The new `nexus/lib/auth/*` modules nest under `nexus.lib` but live in a sibling `auth/` subpackage to avoid colliding with the existing `nexus.lib.oauth.*` names. The implementation plan picks the final landing path during plan-writing once it greps both trees for collisions.
+Plus the package markers needed for Python to traverse:
+- `nexus/bricks/__init__.py`
+- `nexus/bricks/search/__init__.py`
 
-The bricks files listed above pull transitive imports (cache, types, constants, profile_store, etc.). The implementation plan must:
+`packages/nexus-fs/pyproject.toml` change:
 
-1. Trace each move target's transitive imports.
-2. Decide per-import whether to move the dep, leave it in bricks (and add a slim re-import), or refactor it out of the slim path entirely.
-3. Confirm the resulting `nexus.lib.*` subtree imports cleanly with `nexus.bricks.*` blocked (the integrity test enforces this).
-
-Each `nexus.bricks.*` module becomes:
-
-```python
-# nexus/bricks/search/primitives/glob_helpers.py
-from nexus.utils.glob import glob_match, glob_filter, extract_static_prefix  # noqa: F401
-__all__ = ["glob_match", "glob_filter", "extract_static_prefix"]
+```toml
+[tool.hatch.build.targets.wheel.force-include]
+"../../src/nexus/bricks/__init__.py" = "nexus/bricks/__init__.py"
+"../../src/nexus/bricks/auth" = "nexus/bricks/auth"
+"../../src/nexus/bricks/search/__init__.py" = "nexus/bricks/search/__init__.py"
+"../../src/nexus/bricks/search/primitives" = "nexus/bricks/search/primitives"
 ```
 
-Connectors (`nexus.backends.connectors.{x,gmail,slack,gdrive,calendar,oauth_base,cli/base,oauth}`) update imports to point at `nexus.utils.*` / `nexus.lib.*` directly, never at `nexus.bricks.*`.
+`force-include` overrides the broad `**/bricks/**` exclude. No file moves, no re-exports, no connector-import edits. Existing connector code (X module-level import; gmail/slack/gdrive/calendar/oauth_base/cli/base deferred imports) starts working in the slim wheel as-is.
 
-`packages/nexus-fs/pyproject.toml` already includes `nexus/lib/**` in the wheel allowlist; the new `nexus/utils/glob.py` is also covered by the existing `"nexus/utils/__init__.py"` + targeted file pattern — extend the allowlist:
+### Slim-tier contract (revised)
 
-```diff
-     "nexus/utils/__init__.py",
-     "nexus/utils/edit_engine.py",
-+    "nexus/utils/glob.py",
-```
+"Slim" wheel ships:
+- `nexus/{contracts,core,backends,lib,storage,fs,utils}/**` (existing)
+- `nexus/bricks/auth/**` and `nexus/bricks/search/primitives/**` (new — for connector auth + glob query helpers)
+
+"Slim" wheel **excludes**: server, raft, factory, fuse, remote, services, grpc, cache, daemon, migrations, network, plugins, proxy, sdk, security, sync, task_manager, tasks, tools, validation, and the `bricks/*` subtrees that aren't auth or search/primitives.
+
+### Connector imports (no change)
+
+X connector keeps its module-level `nexus.bricks.search.primitives` import. The 6 deferred-import connectors keep their `nexus.bricks.auth.oauth.factory` / `nexus.bricks.auth.profile` / `nexus.bricks.auth.classifiers.google` imports. They Just Work in slim because the carve-out includes those paths.
 
 ### Failure modes
 
@@ -107,34 +103,23 @@ Connectors (`nexus.backends.connectors.{x,gmail,slack,gdrive,calendar,oauth_base
 
 ## Data flow
 
-### Glob path (after PR)
+### Glob path (no change)
 
 ```
 PathXBackend.glob(pattern)
-  └─ from nexus.utils.glob import glob_filter
-  └─ glob_filter(paths, include, exclude)
-       └─ from nexus._rust_compat import glob_match_bulk     # nexus_runtime, OK
-nexus.bricks.search.primitives.glob_helpers
-  └─ from nexus.utils.glob import *                          # full-runtime back-compat
+  └─ nexus.bricks.search.primitives.glob_helpers.glob_filter(...)   # carved into slim
+       └─ from nexus._rust_compat import glob_match_bulk             # nexus_runtime, OK
 ```
 
-### OAuth factory path (after PR)
+### OAuth factory path (no change)
 
 ```
 connector.authenticate(...)
-  └─ from nexus.lib.auth.oauth_factory import create_token_manager
-nexus.bricks.auth.oauth.factory
-  └─ from nexus.lib.auth.oauth_factory import create_token_manager  # re-export
+  └─ importlib.import_module("nexus.bricks.auth.oauth.factory")     # carved into slim
+       └─ … existing factory code unchanged
 ```
 
-### Re-export contract
-
-- `nexus.bricks.*` modules listed above keep their public names; full-runtime callers see no diff.
-- Internal callers inside bricks that do `from .factory import create_token_manager` keep working — the re-export is module-level, not a wildcard hack.
-- `is`-identity is preserved (the same function object is reachable from both paths).
-- `__module__` on these symbols moves to the new path. Any caller that introspects `inspect.getmodule(...)` will see the new path. Pre-merge audit:
-  - `rg -n '__module__|inspect\.getmodule' src/ tests/` over the names `glob_match`, `glob_filter`, `extract_static_prefix`, `create_token_manager`, `AuthProfile`, `CredentialPool`, `TokenManager`, `classify_google_error`.
-  - For each hit, decide: keep (compares to new path), update (if asserting old path), or drop (if the assertion is incidental).
+No re-export indirection, no `__module__` audit needed. Symbols stay where they are.
 
 ## Testing
 
@@ -158,38 +143,28 @@ CI workflow `.github/workflows/slim-wheel-smoke.yml`:
 - Job `smoke-test`: provision fresh venv, install built wheel + `nexus-runtime`, run smoke script.
 - Platforms: `ubuntu-latest`, `macos-latest`, Python 3.14 (matching `requires-python` in `packages/nexus-fs/pyproject.toml`). Windows deferred — `nexus-runtime` macOS/Linux wheels are the priority.
 
-### Slim release-integrity (new; closes #3944's AC)
+### Slim wheel-content audit (new; closes #3944's AC)
 
-`tests/unit/fs/test_slim_imports.py`:
+`tests/unit/fs/test_slim_wheel_contents.py`:
 
-- Discover slim-shipped backend modules via `pkgutil.walk_packages(nexus.backends, ...)`.
-- For each module, spawn a subprocess (subprocess isolation matters — once `nexus.bricks` is imported by another test in the same process, the test is meaningless).
-- In the subprocess, install a sentinel meta-path finder that raises `ImportError` for any name starting with `nexus.bricks`.
-- Import the connector module. Assert success.
-- Allowlist: optional `(module_path, allowed_bricks_imports)` map for legitimate exceptions; defaults to deny-all.
+- Build the slim wheel in a tmpdir.
+- Unzip it; assert the file list:
+  - **Includes** `nexus/bricks/auth/...`, `nexus/bricks/search/primitives/...`, `nexus/bricks/__init__.py`, `nexus/bricks/search/__init__.py`.
+  - **Excludes** `nexus/bricks/server/...`, `nexus/bricks/raft/...`, `nexus/bricks/sync/...`, `nexus/bricks/catalog/...`, plus any other bricks subtree we don't intend to ship.
+- Assert the connectors known to depend on bricks (X, gmail, slack, gdrive, calendar, oauth_base, cli/base) import successfully when invoked against the freshly-installed slim wheel (in the smoke-test job's venv).
 
-### Re-export identity
-
-`tests/unit/lib/test_glob_reexport.py`:
-
-```python
-from nexus.utils.glob import glob_match as new
-from nexus.bricks.search.primitives.glob_helpers import glob_match as old
-assert new is old                      # single source of truth
-```
-
-Same shape for `oauth_factory`, `profile`, `credential_pool`, `classify_google_error`, `token_manager`.
+This replaces the original "import-time block of `nexus.bricks`" integrity test — under the carve-out, slim-shipped modules *do* import `nexus.bricks.*`, and that's expected. The wheel-content audit catches the regression #3944 is really worried about: a future allowlist edit shipping more or less of bricks than we intend.
 
 ### Existing tests
 
-- All connector tests (`gmail`, `slack`, `gdrive`, `calendar`, `x`, `oauth_base`) must continue to pass — confirms re-exports preserve runtime semantics.
+- All connector tests (`gmail`, `slack`, `gdrive`, `calendar`, `x`, `oauth_base`) must continue to pass — confirms no behavioral regression.
 - `tests/unit/fs/test_slim_external_write.py` may need cleanup of the assertion that "non-external slim writes still surface `_kernel=None` errors" — that condition no longer exists under the new contract.
 
 ### Manual verification (PR test plan)
 
 - `cd packages/nexus-fs && pip install -e .` in clean venv → `python -c "import nexus.fs; nexus.fs.mount_sync('local:///tmp/x')"` succeeds.
 - `python -c "from nexus.backends.connectors.x.connector import PathXBackend"` succeeds in slim install.
-- `python -c "from nexus.bricks.search.primitives.glob_helpers import glob_match"` succeeds in full-runtime install (back-compat).
+- `python -c "from nexus.backends.connectors.gmail.connector import PathGmailBackend"` succeeds in slim install.
 
 ## Risks
 
@@ -197,13 +172,11 @@ Same shape for `oauth_factory`, `profile`, `credential_pool`, `classify_google_e
 
 2. **Version skew.** `nexus-fs 0.4.9` and `nexus-runtime 0.10.0` aren't pinned together today. We use `nexus-runtime>=0.10,<0.11` (compatible-release). Future bumps require coordinated releases.
 
-3. **Re-export observability.** `inspect.getmodule(obj).__name__` returns the new path, not the old. Audit grep for `__module__` / `getmodule` over the affected symbols before merge; tests prefer `is` identity.
+3. **Slim wheel weight.** Carving in `bricks/auth/**` (~140 files) and `bricks/search/primitives/**` (3 files) increases slim wheel size. Acceptable: the alternative was a multi-week refactor moving the same code. Wheel-content audit pins what ships.
 
-4. **Circular imports.** `nexus.bricks.*` re-exports from `nexus.lib.*` is safe (lib is lower-tier). `nexus.lib.*` must not pull from `nexus.bricks`. The release-integrity test enforces this for slim-shipped modules; existing bricks tests guard the full-runtime side.
+4. **Bricks tier discipline.** Carving bricks subtrees into the slim package means slim depends on (parts of) the bricks tier. This blurs the previous "slim ships only kernel/lib/contracts" line. Mitigation: the wheel-content audit makes the slim-shipped bricks set explicit; future bricks added to `bricks/auth/` automatically ship to slim — the slim contract is now "slim ships kernel + lib + auth bricks + search primitives." Document this in `packages/nexus-fs/pyproject.toml` next to the `force-include` block.
 
-5. **Integrity test scope.** `walk_packages` may surface a module that legitimately needs `nexus.bricks` (none today, but defensive). Test takes an explicit allowlist; default-deny.
-
-6. **Single-PR review burden.** ~7 commits across packaging, lib re-homes, connector edits, bricks re-exports, tests, CI. Mitigation: clean per-commit messages let reviewers step through; the integrity test pins behavior so a regression in any commit fails CI immediately.
+5. **Single-PR review burden.** ~5 commits: packaging (deps + force-include), smoke test, wheel-content audit, CI workflow, slim_external_write cleanup. Mitigation: clean per-commit messages let reviewers step through.
 
 ## Rollback
 
@@ -213,9 +186,9 @@ Same shape for `oauth_factory`, `profile`, `credential_pool`, `classify_google_e
 ## Decision log
 
 - Picked **B (Rust as hard dep)** over A (pure-Python re-implementation, weeks of work) and C (optional extras, doubles test matrix). Rationale: smallest diff, eliminates the silent-import-failure class.
-- Chose **move-and-reexport** for #3944 over carving out `bricks/search/primitives` in the slim wheel. Rationale: keeps the existing `**/bricks/**` exclusion intact, single source of truth for shared helpers.
-- **Single PR** over a 2-PR split. Rationale: the contract change and the connector sweep both land behind the new install-smoke + integrity test; splitting would let one merge without the other and leave a window where the integrity test references modules that haven't moved yet.
-- Sweep all `nexus.bricks` connector imports (not only X). Rationale: the integrity test mandated by #3944's ACs would trip on the deferred imports anyway.
+- For #3944, picked **carve-out (3944b)** over move-and-reexport (3944a). Rationale: discovery during plan-writing showed move-and-reexport requires re-homing ~2000 LOC of `bricks/auth/**` plus its transitive deps — a multi-week refactor of the auth tier. Carve-out is a single `force-include` block in `pyproject.toml`; slim contract becomes "slim ships kernel + lib + auth bricks + search primitives." Wheel-content audit pins the slim-shipped bricks set.
+- **Single PR** over a 2-PR split. Rationale: the contract change (`nexus-runtime` dep) and the bricks carve-out are both surgical pyproject edits gated by the same install-smoke + wheel-content tests.
+- Sweep all `nexus.bricks` connector imports (not only X). Rationale: the carve-out picks up all 7 connectors at once — auth subtree covers gmail/slack/gdrive/calendar/oauth_base/cli/base; search/primitives covers X.
 
 ## Out of scope
 

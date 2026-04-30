@@ -87,7 +87,6 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_search,
         handle_semantic_search,
         handle_semantic_search_index,
-        handle_set_metadata,
         handle_sys_lock,
         handle_sys_unlock,
         handle_write,
@@ -113,7 +112,12 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "mkdir": DispatchEntry(handle_mkdir, is_async=True, event_type="dir_create"),
         "sys_rmdir": DispatchEntry(handle_rmdir, is_async=True, event_type="dir_delete"),
         "sys_stat": DispatchEntry(handle_get_metadata, is_async=True),
-        "sys_setattr": DispatchEntry(handle_set_metadata, is_async=True),
+        # NOTE: sys_setattr is served by the kernel-syscall thin dispatcher
+        # in `nexus.server._kernel_syscall_dispatch`; the legacy entry
+        # routed it to `handle_set_metadata` (a Python-side metastore put
+        # with incompatible `{path, metadata}` params shape) and hijacked
+        # the wire-form name.  Subsequent commits delete the rest of the
+        # syscall entries here as the thin dispatcher takes over.
         # Short aliases for nexus-test / remote clients
         "read": DispatchEntry(handle_read_async, is_async=True),
         "write": DispatchEntry(

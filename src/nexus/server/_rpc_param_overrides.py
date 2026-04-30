@@ -225,23 +225,6 @@ class AdminGcVersionsStatsParams:
 
 
 # ============================================================
-# 6. RemoteMetastore Parameters (metadata proxy for REMOTE profile)
-# ============================================================
-
-
-@dataclass
-class SetMetadataParams:
-    """Parameters for set_metadata() — store/update file metadata.
-
-    Called by RemoteMetastore.put() to persist DT_MOUNT entries and
-    metadata updates from the REMOTE deployment profile.
-    """
-
-    path: str
-    metadata: dict[str, Any] | None = None
-
-
-# ============================================================
 # 8. Namespace override (RPC name differs from method name)
 # ============================================================
 
@@ -347,8 +330,6 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "admin_gc_versions_stats": AdminGcVersionsStatsParams,
     # Namespace
     "namespace_get": NamespaceGetParams,
-    # RemoteMetastore
-    "sys_setattr": SetMetadataParams,
     # Semantic search init (Issue #3728 follow-up — the client calls this
     # via RemoteServiceProxy, and without an entry here ``parse_method_params``
     # rejects the RPC as "Unknown method".)

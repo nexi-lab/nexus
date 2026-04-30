@@ -387,8 +387,10 @@ class MetadataMixin:
         # service registration, and metadata mutation.  Without an
         # in-class gate, in-process callers (and any future RPC handler
         # that forgot to gate) could poison metadata under /zone/X for a
-        # token without WRITE there.  Defense in depth: check here even
-        # though `handle_set_metadata` already checks at the RPC edge.
+        # token without WRITE there.  This is the only enforcement layer
+        # for sys_setattr now that the kernel-syscall thin dispatcher
+        # routes wire-form `sys_setattr` straight here without a per-RPC
+        # handler.
         _entry_type = attrs.get("entry_type", 0)
         if context is not None and not getattr(context, "is_system", False):
             from nexus.contracts.exceptions import PermissionDeniedError as _PDE

@@ -308,45 +308,6 @@ async def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) ->
     return {"metadata": metadata}
 
 
-async def handle_set_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
-    """Handle set_metadata — persist metadata from RemoteMetastore.put().
-
-    Reconstructs a FileMetadata from the dict sent by the client and
-    stores it via the server-side metastore.
-
-    Issue #3786 / Codex Round 5 finding #2: enforce WRITE permission on
-    ``params.path`` before persisting.  Without this gate a federation token
-    holding read-only or no grant for /zone/X/ could overwrite arbitrary
-    metadata there (poisoning, hiding files, redirecting backends).  The
-    mutation bypasses ``Kernel::sys_write`` and the ``request_zone_perms_scope``
-    wrapper, so the enforcer is invoked here directly.
-    """
-    from nexus.contracts.exceptions import PermissionDeniedError
-    from nexus.contracts.types import Permission
-    from nexus.storage._metadata_mapper_generated import MetadataMapper
-
-    enforcer = nexus_fs.service("permission_enforcer")
-    if enforcer is not None and context is not None and not getattr(context, "is_system", False):
-        from nexus.lib.zone_perms_cache import request_zone_perms_scope
-
-        _zp = getattr(context, "zone_perms", ())
-        with request_zone_perms_scope(_zp):
-            allowed = enforcer.check(params.path, Permission.WRITE, context)
-        if not allowed:
-            raise PermissionDeniedError(
-                f"set_metadata denied: WRITE not granted for {params.path!r}",
-                path=params.path,
-            )
-
-    meta_dict: dict[str, Any] = params.metadata or {}
-    # Ensure path is set (prefer params.path over dict contents)
-    meta_dict["path"] = params.path
-
-    file_meta = MetadataMapper.from_json(meta_dict)
-    nexus_fs.metadata.put(file_meta)
-    return {"path": params.path, "ok": True}
-
-
 def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle glob method."""
     kwargs: dict[str, Any] = {"context": context}

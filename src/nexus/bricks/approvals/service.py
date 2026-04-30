@@ -188,7 +188,7 @@ class ApprovalService:
             except Exception:
                 logger.warning("notify(approvals_new) failed; queue still durable", exc_info=True)
 
-        fut = self._dispatcher.register(req.id)
+        fut = self._dispatcher.register(req.id, session_id=session_id)
 
         # If the row is already terminal (race: decided between insert and register),
         # short-circuit by re-fetching.
@@ -319,22 +319,37 @@ class ApprovalService:
         if updated is None:
             raise ValueError(f"request {request_id} is not pending")
 
-        if scope is DecisionScope.SESSION and decision is Decision.APPROVED and updated.session_id:
-            await self._repo.insert_session_allow(
-                session_id=updated.session_id,
-                zone_id=updated.zone_id,
-                kind=updated.kind,
-                subject=updated.subject,
-                decided_by=decided_by,
-                decided_at=now,
-                request_id=updated.id,
-            )
+        if scope is DecisionScope.SESSION and decision is Decision.APPROVED:
+            # Fan out a session_allow row for *every* coalesced waiter's
+            # session_id, not just ``updated.session_id`` (the winning
+            # insert's). When N callers coalesce on (zone, kind, subject)
+            # with N different sessions, a SESSION-scope approval should
+            # short-circuit *all* of them on the next same-session call —
+            # otherwise the losers fall back to a fresh pending row after
+            # the inherit window. (Issue #3790 follow-up.)
+            session_ids: set[str] = set()
+            if updated.session_id:
+                session_ids.add(updated.session_id)
+            for sid in self._dispatcher.session_ids_for(request_id):
+                session_ids.add(sid)
+            for sid in session_ids:
+                await self._repo.insert_session_allow(
+                    session_id=sid,
+                    zone_id=updated.zone_id,
+                    kind=updated.kind,
+                    subject=updated.subject,
+                    decided_by=decided_by,
+                    decided_at=now,
+                    request_id=updated.id,
+                )
 
         await self._notify.notify(
             CHANNEL_DECIDED,
             json.dumps({"request_id": request_id, "decision": decision.value}),
         )
         # Resolve in-process futures immediately for callers on the same worker.
+        # NB: resolve() drops the dispatcher entry — must run after the
+        # session_ids_for(...) fan-out above, not before.
         self._dispatcher.resolve(request_id, decision)
         return updated
 

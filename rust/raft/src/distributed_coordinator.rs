@@ -1124,6 +1124,82 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         Ok(())
     }
 
+    fn join_cluster(
+        &self,
+        kernel: &Kernel,
+        zone_id: &str,
+        leader_addr: &str,
+        as_learner: bool,
+    ) -> CoordinatorResult<()> {
+        let zm = self.zm().ok_or("federation not active")?;
+        let runtime = self
+            .runtime
+            .get()
+            .ok_or("federation runtime not initialised")?;
+        if leader_addr.trim().is_empty() {
+            return Err("join_cluster: leader_addr must not be empty".to_string());
+        }
+
+        // Step 1: set up local raft replica with skip_bootstrap=true so the
+        // leader's snapshot is the authoritative ConfState source.  We seed
+        // the address book with the leader so outgoing AppendEntries acks
+        // and vote responses can reach it from the moment the snapshot
+        // installs.
+        let leader_peer = vec![leader_addr.to_string()];
+        if zm.get_zone(zone_id).is_none() {
+            zm.join_zone(zone_id, leader_peer, as_learner)
+                .map_err(|e| format!("join_cluster local setup: {e}"))?;
+        }
+
+        // Step 2: send JoinZone RPC to the leader.  Followers self-redirect
+        // via JoinZoneResponse.leader_address; we follow the redirect once
+        // before surfacing the failure.
+        let self_id = zm.node_id();
+        let self_address = kernel
+            .self_address_string()
+            .ok_or("join_cluster: self_address not published — federation not initialised")?;
+        let mut endpoint = leader_addr.to_string();
+        let mut redirected_once = false;
+        loop {
+            let attempt = runtime.block_on(crate::transport::call_join_zone_rpc(
+                &endpoint,
+                zone_id,
+                self_id,
+                &self_address,
+                as_learner,
+                10,
+            ));
+            match attempt {
+                Ok(result) if result.success => {
+                    tracing::info!(
+                        zone_id = %zone_id,
+                        endpoint = %endpoint,
+                        self_id = self_id,
+                        "join_cluster: leader committed ConfChangeV2 AddNode"
+                    );
+                    self.install_apply_cb_for_zone(kernel, zone_id);
+                    return Ok(());
+                }
+                Ok(result) => {
+                    if let Some(addr) = result.leader_address.as_ref() {
+                        if !redirected_once && !addr.is_empty() && addr != &endpoint {
+                            endpoint = addr.clone();
+                            redirected_once = true;
+                            continue;
+                        }
+                    }
+                    return Err(format!(
+                        "join_cluster: peer {endpoint} rejected — error={:?}",
+                        result.error
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!("join_cluster: RPC to {endpoint} failed: {e}"));
+                }
+            }
+        }
+    }
+
     fn share_zone(
         &self,
         kernel: &Kernel,

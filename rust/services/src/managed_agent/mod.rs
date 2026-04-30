@@ -516,6 +516,7 @@ fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), Stri
             /* mime_type */ None,
             /* modified_at_ms */ None,
             /* link_target */ None,
+            /* source */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
@@ -548,6 +549,7 @@ fn create_dt_link(
             /* mime_type */ None,
             /* modified_at_ms */ None,
             /* link_target */ Some(target),
+            /* source */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_LINK at {path} -> {target}): {e:?}"))

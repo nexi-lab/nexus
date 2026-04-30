@@ -1504,6 +1504,15 @@ impl Kernel {
         modified_at_ms: Option<i64>,
         // -- DT_LINK params (entry_type == 6) --
         link_target: Option<&str>,
+        // -- DT_MOUNT explicit source (entry_type == 2) --
+        //
+        // When `source` is `Some(addr)` and `addr` is non-empty, the mount
+        // semantics flip from "create the target zone locally" to "join the
+        // target zone at this leader address".  Mirrors the explicit
+        // `mount remote-addr:/remote /local` direction (joiner picks up
+        // remote metadata) versus `mount /local remote-addr:/remote`
+        // (sharer publishes local metadata).
+        source: Option<&str>,
     ) -> Result<SysSetAttrResult, KernelError> {
         match entry_type {
             2 => {
@@ -1525,18 +1534,39 @@ impl Kernel {
                 // per-mount MetaStore Arc, so crosslinks of the same
                 // zone share one callback.
                 let coordinator = self.distributed_coordinator();
-                // Federation activity derives from `list_zones` — empty
-                // before `install()` populates the ZoneManager, populated
-                // after with at least the root zone.
-                let federation_active = !coordinator.list_zones(self).is_empty();
-                let metastore = match metastore {
-                    Some(m) => Some(m),
-                    None if federation_active && !zone_id.is_empty() => {
-                        // Auto-create + resolve.
+                // Federation readiness via the trait's is_initialized — true
+                // once init_from_env completes regardless of whether any
+                // zones are loaded.  This matters for dynamic-bootstrap
+                // mode (NEXUS_PEERS empty), where zones are zero at boot
+                // but the coordinator is fully ready to accept create_zone
+                // / join_cluster calls.  Using list_zones as a readiness
+                // shadow misclassified that state.
+                let federation_active = coordinator.is_initialized(self);
+                let source_addr = source.map(str::trim).filter(|s| !s.is_empty());
+                let metastore = match (metastore, source_addr) {
+                    (Some(m), _) => Some(m),
+                    (None, Some(addr)) if federation_active && !zone_id.is_empty() => {
+                        // Explicit source given — interpret as `mount
+                        // remote-addr:/zone-id /local-path`: this node
+                        // joins an existing cluster at `addr` (joiner
+                        // semantics) rather than self-bootstrapping a
+                        // 1-voter group.  Leader ConfChangeV2 AddNode
+                        // commits + snapshot install populates ConfState.
+                        coordinator
+                            .join_cluster(self, zone_id, addr, false)
+                            .map_err(KernelError::Federation)?;
+                        coordinator.metastore_for_zone(self, zone_id).ok()
+                    }
+                    (None, None) if federation_active && !zone_id.is_empty() => {
+                        // No source given — interpret as `mount
+                        // /local-path remote-addr:/zone-id`: this node
+                        // contributes a fresh 1-voter zone (creator
+                        // semantics).  Subsequent peers join via the
+                        // explicit-source path above.
                         let _ = coordinator.create_zone(self, zone_id);
                         coordinator.metastore_for_zone(self, zone_id).ok()
                     }
-                    None => None,
+                    (None, _) => None,
                 };
                 self.dlc.mount(
                     self,
@@ -2993,6 +3023,7 @@ mod tests {
             None,  // mime_type
             None,  // modified_at_ms
             None,  // link_target
+            None,  // source
         )
     }
 
@@ -3092,6 +3123,7 @@ mod tests {
                 Some("text/plain"),
                 None,
                 None,
+                None, // source
             )
             .unwrap();
         assert!(!r.created);
@@ -3155,6 +3187,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None, // source
             )
             .unwrap();
         assert!(r.created);
@@ -3195,6 +3228,7 @@ mod tests {
             None,
             None,
             None,
+            None, // source
         )
         .unwrap();
 

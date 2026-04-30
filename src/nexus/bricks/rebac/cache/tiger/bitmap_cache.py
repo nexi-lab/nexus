@@ -151,6 +151,14 @@ class TigerCache:
         self._l2_executor: Any | None = None
         self._l2_max_workers = l2_max_workers
 
+        # Rate-limit orphan-id WARNING logs (Issue #3951): a stale resource_map
+        # row in a popular subject's bitmap would otherwise log on every auth
+        # check. Dedupe by (zone, subject_type, subject_id, permission, type)
+        # with a 60s window; first occurrence per window emits WARNING with
+        # full context, repeats are downgraded to DEBUG.
+        self._orphan_log_window_s = 60.0
+        self._orphan_log_last_emit: dict[tuple[str, str, str, str, str], float] = {}
+
     @property
     def resource_map(self) -> "TigerResourceMap":
         """Public accessor for the resource map."""
@@ -746,11 +754,19 @@ class TigerCache:
         # every prefix in a batch on a single stale row.
         unresolved = len(int_ids) - len(id_to_key)
         if unresolved > 0:
-            logger.warning(
+            dedupe_key = (zone_id, subject_type, subject_id, permission, resource_type)
+            now = time.monotonic()
+            last = self._orphan_log_last_emit.get(dedupe_key, 0.0)
+            level = logging.WARNING if (now - last) >= self._orphan_log_window_s else logging.DEBUG
+            if level == logging.WARNING:
+                self._orphan_log_last_emit[dedupe_key] = now
+            logger.log(
+                level,
                 "[TIGER-PUSHDOWN] resource_map orphans: %d/%d int IDs unresolved "
-                "(subject=%s:%s, perm=%s, type=%s) — dropping silently to match pre-refactor parity",
+                "(zone=%s, subject=%s:%s, perm=%s, type=%s) — dropping silently",
                 unresolved,
                 len(int_ids),
+                zone_id or "-",
                 subject_type,
                 subject_id,
                 permission,

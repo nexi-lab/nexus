@@ -44,6 +44,10 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
         "VFSSemaphore",
         "BlobPackEngine",
     ),
+    "prefix": (
+        "any_path_starts_with",
+        "batch_prefix_check",
+    ),
 }
 
 # All public methods that must exist on nexus_runtime.PyKernel.

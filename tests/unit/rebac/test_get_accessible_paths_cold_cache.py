@@ -23,6 +23,8 @@ def test_get_accessible_paths_cold_int_to_uuid_uses_bulk_fallback():
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
+    cache._orphan_log_window_s = 60.0
+    cache._orphan_log_last_emit = {}
 
     resource_map = MagicMock()
     resource_map._int_to_uuid = {}  # cold L1 — empty in-memory map
@@ -51,6 +53,8 @@ def test_get_accessible_paths_filters_wrong_resource_type():
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
+    cache._orphan_log_window_s = 60.0
+    cache._orphan_log_last_emit = {}
     resource_map = MagicMock()
     resource_map.bulk_get_resource_ids.return_value = {
         1: ("file", "/a/file.txt"),
@@ -74,6 +78,8 @@ def test_get_accessible_paths_returns_none_when_no_bitmap():
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
+    cache._orphan_log_window_s = 60.0
+    cache._orphan_log_last_emit = {}
     cache._resource_map = MagicMock()
     cache.get_accessible_int_ids = MagicMock(return_value=None)
 
@@ -102,6 +108,8 @@ def test_get_accessible_paths_drops_orphan_ids_silently(caplog):
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
+    cache._orphan_log_window_s = 60.0
+    cache._orphan_log_last_emit = {}
     resource_map = MagicMock()
     # int_id 2 unresolvable (DB also has no row) — orphan / partial resolution
     resource_map.bulk_get_resource_ids.return_value = {1: ("file", "/a/file.txt")}
@@ -132,6 +140,8 @@ def test_get_accessible_paths_returns_empty_when_all_unresolved():
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
+    cache._orphan_log_window_s = 60.0
+    cache._orphan_log_last_emit = {}
     resource_map = MagicMock()
     resource_map.bulk_get_resource_ids.return_value = {}
     cache._resource_map = resource_map
@@ -152,6 +162,8 @@ def test_get_accessible_paths_large_bitmap_single_bulk_call():
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
+    cache._orphan_log_window_s = 60.0
+    cache._orphan_log_last_emit = {}
     resource_map = MagicMock()
     resource_map.bulk_get_resource_ids.return_value = {
         i: ("file", f"/workspace/file_{i}.txt") for i in range(50_000)
@@ -203,3 +215,79 @@ def test_bulk_get_resource_ids_empty_input():
 
     assert rmap.bulk_get_resource_ids(set()) == {}
     assert rmap.bulk_get_resource_ids([]) == {}
+
+
+def test_orphan_warning_is_rate_limited(caplog):
+    """Repeated orphan-id calls within the dedupe window emit DEBUG, not WARNING."""
+    import logging
+
+    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
+
+    cache = TigerCache.__new__(TigerCache)
+    cache._orphan_log_window_s = 60.0
+    cache._orphan_log_last_emit = {}
+    rm = MagicMock()
+    rm.bulk_get_resource_ids.return_value = {1: ("file", "/a")}
+    cache._resource_map = rm
+    cache.get_accessible_int_ids = MagicMock(return_value={1, 2})
+
+    with caplog.at_level(logging.DEBUG):
+        cache.get_accessible_paths(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+        )
+        cache.get_accessible_paths(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+        )
+        cache.get_accessible_paths(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+        )
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    debugs = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "resource_map orphans" in r.message
+    ]
+    assert len(warnings) == 1, f"expected exactly 1 WARNING, got {len(warnings)}"
+    assert len(debugs) == 2, f"expected 2 DEBUG repeats, got {len(debugs)}"
+
+
+def test_prefix_helpers_in_capability_groups():
+    """Issue #3951: prefix functions must be gated through CAPABILITY_GROUP_CONFIG.
+
+    Without this, a stale/version-skewed nexus_runtime would still expose
+    these symbols while the rest of Rust is disabled — driving auth
+    visibility off a broken binary.
+    """
+    from nexus._kernel_api_groups import MODULE_CAPABILITY_GROUPS
+
+    assert "prefix" in MODULE_CAPABILITY_GROUPS
+    prefix_group = MODULE_CAPABILITY_GROUPS["prefix"]
+    assert "any_path_starts_with" in prefix_group
+    assert "batch_prefix_check" in prefix_group
+
+
+def test_prefix_helpers_disabled_when_group_fails(monkeypatch):
+    """Simulate a stale runtime where the 'prefix' group is invalidated."""
+    import importlib
+
+    import nexus._rust_compat as rc
+
+    monkeypatch.setattr(rc, "_disabled_symbols", set(rc._disabled_symbols))
+    rc._disabled_symbols.update({"any_path_starts_with", "batch_prefix_check"})
+
+    importlib.reload(rc)
+    # After reload disabled set is reconstructed from real env, so test the
+    # gating function directly:
+    rc._disabled_symbols.update({"any_path_starts_with", "batch_prefix_check"})
+    assert rc._get("any_path_starts_with") is None
+    assert rc._get("batch_prefix_check") is None

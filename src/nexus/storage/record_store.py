@@ -229,7 +229,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                          When None, uses _build_pool_kwargs defaults (30 primary, 10 with replica).
         """
         from sqlalchemy import create_engine, event
+        from sqlalchemy.engine import make_url
         from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
 
         # Resolve database URL
         _resolved = self._resolve_db_url(db_url, db_path)
@@ -255,6 +257,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         engine_kwargs: dict[str, Any] = {}
         if not self._is_postgresql:
             engine_kwargs["connect_args"] = {"check_same_thread": False}
+            url = make_url(self.database_url)
+            if url.database in (None, "", ":memory:"):
+                engine_kwargs["poolclass"] = StaticPool
         else:
             _default_pool = (
                 pool_size if pool_size is not None else (10 if self._has_read_replica else 20)

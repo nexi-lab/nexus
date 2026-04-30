@@ -12,12 +12,17 @@ Key design decisions:
   - Comprehensive error handling with structured logging
 """
 
+import hashlib
 import logging
+import posixpath
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.virtual_views import is_parseable_path
 
 # Removed: txtai handles this (Issue #2663)
@@ -37,6 +42,38 @@ from nexus.bricks.search.models import DocumentChunkModel, FilePathModel
 from nexus.bricks.search.protocols import FileReaderProtocol
 
 logger = logging.getLogger(__name__)
+
+
+def _looks_like_virtual_readme(path: str) -> bool:
+    """Heuristic: does ``path`` match a virtual ``.readme/`` overlay entry?
+
+    Issue #3728: the virtual ``.readme/`` tree has no metastore rows.
+    When ``_query_file_model`` misses on a path under ``.readme/``, this
+    helper lets the indexer treat it as a virtual-doc candidate and
+    synthesize a path_id instead of silently dropping the file.
+
+    The check is intentionally path-shape-only — the router /
+    backend introspection that would give us definitive "is this
+    virtual?" answers isn't available from ``IndexingService``
+    (which only holds a ``FileReaderProtocol``).  False positives
+    are bounded: a user-created real ``.readme/`` folder whose row
+    happens to be missing would index with a synthetic ``virtual:``
+    path_id which doesn't collide with real path_ids.
+    """
+    normalized = posixpath.normpath(path)
+    segments = normalized.split("/")
+    return any(seg == ".readme" for seg in segments)
+
+
+def _virtual_path_id(path: str) -> str:
+    """Deterministic synthetic path_id for a virtual readme path.
+
+    ``document_chunks.path_id`` is a 36-character FK to ``file_paths``, so
+    row-less virtual documents still need a UUID-shaped identifier. UUID5
+    keeps the value stable across runs so re-indexing replaces the previous
+    chunks via the pipeline's path_id-keyed upsert.
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"nexus:virtual-readme:{path}"))
 
 
 # Binary extensions excluded from directory indexing.
@@ -345,7 +382,24 @@ class IndexingService:
                         documents.append(
                             (file_path, content, file_model.path_id),
                         )
-
+                    elif _looks_like_virtual_readme(file_path):
+                        # Issue #3728: virtual ``.readme/`` overlay paths
+                        # are served from class metadata at read time.  The
+                        # chunk tables still enforce a FK to file_paths, so
+                        # persist a minimal deterministic row before handing
+                        # the document to the indexing pipeline.
+                        #
+                        # Known limitation: when the connector class
+                        # metadata changes (e.g. a nexus upgrade), the
+                        # synthetic path_id stays the same but the
+                        # embeddings become stale.  Users need to
+                        # re-trigger indexing (remount) to refresh.
+                        virtual_model = self._ensure_virtual_readme_file_model(
+                            session,
+                            file_path,
+                            content,
+                        )
+                        documents.append((file_path, content, virtual_model.path_id))
                 except Exception:
                     logger.warning(
                         "[INDEXING-SVC] Skipping %s: failed to read or resolve",
@@ -450,3 +504,61 @@ class IndexingService:
             .where(DocumentChunkModel.path_id == path_id)
         )
         return session.execute(stmt).scalar() or 0
+
+    @staticmethod
+    def _ensure_virtual_readme_file_model(
+        session: Any,
+        path: str,
+        content: str,
+    ) -> Any:
+        """Create or refresh the synthetic file_paths row for a virtual readme."""
+        path_id = _virtual_path_id(path)
+        content_id = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        now = datetime.now(UTC)
+
+        file_model = session.get(FilePathModel, path_id)
+        if file_model is None:
+            file_model = session.execute(
+                select(FilePathModel).where(
+                    FilePathModel.zone_id == ROOT_ZONE_ID,
+                    FilePathModel.virtual_path == path,
+                    FilePathModel.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+
+        if file_model is None:
+            file_model = FilePathModel(
+                path_id=path_id,
+                zone_id=ROOT_ZONE_ID,
+                virtual_path=path,
+                file_type="text/markdown",
+                size_bytes=len(content.encode("utf-8")),
+                content_id=content_id,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(file_model)
+        else:
+            file_model.content_id = content_id
+            file_model.size_bytes = len(content.encode("utf-8"))
+            file_model.file_type = file_model.file_type or "text/markdown"
+            file_model.updated_at = now
+            file_model.deleted_at = None
+
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            file_model = session.get(FilePathModel, path_id)
+            if file_model is None:
+                file_model = session.execute(
+                    select(FilePathModel).where(
+                        FilePathModel.zone_id == ROOT_ZONE_ID,
+                        FilePathModel.virtual_path == path,
+                        FilePathModel.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+            if file_model is None:
+                raise
+
+        return file_model

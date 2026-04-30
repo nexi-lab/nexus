@@ -70,9 +70,67 @@ async def test_legacy_delete_paths_call_delete_backends() -> None:
     daemon._backend.delete.assert_awaited_once_with(["/docs/readme.md"], zone_id=ROOT_ZONE_ID)
 
 
+@pytest.mark.asyncio
+async def test_legacy_delete_skips_document_chunks_when_path_id_unresolved() -> None:
+    daemon = SearchDaemon()
+    daemon._chunk_store = AsyncMock()
+    daemon._backend = AsyncMock()
+    daemon._resolve_mutations = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                zone_id=ROOT_ZONE_ID,
+                doc_id="/docs/readme.md",
+                path_id="/docs/readme.md",
+                virtual_path="/docs/readme.md",
+                path_id_resolved=False,
+            )
+        ]
+    )
+
+    await daemon._delete_indexes_for_paths(["/zone/root/docs/readme.md"])
+
+    daemon._chunk_store.delete_document_chunks.assert_not_awaited()
+    daemon._backend.delete.assert_awaited_once_with(["/docs/readme.md"], zone_id=ROOT_ZONE_ID)
+
+
+@pytest.mark.asyncio
+async def test_fts_mutation_skips_document_chunks_when_path_id_unresolved() -> None:
+    daemon = SearchDaemon()
+    daemon._chunk_store = AsyncMock()
+    event = SearchMutationEvent(
+        event_id="evt-1",
+        operation_id="op-1",
+        op=SearchMutationOp.UPSERT,
+        path="/docs/readme.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=datetime.now(UTC).replace(tzinfo=None),
+        sequence_number=1,
+    )
+    daemon._resolve_mutations = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                event=event,
+                zone_id=ROOT_ZONE_ID,
+                doc_id="/docs/readme.md",
+                path_id="/docs/readme.md",
+                virtual_path="/docs/readme.md",
+                content="hello",
+                path_id_resolved=False,
+            )
+        ]
+    )
+
+    await daemon._consume_fts_mutations([event])
+
+    daemon._chunk_store.replace_document_chunks.assert_not_awaited()
+
+
 class _RowsResult:
     def __init__(self, rows):
         self._rows = rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
 
     def fetchall(self):
         return self._rows
@@ -92,6 +150,37 @@ class _SessionCtx:
     async def execute(self, _stmt, _params=None):
         self.execute_count += 1
         return _RowsResult(self._rows)
+
+
+class _SequentialSessionFactory:
+    def __init__(self, sessions):
+        self._sessions = list(sessions)
+
+    def __call__(self):
+        return self._sessions.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_refresh_indexes_reuses_cached_content_path_id() -> None:
+    daemon = SearchDaemon()
+    daemon._indexing_pipeline = AsyncMock()
+    daemon._indexing_pipeline.index_document.return_value = SimpleNamespace(error=None)
+    daemon._embedding_provider = object()
+    daemon._async_session = _SequentialSessionFactory(
+        [
+            _SessionCtx([("scoped content", "pid-scoped")]),
+            _SessionCtx([("pid-canonical",)]),
+            _SessionCtx([(1,)]),
+        ]
+    )
+
+    await daemon._refresh_indexes(["/zone/tenant/docs/readme.md"])
+
+    daemon._indexing_pipeline.index_document.assert_awaited_once_with(
+        "/zone/tenant/docs/readme.md",
+        "scoped content",
+        "pid-scoped",
+    )
 
 
 @pytest.mark.asyncio

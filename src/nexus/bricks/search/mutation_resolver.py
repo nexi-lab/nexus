@@ -29,6 +29,7 @@ class ResolvedMutation:
     path_id: str
     doc_id: str
     content: str | None = None
+    path_id_resolved: bool = True
 
 
 class MutationResolver:
@@ -72,7 +73,7 @@ class MutationResolver:
         now = time.monotonic()
         resolved: list[ResolvedMutation | None] = [None] * len(events)
         unresolved_indices: list[int] = []
-        unresolved_keys: list[tuple[str, str]] = []
+        lookup_candidates: list[tuple[str, str, str, int]] = []
 
         for idx, event in enumerate(events):
             cached = self._cache.get(event.event_id)
@@ -80,15 +81,17 @@ class MutationResolver:
                 resolved[idx] = cached[1]
                 continue
             unresolved_indices.append(idx)
-            unresolved_keys.append(self._path_key(event.zone_id, event.virtual_path))
+            lookup_candidates.extend(self._lookup_candidates(event))
 
-        path_id_map = await self._lookup_path_ids(unresolved_keys)
+        path_id_map = await self._lookup_path_ids(lookup_candidates)
         content_map = await self._lookup_content(events, unresolved_indices)
 
         for idx in unresolved_indices:
             event = events[idx]
             virtual_path = event.virtual_path
-            path_id = path_id_map.get(self._path_key(event.zone_id, virtual_path), virtual_path)
+            resolved_path_id = path_id_map.get(self._path_key(event.zone_id, virtual_path))
+            path_id_resolved = resolved_path_id is not None
+            path_id = resolved_path_id if resolved_path_id is not None else virtual_path
             zone_id = event.zone_id
             doc_id = f"{zone_id}:{virtual_path}" if zone_id != ROOT_ZONE_ID else virtual_path
             mutation = ResolvedMutation(
@@ -98,6 +101,7 @@ class MutationResolver:
                 path_id=path_id,
                 doc_id=doc_id,
                 content=content_map.get(event.event_id),
+                path_id_resolved=path_id_resolved,
             )
             self._cache[event.event_id] = (now, mutation)
             resolved[idx] = mutation
@@ -106,35 +110,42 @@ class MutationResolver:
 
     async def _lookup_path_ids(
         self,
-        path_keys: list[tuple[str, str]],
+        lookup_candidates: list[tuple[str, str, str, int]],
     ) -> dict[tuple[str, str], str]:
-        if not path_keys or self._async_session_factory is None:
+        if not lookup_candidates or self._async_session_factory is None:
             return {}
 
         path_id_map: dict[tuple[str, str], str] = {}
-        unique_keys = list(dict.fromkeys(path_keys))
+        unique_candidates = list(dict.fromkeys(lookup_candidates))
         async with self._async_session_factory() as session:
-            for offset in range(0, len(unique_keys), self._lookup_batch_size):
-                batch = unique_keys[offset : offset + self._lookup_batch_size]
+            for offset in range(0, len(unique_candidates), self._lookup_batch_size):
+                batch = unique_candidates[offset : offset + self._lookup_batch_size]
                 values_sql, params = self._build_lookup_values(batch)
                 result = await session.execute(
                     sa_text(
                         f"""
-                        WITH lookup(zone_id, virtual_path) AS (
+                        WITH lookup(
+                            zone_id,
+                            virtual_path,
+                            canonical_virtual_path,
+                            lookup_rank
+                        ) AS (
                             VALUES {values_sql}
                         )
-                        SELECT fp.zone_id, fp.virtual_path, fp.path_id
+                        SELECT l.zone_id, l.canonical_virtual_path, fp.path_id
                         FROM file_paths fp
                         JOIN lookup l
                           ON fp.zone_id = l.zone_id
                          AND fp.virtual_path = l.virtual_path
                         WHERE fp.deleted_at IS NULL
+                        ORDER BY l.lookup_rank
                         """
                     ),
                     params,
                 )
                 for row in result.fetchall():
-                    path_id_map[self._path_key(str(row[0]), str(row[1]))] = str(row[2])
+                    key = self._path_key(str(row[0]), str(row[1]))
+                    path_id_map.setdefault(key, str(row[2]))
         return path_id_map
 
     async def _lookup_content(
@@ -158,9 +169,10 @@ class MutationResolver:
                 missing_events.append(event)
 
         if missing_events and self._async_session_factory is not None:
-            db_content = await self._lookup_content_cache(
-                [self._path_key(event.zone_id, event.virtual_path) for event in missing_events]
-            )
+            lookup_candidates: list[tuple[str, str, str, int]] = []
+            for event in missing_events:
+                lookup_candidates.extend(self._lookup_candidates(event))
+            db_content = await self._lookup_content_cache(lookup_candidates)
             for event in missing_events:
                 content = db_content.get(self._path_key(event.zone_id, event.virtual_path))
                 if content:
@@ -183,25 +195,30 @@ class MutationResolver:
 
     async def _lookup_content_cache(
         self,
-        path_keys: list[tuple[str, str]],
+        lookup_candidates: list[tuple[str, str, str, int]],
     ) -> dict[tuple[str, str], str]:
-        if not path_keys or self._async_session_factory is None:
+        if not lookup_candidates or self._async_session_factory is None:
             return {}
 
         content_map: dict[tuple[str, str], str] = {}
-        unique_keys = list(dict.fromkeys(path_keys))
+        unique_candidates = list(dict.fromkeys(lookup_candidates))
         async with self._async_session_factory() as session:
             try:
-                for offset in range(0, len(unique_keys), self._lookup_batch_size):
-                    batch = unique_keys[offset : offset + self._lookup_batch_size]
+                for offset in range(0, len(unique_candidates), self._lookup_batch_size):
+                    batch = unique_candidates[offset : offset + self._lookup_batch_size]
                     values_sql, params = self._build_lookup_values(batch)
                     result = await session.execute(
                         sa_text(
                             f"""
-                            WITH lookup(zone_id, virtual_path) AS (
+                            WITH lookup(
+                                zone_id,
+                                virtual_path,
+                                canonical_virtual_path,
+                                lookup_rank
+                            ) AS (
                                 VALUES {values_sql}
                             )
-                            SELECT fp.zone_id, fp.virtual_path, cc.content_text
+                            SELECT l.zone_id, l.canonical_virtual_path, cc.content_text
                             FROM lookup l
                             JOIN file_paths fp
                               ON fp.zone_id = l.zone_id
@@ -210,26 +227,68 @@ class MutationResolver:
                               ON cc.path_id = fp.path_id
                             WHERE fp.deleted_at IS NULL
                               AND cc.content_text IS NOT NULL
+                            ORDER BY l.lookup_rank
                             """
                         ),
                         params,
                     )
                     for row in result.fetchall():
                         if row[2]:
-                            content_map[self._path_key(str(row[0]), str(row[1]))] = str(row[2])
+                            content_map.setdefault(
+                                self._path_key(str(row[0]), str(row[1])),
+                                str(row[2]),
+                            )
             except ProgrammingError as exc:
                 if self._is_missing_table_error(exc):
                     return {}
                 raise
         return content_map
 
-    def _build_lookup_values(self, path_keys: list[tuple[str, str]]) -> tuple[str, dict[str, str]]:
-        params: dict[str, str] = {}
+    @staticmethod
+    def _lookup_candidates(event: SearchMutationEvent) -> list[tuple[str, str, str, int]]:
+        return MutationResolver._build_path_lookup_candidates(
+            event.zone_id,
+            event.path,
+            event.virtual_path,
+        )
+
+    @staticmethod
+    def _build_path_lookup_candidates(
+        zone_id: str,
+        scoped_path: str,
+        virtual_path: str,
+    ) -> list[tuple[str, str, str, int]]:
+        canonical = virtual_path
+        candidates: list[str] = []
+
+        def add(candidate: str) -> None:
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        add(canonical)
+        add(scoped_path)
+        if canonical.startswith("/"):
+            add(f"/zone/{zone_id}{canonical}")
+
+        return [(zone_id, candidate, canonical, rank) for rank, candidate in enumerate(candidates)]
+
+    def _build_lookup_values(
+        self,
+        lookup_candidates: list[tuple[str, str, str, int]],
+    ) -> tuple[str, dict[str, str | int]]:
+        params: dict[str, str | int] = {}
         values_parts: list[str] = []
-        for idx, (zone_id, virtual_path) in enumerate(path_keys):
+        for idx, (zone_id, virtual_path, canonical_virtual_path, lookup_rank) in enumerate(
+            lookup_candidates
+        ):
             params[f"zone_id_{idx}"] = zone_id
             params[f"virtual_path_{idx}"] = virtual_path
-            values_parts.append(f"(:zone_id_{idx}, :virtual_path_{idx})")
+            params[f"canonical_virtual_path_{idx}"] = canonical_virtual_path
+            params[f"lookup_rank_{idx}"] = lookup_rank
+            values_parts.append(
+                f"(:zone_id_{idx}, :virtual_path_{idx}, "
+                f":canonical_virtual_path_{idx}, :lookup_rank_{idx})"
+            )
         return ", ".join(values_parts), params
 
     @staticmethod

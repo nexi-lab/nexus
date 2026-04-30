@@ -569,7 +569,9 @@ class TestVirtualReadmeIndexing:
         assert _looks_like_virtual_readme("/work/my.readme/file.md") is False
         assert _looks_like_virtual_readme("/work/.readmex/file.md") is False
 
-    def test_virtual_path_id_is_deterministic_and_prefixed(self) -> None:
+    def test_virtual_path_id_is_deterministic_uuid(self) -> None:
+        import uuid
+
         from nexus.bricks.search.indexing_service import _virtual_path_id
 
         a = _virtual_path_id("/gws/gmail/.readme/README.md")
@@ -577,14 +579,13 @@ class TestVirtualReadmeIndexing:
         c = _virtual_path_id("/gws/gmail/.readme/schemas/send.yaml")
         assert a == b  # deterministic
         assert a != c  # different paths → different ids
-        assert a.startswith("virtual:")
-        # Uses SHA-256 (64 hex chars after the prefix)
-        assert len(a) == len("virtual:") + 64
+        assert str(uuid.UUID(a)) == a
+        assert len(a) == 36
 
     @pytest.mark.asyncio
     async def test_index_directory_indexes_virtual_readme_paths_without_row(self) -> None:
         """Virtual ``.readme/`` files have no FilePathModel but should still
-        be indexed via a synthetic ``virtual:`` path_id."""
+        be indexed via a synthetic file_paths row."""
         # Session returns None for every FilePathModel query → simulates
         # a post-mount indexing run over a skill backend where only the
         # virtual tree has entries and the metastore has no rows for
@@ -619,8 +620,9 @@ class TestVirtualReadmeIndexing:
         for doc_path, content, path_id in docs:
             assert doc_path in file_list
             assert content == "# Gmail\n\nsend_email schema ..."
-            # Synthetic path_id is used instead of a real FilePathModel id
-            assert path_id.startswith("virtual:")
+            # Synthetic path_id is UUID-shaped for document_chunks FK compatibility.
+            assert len(path_id) == 36
+        assert session.add.call_count == 2
 
     @pytest.mark.asyncio
     async def test_index_directory_still_skips_rowless_non_readme_paths(self) -> None:

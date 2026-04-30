@@ -153,7 +153,9 @@ async def test_resolver_uses_values_lookup_batches_instead_of_or_chains() -> Non
     session = _SessionCtx(
         [
             [("root", "/docs/a.txt", "pid-a")],
+            [],
             [("root", "/docs/b.txt", "pid-b")],
+            [],
         ]
     )
     resolver = MutationResolver(
@@ -185,8 +187,8 @@ async def test_resolver_uses_values_lookup_batches_instead_of_or_chains() -> Non
     resolved = await resolver.resolve_batch(events)
 
     assert [item.path_id for item in resolved] == ["pid-a", "pid-b"]
-    assert len(session.statements) == 2
-    assert all("WITH lookup(zone_id, virtual_path) AS" in stmt for stmt in session.statements)
+    assert len(session.statements) == 4
+    assert all("WITH lookup(" in stmt for stmt in session.statements)
     assert all(" OR " not in stmt for stmt in session.statements)
 
 
@@ -225,3 +227,102 @@ async def test_resolver_ignores_missing_content_cache_table() -> None:
 
     assert len(resolved) == 1
     assert resolved[0].content is None
+
+
+@pytest.mark.asyncio
+async def test_resolver_preserves_first_content_cache_candidate() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = [OSError("missing"), OSError("missing")]
+    session_factory = _SequentialSessionFactory(
+        [
+            _SessionCtx(
+                [
+                    [
+                        ("tenant", "/docs/readme.md", "pid-canonical"),
+                        ("tenant", "/docs/readme.md", "pid-scoped"),
+                    ]
+                ]
+            ),
+            _SessionCtx(
+                [
+                    [
+                        ("tenant", "/docs/readme.md", "canonical content"),
+                        ("tenant", "/docs/readme.md", "scoped content"),
+                    ]
+                ]
+            ),
+        ]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-tenant",
+        operation_id="op-tenant",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/tenant/docs/readme.md",
+        zone_id="tenant",
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+
+    assert resolved[0].path_id == "pid-canonical"
+    assert resolved[0].content == "canonical content"
+
+
+@pytest.mark.asyncio
+async def test_resolver_includes_scoped_candidate_for_unscoped_event_paths() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.return_value = "hello"
+    session = _SessionCtx(
+        [
+            [("tenant", "/shared-readonly-test/readme.txt", "pid-readme")],
+        ]
+    )
+
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=lambda: session,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-tenant",
+        operation_id="op-tenant",
+        op=SearchMutationOp.UPSERT,
+        path="/shared-readonly-test/readme.txt",
+        zone_id="tenant",
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+
+    assert resolved[0].path_id == "pid-readme"
+    assert resolved[0].path_id_resolved is True
+    assert "/zone/tenant/shared-readonly-test/readme.txt" in session.params[0].values()
+
+
+@pytest.mark.asyncio
+async def test_resolver_marks_unresolved_path_id_fallback() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.return_value = "hello"
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=lambda: _SessionCtx([[]]),
+    )
+    event = SearchMutationEvent(
+        event_id="evt-missing",
+        operation_id="op-missing",
+        op=SearchMutationOp.UPSERT,
+        path="/missing.txt",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+
+    assert resolved[0].path_id == "/missing.txt"
+    assert resolved[0].path_id_resolved is False

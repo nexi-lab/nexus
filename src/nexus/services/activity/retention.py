@@ -12,11 +12,20 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def prune_older_than(*, db_path: Path | str, retention_days: int) -> int:
+def prune_older_than(
+    *,
+    db_path: Path | str,
+    retention_days: int,
+    vacuum_threshold: int = 1000,
+) -> int:
     """Synchronously delete rows older than now - retention_days.
 
+    ts is always YYYY-MM-DDTHH:MM:SS.ffffff+00:00 (see emitter._now_iso),
+    so lexicographic comparison matches chronological order.
+
     Returns the number of rows deleted. retention_days <= 0 is a no-op.
-    Missing DB returns 0 silently.
+    Missing DB returns 0 silently. Runs VACUUM after deleting more than
+    vacuum_threshold rows (default 1000) to reclaim disk space.
     """
     if retention_days <= 0:
         return 0
@@ -25,14 +34,18 @@ def prune_older_than(*, db_path: Path | str, retention_days: int) -> int:
         return 0
     threshold = (datetime.now(tz=UTC) - timedelta(days=retention_days)).isoformat()
     try:
-        conn = sqlite3.connect(db)
+        conn = sqlite3.connect(db, isolation_level=None)  # autocommit needed for VACUUM
         try:
             cursor = conn.execute(
                 "DELETE FROM activity_events WHERE ts < ?",
                 (threshold,),
             )
             deleted = cursor.rowcount or 0
-            conn.commit()
+            if deleted >= vacuum_threshold:
+                try:
+                    conn.execute("VACUUM")
+                except sqlite3.Error:
+                    logger.warning("activity retention VACUUM failed", exc_info=True)
             return deleted
         finally:
             conn.close()
@@ -50,10 +63,12 @@ class RetentionTask:
         db_path: Path | str,
         retention_days: int,
         interval_s: float = 3600.0,
+        vacuum_threshold: int = 1000,
     ) -> None:
         self._db_path = db_path
         self._retention_days = retention_days
         self._interval_s = interval_s
+        self._vacuum_threshold = vacuum_threshold
         self._stopping = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._total_pruned = 0
@@ -86,6 +101,7 @@ class RetentionTask:
                     prune_older_than,
                     db_path=self._db_path,
                     retention_days=self._retention_days,
+                    vacuum_threshold=self._vacuum_threshold,
                 )
                 self._total_pruned += deleted
             except Exception:

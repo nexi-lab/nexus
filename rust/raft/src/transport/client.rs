@@ -714,7 +714,25 @@ pub async fn call_replace_voter_by_hostname(
     let response = client
         .replace_voter_by_hostname(request)
         .await
-        .map_err(|e| TransportError::Rpc(format!("ReplaceVoter RPC failed: {e}")))?
+        .map_err(|e| {
+            // Witness binaries (and any future minimal-server profile) don't
+            // include the ZoneApiService — gRPC reports `Code::Unimplemented`.
+            // Semantically that's "this peer can't participate in rotation",
+            // which for the caller's classification is equivalent to "no
+            // peer present at this address" rather than "live cluster
+            // exists".  Translate to `Connection` so the rotation classifier
+            // (`try_replace_voter_on_peers` in distributed_coordinator) skips
+            // it without flipping `any_reachable=true` and locking out the
+            // cold-start fallback.
+            if e.code() == tonic::Code::Unimplemented {
+                TransportError::Connection(format!(
+                    "ReplaceVoter unimplemented at {peer_addr} \
+                     (peer is likely a witness binary): {e}"
+                ))
+            } else {
+                TransportError::Rpc(format!("ReplaceVoter RPC failed: {e}"))
+            }
+        })?
         .into_inner();
 
     Ok(ReplaceVoterResult {

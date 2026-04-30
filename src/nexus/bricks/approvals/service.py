@@ -34,6 +34,34 @@ logger = logging.getLogger(__name__)
 CHANNEL_NEW = "approvals_new"
 CHANNEL_DECIDED = "approvals_decided"
 
+# F2 (Issue #3790): session_id prefixes that MUST NOT short-circuit the
+# SESSION-scope cache. These are server-fabricated identifiers (no
+# HTTP-session lifecycle binds them) — caching against them would turn
+# SESSION-scoped operator approval into a durable persist, which is the
+# operator's call to make via a real ReBAC tuple, not a side-effect of
+# an approval queue grant.
+#
+# ``hub:`` — synthesized by the hub zone-access hook (see
+# nexus.server.auth.zone_routes._zone_access_approved_via_gate). Stable
+# across requests and independent of HTTP-session lifetime.
+_FABRICATED_SESSION_ID_PREFIXES: tuple[str, ...] = ("hub:",)
+
+
+def _is_fabricated_session_id(session_id: str | None) -> bool:
+    """Return True if ``session_id`` is a server-fabricated identifier.
+
+    Fabricated session_ids (see ``_FABRICATED_SESSION_ID_PREFIXES``) are
+    not bound to any caller-controlled session lifetime; consulting the
+    SESSION-scope cache against them would make a SESSION-scope approval
+    effectively durable. This helper centralizes the rule so
+    ``request_and_wait`` / ``PolicyGate.check`` / ``decide`` can all
+    refuse the fast-path consistently.
+    """
+    if session_id is None:
+        return False
+    return any(session_id.startswith(p) for p in _FABRICATED_SESSION_ID_PREFIXES)
+
+
 # Grace window for inheriting a recent terminal decision when a late-inserted
 # pending row appears for the same coalesce key. The partial unique index
 # `approval_requests_pending_coalesce` is `WHERE status='pending'`, so once a
@@ -84,6 +112,11 @@ class ApprovalService:
             interval_seconds=config.sweeper_interval_seconds,
             on_expired=self._on_expired_ids,
         )
+        # F3 (#3790): reconcile watchdog. Set in start(), cancelled in stop().
+        # Periodically runs ``reconcile_in_flight`` so cross-worker decisions
+        # converge even if NOTIFY delivery silently fails (asyncpg listener
+        # disconnect, missed payload, etc.). See start() for the cadence.
+        self._reconcile_task: asyncio.Task[None] | None = None
 
     @property
     def repository(self) -> ApprovalRepository:
@@ -110,10 +143,54 @@ class ApprovalService:
             on_reconnect=self.reconcile_in_flight,
         )
         await self._sweeper.start()
+        # F3 (#3790): start the reconcile watchdog if configured. The
+        # watchdog runs at ``reconcile_interval_seconds`` cadence and
+        # makes cross-worker decisions converge even when NOTIFY drops a
+        # message (asyncpg has no auto-reconnect today, so a listener
+        # blip can strand local waiters until timeout).
+        if self._cfg.reconcile_interval_seconds > 0:
+            self._reconcile_task = asyncio.create_task(self._reconcile_loop())
 
     async def stop(self) -> None:
+        # Stop the reconcile watchdog before tearing down NotifyBridge so
+        # an in-flight reconcile doesn't race against repository teardown.
+        if self._reconcile_task is not None:
+            self._reconcile_task.cancel()
+            with contextlib.suppress(BaseException):
+                await self._reconcile_task
+            self._reconcile_task = None
         await self._sweeper.stop()
         await self._notify.stop()
+
+    async def _reconcile_loop(self) -> None:
+        """Periodic watchdog — sweeps in-flight futures against the DB.
+
+        F3 (#3790): NotifyBridge holds one asyncpg connection for LISTEN
+        and has no auto-reconnect path today. If that connection drops,
+        rows decided on a remote worker won't fire ``_on_decided_payload``
+        locally and the in-process futures wait until ``request_and_wait``
+        times them out. The watchdog re-fetches every in-flight row at a
+        bounded cadence so any terminal status flushes the future
+        regardless of NOTIFY health. Cancel-aware: the task exits cleanly
+        on ``stop()``.
+        """
+        interval = self._cfg.reconcile_interval_seconds
+        while True:
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                return
+            try:
+                await self.reconcile_in_flight()
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                # Reconcile is best-effort — a single failure must not
+                # kill the watchdog loop. Log and try again next tick.
+                logger.warning(
+                    "approvals.reconcile_in_flight raised in watchdog; will retry",
+                    exc_info=True,
+                )
 
     # ------------------------------------------------------------------
     # Public API
@@ -141,7 +218,14 @@ class ApprovalService:
         # so non-PolicyGate callers (gRPC, HTTP, internal) also benefit and so
         # callers arriving after the orphan-race window still get APPROVED if a
         # session_allow row was inserted by the SESSION-scope decide.
-        if session_id is not None:
+        #
+        # F2 (#3790): refuse the fast-path for server-fabricated session_ids
+        # (e.g. the hub zone-access hook's stable ``hub:user:zone:...`` shape).
+        # Those identifiers have no HTTP-session lifetime, so honoring them
+        # here would turn a SESSION-scope approval into a durable persist
+        # without the operator ever asking for it. Falling through means
+        # the next call goes back through the queue.
+        if session_id is not None and not _is_fabricated_session_id(session_id):
             allow = await self._repo.session_allow_exists(
                 session_id=session_id,
                 zone_id=zone_id,
@@ -271,7 +355,15 @@ class ApprovalService:
         # For SESSION scope, also persist a session_allow row so subsequent
         # callers (with the same session_id) short-circuit at the top of
         # request_and_wait without round-tripping through this branch.
-        if scope is DecisionScope.SESSION and session_id is not None:
+        # F2 (#3790): skip when the session_id was fabricated server-side
+        # (e.g. by the hub zone-access hook) — durable caching against an
+        # un-bound identifier is the operator's call via a real ReBAC
+        # tuple, not an inheritance side-effect.
+        if (
+            scope is DecisionScope.SESSION
+            and session_id is not None
+            and not _is_fabricated_session_id(session_id)
+        ):
             await self._repo.insert_session_allow(
                 session_id=session_id,
                 zone_id=zone_id,
@@ -344,12 +436,17 @@ class ApprovalService:
         # cross-worker waiter on a NOTIFY drop — see service.start().
 
         # Step 1: snapshot session_ids BEFORE resolve drops them.
+        # F2 (#3790): server-fabricated session_ids are excluded so a
+        # SESSION-scope approval against them does not fan out durable
+        # session_allow rows (the next caller must go back through the
+        # queue — see ``_is_fabricated_session_id``).
         session_ids: set[str] = set()
         if scope is DecisionScope.SESSION and decision is Decision.APPROVED:
-            if updated.session_id:
+            if updated.session_id and not _is_fabricated_session_id(updated.session_id):
                 session_ids.add(updated.session_id)
             for sid in self._dispatcher.session_ids_for(request_id):
-                session_ids.add(sid)
+                if not _is_fabricated_session_id(sid):
+                    session_ids.add(sid)
 
         # Step 2: resolve in-process futures. NEVER let a downstream
         # error rob local callers of the decision they were waiting on.
@@ -487,6 +584,8 @@ class ApprovalService:
         # ``insert_session_allow`` is keyed on the partial unique index
         # ``uq_approval_session_allow`` so duplicates from the
         # deciding-worker insert (same row) are silently skipped.
+        # Issue #3790 F2 follow-up: filter fabricated session_ids — see
+        # ``_is_fabricated_session_id`` for rationale.
         if (
             decision is Decision.APPROVED
             and row is not None
@@ -496,6 +595,8 @@ class ApprovalService:
             decided_at = row.decided_at or datetime.now(UTC)
             decided_by = row.decided_by or "system"
             for sid in local_session_ids:
+                if _is_fabricated_session_id(sid):
+                    continue
                 try:
                     await self._repo.insert_session_allow(
                         session_id=sid,

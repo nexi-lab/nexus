@@ -297,6 +297,16 @@ async def _zone_access_approved_via_gate(
     # use subject_id (user_id) as the token identifier and the request's
     # auth source as the session identifier — operators can correlate
     # repeated attempts for the same user/zone in the queue UI.
+    #
+    # F2 (#3790): the synthesized session_id is deliberately stable across
+    # requests (no HTTP-session lifecycle to bind it to). The approvals
+    # service guards against this turning a SESSION-scope grant into a
+    # durable persist by refusing the SESSION-scope cache fast-path for
+    # any session_id starting with ``hub:`` (see
+    # ``_is_fabricated_session_id`` in nexus.bricks.approvals.service).
+    # Operators that want durable zone access must write a ReBAC tuple
+    # via the admin tuples endpoint; an approval here is good for one
+    # zone-access attempt only.
     subject_type = auth_result.get("subject_type") or "user"
     token_id = f"hub:{subject_type}:{user_id}"
     session_id = f"{token_id}:zone:{zone_id}"

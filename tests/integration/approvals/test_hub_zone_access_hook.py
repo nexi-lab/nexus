@@ -112,6 +112,97 @@ async def test_zone_access_creates_pending_request(approval_service):
 
 
 @pytest.mark.asyncio
+async def test_hub_session_id_does_not_short_circuit_session_cache(approval_service):
+    """F2 (#3790): the synthesized ``hub:`` session_id MUST NOT auto-allow.
+
+    Repeating ``_zone_access_approved_via_gate`` for the same user+zone
+    after a prior SESSION-scope approval must NOT short-circuit on the
+    session_allow row — the synthesized identifier has no HTTP-session
+    lifetime, so durable caching against it would turn SESSION-scope into
+    a permanent persist.
+
+    The test simulates the hub call directly: PolicyGate.check with the
+    same session_id pattern used by ``zone_routes._zone_access_approved_via_gate``
+    is called once and SESSION-approved; a second call with the same
+    identifiers must land a fresh pending row (no auto-allow).
+    """
+    from nexus.bricks.approvals.policy_gate import PolicyGate
+
+    gate = PolicyGate(approval_service)
+    tag = _tag()
+    zone = f"sess_{tag}"
+    user_id = f"u_{tag}"
+    subject_type = "user"
+    # Mirrors the synthesized identifiers in
+    # nexus.server.auth.zone_routes._zone_access_approved_via_gate.
+    token_id = f"hub:{subject_type}:{user_id}"
+    session_id = f"{token_id}:zone:{zone}"
+
+    async def call_once():
+        return await gate.check(
+            kind=ApprovalKind.ZONE_ACCESS,
+            subject=zone,
+            zone_id=zone,
+            token_id=token_id,
+            session_id=session_id,
+            agent_id=None,
+            reason="zone_access",
+            metadata={"requested_zone": zone, "user_id": user_id},
+        )
+
+    # First call: SESSION-approve and verify decision.
+    waiter1 = asyncio.create_task(call_once())
+    pending1 = await _wait_pending_by_subject(approval_service, zone, zone)
+    await approval_service.decide(
+        request_id=pending1.id,
+        decision=Decision.APPROVED,
+        decided_by="op",
+        scope=DecisionScope.SESSION,
+        reason=None,
+        source=DecisionSource.GRPC,
+    )
+    assert (await asyncio.wait_for(waiter1, 5.0)) is Decision.APPROVED
+
+    # Second call (same identifiers) MUST NOT short-circuit. Without the
+    # F2 fix, gate.check would consult ``session_allow_exists`` against
+    # the stable ``hub:...`` session_id and return APPROVED without
+    # creating a new row. With the fix, a fresh pending row appears.
+    waiter2 = asyncio.create_task(call_once())
+
+    pending2 = None
+    try:
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            pending = await approval_service.list_pending(zone_id=zone)
+            # We expect a NEW pending row (different from pending1.id).
+            match = [p for p in pending if p.subject == zone and p.id != pending1.id]
+            if match:
+                pending2 = match[0]
+                break
+        assert pending2 is not None, (
+            "second hub-zone-access call short-circuited via session_allow "
+            "instead of opening a fresh pending row — F2 regression"
+        )
+        assert pending2.session_id == session_id
+
+        # Cleanup so the waiter doesn't leak: deny is fine.
+        await approval_service.decide(
+            request_id=pending2.id,
+            decision=Decision.DENIED,
+            decided_by="op",
+            scope=DecisionScope.ONCE,
+            reason="cleanup",
+            source=DecisionSource.GRPC,
+        )
+        assert (await asyncio.wait_for(waiter2, 5.0)) is Decision.DENIED
+    finally:
+        if not waiter2.done():
+            waiter2.cancel()
+            with contextlib.suppress(BaseException):
+                await waiter2
+
+
+@pytest.mark.asyncio
 async def test_zone_access_denied_returns_decision_denied(approval_service):
     """An operator-deny on a zone-access request returns Decision.DENIED — the
     hub hook will then keep its existing 403 deny path.

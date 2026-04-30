@@ -80,6 +80,7 @@ class MCPService:
         mount_lister: Callable[[], list[tuple[str, str]]] | None = None,
         ssrf_config: "SSRFConfig | None" = None,
         policy_gate: "PolicyGate | None" = None,
+        zone_id: str | None = None,
     ):
         """Initialize MCP service.
 
@@ -97,12 +98,19 @@ class MCPService:
                 Task 18). The gate is normally built later in the FastAPI
                 approvals lifespan, so callers should attach it post-hoc via
                 :meth:`set_policy_gate`. ``None`` preserves fail-closed.
+            zone_id: Optional daemon zone forwarded into every
+                ``MCPMountManager`` this service constructs so SSRF
+                approval requests are scoped to that zone instead of
+                falling back to ROOT_ZONE_ID (Issue #3790, F4). May be
+                attached post-hoc via :meth:`set_zone`. When ``None``
+                the gate hook fails closed.
         """
         self._filesystem = filesystem
         self._credential_service = credential_service
         self._mount_lister = mount_lister
         self._ssrf_config = ssrf_config
         self._policy_gate = policy_gate
+        self._zone_id = zone_id
 
         logger.info("[MCPService] Initialized")
 
@@ -114,6 +122,15 @@ class MCPService:
         consults the gate when SSRF blocks an unlisted host (Issue #3790).
         """
         self._policy_gate = gate
+
+    def set_zone(self, zone_id: str | None) -> None:
+        """Attach (or detach) the daemon zone after construction.
+
+        F4 (Issue #3790): every subsequent ``MCPMountManager`` this
+        service constructs will be bound to ``zone_id`` so SSRF-blocked
+        egress is filed against the correct zone (not ROOT_ZONE_ID).
+        """
+        self._zone_id = zone_id
 
     # =========================================================================
     # Public API: MCP Mount Management
@@ -873,4 +890,5 @@ class MCPService:
             self._filesystem,
             ssrf_config=self._ssrf_config,
             policy_gate=self._policy_gate,
+            zone_id=self._zone_id,
         )

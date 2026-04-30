@@ -85,3 +85,61 @@ def test_mcp_service_get_mount_manager_forwards_policy_gate() -> None:
     svc.set_policy_gate(None)
     manager2 = svc._get_mcp_mount_manager()
     assert manager2._policy_gate is None
+
+
+# ---------------------------------------------------------------------------
+# F4 (Issue #3790) — zone_id threading. Without these the gate hook would
+# silently charge approvals to ROOT_ZONE_ID (cross-zone privilege issue).
+# ---------------------------------------------------------------------------
+
+
+def test_connection_manager_forwards_zone_id_to_mount_manager() -> None:
+    """MCPConnectionManager(zone_id=...) wires the zone into its mount manager."""
+    cm = MCPConnectionManager(filesystem=None, zone_id="zoneA")
+    assert cm._zone_id == "zoneA"
+    assert cm.mount_manager._zone_id == "zoneA"
+
+
+def test_connection_manager_default_zone_id_is_none() -> None:
+    """No zone at construction → fail-closed at the gate hook."""
+    cm = MCPConnectionManager(filesystem=None)
+    assert cm._zone_id is None
+    assert cm.mount_manager._zone_id is None
+
+
+def test_connection_manager_set_zone_updates_mount_manager() -> None:
+    """set_zone() retroactively wires the zone into the existing mount manager."""
+    cm = MCPConnectionManager(filesystem=None)
+    cm.set_zone("zoneB")
+    assert cm._zone_id == "zoneB"
+    assert cm.mount_manager._zone_id == "zoneB"
+
+    cm.set_zone(None)
+    assert cm._zone_id is None
+    assert cm.mount_manager._zone_id is None
+
+
+def test_mcp_service_stores_zone_id() -> None:
+    """MCPService(zone_id=...) keeps the zone for forwarding into mount managers."""
+    svc = MCPService(filesystem=None, zone_id="z1")
+    assert svc._zone_id == "z1"
+
+
+def test_mcp_service_set_zone_updates_internal_state() -> None:
+    svc = MCPService(filesystem=None)
+    assert svc._zone_id is None
+    svc.set_zone("z2")
+    assert svc._zone_id == "z2"
+    svc.set_zone(None)
+    assert svc._zone_id is None
+
+
+def test_mcp_service_get_mount_manager_forwards_zone_id() -> None:
+    fake_fs = MagicMock()
+    svc = MCPService(filesystem=fake_fs, zone_id="zX")
+    mgr = svc._get_mcp_mount_manager()
+    assert mgr._zone_id == "zX"
+
+    svc.set_zone(None)
+    mgr2 = svc._get_mcp_mount_manager()
+    assert mgr2._zone_id is None

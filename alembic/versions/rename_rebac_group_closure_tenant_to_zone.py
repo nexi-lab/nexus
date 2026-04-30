@@ -77,13 +77,36 @@ def upgrade() -> None:
     # zone_id (duplicate), so we drop tenant_id instead (zone_id already has
     # the correct data — c7d9a0f4b8e2 backfills it from tenant_id).
     if _has_column("rebac_group_closure", "zone_id"):
+        # Drop tenant_id-based indexes BEFORE the column drop. SQLite's
+        # batch_alter_table auto-recreates existing indexes on the new
+        # table — indexes referencing tenant_id fail if that column is gone.
+        if _has_index("rebac_group_closure", "idx_closure_member"):
+            op.drop_index("idx_closure_member", table_name="rebac_group_closure")
+        if _has_index("rebac_group_closure", "idx_closure_group"):
+            op.drop_index("idx_closure_group", table_name="rebac_group_closure")
+
         # Drop old tenant_id. On SQLite batch mode is required.
         if bind.dialect.name == "sqlite":
             with op.batch_alter_table("rebac_group_closure") as batch_op:
                 batch_op.drop_column("tenant_id")
         else:
             op.drop_column("rebac_group_closure", "tenant_id")
-        # Indexes already rebuilt by c7d9a0f4b8e2; nothing more to do.
+
+        # Recreate indexes against zone_id. On PostgreSQL c7d9a0f4b8e2
+        # already rebuilt them; on SQLite we must do it here because
+        # _replace_group_closure_shape is Postgres-only.
+        if not _has_index("rebac_group_closure", "idx_closure_member"):
+            op.create_index(
+                "idx_closure_member",
+                "rebac_group_closure",
+                ["zone_id", "member_type", "member_id"],
+            )
+        if not _has_index("rebac_group_closure", "idx_closure_group"):
+            op.create_index(
+                "idx_closure_group",
+                "rebac_group_closure",
+                ["zone_id", "group_type", "group_id"],
+            )
         return
 
     # 1. Drop indexes that reference tenant_id. Guarded so a partial prior run

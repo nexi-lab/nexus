@@ -154,10 +154,14 @@ class TigerCache:
         # Rate-limit orphan-id WARNING logs (Issue #3951): a stale resource_map
         # row in a popular subject's bitmap would otherwise log on every auth
         # check. Dedupe by (zone, subject_type, subject_id, permission, type)
-        # with a 60s window; first occurrence per window emits WARNING with
-        # full context, repeats are downgraded to DEBUG.
+        # with a 60s window; first occurrence per window emits WARNING, repeats
+        # downgrade to DEBUG. Bounded LRU + dedicated lock so a broad orphan
+        # condition across many subjects cannot retain unbounded state and
+        # concurrent calls cannot duplicate-emit WARNINGs.
         self._orphan_log_window_s = 60.0
+        self._orphan_log_max_keys = 1024
         self._orphan_log_last_emit: dict[tuple[str, str, str, str, str], float] = {}
+        self._orphan_log_lock = threading.Lock()
 
     @property
     def resource_map(self) -> "TigerResourceMap":
@@ -756,10 +760,22 @@ class TigerCache:
         if unresolved > 0:
             dedupe_key = (zone_id, subject_type, subject_id, permission, resource_type)
             now = time.monotonic()
-            last = self._orphan_log_last_emit.get(dedupe_key, 0.0)
-            level = logging.WARNING if (now - last) >= self._orphan_log_window_s else logging.DEBUG
-            if level == logging.WARNING:
-                self._orphan_log_last_emit[dedupe_key] = now
+            with self._orphan_log_lock:
+                last = self._orphan_log_last_emit.get(dedupe_key, 0.0)
+                if (now - last) >= self._orphan_log_window_s:
+                    level = logging.WARNING
+                    # Bound dedupe map: LRU-evict oldest insertion-order
+                    # entry if at cap and this is a new key. Python 3.7+
+                    # dicts preserve insertion order.
+                    if (
+                        dedupe_key not in self._orphan_log_last_emit
+                        and len(self._orphan_log_last_emit) >= self._orphan_log_max_keys
+                    ):
+                        oldest = next(iter(self._orphan_log_last_emit))
+                        self._orphan_log_last_emit.pop(oldest, None)
+                    self._orphan_log_last_emit[dedupe_key] = now
+                else:
+                    level = logging.DEBUG
             logger.log(
                 level,
                 "[TIGER-PUSHDOWN] resource_map orphans: %d/%d int IDs unresolved "

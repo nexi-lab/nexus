@@ -293,6 +293,31 @@ class ApprovalService:
             result = await asyncio.wait_for(fut, timeout=timeout)
         except TimeoutError as e:
             self._dispatcher.cancel(fut)
+            # F1 (#3790): close the operator's stale-approval window
+            # immediately — without this, the row stays PENDING in the
+            # DB until the periodic sweeper runs (default 30s), and an
+            # operator decision arriving in that gap would write a
+            # SESSION-scope session_allow for an already-auto-denied
+            # request. Best-effort: a failed transition (already
+            # decided / already expired by the sweeper / DB error) is
+            # fine — reconcile + sweeper still handle the row.
+            try:
+                await self._repo.transition(
+                    request_id=req.id,
+                    new_status=ApprovalRequestStatus.EXPIRED,
+                    decided_by="system",
+                    scope=DecisionScope.ONCE,
+                    reason="auto_deny_after_timeout",
+                    source=DecisionSource.SYSTEM_TIMEOUT,
+                    now=datetime.now(UTC),
+                )
+            except Exception:
+                logger.warning(
+                    "approvals.request_and_wait: best-effort EXPIRED transition "
+                    "failed rid=%s (sweeper will reconcile)",
+                    req.id,
+                    exc_info=True,
+                )
             raise ApprovalTimeout(req.id, timeout) from e
 
         if result is Decision.DENIED:
@@ -417,7 +442,13 @@ class ApprovalService:
             now=now,
         )
         if updated is None:
-            raise ValueError(f"request {request_id} is not pending")
+            # F1 (#3790): transition() also returns None when the row's
+            # expires_at is already past (an operator approving a stale
+            # request). The caller (gRPC Decide) maps ValueError to
+            # FAILED_PRECONDITION which is the right status for both
+            # "already decided" and "expired"; keep the message generic
+            # so we don't leak the row's expiry state.
+            raise ValueError(f"request {request_id} not pending or already expired")
 
         # F3 (Issue #3790): once ``transition`` has committed, the
         # row is non-pending and a retry can't re-decide it. We MUST

@@ -101,16 +101,29 @@ fs2 = nexus.fs.mount_sync("local://{workdir}")
 mounts2 = [m for m in fs2.list_mounts() if "{workdir.name}" in m]
 mp2 = mounts2[0].rstrip("/")
 
-# Old path must not exist.
+# Old path must not exist — both read AND stat must fail so backend fallback
+# cannot mask a metastore no-op (sys_read falls back to the physical file,
+# but stat/exists must go through the metastore on cold cache).
 try:
     fs2.read(mp2 + "/before.txt")
     sys.exit("before.txt still readable after rename + remount")
 except FileNotFoundError:
     pass
 
-# New path must be readable with correct content.
+try:
+    fs2.stat(mp2 + "/before.txt")
+    sys.exit("stat(before.txt) succeeded after rename + remount — metastore stale")
+except FileNotFoundError:
+    pass
+
+# New path must be readable with correct content AND stat must return committed metadata.
 content = fs2.read(mp2 + "/after.txt")
 assert content == b"cold-cache-check", f"cold read mismatch: {{repr(content)}}"
+
+st = fs2.stat(mp2 + "/after.txt")
+if st is None:
+    sys.exit("stat(after.txt) returned None — metastore rename may not have persisted")
+assert st.get("size", 0) == len(b"cold-cache-check"), f"stat size mismatch: {{st}}"
 
 print("COLD OK")
 """

@@ -322,22 +322,48 @@ jobs:
           path: /tmp/nexus-runtime-artifacts
           merge-multiple: true
 
+      - name: Verify nexus-runtime is on PyPI before publishing nexus-fs
+        run: |
+          # nexus-runtime is a hard dep of nexus-fs. Guard the publish step by
+          # verifying the exact version declared in pyproject.toml is resolvable
+          # from PyPI. If publish-rust skipped (token absent), this check catches
+          # the gap before nexus-fs is uploaded and users encounter a broken dep.
+          RUNTIME_VERSION=$(python -c "
+          import re, pathlib
+          txt = pathlib.Path('packages/nexus-fs/pyproject.toml').read_text()
+          m = re.search(r'nexus-runtime>=([0-9.]+)', txt)
+          print(m.group(1) if m else '')
+          ")
+          echo "Required nexus-runtime >= $RUNTIME_VERSION"
+          python - <<PY
+          import urllib.request, urllib.error, sys
+          try:
+              with urllib.request.urlopen("https://pypi.org/pypi/nexus-runtime/json") as r:
+                  import json
+                  data = json.load(r)
+                  releases = data.get("releases", {})
+          except urllib.error.HTTPError as e:
+              if e.code == 404:
+                  print("FATAL: nexus-runtime is not on PyPI; publish-rust must run first", file=sys.stderr)
+                  sys.exit(1)
+              raise
+          required = "$RUNTIME_VERSION"
+          from packaging.version import Version
+          latest = max((Version(v) for v in releases), default=None)
+          if latest is None or latest < Version(required):
+              print(f"FATAL: PyPI has nexus-runtime up to {latest} but nexus-fs requires >={required}", file=sys.stderr)
+              sys.exit(1)
+          print(f"OK: nexus-runtime {latest} is on PyPI")
+          PY
+
       - name: Smoke test — install in clean environment
         run: |
           python -m venv /tmp/nexus-fs-release-test
-          # Install the exact nexus-runtime wheel built and ordered by publish-rust.
-          # Using the local artifact (not PyPI) proves the ordered dep is installable
-          # on this platform before nexus-fs users encounter the constraint.
-          RUNTIME_WHL=$(find /tmp/nexus-runtime-artifacts -name "nexus_runtime-*linux*manylinux*.whl" | head -1)
-          if [ -z "$RUNTIME_WHL" ]; then
-            RUNTIME_WHL=$(find /tmp/nexus-runtime-artifacts -name "nexus_runtime-*.whl" | head -1)
-          fi
-          if [ -n "$RUNTIME_WHL" ]; then
-            /tmp/nexus-fs-release-test/bin/pip install "$RUNTIME_WHL"
-          else
-            echo "::warning::nexus-runtime wheel not found in artifacts; falling back to PyPI"
-            /tmp/nexus-fs-release-test/bin/pip install nexus-runtime
-          fi
+          # Install nexus-runtime from local artifacts using pip's own wheel
+          # compatibility logic (--no-index --find-links avoids OS/arch mismatch).
+          /tmp/nexus-fs-release-test/bin/pip install \
+            --no-index --find-links /tmp/nexus-runtime-artifacts \
+            nexus-runtime
           /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
           /tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(f'nexus-fs v{nexus.fs.__version__}')"
           /tmp/nexus-fs-release-test/bin/nexus-fs --help

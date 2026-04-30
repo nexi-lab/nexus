@@ -71,6 +71,21 @@ def upgrade() -> None:
     if not _has_column("rebac_group_closure", "tenant_id"):
         return
 
+    # Schema-repair race: c7d9a0f4b8e2 (repair_edge_permission_schema_drift)
+    # can run before this migration and ADD zone_id as a NEW column alongside
+    # the still-present tenant_id. In that case we cannot rename tenant_id →
+    # zone_id (duplicate), so we drop tenant_id instead (zone_id already has
+    # the correct data — c7d9a0f4b8e2 backfills it from tenant_id).
+    if _has_column("rebac_group_closure", "zone_id"):
+        # Drop old tenant_id. On SQLite batch mode is required.
+        if bind.dialect.name == "sqlite":
+            with op.batch_alter_table("rebac_group_closure") as batch_op:
+                batch_op.drop_column("tenant_id")
+        else:
+            op.drop_column("rebac_group_closure", "tenant_id")
+        # Indexes already rebuilt by c7d9a0f4b8e2; nothing more to do.
+        return
+
     # 1. Drop indexes that reference tenant_id. Guarded so a partial prior run
     #    that already dropped them doesn't blow up.
     if _has_index("rebac_group_closure", "idx_closure_member"):

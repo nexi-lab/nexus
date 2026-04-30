@@ -212,6 +212,7 @@ pub struct SysUnlinkResult {
 }
 
 /// Result of sys_rename(): hit + metadata for event payload.
+#[derive(Debug)]
 pub struct SysRenameResult {
     /// True if Rust completed the full operation (metastore + backend + dcache).
     pub hit: bool,
@@ -1015,19 +1016,6 @@ impl Kernel {
             // target through a different construction path; non-link
             // metadata never carries a value here.
             link_target: None,
-        }
-    }
-
-    /// Compute zone-relative metastore key from a route's `backend_path`.
-    ///
-    /// Still used by backend / dcache code paths that need the
-    /// zone-namespace key even though the metastore no longer does.
-    #[inline]
-    fn zone_key(backend_path: &str) -> String {
-        if backend_path.is_empty() {
-            contracts::VFS_ROOT.to_string()
-        } else {
-            format!("/{}", backend_path)
         }
     }
 
@@ -3352,14 +3340,15 @@ mod tests {
     }
 
     #[test]
-    fn test_sys_rename_cross_mount() {
+    fn test_sys_rename_cross_mount_rejected() {
+        // Cross-mount rename is always rejected — both PAS and CAS. Callers
+        // must use copy + delete. Verify both metastores remain unchanged.
         use crate::meta_store::{FileMetadata, MemoryMetaStore};
         use std::sync::Arc;
 
         let k = Kernel::new();
         let zone = contracts::ROOT_ZONE_ID;
 
-        // Set up two separate mounts with independent MemoryMetaStores
         let ms_a = Arc::new(MemoryMetaStore::new());
         let ms_b = Arc::new(MemoryMetaStore::new());
 
@@ -3377,41 +3366,44 @@ mod tests {
             ms_b.clone() as Arc<dyn crate::meta_store::MetaStore>,
         );
 
-        // Seed a file in mount A's metastore
+        // Seed a file in mount A's metastore using full VFS paths.
         let meta = FileMetadata {
-            path: "/file.txt".to_string(),
+            path: "/mnt_a/file.txt".to_string(),
             size: 42,
             entry_type: DT_REG,
             ..Default::default()
         };
-        ms_a.put("/file.txt", meta).unwrap();
-        assert!(ms_a.exists("/file.txt").unwrap());
-        assert!(!ms_b.exists("/file.txt").unwrap());
+        ms_a.put("/mnt_a/file.txt", meta).unwrap();
 
-        // Cross-mount rename: /mnt_a/file.txt → /mnt_b/file.txt
+        // Cross-mount rename must be rejected with an IOError.
         let ctx = OperationContext::new("test", zone, true, None, true);
-        let result = k
+        let err = k
             .sys_rename("/mnt_a/file.txt", "/mnt_b/file.txt", &ctx)
-            .unwrap();
-        assert!(result.hit, "cross-mount rename should return hit=true");
-        assert!(result.success, "cross-mount rename should succeed");
+            .expect_err("cross-mount rename must return Err");
+        match err {
+            KernelError::IOError(msg) => {
+                assert!(
+                    msg.contains("cross-mount"),
+                    "error should mention cross-mount: {msg}"
+                );
+            }
+            other => panic!("expected IOError, got {other:?}"),
+        }
 
-        // Old metastore should be empty, new metastore should have the entry
+        // Both metastores must be unchanged.
         assert!(
-            !ms_a.exists("/file.txt").unwrap(),
-            "source metastore should no longer contain the file"
+            ms_a.exists("/mnt_a/file.txt").unwrap(),
+            "source metastore must not be modified after rejected rename"
         );
         assert!(
-            ms_b.exists("/file.txt").unwrap(),
-            "destination metastore should contain the file"
+            !ms_b.exists("/mnt_b/file.txt").unwrap(),
+            "destination metastore must not be populated after rejected rename"
         );
-        let moved = ms_b.get("/file.txt").unwrap().unwrap();
-        assert_eq!(moved.size, 42);
-        assert_eq!(moved.path, "/file.txt");
     }
 
     #[test]
-    fn test_sys_rename_cross_mount_directory_children() {
+    fn test_sys_rename_cross_mount_directory_rejected() {
+        // Cross-mount directory rename is rejected; all source children unchanged.
         use crate::meta_store::{FileMetadata, MemoryMetaStore};
         use std::sync::Arc;
 
@@ -3435,45 +3427,38 @@ mod tests {
             ms_b.clone() as Arc<dyn crate::meta_store::MetaStore>,
         );
 
-        // Seed a directory with children
-        let dir_meta = FileMetadata {
-            path: "/docs".to_string(),
-            entry_type: DT_DIR,
-            ..Default::default()
-        };
-        let child1 = FileMetadata {
-            path: "/docs/a.md".to_string(),
-            size: 10,
-            entry_type: DT_REG,
-            ..Default::default()
-        };
-        let child2 = FileMetadata {
-            path: "/docs/b.md".to_string(),
-            size: 20,
-            entry_type: DT_REG,
-            ..Default::default()
-        };
-        ms_a.put("/docs", dir_meta).unwrap();
-        ms_a.put("/docs/a.md", child1).unwrap();
-        ms_a.put("/docs/b.md", child2).unwrap();
+        // Seed a directory with children using full VFS paths.
+        ms_a.put(
+            "/mnt_a/docs",
+            FileMetadata {
+                path: "/mnt_a/docs".into(),
+                entry_type: DT_DIR,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        ms_a.put(
+            "/mnt_a/docs/a.md",
+            FileMetadata {
+                path: "/mnt_a/docs/a.md".into(),
+                size: 10,
+                entry_type: DT_REG,
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         let ctx = OperationContext::new("test", zone, true, None, true);
-        let result = k.sys_rename("/mnt_a/docs", "/mnt_b/docs", &ctx).unwrap();
-        assert!(result.hit);
-        assert!(result.success);
-        assert!(result.is_directory);
+        let err = k
+            .sys_rename("/mnt_a/docs", "/mnt_b/docs", &ctx)
+            .expect_err("cross-mount rename must return Err");
+        assert!(matches!(err, KernelError::IOError(_)));
 
-        // All entries should have moved from ms_a to ms_b
-        assert!(!ms_a.exists("/docs").unwrap());
-        assert!(!ms_a.exists("/docs/a.md").unwrap());
-        assert!(!ms_a.exists("/docs/b.md").unwrap());
-
-        assert!(ms_b.exists("/docs").unwrap());
-        assert!(ms_b.exists("/docs/a.md").unwrap());
-        assert!(ms_b.exists("/docs/b.md").unwrap());
-
-        assert_eq!(ms_b.get("/docs/a.md").unwrap().unwrap().size, 10);
-        assert_eq!(ms_b.get("/docs/b.md").unwrap().unwrap().size, 20);
+        // Source children must be unchanged.
+        assert!(ms_a.exists("/mnt_a/docs").unwrap());
+        assert!(ms_a.exists("/mnt_a/docs/a.md").unwrap());
+        assert!(!ms_b.exists("/mnt_b/docs").unwrap());
+        assert!(!ms_b.exists("/mnt_b/docs/a.md").unwrap());
     }
 
     /// sys_unlink on a DT_MOUNT path runs the full unmount lifecycle:

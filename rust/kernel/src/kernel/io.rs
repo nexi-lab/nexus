@@ -970,13 +970,10 @@ impl Kernel {
             return miss();
         }
 
-        // 4. Existence check: get old metadata (per-mount or global) — zone-relative keys
-        let old_zone_path = Self::zone_key(&old_route.backend_path);
-        let new_zone_path = Self::zone_key(&new_route.backend_path);
+        // 4. Existence check: get old metadata — use full VFS paths (R20.3 contract).
+        // backend_path is used only for backend I/O and PAS content_id calculation.
         let old_meta = self
-            .with_metastore(&old_route.mount_point, |ms| {
-                ms.get(&old_zone_path).ok().flatten()
-            })
+            .with_metastore(&old_route.mount_point, |ms| ms.get(old_path).ok().flatten())
             .flatten();
 
         // Also check dcache
@@ -987,7 +984,7 @@ impl Kernel {
             (None, Some(e)) => (e.entry_type == DT_DIR, e.entry_type),
             (None, None) => {
                 // Check for implicit directory: no explicit entry, but has children
-                let child_prefix = format!("{}/", old_zone_path.trim_end_matches('/'));
+                let child_prefix = format!("{}/", old_path.trim_end_matches('/'));
                 let has_children = self
                     .with_metastore(&old_route.mount_point, |ms| {
                         ms.list(&child_prefix)
@@ -1019,10 +1016,10 @@ impl Kernel {
             _ => {}
         }
 
-        // 5. Destination conflict check — use new_route's metastore for cross-mount
+        // 5. Destination conflict check — full VFS path (R20.3 contract)
         let new_exists = self
             .with_metastore(&new_route.mount_point, |ms| {
-                ms.exists(&new_zone_path).unwrap_or(false)
+                ms.exists(new_path).unwrap_or(false)
             })
             .unwrap_or(false);
         if new_exists {
@@ -1090,9 +1087,10 @@ impl Kernel {
             };
 
             // Commit metadata after PAS bytes are moved (or immediately for CAS).
+            // Use full VFS paths — metastore entries written by sys_write use full paths.
             let rename_result = self
                 .with_metastore(&old_route.mount_point, |ms| {
-                    ms.rename_path(&old_zone_path, &new_zone_path, !old_route.is_cas)
+                    ms.rename_path(old_path, new_path, !old_route.is_cas)
                 })
                 .ok_or_else(|| {
                     KernelError::IOError(format!(
@@ -1265,15 +1263,13 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 3. Get source metadata (dcache or metastore) — zone-relative keys
-        let src_zone_path = Self::zone_key(&src_route.backend_path);
-        let dst_zone_path = Self::zone_key(&dst_route.backend_path);
+        // 3. Get source metadata (dcache or metastore) — full VFS paths (R20.3 contract)
         let src_meta = match self.dcache.get_entry(src_path) {
             Some(e) => e,
             None => {
                 match self
                     .with_metastore(&src_route.mount_point, |ms| {
-                        ms.get(&src_zone_path).ok().flatten().map(|m| (&m).into())
+                        ms.get(src_path).ok().flatten().map(|m| (&m).into())
                     })
                     .flatten()
                 {
@@ -1291,10 +1287,10 @@ impl Kernel {
             )));
         }
 
-        // 5. Check destination doesn't already exist (zone-relative key)
+        // 5. Check destination doesn't already exist — full VFS path (R20.3 contract)
         let dst_exists = self
             .with_metastore(&dst_route.mount_point, |ms| {
-                ms.exists(&dst_zone_path).unwrap_or(false)
+                ms.exists(dst_path).unwrap_or(false)
             })
             .unwrap_or(false);
         if dst_exists {
@@ -1384,8 +1380,9 @@ impl Kernel {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let new_version = 1u32;
+        // Use full VFS dst_path for metastore key to match R20.3 convention.
         let meta = self.build_metadata(
-            &dst_zone_path,
+            dst_path,
             &dst_route.zone_id,
             DT_REG,
             size,
@@ -1396,13 +1393,9 @@ impl Kernel {
             Some(now_ms),
         );
         // 9. Atomic commit — metastore (raft) first, dcache on success.
-        // dcache uses the caller-visible dst_path; metastore uses the
-        // zone-relative key from meta.path.
         let cache_entry: CachedEntry = (&meta).into();
         let put_result = self
-            .with_metastore(&dst_route.mount_point, move |ms| {
-                ms.put(&dst_zone_path, meta)
-            })
+            .with_metastore(&dst_route.mount_point, move |ms| ms.put(dst_path, meta))
             .ok_or_else(|| {
                 KernelError::IOError(format!(
                     "sys_copy: no metastore for {}",

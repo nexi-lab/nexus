@@ -550,9 +550,16 @@ impl VFSRouter {
     }
 
     /// Delete a file via the mount's backend.
-    pub fn delete_file(&self, canonical_key: &str, backend_path: &str) -> Option<()> {
+    ///
+    /// Returns `None` when the mount has no Rust backend (Python-side connector).
+    /// Returns `Some(Ok(()))` on success, `Some(Err(_))` on backend error.
+    pub fn delete_file(
+        &self,
+        canonical_key: &str,
+        backend_path: &str,
+    ) -> Option<Result<(), crate::abc::object_store::StorageError>> {
         let entry = self.entries.get(canonical_key)?;
-        entry.backend.as_ref()?.delete_file(backend_path).ok()
+        Some(entry.backend.as_ref()?.delete_file(backend_path))
     }
 
     /// Rename a file via the mount's backend.
@@ -561,28 +568,47 @@ impl VFSRouter {
         canonical_key: &str,
         old_backend_path: &str,
         new_backend_path: &str,
-    ) -> Option<()> {
+    ) -> Option<Result<(), crate::abc::object_store::StorageError>> {
         let entry = self.entries.get(canonical_key)?;
-        entry
-            .backend
-            .as_ref()?
-            .rename(old_backend_path, new_backend_path)
-            .ok()
+        let backend = entry.backend.as_ref()?;
+        Some(backend.rename(old_backend_path, new_backend_path))
+    }
+
+    /// Probe whether a backend path exists without reading content.
+    ///
+    /// Returns `None` when the mount has no Rust backend or the backend does not
+    /// implement `get_content_size`. Returns `Some(true)` if the path exists,
+    /// `Some(false)` if `NotFound` is returned.
+    pub fn backend_path_exists(&self, canonical_key: &str, backend_path: &str) -> Option<bool> {
+        let entry = self.entries.get(canonical_key)?;
+        let backend = entry.backend.as_ref()?;
+        match backend.get_content_size(backend_path) {
+            Ok(_) => Some(true),
+            Err(crate::abc::object_store::StorageError::NotFound(_)) => Some(false),
+            Err(_) => None, // NotSupported or other error — cannot determine
+        }
     }
 
     /// Copy a file via the mount's backend (PAS server-side copy).
+    ///
+    /// Returns `None` when the mount has no Rust backend (Python-side connector).
+    /// Returns `Some(Ok(_))` on success, `Some(Err(_))` on backend error.
+    /// Callers should fall back to read+write only for `StorageError::NotSupported`;
+    /// other errors indicate a real failure and should be propagated.
     pub fn copy_file(
         &self,
         canonical_key: &str,
         src_backend_path: &str,
         dst_backend_path: &str,
-    ) -> Option<crate::abc::object_store::WriteResult> {
+    ) -> Option<Result<crate::abc::object_store::WriteResult, crate::abc::object_store::StorageError>>
+    {
         let entry = self.entries.get(canonical_key)?;
-        entry
-            .backend
-            .as_ref()?
-            .copy_file(src_backend_path, dst_backend_path)
-            .ok()
+        Some(
+            entry
+                .backend
+                .as_ref()?
+                .copy_file(src_backend_path, dst_backend_path),
+        )
     }
 
     /// Create a directory via the mount's backend.

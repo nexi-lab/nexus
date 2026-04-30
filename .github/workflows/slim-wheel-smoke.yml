@@ -1,0 +1,71 @@
+name: Slim Wheel Smoke
+
+# Verify that the nexus-fs slim wheel builds correctly, installs cleanly into
+# a fresh venv (with the locally-built nexus-runtime wheel), and passes the
+# CRUD smoke test + wheel-content audit that enforces the bricks carve-out.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    paths:
+      - "packages/nexus-fs/**"
+      - "src/nexus/fs/**"
+      - "src/nexus/backends/connectors/**"
+      - "src/nexus/bricks/auth/**"
+      - "src/nexus/bricks/search/primitives/**"
+      - "tests/integration/slim/**"
+      - ".github/workflows/slim-wheel-smoke.yml"
+      # Rust runtime changes affect rename/copy/read correctness
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/actions/build-rust-extensions/**"
+
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slim-wheel-smoke:
+    name: Slim wheel smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      # nexus-runtime is not on PyPI — build it from the Rust source so the
+      # conftest's slim_venv fixture can pre-install it before pip resolves
+      # the slim wheel's declared nexus-runtime>=0.10,<0.11 dependency.
+      - name: Build nexus-runtime wheel
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: dev
+          rust-cache-shared-key: "slim-wheel-smoke"
+          output-dir: dist
+          github-token: ${{ github.token }}
+
+      - name: Install hatchling and pytest
+        # hatchling is called directly by the conftest build fixture (not via
+        # python -m build) to avoid isolated-env hatchling version skew.
+        run: pip install "hatchling>=1.27" pytest
+
+      - name: Run slim wheel smoke tests
+        run: pytest tests/integration/slim/ -v
+        env:
+          # conftest.slim_venv pre-installs the wheel from this dir so pip
+          # doesn't try PyPI for nexus-runtime.
+          NEXUS_RUNTIME_WHEEL_DIR: dist

@@ -43,11 +43,21 @@ assert content == b"hi from slim", f"read mismatch: {{repr(content)}}"
 # mkdir
 fs.mkdir(mp + "/sub")
 
-# write a second file and delete it
-fs.write(mp + "/bye.txt", b"bye")
-fs.delete(mp + "/bye.txt")
+# rename (PAS content_id fix in meta_store/mod.rs)
+fs.write(mp + "/old.txt", b"rename-me")
+fs.rename(mp + "/old.txt", mp + "/new.txt")
+renamed = fs.read(mp + "/new.txt")
+assert renamed == b"rename-me", f"rename mismatch: {{repr(renamed)}}"
+
+# copy (PAS content_id fix in path_local.rs)
+fs.copy(mp + "/hello.txt", mp + "/copy.txt")
+copied = fs.read(mp + "/copy.txt")
+assert copied == b"hi from slim", f"copy mismatch: {{repr(copied)}}"
+
+# delete
+fs.delete(mp + "/hello.txt")
 try:
-    fs.read(mp + "/bye.txt")
+    fs.read(mp + "/hello.txt")
     sys.exit("expected FileNotFoundError after delete")
 except FileNotFoundError:
     pass

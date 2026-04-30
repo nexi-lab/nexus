@@ -103,6 +103,7 @@ packages = ["../../src/nexus"]
 include = [
     "nexus/__init__.py",
     "nexus/py.typed",
+    "nexus/_kernel_api_groups.py",
     "nexus/fs/**",
     "nexus/core/**",
     "nexus/contracts/**",
@@ -139,7 +140,8 @@ exclude = [
     "**/tools/**",
     "**/validation/**",
     # Top-level modules that belong to the full runtime
-    "**/_kernel_api_groups.py",
+    # _kernel_api_groups.py is included (listed in include above) — needed to
+    # suppress the validation-disabled warning at import time.
     "**/auth_config.py",
     "**/sync.py",
     # utils/ keep only __init__.py and edit_engine.py
@@ -185,7 +187,10 @@ exclude = [
 "../../src/nexus/bricks/auth/oauth/factory.py" = "nexus/bricks/auth/oauth/factory.py"
 "../../src/nexus/bricks/auth/oauth/pending.py" = "nexus/bricks/auth/oauth/pending.py"
 "../../src/nexus/bricks/auth/oauth/protocol.py" = "nexus/bricks/auth/oauth/protocol.py"
-"../../src/nexus/bricks/auth/oauth/token_manager.py" = "nexus/bricks/auth/oauth/token_manager.py"
+# token_manager.py excluded: top-level `from sqlalchemy import select` —
+# sqlalchemy is not a slim dep and OAuth token DB storage is full-runtime only.
+# Connectors import it lazily (importlib inside _init_oauth); they fail at
+# authenticate() time, not at module import time — expected for slim [x] users.
 "../../src/nexus/bricks/auth/oauth/token_resolver.py" = "nexus/bricks/auth/oauth/token_resolver.py"
 "../../src/nexus/bricks/auth/oauth/types.py" = "nexus/bricks/auth/oauth/types.py"
 "../../src/nexus/bricks/auth/oauth/user_auth.py" = "nexus/bricks/auth/oauth/user_auth.py"

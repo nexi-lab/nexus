@@ -40,7 +40,9 @@ REQUIRED_BRICKS_PATHS = [
     "nexus/bricks/auth/oauth/factory.py",
     "nexus/bricks/auth/oauth/pending.py",
     "nexus/bricks/auth/oauth/protocol.py",
-    "nexus/bricks/auth/oauth/token_manager.py",
+    # token_manager.py is intentionally excluded (top-level sqlalchemy import;
+    # OAuth token DB storage is full-runtime only — see pyproject force-include).
+    # "nexus/bricks/auth/oauth/token_manager.py",
     "nexus/bricks/auth/oauth/token_resolver.py",
     "nexus/bricks/auth/oauth/types.py",
     "nexus/bricks/auth/oauth/user_auth.py",
@@ -64,6 +66,8 @@ FORBIDDEN_BRICKS_PREFIXES = [
     "nexus/bricks/auth/user_queries.py",
     "nexus/bricks/auth/cache.py",
     "nexus/bricks/auth/consumer_metrics.py",
+    # token_manager has top-level sqlalchemy import — excluded from slim
+    "nexus/bricks/auth/oauth/token_manager.py",
     # auth subtrees excluded entirely
     "nexus/bricks/auth/stores/",
     "nexus/bricks/auth/daemon/",

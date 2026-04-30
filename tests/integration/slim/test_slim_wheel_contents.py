@@ -68,6 +68,8 @@ FORBIDDEN_BRICKS_PREFIXES = [
     "nexus/bricks/auth/stores/",
     "nexus/bricks/auth/daemon/",
     "nexus/bricks/auth/providers/",
+    # test code must not ship in the slim wheel
+    "nexus/bricks/auth/oauth/tests/",
     # All other top-level bricks subdirs — never included in slim
     "nexus/bricks/access_manifest/",
     "nexus/bricks/catalog/",

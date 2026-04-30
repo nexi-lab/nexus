@@ -54,8 +54,8 @@ fs.delete(mp + "/hello.txt")
 try:
     fs.read(mp + "/hello.txt")
     sys.exit("expected delete to raise FileNotFoundError")
-except (FileNotFoundError, Exception):
-    pass  # any error after delete is expected
+except FileNotFoundError:
+    pass
 
 print("CRUD OK")
 """

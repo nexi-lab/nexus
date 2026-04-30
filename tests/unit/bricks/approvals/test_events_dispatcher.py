@@ -61,3 +61,42 @@ async def test_waiter_count_returns_n_after_n_register_calls():
     # Resolve drops the parked futures back to zero.
     d.resolve("req_c", Decision.APPROVED)
     assert d.waiter_count("req_c") == 0
+
+
+@pytest.mark.asyncio
+async def test_session_ids_for_returns_distinct_session_ids():
+    """Issue #3790 follow-up: SESSION-scope decide must fan out
+    session_allow rows to every coalesced waiter's session_id."""
+    d = Dispatcher()
+    d.register("req_x", session_id="sess_1")
+    d.register("req_x", session_id="sess_2")
+    d.register("req_x", session_id="sess_1")  # duplicate
+    d.register("req_x", session_id=None)  # ignored
+    d.register("req_x", session_id="")  # ignored
+
+    sids = d.session_ids_for("req_x")
+    assert sids == ["sess_1", "sess_2"]
+    # Other ids return empty.
+    assert d.session_ids_for("req_y") == []
+
+
+@pytest.mark.asyncio
+async def test_session_ids_for_after_resolve_returns_empty():
+    """resolve() drops the entry; session_ids_for must reflect that."""
+    d = Dispatcher()
+    d.register("req_z", session_id="s1")
+    d.resolve("req_z", Decision.APPROVED)
+    assert d.session_ids_for("req_z") == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_finds_and_removes_future_with_session_id():
+    """Regression: cancel() must locate futures stored as (fut, sid)
+    tuples — the prior implementation iterated over plain futures."""
+    d = Dispatcher()
+    f1 = d.register("req_q", session_id="s1")
+    f2 = d.register("req_q", session_id="s2")
+    d.cancel(f1)
+    assert d.waiter_count("req_q") == 1
+    d.resolve("req_q", Decision.APPROVED)
+    assert (await asyncio.wait_for(f2, 0.5)) is Decision.APPROVED

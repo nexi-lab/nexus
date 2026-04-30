@@ -16,29 +16,45 @@ logger = logging.getLogger(__name__)
 
 
 class Dispatcher:
-    """In-process map of request_id → futures awaiting a Decision."""
+    """In-process map of request_id → futures awaiting a Decision.
+
+    Each waiter optionally carries the caller's ``session_id`` so the
+    service layer can fan out per-waiter session_allow rows when an
+    approval is decided with SESSION scope (Issue #3790 follow-up: the
+    decided row only stores ONE session_id — the winning insert's — so
+    coalesced waiters with different session_ids would otherwise lose
+    their session caching).
+    """
 
     def __init__(self) -> None:
-        self._waiters: dict[str, list[asyncio.Future[Decision]]] = defaultdict(list)
+        # Each entry is (future, session_id-or-None). A list (not a set)
+        # because multiple waiters may share the same session_id and we
+        # need to drop only one entry on cancel.
+        self._waiters: dict[str, list[tuple[asyncio.Future[Decision], str | None]]] = defaultdict(
+            list
+        )
 
-    def register(self, request_id: str) -> asyncio.Future[Decision]:
+    def register(
+        self, request_id: str, *, session_id: str | None = None
+    ) -> asyncio.Future[Decision]:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[Decision] = loop.create_future()
-        self._waiters[request_id].append(fut)
+        self._waiters[request_id].append((fut, session_id))
         return fut
 
     def cancel(self, fut: asyncio.Future[Decision]) -> None:
         """Remove one future from any list it appears in."""
         for rid, lst in list(self._waiters.items()):
-            if fut in lst:
-                lst.remove(fut)
-                if not lst:
-                    del self._waiters[rid]
-                return
+            for entry in lst:
+                if entry[0] is fut:
+                    lst.remove(entry)
+                    if not lst:
+                        del self._waiters[rid]
+                    return
 
     def resolve(self, request_id: str, decision: Decision) -> None:
         waiters = self._waiters.pop(request_id, ())
-        for fut in waiters:
+        for fut, _sid in waiters:
             if not fut.done():
                 fut.set_result(decision)
 
@@ -54,6 +70,25 @@ class Dispatcher:
         change the value at any moment.
         """
         return len(self._waiters.get(request_id, []))
+
+    def session_ids_for(self, request_id: str) -> list[str]:
+        """Return distinct, non-empty session_ids registered for this id.
+
+        Used by ApprovalService.decide(scope=SESSION) to fan out
+        ``session_allow`` rows to every coalesced waiter — not only the
+        winning insert's session_id (Issue #3790 follow-up).
+
+        Returned in registration order with duplicates removed; never
+        contains ``None`` or empty strings.
+        """
+        seen: set[str] = set()
+        out: list[str] = []
+        for _fut, sid in self._waiters.get(request_id, ()):
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            out.append(sid)
+        return out
 
 
 NotifyHandler = Callable[[str], Coroutine[Any, Any, None]]

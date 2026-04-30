@@ -114,6 +114,71 @@ async def test_timeout_raises_approval_timeout(approval_service_short: ApprovalS
 
 
 @pytest.mark.asyncio
+async def test_session_scope_fans_out_session_allow_to_every_coalesced_waiter(
+    approval_service: ApprovalService,
+):
+    """Issue #3790 follow-up regression: when N waiters coalesce on
+    (zone, kind, subject) with N different session_ids, a SESSION-scope
+    approval must insert ``session_allow`` for *every* registered
+    session_id — not just the winning insert's. Otherwise the losers
+    create a fresh pending row on the next same-session call.
+    """
+    tag = _tag()
+    zone = f"z_session_{tag}"
+    subject = f"shared.session.example:443:{tag}"
+    kind = ApprovalKind.EGRESS_HOST
+    sids = [f"tok:s_{i}_{tag}" for i in range(3)]
+
+    async def call(rid: str, sid: str) -> Decision:
+        return await approval_service.request_and_wait(
+            request_id=rid,
+            zone_id=zone,
+            kind=kind,
+            subject=subject,
+            agent_id="ag",
+            token_id="tok",
+            session_id=sid,
+            reason="r",
+            metadata={},
+        )
+
+    tasks = [asyncio.create_task(call(f"req_se_{i}_{tag}", sids[i])) for i in range(3)]
+
+    # Wait for the coalesced row to appear.
+    coalesced_id: str | None = None
+    for _ in range(50):
+        await asyncio.sleep(0.1)
+        pending = await approval_service.list_pending(zone_id=zone)
+        rows = [p for p in pending if p.subject == subject]
+        if len(rows) == 1 and approval_service._dispatcher.waiter_count(rows[0].id) >= 3:
+            coalesced_id = rows[0].id
+            break
+    else:
+        raise AssertionError("3 coalesced waiters never registered against the same row")
+
+    await approval_service.decide(
+        request_id=coalesced_id,
+        decision=Decision.APPROVED,
+        decided_by="op",
+        scope=DecisionScope.SESSION,
+        reason=None,
+        source=DecisionSource.GRPC,
+    )
+
+    for task in tasks:
+        assert await asyncio.wait_for(task, 5.0) is Decision.APPROVED
+
+    # Every waiter's session_id must have an allow row.
+    for sid in sids:
+        assert await approval_service.repository.session_allow_exists(
+            session_id=sid,
+            zone_id=zone,
+            kind=kind,
+            subject=subject,
+        ), f"missing session_allow for {sid}"
+
+
+@pytest.mark.asyncio
 async def test_concurrent_callers_same_subject_share_one_row(approval_service: ApprovalService):
     tag = _tag()
     zone = f"z_{tag}"

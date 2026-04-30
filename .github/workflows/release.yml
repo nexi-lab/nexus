@@ -357,7 +357,16 @@ jobs:
             --no-index --find-links /tmp/nexus-runtime-artifacts \
             nexus-runtime
           /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
-          /tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(f'nexus-fs v{nexus.fs.__version__}')"
+          PKG_VERSION=$(grep '^version = ' packages/nexus-fs/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          /tmp/nexus-fs-release-test/bin/python - "$PKG_VERSION" <<'PY'
+          import sys, nexus.fs
+          pkg_ver = sys.argv[1]
+          runtime_ver = nexus.fs.__version__
+          print(f"nexus-fs __version__ = {runtime_ver}, pyproject.toml = {pkg_ver}")
+          if runtime_ver != pkg_ver:
+              print(f"FATAL: __version__ {runtime_ver!r} != pyproject.toml {pkg_ver!r}", file=sys.stderr)
+              sys.exit(1)
+          PY
           /tmp/nexus-fs-release-test/bin/nexus-fs --help
 
       - name: Detect existing nexus-fs PyPI version

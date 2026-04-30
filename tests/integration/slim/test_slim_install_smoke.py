@@ -82,13 +82,12 @@ def test_slim_local_rename_cold_cache(slim_venv: Path, tmp_path: Path) -> None:
     """
     workdir = tmp_path / "cold"
     workdir.mkdir()
-    meta_db = tmp_path / "meta.db"  # explicit shared db so both processes agree
 
     write_script = f"""
 import sys
 import nexus.fs
 
-fs = nexus.fs.mount_sync("local://{workdir}", metadata_db="{meta_db}")
+fs = nexus.fs.mount_sync("local://{workdir}")
 mounts = [m for m in fs.list_mounts() if "{workdir.name}" in m]
 if not mounts:
     sys.exit(f"mount not found: {{fs.list_mounts()}}")
@@ -102,7 +101,7 @@ print("WRITE OK")
 import sys
 import nexus.fs
 
-fs = nexus.fs.mount_sync("local://{workdir}", metadata_db="{meta_db}")
+fs = nexus.fs.mount_sync("local://{workdir}")
 mounts = [m for m in fs.list_mounts() if "{workdir.name}" in m]
 if not mounts:
     sys.exit(f"mount not found: {{fs.list_mounts()}}")

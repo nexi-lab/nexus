@@ -252,6 +252,28 @@ class ApprovalService:
         except Exception as e:
             raise GatewayClosed("could not insert pending row") from e
 
+        if req is None:
+            # Round-4 (#3790): the ON CONFLICT path returned None because
+            # the conflicting pending row was decided between the insert
+            # and the follow-up SELECT (operator decision arrived in that
+            # tiny window). Treat this as a very-recent decision: check
+            # the inherit path with a fresh timestamp and, for SESSION/
+            # PERSIST scopes, return APPROVED if a session_allow row was
+            # just written. Failing that, raise GatewayClosed so the
+            # caller retries — a re-try will either insert a fresh row or
+            # hit the session_allow fast-path above.
+            inherited = await self._maybe_inherit_recent_decision(
+                request_id=request_id,
+                zone_id=zone_id,
+                kind=kind,
+                subject=subject,
+                session_id=session_id,
+                now=datetime.now(UTC),
+            )
+            if inherited is not None:
+                return inherited
+            raise GatewayClosed("coalesced pending row vanished (concurrent decide); retry")
+
         # Was it newly inserted under our id, or an existing coalesced row?
         newly_inserted = req.id == request_id
         if newly_inserted:
@@ -331,6 +353,7 @@ class ApprovalService:
                 # missing), so no other waiter has remaining time under
                 # the row's own expiry. Best-effort: a failed transition
                 # means the sweeper handles the row.
+                _expired_ok = False
                 try:
                     await self._repo.transition(
                         request_id=req.id,
@@ -341,6 +364,7 @@ class ApprovalService:
                         source=DecisionSource.SYSTEM_TIMEOUT,
                         now=_now_ts,
                     )
+                    _expired_ok = True
                 except Exception:
                     logger.warning(
                         "approvals.request_and_wait: best-effort EXPIRED transition "
@@ -348,6 +372,38 @@ class ApprovalService:
                         req.id,
                         exc_info=True,
                     )
+
+                if _expired_ok:
+                    # Round-4 (#3790): wake coalesced waiters so they do
+                    # not block until the watchdog or their own timeout.
+                    # Mirrors ``_on_expired_ids`` but scoped to this row.
+                    self._dispatcher.resolve(req.id, Decision.DENIED)
+                    zone = (
+                        _latest.zone_id
+                        if _latest is not None
+                        else req.zone_id
+                        if hasattr(req, "zone_id")
+                        else ""
+                    )
+                    self._broadcast(
+                        WatchEvent(
+                            type="decided",
+                            request_id=req.id,
+                            zone_id=zone,
+                            decision="expired",
+                        )
+                    )
+                    try:
+                        await self._notify.notify(
+                            CHANNEL_DECIDED,
+                            json.dumps({"request_id": req.id, "decision": Decision.DENIED.value}),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "approvals: notify(decided) after local EXPIRED failed rid=%s",
+                            req.id,
+                            exc_info=True,
+                        )
             raise ApprovalTimeout(req.id, timeout) from e
 
         if result is Decision.DENIED:

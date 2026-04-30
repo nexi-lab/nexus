@@ -95,11 +95,19 @@ class ApprovalService:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
+        # F3 (Issue #3790): pass reconcile_in_flight as the bridge's
+        # ``on_reconnect`` hook so any rows decided while the LISTEN
+        # connection was unavailable get flushed back to local waiters
+        # the first time the listener attaches. The hook fires once on
+        # initial start today; future auto-reconnect plumbing in
+        # NotifyBridge will re-fire it after each successful re-attach
+        # without further changes here.
         await self._notify.start(
             {
                 CHANNEL_DECIDED: self._on_decided_payload,
                 CHANNEL_NEW: self._on_new_payload,
-            }
+            },
+            on_reconnect=self.reconcile_in_flight,
         )
         await self._sweeper.start()
 
@@ -319,20 +327,39 @@ class ApprovalService:
         if updated is None:
             raise ValueError(f"request {request_id} is not pending")
 
+        # F3 (Issue #3790): once ``transition`` has committed, the
+        # row is non-pending and a retry can't re-decide it. We MUST
+        # resolve local dispatcher futures and emit NOTIFY even if any
+        # subsequent best-effort step (session_allow inserts, NOTIFY
+        # publish) fails — otherwise local waiters strand until timeout
+        # and cross-worker waiters never get unblocked.
+        #
+        # Order:
+        #   1. snapshot session_ids (resolve drops the dispatcher entry)
+        #   2. resolve local futures — IMMEDIATE, no try/except
+        #   3. session_allow inserts (best-effort, log+swallow)
+        #   4. NOTIFY (best-effort, log+swallow)
+        #
+        # Reconciliation (``reconcile_in_flight``) still recovers any
+        # cross-worker waiter on a NOTIFY drop — see service.start().
+
+        # Step 1: snapshot session_ids BEFORE resolve drops them.
+        session_ids: set[str] = set()
         if scope is DecisionScope.SESSION and decision is Decision.APPROVED:
-            # Fan out a session_allow row for *every* coalesced waiter's
-            # session_id, not just ``updated.session_id`` (the winning
-            # insert's). When N callers coalesce on (zone, kind, subject)
-            # with N different sessions, a SESSION-scope approval should
-            # short-circuit *all* of them on the next same-session call —
-            # otherwise the losers fall back to a fresh pending row after
-            # the inherit window. (Issue #3790 follow-up.)
-            session_ids: set[str] = set()
             if updated.session_id:
                 session_ids.add(updated.session_id)
             for sid in self._dispatcher.session_ids_for(request_id):
                 session_ids.add(sid)
-            for sid in session_ids:
+
+        # Step 2: resolve in-process futures. NEVER let a downstream
+        # error rob local callers of the decision they were waiting on.
+        self._dispatcher.resolve(request_id, decision)
+
+        # Step 3: best-effort session_allow fan-out for SESSION scope.
+        # Each insert is wrapped individually so a single failure can't
+        # block the others or the NOTIFY publish.
+        for sid in session_ids:
+            try:
                 await self._repo.insert_session_allow(
                     session_id=sid,
                     zone_id=updated.zone_id,
@@ -342,15 +369,31 @@ class ApprovalService:
                     decided_at=now,
                     request_id=updated.id,
                 )
+            except Exception:
+                logger.warning(
+                    "approvals.decide: session_allow insert failed sid=%s rid=%s "
+                    "(row already APPROVED; reconciliation can address later)",
+                    sid,
+                    request_id,
+                    exc_info=True,
+                )
 
-        await self._notify.notify(
-            CHANNEL_DECIDED,
-            json.dumps({"request_id": request_id, "decision": decision.value}),
-        )
-        # Resolve in-process futures immediately for callers on the same worker.
-        # NB: resolve() drops the dispatcher entry — must run after the
-        # session_ids_for(...) fan-out above, not before.
-        self._dispatcher.resolve(request_id, decision)
+        # Step 4: best-effort NOTIFY for cross-worker fan-out.
+        # Cross-worker waiters that miss this NOTIFY get unblocked via
+        # ``reconcile_in_flight`` after the listener reconnects.
+        try:
+            await self._notify.notify(
+                CHANNEL_DECIDED,
+                json.dumps({"request_id": request_id, "decision": decision.value}),
+            )
+        except Exception:
+            logger.warning(
+                "approvals.decide: NOTIFY publish failed rid=%s "
+                "(row already APPROVED; cross-worker waiters will reconcile)",
+                request_id,
+                exc_info=True,
+            )
+
         return updated
 
     async def list_pending(self, zone_id: str | None) -> list[ApprovalRequest]:

@@ -94,24 +94,57 @@ class Dispatcher:
 NotifyHandler = Callable[[str], Coroutine[Any, Any, None]]
 
 
+ReconnectHook = Callable[[], Coroutine[Any, Any, None]]
+
+
 class NotifyBridge:
     """Bridge to Postgres LISTEN/NOTIFY using a dedicated asyncpg connection.
 
     Holds one connection borrowed from the pool for the lifetime of the bridge.
     Multiple LISTEN channels are supported; notify() acquires a fresh connection
     each call so listening continues uninterrupted.
+
+    F3 (Issue #3790): callers may register an ``on_reconnect`` hook that
+    runs after every successful (re-)attachment of the listener
+    connection. ``ApprovalService`` wires this to
+    :meth:`ApprovalService.reconcile_in_flight` so any rows decided
+    while the listener was disconnected can flush queued futures back
+    to in-process waiters. Today the bridge does not auto-reconnect on
+    connection loss (single-connection model); the hook fires once on
+    ``start`` so future reconnect plumbing can reuse the same wiring
+    without churning ApprovalService.
     """
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
         self._listen_conn: asyncpg.Connection | None = None
         self._handlers: dict[str, NotifyHandler] = {}
+        self._on_reconnect: ReconnectHook | None = None
 
-    async def start(self, handlers: dict[str, NotifyHandler]) -> None:
+    async def start(
+        self,
+        handlers: dict[str, NotifyHandler],
+        *,
+        on_reconnect: ReconnectHook | None = None,
+    ) -> None:
         self._handlers = dict(handlers)
+        self._on_reconnect = on_reconnect
         self._listen_conn = await self._pool.acquire()
         for channel in self._handlers:
             await self._listen_conn.add_listener(channel, self._on_notify)
+        # Fire the hook once on initial attach. When auto-reconnect is
+        # added later, this same call site will re-fire after each
+        # successful re-attach so reconcile_in_flight can recover any
+        # rows decided during the gap.
+        if self._on_reconnect is not None:
+            try:
+                await self._on_reconnect()
+            except Exception:
+                logger.warning(
+                    "approvals.NotifyBridge: on_reconnect hook raised; "
+                    "listener attached but reconciliation skipped",
+                    exc_info=True,
+                )
 
     async def stop(self) -> None:
         if self._listen_conn is None:
@@ -124,6 +157,7 @@ class NotifyBridge:
         await self._pool.release(self._listen_conn)
         self._listen_conn = None
         self._handlers = {}
+        self._on_reconnect = None
 
     async def notify(self, channel: str, payload: str) -> None:
         async with self._pool.acquire() as conn:

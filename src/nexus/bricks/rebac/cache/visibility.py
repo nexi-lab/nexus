@@ -254,10 +254,7 @@ class DirectoryVisibilityCache:
         if not self._tiger_cache:
             return {}
 
-        # Build cache keys for batch fetch
-
-        # Use single get_accessible_resources (already optimized with bloom + L1)
-        accessible_ids = self._tiger_cache.get_accessible_resources(
+        accessible_paths = self._tiger_cache.get_accessible_paths(
             subject_type=subject_type,
             subject_id=subject_id,
             permission=permission,
@@ -265,8 +262,11 @@ class DirectoryVisibilityCache:
             zone_id=zone_id,
         )
 
-        results: dict[str, bool] = {}
-        if not accessible_ids:
+        if accessible_paths is None:
+            return {}  # cache miss
+
+        if not accessible_paths:
+            results: dict[str, bool] = {}
             for dp in dir_paths:
                 self.set_visible(
                     zone_id, subject_type, subject_id, dp, False, "no_accessible_resources"
@@ -274,22 +274,14 @@ class DirectoryVisibilityCache:
                 results[dp] = False
             return results
 
-        # Build set of accessible paths for fast prefix matching
-        resource_map = self._tiger_cache._resource_map
-        accessible_paths: list[str] = []
-        for int_id in accessible_ids:
-            res_info = resource_map.get_resource_id(int_id)
-            if res_info:
-                accessible_paths.append(res_info[1])
+        from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
 
-        # Check each directory against accessible paths
-        for dp in dir_paths:
-            prefix = dp.rstrip("/") + "/" if dp != "/" else "/"
-            visible = any(p == dp or p.startswith(prefix) for p in accessible_paths)
+        visible_flags = batch_paths_under_prefixes(accessible_paths, dir_paths)
+        results = {}
+        for dp, visible in zip(dir_paths, visible_flags, strict=True):
             reason = "batch_bitmap" if visible else "no_descendants_in_bitmap"
             self.set_visible(zone_id, subject_type, subject_id, dp, visible, reason)
             results[dp] = visible
-
         return results
 
     def invalidate(

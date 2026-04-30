@@ -195,3 +195,44 @@ def test_compute_from_tiger_bitmap_no_descendants_returns_false():
     cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
     result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# DirectoryVisibilityCache.compute_batch_visibility — refactor contract
+# ---------------------------------------------------------------------------
+
+
+def test_compute_batch_visibility_correct_results():
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths.return_value = {"/a/b/c", "/x/y/z"}
+    tiger_cache.get_accessible_resources.return_value = set()  # wrong result if called
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    result = cache.compute_batch_visibility("z1", "user", "u1", ["/a/b", "/x/y", "/nope"], "read")
+
+    assert result == {"/a/b": True, "/x/y": True, "/nope": False}
+
+
+def test_compute_batch_visibility_cache_miss_returns_empty():
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths.return_value = None
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    result = cache.compute_batch_visibility("z1", "user", "u1", ["/a/b"], "read")
+    assert result == {}
+
+
+def test_compute_batch_visibility_no_tiger_cache_returns_empty():
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    cache = DirectoryVisibilityCache(tiger_cache=None)
+    result = cache.compute_batch_visibility("z1", "user", "u1", ["/a/b"], "read")
+    assert result == {}

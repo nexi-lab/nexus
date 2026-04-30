@@ -578,6 +578,12 @@ def federation_start_replication_scanner(
 ) -> None: ...
 
 # ---------------------------------------------------------------------------
+# Audit stream-only registration (rust/services/src/python/mod.rs)
+# ---------------------------------------------------------------------------
+
+def prepare_audit_stream_only(kernel: Any, zone_id: str, stream_path: str) -> None: ...
+
+# ---------------------------------------------------------------------------
 # ManagedAgentService PyO3 surface (rust/services/src/python/mod.rs)
 # ---------------------------------------------------------------------------
 

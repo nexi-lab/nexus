@@ -63,28 +63,9 @@ def slim_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return wheels[0]
 
 
-@pytest.fixture(scope="session")
-def slim_venv(
-    slim_wheel: Path,
-    tmp_path_factory: pytest.TempPathFactory,
-) -> Path:
-    """Create a fresh venv and pip install the slim wheel into it.
-
-    If ``NEXUS_RUNTIME_WHEEL_DIR`` is set, the nexus-runtime wheel from that
-    directory is pre-installed before the slim wheel so pip can resolve the
-    declared ``nexus-runtime>=0.10,<0.11`` dep without hitting PyPI.
-
-    Returns the venv root.
-    """
-    venv_dir = tmp_path_factory.mktemp("slim-venv")
-    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
-    py = _venv_python(venv_dir)
-    subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
-
-    runtime_wheel_dir = os.environ.get("NEXUS_RUNTIME_WHEEL_DIR")
+def _install_runtime(py: Path, runtime_wheel_dir: str | None) -> None:
+    """Pre-install nexus-runtime from a local wheel dir if provided."""
     if runtime_wheel_dir:
-        # Pre-install nexus-runtime from the locally-built wheel so pip
-        # doesn't try to fetch it from PyPI (it's not published there).
         subprocess.run(
             [
                 str(py),
@@ -99,9 +80,44 @@ def slim_venv(
             check=True,
         )
 
-    # Install slim wheel with the connector extras that the import smoke tests
-    # need. Each connector extra pulls the Python deps (e.g. requests-oauthlib
-    # for [x], google-* for [gdrive,gmail,gcalendar], slack-sdk for [slack]).
+
+@pytest.fixture(scope="session")
+def slim_base_venv(
+    slim_wheel: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    """Fresh venv with only the base slim wheel (no connector extras).
+
+    Used by test_slim_base_module_imports to verify that modules shipped in
+    the base wheel do not secretly depend on extras-only packages.
+    """
+    venv_dir = tmp_path_factory.mktemp("slim-base-venv")
+    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+    py = _venv_python(venv_dir)
+    subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
+    _install_runtime(py, os.environ.get("NEXUS_RUNTIME_WHEEL_DIR"))
+    subprocess.run([str(py), "-m", "pip", "install", str(slim_wheel)], check=True)
+    return venv_dir
+
+
+@pytest.fixture(scope="session")
+def slim_venv(
+    slim_wheel: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    """Fresh venv with slim wheel + connector extras (x, gdrive, gmail, gcalendar, slack).
+
+    Used by CRUD and connector-import tests. If ``NEXUS_RUNTIME_WHEEL_DIR`` is
+    set the nexus-runtime wheel is pre-installed from that directory (it is not
+    on PyPI; CI builds it from source via build-rust-extensions).
+
+    Returns the venv root.
+    """
+    venv_dir = tmp_path_factory.mktemp("slim-venv")
+    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
+    py = _venv_python(venv_dir)
+    subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
+    _install_runtime(py, os.environ.get("NEXUS_RUNTIME_WHEEL_DIR"))
     subprocess.run(
         [str(py), "-m", "pip", "install", f"{slim_wheel}[x,gdrive,gmail,gcalendar,slack]"],
         check=True,

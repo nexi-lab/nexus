@@ -1094,8 +1094,13 @@ impl Kernel {
         // fetches the stale old-path backend file (which no longer exists).
         if let Some(mut entry) = self.dcache.get_entry(old_path) {
             self.dcache.evict(old_path);
+            // PAS only: update content_id to new backend path.
+            // Guard: skip 64-hex CAS content_ids — a CAS file named exactly
+            // its hash satisfies `cid == old_route.backend_path` but must not
+            // have its blob reference rewritten.
             if let Some(ref cid) = entry.content_id.clone() {
-                if *cid == old_route.backend_path {
+                let is_cas = cid.len() == 64 && cid.bytes().all(|b| b.is_ascii_hexdigit());
+                if !is_cas && *cid == old_route.backend_path {
                     entry.content_id = Some(new_route.backend_path.clone());
                 }
             }

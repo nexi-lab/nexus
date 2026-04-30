@@ -177,18 +177,35 @@ class FederationRPCService(FederationRPCMixin):
         nx = self._nexus_fs
         if nx is None:
             raise RuntimeError("federation_import_zone: no NexusFS attached")
-        # Create the raft zone before loading data into it. Import is a
-        # restore-into-zone operation, not a create+restore, so the
-        # target zone must exist on the raft side. Idempotent: a
-        # pre-existing zone surfaces as an "already exists" error we
-        # swallow, keeping the RPC callable twice with the same args.
+        # Create the raft zone before loading data into it. Import is
+        # a restore-into-zone operation, not a create+restore, so the
+        # target zone must exist on the raft side.  Routes through
+        # the standard syscall surface (sys_setattr DT_MOUNT
+        # auto-creates the underlying raft group when the federation
+        # provider is initialised) — no PyO3 shortcut to the HAL
+        # trait.  The synthetic mount entry under
+        # ``/__fed_import__/{target_zone}`` is segregated with a
+        # double-underscore prefix so it doesn't collide with normal
+        # paths; idempotent on already-exists.
         if target_zone:
+            DT_MOUNT = 2
+            with contextlib.suppress(Exception):
+                # mkdir parent directory; ignore "already exists" via
+                # contextlib.suppress (fall through to setattr below).
+                self._kernel.sys_setattr(
+                    "/__fed_import__",
+                    1,  # DT_DIR
+                    "",  # backend_name (unused for DT_DIR)
+                )
             try:
-                import nexus_runtime as _nr
-
-                _nr.federation_create_zone(self._kernel, target_zone)
+                self._kernel.sys_setattr(
+                    f"/__fed_import__/{target_zone}",
+                    DT_MOUNT,
+                    backend_name="",
+                    zone_id=target_zone,
+                )
             except Exception as e:
-                if "already exists" not in str(e).lower():
+                if "already" not in str(e).lower() and "exists" not in str(e).lower():
                     raise
         service = ZoneImportService(nx)
         options = ZoneImportOptions(
@@ -217,13 +234,34 @@ class FederationRPCService(FederationRPCMixin):
 
     @rpc_expose(admin_only=True)
     def federation_create_zone(self, zone_id: str) -> dict[str, Any]:
-        # Standalone create (no mount): use the federation control-plane
-        # helper.  Mount-tied creation flows through sys_setattr DT_MOUNT
-        # which auto-creates via the same DistributedCoordinator trait.
-        import nexus_runtime as _nr
-
-        created = _nr.federation_create_zone(self._kernel, zone_id)
-        return {"zone_id": created}
+        # Standalone-create RPC retained for back-compat (CLI / older
+        # agents).  Body routes through the syscall surface — no PyO3
+        # shortcut to the HAL trait.  ``sys_setattr DT_MOUNT``
+        # auto-creates the underlying raft group when the federation
+        # provider is initialised; the synthetic mount entry lives
+        # under ``/__fed_zones__/{zone_id}`` so it's segregated from
+        # the normal namespace and clean for ``federation_remove_zone``
+        # to cascade-unmount.
+        DT_MOUNT = 2
+        with contextlib.suppress(Exception):
+            self._kernel.sys_setattr(
+                "/__fed_zones__",
+                1,  # DT_DIR
+                "",  # backend_name (unused for DT_DIR)
+            )
+        synthetic_path = f"/__fed_zones__/{zone_id}"
+        try:
+            self._kernel.sys_setattr(
+                synthetic_path,
+                DT_MOUNT,
+                backend_name="",
+                zone_id=zone_id,
+            )
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "already" not in msg and "exists" not in msg and "dt_mount" not in msg:
+                raise
+        return {"zone_id": zone_id}
 
     @rpc_expose(admin_only=True)
     def federation_remove_zone(self, zone_id: str, force: bool = False) -> dict[str, Any]:

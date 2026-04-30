@@ -815,7 +815,10 @@ pub fn register_python_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     }
     m.add_function(wrap_pyfunction!(install_federation_wiring_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_is_initialized_py, m)?)?;
-    m.add_function(wrap_pyfunction!(federation_create_zone_py, m)?)?;
+    // federation_create_zone PyO3 binding removed — service tier
+    // (FederationRPCService.federation_create_zone) now routes
+    // through sys_setattr DT_MOUNT instead of a direct HAL-trait
+    // shortcut.
     m.add_function(wrap_pyfunction!(federation_remove_zone_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_join_zone_py, m)?)?;
     m.add_function(wrap_pyfunction!(federation_share_zone_py, m)?)?;
@@ -871,29 +874,13 @@ fn install_federation_wiring_py(
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 
-/// Federation control-plane: create a raft zone (no mount).
-///
-/// Standalone zone creation — analogous to Linux `mkfs.<type>`,
-/// which is a userspace utility that prepares a filesystem image
-/// without involving `mount(2)`.  Service-tier callers reach this
-/// through `nexus_runtime.federation_create_zone(kernel, zone_id)`;
-/// it is intentionally NOT a method on `PyKernel` because zone
-/// lifecycle is a federation-driver concern, not a kernel primitive.
-/// Mount-tied creation continues to flow through
-/// `kernel.sys_setattr(path, DT_MOUNT, target_zone_id=…)` which
-/// auto-creates the zone via the same trait method.
-#[pyfunction]
-#[pyo3(name = "federation_create_zone")]
-fn federation_create_zone_py(
-    kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
-    zone_id: &str,
-) -> PyResult<String> {
-    let k = kernel.kernel_ref();
-    k.distributed_coordinator()
-        .create_zone(k, zone_id)
-        .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-    Ok(zone_id.to_string())
-}
+// federation_create_zone_py PyO3 binding removed: service-tier
+// callers (FederationRPCService.federation_create_zone) now route
+// through `sys_setattr DT_MOUNT` instead of taking a direct
+// HAL-trait shortcut.  The kernel's auto-create-zone branch in
+// `Kernel::sys_setattr` handles the create when the federation
+// provider is initialised — single code path, single trust
+// boundary.
 
 /// Federation control-plane: remove a raft zone.  Cascade-unmount
 /// happens inside the provider impl.  `force=true` honors the

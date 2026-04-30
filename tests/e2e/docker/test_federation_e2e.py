@@ -482,69 +482,71 @@ def federation_zones(cluster, api_key):
     grpc2 = cluster["grpc2"]
     expected_zones = ["corp", "corp-eng", "corp-sales", "family"]
 
-    def _ensure_zone(target: str, zone_id: str) -> None:
-        r = _grpc_call(
-            target,
-            "federation_create_zone",
-            {"zone_id": zone_id},
-            api_key=api_key,
-        )
-        if "error" in r:
-            msg = str(r.get("error", {}).get("message", "")).lower()
-            # Benign on repeat calls — zone already exists.
-            if "already" in msg or "exists" in msg:
-                return
-            pytest.fail(f"federation_create_zone({zone_id}) on {target}: {r}")
+    # Combined create+mount via sys_setattr DT_MOUNT — kernel
+    # auto-creates the target zone if it doesn't already exist
+    # (federation_active && zone_id non-empty triggers
+    # coordinator.create_zone), then writes the DT_MOUNT entry that
+    # raft replicates to peers.  Replaces the old two-step pattern
+    # (federation_create_zone on each node + federation_mount on each
+    # node) — one syscall per (path, zone) pair, idempotent on
+    # already-mounted, idempotent on already-existing zone.
+    DT_MOUNT = 2
 
-    # Create zones on node-1 first, then node-2 (joins the raft group).
-    for target in [grpc1, grpc2]:
-        for zone_id in expected_zones:
-            _ensure_zone(target, zone_id)
+    def _ensure_dt_mount(target: str, path: str, target_zone: str) -> None:
+        # mkdir parent path first; DLC.mount requires it to exist.
+        parent_dir = "/".join(path.rstrip("/").split("/")[:-1]) or "/"
+        if parent_dir != "/":
+            mk = _grpc_call(target, "mkdir", {"path": parent_dir, "parents": True}, api_key=api_key)
+            if "error" in mk:
+                msg = str(mk.get("error", {}).get("message", "")).lower()
+                if "exists" not in msg and "already" not in msg:
+                    pytest.fail(f"mkdir parent {parent_dir} on {target}: {mk}")
+
+        deadline = time.time() + 15
+        last: dict = {}
+        while time.time() < deadline:
+            r = _grpc_call(
+                target,
+                "sys_setattr",
+                {
+                    "path": path,
+                    "entry_type": DT_MOUNT,
+                    "zone_id": target_zone,
+                },
+                api_key=api_key,
+                timeout=30,
+            )
+            last = r
+            if "error" not in r:
+                return
+            msg = str(r.get("error", {}).get("message", "")).lower()
+            if "already" in msg or "exists" in msg or "dt_mount" in msg:
+                return
+            time.sleep(0.5)
+        pytest.fail(
+            f"sys_setattr DT_MOUNT({path}, zone={target_zone}) on {target} "
+            f"did not succeed within 15s: {last}"
+        )
+
+    mounts = [
+        ("/corp", "corp"),
+        ("/family", "family"),
+        ("/corp/eng", "corp-eng"),
+        ("/corp/sales", "corp-sales"),
+        ("/family/work", "corp"),  # crosslink — corp is mounted twice
+    ]
+    # Each (path, zone) pair gets a sys_setattr on both nodes so the
+    # local raft instance for `target_zone` is bootstrapped on each
+    # peer.  Static-bootstrap mode: identical NEXUS_PEERS makes both
+    # nodes' raft state for the new zone converge on the same
+    # ConfState without coordination.
+    for path, target_zone in mounts:
+        for target in [grpc1, grpc2]:
+            _ensure_dt_mount(target, path, target_zone)
 
     for zone_id in expected_zones:
         _wait_zone_ready(grpc1, zone_id, api_key, timeout=30)
         _wait_zone_ready(grpc2, zone_id, api_key, timeout=30)
-
-    # Build the mount tree. Mounts are replicated through raft's root
-    # zone, so we try each mount on both nodes and tolerate "already
-    # mounted" errors (they mean raft replication beat us to it).
-    def _ensure_mount(parent_zone: str, path: str, target_zone: str) -> None:
-        mk = _grpc_call(grpc1, "mkdir", {"path": path, "parents": True}, api_key=api_key)
-        if "error" in mk:
-            msg = str(mk.get("error", {}).get("message", "")).lower()
-            if "exists" not in msg and "already" not in msg:
-                pytest.fail(f"mkdir {path}: {mk}")
-
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            for t in [grpc1, grpc2]:
-                r = _grpc_call(
-                    t,
-                    "federation_mount",
-                    {
-                        "parent_zone": parent_zone,
-                        "path": path,
-                        "target_zone": target_zone,
-                    },
-                    api_key=api_key,
-                )
-                if "error" not in r:
-                    return
-                msg = str(r.get("error", {}).get("message", ""))
-                if "already a DT_MOUNT" in msg or "already" in msg.lower():
-                    return
-            time.sleep(0.5)
-        pytest.fail(f"mount {target_zone} at {path} did not succeed within 10s")
-
-    mounts = [
-        ("root", "/corp", "corp"),
-        ("root", "/family", "family"),
-        ("corp", "/corp/eng", "corp-eng"),
-        ("corp", "/corp/sales", "corp-sales"),
-        ("family", "/family/work", "corp"),
-    ]
-    for parent_zone, path, target_zone in mounts:
-        _ensure_mount(parent_zone, path, target_zone)
 
     # Final convergence gate: every zone (root + each created zone)
     # must have both nodes' applied_index == leader's commit_index
@@ -562,7 +564,7 @@ def federation_zones(cluster, api_key):
 
     return {
         "zones": expected_zones,
-        "mounts": [path for _, path, _ in mounts],
+        "mounts": [path for path, _ in mounts],
     }
 
 
@@ -696,23 +698,49 @@ class TestZoneLifecycleWorkflow:
         # with parallel test invocations or accumulated state.
         zones = [f"lifecycle-{uid}-{i}" for i in range(3)]
 
-        # Step 1: concurrent create on node-1 — both calls hit the same
-        # zone-create code path simultaneously. Raft must serialize them
-        # without producing split-brain (two zones with same id).
+        # Each zone gets a synthetic mount path so the syscall-driven
+        # create flow (sys_setattr DT_MOUNT auto-creates the zone) has
+        # somewhere to attach.  The path lives under /__zone_lifecycle__/
+        # so the test cluster's user-visible namespace stays clean.
+        DT_MOUNT_T = 2
+
+        def _zone_mount_path(zone_id: str) -> str:
+            return f"/__zone_lifecycle__/{zone_id}"
+
+        def _create_via_syscall(target: str, zone_id: str) -> dict:
+            # mkdir parent — idempotent, may pre-exist on second call.
+            mk = _grpc_call(
+                target,
+                "mkdir",
+                {"path": "/__zone_lifecycle__", "parents": True},
+                api_key=api_key,
+            )
+            if "error" in mk:
+                msg = str(mk.get("error", {}).get("message", "")).lower()
+                if "exists" not in msg and "already" not in msg:
+                    return mk
+            return _grpc_call(
+                target,
+                "sys_setattr",
+                {
+                    "path": _zone_mount_path(zone_id),
+                    "entry_type": DT_MOUNT_T,
+                    "zone_id": zone_id,
+                },
+                api_key=api_key,
+                timeout=20,
+            )
+
+        # Step 1: concurrent create on node-1 via sys_setattr DT_MOUNT
+        # — auto-creates the zone, raft must serialize the underlying
+        # ConfState bootstraps without producing split-brain.
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-            futures = [
-                ex.submit(
-                    _grpc_call,
-                    grpc1,
-                    "federation_create_zone",
-                    {"zone_id": z},
-                    api_key=api_key,
-                )
-                for z in zones
-            ]
+            futures = [ex.submit(_create_via_syscall, grpc1, z) for z in zones]
             results = [f.result() for f in futures]
         for z, r in zip(zones, results, strict=True):
-            assert "error" not in r, f"concurrent create {z}: {r}"
+            if "error" in r:
+                msg = str(r.get("error", {}).get("message", "")).lower()
+                assert "already" in msg or "exists" in msg, f"concurrent create {z}: {r}"
 
         # Step 2: every zone visible on node-1 (the creator).
         for z in zones:
@@ -720,9 +748,11 @@ class TestZoneLifecycleWorkflow:
 
         # Step 3: same zones visible on node-2 (raft replication
         # invariant — joining the raft group is mandatory before
-        # cluster_info reports them).
+        # cluster_info reports them).  Calling sys_setattr DT_MOUNT
+        # again on node-2 with the same path/zone_id ensures node-2
+        # has a local raft replica for the zone.
         for z in zones:
-            r = _grpc_call(grpc2, "federation_create_zone", {"zone_id": z}, api_key=api_key)
+            r = _create_via_syscall(grpc2, z)
             # Already-exists is fine — node-2 may have caught up via raft.
             if "error" in r:
                 msg = str(r["error"].get("message", "")).lower()
@@ -730,11 +760,21 @@ class TestZoneLifecycleWorkflow:
             _wait_zone_ready(grpc2, z, api_key, timeout=20)
 
         # Step 4: remove the middle zone, leave the other two.
+        # sys_unlink on the synthetic mount path triggers the
+        # cascade-unmount path which destroys the underlying raft
+        # group.
         target_remove = zones[1]
         rm = _grpc_call(
-            grpc1, "federation_remove_zone", {"zone_id": target_remove}, api_key=api_key
+            grpc1,
+            "sys_unlink",
+            {"path": _zone_mount_path(target_remove)},
+            api_key=api_key,
         )
-        assert "error" not in rm, f"remove {target_remove}: {rm}"
+        assert "error" not in rm, f"unlink {target_remove}: {rm}"
+        # Cluster-control teardown of the raft group itself stays on
+        # the federation_remove_zone RPC — no syscall analog for
+        # destroying a raft group.
+        _grpc_call(grpc1, "federation_remove_zone", {"zone_id": target_remove}, api_key=api_key)
 
         # Step 5: list_zones reflects the removal (poll for replication).
         deadline = time.time() + 15
@@ -748,19 +788,15 @@ class TestZoneLifecycleWorkflow:
         else:
             pytest.fail(f"removal of {target_remove} not reflected within 15s on node-1")
 
-        # Step 6: recreate the same zone id — must succeed (no
-        # tombstone-blocked-create regression).
-        re_create = _grpc_call(
-            grpc1,
-            "federation_create_zone",
-            {"zone_id": target_remove},
-            api_key=api_key,
-        )
+        # Step 6: recreate the same zone id via sys_setattr DT_MOUNT
+        # — must succeed (no tombstone-blocked-create regression).
+        re_create = _create_via_syscall(grpc1, target_remove)
         assert "error" not in re_create, f"recreate-after-remove {target_remove}: {re_create}"
         _wait_zone_ready(grpc1, target_remove, api_key, timeout=20)
 
-        # Step 7: cleanup — remove the three zones we created.
+        # Step 7: cleanup — sys_unlink mount + federation_remove_zone.
         for z in zones:
+            _grpc_call(grpc1, "sys_unlink", {"path": _zone_mount_path(z)}, api_key=api_key)
             _grpc_call(grpc1, "federation_remove_zone", {"zone_id": z}, api_key=api_key)
 
 
@@ -781,32 +817,37 @@ class TestMountLifecycleWorkflow:
         primary_path = f"/corp/eng/mountlife-{uid}"
         crosslink_path = f"/family/mountlife-link-{uid}"
 
-        # Step 1: create temp zone on BOTH nodes — the raft zone
-        # group must include all data-node voters so cross-node
-        # reads via the crosslink reach quorum. Mount under /corp/eng
-        # (nested mount inside an existing federation mount).
-        cr1 = _grpc_call(grpc1, "federation_create_zone", {"zone_id": temp_zone}, api_key=api_key)
-        assert "error" not in cr1, f"create {temp_zone} on node-1: {cr1}"
-        cr2 = _grpc_call(grpc2, "federation_create_zone", {"zone_id": temp_zone}, api_key=api_key)
-        if "error" in cr2:
-            msg = str(cr2["error"].get("message", "")).lower()
-            assert "already" in msg or "exists" in msg, f"create {temp_zone} on node-2: {cr2}"
-        _wait_zone_ready(grpc1, temp_zone, api_key, timeout=15)
-        _wait_zone_ready(grpc2, temp_zone, api_key, timeout=15)
-
+        # Step 1: create+mount temp zone on BOTH nodes via syscall.
+        # sys_setattr DT_MOUNT auto-creates the underlying raft zone
+        # (federation_active && zone_id non-empty triggers
+        # coordinator.create_zone) AND writes the DT_MOUNT entry —
+        # one syscall replaces the prior two-step
+        # federation_create_zone + federation_mount pattern.  Calling
+        # on both nodes ensures both have a local raft replica so
+        # cross-node reads via the crosslink reach quorum.
+        DT_MOUNT_T = 2
         mk = _grpc_call(grpc1, "mkdir", {"path": primary_path, "parents": True}, api_key=api_key)
         assert "error" not in mk, f"mkdir {primary_path}: {mk}"
-        mt = _grpc_call(
-            grpc1,
-            "federation_mount",
-            {
-                "parent_zone": "corp-eng",
-                "path": primary_path,
-                "target_zone": temp_zone,
-            },
-            api_key=api_key,
-        )
-        assert "error" not in mt, f"mount {temp_zone} at {primary_path}: {mt}"
+        for target in [grpc1, grpc2]:
+            r = _grpc_call(
+                target,
+                "sys_setattr",
+                {
+                    "path": primary_path,
+                    "entry_type": DT_MOUNT_T,
+                    "zone_id": temp_zone,
+                },
+                api_key=api_key,
+                timeout=20,
+            )
+            if "error" in r:
+                msg = str(r.get("error", {}).get("message", "")).lower()
+                if "already" not in msg and "dt_mount" not in msg:
+                    pytest.fail(
+                        f"sys_setattr DT_MOUNT({primary_path}, {temp_zone}) on {target}: {r}"
+                    )
+        _wait_zone_ready(grpc1, temp_zone, api_key, timeout=15)
+        _wait_zone_ready(grpc2, temp_zone, api_key, timeout=15)
 
         # Step 2: write through the primary mount — verifies the mount
         # actually routes content to the right zone.
@@ -1142,17 +1183,27 @@ class TestWitnessLifecycleWorkflow:
         uid = _uid()
         zone_id = f"witness-flow-{uid}"
 
-        # Step 1: create the zone on BOTH nodes so the raft group has
-        # all data-node voters reachable. Without this, node-2 hasn't
-        # joined the zone's raft and reads on node-2 will miss the
-        # mount table even after replication.
-        cr1 = _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        assert "error" not in cr1, f"create on node-1 {zone_id}: {cr1}"
-        cr2 = _grpc_call(grpc2, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        # Already-exists on node-2 is fine — raft may have replicated.
-        if "error" in cr2:
-            msg = str(cr2["error"].get("message", "")).lower()
-            assert "already" in msg or "exists" in msg, f"create on node-2 {zone_id}: {cr2}"
+        # Step 1+3 combined: create+mount the zone via syscall on
+        # BOTH nodes so the raft group has all data-node voters
+        # reachable.  sys_setattr DT_MOUNT auto-creates the zone AND
+        # writes the mount entry — replaces the prior two-step
+        # federation_create_zone + federation_mount pattern.
+        DT_MOUNT_T = 2
+        mount_path = f"/corp/eng/witness-flow-{uid}"
+        mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
+        assert "error" not in mk
+        for target in [grpc1, grpc2]:
+            r = _grpc_call(
+                target,
+                "sys_setattr",
+                {"path": mount_path, "entry_type": DT_MOUNT_T, "zone_id": zone_id},
+                api_key=api_key,
+                timeout=20,
+            )
+            if "error" in r:
+                msg = str(r["error"].get("message", "")).lower()
+                if "already" not in msg and "dt_mount" not in msg:
+                    pytest.fail(f"sys_setattr DT_MOUNT on {target}: {r}")
         _wait_zone_ready(grpc1, zone_id, api_key, timeout=20)
         _wait_zone_ready(grpc2, zone_id, api_key, timeout=20)
 
@@ -1171,22 +1222,6 @@ class TestWitnessLifecycleWorkflow:
         assert ci_after_join.get("voter_count", 0) >= 2, (
             f"data-node voters missing: {ci_after_join}"
         )
-
-        # Step 3: mount the new zone + write a file. Validates that
-        # witness participates in real write quorum, not just zone
-        # create (which is a no-op on the witness state machine).
-        mount_path = f"/corp/eng/witness-flow-{uid}"
-        mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
-        assert "error" not in mk
-        mt = _grpc_call(
-            grpc1,
-            "federation_mount",
-            {"parent_zone": "corp-eng", "path": mount_path, "target_zone": zone_id},
-            api_key=api_key,
-        )
-        if "error" in mt:
-            msg = str(mt["error"].get("message", ""))
-            assert "already" in msg.lower(), f"mount: {mt}"
 
         doc = f"{mount_path}/doc.txt"
         body = f"witness-{uid}"
@@ -1991,22 +2026,26 @@ class TestZoneSnapshotExportImport:
         grpc1 = cluster["grpc1"]
         zone_id = f"snap-{uid}"
 
-        _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        _grpc_call(
-            cluster["grpc2"], "federation_create_zone", {"zone_id": zone_id}, api_key=api_key
-        )
-        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
-
+        # Combined create+mount via syscall on both nodes — single
+        # sys_setattr DT_MOUNT call replaces the prior pair of
+        # federation_create_zone (one per node) plus federation_mount.
+        DT_MOUNT_T = 2
         mount_path = f"/corp/eng/snap-{uid}-mnt"
         mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
         assert "error" not in mk
-        mnt = _grpc_call(
-            grpc1,
-            "federation_mount",
-            {"parent_zone": "corp-eng", "path": mount_path, "target_zone": zone_id},
-            api_key=api_key,
-        )
-        assert "error" not in mnt, f"mount failed: {mnt}"
+        for target in [grpc1, cluster["grpc2"]]:
+            r = _grpc_call(
+                target,
+                "sys_setattr",
+                {"path": mount_path, "entry_type": DT_MOUNT_T, "zone_id": zone_id},
+                api_key=api_key,
+                timeout=20,
+            )
+            if "error" in r:
+                msg = str(r["error"].get("message", "")).lower()
+                if "already" not in msg and "dt_mount" not in msg:
+                    pytest.fail(f"sys_setattr DT_MOUNT on {target}: {r}")
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
 
         data_path = f"{mount_path}/doc.txt"
         wr = _grpc_call(
@@ -2048,26 +2087,31 @@ class TestZoneRemovalWithActiveMounts:
         grpc2 = cluster["grpc2"]
         zone_id = f"cleanup-{uid}"
 
-        # Create on BOTH nodes so the Raft zone group has all peers and
-        # subsequent writes/removes reach quorum (mirrors existing
-        # TestZoneLifecycle.test_zones_visible_on_both_nodes pattern).
-        _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        _grpc_call(grpc2, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
-        _wait_zone_ready(grpc2, zone_id, api_key, timeout=15)
-
+        # Combined create+mount via syscall on both nodes for each of
+        # the two mount paths.  sys_setattr DT_MOUNT auto-creates the
+        # underlying raft zone the first time; subsequent calls
+        # against the same zone_id are idempotent (zone already
+        # exists, just attaches the new mount).
+        DT_MOUNT_T = 2
         mnt_a = f"/corp/cleanup-a-{uid}"
         mnt_b = f"/family/cleanup-b-{uid}"
-        for parent_zone, path in [("corp", mnt_a), ("family", mnt_b)]:
+        for path in [mnt_a, mnt_b]:
             mk = _grpc_call(grpc1, "mkdir", {"path": path, "parents": True}, api_key=api_key)
             assert "error" not in mk
-            r = _grpc_call(
-                grpc1,
-                "federation_mount",
-                {"parent_zone": parent_zone, "path": path, "target_zone": zone_id},
-                api_key=api_key,
-            )
-            assert "error" not in r, f"mount {path} failed: {r}"
+            for target in [grpc1, grpc2]:
+                r = _grpc_call(
+                    target,
+                    "sys_setattr",
+                    {"path": path, "entry_type": DT_MOUNT_T, "zone_id": zone_id},
+                    api_key=api_key,
+                    timeout=20,
+                )
+                if "error" in r:
+                    msg = str(r["error"].get("message", "")).lower()
+                    if "already" not in msg and "dt_mount" not in msg:
+                        pytest.fail(f"sys_setattr DT_MOUNT({path}) on {target}: {r}")
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
+        _wait_zone_ready(grpc2, zone_id, api_key, timeout=15)
 
         probe = f"{mnt_a}/probe.txt"
         wr = _grpc_call(grpc1, "write", {"path": probe, "content": f"probe-{uid}"}, api_key=api_key)
@@ -2641,26 +2685,30 @@ class TestNewTeamOnboarding:
         grpc2 = cluster["grpc2"]
         zone_id = f"team-{uid}"
 
-        _grpc_call(grpc1, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        _grpc_call(grpc2, "federation_create_zone", {"zone_id": zone_id}, api_key=api_key)
-        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
-        _wait_zone_ready(grpc2, zone_id, api_key, timeout=15)
-
+        # Combined create+mount via syscall on both nodes.  Single
+        # sys_setattr DT_MOUNT call replaces federation_create_zone +
+        # federation_mount.  Raise the timeout: a freshly-created
+        # zone may wait for election to complete before the
+        # i_links_count bump lands.  Default 10s is tight for 3-voter
+        # elections.
+        DT_MOUNT_T = 2
         mount_path = f"/corp/eng/team-x-{uid}"
         mk = _grpc_call(grpc1, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
         assert "error" not in mk
-        # Raise timeout: federation_mount on a freshly-created zone may
-        # wait for election to complete before the i_links_count bump
-        # lands. Default 10s is tight for 3-voter elections + propose
-        # commit when tests wake zone-ready back-to-back.
-        mnt = _grpc_call(
-            grpc1,
-            "federation_mount",
-            {"parent_zone": "corp-eng", "path": mount_path, "target_zone": zone_id},
-            api_key=api_key,
-            timeout=30,
-        )
-        assert "error" not in mnt, f"mount failed: {mnt}"
+        for target in [grpc1, grpc2]:
+            r = _grpc_call(
+                target,
+                "sys_setattr",
+                {"path": mount_path, "entry_type": DT_MOUNT_T, "zone_id": zone_id},
+                api_key=api_key,
+                timeout=30,
+            )
+            if "error" in r:
+                msg = str(r["error"].get("message", "")).lower()
+                if "already" not in msg and "dt_mount" not in msg:
+                    pytest.fail(f"sys_setattr DT_MOUNT({mount_path}) on {target}: {r}")
+        _wait_zone_ready(grpc1, zone_id, api_key, timeout=15)
+        _wait_zone_ready(grpc2, zone_id, api_key, timeout=15)
 
         for i in range(10):
             p = f"{mount_path}/projects/proj1/docs/f{i}.txt"

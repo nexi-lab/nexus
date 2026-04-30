@@ -142,6 +142,8 @@ def test_compute_from_tiger_bitmap_calls_get_accessible_paths():
 
     tiger_cache = MagicMock()
     tiger_cache.get_accessible_paths.return_value = {"/a/b/c", "/a/b/d"}
+
+    tiger_cache.get_accessible_paths_with_status.return_value = ({"/a/b/c", "/a/b/d"}, True)
     # If old code runs it calls get_accessible_resources — return empty set so
     # the wrong path produces the wrong (False) answer.
     tiger_cache.get_accessible_resources.return_value = set()
@@ -150,7 +152,7 @@ def test_compute_from_tiger_bitmap_calls_get_accessible_paths():
     result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
 
     assert result is True
-    tiger_cache.get_accessible_paths.assert_called_once_with(
+    tiger_cache.get_accessible_paths_with_status.assert_called_once_with(
         subject_type="user",
         subject_id="u1",
         permission="read",
@@ -167,6 +169,8 @@ def test_compute_from_tiger_bitmap_cache_miss_returns_none():
     tiger_cache = MagicMock()
     tiger_cache.get_accessible_paths.return_value = None
 
+    tiger_cache.get_accessible_paths_with_status.return_value = (None, True)
+
     cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
     result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
     assert result is None
@@ -180,6 +184,8 @@ def test_compute_from_tiger_bitmap_no_accessible_returns_false():
     tiger_cache = MagicMock()
     tiger_cache.get_accessible_paths.return_value = set()
 
+    tiger_cache.get_accessible_paths_with_status.return_value = (set(), True)
+
     cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
     result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
     assert result is False
@@ -192,6 +198,8 @@ def test_compute_from_tiger_bitmap_no_descendants_returns_false():
 
     tiger_cache = MagicMock()
     tiger_cache.get_accessible_paths.return_value = {"/x/y/z"}
+
+    tiger_cache.get_accessible_paths_with_status.return_value = ({"/x/y/z"}, True)
 
     cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
     result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
@@ -210,6 +218,8 @@ def test_compute_batch_visibility_correct_results():
 
     tiger_cache = MagicMock()
     tiger_cache.get_accessible_paths.return_value = {"/a/b/c", "/x/y/z"}
+
+    tiger_cache.get_accessible_paths_with_status.return_value = ({"/a/b/c", "/x/y/z"}, True)
     tiger_cache.get_accessible_resources.return_value = set()  # wrong result if called
 
     cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
@@ -225,6 +235,8 @@ def test_compute_batch_visibility_cache_miss_returns_empty():
 
     tiger_cache = MagicMock()
     tiger_cache.get_accessible_paths.return_value = None
+
+    tiger_cache.get_accessible_paths_with_status.return_value = (None, True)
 
     cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
     result = cache.compute_batch_visibility("z1", "user", "u1", ["/a/b"], "read")
@@ -252,6 +264,8 @@ def test_has_access_tiger_fallback_uses_get_accessible_paths():
 
     tiger_cache = MagicMock()
     tiger_cache.get_accessible_paths.return_value = {"/workspace/joe/file.txt"}
+
+    tiger_cache.get_accessible_paths_with_status.return_value = ({"/workspace/joe/file.txt"}, True)
 
     # spec=[] means only explicitly-set attributes exist.
     # hasattr() returns False for everything else, so the faster optimisation

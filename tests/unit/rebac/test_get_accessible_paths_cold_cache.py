@@ -423,6 +423,128 @@ def test_orphan_log_lru_refresh_keeps_hot_keys():
     )
 
 
+def test_compute_from_tiger_bitmap_skips_negative_cache_on_partial():
+    """Issue #3951 round 9: when get_accessible_paths_with_status returns
+    (paths, fully_resolved=False) and the prefix doesn't match, compute
+    must return None (not False) so callers fall through to the slow
+    path. Otherwise a transient resource_map orphan would cache False
+    for a directory that may have a real accessible descendant via the
+    unresolved int_id."""
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    # Partial resolution: path set is non-empty but does NOT match the
+    # queried prefix; fully_resolved=False means an orphan int_id might
+    # have been the real match.
+    tiger_cache.get_accessible_paths_with_status.return_value = (
+        {"/other/file.txt"},
+        False,
+    )
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    result = cache.compute_from_tiger_bitmap("zone1", "user", "alice", "/workspace", "read")
+
+    assert result is None  # don't cache False under partial resolution
+    assert ("zone1", "user", "alice", "/workspace") not in cache._cache
+
+
+def test_compute_from_tiger_bitmap_caches_true_even_when_partial():
+    """Positive results under partial resolution are still trustworthy:
+    a path matched the prefix, that match is real regardless of any
+    other unresolved int_ids."""
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths_with_status.return_value = (
+        {"/workspace/data/file.txt"},
+        False,  # partial — but the match is still real
+    )
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    result = cache.compute_from_tiger_bitmap("zone1", "user", "alice", "/workspace", "read")
+
+    assert result is True  # positive match cached
+    assert cache._cache[("zone1", "user", "alice", "/workspace")].visible is True
+
+
+def test_compute_batch_visibility_skips_negative_results_on_partial():
+    """Batch variant of the same invariant: under partial resolution,
+    False entries are dropped from the result so the caller falls back
+    per-dir; True entries (real matches) are kept and cached."""
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths_with_status.return_value = (
+        {"/workspace/data/file.txt"},  # matches /workspace, NOT /other
+        False,  # partial — orphan int_id might have matched /other
+    )
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    results = cache.compute_batch_visibility(
+        "zone1", "user", "alice", ["/workspace", "/other"], "read"
+    )
+
+    # /workspace cached True (real match); /other absent (skipped, partial)
+    assert results == {"/workspace": True}
+    assert ("zone1", "user", "alice", "/workspace") in cache._cache
+    assert ("zone1", "user", "alice", "/other") not in cache._cache
+
+
+def test_get_accessible_paths_with_status_signals_partial():
+    """The new method must return fully_resolved=False on orphan IDs."""
+    cache = _make_cache()
+    rm = MagicMock()
+    rm.bulk_get_resource_ids.return_value = {1: ("file", "/a/file.txt")}
+    cache._resource_map = rm
+    cache.get_accessible_int_ids = MagicMock(return_value={1, 2})  # 2 is orphan
+
+    paths, fully_resolved = cache.get_accessible_paths_with_status(
+        subject_type="user",
+        subject_id="alice",
+        permission="read",
+        resource_type="file",
+    )
+
+    assert paths == {"/a/file.txt"}
+    assert fully_resolved is False
+
+
+def test_get_accessible_paths_with_status_fully_resolved():
+    """No orphans → fully_resolved=True."""
+    cache = _make_cache()
+    rm = MagicMock()
+    rm.bulk_get_resource_ids.return_value = {1: ("file", "/a"), 2: ("file", "/b")}
+    cache._resource_map = rm
+    cache.get_accessible_int_ids = MagicMock(return_value={1, 2})
+
+    paths, fully_resolved = cache.get_accessible_paths_with_status(
+        subject_type="user",
+        subject_id="alice",
+        permission="read",
+        resource_type="file",
+    )
+
+    assert paths == {"/a", "/b"}
+    assert fully_resolved is True
+
+
+def test_get_accessible_paths_with_status_no_bitmap():
+    """No bitmap returns (None, True) — caller treats as cache miss."""
+    cache = _make_cache()
+    cache._resource_map = MagicMock()
+    cache.get_accessible_int_ids = MagicMock(return_value=None)
+
+    paths, fully_resolved = cache.get_accessible_paths_with_status(
+        subject_type="user",
+        subject_id="alice",
+        permission="read",
+        resource_type="file",
+    )
+
+    assert paths is None
+    assert fully_resolved is True
+
+
 def test_orphan_log_dedupe_threadsafe():
     """Concurrent orphan calls must not duplicate-emit the WARNING."""
     import logging

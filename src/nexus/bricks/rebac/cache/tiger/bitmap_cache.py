@@ -729,8 +729,9 @@ class TigerCache:
     ) -> set[str] | None:
         """Get all accessible resource paths from bitmap (for SQL WHERE clause).
 
-        Converts integer IDs from the bitmap back to string paths using the resource map.
-        This is used for predicate pushdown to filter at the database level.
+        Returns the (possibly partial) path set; callers that need to
+        distinguish fully-resolved from partial results should use
+        get_accessible_paths_with_status() instead.
 
         Args:
             subject_type: Type of subject (e.g., "user", "agent")
@@ -741,6 +742,31 @@ class TigerCache:
         Returns:
             Set of paths the subject can access, or None if no bitmap cached.
         """
+        paths, _ = self.get_accessible_paths_with_status(
+            subject_type, subject_id, permission, resource_type, zone_id=zone_id
+        )
+        return paths
+
+    def get_accessible_paths_with_status(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        zone_id: str = "",
+    ) -> tuple[set[str] | None, bool]:
+        """Get accessible paths with a fully-resolved flag (Issue #3951).
+
+        Returns:
+            (paths, fully_resolved):
+            - (None, True): no bitmap cached — caller treats as cache miss.
+            - (set(), True): bitmap cached but empty — authoritative no-access.
+            - (set(...), True): bitmap cached, every int_id resolved.
+            - (set(...), False): bitmap cached but resource_map could not
+              resolve every int_id (orphan/lag/race). The set may be a
+              partial view; callers that cache negative results should
+              treat False results as indeterminate and skip caching.
+        """
         int_ids = self.get_accessible_int_ids(
             subject_type,
             subject_id,
@@ -749,7 +775,7 @@ class TigerCache:
             zone_id=zone_id,
         )
         if int_ids is None:
-            return None
+            return None, True
 
         # Convert int IDs back to paths using resource map.
         # Use bulk_get_resource_ids() so cold in-memory maps fall back to
@@ -758,13 +784,12 @@ class TigerCache:
         id_to_key = self._resource_map.bulk_get_resource_ids(int_ids)
 
         # Orphaned int IDs (bitmap row exists but resource_map row deleted —
-        # e.g. cleanup race, replication lag) are silently dropped, matching
-        # the pre-refactor get_resource_id-per-int_id loop. Log when it
-        # happens so the degradation is observable; do NOT return None
-        # because callers (enforcer.has_accessible_descendants_batch) treat
-        # None as "no bitmap = fail-closed all-deny", which would suppress
-        # every prefix in a batch on a single stale row.
+        # e.g. cleanup race, replication lag) are silently dropped from the
+        # path set. The fully_resolved flag in the tuple return surfaces
+        # this so visibility callers can avoid caching a False result that
+        # may flip back to True once the resource_map repairs.
         unresolved = len(int_ids) - len(id_to_key)
+        fully_resolved = unresolved == 0
         if unresolved > 0:
             dedupe_key = (zone_id, subject_type, subject_id, permission, resource_type)
             now = time.monotonic()
@@ -809,7 +834,7 @@ class TigerCache:
             logger.debug(
                 "[TIGER-PUSHDOWN] Converted %d int IDs to %d paths", len(int_ids), len(paths)
             )
-        return paths
+        return paths, fully_resolved
 
     def _load_from_db(
         self, key: CacheKey, conn: "Connection | None" = None, skip_l2: bool = False

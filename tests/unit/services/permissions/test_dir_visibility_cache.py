@@ -444,6 +444,8 @@ class TestBitmapComputation:
         tiger_cache = MagicMock()
         tiger_cache.get_accessible_paths.return_value = set()
 
+        tiger_cache.get_accessible_paths_with_status.return_value = (set(), True)
+
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
         result = cache.compute_from_tiger_bitmap("zone1", "user", "alice", "/workspace")
@@ -456,10 +458,9 @@ class TestBitmapComputation:
     def test_returns_true_when_descendant_found(self):
         """Test returns True when accessible descendant is found."""
         tiger_cache = MagicMock()
-        tiger_cache.get_accessible_paths.return_value = {
-            "/workspace/data/file1.txt",
-            "/other/file2.txt",
-        }
+        paths = {"/workspace/data/file1.txt", "/other/file2.txt"}
+        tiger_cache.get_accessible_paths.return_value = paths
+        tiger_cache.get_accessible_paths_with_status.return_value = (paths, True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -477,6 +478,8 @@ class TestBitmapComputation:
         """Test that bitmap computation result is cached."""
         tiger_cache = MagicMock()
         tiger_cache.get_accessible_paths.return_value = {"/workspace/file.txt"}
+
+        tiger_cache.get_accessible_paths_with_status.return_value = ({"/workspace/file.txt"}, True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -496,6 +499,8 @@ class TestBitmapComputation:
         tiger_cache = MagicMock()
         tiger_cache.get_accessible_paths.return_value = {"/workspace/file.txt"}
 
+        tiger_cache.get_accessible_paths_with_status.return_value = ({"/workspace/file.txt"}, True)
+
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
         result = cache.compute_from_tiger_bitmap("zone1", "user", "alice", "/")
@@ -508,6 +513,8 @@ class TestBitmapComputation:
         tiger_cache = MagicMock()
         tiger_cache.get_accessible_paths.return_value = {"/workspace"}
 
+        tiger_cache.get_accessible_paths_with_status.return_value = ({"/workspace"}, True)
+
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
         result = cache.compute_from_tiger_bitmap("zone1", "user", "alice", "/workspace")
@@ -518,10 +525,9 @@ class TestBitmapComputation:
     def test_no_descendants_caches_false(self):
         """Test that finding no descendants caches False result."""
         tiger_cache = MagicMock()
-        tiger_cache.get_accessible_paths.return_value = {
-            "/other/file1.txt",
-            "/different/file2.txt",
-        }
+        paths = {"/other/file1.txt", "/different/file2.txt"}
+        tiger_cache.get_accessible_paths.return_value = paths
+        tiger_cache.get_accessible_paths_with_status.return_value = (paths, True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 
@@ -596,6 +602,7 @@ class TestMetrics:
         """Test that bitmap computations are tracked."""
         tiger_cache = MagicMock()
         tiger_cache.get_accessible_resources.return_value = []
+        tiger_cache.get_accessible_paths_with_status.return_value = (set(), True)
 
         cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
 

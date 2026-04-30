@@ -201,7 +201,7 @@ class DirectoryVisibilityCache:
 
         self._bitmap_computes += 1
 
-        accessible_paths = self._tiger_cache.get_accessible_paths(
+        accessible_paths, fully_resolved = self._tiger_cache.get_accessible_paths_with_status(
             subject_type=subject_type,
             subject_id=subject_id,
             permission=permission,
@@ -212,16 +212,24 @@ class DirectoryVisibilityCache:
         if accessible_paths is None:
             return None  # cache miss — caller falls through to slow path
 
-        if not accessible_paths:
-            self.set_visible(
-                zone_id, subject_type, subject_id, dir_path, False, "no_accessible_resources"
-            )
-            return False
-
         from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
 
-        result = any_path_under_prefix(accessible_paths, dir_path)
-        reason = f"bitmap_prefix:{dir_path}" if result else "no_descendants_in_bitmap"
+        result = any_path_under_prefix(accessible_paths, dir_path) if accessible_paths else False
+
+        # Issue #3951: when the resource_map could not resolve every int_id
+        # (orphan/lag/race), a False result may be a transient false-negative.
+        # Skip negative caching and return None so the caller falls through
+        # to the authoritative slow path; cache only positive results (those
+        # are backed by a real resolved path that matched the prefix).
+        if not result and not fully_resolved:
+            return None
+
+        if not accessible_paths:
+            reason = "no_accessible_resources"
+        elif result:
+            reason = f"bitmap_prefix:{dir_path}"
+        else:
+            reason = "no_descendants_in_bitmap"
         self.set_visible(zone_id, subject_type, subject_id, dir_path, result, reason)
         logger.debug("[DirVisCache] BITMAP_COMPUTE: %s visible=%s", dir_path, result)
         return result
@@ -254,7 +262,7 @@ class DirectoryVisibilityCache:
         if not self._tiger_cache:
             return {}
 
-        accessible_paths = self._tiger_cache.get_accessible_paths(
+        accessible_paths, fully_resolved = self._tiger_cache.get_accessible_paths_with_status(
             subject_type=subject_type,
             subject_id=subject_id,
             permission=permission,
@@ -265,21 +273,25 @@ class DirectoryVisibilityCache:
         if accessible_paths is None:
             return {}  # cache miss
 
-        if not accessible_paths:
-            results: dict[str, bool] = {}
-            for dp in dir_paths:
-                self.set_visible(
-                    zone_id, subject_type, subject_id, dp, False, "no_accessible_resources"
-                )
-                results[dp] = False
-            return results
-
         from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
 
-        visible_flags = batch_paths_under_prefixes(accessible_paths, dir_paths)
-        results = {}
+        visible_flags = (
+            batch_paths_under_prefixes(accessible_paths, dir_paths)
+            if accessible_paths
+            else [False] * len(dir_paths)
+        )
+        results: dict[str, bool] = {}
         for dp, visible in zip(dir_paths, visible_flags, strict=True):
-            reason = "batch_bitmap" if visible else "no_descendants_in_bitmap"
+            # Issue #3951: as in compute_from_tiger_bitmap, only cache True
+            # when the resource_map fully resolved. False under partial
+            # resolution is dropped from the result so the caller falls
+            # through to per-dir authoritative checks.
+            if not visible and not fully_resolved:
+                continue
+            if not accessible_paths:
+                reason = "no_accessible_resources"
+            else:
+                reason = "batch_bitmap" if visible else "no_descendants_in_bitmap"
             self.set_visible(zone_id, subject_type, subject_id, dp, visible, reason)
             results[dp] = visible
         return results

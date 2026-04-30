@@ -83,7 +83,17 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.ListPendingResponse:
         await self._auth.authorize(context, "approvals:read")
-        rows = await self._svc.list_pending(zone_id=request.zone_id or None)
+        # Zone isolation (#3790 follow-up): an empty zone_id would return
+        # rows from every zone. The current ReBAC namespace is
+        # ``("approvals", "global")`` (flat) — so once a caller is granted
+        # ``approvals:read`` they could otherwise see all zones.
+        # TODO(#3790): graduate to per-zone ReBAC objects
+        # ``("approvals", zone_id)`` so a future "global admin" capability
+        # can re-allow empty zone_id explicitly.
+        if not request.zone_id:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "zone_id is required")
+            raise  # unreachable; abort raises.
+        rows = await self._svc.list_pending(zone_id=request.zone_id)
         return approvals_pb2.ListPendingResponse(requests=[_to_pb(r) for r in rows])
 
     async def Get(
@@ -96,6 +106,11 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         if row is None:
             await context.abort(grpc.StatusCode.NOT_FOUND, "request not found")
             raise  # unreachable; abort raises. Keeps mypy happy on flow.
+        # TODO(#3790): per-zone ReBAC re-check against ``row.zone_id``.
+        # Today the ReBAC namespace is flat ``("approvals", "global")`` so
+        # any caller granted ``approvals:read`` can read across zones.
+        # Operator awareness is the safety today; a future change should
+        # check capability against ``("approvals", row.zone_id)``.
         return _to_pb(row)
 
     async def Decide(
@@ -110,6 +125,8 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         except ValueError:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "bad decision/scope")
             raise  # unreachable; abort raises. Keeps mypy happy on flow.
+        # TODO(#3790): per-zone ReBAC re-check against the looked-up
+        # row's zone_id. Same flat-namespace caveat as Get.
         try:
             row = await self._svc.decide(
                 request_id=request.request_id,
@@ -132,6 +149,8 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         await self._auth.authorize(context, "approvals:decide")
         # Server-side Cancel is a no-op for unknown ids; resolves to OK by design.
         # Logging the request_id keeps the field referenced and aids diagnostics.
+        # TODO(#3790): when Cancel becomes a real terminal transition,
+        # re-check ReBAC against the row's zone_id (see Decide).
         logger.debug("approvals.cancel id=%s", request.request_id)
         return approvals_pb2.CancelResponse()
 
@@ -141,8 +160,12 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         context: grpc.aio.ServicerContext,
     ) -> AsyncIterator[approvals_pb2.ApprovalEvent]:
         await self._auth.authorize(context, "approvals:read")
+        # Zone isolation (#3790 follow-up) — see ListPending for rationale.
+        if not request.zone_id:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "zone_id is required")
+            raise  # unreachable.
         try:
-            async for ev in self._svc.watch(zone_id=request.zone_id or None):
+            async for ev in self._svc.watch(zone_id=request.zone_id):
                 yield approvals_pb2.ApprovalEvent(
                     type=ev.type,
                     request_id=ev.request_id,

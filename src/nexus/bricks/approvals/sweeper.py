@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
+from typing import Any
 
 from nexus.bricks.approvals.repository import ApprovalRepository
 
@@ -17,7 +18,7 @@ class Sweeper:
         self,
         repository: ApprovalRepository,
         interval_seconds: float,
-        on_expired: Callable[[list[str]], None],
+        on_expired: Callable[[list[tuple[str, str]]], Coroutine[Any, Any, None]],
     ) -> None:
         self._repo = repository
         self._interval = interval_seconds
@@ -41,9 +42,9 @@ class Sweeper:
     async def _run(self) -> None:
         while not self._stop_event.is_set():
             try:
-                ids = await self._repo.sweep_expired(now=datetime.now(UTC))
-                if ids:
-                    self._on_expired(ids)
+                rows = await self._repo.sweep_expired(now=datetime.now(UTC))
+                if rows:
+                    await self._on_expired(rows)
             except Exception:
                 logger.exception("sweeper iteration failed")
             try:

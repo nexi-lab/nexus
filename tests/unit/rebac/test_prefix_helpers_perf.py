@@ -44,20 +44,25 @@ def test_any_path_under_prefix_50k_paths_under_500ms():
     )
 
 
-def test_any_path_under_prefix_python_fallback_50k_paths_under_500ms(monkeypatch):
-    import nexus.bricks.rebac.cache._prefix_helpers as ph
+def test_any_path_under_prefix_50k_paths_early_match_under_50ms():
+    """Common hot-path case: matching descendant near the front of the list.
 
-    monkeypatch.setattr(ph, "_rust_any", None)
+    Python `any(startswith)` short-circuits on first match — should be far
+    under the no-match worst case.
+    """
+    from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
 
     paths = _make_paths(50_000)
-    prefix = "/workspace/user_999"
+    # Prepend a guaranteed match so early-exit fires immediately
+    paths = ["/workspace/early_match/file.txt", *paths]
+    prefix = "/workspace/early_match"
 
     start = time.perf_counter()
-    result = ph.any_path_under_prefix(paths, prefix)
+    result = any_path_under_prefix(paths, prefix)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     assert result is True
-    assert elapsed_ms < 500, f"Python fallback over 50K paths took {elapsed_ms:.1f}ms (limit 500ms)"
+    assert elapsed_ms < 50, f"early-exit over 50K paths took {elapsed_ms:.1f}ms (limit 50ms)"
 
 
 # ---------------------------------------------------------------------------

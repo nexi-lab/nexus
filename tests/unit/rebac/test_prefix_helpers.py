@@ -105,10 +105,11 @@ def test_batch_paths_under_prefixes_result_length_matches_prefixes():
 # ---------------------------------------------------------------------------
 
 
-def test_any_path_under_prefix_python_fallback(monkeypatch):
+def test_any_path_under_prefix_python_fallback():
+    """any_path_under_prefix is intentionally Python-only (round 8) for early
+    exit; this test pins the semantic against any future Rust regression."""
     import nexus.bricks.rebac.cache._prefix_helpers as ph
 
-    monkeypatch.setattr(ph, "_rust_any", None)
     assert ph.any_path_under_prefix(["/a/b/c"], "/a/b") is True
     assert ph.any_path_under_prefix(["/a/bc"], "/a/b") is False
 
@@ -121,10 +122,10 @@ def test_batch_paths_under_prefixes_python_fallback(monkeypatch):
     assert result == [True, False]
 
 
-def test_python_fallback_no_partial_match(monkeypatch):
+def test_python_no_partial_match():
+    """Confirm "/a/bc" does NOT match prefix "/a/b" (descendant match needs /)."""
     import nexus.bricks.rebac.cache._prefix_helpers as ph
 
-    monkeypatch.setattr(ph, "_rust_any", None)
     assert ph.any_path_under_prefix(["/a/bc"], "/a/b") is False
 
 

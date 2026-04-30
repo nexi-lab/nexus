@@ -153,14 +153,22 @@ class TigerCache:
 
         # Rate-limit orphan-id WARNING logs (Issue #3951): a stale resource_map
         # row in a popular subject's bitmap would otherwise log on every auth
-        # check. Dedupe by (zone, subject_type, subject_id, permission, type)
-        # with a 60s window; first occurrence per window emits WARNING, repeats
-        # downgrade to DEBUG. Bounded LRU + dedicated lock so a broad orphan
-        # condition across many subjects cannot retain unbounded state and
-        # concurrent calls cannot duplicate-emit WARNINGs.
+        # check. Two-level limiter:
+        # - per-key 60s dedupe (zone,subject_type,subject_id,permission,type)
+        #   in a true LRU OrderedDict — refreshing a key moves it to the end
+        # - global cap of 16 WARNINGs per 60s window across all keys, so a
+        #   high-cardinality orphan event (many subjects) cannot flood logs;
+        #   excess emissions drop to DEBUG.
         self._orphan_log_window_s = 60.0
         self._orphan_log_max_keys = 1024
-        self._orphan_log_last_emit: dict[tuple[str, str, str, str, str], float] = {}
+        self._orphan_log_global_cap = 16
+        from collections import OrderedDict as _OrderedDict
+
+        self._orphan_log_last_emit: "_OrderedDict[tuple[str, str, str, str, str], float]" = (
+            _OrderedDict()
+        )
+        self._orphan_log_global_window_start = 0.0
+        self._orphan_log_global_count = 0
         self._orphan_log_lock = threading.Lock()
 
     @property
@@ -761,19 +769,25 @@ class TigerCache:
             dedupe_key = (zone_id, subject_type, subject_id, permission, resource_type)
             now = time.monotonic()
             with self._orphan_log_lock:
+                # Reset global window if the previous one expired.
+                if (now - self._orphan_log_global_window_start) >= self._orphan_log_window_s:
+                    self._orphan_log_global_window_start = now
+                    self._orphan_log_global_count = 0
+
                 last = self._orphan_log_last_emit.get(dedupe_key, 0.0)
-                if (now - last) >= self._orphan_log_window_s:
+                per_key_due = (now - last) >= self._orphan_log_window_s
+                under_global_cap = self._orphan_log_global_count < self._orphan_log_global_cap
+
+                if per_key_due and under_global_cap:
                     level = logging.WARNING
-                    # Bound dedupe map: LRU-evict oldest insertion-order
-                    # entry if at cap and this is a new key. Python 3.7+
-                    # dicts preserve insertion order.
-                    if (
-                        dedupe_key not in self._orphan_log_last_emit
-                        and len(self._orphan_log_last_emit) >= self._orphan_log_max_keys
-                    ):
-                        oldest = next(iter(self._orphan_log_last_emit))
-                        self._orphan_log_last_emit.pop(oldest, None)
+                    # True LRU: pop existing key so the re-insert lands at
+                    # the end. Bound to max_keys with FIFO eviction.
+                    if dedupe_key in self._orphan_log_last_emit:
+                        self._orphan_log_last_emit.pop(dedupe_key)
+                    elif len(self._orphan_log_last_emit) >= self._orphan_log_max_keys:
+                        self._orphan_log_last_emit.popitem(last=False)  # evict oldest
                     self._orphan_log_last_emit[dedupe_key] = now
+                    self._orphan_log_global_count += 1
                 else:
                     level = logging.DEBUG
             logger.log(

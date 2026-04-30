@@ -11,6 +11,8 @@ trips) so a large bitmap doesn't saturate the DB on hot auth paths.
 
 from __future__ import annotations
 
+import threading as _threading
+from collections import OrderedDict
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,17 +20,24 @@ import pytest
 pytest.importorskip("pyroaring")
 
 
-def test_get_accessible_paths_cold_int_to_uuid_uses_bulk_fallback():
-    """Cold in-memory map must resolve all int IDs via bulk_get_resource_ids."""
+def _make_cache(*, max_keys: int = 1024, global_cap: int = 16):
+    """Construct a TigerCache stub with all orphan-log attrs initialised."""
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
     cache = TigerCache.__new__(TigerCache)
     cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 1024
-    cache._orphan_log_last_emit = {}
-    import threading as _threading
-
+    cache._orphan_log_max_keys = max_keys
+    cache._orphan_log_global_cap = global_cap
+    cache._orphan_log_last_emit = OrderedDict()
+    cache._orphan_log_global_window_start = 0.0
+    cache._orphan_log_global_count = 0
     cache._orphan_log_lock = _threading.Lock()
+    return cache
+
+
+def test_get_accessible_paths_cold_int_to_uuid_uses_bulk_fallback():
+    """Cold in-memory map must resolve all int IDs via bulk_get_resource_ids."""
+    cache = _make_cache()
 
     resource_map = MagicMock()
     resource_map._int_to_uuid = {}  # cold L1 — empty in-memory map
@@ -54,15 +63,7 @@ def test_get_accessible_paths_cold_int_to_uuid_uses_bulk_fallback():
 
 def test_get_accessible_paths_filters_wrong_resource_type():
     """bulk_get_resource_ids may include other resource_types — filter them out."""
-    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-
-    cache = TigerCache.__new__(TigerCache)
-    cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 1024
-    cache._orphan_log_last_emit = {}
-    import threading as _threading
-
-    cache._orphan_log_lock = _threading.Lock()
+    cache = _make_cache()
     resource_map = MagicMock()
     resource_map.bulk_get_resource_ids.return_value = {
         1: ("file", "/a/file.txt"),
@@ -83,15 +84,7 @@ def test_get_accessible_paths_filters_wrong_resource_type():
 
 def test_get_accessible_paths_returns_none_when_no_bitmap():
     """When get_accessible_int_ids returns None (no bitmap cached), pass through."""
-    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-
-    cache = TigerCache.__new__(TigerCache)
-    cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 1024
-    cache._orphan_log_last_emit = {}
-    import threading as _threading
-
-    cache._orphan_log_lock = _threading.Lock()
+    cache = _make_cache()
     cache._resource_map = MagicMock()
     cache.get_accessible_int_ids = MagicMock(return_value=None)
 
@@ -117,15 +110,7 @@ def test_get_accessible_paths_drops_orphan_ids_silently(caplog):
     """
     import logging
 
-    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-
-    cache = TigerCache.__new__(TigerCache)
-    cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 1024
-    cache._orphan_log_last_emit = {}
-    import threading as _threading
-
-    cache._orphan_log_lock = _threading.Lock()
+    cache = _make_cache()
     resource_map = MagicMock()
     # int_id 2 unresolvable (DB also has no row) — orphan / partial resolution
     resource_map.bulk_get_resource_ids.return_value = {1: ("file", "/a/file.txt")}
@@ -153,15 +138,7 @@ def test_get_accessible_paths_returns_empty_when_all_unresolved():
     incorrectly flip the enforcer to fail-closed-all-deny on a single
     stale row.
     """
-    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-
-    cache = TigerCache.__new__(TigerCache)
-    cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 1024
-    cache._orphan_log_last_emit = {}
-    import threading as _threading
-
-    cache._orphan_log_lock = _threading.Lock()
+    cache = _make_cache()
     resource_map = MagicMock()
     resource_map.bulk_get_resource_ids.return_value = {}
     cache._resource_map = resource_map
@@ -179,15 +156,7 @@ def test_get_accessible_paths_returns_empty_when_all_unresolved():
 
 def test_get_accessible_paths_large_bitmap_single_bulk_call():
     """50K cold int IDs must produce one bulk_get_resource_ids call, not 50K."""
-    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-
-    cache = TigerCache.__new__(TigerCache)
-    cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 1024
-    cache._orphan_log_last_emit = {}
-    import threading as _threading
-
-    cache._orphan_log_lock = _threading.Lock()
+    cache = _make_cache()
     resource_map = MagicMock()
     resource_map.bulk_get_resource_ids.return_value = {
         i: ("file", f"/workspace/file_{i}.txt") for i in range(50_000)
@@ -245,15 +214,7 @@ def test_orphan_warning_is_rate_limited(caplog):
     """Repeated orphan-id calls within the dedupe window emit DEBUG, not WARNING."""
     import logging
 
-    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-
-    cache = TigerCache.__new__(TigerCache)
-    cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 1024
-    cache._orphan_log_last_emit = {}
-    import threading as _threading
-
-    cache._orphan_log_lock = _threading.Lock()
+    cache = _make_cache()
     rm = MagicMock()
     rm.bulk_get_resource_ids.return_value = {1: ("file", "/a")}
     cache._resource_map = rm
@@ -314,6 +275,22 @@ def test_prefix_helpers_disabled_when_group_fails(monkeypatch):
     assert rc._get("batch_prefix_check") is None
 
 
+def test_rust_hash_available_false_when_rust_unavailable():
+    """Round 7: RUST_HASH_AVAILABLE must follow RUST_AVAILABLE.
+
+    Earlier code set RUST_HASH_AVAILABLE solely from the hash group's
+    own symbol presence — leaking a True flag even when stale-core had
+    forced RUST_AVAILABLE False. Downstream callers (e.g. nexus.core
+    .hash_fast) copy that flag into their own state and would falsely
+    report Rust-hash capability.
+    """
+    import nexus._rust_compat as rc
+
+    # Invariant: RUST_HASH_AVAILABLE implies RUST_AVAILABLE.
+    if not rc.RUST_AVAILABLE:
+        assert rc.RUST_HASH_AVAILABLE is False
+
+
 def test_prefix_helpers_disabled_when_core_fails():
     """Issue #3951 round 6: when core ABI fails, ALL groups must be disabled.
 
@@ -339,15 +316,7 @@ def test_prefix_helpers_disabled_when_core_fails():
 
 def test_orphan_log_dedupe_map_is_bounded():
     """Many distinct subjects must not retain unbounded orphan-log state."""
-    import threading as _threading
-
-    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-
-    cache = TigerCache.__new__(TigerCache)
-    cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 32  # tight cap for the test
-    cache._orphan_log_last_emit = {}
-    cache._orphan_log_lock = _threading.Lock()
+    cache = _make_cache(max_keys=32, global_cap=10_000)  # tight LRU cap, lift global
     rm = MagicMock()
     rm.bulk_get_resource_ids.return_value = {}  # all orphans
     cache._resource_map = rm
@@ -367,19 +336,99 @@ def test_orphan_log_dedupe_map_is_bounded():
     )
 
 
+def test_orphan_log_global_rate_limit_caps_warnings():
+    """High-cardinality orphan event across many subjects must cap WARNINGs.
+
+    Per-key dedupe alone isn't enough — a thousand subjects each producing
+    one WARNING in the window is still a flood. The global cap downgrades
+    excess emissions to DEBUG once the window-counter exceeds the cap.
+    """
+    import logging
+
+    cache = _make_cache(max_keys=10_000, global_cap=8)
+    rm = MagicMock()
+    rm.bulk_get_resource_ids.return_value = {}  # all orphans
+    cache._resource_map = rm
+
+    warnings = 0
+
+    class _CountingHandler(logging.Handler):
+        def emit(self, record):
+            nonlocal warnings
+            if record.levelno == logging.WARNING and "resource_map orphans" in record.getMessage():
+                warnings += 1
+
+    handler = _CountingHandler()
+    bitmap_logger = logging.getLogger("nexus.bricks.rebac.cache.tiger.bitmap_cache")
+    bitmap_logger.addHandler(handler)
+    bitmap_logger.setLevel(logging.DEBUG)
+
+    try:
+        for i in range(100):  # 100 distinct subjects, all orphan
+            cache.get_accessible_int_ids = MagicMock(return_value={i + 1})
+            cache.get_accessible_paths(
+                subject_type="user",
+                subject_id=f"alice_{i}",
+                permission="read",
+                resource_type="file",
+            )
+    finally:
+        bitmap_logger.removeHandler(handler)
+
+    assert warnings <= cache._orphan_log_global_cap, (
+        f"emitted {warnings} WARNINGs, expected ≤ {cache._orphan_log_global_cap}"
+    )
+
+
+def test_orphan_log_lru_refresh_keeps_hot_keys():
+    """Refreshing an existing key must move it to the LRU tail, not stay at front.
+
+    Without true LRU, a hot key would be evicted by churn from unrelated
+    subjects and emit WARNINGs again inside the suppression window.
+    """
+    cache = _make_cache(max_keys=4, global_cap=10_000)
+    rm = MagicMock()
+    rm.bulk_get_resource_ids.return_value = {}
+    cache._resource_map = rm
+
+    # Burn through 4 distinct keys (fills the LRU)
+    for i in range(4):
+        cache.get_accessible_int_ids = MagicMock(return_value={i + 1})
+        cache.get_accessible_paths(
+            subject_type="user",
+            subject_id=f"k{i}",
+            permission="read",
+            resource_type="file",
+        )
+
+    # Force-expire k0 by rewinding its timestamp, then re-emit it. Without
+    # LRU refresh on emit, k0 would still be at the front and be evicted
+    # next. With true LRU it moves to the end and "k1" becomes oldest.
+    k0 = ("", "user", "k0", "read", "file")
+    cache._orphan_log_last_emit[k0] = 0.0  # expired
+    cache.get_accessible_int_ids = MagicMock(return_value={99})
+    cache.get_accessible_paths(
+        subject_type="user", subject_id="k0", permission="read", resource_type="file"
+    )
+
+    # Now insert a brand-new key — should evict the oldest (k1, not k0)
+    cache.get_accessible_int_ids = MagicMock(return_value={100})
+    cache.get_accessible_paths(
+        subject_type="user", subject_id="k_new", permission="read", resource_type="file"
+    )
+
+    assert k0 in cache._orphan_log_last_emit, "k0 should not have been evicted"
+    assert ("", "user", "k1", "read", "file") not in cache._orphan_log_last_emit, (
+        "k1 (oldest) should have been evicted"
+    )
+
+
 def test_orphan_log_dedupe_threadsafe():
     """Concurrent orphan calls must not duplicate-emit the WARNING."""
     import logging
-    import threading as _threading
     from concurrent.futures import ThreadPoolExecutor
 
-    from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
-
-    cache = TigerCache.__new__(TigerCache)
-    cache._orphan_log_window_s = 60.0
-    cache._orphan_log_max_keys = 1024
-    cache._orphan_log_last_emit = {}
-    cache._orphan_log_lock = _threading.Lock()
+    cache = _make_cache()
     rm = MagicMock()
     rm.bulk_get_resource_ids.return_value = {1: ("file", "/a")}
     cache._resource_map = rm

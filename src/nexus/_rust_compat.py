@@ -115,8 +115,6 @@ if RUST_AVAILABLE:
                 _REBUILD_CMD,
             )
 
-    RUST_HASH_AVAILABLE = _group_ok.get("hash", False)
-
     _core_disabled = not _group_ok.get("core", False)
     if _core_disabled:
         RUST_AVAILABLE = False
@@ -163,6 +161,10 @@ elif RUST_EXTENSION_INSTALLED and _nf is not None:
         for _g, _syms in _CAPABILITY_GROUPS.items():
             if not _group_ok.get(_g, False):
                 _disabled_symbols.update(_syms)
+
+# Capability flags (set after kill switch so a stale-core binary cannot
+# leak a True flag while the Rust symbol itself is disabled — #3951).
+RUST_HASH_AVAILABLE = RUST_AVAILABLE and bool(_group_ok) and _group_ok.get("hash", False)
 
 # Snapshot the module for re-exports.
 _nf_snapshot: Any = _nf

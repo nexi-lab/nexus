@@ -987,6 +987,15 @@ def generate_stubs(
         "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
     )
     lines.append("")
+    # ── DeploymentProfile-driven driver gate (services::python) -- hand-
+    # written, not codegen.  Python boot calls this with the profile's
+    # enabled-driver set before any DT_MOUNT sys_setattr fires.
+    lines.append("# " + "-" * 75)
+    lines.append("# Driver gate (rust/services/src/python/mod.rs)")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append("def nx_set_enabled_drivers(drivers: list[str]) -> None: ...")
+    lines.append("")
     # ── ManagedAgentService PyO3 surface (services::python) -- hand-written,
     # not codegen. Boot-installer for AgentKind::MANAGED hooks +
     # session lifecycle.

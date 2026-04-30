@@ -18,7 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kernel::abc::object_store::ObjectStore;
-use kernel::hal::backend_factory::{BackendArgs, BackendBuildResult, BackendFactory};
+use kernel::hal::backend_factory::{
+    is_driver_enabled, BackendArgs, BackendBuildResult, BackendFactory,
+};
 use kernel::meta_store::MetaStore;
 
 /// The canonical backend factory installed by `nexus-cdylib` at boot.
@@ -30,6 +32,23 @@ impl BackendFactory for DefaultBackendFactory {
     fn build(&self, args: &BackendArgs<'_>) -> Result<BackendBuildResult, String> {
         let backend_name = args.backend_name;
         let backend_type = args.backend_type;
+
+        // ── DeploymentProfile-driven driver gate ───────────────────
+        // Disabled drivers surface a clear error before the per-driver
+        // construction switch.  See `kernel::hal::backend_factory`
+        // for the gate-set lifecycle.  The empty-string + the four
+        // local roots (`""`, `"path_local"`, `"local_connector"`,
+        // `"cas-local"`) skip the gate — they are kernel defaults
+        // available in every profile.
+        let is_local_default = backend_type.is_empty()
+            || backend_type == "path_local"
+            || backend_type == "local_connector"
+            || backend_type == "cas-local";
+        if !is_local_default && !is_driver_enabled(backend_type) {
+            return Err(format!(
+                "driver {backend_type:?} not enabled in current deployment profile"
+            ));
+        }
 
         let mut pending_remote_meta_store: Option<Arc<dyn MetaStore>> = None;
 

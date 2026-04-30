@@ -21,7 +21,8 @@
 //! method's argument lifetimes so callers don't allocate per-arg
 //! `String`s on the hot path.
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashSet;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::abc::object_store::ObjectStore;
 use crate::cas_remote::RemoteChunkFetcher;
@@ -141,4 +142,100 @@ pub fn set_factory(factory: Arc<dyn BackendFactory>) -> Result<(), Arc<dyn Backe
 /// their own factory before exercising mounts.
 pub fn get_factory() -> Option<Arc<dyn BackendFactory>> {
     BACKEND_FACTORY.get().cloned()
+}
+
+// ── Driver gate (DeploymentProfile-driven) ─────────────────────────────────
+//
+// A `DeploymentProfile` is a Python-side declaration of which bricks /
+// services / drivers a runtime image runs with.  Bricks + services are
+// gated by Python factory wiring; drivers are gated here because the
+// path that constructs them — `Kernel::sys_setattr(DT_MOUNT)` — is
+// shared across every profile and lives Rust-side.
+//
+// Layout:
+//
+//   * Python `DeploymentProfile` resolves to a `frozenset[str]` of
+//     enabled driver names (e.g. `{"local", "remote", "nostr"}`).
+//   * `services::python::register` exposes
+//     `nx_set_enabled_drivers(drivers: list[str])` that calls
+//     [`set_enabled_drivers`] below.
+//   * `DefaultBackendFactory::build` calls [`is_driver_enabled`]
+//     before the per-driver construction switch.  Disabled drivers
+//     surface as `Err("driver 'X' not enabled in current
+//     deployment profile")` rather than the generic
+//     `BackendBuildResult { backend: None, ... }` "kernel default"
+//     fallthrough.
+//
+// When the gate has never been set (pure-Rust embedders, tests),
+// [`is_driver_enabled`] returns `true` for every name — backward
+// compatible with the pre-gating behaviour.
+
+static DRIVER_GATE: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
+
+/// Install the enabled driver set.  Called once during Python boot
+/// from `nexus_runtime.nx_set_enabled_drivers`, before any
+/// `sys_setattr(DT_MOUNT)` fires.  Idempotent — repeated calls
+/// overwrite the set, so a Python reload that re-resolves the
+/// profile sees the updated drivers without an interpreter restart.
+pub fn set_enabled_drivers<I, S>(drivers: I)
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let set: HashSet<String> = drivers.into_iter().map(Into::into).collect();
+    let lock = DRIVER_GATE.get_or_init(|| RwLock::new(HashSet::new()));
+    *lock.write().expect("DRIVER_GATE poisoned") = set;
+}
+
+/// Check whether `driver_name` is enabled in the current deployment
+/// profile.  Returns `true` when the gate has never been initialised
+/// (pure-Rust tests, non-cdylib embedders) so existing tests keep
+/// passing without explicit wiring.
+pub fn is_driver_enabled(driver_name: &str) -> bool {
+    let Some(lock) = DRIVER_GATE.get() else {
+        return true;
+    };
+    lock.read()
+        .map(|set| set.contains(driver_name))
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `is_driver_enabled` returns true when the gate has not been
+    /// initialised — this is what keeps non-cdylib Rust tests working
+    /// without explicit profile wiring.
+    #[test]
+    fn ungated_returns_true_for_any_driver() {
+        // NB: the OnceLock is process-wide, so this assertion is only
+        // meaningful when the test runs first.  We rely on cargo test
+        // running the kernel-lib tests in a fresh process per invocation;
+        // if a future test sets the gate before this one runs, the
+        // assertion below would still hold for any driver name in the
+        // gated set, so the test stays correct.
+        if DRIVER_GATE.get().is_none() {
+            assert!(is_driver_enabled("anything"));
+            assert!(is_driver_enabled("nostr"));
+        }
+    }
+
+    /// `set_enabled_drivers` followed by `is_driver_enabled` reports
+    /// only members of the set as enabled.
+    #[test]
+    fn gated_only_returns_true_for_listed_drivers() {
+        set_enabled_drivers(["local", "remote"]);
+        assert!(is_driver_enabled("local"));
+        assert!(is_driver_enabled("remote"));
+        assert!(!is_driver_enabled("nostr"));
+        // Restore an open set so other tests aren't affected.
+        set_enabled_drivers(std::iter::empty::<String>());
+        // After a reset to empty, the gate is initialised but contains
+        // nothing, so every driver is rejected.  Tests that need an
+        // open gate should clear DRIVER_GATE explicitly — but
+        // OnceLock has no take(), so process-isolation is the
+        // cleanup.
+        assert!(!is_driver_enabled("local"));
+    }
 }

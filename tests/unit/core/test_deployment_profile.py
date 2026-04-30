@@ -16,6 +16,7 @@ import pytest
 
 from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
+    ALL_DRIVER_NAMES,
     BRICK_CACHE,
     BRICK_EVENTLOG,
     BRICK_FEDERATION,
@@ -27,8 +28,14 @@ from nexus.contracts.deployment_profile import (
     BRICK_SANDBOX,
     BRICK_SEARCH,
     BRICK_WORKFLOWS,
+    DRIVER_ANTHROPIC,
+    DRIVER_NOSTR,
+    DRIVER_OPENAI,
+    DRIVER_REMOTE,
+    DRIVER_S3,
     DeploymentProfile,
     resolve_enabled_bricks,
+    resolve_enabled_drivers,
 )
 
 
@@ -198,6 +205,94 @@ class TestResolveEnabledBricks:
         for profile in DeploymentProfile:
             all_from_profiles |= profile.default_bricks()
         assert all_from_profiles.issubset(ALL_BRICK_NAMES)
+
+
+class TestDefaultDriverSets:
+    """Driver gating mirrors brick gating; verify per-profile defaults."""
+
+    def test_cluster_includes_remote_only(self) -> None:
+        # cluster runs federated; needs the cross-node `remote` driver but
+        # nothing else (a deployment that wants S3 mounts on top opts in
+        # explicitly via overrides).
+        drivers = DeploymentProfile.CLUSTER.default_drivers()
+        assert DRIVER_REMOTE in drivers
+        assert DRIVER_NOSTR not in drivers
+        assert DRIVER_S3 not in drivers
+
+    def test_embedded_and_lite_have_no_drivers(self) -> None:
+        # Single-machine profiles have no remote storage/connector
+        # drivers — only the kernel-default local-root branches.
+        assert DeploymentProfile.EMBEDDED.default_drivers() == frozenset()
+        assert DeploymentProfile.LITE.default_drivers() == frozenset()
+
+    def test_sandbox_includes_nostr_and_llm_connectors(self) -> None:
+        drivers = DeploymentProfile.SANDBOX.default_drivers()
+        assert DRIVER_NOSTR in drivers
+        assert DRIVER_OPENAI in drivers
+        assert DRIVER_ANTHROPIC in drivers
+        # Cloud storage stays disabled in sandbox
+        assert DRIVER_S3 not in drivers
+
+    def test_full_is_superset_of_sandbox(self) -> None:
+        sandbox = DeploymentProfile.SANDBOX.default_drivers()
+        full = DeploymentProfile.FULL.default_drivers()
+        assert sandbox.issubset(full)
+        assert DRIVER_S3 in full
+        assert DRIVER_REMOTE in full
+
+    def test_remote_profile_uses_only_remote_driver(self) -> None:
+        # NFS-client model: every mount goes through the remote proxy.
+        assert DeploymentProfile.REMOTE.default_drivers() == frozenset({DRIVER_REMOTE})
+
+    def test_is_driver_enabled_matches_default_drivers(self) -> None:
+        assert DeploymentProfile.SANDBOX.is_driver_enabled(DRIVER_NOSTR)
+        assert not DeploymentProfile.LITE.is_driver_enabled(DRIVER_NOSTR)
+
+
+class TestResolveEnabledDrivers:
+    """resolve_enabled_drivers parallels resolve_enabled_bricks."""
+
+    def test_no_overrides_returns_defaults(self) -> None:
+        result = resolve_enabled_drivers(DeploymentProfile.SANDBOX)
+        assert result == DeploymentProfile.SANDBOX.default_drivers()
+
+    def test_override_enables_driver(self) -> None:
+        # Cluster doesn't ship Nostr by default; an operator can opt in.
+        result = resolve_enabled_drivers(
+            DeploymentProfile.CLUSTER,
+            overrides={DRIVER_NOSTR: True},
+        )
+        assert DRIVER_NOSTR in result
+        assert DRIVER_REMOTE in result  # default kept
+
+    def test_override_disables_driver(self) -> None:
+        result = resolve_enabled_drivers(
+            DeploymentProfile.SANDBOX,
+            overrides={DRIVER_NOSTR: False},
+        )
+        assert DRIVER_NOSTR not in result
+
+    def test_unknown_driver_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown driver names"):
+            resolve_enabled_drivers(
+                DeploymentProfile.FULL,
+                overrides={"nonexistent_driver": True},
+            )
+
+    def test_override_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING):
+            resolve_enabled_drivers(
+                DeploymentProfile.LITE,
+                overrides={DRIVER_NOSTR: True},
+            )
+        assert "enabling" in caplog.text.lower()
+        assert DRIVER_NOSTR in caplog.text
+
+    def test_all_driver_names_comprehensive(self) -> None:
+        all_from_profiles: set[str] = set()
+        for profile in DeploymentProfile:
+            all_from_profiles |= profile.default_drivers()
+        assert all_from_profiles.issubset(ALL_DRIVER_NAMES)
 
 
 class TestFeaturesConfigOverrides:

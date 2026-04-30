@@ -593,6 +593,12 @@ def federation_start_replication_scanner(
 ) -> None: ...
 
 # ---------------------------------------------------------------------------
+# Driver gate (rust/services/src/python/mod.rs)
+# ---------------------------------------------------------------------------
+
+def nx_set_enabled_drivers(drivers: list[str]) -> None: ...
+
+# ---------------------------------------------------------------------------
 # ManagedAgentService PyO3 surface (rust/services/src/python/mod.rs)
 # ---------------------------------------------------------------------------
 

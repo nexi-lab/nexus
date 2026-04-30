@@ -14,6 +14,7 @@
 //!   the kernel cdylib boundary into the owning service tier.
 
 use kernel::generated_kernel_abi_pyo3::PyKernel;
+use kernel::hal::backend_factory::set_enabled_drivers;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -44,6 +45,24 @@ fn install_audit_hook_py(
 ) -> PyResult<()> {
     audit::install(kernel.kernel_ref(), zone_id, stream_path)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))
+}
+
+/// Install the deployment-profile-driven driver gate.
+///
+/// `drivers` is the union of every backend type the active profile
+/// enables (e.g. `["local", "remote", "anthropic", "openai"]`).
+/// Subsequent `sys_setattr(DT_MOUNT)` with a `backend_type` outside
+/// the gate surfaces a clear error instead of silently falling
+/// through to the kernel-default local-root branch.
+///
+/// Idempotent — repeated calls overwrite the gate, so a Python
+/// reload that re-resolves the profile sees the updated set without
+/// an interpreter restart.  Pass an empty list to lock down every
+/// non-local-default driver.
+#[pyfunction]
+fn nx_set_enabled_drivers(drivers: Vec<String>) -> PyResult<()> {
+    set_enabled_drivers(drivers);
+    Ok(())
 }
 
 /// Install `ManagedAgentService` on `kernel`. Registers the chat-with-me
@@ -98,6 +117,11 @@ fn nx_kernel_dispatch_rust_call<'py>(
 /// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_runtime`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(install_audit_hook_py, m)?)?;
+    // DeploymentProfile-driven driver gate — Python boot calls this
+    // with the profile's enabled driver set before any DT_MOUNT
+    // sys_setattr fires.  Disabled drivers fail with a clear error
+    // at mount time instead of silently degrading.
+    m.add_function(wrap_pyfunction!(nx_set_enabled_drivers, m)?)?;
     // ManagedAgentService — boot install (kernel doesn't auto-call
     // because services lives in a peer crate; Python-side wiring
     // calls this from `_wired.py` after `Kernel::new` returns).

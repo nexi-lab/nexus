@@ -107,14 +107,15 @@ if not mounts:
     sys.exit(f"mount not found: {{fs.list_mounts()}}")
 mp = mounts[0].rstrip("/")
 
-# stat(before.txt) must fail — metastore must not have the old entry.
+# stat(before.txt) must not find the old entry.
+# fs.stat() returns None when the file is absent (no exception raised).
+st_before = None
 try:
-    st = fs.stat(mp + "/before.txt")
-    sys.exit(f"stat(before.txt) = {{st}}; old path must not exist after rename + new process")
-except (FileNotFoundError, Exception) as e:
-    if "not found" not in str(e).lower() and "noent" not in str(e).lower():
-        if fs.stat(mp + "/before.txt") is not None:
-            sys.exit(f"stat(before.txt) still returns metadata: {{e}}")
+    st_before = fs.stat(mp + "/before.txt")
+except (FileNotFoundError, Exception):
+    pass  # exception is also an acceptable "not found" signal
+if st_before is not None:
+    sys.exit(f"stat(before.txt) = {{st_before}}; old path must not exist after rename + new process")
 
 # stat(after.txt) must succeed with committed metadata.
 st = fs.stat(mp + "/after.txt")

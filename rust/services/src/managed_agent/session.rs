@@ -19,6 +19,10 @@ pub(crate) struct Session {
     pub agent: String,
     pub model: String,
     pub workspace_path: String,
+    /// Repo aliases materialised inside the workspace at start_session
+    /// time.  Tracked here so cancel can reap the per-alias DT_LINKs
+    /// without re-reading sudowork's original request.
+    pub repo_aliases: Vec<String>,
 }
 
 pub(crate) fn alloc_pid() -> String {

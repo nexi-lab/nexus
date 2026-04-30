@@ -227,7 +227,11 @@ mod tests {
             .write_content(content, "docs/file.txt", &ctx, 0)
             .unwrap();
         assert_eq!(wr.size, content.len() as u64);
-        assert_eq!(wr.content_id.len(), 64); // hash
+        // PAS: content_id is the backend_path (so peer reads via
+        // KernelBlobFetcher route through the same path), version
+        // carries the SHA-256 hex hash for OCC.
+        assert_eq!(wr.content_id, "docs/file.txt");
+        assert_eq!(wr.version.len(), 64);
 
         let data = backend.read_content("docs/file.txt", &ctx).unwrap();
         assert_eq!(data, content);

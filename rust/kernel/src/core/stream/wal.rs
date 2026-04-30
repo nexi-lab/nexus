@@ -149,6 +149,41 @@ impl WalStreamCore {
         Ok(seq)
     }
 
+    /// Append `data` and wait for the metastore commit before
+    /// returning. Same allocation path as `write_nowait`, but bypasses
+    /// the async flush channel so the call returns only after
+    /// `store.append_stream_entry` has confirmed durability —
+    /// i.e. raft has committed the entry on the local node and any
+    /// peer reading the same store sees it immediately.
+    ///
+    /// Use this when the caller's contract is synchronous (e.g.
+    /// `PipeBackend::push`, where pop on a sibling replica is
+    /// expected to see the data). For high-throughput streams where
+    /// the writer can pipeline multiple entries before any consumer
+    /// reads, prefer `write_nowait`.
+    pub fn write_sync(&self, data: &[u8]) -> Result<u64, String> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(format!("WAL stream {} is closed", self.stream_id));
+        }
+        let seq = self.next_seq.fetch_add(1, Ordering::AcqRel);
+        let data_vec = data.to_vec();
+        // Insert into inflight first so a `read_at(seq)` racing
+        // between here and the store commit still finds the data.
+        self.inflight.write().insert(seq, data_vec.clone());
+        let key = self.key(seq);
+        let result = self.store.append_stream_entry(&key, &data_vec);
+        // Remove from inflight only on success; on failure the entry
+        // stays in inflight so reads still return data even though
+        // the metastore did not durably accept it (matches the
+        // `write_nowait` flush-failure path).
+        if result.is_ok() {
+            self.inflight.write().remove(&seq);
+        }
+        result
+            .map(|_| seq)
+            .map_err(|e| format!("append_stream_entry({key}): {e:?}"))
+    }
+
     /// Read the entry at `seq`.  `Ok(Some(bytes))` if present;
     /// `Ok(None)` if not yet written; `Err` if the stream is closed
     /// and no more data will arrive at this offset.

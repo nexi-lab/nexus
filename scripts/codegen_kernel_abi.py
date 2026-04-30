@@ -33,6 +33,13 @@ STUBS_PATH = ROOT / "stubs" / "nexus_runtime" / "__init__.pyi"
 EXPORTS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_exports.py"
 PROTOCOLS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_protocols.py"
 API_GROUPS_PATH = ROOT / "src" / "nexus" / "_kernel_api_groups.py"
+# Thin RPC dispatch — gRPC method name → kernel syscall.  The codegen
+# scans PyKernel #[pymethods] (Rust SSOT) and emits the Python module
+# the gRPC servicer's `Call` handler consults BEFORE the legacy
+# dispatch_method path.  Replaces the multi-layer chain (dispatch.py
+# table + handlers/filesystem.py wrappers + _rpc_params_generated.py
+# dataclasses + _rpc_param_overrides.py manual fixups) for syscalls.
+KERNEL_DISPATCH_PATH = ROOT / "src" / "nexus" / "server" / "_kernel_syscall_dispatch.py"
 # Single PyO3 transport file. Phase C renamed from `generated_pyo3.rs` to
 # the more explicit `generated_kernel_abi_pyo3.rs` so a future codegen
 # generated_lib_abi_pyo3.rs (Phase H — `lib::python::*` wrappers) can
@@ -4923,93 +4930,229 @@ def collect_all() -> tuple[
     return module_functions, classes, class_order, traits, all_names
 
 
-# ── Kernel RPC param generation (new autogen — Rust SSOT) ─────────
+# ── Kernel syscall dispatch generation (Rust SSOT thin wrapper) ───
 #
-# Generates RPC param dataclasses + dispatch handler wrappers directly
-# from the Rust kernel method signatures. Replaces the old path where
-# Python @rpc_expose decorated methods were the SSOT and
-# generate_rpc_params.py introspected them.
+# Replaces the legacy multi-layer Python RPC plumbing (dispatch.py
+# table → handlers/filesystem.py wrappers → nexus_fs methods) for
+# kernel syscalls.  The gRPC servicer's `Call` handler consults the
+# generated dispatcher BEFORE falling through to the (deprecated)
+# Python ``dispatch_method`` path.  Each syscall is scanned out of
+# the PyKernel ``#[pymethods]`` block in
+# ``generated_kernel_abi_pyo3.rs`` — Rust is SSOT, this is a thin
+# projection.
 #
-# Each kernel syscall that is exposed via RPC gets:
-#   1. A @dataclass with fields matching the Rust PyO3 signature
-#   2. A thin dispatch handler function (nexus_fs, params, context) → dict
-#   3. A KERNEL_RPC_METHOD_PARAMS dict for protocol.py to merge
-#
-# The param field names and defaults match the Rust PyO3 #[pyo3(signature)]
-# exactly — Rust is the SSOT, this is a thin projection.
+# The generated module is small and intentionally schema-free at
+# call sites: dispatch uses ``inspect.signature`` to filter kwargs
+# from the wire dict against the NexusFS method, so adding a new
+# kernel syscall only requires extending KERNEL_SYSCALL_NAMES below
+# (re-running the codegen) — no params dataclass, no handle_*
+# wrapper, no @rpc_expose decorator chain.
 
 
-def generate_kernel_rpc_params() -> str:
-    """Generate RPC param classes + handlers for kernel lock syscalls.
+# Methods on PyKernel that map 1:1 to a NexusFS syscall and should be
+# served by the thin dispatcher.  Names match PyKernel's Python-facing
+# names — alias surface (read/write/delete/exists/list/rename/sys_rmdir
+# /lock_acquire) is wired separately below since some don't have a
+# matching PyKernel symbol.
+_KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
+    "sys_read",
+    "sys_write",
+    "sys_setattr",
+    "sys_unlink",
+    "sys_rename",
+    "sys_copy",
+    "sys_stat",
+    "sys_readdir",
+    "sys_mkdir",
+    "sys_rmdir",
+    "sys_lock",
+    "sys_unlock",
+    "access",
+    "is_directory",
+)
 
-    Source of truth: the Rust kernel method signatures in kernel.rs,
-    projected through the PyO3 wrapper in generated_pyo3.rs.
+
+# Wire-name → canonical NexusFS method name.  Two reasons we need this:
+#   1. Aliases (``read`` / ``write`` / ``delete`` / ``exists`` /
+#      ``list`` / ``rename``) are short forms used by nexus-test and
+#      remote clients; canonical NexusFS methods keep the ``sys_``
+#      prefix.
+#   2. PyKernel exposes ``sys_mkdir`` / ``sys_rmdir`` while NexusFS
+#      exposes ``mkdir`` / ``rmdir`` (no sys_ prefix at the FS-level
+#      Tier 2 wrapper).  Backward-compat ``sys_rmdir`` keeps working
+#      for older clients via the alias map.
+#   3. ``lock_acquire`` is the Tier 2 dict-shaped wrapper — see the
+#      Python helper that materializes the ``{acquired, lock_id}``
+#      response from ``sys_lock``.
+_KERNEL_SYSCALL_ALIASES: dict[str, str] = {
+    "read": "sys_read",
+    "write": "sys_write",
+    "delete": "sys_unlink",
+    "rename": "sys_rename",
+    "exists": "access",
+    "list": "sys_readdir",
+    # PyKernel says sys_mkdir / sys_rmdir; NexusFS Tier 2 says mkdir / rmdir.
+    "sys_mkdir": "mkdir",
+    "sys_rmdir": "rmdir",
+    # Tier 2 lock_acquire dispatches to sys_lock and shapes the result.
+    "lock_acquire": "sys_lock",
+}
+
+
+def _scan_pykernel_syscalls(classes: dict[str, "ClassDef"]) -> list[str]:
+    """Return the syscall method names actually present on PyKernel.
+
+    Filters the allowlist down to methods we can verify exist in the
+    PyO3 #[pymethods] block — guards against stale allowlist entries
+    surviving a kernel-side rename without surfacing as a codegen
+    diff.  Returns names in allowlist order so the generated file is
+    stable.
     """
-    return '''\
+    pykernel = classes.get("PyKernel")
+    if pykernel is None:
+        # Codegen ran before PyKernel was parsed (shouldn't happen
+        # in normal flow) — defensively return an empty list rather
+        # than blowing up.
+        return []
+    have = {m.name for m in pykernel.methods}
+    return [name for name in _KERNEL_SYSCALL_ALLOWLIST if name in have]
+
+
+def generate_kernel_syscall_dispatch(classes: dict[str, "ClassDef"]) -> str:
+    """Emit the thin syscall dispatch module.
+
+    Caller wires the generated ``dispatch_kernel_syscall`` into the
+    gRPC servicer's ``Call`` handler.  See ``KERNEL_DISPATCH_PATH``.
+    """
+    syscalls = _scan_pykernel_syscalls(classes)
+    # All wire-form names the dispatcher recognizes — direct PyKernel
+    # method names plus the alias map's keys.
+    wire_names = sorted(set(syscalls) | set(_KERNEL_SYSCALL_ALIASES.keys()))
+
+    names_block = ",\n        ".join(f'"{n}"' for n in wire_names)
+    aliases_block = ",\n    ".join(
+        f'"{src}": "{dst}"' for src, dst in sorted(_KERNEL_SYSCALL_ALIASES.items())
+    )
+
+    return f'''\
 # AUTO-GENERATED by scripts/codegen_kernel_abi.py — DO NOT EDIT
-# Source: rust/kernel/src/kernel.rs (advisory lock syscalls)
-#
-# RPC param dataclasses for kernel syscalls exposed via gRPC/RPC.
-# Rust trait is SSOT — these are thin projections of the PyO3 signatures.
-#
-# Re-generate: python scripts/codegen_kernel_abi.py
+"""Thin gRPC `Call` dispatch for kernel syscalls.
+
+Source of truth: PyKernel ``#[pymethods]`` in
+``rust/kernel/src/generated_kernel_abi_pyo3.rs``.  The codegen
+scans that file for syscall methods (sys_read, sys_write,
+sys_setattr, …) and emits this module so the gRPC servicer can
+route calls to the Python ``NexusFS`` wrapper without any
+@rpc_expose / dispatch.py / handlers/filesystem.py / params-dataclass
+chain.
+
+The dispatcher uses ``inspect.signature`` to filter kwargs against
+the matching NexusFS method, so adding a new kernel syscall is just
+``_KERNEL_SYSCALL_ALLOWLIST`` + re-run the codegen.  Methods that
+take ``**attrs`` (sys_setattr) get arbitrary extras forwarded
+unchanged.
+
+Re-generate: python scripts/codegen_kernel_abi.py
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+import inspect
+from typing import Any
+
+# Wire-form RPC method names this module handles. The gRPC servicer
+# tests membership BEFORE invoking the legacy ``dispatch_method`` path.
+KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset({{
+        {names_block},
+}})
 
 
-# ── Advisory lock syscalls (F4 C5) ──────────────────────────────
+# Wire name → canonical NexusFS method name (see codegen for the why).
+_ALIASES: dict[str, str] = {{
+    {aliases_block},
+}}
 
 
-@dataclass
-class SysLockParams:
-    """Acquire or extend advisory lock.
+def _resolve_method_name(method: str) -> str:
+    """Resolve a wire-form RPC name to the NexusFS method to invoke."""
+    return _ALIASES.get(method, method)
 
-    Rust: Kernel::sys_lock(path, lock_id, mode, max_holders, ttl_secs, holder_info)
+
+def _build_kwargs(
+    func: Any,
+    params: dict[str, Any],
+    context: Any,
+) -> dict[str, Any]:
+    """Filter ``params`` to ``func``'s signature; forward extras to **kwargs.
+
+    Methods like ``sys_setattr(path, *, context, **attrs)`` collect
+    arbitrary extras through their VAR_KEYWORD param — without explicit
+    forwarding, ``inspect.signature`` would drop them.  This is how
+    DT_MOUNT's ``entry_type`` / ``zone_id`` / ``backend_name`` reach
+    the kernel without each needing a named slot in NexusFS's signature.
     """
+    sig = inspect.signature(func)
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
 
-    path: str
-    lock_id: str = ""
-    mode: str = "exclusive"
-    max_holders: int = 1
-    ttl_secs: int = 60
-    holder_info: str = ""
+    kwargs: dict[str, Any] = {{}}
+    matched: set[str] = set()
+    for name, param in sig.parameters.items():
+        if name == "self" or param.kind == inspect.Parameter.VAR_KEYWORD:
+            continue
+        if name in ("context", "_context"):
+            kwargs[name] = context
+            matched.add(name)
+        elif name in params:
+            kwargs[name] = params[name]
+            matched.add(name)
+
+    if has_var_keyword:
+        for k, v in params.items():
+            if k not in matched and k not in ("context", "_context"):
+                kwargs[k] = v
+
+    return kwargs
 
 
-@dataclass
-class SysUnlockParams:
-    """Release advisory lock (normal or force).
+async def dispatch_kernel_syscall(
+    nexus_fs: Any,
+    method: str,
+    params: dict[str, Any],
+    context: Any,
+) -> Any:
+    """Dispatch a kernel syscall RPC to the matching ``NexusFS`` method.
 
-    Rust: Kernel::sys_unlock(path, lock_id, force)
+    Returns the NexusFS method's result unchanged.  Caller (gRPC servicer)
+    encodes it into the wire response.
+
+    Wire-name aliases (``read`` / ``write`` / ``delete`` / ``exists``
+    / ``list`` / ``rename``, plus ``sys_mkdir`` / ``sys_rmdir`` /
+    ``lock_acquire``) all funnel into the same canonical NexusFS method
+    via ``_ALIASES``.  ``lock_acquire`` then re-shapes the bare lock_id
+    return into the dict response shape Tier 2 callers expect.
     """
+    canonical = _resolve_method_name(method)
+    func = getattr(nexus_fs, canonical, None)
+    if func is None:
+        raise AttributeError(
+            f"NexusFS has no method {{canonical!r}} (from RPC method {{method!r}})"
+        )
 
-    path: str
-    lock_id: str = ""
-    force: bool = False
+    kwargs = _build_kwargs(func, params, context)
 
+    if asyncio.iscoroutinefunction(func):
+        result = await func(**kwargs)
+    else:
+        result = func(**kwargs)
 
-@dataclass
-class LockAcquireParams:
-    """Tier 2 lock_acquire — dict wrapper for gRPC Call RPC.
+    # Tier 2 lock_acquire shape: bare lock_id (or None) → ``{{"acquired": bool, "lock_id": str | None}}``.
+    if method == "lock_acquire":
+        return {{"acquired": result is not None, "lock_id": result}}
 
-    Convenience alias over sys_lock for clients that expect
-    {acquired: bool, lock_id: str} response shape.
-    """
-
-    path: str
-    mode: str = "exclusive"
-    ttl_secs: int = 60
-    max_holders: int = 1
-
-
-# ── METHOD_PARAMS registry ──────────────────────────────────────
-
-KERNEL_RPC_METHOD_PARAMS: dict[str, type] = {
-    "sys_lock": SysLockParams,
-    "sys_unlock": SysUnlockParams,
-    "lock_acquire": LockAcquireParams,
-}
+    return result
 '''
 
 
@@ -5026,12 +5169,14 @@ def main() -> int:
     exports_content = generate_exports(all_names)
     api_groups_content = generate_api_groups(classes)
     pyo3_content = generate_pyo3_rs(traits)
+    kernel_dispatch_content = generate_kernel_syscall_dispatch(classes)
     outputs: list[tuple[Path, str]] = [
         (STUBS_PATH, stubs_content),
         (PROTOCOLS_PATH, protocols_content),
         (EXPORTS_PATH, exports_content),
         (API_GROUPS_PATH, api_groups_content),
         (GENERATED_PYO3_PATH, pyo3_content),
+        (KERNEL_DISPATCH_PATH, kernel_dispatch_content),
     ]
 
     if check_mode:
@@ -5045,18 +5190,24 @@ def main() -> int:
         rustfmt = shutil.which("rustfmt")
 
         def _ruff_format(content: str, suffix: str) -> str:
+            # mode="wb" + write_bytes parity: text-mode `mode="w"`
+            # translates `\n` → `\r\n` on Windows under some Python
+            # interpreters (notably venv python.exe vs WindowsApps
+            # python3) which makes ruff format the temp file with
+            # CRLF input — its output then differs from how main()
+            # formats LF on-disk.  Force LF byte-exactness instead.
             if ruff and suffix in (".py", ".pyi"):
-                with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
-                    f.write(content)
+                with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False) as f:
+                    f.write(content.encode("utf-8"))
                     f.flush()
                     subprocess.run([ruff, "format", f.name], capture_output=True)
-                    return Path(f.name).read_text()
+                    return Path(f.name).read_bytes().decode("utf-8")
             if rustfmt and suffix == ".rs":
-                with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
-                    f.write(content)
+                with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False) as f:
+                    f.write(content.encode("utf-8"))
                     f.flush()
                     subprocess.run([rustfmt, f.name], capture_output=True)
-                    return Path(f.name).read_text()
+                    return Path(f.name).read_bytes().decode("utf-8")
             return content
 
         ok = True

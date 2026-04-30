@@ -209,23 +209,13 @@ impl MetaStore for MemoryMetaStore {
 // be updated to the new backend-relative path or sys_read resolves the old
 // (now non-existent) filename.
 //
-// Detection: PAS entries satisfy `old_vfs.ends_with("/<content_id>")` AND
-// the content_id is NOT a 64-hex-char BLAKE3 hash (which indicates CAS
-// addressing). An entry named exactly its own hash would satisfy the suffix
-// check but must be treated as CAS to avoid corrupting the stored blob
-// reference during a rename.
-fn is_cas_content_id(cid: &str) -> bool {
-    cid.len() == 64 && cid.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-fn pas_update_content_id(meta: &mut FileMetadata, old_vfs: &str, new_vfs: &str) {
+// Callers (sys_rename in io.rs) are responsible for not calling this on CAS
+// entries — they have route.is_cas from the VFSRouter, which is the
+// authoritative source. This helper is invoked for the same-mount metastore
+// path (LocalMetaStore/MemoryMetaStore) where the backend type is known at
+// the call site.
+pub fn pas_update_content_id(meta: &mut FileMetadata, old_vfs: &str, new_vfs: &str) {
     if let Some(cid) = meta.content_id.as_deref() {
-        // Skip CAS entries — their content_id is a 64-hex BLAKE3 hash and
-        // must not be rewritten; the blob lives at the hash address, not at
-        // the filename.
-        if is_cas_content_id(cid) {
-            return;
-        }
         let pas_suffix = format!("/{cid}");
         if old_vfs.ends_with(pas_suffix.as_str()) || old_vfs == cid {
             let prefix_len = old_vfs.len() - cid.len();

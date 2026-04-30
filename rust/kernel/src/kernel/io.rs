@@ -1046,6 +1046,10 @@ impl Kernel {
             if let Some(old_m) = old_meta.as_ref() {
                 let mut new_m = old_m.clone();
                 new_m.path = new_zone_path.clone();
+                // PAS cross-mount: content_id is the old backend-relative path;
+                // update it to the new backend path so sys_read resolves correctly.
+                use crate::core::meta_store::pas_update_content_id;
+                pas_update_content_id(&mut new_m, &old_zone_path, &new_zone_path);
                 self.commit_metadata(&new_zone_path, &new_route.mount_point, new_m)?;
                 self.commit_delete(&old_zone_path, &old_route.mount_point)?;
             }
@@ -1059,6 +1063,8 @@ impl Kernel {
                     let child_new_path = format!("{}{}", new_zone_path, suffix);
                     let mut child_meta = child.clone();
                     child_meta.path = child_new_path.clone();
+                    use crate::core::meta_store::pas_update_content_id as _pac;
+                    _pac(&mut child_meta, &child.path, &child_new_path);
                     self.commit_metadata(&child_new_path, &new_route.mount_point, child_meta)?;
                     self.commit_delete(&child.path, &old_route.mount_point)?;
                 }
@@ -1095,13 +1101,14 @@ impl Kernel {
         if let Some(mut entry) = self.dcache.get_entry(old_path) {
             self.dcache.evict(old_path);
             // PAS only: update content_id to new backend path.
-            // Guard: skip 64-hex CAS content_ids — a CAS file named exactly
-            // its hash satisfies `cid == old_route.backend_path` but must not
-            // have its blob reference rewritten.
-            if let Some(ref cid) = entry.content_id.clone() {
-                let is_cas = cid.len() == 64 && cid.bytes().all(|b| b.is_ascii_hexdigit());
-                if !is_cas && *cid == old_route.backend_path {
-                    entry.content_id = Some(new_route.backend_path.clone());
+            // Use the route's authoritative is_cas flag rather than a
+            // string-shape heuristic — a PAS file named like a BLAKE3 hex
+            // digest would otherwise be incorrectly treated as CAS.
+            if !old_route.is_cas {
+                if let Some(ref cid) = entry.content_id.clone() {
+                    if *cid == old_route.backend_path {
+                        entry.content_id = Some(new_route.backend_path.clone());
+                    }
                 }
             }
             self.dcache.put(new_path, entry);

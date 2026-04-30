@@ -104,7 +104,11 @@ def emit(
 
 
 def _new_id() -> str:
-    """Sortable id: ms-timestamp prefix + random suffix (no third-party dep)."""
+    """Sortable id: ms-timestamp prefix + random suffix (no third-party dep).
+
+    IDs from different milliseconds sort in time order. IDs within the
+    same millisecond have no time-order guarantee.
+    """
     ms = int(time.time() * 1000)
     rand = uuid.uuid4().hex[:16]
     return f"{ms:013d}{rand}"
@@ -117,8 +121,10 @@ def _now_iso() -> str:
 class QueueEmitter:
     """Production emitter — non-blocking put_nowait with drop counter.
 
-    Thread-safe: asyncio.Queue.put_nowait is safe from non-loop threads
-    when only the worker awaits get() on the loop thread.
+    Must be called from the event loop thread. asyncio.Queue is not
+    thread-safe; put_nowait() from a non-loop thread while the worker
+    awaits get() is a data race. Off-loop callers must use
+    loop.call_soon_threadsafe().
     """
 
     def __init__(self, *, queue: asyncio.Queue[ActivityEvent]) -> None:

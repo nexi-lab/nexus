@@ -165,10 +165,15 @@ impl ObjectStore for PathLocalBackend {
         Ok(())
     }
 
-    fn get_content_size(&self, _content_id: &str) -> Result<u64, StorageError> {
-        Err(StorageError::NotSupported(
-            "PathLocalBackend.get_content_size requires backend_path",
-        ))
+    fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
+        let path = self.resolve_path(content_id)?;
+        match fs::metadata(&path) {
+            Ok(m) => Ok(m.len()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                Err(StorageError::NotFound(content_id.to_string()))
+            }
+            Err(e) => Err(StorageError::IOError(e)),
+        }
     }
 
     fn mkdir(&self, path: &str, parents: bool, _exist_ok: bool) -> Result<(), StorageError> {

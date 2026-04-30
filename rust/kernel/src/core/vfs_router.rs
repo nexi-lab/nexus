@@ -577,6 +577,21 @@ impl VFSRouter {
         Some(backend.rename(old_backend_path, new_backend_path))
     }
 
+    /// Probe whether a backend path exists without reading content.
+    ///
+    /// Returns `None` when the mount has no Rust backend or the backend does not
+    /// implement `get_content_size`. Returns `Some(true)` if the path exists,
+    /// `Some(false)` if `NotFound` is returned.
+    pub fn backend_path_exists(&self, canonical_key: &str, backend_path: &str) -> Option<bool> {
+        let entry = self.entries.get(canonical_key)?;
+        let backend = entry.backend.as_ref()?;
+        match backend.get_content_size(backend_path) {
+            Ok(_) => Some(true),
+            Err(crate::abc::object_store::StorageError::NotFound(_)) => Some(false),
+            Err(_) => None, // NotSupported or other error — cannot determine
+        }
+    }
+
     /// Copy a file via the mount's backend (PAS server-side copy).
     ///
     /// Returns `None` when the mount has no Rust backend (Python-side connector).

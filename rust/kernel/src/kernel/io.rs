@@ -837,35 +837,25 @@ impl Kernel {
             return miss(entry.entry_type);
         }
 
-        // 6. PAS: delete backend bytes BEFORE metastore so failures are clean.
-        // If the backend delete fails with a real error (not NotFound), return
-        // without modifying metastore — the file stays fully accessible and
-        // the caller can retry. For CAS or no-backend mounts, skip (bytes are
-        // hash-addressed or managed externally).
-        if !route.is_cas {
-            if let Some(Err(e)) = self
-                .vfs_router
-                .delete_file(&route.mount_point, &route.backend_path)
-            {
-                use crate::abc::object_store::StorageError;
-                if !matches!(e, StorageError::NotFound(_)) {
-                    self.lock_manager.do_release(lock_handle);
-                    return Err(KernelError::IOError(format!(
-                        "sys_unlink: backend delete failed: {e:?}"
-                    )));
-                }
-                // NotFound — file already absent from backend; proceed to
-                // commit the metastore delete so the namespace stays clean.
-            }
-        }
-
-        // 7. Atomic metastore delete + dcache evict.
-        // If raft propose fails (quorum unreachable), the entry stays in BOTH
-        // the state machine and the dcache so a retry sees a consistent view.
+        // 6. Atomic metastore delete + dcache evict (metadata-first ordering).
+        // Metadata is deleted first so the file becomes invisible immediately;
+        // on metastore failure the entry remains fully consistent for retry.
+        // Backend bytes are cleaned up afterward (best-effort); orphaned objects
+        // from a failed backend delete are collected by a background GC sweep.
+        // The inverse ordering (backend-first) risks deleting bytes while leaving
+        // live metadata if the metastore call fails — unrecoverable data loss.
         if let Err(e) = self.commit_delete(path, &route.mount_point) {
             self.lock_manager.do_release(lock_handle);
             return Err(e);
         }
+
+        // 7. Backend delete (PAS only, best-effort after metastore commit).
+        // Errors are not surfaced to the caller — the namespace is already clean
+        // and orphaned bytes are harmless pending GC. CAS backends do not track
+        // content by path; their GC handles unreferenced blobs independently.
+        let _ = self
+            .vfs_router
+            .delete_file(&route.mount_point, &route.backend_path);
 
         // 8. Release VFS lock
         self.lock_manager.do_release(lock_handle);
@@ -1311,6 +1301,22 @@ impl Kernel {
             return Err(KernelError::IOError(format!(
                 "sys_copy: destination already exists: {dst_path}"
             )));
+        }
+
+        // 5b. For PAS backends, also check backend existence so rollback never
+        // deletes a pre-existing untracked file at the destination path.
+        // If the backend path already exists (untracked by metastore), reject
+        // the copy rather than silently overwriting and potentially losing bytes
+        // if the subsequent metastore commit fails.
+        if !dst_route.is_cas {
+            if let Some(true) = self
+                .vfs_router
+                .backend_path_exists(&dst_route.mount_point, &dst_route.backend_path)
+            {
+                return Err(KernelError::IOError(format!(
+                    "sys_copy: destination backend path already exists (untracked): {dst_path}"
+                )));
+            }
         }
 
         // 6. VFS lock both paths (sorted, deadlock-free)

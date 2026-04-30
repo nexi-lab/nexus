@@ -297,7 +297,15 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         if request.session_id:
             bound_session_id: str | None = f"grpc:{token_id}:{request.session_id}"
         else:
-            bound_session_id = f"grpc:{token_id}"
+            # Round-5 (#3790): omit session_id when the client supplied
+            # none. The ``grpc:{token_id}`` fallback created an indefinite
+            # per-token SESSION grant because session_allow has no expiry;
+            # a SESSION-scope approval without a real client session would
+            # cache for the lifetime of the token. Passing None means
+            # approval_session_allow is not written and each call goes
+            # back through the queue — correct when the caller has no
+            # session identity to bind the approval to.
+            bound_session_id = None
         try:
             decision = await self._svc.request_and_wait(
                 request_id=request_id,

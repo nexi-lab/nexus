@@ -21,13 +21,10 @@ Diag auth contract
 ==================
 ``src/nexus/server/lifespan/approvals.py`` registers the diag router with
 ``allow_subject = os.environ.get("NEXUS_APPROVALS_DIAG_TOKEN") or None``.
-The ``running_nexus`` fixture sets ``NEXUS_APPROVALS_ADMIN_TOKEN`` (gates
-the gRPC server) but NOT ``NEXUS_APPROVALS_DIAG_TOKEN`` — so the diag
-router runs with ``allow_subject=None``, meaning no auth header is
-required. The dump test therefore omits ``Authorization``. If a future
-hardening pass starts forwarding ``NEXUS_APPROVALS_DIAG_TOKEN`` into the
-running_nexus stack, this test will need to send ``Bearer <diag_token>``
-— see the comment in the test body.
+When unset the lifespan disables ``GET /hub/approvals/dump`` entirely.
+The ``running_nexus`` fixture sets ``NEXUS_APPROVALS_DIAG_TOKEN`` to a
+generated secret and surfaces it as ``running_nexus.diag_token``. The
+dump test sends ``Authorization: Bearer <diag_token>`` (#3790 round-13).
 """
 
 from __future__ import annotations
@@ -180,10 +177,10 @@ class TestWatchAndDump:
         the diag endpoint. Assert the response payload contains an entry
         whose ``subject`` matches what we submitted.
 
-        Auth: the running_nexus fixture does NOT set
-        ``NEXUS_APPROVALS_DIAG_TOKEN``, so the lifespan registers the diag
-        router with ``allow_subject=None`` and no Bearer header is
-        required (see module docstring).
+        Auth: running_nexus sets NEXUS_APPROVALS_DIAG_TOKEN so the
+        lifespan registers the diag router with an explicit allow_subject.
+        The test sends ``Authorization: Bearer <diag_token>`` (#3790
+        round-13 — unauthenticated access was removed).
         """
         tag = _tag()
         zone = f"dump_{tag}"
@@ -228,16 +225,15 @@ class TestWatchAndDump:
                         break
                 assert landed, f"pending row never landed for subject={subject!r}"
 
-                # Hit the diag dump. No Authorization header — diag is
-                # configured with allow_subject=None in this fixture
-                # (see module docstring). If NEXUS_APPROVALS_DIAG_TOKEN
-                # ever gets forwarded into the running_nexus stack, this
-                # needs:
-                #   headers={"Authorization": f"Bearer {<diag_token>}"}
+                # Hit the diag dump. NEXUS_APPROVALS_DIAG_TOKEN is set in
+                # the running_nexus fixture, so send the Bearer token.
                 async with httpx.AsyncClient(
                     base_url=running_nexus.http_url, timeout=10.0
                 ) as client:
-                    r = await client.get(f"/hub/approvals/dump?zone_id={zone}")
+                    r = await client.get(
+                        f"/hub/approvals/dump?zone_id={zone}",
+                        headers={"Authorization": f"Bearer {running_nexus.diag_token}"},
+                    )
                 assert r.status_code == 200, r.text
                 payload = r.json()
                 assert payload.get("pending"), (

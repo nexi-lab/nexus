@@ -155,6 +155,10 @@ class RunningNexus:
         in the daemon's database. Recognised by ``require_admin``-gated
         HTTP endpoints (e.g. ``POST /api/v2/auth/keys``) and by the
         ReBACCapabilityAuth gRPC pipeline as ``is_admin=True``.
+      - ``diag_token``: the ``NEXUS_APPROVALS_DIAG_TOKEN`` Bearer secret
+        required to access ``GET /hub/approvals/dump``. The lifespan
+        disables the route entirely when this env var is unset, so tests
+        that hit the diag endpoint must send this token.
       - ``zone``: a uuid-prefixed zone id for test isolation.
     """
 
@@ -162,6 +166,7 @@ class RunningNexus:
     grpc_addr: str
     admin_token: str
     admin_api_key: str
+    diag_token: str
     zone: str
     project_dir: Path
 
@@ -209,6 +214,9 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     # The leading sk- prefix matches the canonical Nexus key format so the
     # CLI/auth pipeline parsers don't reject it as malformed.
     admin_api_key = f"sk-e2e-{uuid.uuid4().hex}"
+    # Diag token: NEXUS_APPROVALS_DIAG_TOKEN gates GET /hub/approvals/dump.
+    # The lifespan disables the route entirely when unset (#3790 round-13).
+    diag_token = f"diag-{uuid.uuid4().hex}"
     zone = f"z-e2e-{uuid.uuid4().hex[:8]}"
     # Resolve the host-side approvals gRPC port. Honor an explicit
     # NEXUS_APPROVALS_GRPC_PORT override (lets ops pin a known port for
@@ -280,6 +288,7 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     up_env = os.environ.copy()
     up_env["NEXUS_APPROVALS_ENABLED"] = "1"
     up_env["NEXUS_APPROVALS_ADMIN_TOKEN"] = admin_token
+    up_env["NEXUS_APPROVALS_DIAG_TOKEN"] = diag_token
     up_env["NEXUS_APPROVALS_GRPC_PORT"] = str(grpc_port)
     # Mirror the pinned api_key into NEXUS_API_KEY for the docker compose
     # subprocess. ``nexus up`` already derives this from nexus.yaml's
@@ -349,6 +358,7 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
         grpc_addr=f"127.0.0.1:{grpc_port}",
         admin_token=admin_token,
         admin_api_key=admin_api_key,
+        diag_token=diag_token,
         zone=zone,
         project_dir=project_dir,
     )

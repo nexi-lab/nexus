@@ -126,3 +126,72 @@ def test_python_fallback_no_partial_match(monkeypatch):
 
     monkeypatch.setattr(ph, "_rust_any", None)
     assert ph.any_path_under_prefix(["/a/bc"], "/a/b") is False
+
+
+# ---------------------------------------------------------------------------
+# DirectoryVisibilityCache.compute_from_tiger_bitmap — refactor contract
+# ---------------------------------------------------------------------------
+
+
+def test_compute_from_tiger_bitmap_calls_get_accessible_paths():
+    """After refactor, method must use get_accessible_paths (not get_accessible_resources)."""
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths.return_value = {"/a/b/c", "/a/b/d"}
+    # If old code runs it calls get_accessible_resources — return empty set so
+    # the wrong path produces the wrong (False) answer.
+    tiger_cache.get_accessible_resources.return_value = set()
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
+
+    assert result is True
+    tiger_cache.get_accessible_paths.assert_called_once_with(
+        subject_type="user",
+        subject_id="u1",
+        permission="read",
+        resource_type="file",
+        zone_id="z1",
+    )
+
+
+def test_compute_from_tiger_bitmap_cache_miss_returns_none():
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths.return_value = None
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
+    assert result is None
+
+
+def test_compute_from_tiger_bitmap_no_accessible_returns_false():
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths.return_value = set()
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
+    assert result is False
+
+
+def test_compute_from_tiger_bitmap_no_descendants_returns_false():
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths.return_value = {"/x/y/z"}
+
+    cache = DirectoryVisibilityCache(tiger_cache=tiger_cache)
+    result = cache.compute_from_tiger_bitmap("z1", "user", "u1", "/a/b", "read")
+    assert result is False

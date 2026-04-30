@@ -194,15 +194,14 @@ class DirectoryVisibilityCache:
         Returns:
             True if directory is visible (has accessible descendants),
             False if not visible,
-            None if Tiger Cache is unavailable
+            None if Tiger Cache is unavailable or cache miss
         """
         if not self._tiger_cache:
             return None
 
         self._bitmap_computes += 1
 
-        # Get all accessible resource IDs from Tiger Cache
-        accessible_ids = self._tiger_cache.get_accessible_resources(
+        accessible_paths = self._tiger_cache.get_accessible_paths(
             subject_type=subject_type,
             subject_id=subject_id,
             permission=permission,
@@ -210,46 +209,22 @@ class DirectoryVisibilityCache:
             zone_id=zone_id,
         )
 
-        if not accessible_ids:
-            # No accessible resources at all
+        if accessible_paths is None:
+            return None  # cache miss — caller falls through to slow path
+
+        if not accessible_paths:
             self.set_visible(
                 zone_id, subject_type, subject_id, dir_path, False, "no_accessible_resources"
             )
             return False
 
-        # Normalize directory prefix for matching
-        prefix = dir_path.rstrip("/") + "/"
-        if dir_path == "/":
-            prefix = "/"
+        from nexus.bricks.rebac.cache._prefix_helpers import any_path_under_prefix
 
-        # Scan bitmap and check if any accessible resource is under this directory
-        # This is O(bitmap_size) but avoids N metadata queries
-        resource_map = self._tiger_cache._resource_map
-
-        for int_id in accessible_ids:
-            res_info = resource_map.get_resource_id(int_id)
-            if res_info:
-                res_type, res_path = res_info
-
-                # Check if resource is under the directory
-                if res_path == dir_path or res_path.startswith(prefix):
-                    self.set_visible(
-                        zone_id,
-                        subject_type,
-                        subject_id,
-                        dir_path,
-                        True,
-                        f"descendant:{res_path}",
-                    )
-                    logger.debug(f"[DirVisCache] BITMAP_COMPUTE: {dir_path} visible via {res_path}")
-                    return True
-
-        # No descendants found
-        self.set_visible(
-            zone_id, subject_type, subject_id, dir_path, False, "no_descendants_in_bitmap"
-        )
-        logger.debug(f"[DirVisCache] BITMAP_COMPUTE: {dir_path} not visible")
-        return False
+        result = any_path_under_prefix(accessible_paths, dir_path)
+        reason = f"bitmap_prefix:{dir_path}" if result else "no_descendants_in_bitmap"
+        self.set_visible(zone_id, subject_type, subject_id, dir_path, result, reason)
+        logger.debug("[DirVisCache] BITMAP_COMPUTE: %s visible=%s", dir_path, result)
+        return result
 
     def compute_batch_visibility(
         self,

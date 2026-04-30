@@ -653,10 +653,30 @@ impl RaftDistributedCoordinator {
             return Ok(false);
         }
 
+        // NEXUS_PEERS empty selects the dynamic-bootstrap mode: the
+        // daemon brings up the raft transport server and federation
+        // wiring, but does NOT auto-create the root zone.  An
+        // operator / agent later drives cluster membership explicitly
+        // via the existing RPC contract:
+        //
+        //   * first node:   `federation_create_zone("root")` —
+        //                   creates a 1-voter raft group (ConfState
+        //                   contains only `self.node_id`, quorum=1,
+        //                   self-campaigns to leader).
+        //   * later nodes:  `JoinZone(zone_id="root", node_id, addr)`
+        //                   RPC against the leader — leader proposes
+        //                   ConfChangeV2 AddNode, commits (quorum
+        //                   from existing voter set), pushes a
+        //                   snapshot, joiner installs ConfState and
+        //                   syncs the log.
+        //
+        // NEXUS_PEERS non-empty keeps the static-bootstrap mode
+        // unchanged: every peer seeds the same ConfState from the
+        // shared NEXUS_PEERS list, raft-rs runs election internally
+        // once peers reach each other.  Both modes coexist; choice
+        // is per-deployment, signalled by NEXUS_PEERS presence.
         let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
-        if peers_csv.trim().is_empty() {
-            return Ok(false);
-        }
+        let dynamic_bootstrap = peers_csv.trim().is_empty();
 
         let hostname = std::env::var("NEXUS_HOSTNAME").ok().unwrap_or_else(|| {
             #[cfg(unix)]
@@ -756,8 +776,22 @@ impl RaftDistributedCoordinator {
         // `ReplaceVoterByHostname` on each peer until a leader accepts
         // the rotation.  Strict raft membership-swap contract via
         // ConfChangeV2 atomic commit — no transient quorum gap.
-        let membership =
-            self.ensure_voter_membership(&hostname, &self_addr, &zones_dir, &peer_addrs)?;
+        //
+        // Dynamic-bootstrap mode skips the rotation RPC dance — there
+        // are no peers to rotate against (NEXUS_PEERS is empty by
+        // construction).  Use the cold-start sentinel (incarnation=0,
+        // hostname-based ID) which matches the semantics: this node
+        // is the first to come up and either becomes leader of a
+        // 1-voter cluster on `federation_create_zone`, or joins an
+        // existing cluster via JoinZone RPC under the same identity.
+        let membership = if dynamic_bootstrap {
+            VoterMembership {
+                node_id: hostname_to_node_id(&hostname),
+                rotated_into_existing_cluster: false,
+            }
+        } else {
+            self.ensure_voter_membership(&hostname, &self_addr, &zones_dir, &peer_addrs)?
+        };
 
         let zm = ZoneManager::with_node_id(
             &hostname,
@@ -811,15 +845,21 @@ impl RaftDistributedCoordinator {
             Ok(())
         };
 
-        bootstrap_zone("root")?;
+        // Static-bootstrap mode: every node seeds the same ConfState
+        // from NEXUS_PEERS at boot.  Dynamic-bootstrap mode skips
+        // this entirely — root and any federation zones are created
+        // later via explicit RPC (`federation_create_zone` / `JoinZone`).
+        if !dynamic_bootstrap {
+            bootstrap_zone("root")?;
 
-        if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
-            for zone_id in zones_csv
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                bootstrap_zone(zone_id)?;
+            if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
+                for zone_id in zones_csv
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    bootstrap_zone(zone_id)?;
+                }
             }
         }
 

@@ -225,7 +225,7 @@ impl ZoneManager {
 
     /// Create a `ZoneManager` with an explicit node ID.
     ///
-    /// Used by `RaftFederationProvider::ensure_voter_membership` to
+    /// Used by `RaftDistributedCoordinator::ensure_voter_membership` to
     /// bind a freshly-minted incarnation-based ID for the post-wipe
     /// rotation path.  Most callers should use [`Self::new`], which
     /// computes the cold-start `hostname_to_node_id` automatically.

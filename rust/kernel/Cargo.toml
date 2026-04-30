@@ -14,7 +14,11 @@ crate-type = ["rlib"]
 
 [dependencies]
 contracts = { workspace = true }
-lib = { workspace = true, features = ["python"] }
+# `lib` carries both algorithm wrappers (under `python` feature) and
+# the gRPC transport primitives (under `transport` feature: TLS,
+# connection pool, peer addressing, TOFU trust store, PeerBlobClient
+# trait). Kernel needs both.
+lib = { workspace = true, features = ["python", "transport"] }
 # Kernel depends on `contracts` and `shared/` only; the dep direction
 # is one-way `services -> kernel`. AgentTable is the kernel SSOT at
 # `crate::core::agents::table`. Raft depends on kernel for
@@ -52,11 +56,6 @@ lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
-# Kernel consumes `transport-primitives` for TlsConfig / connection-pool
-# / peer addressing — the lowest shared transport layer. The high-level
-# `transport` crate depends on kernel, so kernel only takes the
-# primitives crate to keep the dep direction one-way.
-transport-primitives = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }

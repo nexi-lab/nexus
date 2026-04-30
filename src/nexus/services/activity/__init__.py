@@ -3,6 +3,13 @@
 See ``docs/superpowers/specs/2026-04-30-3791-activity-event-foundation-design.md``.
 """
 
+from nexus.services.activity.emitter import (
+    Emitter,
+    NoopEmitter,
+    emit,
+    get_emitter,
+    set_emitter,
+)
 from nexus.services.activity.events import (
     ActivityEvent,
     Actor,
@@ -14,7 +21,12 @@ from nexus.services.activity.events import (
 __all__ = [
     "ActivityEvent",
     "Actor",
+    "Emitter",
     "EventKind",
+    "NoopEmitter",
     "Result",
     "Subject",
+    "emit",
+    "get_emitter",
+    "set_emitter",
 ]

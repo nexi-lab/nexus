@@ -6,7 +6,9 @@ nexus needed. Auth paths covered:
 - no Authorization header → 401
 - non-admin token → 403
 - admin token via auth_provider → 201
-- admin token via NEXUS_APPROVALS_ADMIN_TOKEN fallback → 201
+- ``NEXUS_APPROVALS_ADMIN_TOKEN`` is NOT a fallback here — regression
+  guard so a leaked approvals token cannot write arbitrary ReBAC
+  tuples → 403
 - pydantic schema violations → 422
 - ValueError from rebac_write → 400
 - GET / DELETE happy paths
@@ -154,11 +156,13 @@ def test_post_with_admin_via_auth_provider_succeeds(fake_rebac_manager: MagicMoc
     assert body["subject_id"] == "alice"
 
 
-def test_post_with_approvals_admin_token_fallback(
+def test_post_with_approvals_admin_token_is_rejected(
     fake_rebac_manager: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Issue #3790 fixture sets only NEXUS_APPROVALS_ADMIN_TOKEN —
-    the router must still admit it."""
+    """Regression guard for #3790 follow-up security review:
+    ``NEXUS_APPROVALS_ADMIN_TOKEN`` must NOT be admitted as HTTP admin
+    here. Otherwise a leaked approvals token would be able to write
+    arbitrary ReBAC tuples (e.g. grant itself further capabilities)."""
     monkeypatch.setenv("NEXUS_APPROVALS_ADMIN_TOKEN", "approvals-admin-secret")
     app = _make_app(rebac_manager=fake_rebac_manager, auth_provider=None)
     with _client(app) as client:
@@ -166,21 +170,6 @@ def test_post_with_approvals_admin_token_fallback(
             "/api/v2/rebac/tuples",
             json=_VALID_BODY,
             headers={"Authorization": "Bearer approvals-admin-secret"},
-        )
-    assert resp.status_code == 201, resp.text
-    fake_rebac_manager.rebac_write.assert_called_once()
-
-
-def test_post_with_wrong_approvals_token_rejected(
-    fake_rebac_manager: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("NEXUS_APPROVALS_ADMIN_TOKEN", "right-secret")
-    app = _make_app(rebac_manager=fake_rebac_manager, auth_provider=None)
-    with _client(app) as client:
-        resp = client.post(
-            "/api/v2/rebac/tuples",
-            json=_VALID_BODY,
-            headers={"Authorization": "Bearer wrong-secret"},
         )
     assert resp.status_code == 403, resp.text
     fake_rebac_manager.rebac_write.assert_not_called()

@@ -5,7 +5,8 @@ nexus needed. Auth paths covered:
 - no Authorization header → 401
 - non-admin token → 403
 - admin token via auth_provider → 201
-- admin token via NEXUS_APPROVALS_ADMIN_TOKEN fallback → 201
+- ``NEXUS_APPROVALS_ADMIN_TOKEN`` is NOT a fallback (security regression
+  guard for #3790 follow-up) → 403
 - invalid body (missing both command and url) → handled by MCPService
   (ValidationError → 400 via global handler in production; here we
   assert the service was called and the surface didn't 422 on the
@@ -151,13 +152,17 @@ def test_post_with_admin_via_auth_provider_succeeds(fake_mcp_service: AsyncMock)
     assert body["mounted"] is True
 
 
-def test_post_with_approvals_admin_token_fallback(
+def test_post_with_approvals_admin_token_is_rejected(
     fake_mcp_service: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Issue #3790 fixture sets only NEXUS_APPROVALS_ADMIN_TOKEN —
-    the router must still admit it."""
+    """Regression guard for #3790 follow-up security review:
+    ``NEXUS_APPROVALS_ADMIN_TOKEN`` must NOT be admitted as HTTP admin
+    here — the env var is scoped to the approvals gRPC server only.
+    The MCP-mount router would otherwise allow stdio mounts (arbitrary
+    subprocess execution) for any holder of the approvals token."""
     monkeypatch.setenv("NEXUS_APPROVALS_ADMIN_TOKEN", "approvals-admin-secret")
-    # NO auth_provider (closer to the fixture path).
+    # NO auth_provider — exercises the path that previously fell through
+    # to the approvals-token fallback.
     app = _make_app(mcp_service=fake_mcp_service, auth_provider=None)
     with _client(app) as client:
         resp = client.post(
@@ -165,26 +170,9 @@ def test_post_with_approvals_admin_token_fallback(
             json={"name": "x", "transport": "sse", "url": "http://10.0.0.1:9999/sse"},
             headers={"Authorization": "Bearer approvals-admin-secret"},
         )
-    assert resp.status_code == 201, resp.text
-    fake_mcp_service.mcp_mount.assert_awaited_once()
-
-
-def test_post_with_wrong_approvals_token_rejected(
-    fake_mcp_service: AsyncMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A bearer that doesn't match NEXUS_APPROVALS_ADMIN_TOKEN must NOT
-    be admitted as admin via the fallback. Under TestClient the request
-    appears as loopback so resolve_auth grants open-access authentication
-    (not admin); the fallback check then misses → 403 admin-required.
-    The mount must not be called."""
-    monkeypatch.setenv("NEXUS_APPROVALS_ADMIN_TOKEN", "right-secret")
-    app = _make_app(mcp_service=fake_mcp_service, auth_provider=None)
-    with _client(app) as client:
-        resp = client.post(
-            "/api/v2/mcp/mounts",
-            json={"name": "x", "transport": "sse", "url": "http://10.0.0.1:9999/sse"},
-            headers={"Authorization": "Bearer wrong-secret"},
-        )
+    # TestClient is loopback → resolve_auth treats it as open-access
+    # authenticated; the bearer is not admin and the fallback is gone,
+    # so 403 is the correct outcome. The mount must not be called.
     assert resp.status_code == 403, resp.text
     fake_mcp_service.mcp_mount.assert_not_called()
 

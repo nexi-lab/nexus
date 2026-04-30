@@ -36,7 +36,7 @@ import pytest
 
 from nexus.grpc.approvals import approvals_pb2, approvals_pb2_grpc
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.timeout(600)]
 
 
 def _tag() -> str:

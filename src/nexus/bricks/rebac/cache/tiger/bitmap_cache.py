@@ -731,13 +731,15 @@ class TigerCache:
         if int_ids is None:
             return None
 
-        # Convert int IDs back to paths using resource map
+        # Convert int IDs back to paths using resource map.
+        # Use get_resource_id() (not direct _int_to_uuid lookup) so that
+        # cold in-memory maps fall back to DB — otherwise valid bitmap
+        # entries silently drop, producing false-negative visibility.
         paths: set[str] = set()
-        with self._resource_map._lock:
-            for int_id in int_ids:
-                key = self._resource_map._int_to_uuid.get(int_id)
-                if key and key[0] == resource_type:
-                    paths.add(key[1])  # key is (type, path)
+        for int_id in int_ids:
+            key = self._resource_map.get_resource_id(int_id)
+            if key and key[0] == resource_type:
+                paths.add(key[1])  # key is (type, path)
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(

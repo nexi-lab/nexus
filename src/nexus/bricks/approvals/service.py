@@ -768,10 +768,27 @@ class ApprovalService:
         try:
             msg = json.loads(payload)
             rid = msg["request_id"]
-            decision = Decision(msg["decision"])
         except Exception:
             logger.warning("bad approvals_decided payload: %s", payload)
             return
+
+        # Round-5 (#3790): treat NOTIFY as a hint only. Re-read the durable
+        # row before resolving local waiters so payload tampering, stale
+        # payloads, or a buggy retry after transition() returned None cannot
+        # release waiters without a matching committed DB status / audit row.
+        # Rows that are still PENDING (spurious NOTIFY, double-fire, or replay)
+        # are silently ignored — the sweeper / reconcile watchdog will handle
+        # them later.
+        row = await self._repo.get(rid)
+        if row is None or row.status is ApprovalRequestStatus.PENDING:
+            # No durable terminal decision yet — ignore.
+            return
+
+        if row.status is ApprovalRequestStatus.APPROVED:
+            decision = Decision.APPROVED
+        else:
+            # REJECTED, EXPIRED, or any future terminal status → denial.
+            decision = Decision.DENIED
 
         # F2 (Issue #3790): cross-worker SESSION fan-out. Before resolving
         # the local dispatcher (which drops the session_ids of any
@@ -789,13 +806,14 @@ class ApprovalService:
         # before; the session_allow inserts are best-effort followups).
         self._dispatcher.resolve(rid, decision)
 
-        # zone is not on the payload; look it up so we can broadcast
-        # the WatchEvent with the right zone AND so the SESSION fan-out
-        # below has the kind/subject/zone tuple.
-        row = await self._repo.get(rid)
-        zone = row.zone_id if row else ""
+        zone = row.zone_id
         self._broadcast(
-            WatchEvent(type="decided", request_id=rid, zone_id=zone, decision=decision.value)
+            WatchEvent(
+                type="decided",
+                request_id=rid,
+                zone_id=zone,
+                decision=row.status.value,
+            )
         )
 
         # F2: only fan out for APPROVED + SESSION scope. The repo's
@@ -806,7 +824,6 @@ class ApprovalService:
         # ``_is_fabricated_session_id`` for rationale.
         if (
             decision is Decision.APPROVED
-            and row is not None
             and row.decision_scope is DecisionScope.SESSION
             and local_session_ids
         ):

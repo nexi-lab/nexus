@@ -185,6 +185,61 @@ services:
       start_period: 10s
 
   # ==========================================================================
+  # NexusFS Audit Node — joins production zones as raft learner + runs
+  # the audit-node collect/gather loop.  Audit traces produced on
+  # nexus-1 / nexus-2 reach this node via raft replication of the
+  # WAL-replicated /audit/traces/ DT_STREAM; the ``AuditNode`` Python
+  # service appends each source-zone's stream into a local
+  # /audit/collect/{source}/traces/ for centralized retention.
+  # ==========================================================================
+  audit-node:
+    image: nexus-fullnode:latest
+    container_name: nexus-dyn-audit-node
+    hostname: audit-node
+    restart: unless-stopped
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    environment:
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 2026
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_PROFILE: cluster
+
+      # Raft — joins production zones as a learner via AddLearnerNode
+      # conf change (federation_join_zone(as_learner=true)).  The
+      # static peer list points at the voter set so the audit-node
+      # can reach the leader during the join handshake; production
+      # voters discover the learner's address via the conf change
+      # entry, not via this list.
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: audit-node:2126
+      NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
+      NEXUS_RAFT_TLS: "false"
+      NEXUS_GRPC_BIND_ALL: "true"
+
+      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}
+      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
+      NEXUS_USE_UVLOOP: "true"
+      RUST_LOG: info,nexus_raft=debug
+
+      # Marks this node as the audit collector — bootstrapping logic
+      # in the test suite uses this flag to spawn the AuditNode loop.
+      NEXUS_AUDIT_NODE_ROLE: "true"
+      NEXUS_AUDIT_NODE_ZONE_ID: "audit"
+    volumes:
+      - dyn_audit_node_data:/app/data
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:2026/healthz/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  # ==========================================================================
   # SSE mock sidecar — OpenAI + Anthropic streaming responses for the
   # Rust OpenAIBackend / AnthropicBackend E2E tests.
   # ==========================================================================
@@ -290,5 +345,7 @@ volumes:
     name: nexus-dyn-node2-data
   dyn_witness_data:
     name: nexus-dyn-witness-data
+  dyn_audit_node_data:
+    name: nexus-dyn-audit-node-data
   dyn_dragonfly_data:
     name: nexus-dyn-dragonfly-data

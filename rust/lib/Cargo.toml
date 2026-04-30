@@ -27,6 +27,23 @@ python = [
     "dep:dashmap",
     "dep:bloomfilter",
 ]
+# Brings `lib::transport_primitives` (TLS, pool, addressing, TOFU trust
+# store, PeerBlobClient trait). Pulls tonic + tokio + pem + base64 + sha2
+# + serde + time. Enabled by every peer crate that speaks raft or VFS
+# gRPC (raft, transport, kernel through the peer-client slot). WASM /
+# pure-algo callers skip it.
+transport = [
+    "dep:tonic",
+    "dep:tokio",
+    "dep:dashmap",
+    "dep:parking_lot",
+    "dep:thiserror",
+    "dep:tracing",
+    "dep:sha2",
+    "dep:pem",
+    "dep:base64",
+    "dep:time",
+]
 
 [dependencies]
 serde = { workspace = true }
@@ -62,9 +79,22 @@ bloomfilter = { version = "3.0", optional = true }
 # the `[dependencies]` line above; no extra entry needed for the
 # `python` feature.
 
+# Transport-primitives module deps (gated by the `transport` feature).
+tonic = { workspace = true, optional = true }
+tokio = { version = "1", features = ["rt", "net", "sync", "time"], optional = true }
+thiserror = { version = "2", optional = true }
+tracing = { version = "0.1", optional = true }
+sha2 = { version = "0.10", optional = true }
+pem = { version = "3", optional = true }
+base64 = { version = "0.22", optional = true }
+time = { version = "0.3", features = ["parsing", "formatting"], optional = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
 proptest = "1.5"
 tempfile = "3"
+# transport_primitives unit tests need self-signed cert generation +
+# tempdirs. Only compiled when running tests with `--features transport`.
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }

@@ -82,11 +82,11 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
 }
 
 # PyO3 wrappers for the lib algorithms live in
-# rust/shared/lib/src/python/. The codegen uses flat module names
+# rust/lib/src/python/. The codegen uses flat module names
 # (rebac, search, glob, io, prefix, simd, trigram, path_utils, bitmap,
 # bloom, hash) in the registration calls; this map locates the actual
 # .rs file for each.
-LIB_PYTHON_DIR = ROOT / "rust" / "shared" / "lib" / "src" / "python"
+LIB_PYTHON_DIR = ROOT / "rust" / "lib" / "src" / "python"
 LIB_PYTHON_MODULES: set[str] = {
     "bitmap",
     "bloom",
@@ -106,7 +106,7 @@ def _resolve_module_path(mod_name: str) -> Path | None:
     """Return the on-disk `.rs` file for a flat module name, or None.
 
     Resolution order:
-      1. `rust/shared/lib/src/python/<mod>.rs` for algorithm wrappers under lib.
+      1. `rust/lib/src/python/<mod>.rs` for algorithm wrappers under lib.
       2. Nested file aliases in the kernel `core/*` tree.
       3. Flat `rust/kernel/src/<mod>.rs`.
       4. Peer crates' `src/<mod>.rs` — `transport::python::register` adds
@@ -4755,7 +4755,7 @@ def collect_all() -> tuple[
     if kernel_python_path.exists():
         kernel_python_text = kernel_python_path.read_text()
     lib_python_text = ""
-    lib_python_mod = ROOT / "rust" / "shared" / "lib" / "src" / "python" / "mod.rs"
+    lib_python_mod = ROOT / "rust" / "lib" / "src" / "python" / "mod.rs"
     if lib_python_mod.exists():
         lib_python_text = lib_python_mod.read_text()
     # Phase 4 (full): peer-crate `python::register` fns also expose

@@ -2,7 +2,7 @@
 name = "nexus-cdylib"
 version = "0.10.0"
 edition = "2021"
-description = "Python entry-point cdylib (produces nexus_runtime.so / nexus_runtime.pyd). Composes the kernel + lib + raft + backends + services + transport + rpc rlibs into the single shared object Python imports as `nexus_runtime`. Build artifact; see KERNEL-ARCHITECTURE.md §6.1."
+description = "Python entry-point cdylib (produces nexus_runtime.so / nexus_runtime.pyd). Composes the kernel + lib + raft + backends + services + transport rlibs into the single shared object Python imports as `nexus_runtime`. Build artifact; see KERNEL-ARCHITECTURE.md §6.1."
 
 [lib]
 # Wheel module name `nexus_runtime` aggregates the whole runtime;
@@ -35,15 +35,11 @@ services = { workspace = true, features = ["python"] }
 # `ObjectStoreProvider::build` switch the kernel calls through
 # `kernel::hal::object_store_provider::get_provider()`.
 backends = { workspace = true, features = ["python"] }
-# Transport with `python` feature enabled — registers
-# `PyVfsGrpcServerHandle` + `start_vfs_grpc_server` (front-door VFS
-# gRPC server) into nexus_runtime module.
+# Transport with `python` feature enabled — registers the in-bound
+# VFS gRPC server pyclass + starter, the out-bound `PyFederationClient`,
+# and the `install_transport_wiring(kernel)` peer-blob-client install
+# entry point.
 transport = { workspace = true, features = ["python"] }
-# rpc with `python` feature enabled — registers `PyFederationClient`
-# + `install_transport_wiring` (peer-blob client wiring) into the
-# nexus_runtime module. Driver-outgoing RPC clients (peer-blob,
-# federation, VFS) consolidate here in the rpc driver-layer crate.
-rpc = { workspace = true, features = ["python"] }
 # Sole crate that enables `extension-module`. Cargo unifies pyo3
 # features across the workspace, so every transitive pyo3 user
 # (kernel, lib, raft, backends, …) sees the cdylib-correct

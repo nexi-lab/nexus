@@ -6,13 +6,13 @@
 //! across the workspace and pulls together the rlibs that compose
 //! the runtime:
 //!
-//! * [`lib`]         — pure-Rust algorithms (libc analogue)
-//! * [`kernel`]      — pillars + primitives + syscalls
-//! * [`nexus_raft`]  — Raft / federation
-//! * `backends`      — driver impls
-//! * `services`      — post-syscall hooks (audit / permission / agents / tasks)
-//! * `transport`     — front-door VFS gRPC server + IPC envelope helpers
-//! * `rpc`           — driver-outgoing RPC clients (VFS / peer-blob / federation)
+//! * [`lib`] — pure-Rust algorithms + transport primitives (libc
+//!   analogue, §6 tier-neutral)
+//! * [`kernel`] — pillars + primitives + syscalls
+//! * [`nexus_raft`] — Raft / federation
+//! * `backends` — driver impls
+//! * `services` — post-syscall hooks (audit / permission / agents / tasks)
+//! * `transport` — network surface tier (VFS gRPC server + IPC + driver-outgoing clients)
 //!
 //! Each peer rlib exposes its own `python::register(&Bound<PyModule>)`
 //! function; this cdylib is just the envelope that calls all of them.
@@ -48,14 +48,12 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     // constructs concrete backends through the §3.B.2 trait without
     // the kernel reaching into the backends crate.
     backends::python::register(m)?;
-    // Front-door services tier: VFS gRPC server pyclass + starter.
+    // Network surface tier: in-bound VFS gRPC server (PyVfsGrpcServerHandle
+    // + start_vfs_grpc_server) plus out-bound clients (PyFederationClient
+    // + `install_transport_wiring(kernel)` for peer-blob client wiring).
+    // Python's NexusFS boot calls
+    // `nexus_runtime.install_transport_wiring(kernel)` once after
+    // federation env vars are read.
     transport::python::register(m)?;
-    // Driver-outgoing RPC clients: PyFederationClient pyclass +
-    // `install_transport_wiring(kernel)` Python entry point that
-    // wires kernel's `peer_client` slot to the real
-    // `rpc::peer_blob::PeerBlobClient` impl. Python's NexusFS boot
-    // calls `nexus_runtime.install_transport_wiring(kernel)` once
-    // after federation env vars are read.
-    rpc::python::register(m)?;
     Ok(())
 }

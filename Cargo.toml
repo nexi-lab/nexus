@@ -1,38 +1,22 @@
 [workspace]
 resolver = "2"
 members = [
+    # Tier-neutral packages (KERNEL-ARCHITECTURE.md §6):
+    #   contracts/ — types / enums / exceptions / constants (zero deps).
+    #   lib/       — pure-Rust implementations (algorithms + transport
+    #                primitives). Every peer crate depends on it; it
+    #                depends only on `contracts`.
     "rust/contracts",
-    # `rust/shared/` holds the workspace's lowest shared layer:
-    # `shared/lib` (algorithms, WASM-clean) + `shared/transport-primitives`
-    # (TLS / pool / addressing / TOFU / PeerBlobClient trait). Every
-    # peer crate depends on these but they never depend on a peer
-    # crate, which is what keeps the workspace dep graph acyclic.
-    "rust/shared/lib",
-    "rust/shared/transport-primitives",
+    "rust/lib",
+    # OS proper + driver / service tiers (§6.1).
     "rust/transport",
     "rust/kernel",
     "rust/backends",
     "rust/services",
     "rust/raft",
-    # Driver-outgoing RPC clients: VFS gRPC (RemoteBackend), peer-blob
-    # fetch, federation peer client. Driver-layer crate alongside
-    # `backends/` and `raft/`. The single directed edge between driver-
-    # layer crates is `rpc -> raft` — rpc is the "raft protocol client"
-    # so it references raft's wire-format proto stubs.
-    "rust/rpc",
-    # Phase 3 restructure plan #6: rust/tasks folded into rust/services/src/tasks/.
-    # Phase 4 (full) — deployment profile binaries get their own folder.
-    # Today only `cluster` (Sudowork's `nexusd-cluster` ELF/EXE) lives
-    # under `rust/profiles/`; future profiles (slim / full / embedded /
-    # lite / cloud / remote) each get their own subdirectory there.
-    # See KERNEL-ARCHITECTURE.md §7 for profile semantics.  The cdylib
-    # below stays at workspace top-level because it's a Python-SDK
-    # *artifact*, not a deployment profile.
+    # Deployment binaries.
     "rust/profiles/cluster",
-    # Phase 0: thin cdylib that produces `nexus_kernel.so` by composing
-    # `kernel + lib + raft + backends + services + transport` rlibs.
-    # Build artifact only — not an architectural tier; see
-    # `docs/architecture/KERNEL-ARCHITECTURE.md` §6.1.
+    # Build artifact: Python wheel cdylib.
     "rust/nexus-cdylib",
 ]
 # nexus-fuse excluded: standalone FUSE daemon with different dependency versions
@@ -40,37 +24,31 @@ exclude = ["nexus-fuse"]
 
 [workspace.dependencies]
 contracts = { path = "rust/contracts" }
-lib = { path = "rust/shared/lib" }
-# `transport-primitives` lives at the lowest shared layer (TLS / pool /
-# addressing / TOFU trust store / PeerBlobClient trait) — every peer
-# crate depends on it, it depends only on `contracts`.
-# `transport` is the front-door services crate (VFS gRPC server + IPC
-# envelope helpers) — depends on kernel + shared/transport-primitives.
-transport-primitives = { path = "rust/shared/transport-primitives" }
+# `lib` is the tier-neutral implementation crate per §6 — algorithms
+# (bitmap, bloom, glob, hash, rebac, search, simd, trigram) plus the
+# `transport_primitives` module (TLS / pool / addressing / TOFU /
+# PeerBlobClient trait). Default build is WASM-clean; `python` and
+# `transport` features are opt-in.
+lib = { path = "rust/lib" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
-# Driver impls (Phase 2). The `python` feature is enabled by the
-# `nexus-cdylib` build-artifact crate so its `#[pymodule]` can expose
-# backends' `#[pyclass]` types alongside the kernel's own.
+# Driver impls. The `python` feature is enabled by the `nexus-cdylib`
+# build-artifact crate so its `#[pymodule]` can expose backends'
+# `#[pyclass]` types alongside the kernel's own.
 backends = { path = "rust/backends" }
-# `kernel` is rlib-only after Phase 0 — the Python entry-point cdylib
-# `nexus_kernel.so` lives in `rust/nexus-cdylib/`. `default-features =
+# `kernel` is rlib-only — the Python entry-point cdylib
+# `nexus_runtime.so` lives in `rust/nexus-cdylib/`. `default-features =
 # false` keeps the kernel runtime defaults (mimalloc allocator, HTTP
 # connector stack, py-hook adapters) off in transitive consumers
 # (backends / services / transport rlibs); `nexus-cdylib` opts back in
 # explicitly. This is the cycle break that lets `<peer-crate> -> kernel`
 # coexist with cdylib registration of peer-crate `#[pyclass]`es.
 kernel = { path = "rust/kernel", default-features = false }
-# raft is an rlib pulled into the `nexus_kernel.so` cdylib via the
-# nexus-cdylib build artifact (alongside kernel). Direction is
-# `nexus-cdylib -> {kernel, raft}` only — no cycle. Other crates
-# (kernel, etc.) use raft as a workspace dep too; the `python` +
-# `grpc` feature flags here apply uniformly.
+# raft is an rlib pulled into the `nexus_runtime.so` cdylib via the
+# nexus-cdylib build artifact (alongside kernel). Other crates use raft
+# as a workspace dep too; the `python` + `grpc` feature flags here apply
+# uniformly.
 raft = { path = "rust/raft", default-features = false, features = ["python", "grpc"] }
-# Driver-outgoing RPC clients (VFS, peer-blob, federation). The
-# `python` feature unions the PyO3 install hooks into a single
-# `rpc::python::register(m)` entry consumed by the cdylib.
-rpc = { path = "rust/rpc" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ahash = "0.8"

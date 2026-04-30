@@ -37,6 +37,7 @@ use kernel::kernel::Kernel;
 
 use crate::transport::{
     call_replace_voter_by_hostname, compute_node_id, hostname_to_node_id, NodeAddress,
+    TransportError,
 };
 use crate::zone_meta_store::ZoneMetaStore;
 use crate::{TlsFiles, ZoneManager};
@@ -331,10 +332,50 @@ fn write_node_incarnation(zones_dir: &str, incarnation: u64) -> Result<(), Strin
     Ok(())
 }
 
+/// Outcome of attempting wipe-rejoin rotation against the configured peers.
+///
+/// Distinguishes "no live cluster exists" (safe cold-start) from "cluster
+/// exists but rotation didn't commit" (cold-starting here would silently
+/// rejoin with the joiner's stale hostname-based ID and panic raft-rs's
+/// `to_commit` assertion on the leader's first heartbeat — fail loudly
+/// instead).  This three-way classification is the contract the caller
+/// (`ensure_voter_membership`) relies on to never silently violate the
+/// wipe-rejoin invariant.
+#[derive(Debug)]
+enum RotationOutcome {
+    /// Leader committed the ConfChangeV2 atomically swapping
+    /// `RemoveNode(old_id) + AddNode(new_id)`.  Caller persists the
+    /// new incarnation and starts raft with `skip_bootstrap=true` so
+    /// the leader's snapshot installs the authoritative ConfState.
+    Committed,
+    /// Every peer failed at the TCP/connect layer (or the peers list
+    /// was empty / all self).  No live cluster to rejoin — caller
+    /// falls through to the cold-start sentinel (incarnation=0,
+    /// hostname-based ID) so every fresh peer converges on identical
+    /// ConfState bootstraps without coordination.
+    AllPeersUnreachable,
+    /// At least one peer was TCP-reachable but rotation didn't commit
+    /// (RPC handler timeout, "not leader" with no usable redirect, or
+    /// — most relevantly — quorum deadlock when the joiner IS the
+    /// missing voter on a 2-voter cluster).  A live cluster already
+    /// holds this hostname's stale voter ID; cold-starting with that
+    /// ID is a contract violation and panics raft-rs.
+    PeersReachableRotationFailed { detail: String },
+}
+
 /// Try `ReplaceVoterByHostname` against each peer in turn.  Returns
-/// `true` on the first peer that responds with `success`.  Followers
-/// supply the leader's address in `leader_address`; the caller follows
-/// that redirect once before moving to the next peer.
+/// the first `Committed` if any peer's leader accepts the rotation,
+/// otherwise classifies the failure mode.  Followers supply the
+/// leader's address in `leader_address`; the caller follows that
+/// redirect once before moving to the next peer.
+///
+/// **Failure-mode classification is load-bearing.**  The caller relies
+/// on the distinction between `AllPeersUnreachable` (safe cold-start)
+/// and `PeersReachableRotationFailed` (must surface to operator) to
+/// honour the wipe-rejoin contract.  Treating "RPC timeout from a
+/// reachable peer" as "no peer reachable" silently rejoins an existing
+/// cluster with a stale ID and panics raft-rs (`to_commit X is out of
+/// range [last_index 0]`).
 ///
 /// Takes the owning `Runtime` (not a `Handle`) so we can call
 /// `Runtime::block_on` directly — `Handle::block_on` against a
@@ -347,7 +388,10 @@ fn try_replace_voter_on_peers(
     self_hostname: &str,
     new_node_id: u64,
     self_address: &str,
-) -> bool {
+) -> RotationOutcome {
+    let mut any_reachable = false;
+    let mut last_failure: Option<String> = None;
+
     for peer in peers {
         if peer.hostname == self_hostname {
             // Skip self — even if NEXUS_PEERS includes us, RPC to self
@@ -378,9 +422,14 @@ fn try_replace_voter_on_peers(
                          removed_old_id={:?}",
                         result.removed_old_id,
                     );
-                    return true;
+                    return RotationOutcome::Committed;
                 }
                 Ok(result) => {
+                    // TCP succeeded, server responded with success=false.
+                    // Either a follower redirect (try the leader once)
+                    // or a genuine refusal (cluster reachable, rotation
+                    // didn't commit).
+                    any_reachable = true;
                     if let Some(addr) = result.leader_address.as_ref() {
                         if !redirected_once && !addr.is_empty() && addr != &endpoint {
                             eprintln!(
@@ -391,20 +440,45 @@ fn try_replace_voter_on_peers(
                             continue;
                         }
                     }
-                    eprintln!(
-                        "[ensure_voter_membership] rejected by {endpoint}: error={:?}",
-                        result.error,
-                    );
+                    let detail = format!("{endpoint} responded with error={:?}", result.error);
+                    eprintln!("[ensure_voter_membership] {detail}");
+                    last_failure = Some(detail);
+                    break;
+                }
+                Err(TransportError::Connection(msg)) | Err(TransportError::InvalidAddress(msg)) => {
+                    // TCP/connect-time failure or unparseable endpoint —
+                    // peer is down or unaddressable.  `any_reachable`
+                    // stays false on this leg; this is the only branch
+                    // that's safe to fold into the cold-start sentinel.
+                    eprintln!("[ensure_voter_membership] peer unreachable {endpoint}: {msg}");
                     break;
                 }
                 Err(e) => {
-                    eprintln!("[ensure_voter_membership] RPC to {endpoint} failed: {e}");
+                    // TCP succeeded, post-connect RPC failed (handler
+                    // timeout, transport-level deserialization error,
+                    // etc.).  Cluster exists, rotation didn't commit —
+                    // surface to operator instead of silently
+                    // cold-starting with a stale ID.
+                    any_reachable = true;
+                    let detail = format!("{endpoint} RPC error: {e}");
+                    eprintln!("[ensure_voter_membership] {detail}");
+                    last_failure = Some(detail);
                     break;
                 }
             }
         }
     }
-    false
+
+    if any_reachable {
+        RotationOutcome::PeersReachableRotationFailed {
+            detail: last_failure.unwrap_or_else(|| {
+                // Defensive — `any_reachable=true` always sets last_failure.
+                "(no failure detail captured)".to_string()
+            }),
+        }
+    } else {
+        RotationOutcome::AllPeersUnreachable
+    }
 }
 
 impl RaftDistributedCoordinator {
@@ -418,25 +492,35 @@ impl RaftDistributedCoordinator {
     /// computed `node_id` is what raft commits into ConfState.
     ///
     /// Logic:
-    /// 1. If `<zones_dir>/root/raft/raft.redb` exists, read the
-    ///    persisted incarnation (defaulting to 0 = legacy / cold-start
-    ///    sentinel) and return `compute_node_id(hostname, incarnation)`
-    ///    with `rotated_into_existing_cluster = false` — this is a
-    ///    plain restart with intact storage.
+    /// 1. If `<zones_dir>/.node_incarnation` exists this is a recovery
+    ///    boot — read the persisted incarnation (defaulting to 0 =
+    ///    legacy / cold-start sentinel) and return
+    ///    `compute_node_id(hostname, incarnation)` with
+    ///    `rotated_into_existing_cluster = false` — plain restart with
+    ///    intact storage.
     /// 2. Otherwise the node is fresh (first-ever boot or post-wipe).
     ///    Mint a fresh non-zero incarnation, compute the new ID, and
-    ///    try `ReplaceVoterByHostname` on every peer — if any peer is
-    ///    leader (or redirects to one), the leader proposes
-    ///    ConfChange `RemoveNode(old_id)` + `AddNode(new_id)` so the
-    ///    cluster's voter set is updated before our raft instance
-    ///    starts emitting heartbeats.  Persist the incarnation under
-    ///    root's storage and return with
-    ///    `rotated_into_existing_cluster = true`.
-    /// 3. If no peer was reachable as leader (everyone is also fresh),
-    ///    fall through to cold-start: persist incarnation `0` and
-    ///    return the legacy `hostname_to_node_id` so all peers
-    ///    converge on the same ConfState bootstrap without
-    ///    coordination.
+    ///    try `ReplaceVoterByHostname` on every peer.  Three outcomes
+    ///    drive distinct branches — see [`RotationOutcome`]:
+    ///    * **Committed** — leader atomically swapped
+    ///      `RemoveNode(old_id) + AddNode(new_id)` via ConfChangeV2.
+    ///      Persist the new incarnation, return with
+    ///      `rotated_into_existing_cluster = true` so callers use
+    ///      `join_zone(skip_bootstrap=true)`.
+    ///    * **AllPeersUnreachable** — no peer responded at TCP level.
+    ///      Genuine simultaneous cluster bringup; fall through to the
+    ///      cold-start sentinel (incarnation=0, hostname-based ID) so
+    ///      every fresh peer converges on identical ConfState
+    ///      bootstraps without coordination.
+    ///    * **PeersReachableRotationFailed** — at least one peer was
+    ///      reachable but rotation didn't commit (handler timeout,
+    ///      "not leader" with no usable redirect, or 2-voter quorum
+    ///      deadlock where the joiner *is* the missing voter).  A
+    ///      live cluster holds this hostname's stale voter ID;
+    ///      cold-starting here would panic raft-rs's commit_to
+    ///      assertion.  Return Err with operator-actionable
+    ///      remediation; do **not** persist incarnation, so the next
+    ///      boot retries rotation.
     fn ensure_voter_membership(
         &self,
         hostname: &str,
@@ -487,40 +571,69 @@ impl RaftDistributedCoordinator {
             .thread_name("ensure-voter-membership")
             .build()
             .map_err(|e| format!("rotation runtime: {e}"))?;
-        let rotated =
+        let outcome =
             try_replace_voter_on_peers(&rotation_runtime, peers, hostname, new_id, self_address);
         drop(rotation_runtime);
 
-        // Whether we rotated or fell through to cold-start, persist
-        // the chosen incarnation so the next restart hits the recovery
-        // path above.  Crucially this lives in a flat node-level file
-        // rather than per-zone redb, so `open_existing_zones_from_disk`
-        // (which scans `<zones_dir>/<zone>/raft/` subtrees) is
-        // unaffected.
-        if rotated {
-            write_node_incarnation(zones_dir, new_incarnation)?;
-            eprintln!(
-                "[ensure_voter_membership] rotated into existing cluster: \
-                 hostname={hostname} incarnation={new_incarnation} node_id={new_id}",
-            );
-            Ok(VoterMembership {
-                node_id: new_id,
-                rotated_into_existing_cluster: true,
-            })
-        } else {
-            // Cold-start sentinel — every peer derives the same ID for
-            // this hostname so `create_zone` ConfState bootstraps
-            // converge without coordination.
-            write_node_incarnation(zones_dir, 0)?;
-            let cold_id = hostname_to_node_id(hostname);
-            eprintln!(
-                "[ensure_voter_membership] cold start (no leader reachable): \
-                 hostname={hostname} node_id={cold_id}",
-            );
-            Ok(VoterMembership {
-                node_id: cold_id,
-                rotated_into_existing_cluster: false,
-            })
+        // Three-way classification — see RotationOutcome for the
+        // contract.  Persisting incarnation is the SSOT commit point:
+        // we only do it for outcomes where the chosen ID is safe.
+        // PeersReachableRotationFailed deliberately skips the persist
+        // so the next boot retries rotation from the "fresh" path.
+        match outcome {
+            RotationOutcome::Committed => {
+                write_node_incarnation(zones_dir, new_incarnation)?;
+                eprintln!(
+                    "[ensure_voter_membership] rotated into existing cluster: \
+                     hostname={hostname} incarnation={new_incarnation} node_id={new_id}",
+                );
+                Ok(VoterMembership {
+                    node_id: new_id,
+                    rotated_into_existing_cluster: true,
+                })
+            }
+            RotationOutcome::AllPeersUnreachable => {
+                // Cold-start sentinel — every peer derives the same ID
+                // for this hostname so `create_zone` ConfState
+                // bootstraps converge without coordination.
+                write_node_incarnation(zones_dir, 0)?;
+                let cold_id = hostname_to_node_id(hostname);
+                eprintln!(
+                    "[ensure_voter_membership] cold start (no peer TCP-reachable): \
+                     hostname={hostname} node_id={cold_id}",
+                );
+                Ok(VoterMembership {
+                    node_id: cold_id,
+                    rotated_into_existing_cluster: false,
+                })
+            }
+            RotationOutcome::PeersReachableRotationFailed { detail } => {
+                // CRITICAL contract enforcement: a live cluster holds
+                // this hostname's stale voter ID.  Falling through to
+                // cold-start would silently rejoin with that stale ID
+                // and panic raft-rs (`to_commit X is out of range
+                // [last_index 0]`) on the leader's first heartbeat.
+                //
+                // Surface loud and actionable instead.  Operator picks
+                // remediation; the next boot retries rotation since
+                // we did NOT persist the incarnation.
+                Err(format!(
+                    "wipe-rejoin rotation failed against reachable peer(s): {detail}.\n\
+                     A live cluster holds this hostname's stale voter ID.  Falling \
+                     through to cold-start would silently rejoin with that stale ID \
+                     and panic raft-rs's commit_to assertion on the leader's first \
+                     heartbeat.\n\
+                     Remediation:\n  \
+                       (a) retry boot — leader may need a moment to drive quorum \
+                           after another node restarts;\n  \
+                       (b) 2-voter clusters cannot rotate when one voter is \
+                           missing (the missing voter IS the joiner) — add a 3rd \
+                           voter / witness for HA, or wipe NEXUS_DATA_DIR on every \
+                           peer simultaneously for a coordinated cold start;\n  \
+                       (c) 3+ voter clusters should auto-recover on retry once the \
+                           leader has quorum-of-old-config to commit ConfChangeV2."
+                ))
+            }
         }
     }
 }
@@ -1290,4 +1403,76 @@ pub fn install(kernel: &Kernel) -> Result<(), String> {
     coordinator.init_from_env(kernel)?;
     crate::blob_fetcher_handler::install(kernel);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a tokio Runtime suitable for `try_replace_voter_on_peers`.
+    /// Mirrors the construction in `ensure_voter_membership` so tests
+    /// exercise the same runtime configuration as production.
+    fn rotation_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .thread_name("test-rotation")
+            .build()
+            .expect("rotation runtime")
+    }
+
+    #[test]
+    fn empty_peers_classifies_as_all_unreachable() {
+        // No peers configured at all → loop body never enters, no peer
+        // is reachable, fall through to cold-start sentinel safely.
+        let rt = rotation_runtime();
+        let outcome = try_replace_voter_on_peers(&rt, &[], "host-a", 1, "host-a:2126");
+        assert!(matches!(outcome, RotationOutcome::AllPeersUnreachable));
+    }
+
+    #[test]
+    fn all_self_peers_classifies_as_all_unreachable() {
+        // NEXUS_PEERS lists only ourselves (single-node bringup) →
+        // every peer skipped via the self-hostname guard, no peer
+        // reachable.
+        let rt = rotation_runtime();
+        let peers = vec![NodeAddress::parse("host-a:2126", false).expect("parse")];
+        let outcome = try_replace_voter_on_peers(&rt, &peers, "host-a", 1, "host-a:2126");
+        assert!(matches!(outcome, RotationOutcome::AllPeersUnreachable));
+    }
+
+    #[test]
+    fn closed_port_classifies_as_all_unreachable() {
+        // 127.0.0.1:1 is reserved (TCPMUX, never bound on dev boxes) →
+        // tonic returns TransportError::Connection at TCP-connect
+        // time, which must NOT count toward `any_reachable`.  This is
+        // the "Scenario A — genuine network unreachability" case from
+        // the bug analysis: cold-start sentinel is the safe fallback.
+        let rt = rotation_runtime();
+        let peers = vec![NodeAddress::parse("127.0.0.1:1", false).expect("parse")];
+        let outcome = try_replace_voter_on_peers(&rt, &peers, "host-a", 1, "host-a:2126");
+        assert!(
+            matches!(outcome, RotationOutcome::AllPeersUnreachable),
+            "expected AllPeersUnreachable on closed port, got {outcome:?}",
+        );
+    }
+
+    #[test]
+    fn rotation_outcome_variants_are_distinct() {
+        // Compile-time guard: keep the three-way split intact.  If a
+        // future refactor collapses two variants the caller's match
+        // arms will silently lose the contract enforcement, so this
+        // test pins the variants to a known shape.
+        let unreachable = RotationOutcome::AllPeersUnreachable;
+        let failed = RotationOutcome::PeersReachableRotationFailed {
+            detail: "test".to_string(),
+        };
+        let committed = RotationOutcome::Committed;
+        assert!(matches!(unreachable, RotationOutcome::AllPeersUnreachable));
+        assert!(matches!(
+            failed,
+            RotationOutcome::PeersReachableRotationFailed { .. }
+        ));
+        assert!(matches!(committed, RotationOutcome::Committed));
+    }
 }

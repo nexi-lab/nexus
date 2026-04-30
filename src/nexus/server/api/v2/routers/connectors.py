@@ -627,8 +627,10 @@ async def mount_connector(
             # Write readme docs OUTSIDE the mount path so they're not shadowed
             # by the connector backend. /skills/{name}/ stays in the Raft
             # metastore and is always readable by agents and the TUI.
+            from nexus.backends.connectors.schema_generator import render_connector_readme
+
             readme_base = f"/skills/{connector_name}"
-            readme_content = temp_backend.generate_readme(mp)
+            readme_content = render_connector_readme(temp_backend, mp)
             if readme_content:
                 nx.write(
                     f"{readme_base}/README.md",
@@ -754,7 +756,9 @@ async def get_readme_doc(
         import contextlib
 
         with contextlib.suppress(Exception):
-            content = backend.generate_readme(mp)
+            from nexus.backends.connectors.schema_generator import render_connector_readme
+
+            content = render_connector_readme(backend, mp)
 
     # Fall back to reading from VFS if backend generation failed
     if not content:
@@ -820,7 +824,9 @@ async def get_schema(
         traits = getattr(backend, "OPERATION_TRAITS", {})
         if operation in traits:
             try:
-                full_doc = backend.generate_readme(mp)
+                from nexus.backends.connectors.schema_generator import render_connector_readme
+
+                full_doc = render_connector_readme(backend, mp)
                 # Find the operation section in the doc
                 op_display = operation.replace("_", " ").title()
                 idx = full_doc.lower().find(op_display.lower())

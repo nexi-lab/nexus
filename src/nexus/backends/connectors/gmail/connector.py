@@ -285,7 +285,7 @@ class PathGmailBackend(
             readme_md_content = readme_md_content.replace(
                 "/mnt/gmail/", mount_path.rstrip("/") + "/"
             )
-            return readme_md_content
+            return self.get_doc_generator().ensure_frontmatter(readme_md_content)
         except Exception as e:
             logger.warning(f"Failed to load static README.md: {e}, using auto-generated")
             return super().generate_readme(mount_path)

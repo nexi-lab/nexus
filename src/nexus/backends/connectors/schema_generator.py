@@ -13,6 +13,55 @@ from pydantic import BaseModel
 from nexus.backends.connectors.base import ConfirmLevel, ErrorDef, OpTraits
 
 
+def resolve_readme_short_description(
+    connector_class: type[Any],
+    explicit: str = "",
+) -> str:
+    """Resolve the one-line README frontmatter description for a connector."""
+    if explicit.strip():
+        return explicit.strip()
+
+    module_path = getattr(connector_class, "__module__", "")
+    class_name = getattr(connector_class, "__name__", "")
+
+    try:
+        from nexus.backends._manifest import CONNECTOR_MANIFEST
+
+        for entry in CONNECTOR_MANIFEST:
+            if (
+                entry.module_path == module_path
+                and entry.class_name == class_name
+                and entry.description
+            ):
+                return entry.description
+    except Exception:
+        pass
+
+    try:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        for info in ConnectorRegistry.list_all():
+            if info.connector_class is connector_class and info.description:
+                return info.description
+    except Exception:
+        pass
+
+    return ""
+
+
+def render_connector_readme(backend: Any, mount_path: str) -> str:
+    """Render a connector README and normalize generated frontmatter."""
+    text: str = backend.generate_readme(mount_path)
+    try:
+        generator = backend.get_doc_generator()
+    except Exception:
+        return text
+
+    if callable(getattr(type(generator), "ensure_frontmatter", None)):
+        return generator.ensure_frontmatter(text)
+    return text
+
+
 class ReadmeDocGenerator:
     """Generate README.md documentation from connector metadata.
 
@@ -84,8 +133,36 @@ class ReadmeDocGenerator:
             "title": self._format_display_name(),
             "description": self._short_description,
         }
-        yaml_str = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+        yaml_str = yaml.safe_dump(frontmatter, default_flow_style=False, sort_keys=False)
         return f"---\n{yaml_str}---"
+
+    def ensure_frontmatter(self, markdown: str) -> str:
+        """Return markdown with required frontmatter fields present."""
+        if markdown.startswith("---\n"):
+            closing = markdown.find("\n---", 4)
+            if closing != -1:
+                raw_frontmatter = markdown[4:closing]
+                suffix = markdown[closing + len("\n---") :]
+                try:
+                    frontmatter = yaml.safe_load(raw_frontmatter) or {}
+                except yaml.YAMLError:
+                    frontmatter = {}
+                if isinstance(frontmatter, dict):
+                    changed = False
+                    if not frontmatter.get("title"):
+                        frontmatter["title"] = self._format_display_name()
+                        changed = True
+                    if not frontmatter.get("description") and self._short_description:
+                        frontmatter["description"] = self._short_description
+                        changed = True
+                    if not changed:
+                        return markdown
+                    yaml_str = yaml.safe_dump(
+                        frontmatter, default_flow_style=False, sort_keys=False
+                    )
+                    return f"---\n{yaml_str}---{suffix}"
+        body = markdown.lstrip("\n")
+        return f"{self._generate_frontmatter()}\n\n{body}"
 
     def generate_readme(self, mount_path: str) -> str:
         """Auto-generate README.md from connector metadata.

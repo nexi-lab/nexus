@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.backends.connectors.schema_generator import ReadmeDocGenerator
 from nexus.bricks.parsers.readme_resolver import ReadmePathResolver
 
 
@@ -45,6 +46,34 @@ class TestTryRead:
         result = mounted.try_read("/mnt/gmail/.readme/README.md")
         assert result is not None
         assert b"gmail readme" in result
+
+    def test_static_readme_output_requires_frontmatter(self) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="gmail",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+            short_description="Gmail with OAuth 2.0 authentication",
+        )
+
+        class _Backend:
+            def generate_readme(self, _mp: str) -> str:
+                return "# Gmail Connector\n\nStatic docs.\n"
+
+            def get_doc_generator(self) -> ReadmeDocGenerator:
+                return gen
+
+        r = ReadmePathResolver()
+        r.register_backend("/mnt/gmail", _Backend())
+
+        result = r.try_read("/mnt/gmail/.readme/README.md")
+
+        assert result is not None
+        assert result.startswith(b"---\n")
+        assert b"title: Gmail" in result
+        assert b"description: Gmail with OAuth 2.0 authentication" in result
+        assert b"# Gmail Connector" in result
 
     def test_readme_called_with_mount_point(self, mounted: ReadmePathResolver) -> None:
         mounted.try_read("/mnt/gmail/.readme/README.md")

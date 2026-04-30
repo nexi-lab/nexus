@@ -5,13 +5,17 @@ import uuid
 
 import pytest
 
+from nexus.bricks.approvals.config import ApprovalConfig
 from nexus.bricks.approvals.errors import ApprovalDenied, ApprovalTimeout
+from nexus.bricks.approvals.events import NotifyBridge
 from nexus.bricks.approvals.models import (
     ApprovalKind,
+    ApprovalRequestStatus,
     Decision,
     DecisionScope,
     DecisionSource,
 )
+from nexus.bricks.approvals.repository import ApprovalRepository
 from nexus.bricks.approvals.service import ApprovalService
 
 pytestmark = pytest.mark.integration
@@ -222,3 +226,95 @@ async def test_concurrent_callers_same_subject_share_one_row(approval_service: A
     )
     assert await asyncio.wait_for(t1, 5.0) is Decision.APPROVED
     assert await asyncio.wait_for(t2, 5.0) is Decision.APPROVED
+
+
+@pytest.mark.asyncio
+async def test_short_timeout_waiter_cannot_expire_shared_row(session_factory, asyncpg_pool) -> None:
+    """Round-4 (#3790): a coalesced waiter with a shorter timeout_override
+    must NOT expire the shared DB row while the row's own expires_at is
+    still in the future.
+
+    Before the fix, the timeout path called transition(EXPIRED) blindly
+    using the local ``auto_deny_after_seconds`` limit. That could write
+    EXPIRED on a row whose stored ``expires_at`` was far in the future,
+    converting an approvable request to a denial for the remaining waiters.
+    """
+    repo = ApprovalRepository(session_factory)
+    # Long row-level timeout so the shared row stays approvable after the
+    # short waiter gives up.
+    svc = ApprovalService(
+        repo,
+        NotifyBridge(asyncpg_pool),
+        ApprovalConfig(enabled=True, auto_deny_after_seconds=30.0),
+    )
+    await svc.start()
+    try:
+        tag = _tag()
+        zone = f"z_short_{tag}"
+        subject = f"short.example:443:{tag}"
+
+        # Waiter A uses a tiny timeout_override so it gives up quickly.
+        waiter_a = asyncio.create_task(
+            svc.request_and_wait(
+                request_id=f"req_short_a_{tag}",
+                zone_id=zone,
+                kind=ApprovalKind.EGRESS_HOST,
+                subject=subject,
+                agent_id="ag",
+                token_id="tok",
+                session_id=f"tok:s_a:{tag}",
+                reason="r",
+                metadata={},
+                timeout_override=0.2,
+            )
+        )
+
+        # Wait for the shared pending row.
+        coalesced_id: str | None = None
+        for _ in range(50):
+            await asyncio.sleep(0.1)
+            rows = [r for r in await svc.list_pending(zone_id=zone) if r.subject == subject]
+            if rows:
+                coalesced_id = rows[0].id
+                break
+        else:
+            raise AssertionError("shared pending row never appeared")
+
+        # Waiter B coalesces onto the same row with the full row timeout.
+        waiter_b = asyncio.create_task(
+            svc.request_and_wait(
+                request_id=f"req_short_b_{tag}",
+                zone_id=zone,
+                kind=ApprovalKind.EGRESS_HOST,
+                subject=subject,
+                agent_id="ag",
+                token_id="tok",
+                session_id=f"tok:s_b:{tag}",
+                reason="r",
+                metadata={},
+            )
+        )
+
+        # Waiter A times out — must NOT expire the shared row.
+        with pytest.raises(ApprovalTimeout):
+            await asyncio.wait_for(waiter_a, 2.0)
+
+        # The shared row must still be PENDING (not expired).
+        row = await svc.get(coalesced_id)
+        assert row is not None
+        assert row.status is ApprovalRequestStatus.PENDING, (
+            f"short-timeout waiter prematurely expired the shared row: {row.status}"
+        )
+
+        # Now approve — waiter B should still resolve.
+        await svc.decide(
+            request_id=coalesced_id,
+            decision=Decision.APPROVED,
+            decided_by="op",
+            scope=DecisionScope.ONCE,
+            reason=None,
+            source=DecisionSource.GRPC,
+        )
+        assert await asyncio.wait_for(waiter_b, 5.0) is Decision.APPROVED
+    finally:
+        await svc.stop()

@@ -45,7 +45,8 @@ REQUIRED_BRICKS_PATHS = [
     # "nexus/bricks/auth/oauth/token_manager.py",
     "nexus/bricks/auth/oauth/token_resolver.py",
     "nexus/bricks/auth/oauth/types.py",
-    "nexus/bricks/auth/oauth/user_auth.py",
+    # user_auth.py excluded: sqlalchemy + auth/providers.local (server-runtime only)
+    # "nexus/bricks/auth/oauth/user_auth.py",
     # auth/classifiers subtree (entire directory force-included)
     "nexus/bricks/auth/classifiers/__init__.py",
     "nexus/bricks/auth/classifiers/anthropic.py",
@@ -66,8 +67,9 @@ FORBIDDEN_BRICKS_PREFIXES = [
     "nexus/bricks/auth/user_queries.py",
     "nexus/bricks/auth/cache.py",
     "nexus/bricks/auth/consumer_metrics.py",
-    # token_manager has top-level sqlalchemy import — excluded from slim
+    # token_manager + user_auth have top-level sqlalchemy — excluded from slim
     "nexus/bricks/auth/oauth/token_manager.py",
+    "nexus/bricks/auth/oauth/user_auth.py",
     # auth subtrees excluded entirely
     "nexus/bricks/auth/stores/",
     "nexus/bricks/auth/daemon/",

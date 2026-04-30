@@ -193,7 +193,8 @@ exclude = [
 # authenticate() time, not at module import time — expected for slim [x] users.
 "../../src/nexus/bricks/auth/oauth/token_resolver.py" = "nexus/bricks/auth/oauth/token_resolver.py"
 "../../src/nexus/bricks/auth/oauth/types.py" = "nexus/bricks/auth/oauth/types.py"
-"../../src/nexus/bricks/auth/oauth/user_auth.py" = "nexus/bricks/auth/oauth/user_auth.py"
+# user_auth.py excluded: top-level sqlalchemy + nexus.bricks.auth.providers.local imports;
+# both chains are server-runtime only and not available in the slim wheel.
 "../../src/nexus/bricks/auth/oauth/providers" = "nexus/bricks/auth/oauth/providers"
 "../../src/nexus/bricks/auth/classifiers" = "nexus/bricks/auth/classifiers"
 

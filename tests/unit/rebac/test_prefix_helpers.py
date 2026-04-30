@@ -236,3 +236,54 @@ def test_compute_batch_visibility_no_tiger_cache_returns_empty():
     cache = DirectoryVisibilityCache(tiger_cache=None)
     result = cache.compute_batch_visibility("z1", "user", "u1", ["/a/b"], "read")
     assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# DescendantAccessChecker.has_access — Tiger fallback uses get_accessible_paths
+# ---------------------------------------------------------------------------
+
+
+def test_has_access_tiger_fallback_uses_get_accessible_paths():
+    """Tiger fallback must call get_accessible_paths, not loop _resource_map."""
+    from unittest.mock import MagicMock
+
+    from nexus.services.namespace.descendant_access import DescendantAccessChecker
+
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths.return_value = {"/workspace/joe/file.txt"}
+
+    # spec=[] means only explicitly-set attributes exist.
+    # hasattr() returns False for everything else, so the faster optimisation
+    # paths (tiger_check_access, rebac_check_bulk, rebac_check_bulk_sync,
+    # tiger_get_accessible_resources) are all skipped, letting the code reach
+    # the Tiger Cache bitmap fallback at line 305.
+    rebac_manager = MagicMock(spec=[])
+    rebac_manager._tiger_cache = tiger_cache
+
+    rebac_service = MagicMock(spec=[])
+    rebac_service.rebac_check_sync = MagicMock(return_value=False)  # direct access denied
+
+    ctx = MagicMock()
+    ctx.is_admin = False
+    ctx.is_system = False
+    ctx.subject_id = "joe"
+    ctx.subject_type = "user"
+    ctx.zone_id = "z1"
+
+    metadata_store = MagicMock()
+    metadata_store.list.return_value = []
+
+    checker = DescendantAccessChecker(
+        rebac_manager=rebac_manager,
+        rebac_service=rebac_service,
+        dir_visibility_cache=None,
+        permission_enforcer=MagicMock(),
+        metadata_store=metadata_store,
+    )
+
+    from nexus.contracts.types import Permission
+
+    result = checker.has_access("/workspace/joe", Permission.READ, ctx)
+
+    assert result is True
+    tiger_cache.get_accessible_paths.assert_called_once()

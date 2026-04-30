@@ -206,12 +206,13 @@ DEFAULT_TRAJECTORY_NAMESPACE = NamespaceConfig(
 # Approvals namespace (Issue #3790)
 #
 # Drives ReBACCapabilityAuth on the ApprovalsV1 gRPC servicer. The brick
-# treats ``("approvals", "global")`` as a single flat resource — zone
-# scoping happens at the row level inside ApprovalService, not via ReBAC
-# zone tuples — so a single namespace tuple per subject suffices. Operators
-# (or auth_keys.py grants) can write any of the standard
+# uses per-zone ReBAC objects ``("approvals", <zone_id>)`` so capability
+# grants are strictly scoped to a single zone (Issue #3790, F1) — a
+# subject granted ``viewer`` on ``("approvals", "z1")`` can read
+# approvals in zone ``z1`` but NOT zone ``z2``, even with the same
+# token. Operators (or auth_keys.py grants) write any of the standard
 # ``viewer``/``editor``/``owner`` direct relations against
-# ``("approvals", "global")``; the relation→permission expansion below
+# ``("approvals", <zone_id>)``; the relation→permission expansion below
 # matches the three capability strings ``ApprovalsServicer`` checks today:
 #
 #   approvals:read    -> ReBAC ``read``   (viewer | editor | owner)

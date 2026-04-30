@@ -342,9 +342,11 @@ class TestFollowupE2E:
         approvals_admin_bearer = f"Bearer {running_nexus.admin_token}"
         admin_api_key_bearer = f"Bearer {running_nexus.admin_api_key}"
         admin_api_key_headers = {"Authorization": admin_api_key_bearer}
-        # Use ROOT zone for the tuple and the user key — ReBACCapabilityAuth
-        # checks with zone_id=None which the manager normalises to "root".
-        tuple_zone = "root"
+        # Per-zone capability isolation (Issue #3790, F1): the ReBAC
+        # object is ``("approvals", <zone>)``, not the flat
+        # ``("approvals", "global")``. Grant on the same zone the
+        # caller will pass to ListPending so the check passes.
+        tuple_zone = zone
         keys_url = f"{running_nexus.http_url}/api/v2/auth/keys"
         rebac_url = f"{running_nexus.http_url}/api/v2/rebac/tuples"
 
@@ -386,7 +388,9 @@ class TestFollowupE2E:
                 "subject_id": registered_subject_id,
                 "relation": "viewer",
                 "object_namespace": "approvals",
-                "object_id": "global",
+                # F1: per-zone object — ListPending(zone=Z) requires
+                # ``viewer`` on ``("approvals", Z)``.
+                "object_id": tuple_zone,
                 "zone_id": tuple_zone,
             }
 

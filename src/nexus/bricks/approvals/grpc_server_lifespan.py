@@ -45,7 +45,9 @@ async def start_grpc_server(
         service: An already-started ``ApprovalService`` instance.
         auth: A ``CapabilityAuth`` implementation (e.g.
             ``BearerTokenCapabilityAuth``) — every RPC will call
-            ``await auth.authorize(context, capability)``.
+            ``await auth.authorize(context, capability, zone_id)``
+            (or ``check_capability`` for Get/Decide/Cancel which need
+            a zone-scoped denial folded into NOT_FOUND).
         port: TCP port to bind. Use ``0`` to let the kernel pick a free
             port — read it back via ``server.add_insecure_port`` is
             internalized here, but for ad-hoc binds prefer the test

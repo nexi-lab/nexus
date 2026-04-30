@@ -10,6 +10,10 @@ Validates the contract documented in ``grpc_auth.py``:
 The authorize() Protocol uses ``await context.abort(...)`` to fail; abort
 raises ``grpc.aio.AbortError`` after recording the status — we assert on
 the recorded status code, which matches what production callers observe.
+
+``zone_id`` is accepted but ignored by the admin-token shim — any caller
+presenting the configured admin token authorizes for every zone (Issue
+#3790, F1). Tests pass a placeholder zone to satisfy the signature.
 """
 
 from __future__ import annotations
@@ -66,7 +70,7 @@ async def test_missing_authorization_metadata_aborts_unauth() -> None:
     fake, ctx = _ctx(())
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "zone-x")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -78,7 +82,7 @@ async def test_non_bearer_scheme_aborts_unauth() -> None:
     fake, ctx = _ctx((("authorization", "Basic dXNlcjpwYXNz"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "zone-x")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -90,7 +94,7 @@ async def test_empty_token_after_bearer_aborts_unauth() -> None:
     fake, ctx = _ctx((("authorization", "Bearer "),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "zone-x")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -102,7 +106,7 @@ async def test_wrong_token_aborts_unauth() -> None:
     fake, ctx = _ctx((("authorization", "Bearer wrongtoken"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "zone-x")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -113,7 +117,7 @@ async def test_correct_token_returns_subject_id() -> None:
     auth = BearerTokenCapabilityAuth(admin_token="s3cret-12345678")
     fake, ctx = _ctx((("authorization", "Bearer s3cret-12345678"),))
 
-    subject = await auth.authorize(ctx, "approvals:decide")
+    subject = await auth.authorize(ctx, "approvals:decide", "zone-x")
 
     assert fake.aborted_with is None
     assert subject.startswith("admin:")
@@ -124,7 +128,7 @@ async def test_correct_token_returns_subject_id() -> None:
 async def test_bearer_scheme_is_case_insensitive() -> None:
     auth = BearerTokenCapabilityAuth(admin_token="s3cret")
     fake, ctx = _ctx((("authorization", "bearer s3cret"),))
-    subject = await auth.authorize(ctx, "approvals:read")
+    subject = await auth.authorize(ctx, "approvals:read", "zone-x")
     assert fake.aborted_with is None
     assert subject.startswith("admin:")
 
@@ -133,6 +137,6 @@ async def test_bearer_scheme_is_case_insensitive() -> None:
 async def test_metadata_key_is_case_insensitive() -> None:
     auth = BearerTokenCapabilityAuth(admin_token="s3cret")
     fake, ctx = _ctx((("Authorization", "Bearer s3cret"),))
-    subject = await auth.authorize(ctx, "approvals:read")
+    subject = await auth.authorize(ctx, "approvals:read", "zone-x")
     assert fake.aborted_with is None
     assert subject.startswith("admin:")

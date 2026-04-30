@@ -2036,7 +2036,8 @@ class ReBACManager:
         # These are the common object types used in permission checks.
         # ``approvals`` is included so ReBACCapabilityAuth (Issue #3790) can
         # expand viewer/editor/owner relations to read/write/create
-        # permissions on ``("approvals", "global")`` from the Rust path.
+        # permissions on per-zone objects ``("approvals", <zone_id>)`` from
+        # the Rust path (zone scoping enforced at the F1 layer).
         object_types = ["file", "zone", "user", "group", "agent", "memory", "approvals"]
 
         configs = {}

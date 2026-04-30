@@ -61,6 +61,13 @@ _CAPABILITY_TO_PERMISSION: dict[str, str] = {
 # is flat (zone scoping is enforced at the row level inside ApprovalService),
 # so a single ("approvals", "global") tuple is sufficient. Tests and
 # operators can grant a subject any of read/write/create on this object.
+#
+# TODO(#3790): graduate to per-zone ReBAC objects ``("approvals", zone_id)``
+# so capability grants can be scoped per zone. Today ListPending/Watch reject
+# empty zone_id at the servicer (defense-in-depth), and Get/Decide/Cancel
+# operate by opaque request_id — but a caller granted ``approvals:read`` can
+# still query any non-empty zone they know. Per-zone objects would let us
+# enforce zone isolation at the ReBAC layer instead of at the servicer.
 _APPROVALS_OBJECT: tuple[str, str] = ("approvals", "global")
 
 

@@ -890,6 +890,16 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         self.zm().map(|zm| zm.list_zones()).unwrap_or_default()
     }
 
+    fn is_initialized(&self, _kernel: &Kernel) -> bool {
+        // SSOT — `bootstrap_done` is set at the end of `init_from_env`
+        // regardless of whether any zones were bootstrapped.  The
+        // default trait impl falls back to `!list_zones().is_empty()`,
+        // which is a SHADOW of init readiness that misclassifies
+        // dynamic-bootstrap mode (init complete, zones empty until
+        // `create_zone("root")` is invoked).  Override it.
+        self.bootstrap_done.load(Ordering::Acquire)
+    }
+
     fn metastore_for_zone(
         &self,
         _kernel: &Kernel,

@@ -98,6 +98,24 @@ pub trait DistributedCoordinator: Send + Sync + 'static {
     /// federation state.
     fn list_zones(&self, kernel: &crate::kernel::Kernel) -> Vec<String>;
 
+    /// Whether `init_from_env` has completed successfully.
+    ///
+    /// This is the readiness signal for "the coordinator can accept
+    /// zone-lifecycle calls" — independent of whether any zones have
+    /// been loaded yet.  The two states differ in dynamic-bootstrap
+    /// mode, where the daemon comes up with zero zones and waits for
+    /// an explicit `create_zone("root")` or `JoinZone` RPC.
+    ///
+    /// Default impl falls back to `!list_zones().is_empty()` so
+    /// existing implementations (e.g. the `Noop` shim) keep working
+    /// without being forced to track a separate readiness flag.  The
+    /// real Raft impl overrides this to return its `bootstrap_done`
+    /// atomic — a strict superset of "has zones" that also captures
+    /// the dynamic-bootstrap awaiting state.
+    fn is_initialized(&self, kernel: &crate::kernel::Kernel) -> bool {
+        !self.list_zones(kernel).is_empty()
+    }
+
     /// Bundled cluster status for `zone_id` — leader identity, raft
     /// term, replication counts, mount link count. Single round-trip
     /// for all introspection fields.

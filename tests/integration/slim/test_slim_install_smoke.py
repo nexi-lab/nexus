@@ -72,6 +72,30 @@ print("CRUD OK")
 
 
 @pytest.mark.parametrize(
+    "base_module",
+    [
+        # Core slim modules that must import with NO extras — only base deps.
+        # This catches modules shipped in the base wheel that secretly depend
+        # on extras-only packages (e.g. cachetools only in [x]).
+        "nexus.fs",
+        "nexus.bricks.auth.oauth.pending",
+        "nexus.bricks.auth.oauth.factory",
+        "nexus.bricks.search.primitives.glob_helpers",
+        "nexus.backends.connectors.oauth_base",
+    ],
+)
+def test_slim_base_module_imports(slim_venv: Path, base_module: str) -> None:
+    """Base-wheel modules must import without connector extras installed."""
+    script = f"import {base_module}; print('OK')"
+    result = run_in_slim_venv(slim_venv, script)
+    assert result.returncode == 0, (
+        f"base module {base_module} requires an extra dep not in base deps:\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "OK" in result.stdout
+
+
+@pytest.mark.parametrize(
     "connector_module",
     [
         "nexus.backends.connectors.x.connector",
@@ -79,7 +103,6 @@ print("CRUD OK")
         "nexus.backends.connectors.slack.connector",
         "nexus.backends.connectors.gdrive.connector",
         "nexus.backends.connectors.calendar.connector",
-        "nexus.backends.connectors.oauth_base",
     ],
 )
 def test_slim_connector_imports(slim_venv: Path, connector_module: str) -> None:

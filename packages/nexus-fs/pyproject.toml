@@ -154,10 +154,27 @@ exclude = [
 # but the auth bricks (oauth/factory/profile/credential_pool/classifiers) and
 # the search primitives (glob_helpers/trigram_fast) are needed by connectors
 # that ship in the slim wheel. force-include overrides exclude for these paths.
+#
+# bricks/auth: only the sub-paths that connectors actually import are carved in.
+# Excluded server-only files:
+#   - unified_service.py (top-level import of nexus.security.secret_file)
+#   - stores/__init__.py (eagerly imports SQLAlchemyUserLookup / sqlalchemy.orm)
+#   - postgres_profile_store.py, postgres_migrate.py (server-only SQLAlchemy)
+#   - providers/ subtree (database_key.py, oidc.py import sqlalchemy at top level)
+#   - cache.py (imports cachetools, not a slim dep; not imported by connectors)
+#   - consumer_metrics.py (imports prometheus_client, not a slim dep; not imported by connectors)
 "../../src/nexus/bricks/__init__.py" = "nexus/bricks/__init__.py"
 "../../src/nexus/bricks/search/__init__.py" = "nexus/bricks/search/__init__.py"
 "../../src/nexus/bricks/search/primitives" = "nexus/bricks/search/primitives"
-"../../src/nexus/bricks/auth" = "nexus/bricks/auth"
+"../../src/nexus/bricks/auth/__init__.py" = "nexus/bricks/auth/__init__.py"
+"../../src/nexus/bricks/auth/types.py" = "nexus/bricks/auth/types.py"
+"../../src/nexus/bricks/auth/protocol.py" = "nexus/bricks/auth/protocol.py"
+"../../src/nexus/bricks/auth/constants.py" = "nexus/bricks/auth/constants.py"
+"../../src/nexus/bricks/auth/profile.py" = "nexus/bricks/auth/profile.py"
+"../../src/nexus/bricks/auth/credential_backend.py" = "nexus/bricks/auth/credential_backend.py"
+"../../src/nexus/bricks/auth/credential_pool.py" = "nexus/bricks/auth/credential_pool.py"
+"../../src/nexus/bricks/auth/oauth" = "nexus/bricks/auth/oauth"
+"../../src/nexus/bricks/auth/classifiers" = "nexus/bricks/auth/classifiers"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

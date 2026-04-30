@@ -18,6 +18,7 @@ from nexus.services.activity.events import (
     Result,
     Subject,
 )
+from nexus.services.activity.lifespan import setup_activity, shutdown_activity
 from nexus.services.activity.worker import ActivityWorker
 
 __all__ = [
@@ -33,4 +34,6 @@ __all__ = [
     "emit",
     "get_emitter",
     "set_emitter",
+    "setup_activity",
+    "shutdown_activity",
 ]

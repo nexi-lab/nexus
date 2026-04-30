@@ -1087,9 +1087,18 @@ impl Kernel {
             );
         }
 
-        // 9. DCache: evict old + put new; evict children prefix for directories
-        if let Some(entry) = self.dcache.get_entry(old_path) {
+        // 9. DCache: evict old + put new; evict children prefix for directories.
+        // For PAS backends, content_id is the backend-relative path. After a rename
+        // the disk file is at the new backend path, so we must update content_id in
+        // the cached entry before inserting it at new_path — otherwise sys_read
+        // fetches the stale old-path backend file (which no longer exists).
+        if let Some(mut entry) = self.dcache.get_entry(old_path) {
             self.dcache.evict(old_path);
+            if let Some(ref cid) = entry.content_id.clone() {
+                if *cid == old_route.backend_path {
+                    entry.content_id = Some(new_route.backend_path.clone());
+                }
+            }
             self.dcache.put(new_path, entry);
         }
         if is_directory {

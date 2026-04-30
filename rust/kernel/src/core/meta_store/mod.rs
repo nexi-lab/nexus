@@ -146,6 +146,7 @@ impl MetaStore for MemoryMetaStore {
         }
         if let Some((_, mut meta)) = self.entries.remove(old_path) {
             meta.path = new_path.to_string();
+            pas_update_content_id(&mut meta, old_path, new_path);
             self.entries.insert(new_path.to_string(), meta);
             if let Some((_, fm)) = self.file_metadata.remove(old_path) {
                 self.file_metadata.insert(new_path.to_string(), fm);
@@ -172,6 +173,7 @@ impl MetaStore for MemoryMetaStore {
                     .unwrap_or_default();
                 let new_child = format!("{}{}", new_prefix, suffix);
                 meta.path = new_child.clone();
+                pas_update_content_id(&mut meta, &old_child, &new_child);
                 self.entries.insert(new_child.clone(), meta);
                 if let Some((_, fm)) = self.file_metadata.remove(&old_child) {
                     self.file_metadata.insert(new_child, fm);
@@ -197,6 +199,29 @@ impl MetaStore for MemoryMetaStore {
             .file_metadata
             .get(path)
             .and_then(|inner| inner.get(key).map(|v| v.value().clone())))
+    }
+}
+
+// ── PAS rename helper ─────────────────────────────────────────────────────
+//
+// PAS (path-addressable storage) backends store content_id = backend-relative
+// path (e.g. "file.txt" or "sub/file.txt"). After a rename, content_id must
+// be updated to the new backend-relative path or sys_read resolves the old
+// (now non-existent) filename.
+//
+// Detection: PAS entries satisfy `old_vfs.ends_with("/<content_id>")`.
+// CAS entries store a 64-hex-char hash that never matches this pattern.
+// Derives new content_id by stripping the mount prefix from new_vfs.
+fn pas_update_content_id(meta: &mut FileMetadata, old_vfs: &str, new_vfs: &str) {
+    if let Some(cid) = meta.content_id.as_deref() {
+        let pas_suffix = format!("/{cid}");
+        if old_vfs.ends_with(pas_suffix.as_str()) || old_vfs == cid {
+            let prefix_len = old_vfs.len() - cid.len();
+            let mount_prefix = &old_vfs[..prefix_len];
+            if new_vfs.starts_with(mount_prefix) {
+                meta.content_id = Some(new_vfs[prefix_len..].to_string());
+            }
+        }
     }
 }
 
@@ -753,6 +778,7 @@ impl MetaStore for LocalMetaStore {
             for (old_key, new_key, bytes) in to_rewrite {
                 let mut meta = deserialize_metadata(&bytes)?;
                 meta.path = new_key.clone();
+                pas_update_content_id(&mut meta, &old_key, &new_key);
                 let new_bytes = serialize_metadata(&meta);
                 table
                     .remove(old_key.as_str())

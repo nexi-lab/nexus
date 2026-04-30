@@ -219,8 +219,11 @@ impl ObjectStore for PathLocalBackend {
         let size = fs::copy(&src, &dst).map_err(StorageError::IOError)?;
         let content = fs::read(&dst).map_err(StorageError::IOError)?;
         let hash = lib::hash::hash_content(&content);
+        // PAS contract: content_id = backend path, not content hash.
+        // The hash goes in version for OCC; content_id must equal dst_path
+        // so sys_read can resolve the file on disk after a copy.
         Ok(WriteResult {
-            content_id: hash.clone(),
+            content_id: dst_path.to_string(),
             version: hash,
             size,
         })

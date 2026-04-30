@@ -15,6 +15,10 @@ Validates the contract documented in ``grpc_auth.py``:
   - rebac_check raises → aborts PERMISSION_DENIED (fail-closed)
   - capability → permission mapping is correct for the three approvals
     capability strings the servicer passes today
+  - per-zone object isolation (F1): a grant on ("approvals", "z1")
+    does NOT pass a check against ("approvals", "z2")
+  - check_capability() variant returns None on a ReBAC denial (folded
+    to NOT_FOUND by the servicer for Get/Decide/Cancel)
 
 The mocks intentionally implement only the small surface
 ``ReBACCapabilityAuth`` actually touches (``authenticate``,
@@ -31,10 +35,10 @@ import grpc.aio
 import pytest
 
 from nexus.bricks.approvals.grpc_auth import (
-    _APPROVALS_OBJECT,
     _CAPABILITY_TO_PERMISSION,
     BearerTokenCapabilityAuth,
     ReBACCapabilityAuth,
+    _approvals_object_for_zone,
 )
 from nexus.bricks.auth.types import AuthResult
 
@@ -117,7 +121,10 @@ def test_capability_mapping_covers_servicer_strings() -> None:
     assert _CAPABILITY_TO_PERMISSION["approvals:read"] == "read"
     assert _CAPABILITY_TO_PERMISSION["approvals:decide"] == "write"
     assert _CAPABILITY_TO_PERMISSION["approvals:request"] == "create"
-    assert _APPROVALS_OBJECT == ("approvals", "global")
+    # Per-zone object: zone_id is the ReBAC object_id (Issue #3790, F1).
+    assert _approvals_object_for_zone("global") == ("approvals", "global")
+    assert _approvals_object_for_zone("z1") == ("approvals", "z1")
+    assert _approvals_object_for_zone("zone-x") == ("approvals", "zone-x")
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +142,7 @@ async def test_missing_authorization_metadata_aborts_unauth() -> None:
     fake, ctx = _ctx(())
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -151,7 +158,7 @@ async def test_non_bearer_scheme_aborts_unauth() -> None:
     fake, ctx = _ctx((("authorization", "Basic dXNlcjpwYXNz"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -185,7 +192,7 @@ async def test_resolved_subject_with_capability_returns_subject_id() -> None:
     )
     fake, ctx = _ctx((("authorization", "Bearer tok-alice"),))
 
-    subject = await auth.authorize(ctx, "approvals:read")
+    subject = await auth.authorize(ctx, "approvals:read", "global")
 
     assert subject == "alice"
     assert fake.aborted_with is None
@@ -213,7 +220,7 @@ async def test_resolved_subject_without_capability_aborts_permission_denied() ->
     fake, ctx = _ctx((("authorization", "Bearer tok-bob"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:decide")
+        await auth.authorize(ctx, "approvals:decide", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.PERMISSION_DENIED
@@ -244,7 +251,7 @@ async def test_request_capability_maps_to_create_permission() -> None:
     )
     _fake, ctx = _ctx((("authorization", "Bearer tok-carol"),))
 
-    subject = await auth.authorize(ctx, "approvals:request")
+    subject = await auth.authorize(ctx, "approvals:request", "global")
 
     assert subject == "carol"
     assert rebac.calls == [(("user", "carol"), "create", ("approvals", "global"))]
@@ -271,7 +278,7 @@ async def test_admin_subject_bypasses_rebac() -> None:
     )
     fake, ctx = _ctx((("authorization", "Bearer tok-root"),))
 
-    subject = await auth.authorize(ctx, "approvals:decide")
+    subject = await auth.authorize(ctx, "approvals:decide", "global")
 
     assert subject == "root"
     assert fake.aborted_with is None
@@ -299,7 +306,7 @@ async def test_unknown_capability_aborts_permission_denied() -> None:
     fake, ctx = _ctx((("authorization", "Bearer tok-dave"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:nuke-everything")
+        await auth.authorize(ctx, "approvals:nuke-everything", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.PERMISSION_DENIED
@@ -328,7 +335,7 @@ async def test_rebac_raises_aborts_permission_denied_fail_closed() -> None:
     fake, ctx = _ctx((("authorization", "Bearer tok-eve"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.PERMISSION_DENIED
@@ -352,7 +359,7 @@ async def test_unresolved_token_falls_through_to_admin_fallback() -> None:
     )
     fake, ctx = _ctx((("authorization", "Bearer adm-secret-12345678"),))
 
-    subject = await auth.authorize(ctx, "approvals:read")
+    subject = await auth.authorize(ctx, "approvals:read", "global")
 
     # Admin shim returns its own ``admin:<prefix>`` subject id.
     assert subject.startswith("admin:")
@@ -373,7 +380,7 @@ async def test_unresolved_token_no_fallback_aborts_unauth() -> None:
     fake, ctx = _ctx((("authorization", "Bearer mystery-token"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -394,7 +401,7 @@ async def test_unresolved_token_with_wrong_admin_token_aborts_unauth() -> None:
     fake, ctx = _ctx((("authorization", "Bearer wrong-token"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -416,7 +423,7 @@ async def test_auth_pipeline_exception_treated_as_unresolved() -> None:
 
     with pytest.raises(RuntimeError):
         # tok-flaky is not the admin token, so fallback aborts UNAUTH.
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -439,7 +446,7 @@ async def test_authenticated_but_missing_subject_id_aborts_unauth() -> None:
     fake, ctx = _ctx((("authorization", "Bearer tok-anon"),))
 
     with pytest.raises(RuntimeError):
-        await auth.authorize(ctx, "approvals:read")
+        await auth.authorize(ctx, "approvals:read", "global")
 
     assert fake.aborted_with is not None
     assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
@@ -469,7 +476,164 @@ async def test_subject_type_propagates_to_rebac_check() -> None:
     )
     _fake, ctx = _ctx((("authorization", "Bearer tok-agent"),))
 
-    subject = await auth.authorize(ctx, "approvals:read")
+    subject = await auth.authorize(ctx, "approvals:read", "global")
 
     assert subject == "agent_42"
     assert rebac.calls == [(("agent", "agent_42"), "read", ("approvals", "global"))]
+
+
+# ---------------------------------------------------------------------------
+# F1 — per-zone capability isolation (Issue #3790)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_grant_on_zone_z1_does_not_authorize_z2() -> None:
+    """A subject granted ``read`` on ``("approvals", "z1")`` must NOT pass
+    a capability check against zone ``z2``. Proves the ReBAC object is
+    per-zone, not flat ``("approvals", "global")`` (Issue #3790, F1).
+    """
+    fake_auth = _FakeAuth(
+        {
+            "tok-zoned": AuthResult(
+                authenticated=True,
+                subject_type="user",
+                subject_id="zoned-user",
+            )
+        }
+    )
+    rebac = _FakeReBAC(
+        allow={
+            # Only granted in z1; z2 must be denied.
+            (("user", "zoned-user"), "read", ("approvals", "z1")),
+        }
+    )
+    auth = ReBACCapabilityAuth(
+        auth_service=fake_auth,
+        rebac_manager=rebac,
+        admin_fallback=None,
+    )
+
+    # ListPending(zone=z1) -> success.
+    _fake_z1, ctx_z1 = _ctx((("authorization", "Bearer tok-zoned"),))
+    subject = await auth.authorize(ctx_z1, "approvals:read", "z1")
+    assert subject == "zoned-user"
+    assert (
+        ("user", "zoned-user"),
+        "read",
+        ("approvals", "z1"),
+    ) in rebac.calls
+
+    # ListPending(zone=z2) -> PERMISSION_DENIED.
+    fake_z2, ctx_z2 = _ctx((("authorization", "Bearer tok-zoned"),))
+    with pytest.raises(RuntimeError):
+        await auth.authorize(ctx_z2, "approvals:read", "z2")
+    assert fake_z2.aborted_with is not None
+    assert fake_z2.aborted_with[0] == grpc.StatusCode.PERMISSION_DENIED
+    # The check was scoped to z2's ReBAC object, not z1's.
+    assert (
+        ("user", "zoned-user"),
+        "read",
+        ("approvals", "z2"),
+    ) in rebac.calls
+
+
+@pytest.mark.asyncio
+async def test_check_capability_returns_subject_id_on_success() -> None:
+    """``check_capability`` returns the subject id when the grant exists
+    (mirrors ``authorize``); used by Get/Decide/Cancel.
+    """
+    fake_auth = _FakeAuth(
+        {"tok-z1": AuthResult(authenticated=True, subject_type="user", subject_id="alice")}
+    )
+    rebac = _FakeReBAC(
+        allow={(("user", "alice"), "read", ("approvals", "z1"))},
+    )
+    auth = ReBACCapabilityAuth(
+        auth_service=fake_auth,
+        rebac_manager=rebac,
+        admin_fallback=None,
+    )
+    _fake, ctx = _ctx((("authorization", "Bearer tok-z1"),))
+
+    subject = await auth.check_capability(ctx, "approvals:read", "z1")
+
+    assert subject == "alice"
+
+
+@pytest.mark.asyncio
+async def test_check_capability_returns_none_on_rebac_denial() -> None:
+    """``check_capability`` returns None on a ReBAC denial — used by
+    Get/Decide/Cancel so the servicer can fold the deny into NOT_FOUND
+    and avoid leaking request_id existence across zones.
+    """
+    fake_auth = _FakeAuth(
+        {"tok-no-grant": AuthResult(authenticated=True, subject_type="user", subject_id="bob")}
+    )
+    rebac = _FakeReBAC(allow=set())
+    auth = ReBACCapabilityAuth(
+        auth_service=fake_auth,
+        rebac_manager=rebac,
+        admin_fallback=None,
+    )
+    fake, ctx = _ctx((("authorization", "Bearer tok-no-grant"),))
+
+    result = await auth.check_capability(ctx, "approvals:read", "z1")
+
+    assert result is None
+    # Did NOT abort PERMISSION_DENIED — the servicer will translate
+    # to NOT_FOUND.
+    assert fake.aborted_with is None
+
+
+@pytest.mark.asyncio
+async def test_check_capability_still_aborts_on_unauthenticated() -> None:
+    """A bad bearer token aborts UNAUTHENTICATED even via check_capability.
+
+    These cases are not "wrong zone" — they must NOT be foldable into
+    NOT_FOUND, otherwise an attacker can probe across zones with garbage
+    tokens and never learn whether their token was rejected vs. lacked
+    a zone grant.
+    """
+    fake_auth = _FakeAuth({})
+    rebac = _FakeReBAC()
+    auth = ReBACCapabilityAuth(
+        auth_service=fake_auth,
+        rebac_manager=rebac,
+        admin_fallback=None,
+    )
+    fake, ctx = _ctx((("authorization", "Bearer mystery"),))
+
+    with pytest.raises(RuntimeError):
+        await auth.check_capability(ctx, "approvals:read", "z1")
+
+    assert fake.aborted_with is not None
+    assert fake.aborted_with[0] == grpc.StatusCode.UNAUTHENTICATED
+
+
+@pytest.mark.asyncio
+async def test_check_capability_admin_subject_returns_subject_id() -> None:
+    """Admin subjects bypass ReBAC under check_capability too."""
+    fake_auth = _FakeAuth(
+        {
+            "tok-admin": AuthResult(
+                authenticated=True,
+                subject_type="user",
+                subject_id="root",
+                is_admin=True,
+            )
+        }
+    )
+    rebac = _FakeReBAC(allow=set())
+    auth = ReBACCapabilityAuth(
+        auth_service=fake_auth,
+        rebac_manager=rebac,
+        admin_fallback=None,
+    )
+    _fake, ctx = _ctx((("authorization", "Bearer tok-admin"),))
+
+    subject = await auth.check_capability(ctx, "approvals:decide", "z2")
+
+    assert subject == "root"
+    # Admin bypass must not consult ReBAC.
+    assert rebac.calls == []

@@ -42,7 +42,12 @@ def _tag() -> str:
 
 @pytest.mark.asyncio
 async def test_bearer_auth_rejects_missing_token(approval_service: ApprovalService) -> None:
-    """ListPending with no Authorization header must return UNAUTHENTICATED."""
+    """ListPending with no Authorization header must return UNAUTHENTICATED.
+
+    Per #3790 F1, an empty zone_id is rejected INVALID_ARGUMENT before
+    the auth layer runs, so the test passes a non-empty zone — bad
+    auth must still surface as UNAUTHENTICATED, not slip through.
+    """
     admin_token = f"tok_{_tag()}"
     auth = BearerTokenCapabilityAuth(admin_token=admin_token)
     port = _free_port()
@@ -52,7 +57,7 @@ async def test_bearer_auth_rejects_missing_token(approval_service: ApprovalServi
         async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
             stub = approvals_pb2_grpc.ApprovalsV1Stub(channel)
             with pytest.raises(grpc.aio.AioRpcError) as exc:
-                await stub.ListPending(approvals_pb2.ListPendingRequest(zone_id=""))
+                await stub.ListPending(approvals_pb2.ListPendingRequest(zone_id=f"zone_{_tag()}"))
             assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
     finally:
         await stop_grpc_server(server, grace_seconds=0.1)
@@ -72,7 +77,7 @@ async def test_bearer_auth_rejects_wrong_token(approval_service: ApprovalService
             stub = approvals_pb2_grpc.ApprovalsV1Stub(channel)
             with pytest.raises(grpc.aio.AioRpcError) as exc:
                 await stub.ListPending(
-                    approvals_pb2.ListPendingRequest(zone_id=""),
+                    approvals_pb2.ListPendingRequest(zone_id=f"zone_{_tag()}"),
                     metadata=metadata,
                 )
             assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED

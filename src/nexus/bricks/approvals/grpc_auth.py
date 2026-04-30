@@ -9,8 +9,8 @@ Two implementations live here:
 
   - :class:`ReBACCapabilityAuth` — resolves the bearer token through
     the standard auth pipeline (``AuthService.authenticate``) and then
-    runs a ReBAC permission check against the ``approvals`` namespace
-    for the requested capability. Falls through to a wrapped
+    runs a ReBAC permission check against the per-zone ``approvals``
+    object for the requested capability. Falls through to a wrapped
     :class:`BearerTokenCapabilityAuth` when:
 
       * the token does not resolve to an authenticated subject AND an
@@ -21,15 +21,28 @@ Two implementations live here:
 The capability mapping for ReBAC checks is intentionally narrow so the
 servicer doesn't grow new permission strings ad-hoc:
 
-    approvals:read    -> ReBAC ``read``   on ``("approvals", "global")``
-    approvals:decide  -> ReBAC ``write``  on ``("approvals", "global")``
-    approvals:request -> ReBAC ``create`` on ``("approvals", "global")``
+    approvals:read    -> ReBAC ``read``   on ``("approvals", <zone_id>)``
+    approvals:decide  -> ReBAC ``write``  on ``("approvals", <zone_id>)``
+    approvals:request -> ReBAC ``create`` on ``("approvals", <zone_id>)``
 
 Operators grant per-subject access by writing a tuple of the form
-``(user, alice) -- read --> (approvals, global)`` (etc.) into the ReBAC
-store. The ``approvals`` namespace is treated as a flat resource — zone
-scoping happens at the row level inside :class:`ApprovalService`, not at
-the auth boundary, so a single namespace tuple suffices.
+``(user, alice) -- read --> (approvals, <zone_id>)`` (etc.) into the
+ReBAC store. The ``approvals`` namespace object id is the zone the
+caller is acting in — this keeps capability grants strictly scoped per
+zone so a leaked ``approvals:read`` for ``z1`` cannot be used to read
+``z2`` rows.
+
+Two entry points are exposed on every implementation:
+
+  - ``authorize(ctx, capability, zone_id)`` — abort the gRPC context on
+    failure (UNAUTHENTICATED for unresolved tokens, PERMISSION_DENIED
+    for ReBAC denials). Used by ListPending/Watch/Submit which are
+    keyed off a caller-supplied zone.
+  - ``check_capability(ctx, capability, zone_id)`` — returns the
+    caller's subject id on success, or ``None`` on a ReBAC denial.
+    Still aborts UNAUTHENTICATED on bad/missing tokens. Used by
+    Get/Decide/Cancel so the servicer can fold a denial into NOT_FOUND
+    (so request_id existence does not leak across zones).
 """
 
 from __future__ import annotations
@@ -57,18 +70,22 @@ _CAPABILITY_TO_PERMISSION: dict[str, str] = {
     "approvals:request": "create",
 }
 
-# The ReBAC object that auth checks resolve against. The approvals namespace
-# is flat (zone scoping is enforced at the row level inside ApprovalService),
-# so a single ("approvals", "global") tuple is sufficient. Tests and
-# operators can grant a subject any of read/write/create on this object.
-#
-# TODO(#3790): graduate to per-zone ReBAC objects ``("approvals", zone_id)``
-# so capability grants can be scoped per zone. Today ListPending/Watch reject
-# empty zone_id at the servicer (defense-in-depth), and Get/Decide/Cancel
-# operate by opaque request_id — but a caller granted ``approvals:read`` can
-# still query any non-empty zone they know. Per-zone objects would let us
-# enforce zone isolation at the ReBAC layer instead of at the servicer.
-_APPROVALS_OBJECT: tuple[str, str] = ("approvals", "global")
+
+def _approvals_object_for_zone(zone_id: str) -> tuple[str, str]:
+    """Return the per-zone ReBAC object tuple for an approvals capability check.
+
+    The approvals namespace is registered with object_type ``approvals``
+    (see ``DEFAULT_APPROVALS_NAMESPACE``), and capability grants are
+    keyed off the zone the caller is acting in. A subject granted
+    ``viewer`` on ``("approvals", "z1")`` can read approvals in zone
+    ``z1`` but NOT in zone ``z2`` — even with the same token.
+
+    Empty zone_id is rejected at the servicer (``ListPending``/``Watch``
+    abort INVALID_ARGUMENT before we get here). For ``Get``/``Decide``/
+    ``Cancel`` the row's own zone is used; if the row is missing the
+    servicer aborts NOT_FOUND before this helper is called.
+    """
+    return ("approvals", zone_id)
 
 
 class _AuthLike(Protocol):
@@ -143,7 +160,19 @@ class BearerTokenCapabilityAuth:
             raise ValueError("admin_token must be a non-empty string")
         self._admin_token = admin_token
 
-    async def authorize(self, context: "grpc.aio.ServicerContext", capability: str) -> str:
+    async def authorize(
+        self,
+        context: "grpc.aio.ServicerContext",
+        capability: str,
+        zone_id: str,
+    ) -> str:
+        # ``zone_id`` is intentionally accepted-and-ignored here: the
+        # admin-token shim is a global bypass — any caller presenting
+        # the configured admin token authorizes for every zone. We
+        # accept the parameter so callers (ApprovalsServicer) can pass
+        # the zone uniformly without branching on auth backend.
+        del zone_id  # admin token is global; see docstring.
+
         # gRPC metadata header names are lowercased on the wire; HTTP/2
         # canonicalizes to lowercase. Iterate defensively in case a client
         # sends a different case.
@@ -185,6 +214,22 @@ class BearerTokenCapabilityAuth:
         logger.debug("approvals.auth granted capability=%s", capability)
         return f"admin:{token[:8]}"
 
+    async def check_capability(
+        self,
+        context: "grpc.aio.ServicerContext",
+        capability: str,
+        zone_id: str,
+    ) -> str | None:
+        """Non-aborting variant of ``authorize`` — admin token always wins.
+
+        Bad/missing tokens still abort UNAUTHENTICATED (those cases
+        cannot be legitimately distinguished from "wrong zone"); a valid
+        admin token returns the admin subject id. Symmetrical with
+        ``ReBACCapabilityAuth.check_capability`` so the servicer can use
+        either backend uniformly.
+        """
+        return await self.authorize(context, capability, zone_id)
+
 
 class ReBACCapabilityAuth:
     """Capability auth backed by the auth pipeline + ReBAC permission graph.
@@ -204,13 +249,19 @@ class ReBACCapabilityAuth:
          and return its subject id (admin bypass — the auth pipeline is
          the single source of truth for "global admin" today).
       4. Otherwise, run ``rebac_check(subject, permission, ("approvals",
-         "global"))`` for the mapped permission. On success return the
+         zone_id))`` for the mapped permission. On success return the
          subject id; on failure abort ``PERMISSION_DENIED``.
 
     The capability strings ApprovalsServicer passes today are:
     ``approvals:read``, ``approvals:decide``, ``approvals:request``.
     Anything else aborts ``PERMISSION_DENIED`` with an explicit
     "unknown capability" message — fail-closed by design.
+
+    The ``zone_id`` parameter is mandatory: the servicer either passes
+    the request's ``zone_id`` (ListPending/Watch/Submit) or the
+    resolved row's ``zone_id`` (Get/Decide/Cancel — fetched first).
+    Empty zone aborts INVALID_ARGUMENT at the servicer before reaching
+    this layer.
 
     Args:
         auth_service: Object with ``async authenticate(token) -> AuthResult``.
@@ -235,7 +286,58 @@ class ReBACCapabilityAuth:
         self._rebac = rebac_manager
         self._admin_fallback = admin_fallback
 
-    async def authorize(self, context: "grpc.aio.ServicerContext", capability: str) -> str:
+    async def authorize(
+        self,
+        context: "grpc.aio.ServicerContext",
+        capability: str,
+        zone_id: str,
+    ) -> str:
+        result = await self._check_capability_inner(context, capability, zone_id)
+        if result is None:
+            await context.abort(
+                grpc.StatusCode.PERMISSION_DENIED,
+                f"subject lacks capability: {capability}",
+            )
+            raise  # unreachable.
+        return result
+
+    async def check_capability(
+        self,
+        context: "grpc.aio.ServicerContext",
+        capability: str,
+        zone_id: str,
+    ) -> str | None:
+        """Same as ``authorize`` but returns ``None`` on ReBAC denial.
+
+        Bad/missing tokens still abort UNAUTHENTICATED — those cases
+        are not "wrong zone" and must not be foldable into NOT_FOUND.
+        Used by ApprovalsServicer for Get/Decide/Cancel where a denial
+        must be presented to the caller as NOT_FOUND so request_id
+        existence does not leak across zones.
+        """
+        return await self._check_capability_inner(context, capability, zone_id)
+
+    async def _check_capability_inner(
+        self,
+        context: "grpc.aio.ServicerContext",
+        capability: str,
+        zone_id: str,
+    ) -> str | None:
+        """Shared body of ``authorize``/``check_capability``.
+
+        Returns the subject id on success, ``None`` on a ReBAC-level
+        denial (unknown capability, missing grant, rebac_check raised).
+        Aborts the context on UNAUTHENTICATED conditions (bad token).
+        """
+        # Defensive guard: the servicer should reject empty zone_id
+        # before reaching us, but fail-closed if it ever slips through.
+        if not zone_id:
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "zone_id is required for capability check",
+            )
+            raise  # unreachable; abort raises.
+
         metadata = context.invocation_metadata() or ()
         token = _extract_bearer_token(metadata)
         if token is None:
@@ -263,7 +365,7 @@ class ReBACCapabilityAuth:
             # the whole authorize() — including its own abort semantics —
             # which keeps a single owner of the UNAUTHENTICATED status.
             if self._admin_fallback is not None:
-                return await self._admin_fallback.authorize(context, capability)
+                return await self._admin_fallback.authorize(context, capability, zone_id)
             await context.abort(
                 grpc.StatusCode.UNAUTHENTICATED,
                 "invalid bearer token",
@@ -288,19 +390,23 @@ class ReBACCapabilityAuth:
         # observable.
         if is_admin:
             logger.info(
-                "approvals.auth admin bypass capability=%s subject=%s/%s",
+                "approvals.auth admin bypass capability=%s subject=%s/%s zone=%s",
                 capability,
                 subject_type,
                 subject_id,
+                zone_id,
             )
             return str(subject_id)
 
-        # Stage 3: ReBAC capability check.
+        # Stage 3: ReBAC capability check (zone-scoped object).
         permission = _CAPABILITY_TO_PERMISSION.get(capability)
         if permission is None:
             # Unknown capability string — fail closed. ApprovalsServicer
             # only passes the three known strings today; anything else is
-            # an invariant violation, not a misconfigured client.
+            # an invariant violation, not a misconfigured client. Surface
+            # as a ReBAC-level denial (None) — authorize() will translate
+            # to PERMISSION_DENIED and the caller will see "unknown
+            # capability".
             logger.warning(
                 "approvals.auth: unknown capability %r requested by subject=%s/%s",
                 capability,
@@ -313,46 +419,42 @@ class ReBACCapabilityAuth:
             )
             raise  # unreachable
 
+        approvals_object = _approvals_object_for_zone(zone_id)
         try:
             allowed = self._rebac.rebac_check(
                 subject=(subject_type, str(subject_id)),
                 permission=permission,
-                object=_APPROVALS_OBJECT,
-                zone_id=None,
+                object=approvals_object,
+                zone_id=zone_id,
             )
         except Exception:
             # ReBAC errors are not "no" — they're indeterminate. Fail
-            # closed (PERMISSION_DENIED) but log the cause so operators
-            # can tell the difference between "denied" and "broken graph".
+            # closed but log the cause so operators can tell the
+            # difference between "denied" and "broken graph".
             logger.exception(
-                "approvals.auth: rebac_check raised for subject=%s/%s capability=%s",
+                "approvals.auth: rebac_check raised for subject=%s/%s capability=%s zone=%s",
                 subject_type,
                 subject_id,
                 capability,
+                zone_id,
             )
-            await context.abort(
-                grpc.StatusCode.PERMISSION_DENIED,
-                "permission check failed",
-            )
-            raise  # unreachable
+            return None
 
         if not allowed:
             logger.debug(
-                "approvals.auth denied capability=%s subject=%s/%s",
+                "approvals.auth denied capability=%s subject=%s/%s zone=%s",
                 capability,
                 subject_type,
                 subject_id,
+                zone_id,
             )
-            await context.abort(
-                grpc.StatusCode.PERMISSION_DENIED,
-                f"subject lacks capability: {capability}",
-            )
-            raise  # unreachable
+            return None
 
         logger.debug(
-            "approvals.auth granted capability=%s subject=%s/%s (rebac)",
+            "approvals.auth granted capability=%s subject=%s/%s zone=%s (rebac)",
             capability,
             subject_type,
             subject_id,
+            zone_id,
         )
         return str(subject_id)

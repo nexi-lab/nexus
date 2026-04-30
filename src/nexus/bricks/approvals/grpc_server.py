@@ -33,10 +33,34 @@ class CapabilityAuth(Protocol):
 
     Implementations validate the request's caller against the named capability
     and return the caller's token id (used as `decided_by`/`token_id`).
-    Should raise/abort via the grpc context if the caller is not authorized.
+
+    Two entry points are required:
+
+      - ``authorize`` — abort the gRPC context on a denial (used when the
+        caller supplies the zone, e.g. ListPending/Watch/Submit; surfacing
+        PERMISSION_DENIED is fine because the caller already named the
+        zone they want).
+      - ``check_capability`` — return ``None`` on a ReBAC denial (used by
+        Get/Decide/Cancel where the servicer fetches the row first and
+        passes the row's zone_id; folding a denial into NOT_FOUND avoids
+        leaking request_id existence across zones).
+
+    Both still abort ``UNAUTHENTICATED`` on bad/missing tokens.
     """
 
-    async def authorize(self, context: grpc.aio.ServicerContext, capability: str) -> str: ...
+    async def authorize(
+        self,
+        context: grpc.aio.ServicerContext,
+        capability: str,
+        zone_id: str,
+    ) -> str: ...
+
+    async def check_capability(
+        self,
+        context: grpc.aio.ServicerContext,
+        capability: str,
+        zone_id: str,
+    ) -> str | None: ...
 
 
 def _ts(d: datetime | None) -> Timestamp:
@@ -71,6 +95,14 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
 
     Marshals proto <-> domain models and delegates to ApprovalService.
     Capability checks are delegated to a `CapabilityAuth` implementation.
+
+    Per-zone authorization (Issue #3790, F1):
+      - ``ListPending`` / ``Watch`` / ``Submit``: capability check uses
+        the request's ``zone_id`` (rejected upstream if empty); a denial
+        surfaces as PERMISSION_DENIED.
+      - ``Get`` / ``Decide`` / ``Cancel``: row is fetched first and the
+        capability check uses the row's ``zone_id``. A denial folds into
+        NOT_FOUND so request_id existence does not leak across zones.
     """
 
     def __init__(self, service: ApprovalService, auth: CapabilityAuth) -> None:
@@ -82,17 +114,12 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.ListPendingRequest,
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.ListPendingResponse:
-        await self._auth.authorize(context, "approvals:read")
-        # Zone isolation (#3790 follow-up): an empty zone_id would return
-        # rows from every zone. The current ReBAC namespace is
-        # ``("approvals", "global")`` (flat) — so once a caller is granted
-        # ``approvals:read`` they could otherwise see all zones.
-        # TODO(#3790): graduate to per-zone ReBAC objects
-        # ``("approvals", zone_id)`` so a future "global admin" capability
-        # can re-allow empty zone_id explicitly.
+        # Zone isolation (#3790): empty zone_id would leak across zones
+        # when the ReBAC object is per-zone — reject before authorizing.
         if not request.zone_id:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "zone_id is required")
             raise  # unreachable; abort raises.
+        await self._auth.authorize(context, "approvals:read", request.zone_id)
         rows = await self._svc.list_pending(zone_id=request.zone_id)
         return approvals_pb2.ListPendingResponse(requests=[_to_pb(r) for r in rows])
 
@@ -101,16 +128,18 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.GetRequest,
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.ApprovalRequestProto:
-        await self._auth.authorize(context, "approvals:read")
+        # Fetch the row first so the capability check can be scoped to
+        # the row's zone. Cross-zone callers (ones who lack the row's
+        # zone-scoped capability) get NOT_FOUND so request_id existence
+        # does not leak.
         row = await self._svc.get(request.request_id)
         if row is None:
             await context.abort(grpc.StatusCode.NOT_FOUND, "request not found")
             raise  # unreachable; abort raises. Keeps mypy happy on flow.
-        # TODO(#3790): per-zone ReBAC re-check against ``row.zone_id``.
-        # Today the ReBAC namespace is flat ``("approvals", "global")`` so
-        # any caller granted ``approvals:read`` can read across zones.
-        # Operator awareness is the safety today; a future change should
-        # check capability against ``("approvals", row.zone_id)``.
+        subject = await self._auth.check_capability(context, "approvals:read", row.zone_id)
+        if subject is None:
+            await context.abort(grpc.StatusCode.NOT_FOUND, "request not found")
+            raise  # unreachable.
         return _to_pb(row)
 
     async def Decide(
@@ -118,15 +147,22 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.DecideRequest,
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.ApprovalRequestProto:
-        token_id = await self._auth.authorize(context, "approvals:decide")
+        # Fetch row first so the capability check is zone-scoped against
+        # the row's zone_id, not a caller-supplied value.
+        row = await self._svc.get(request.request_id)
+        if row is None:
+            await context.abort(grpc.StatusCode.NOT_FOUND, "request not found")
+            raise  # unreachable.
+        token_id = await self._auth.check_capability(context, "approvals:decide", row.zone_id)
+        if token_id is None:
+            await context.abort(grpc.StatusCode.NOT_FOUND, "request not found")
+            raise  # unreachable.
         try:
             decision = Decision(request.decision)
             scope = DecisionScope(request.scope)
         except ValueError:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "bad decision/scope")
             raise  # unreachable; abort raises. Keeps mypy happy on flow.
-        # TODO(#3790): per-zone ReBAC re-check against the looked-up
-        # row's zone_id. Same flat-namespace caveat as Get.
         try:
             row = await self._svc.decide(
                 request_id=request.request_id,
@@ -146,12 +182,23 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.CancelRequest,
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.CancelResponse:
-        await self._auth.authorize(context, "approvals:decide")
-        # Server-side Cancel is a no-op for unknown ids; resolves to OK by design.
+        # Cancel today is a no-op for unknown ids; idempotent client
+        # semantics. For known ids we still gate by the row's zone
+        # capability (so a cross-zone caller can't probe for existence).
+        row = await self._svc.get(request.request_id)
+        if row is None:
+            # Unknown id: idempotent OK. We don't run a zone-scoped
+            # check here because there's no zone — and the response is
+            # identical to "I cancelled it", so no leakage.
+            logger.debug("approvals.cancel id=%s (unknown — no-op)", request.request_id)
+            return approvals_pb2.CancelResponse()
+        subject = await self._auth.check_capability(context, "approvals:decide", row.zone_id)
+        if subject is None:
+            await context.abort(grpc.StatusCode.NOT_FOUND, "request not found")
+            raise  # unreachable.
+        # Server-side Cancel is a no-op for known ids today; resolves to OK.
         # Logging the request_id keeps the field referenced and aids diagnostics.
-        # TODO(#3790): when Cancel becomes a real terminal transition,
-        # re-check ReBAC against the row's zone_id (see Decide).
-        logger.debug("approvals.cancel id=%s", request.request_id)
+        logger.debug("approvals.cancel id=%s zone=%s", request.request_id, row.zone_id)
         return approvals_pb2.CancelResponse()
 
     async def Watch(
@@ -159,11 +206,11 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.WatchRequest,
         context: grpc.aio.ServicerContext,
     ) -> AsyncIterator[approvals_pb2.ApprovalEvent]:
-        await self._auth.authorize(context, "approvals:read")
-        # Zone isolation (#3790 follow-up) — see ListPending for rationale.
+        # Zone isolation (#3790) — see ListPending for rationale.
         if not request.zone_id:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "zone_id is required")
             raise  # unreachable.
+        await self._auth.authorize(context, "approvals:read", request.zone_id)
         try:
             async for ev in self._svc.watch(zone_id=request.zone_id):
                 yield approvals_pb2.ApprovalEvent(
@@ -183,7 +230,10 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.SubmitRequest,
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.SubmitDecision:
-        token_id = await self._auth.authorize(context, "approvals:request")
+        if not request.zone_id:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "zone_id is required")
+            raise  # unreachable.
+        token_id = await self._auth.authorize(context, "approvals:request", request.zone_id)
         try:
             kind = ApprovalKind(request.kind)
         except ValueError:

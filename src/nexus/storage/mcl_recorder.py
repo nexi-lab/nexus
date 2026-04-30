@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -60,14 +60,19 @@ class MCLRecorder:
         current_max = int(result) if result is not None else 0
         return max(time_based, current_max + 1)
 
-    def _allocate_sequence(self) -> int | None:
+    def _next_sequence_postgres(self) -> int:
+        """Allocate from the PostgreSQL sequence before ORM insert."""
+        result = self._session.execute(text("SELECT nextval('mcl_sequence_number_seq')"))
+        return int(result.scalar_one())
+
+    def _allocate_sequence(self) -> int:
         """Allocate a sequence number.
 
-        Returns None on PostgreSQL (server_default handles it),
-        or a Python-generated value for other dialects.
+        PostgreSQL has a database sequence, but assigning the value explicitly
+        avoids ORM inserts sending NULL when the mapped column has no server_default.
         """
         if self._is_postgres():
-            return None  # Let the DB sequence handle it
+            return self._next_sequence_postgres()
         return self._next_sequence_fallback()
 
     def _record(self, mcl_kwargs: dict[str, Any], label: str) -> None:
@@ -77,20 +82,16 @@ class MCLRecorder:
         fallback allocator can race under concurrency; retrying with a
         fresh value resolves it (Issue #3062).
         """
-        seq = self._allocate_sequence()
         for attempt in range(_MAX_SEQUENCE_RETRIES):
             try:
-                if seq is not None:
-                    mcl_kwargs["sequence_number"] = seq
+                mcl_kwargs["sequence_number"] = self._allocate_sequence()
                 mcl = MetadataChangeLogModel(**mcl_kwargs)
                 self._session.add(mcl)
                 self._session.flush()
                 return
             except IntegrityError:
                 self._session.rollback()
-                if attempt < _MAX_SEQUENCE_RETRIES - 1:
-                    seq = self._next_sequence_fallback()
-                else:
+                if attempt == _MAX_SEQUENCE_RETRIES - 1:
                     logger.warning("MCL %s failed after %d retries", label, _MAX_SEQUENCE_RETRIES)
             except Exception:
                 logger.warning("MCL %s failed", label, exc_info=True)

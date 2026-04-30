@@ -550,6 +550,7 @@ def ensure_postgres_schema_invariants(engine: Engine) -> None:
         )
 
         _ensure_tenant_column_default(conn, columns_by_table, "tiger_cache")
+        _ensure_tenant_column_default(conn, columns_by_table, "file_paths")
         _ensure_tenant_column_default(conn, columns_by_table, "tiger_cache_queue")
         _ensure_tenant_column_default(conn, columns_by_table, "rebac_group_closure")
         _ensure_tenant_column_default(conn, columns_by_table, "tiger_directory_grants")

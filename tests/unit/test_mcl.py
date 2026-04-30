@@ -1,6 +1,8 @@
 """Tests for MCL recorder — metadata change log integration (Issue #2929)."""
 
 import json
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -113,6 +115,49 @@ class TestMCLRecorder:
 
 class TestMCLSequenceAllocation:
     """Issue #3062: Sequence allocation should produce unique, monotonic values."""
+
+    def test_postgres_sequence_number_allocated_before_flush(self) -> None:
+        """PostgreSQL inserts should not rely on a server default SQLAlchemy omits."""
+
+        class _FakeScalarResult:
+            def __init__(self, value: int) -> None:
+                self._value = value
+
+            def scalar_one(self) -> int:
+                return self._value
+
+        class _FakePostgresSession:
+            bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+            def __init__(self) -> None:
+                self.executed: list[str] = []
+                self.added: list[MetadataChangeLogModel] = []
+                self.flushed = False
+
+            def execute(self, statement: Any) -> _FakeScalarResult:
+                self.executed.append(str(statement))
+                return _FakeScalarResult(42)
+
+            def add(self, obj: MetadataChangeLogModel) -> None:
+                self.added.append(obj)
+
+            def flush(self) -> None:
+                self.flushed = True
+
+            def rollback(self) -> None:
+                raise AssertionError("rollback should not be called")
+
+        session = _FakePostgresSession()
+
+        MCLRecorder(session).record_file_write(
+            entity_urn="urn:nexus:file:root:id1",
+            metadata_dict={"path": "/workspace/demo/plan.md"},
+            zone_id="root",
+        )
+
+        assert session.flushed
+        assert session.added[0].sequence_number == 42
+        assert "nextval('mcl_sequence_number_seq')" in session.executed[0]
 
     def test_multiple_writes_get_unique_sequences(self, db_session) -> None:
         """Concurrent-style writes should each get a unique sequence number."""

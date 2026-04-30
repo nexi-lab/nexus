@@ -293,31 +293,61 @@ class ApprovalService:
             result = await asyncio.wait_for(fut, timeout=timeout)
         except TimeoutError as e:
             self._dispatcher.cancel(fut)
-            # F1 (#3790): close the operator's stale-approval window
-            # immediately — without this, the row stays PENDING in the
-            # DB until the periodic sweeper runs (default 30s), and an
-            # operator decision arriving in that gap would write a
-            # SESSION-scope session_allow for an already-auto-denied
-            # request. Best-effort: a failed transition (already
-            # decided / already expired by the sweeper / DB error) is
-            # fine — reconcile + sweeper still handle the row.
+            # Round-4 (#3790): re-read the row before writing EXPIRED.
+            # The wait_for timeout is a LOCAL caller's configured limit,
+            # not the row's durable ``expires_at``. For coalesced
+            # requests one waiter with a shorter timeout must NOT expire
+            # the shared DB row while other waiters and the operator
+            # still have time under ``row.expires_at``. Similarly, if a
+            # remote worker already approved the row but NOTIFY was
+            # dropped, the local waiter would have timed out before the
+            # watchdog ran — overwriting APPROVED with EXPIRED here would
+            # turn a valid grant into a denial.
+            #
+            # Only attempt the EXPIRED transition when the row's own
+            # ``expires_at`` is in the past (or absent). If the row is
+            # already terminal, honor that decision instead of raising
+            # ApprovalTimeout.
             try:
-                await self._repo.transition(
-                    request_id=req.id,
-                    new_status=ApprovalRequestStatus.EXPIRED,
-                    decided_by="system",
-                    scope=DecisionScope.ONCE,
-                    reason="auto_deny_after_timeout",
-                    source=DecisionSource.SYSTEM_TIMEOUT,
-                    now=datetime.now(UTC),
-                )
+                _latest = await self._repo.get(req.id)
             except Exception:
-                logger.warning(
-                    "approvals.request_and_wait: best-effort EXPIRED transition "
-                    "failed rid=%s (sweeper will reconcile)",
-                    req.id,
-                    exc_info=True,
-                )
+                _latest = None
+
+            if _latest is not None and _latest.status is not ApprovalRequestStatus.PENDING:
+                # Row already terminal (approved, rejected, or expired by
+                # sweeper / another waiter). Honor the DB decision.
+                self._dispatcher.cancel(fut)
+                try:
+                    return _row_to_decision(_latest, timeout=timeout)
+                except ApprovalTimeout:
+                    pass  # truly expired — fall through to raise below
+
+            _now_ts = datetime.now(UTC)
+            _row_expired = (
+                _latest is None or _latest.expires_at is None or _latest.expires_at <= _now_ts
+            )
+            if _row_expired:
+                # Safe to expire: the stored expires_at is past (or
+                # missing), so no other waiter has remaining time under
+                # the row's own expiry. Best-effort: a failed transition
+                # means the sweeper handles the row.
+                try:
+                    await self._repo.transition(
+                        request_id=req.id,
+                        new_status=ApprovalRequestStatus.EXPIRED,
+                        decided_by="system",
+                        scope=DecisionScope.ONCE,
+                        reason="auto_deny_after_timeout",
+                        source=DecisionSource.SYSTEM_TIMEOUT,
+                        now=_now_ts,
+                    )
+                except Exception:
+                    logger.warning(
+                        "approvals.request_and_wait: best-effort EXPIRED transition "
+                        "failed rid=%s (sweeper will reconcile)",
+                        req.id,
+                        exc_info=True,
+                    )
             raise ApprovalTimeout(req.id, timeout) from e
 
         if result is Decision.DENIED:

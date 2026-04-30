@@ -345,25 +345,10 @@ class PermissionEnforcer:
                     logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
                 return dict.fromkeys(prefixes, False)
 
-            # RUST_FALLBACK: rebac enforcer — nexus_runtime for batch permission checks
-            # Try Rust-accelerated prefix matching (Issue #1565)
-            try:
-                import nexus_runtime
+            from nexus.bricks.rebac.cache._prefix_helpers import batch_paths_under_prefixes
 
-                results_list = nexus_runtime.batch_prefix_check(
-                    list(accessible_paths), list(prefixes)
-                )
-                results = dict(zip(prefixes, results_list, strict=True))
-            except (ImportError, AttributeError):
-                # Python fallback (same logic, O(N×M))
-                results = {}
-                for prefix in prefixes:
-                    prefix_normalized = prefix.rstrip("/") + "/"
-                    prefix_exact = prefix.rstrip("/")
-                    results[prefix] = any(
-                        p.startswith(prefix_normalized) or p == prefix_exact
-                        for p in accessible_paths
-                    )
+            results_list = batch_paths_under_prefixes(list(accessible_paths), list(prefixes))
+            results = dict(zip(prefixes, results_list, strict=True))
 
             elapsed = (time.time() - start) * 1000
             found_count = sum(1 for v in results.values() if v)

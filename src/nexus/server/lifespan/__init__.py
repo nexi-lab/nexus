@@ -233,12 +233,20 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         await _durable.stop()
         logger.debug("Durable invalidation stream stopped")
 
-    # Close NexusFS kernel (sync shutdown for PersistentService + hooks)
+    # Close NexusFS kernel (sync shutdown for PersistentService + hooks).
+    # aclose() calls the PyO3 service lifecycle shim, which uses asyncio.run()
+    # for Python BackgroundService coroutines; run it outside this active loop.
     if app.state.nexus_fs:
-        if hasattr(app.state.nexus_fs, "aclose"):
-            app.state.nexus_fs.aclose()
-        elif hasattr(app.state.nexus_fs, "close"):
-            app.state.nexus_fs.close()
+        import inspect
+
+        close_fn = getattr(app.state.nexus_fs, "aclose", None)
+        if close_fn is None:
+            close_fn = getattr(app.state.nexus_fs, "close", None)
+        if close_fn is not None:
+            if inspect.iscoroutinefunction(close_fn):
+                await close_fn()
+            else:
+                await asyncio.get_running_loop().run_in_executor(None, close_fn)
 
     # CacheBrick stop is now handled by coordinator via aclose() (enlisted as BackgroundService)
 

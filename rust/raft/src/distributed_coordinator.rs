@@ -24,6 +24,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use contracts::lock_state::Locks;
 use dashmap::DashMap;
@@ -60,6 +61,8 @@ use crate::{TlsFiles, ZoneManager};
 /// trigger spurious zone bootstrap with skip_bootstrap=true and a
 /// missing ConfState, blocking leader election forever.
 const NODE_INCARNATION_FILE: &str = ".node_incarnation";
+const ROTATION_NO_LEADER_RETRY_SECS: u64 = 30;
+const ROTATION_NO_LEADER_RETRY_INTERVAL_MS: u64 = 250;
 
 /// Triple keyed by target zone: `(parent_zone_id, mount_path, global_path)`.
 type CrossZoneMountTuple = (String, String, String);
@@ -363,6 +366,10 @@ enum RotationOutcome {
     PeersReachableRotationFailed { detail: String },
 }
 
+fn is_not_leader_without_hint(error: Option<&str>, leader_address: Option<&str>) -> bool {
+    error == Some("not leader") && leader_address.unwrap_or("").is_empty()
+}
+
 /// Try `ReplaceVoterByHostname` against each peer in turn.  Returns
 /// the first `Committed` if any peer's leader accepts the rotation,
 /// otherwise classifies the failure mode.  Followers supply the
@@ -391,6 +398,8 @@ fn try_replace_voter_on_peers(
 ) -> RotationOutcome {
     let mut any_reachable = false;
     let mut last_failure: Option<String> = None;
+    let no_leader_retry_deadline =
+        Instant::now() + Duration::from_secs(ROTATION_NO_LEADER_RETRY_SECS);
 
     for peer in peers {
         if peer.hostname == self_hostname {
@@ -441,6 +450,20 @@ fn try_replace_voter_on_peers(
                         }
                     }
                     let detail = format!("{endpoint} responded with error={:?}", result.error);
+                    if is_not_leader_without_hint(
+                        result.error.as_deref(),
+                        result.leader_address.as_deref(),
+                    ) && Instant::now() < no_leader_retry_deadline
+                    {
+                        eprintln!(
+                            "[ensure_voter_membership] {detail}; \
+                             waiting for leader election before retry"
+                        );
+                        std::thread::sleep(Duration::from_millis(
+                            ROTATION_NO_LEADER_RETRY_INTERVAL_MS,
+                        ));
+                        continue;
+                    }
                     eprintln!("[ensure_voter_membership] {detail}");
                     last_failure = Some(detail);
                     break;
@@ -1474,5 +1497,16 @@ mod tests {
             RotationOutcome::PeersReachableRotationFailed { .. }
         ));
         assert!(matches!(committed, RotationOutcome::Committed));
+    }
+
+    #[test]
+    fn not_leader_without_hint_is_retryable() {
+        assert!(is_not_leader_without_hint(Some("not leader"), None));
+        assert!(is_not_leader_without_hint(Some("not leader"), Some("")));
+        assert!(!is_not_leader_without_hint(
+            Some("not leader"),
+            Some("http://leader:2126")
+        ));
+        assert!(!is_not_leader_without_hint(Some("permission denied"), None));
     }
 }

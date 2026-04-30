@@ -34,7 +34,7 @@ class CapabilityAuth(Protocol):
     Implementations validate the request's caller against the named capability
     and return the caller's token id (used as `decided_by`/`token_id`).
 
-    Two entry points are required:
+    Three entry points are required:
 
       - ``authorize`` — abort the gRPC context on a denial (used when the
         caller supplies the zone, e.g. ListPending/Watch/Submit; surfacing
@@ -44,8 +44,13 @@ class CapabilityAuth(Protocol):
         Get/Decide/Cancel where the servicer fetches the row first and
         passes the row's zone_id; folding a denial into NOT_FOUND avoids
         leaking request_id existence across zones).
+      - ``authenticate_only`` (#3790 F2) — validate just the bearer
+        token and return its subject id without any ReBAC check. Used
+        by Get/Decide/Cancel BEFORE the row lookup so unauthenticated
+        callers see UNAUTHENTICATED rather than a NOT_FOUND/OK
+        existence oracle for valid request_ids.
 
-    Both still abort ``UNAUTHENTICATED`` on bad/missing tokens.
+    All three still abort ``UNAUTHENTICATED`` on bad/missing tokens.
     """
 
     async def authorize(
@@ -61,6 +66,11 @@ class CapabilityAuth(Protocol):
         capability: str,
         zone_id: str,
     ) -> str | None: ...
+
+    async def authenticate_only(
+        self,
+        context: grpc.aio.ServicerContext,
+    ) -> str: ...
 
 
 def _ts(d: datetime | None) -> Timestamp:
@@ -128,8 +138,13 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.GetRequest,
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.ApprovalRequestProto:
-        # Fetch the row first so the capability check can be scoped to
-        # the row's zone. Cross-zone callers (ones who lack the row's
+        # F2 (#3790): authenticate FIRST so unauthenticated callers see
+        # UNAUTHENTICATED rather than a NOT_FOUND/OK existence oracle
+        # that distinguishes "valid id" from "invalid id" before any
+        # auth check. ``authenticate_only`` aborts on bad tokens.
+        await self._auth.authenticate_only(context)
+        # Fetch the row so the capability check can be scoped to the
+        # row's zone. Cross-zone callers (ones who lack the row's
         # zone-scoped capability) get NOT_FOUND so request_id existence
         # does not leak.
         row = await self._svc.get(request.request_id)
@@ -147,7 +162,15 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.DecideRequest,
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.ApprovalRequestProto:
-        # Fetch row first so the capability check is zone-scoped against
+        # F2 (#3790): authenticate FIRST — see Get for rationale.
+        # Without this, an unauthenticated caller could distinguish a
+        # valid request_id (NOT_FOUND from check_capability denial) from
+        # an invalid one (NOT_FOUND from get) — both still NOT_FOUND on
+        # the wire today, but Decide also leaks via INVALID_ARGUMENT
+        # when the row exists and the caller passes a malformed
+        # decision string. Auth-first closes that probe.
+        await self._auth.authenticate_only(context)
+        # Fetch row so the capability check is zone-scoped against
         # the row's zone_id, not a caller-supplied value.
         row = await self._svc.get(request.request_id)
         if row is None:
@@ -182,6 +205,13 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         request: approvals_pb2.CancelRequest,
         context: grpc.aio.ServicerContext,
     ) -> approvals_pb2.CancelResponse:
+        # F2 (#3790): authenticate FIRST. Without this, an unauthenticated
+        # caller could fire Cancel against arbitrary request_ids and
+        # always get OK back (the unknown-id branch returns OK with no
+        # auth check) — a free-of-charge zero-friction probing path. We
+        # still want unknown-id Cancel to be idempotent OK, but only
+        # after the caller has presented a valid bearer token.
+        await self._auth.authenticate_only(context)
         # Cancel today is a no-op for unknown ids; idempotent client
         # semantics. For known ids we still gate by the row's zone
         # capability (so a cross-zone caller can't probe for existence).

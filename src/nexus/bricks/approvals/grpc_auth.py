@@ -230,6 +230,24 @@ class BearerTokenCapabilityAuth:
         """
         return await self.authorize(context, capability, zone_id)
 
+    async def authenticate_only(
+        self,
+        context: "grpc.aio.ServicerContext",
+    ) -> str:
+        """F2 (#3790): bearer-token-only validation, no ReBAC.
+
+        Used by Get/Decide/Cancel before the row lookup so an
+        unauthenticated caller cannot use the response code to probe
+        whether a given request_id exists. Aborts UNAUTHENTICATED on
+        missing/bad tokens; returns the admin subject id otherwise.
+        ``capability``/``zone_id`` are intentionally unused — the
+        admin-token shim is global, the servicer's per-row
+        ``check_capability`` call still runs after the row is fetched.
+        """
+        # Reuse authorize()'s validation; pass placeholder values for
+        # capability/zone — the admin shim ignores both.
+        return await self.authorize(context, "approvals:authenticate", "")
+
 
 class ReBACCapabilityAuth:
     """Capability auth backed by the auth pipeline + ReBAC permission graph.
@@ -316,6 +334,63 @@ class ReBACCapabilityAuth:
         existence does not leak across zones.
         """
         return await self._check_capability_inner(context, capability, zone_id)
+
+    async def authenticate_only(
+        self,
+        context: "grpc.aio.ServicerContext",
+    ) -> str:
+        """F2 (#3790): bearer-token-only validation, no ReBAC.
+
+        Used by Get/Decide/Cancel BEFORE the row lookup so an
+        unauthenticated caller cannot use the response code to probe
+        whether a given request_id exists. Aborts UNAUTHENTICATED on
+        missing/bad tokens; returns the resolved subject id otherwise.
+        Falls through to the admin-token shim (when configured) and
+        honors the ``is_admin`` bypass — symmetric with the rest of
+        the auth pipeline.
+        """
+        metadata = context.invocation_metadata() or ()
+        token = _extract_bearer_token(metadata)
+        if token is None:
+            await context.abort(
+                grpc.StatusCode.UNAUTHENTICATED,
+                "missing or malformed authorization metadata",
+            )
+            raise  # unreachable; abort raises.
+
+        # Stage 1: resolve token -> subject via the standard auth pipeline.
+        result: "AuthResult | None" = None
+        try:
+            result = await self._auth.authenticate(token)
+        except Exception:  # auth pipeline boundary — defensive log, no abort
+            logger.warning(
+                "approvals.auth: authenticate() raised in authenticate_only; "
+                "treating as unauthenticated",
+                exc_info=True,
+            )
+            result = None
+
+        if result is None or not getattr(result, "authenticated", False):
+            # Stage 2 (fallback): admin-token shim — same pattern as
+            # _check_capability_inner. Delegating to the shim's
+            # ``authenticate_only`` keeps a single owner of the
+            # UNAUTHENTICATED status code.
+            if self._admin_fallback is not None:
+                return await self._admin_fallback.authenticate_only(context)
+            await context.abort(
+                grpc.StatusCode.UNAUTHENTICATED,
+                "invalid bearer token",
+            )
+            raise  # unreachable
+
+        subject_id = getattr(result, "subject_id", None)
+        if not subject_id:
+            await context.abort(
+                grpc.StatusCode.UNAUTHENTICATED,
+                "authenticated subject is missing subject_id",
+            )
+            raise  # unreachable
+        return str(subject_id)
 
     async def _check_capability_inner(
         self,

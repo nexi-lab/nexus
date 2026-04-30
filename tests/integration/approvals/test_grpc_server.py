@@ -43,15 +43,17 @@ async def _wait_pending(service: ApprovalService, rid: str) -> None:
 class _AllowAllAuth:
     """Test auth shim — always returns a static token id.
 
-    Implements both ``authorize`` and ``check_capability`` (Issue #3790
-    F1): the servicer uses ``authorize`` for ListPending/Watch/Submit
-    and ``check_capability`` for Get/Decide/Cancel.
+    Implements ``authorize``, ``check_capability`` (Issue #3790 F1)
+    and ``authenticate_only`` (#3790 F2 — pre-auth on Get/Decide/Cancel).
     """
 
     async def authorize(self, context: Any, capability: str, zone_id: str) -> str:
         return "tok_test"
 
     async def check_capability(self, context: Any, capability: str, zone_id: str) -> str | None:
+        return "tok_test"
+
+    async def authenticate_only(self, context: Any) -> str:
         return "tok_test"
 
 
@@ -237,6 +239,9 @@ class _ZoneScopedAuth:
             return None
         return "tok_zoned"
 
+    async def authenticate_only(self, context: Any) -> str:
+        return "tok_zoned"
+
 
 @pytest.mark.asyncio
 async def test_list_pending_z2_with_z1_grant_returns_permission_denied(
@@ -369,6 +374,9 @@ class _PerCallerAuth:
         return self._token_id
 
     async def check_capability(self, context: Any, capability: str, zone_id: str) -> str | None:
+        return self._token_id
+
+    async def authenticate_only(self, context: Any) -> str:
         return self._token_id
 
 
@@ -575,5 +583,117 @@ async def test_submit_empty_session_id_falls_back_to_token_namespace(
                 source=DecisionSource.GRPC,
             )
             await asyncio.wait_for(submit_task, 5.0)
+    finally:
+        await server.stop(grace=0.1)
+
+
+# ---------------------------------------------------------------------------
+# F2 (#3790) — Get/Decide/Cancel must authenticate BEFORE the row lookup so
+# response codes don't leak request_id existence to unauthenticated callers.
+# ---------------------------------------------------------------------------
+
+
+class _AuthRequiredAuth:
+    """Test auth shim — aborts UNAUTHENTICATED unless an ``Authorization``
+    metadata header was set. Used to drive F2 pre-auth regression tests
+    so we can verify Get/Decide/Cancel surface UNAUTHENTICATED for an
+    unauthenticated caller, not NOT_FOUND/OK (an existence oracle).
+    """
+
+    async def authorize(self, context: Any, capability: str, zone_id: str) -> str:
+        await self._require_auth(context)
+        return "tok_test"
+
+    async def check_capability(self, context: Any, capability: str, zone_id: str) -> str | None:
+        await self._require_auth(context)
+        return "tok_test"
+
+    async def authenticate_only(self, context: Any) -> str:
+        await self._require_auth(context)
+        return "tok_test"
+
+    @staticmethod
+    async def _require_auth(context: Any) -> None:
+        for key, _ in context.invocation_metadata() or ():
+            if key.lower() == "authorization":
+                return
+        await context.abort(grpc.StatusCode.UNAUTHENTICATED, "missing authorization metadata")
+        raise  # unreachable
+
+
+@pytest.mark.asyncio
+async def test_get_unauthenticated_returns_unauthenticated_not_not_found(
+    approval_service: ApprovalService,
+) -> None:
+    """F2 (#3790): Get without Authorization metadata aborts UNAUTHENTICATED
+    BEFORE the row lookup so the response code can't be used as an
+    existence oracle for valid request_ids.
+    """
+    server = grpc.aio.server()
+    approvals_pb2_grpc.add_ApprovalsV1Servicer_to_server(
+        ApprovalsServicer(approval_service, auth=_AuthRequiredAuth()), server
+    )
+    port = server.add_insecure_port("127.0.0.1:0")
+    await server.start()
+    try:
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
+            stub = approvals_pb2_grpc.ApprovalsV1Stub(channel)
+            with pytest.raises(grpc.aio.AioRpcError) as exc:
+                await stub.Get(approvals_pb2.GetRequest(request_id="req_does_not_exist_x"))
+            assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
+    finally:
+        await server.stop(grace=0.1)
+
+
+@pytest.mark.asyncio
+async def test_decide_unauthenticated_returns_unauthenticated_not_not_found(
+    approval_service: ApprovalService,
+) -> None:
+    """F2 (#3790): same shape as the Get test, but for Decide."""
+    server = grpc.aio.server()
+    approvals_pb2_grpc.add_ApprovalsV1Servicer_to_server(
+        ApprovalsServicer(approval_service, auth=_AuthRequiredAuth()), server
+    )
+    port = server.add_insecure_port("127.0.0.1:0")
+    await server.start()
+    try:
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
+            stub = approvals_pb2_grpc.ApprovalsV1Stub(channel)
+            with pytest.raises(grpc.aio.AioRpcError) as exc:
+                await stub.Decide(
+                    approvals_pb2.DecideRequest(
+                        request_id="req_does_not_exist_y",
+                        decision="approved",
+                        scope="once",
+                    )
+                )
+            assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
+    finally:
+        await server.stop(grace=0.1)
+
+
+@pytest.mark.asyncio
+async def test_cancel_unauthenticated_returns_unauthenticated_not_ok(
+    approval_service: ApprovalService,
+) -> None:
+    """F2 (#3790): Cancel must require auth even for unknown request_ids.
+
+    Without the pre-auth gate, an unauthenticated caller can fire
+    Cancel against arbitrary ids and always get OK back — a free
+    zero-friction probing path. The fix forces a valid bearer token
+    even when the row lookup will return None.
+    """
+    server = grpc.aio.server()
+    approvals_pb2_grpc.add_ApprovalsV1Servicer_to_server(
+        ApprovalsServicer(approval_service, auth=_AuthRequiredAuth()), server
+    )
+    port = server.add_insecure_port("127.0.0.1:0")
+    await server.start()
+    try:
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{port}") as channel:
+            stub = approvals_pb2_grpc.ApprovalsV1Stub(channel)
+            with pytest.raises(grpc.aio.AioRpcError) as exc:
+                await stub.Cancel(approvals_pb2.CancelRequest(request_id="req_unknown_z"))
+            assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
     finally:
         await server.stop(grace=0.1)

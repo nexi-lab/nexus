@@ -71,6 +71,56 @@ print("CRUD OK")
     assert "CRUD OK" in result.stdout
 
 
+def test_slim_local_rename_cold_cache(slim_venv: Path, tmp_path: Path) -> None:
+    """Rename persists through a kernel restart (cold DCache).
+
+    Regression for the zone-key / metastore-path consistency risk: warm DCache
+    can mask a metastore no-op. This test unmounts + remounts (new fs object)
+    after rename so the read goes through the metastore rather than DCache.
+    """
+    workdir = tmp_path / "cold"
+    workdir.mkdir()
+
+    script = f"""
+import sys
+import nexus.fs
+
+# Write + rename with first fs object.
+fs1 = nexus.fs.mount_sync("local://{workdir}")
+mounts = [m for m in fs1.list_mounts() if "{workdir.name}" in m]
+if not mounts:
+    sys.exit(f"mount not found: {{fs1.list_mounts()}}")
+mp = mounts[0].rstrip("/")
+
+fs1.write(mp + "/before.txt", b"cold-cache-check")
+fs1.rename(mp + "/before.txt", mp + "/after.txt")
+
+# Unmount and remount — forces new kernel / cold DCache.
+fs1.unmount(mp)
+fs2 = nexus.fs.mount_sync("local://{workdir}")
+mounts2 = [m for m in fs2.list_mounts() if "{workdir.name}" in m]
+mp2 = mounts2[0].rstrip("/")
+
+# Old path must not exist.
+try:
+    fs2.read(mp2 + "/before.txt")
+    sys.exit("before.txt still readable after rename + remount")
+except FileNotFoundError:
+    pass
+
+# New path must be readable with correct content.
+content = fs2.read(mp2 + "/after.txt")
+assert content == b"cold-cache-check", f"cold read mismatch: {{repr(content)}}"
+
+print("COLD OK")
+"""
+    result = run_in_slim_venv(slim_venv, script)
+    assert result.returncode == 0, (
+        f"cold-cache rename test failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "COLD OK" in result.stdout
+
+
 @pytest.mark.parametrize(
     "base_module",
     [

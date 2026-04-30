@@ -27,8 +27,8 @@ pub mod remote;
 // The canonical home for the trait is `crate::abc::meta_store`; this
 // re-export is a stable compat alias, not a parallel declaration.
 pub use crate::abc::meta_store::{
-    FileMetadata, MetaStore, MetaStoreError, PaginatedList, PathEtag, PathValueStr,
-    PutIfVersionResult,
+    pas_update_content_id, FileMetadata, MetaStore, MetaStoreError, PaginatedList, PathEtag,
+    PathValueStr, PutIfVersionResult,
 };
 
 // PyMetaStoreAdapter + conversion helpers (extract_metadata, to_python_metadata)
@@ -211,30 +211,8 @@ impl MetaStore for MemoryMetaStore {
     }
 }
 
-// ── PAS rename helper ─────────────────────────────────────────────────────
-//
-// PAS (path-addressable storage) backends store content_id = backend-relative
-// path (e.g. "file.txt" or "sub/file.txt"). After a rename, content_id must
-// be updated to the new backend-relative path or sys_read resolves the old
-// (now non-existent) filename.
-//
-// Callers (sys_rename in io.rs) are responsible for not calling this on CAS
-// entries — they have route.is_cas from the VFSRouter, which is the
-// authoritative source. This helper is invoked for the same-mount metastore
-// path (LocalMetaStore/MemoryMetaStore) where the backend type is known at
-// the call site.
-pub fn pas_update_content_id(meta: &mut FileMetadata, old_vfs: &str, new_vfs: &str) {
-    if let Some(cid) = meta.content_id.as_deref() {
-        let pas_suffix = format!("/{cid}");
-        if old_vfs.ends_with(pas_suffix.as_str()) || old_vfs == cid {
-            let prefix_len = old_vfs.len() - cid.len();
-            let mount_prefix = &old_vfs[..prefix_len];
-            if new_vfs.starts_with(mount_prefix) {
-                meta.content_id = Some(new_vfs[prefix_len..].to_string());
-            }
-        }
-    }
-}
+// pas_update_content_id is defined in crate::abc::meta_store and re-exported
+// above. MemoryMetaStore and LocalMetaStore use it via the re-export.
 
 // ── LocalMetaStore — single-node redb-backed metastore ──────────────────
 //

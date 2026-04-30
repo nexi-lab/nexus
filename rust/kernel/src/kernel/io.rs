@@ -1037,44 +1037,21 @@ impl Kernel {
         let is_cross_mount = old_route.mount_point != new_route.mount_point;
 
         if is_cross_mount {
-            // Cross-mount PAS rename is rejected: physically moving bytes across
-            // mount points requires a distributed 2PC (read→write→delete) that is
-            // not atomic and cannot be compensated without a WAL. Callers must use
-            // sys_copy + sys_unlink for cross-mount moves on PAS backends.
-            if !old_route.is_cas {
-                release_locks(&self.lock_manager, lock1, lock2);
-                return Err(KernelError::IOError(
-                    "sys_rename: cross-mount rename not supported for path-addressed backends; \
-                     use copy + delete instead"
-                        .to_string(),
-                ));
-            }
-            // Cross-mount CAS: PUT→new metastore, DELETE→old metastore.
-            // Both must commit; if the PUT fails we don't even try
-            // the DELETE (entry stays at old path — caller can retry).
-            // If PUT succeeds but DELETE fails, the entry exists at
-            // BOTH paths until the next reconcile sweep — at-least-
-            // once semantics, no data loss.
-            if let Some(old_m) = old_meta.as_ref() {
-                let mut new_m = old_m.clone();
-                new_m.path = new_zone_path.clone();
-                self.commit_metadata(&new_zone_path, &new_route.mount_point, new_m)?;
-                self.commit_delete(&old_zone_path, &old_route.mount_point)?;
-            }
-            // Directory children: list→put→delete (each child atomic)
-            let old_prefix = format!("{}/", old_zone_path.trim_end_matches('/'));
-            if let Some(Ok(children)) =
-                self.with_metastore(&old_route.mount_point, |ms| ms.list(&old_prefix))
-            {
-                for child in children {
-                    let suffix = &child.path[old_zone_path.len()..];
-                    let child_new_path = format!("{}{}", new_zone_path, suffix);
-                    let mut child_meta = child.clone();
-                    child_meta.path = child_new_path.clone();
-                    self.commit_metadata(&child_new_path, &new_route.mount_point, child_meta)?;
-                    self.commit_delete(&child.path, &old_route.mount_point)?;
-                }
-            }
+            // Cross-mount rename is always rejected regardless of addressing mode.
+            //
+            // For PAS: physically moving bytes requires a distributed 2PC that is
+            // not atomic and cannot be compensated without a WAL.
+            // For CAS-to-PAS or CAS-to-different-CAS: cloning metadata across
+            // content-addressed namespaces leaves the destination pointing at a
+            // content_id the destination backend cannot resolve, making the file
+            // inaccessible after the source metastore entry is deleted.
+            //
+            // Callers must use sys_copy + sys_unlink for cross-mount moves.
+            release_locks(&self.lock_manager, lock1, lock2);
+            return Err(KernelError::IOError(
+                "sys_rename: cross-mount rename not supported; use copy + delete instead"
+                    .to_string(),
+            ));
         } else {
             // Same-mount rename.
             //

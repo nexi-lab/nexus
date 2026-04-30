@@ -280,7 +280,9 @@ jobs:
   # Uses the same PYPI_API_TOKEN as nexus-ai-fs (org-scoped token).
   publish-nexus-fs:
     name: Publish nexus-fs to PyPI
-    needs: [verify-version]
+    # nexus-fs declares nexus-runtime as a hard dep; ensure nexus-runtime is
+    # published first so the smoke-test pip install can resolve it.
+    needs: [verify-version, publish-rust]
     runs-on: ubuntu-latest
 
     steps:
@@ -316,6 +318,16 @@ jobs:
       - name: Smoke test — install in clean environment
         run: |
           python -m venv /tmp/nexus-fs-release-test
+          # nexus-runtime is a hard dep of nexus-fs. Install it first so pip
+          # can resolve the dependency when installing the local nexus-fs wheel.
+          # publish-rust (which runs before this job) publishes nexus-runtime to
+          # the NEXUS_FAST_PYPI index; fall back to PyPI if not configured.
+          if [ -n "${{ env.NEXUS_FAST_PYPI_API_TOKEN }}" ]; then
+            /tmp/nexus-fs-release-test/bin/pip install nexus-runtime --extra-index-url https://pypi.nexus.internal/simple/ || \
+              /tmp/nexus-fs-release-test/bin/pip install nexus-runtime
+          else
+            /tmp/nexus-fs-release-test/bin/pip install nexus-runtime
+          fi
           /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
           /tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(f'nexus-fs v{nexus.fs.__version__}')"
           /tmp/nexus-fs-release-test/bin/nexus-fs --help

@@ -222,13 +222,16 @@ pub trait MetaStore: Send + Sync {
         &self,
         old_path: &str,
         new_path: &str,
-        _is_pas: bool,
+        is_pas: bool,
     ) -> Result<(), MetaStoreError> {
         if old_path == new_path {
             return Ok(());
         }
         if let Some(mut meta) = self.get(old_path)? {
             meta.path = new_path.to_string();
+            if is_pas {
+                pas_update_content_id(&mut meta, old_path, new_path);
+            }
             self.put(new_path, meta)?;
             self.delete(old_path)?;
         }
@@ -243,6 +246,9 @@ pub trait MetaStore: Send + Sync {
             let old_child = child.path.clone();
             let new_child = format!("{}{}", new_prefix, suffix);
             child.path = new_child.clone();
+            if is_pas {
+                pas_update_content_id(&mut child, &old_child, &new_child);
+            }
             self.put(&new_child, child)?;
             self.delete(&old_child)?;
         }
@@ -390,5 +396,27 @@ pub trait MetaStore: Send + Sync {
         Err(MetaStoreError::IOError(
             "get_stream_entry: not supported by this metastore (use a distributed impl, e.g. ZoneMetaStore)".to_string(),
         ))
+    }
+}
+
+/// Update `content_id` in a PAS `FileMetadata` entry after a rename.
+///
+/// PAS (path-addressed storage) backends store `content_id` equal to the
+/// backend-relative path (e.g. `"file.txt"` or `"sub/file.txt"`).  After a
+/// rename, `content_id` must be updated to the new path or `sys_read` will
+/// attempt to read from the old (now non-existent) location.
+///
+/// Only call this when `route.is_cas == false` — for CAS backends `content_id`
+/// is a hash and must not be overwritten with a path string.
+pub fn pas_update_content_id(meta: &mut FileMetadata, old_vfs: &str, new_vfs: &str) {
+    if let Some(cid) = meta.content_id.as_deref() {
+        let pas_suffix = format!("/{cid}");
+        if old_vfs.ends_with(pas_suffix.as_str()) || old_vfs == cid {
+            let prefix_len = old_vfs.len() - cid.len();
+            let mount_prefix = &old_vfs[..prefix_len];
+            if new_vfs.starts_with(mount_prefix) {
+                meta.content_id = Some(new_vfs[prefix_len..].to_string());
+            }
+        }
     }
 }

@@ -253,25 +253,53 @@ class ApprovalService:
             raise GatewayClosed("could not insert pending row") from e
 
         if req is None:
-            # Round-4 (#3790): the ON CONFLICT path returned None because
+            # Round-5 (#3790): the ON CONFLICT path returned None because
             # the conflicting pending row was decided between the insert
             # and the follow-up SELECT (operator decision arrived in that
-            # tiny window). Treat this as a very-recent decision: check
-            # the inherit path with a fresh timestamp and, for SESSION/
-            # PERSIST scopes, return APPROVED if a session_allow row was
-            # just written. Failing that, raise GatewayClosed so the
-            # caller retries — a re-try will either insert a fresh row or
-            # hit the session_allow fast-path above.
-            inherited = await self._maybe_inherit_recent_decision(
-                request_id=request_id,
+            # tiny window). The losing caller's request_id was NEVER
+            # inserted, so ``_maybe_inherit_recent_decision`` cannot
+            # transition it to APPROVED. Instead query the coalesce key
+            # directly, write session_allow for SESSION/PERSIST scopes,
+            # and return APPROVED. For ONCE scope or no recent approval
+            # raise GatewayClosed so the caller can retry.
+            _vrace_now = datetime.now(UTC)
+            _vrace_since = _vrace_now - timedelta(seconds=_INHERIT_GRACE_SECONDS * 5)
+            _recent = await self._repo.get_recent_decision(
                 zone_id=zone_id,
                 kind=kind,
                 subject=subject,
-                session_id=session_id,
-                now=datetime.now(UTC),
+                since=_vrace_since,
             )
-            if inherited is not None:
-                return inherited
+            if (
+                _recent is not None
+                and _recent.status is ApprovalRequestStatus.APPROVED
+                and _recent.decision_scope in _INHERITABLE_SCOPES
+            ):
+                if (
+                    session_id is not None
+                    and not _is_fabricated_session_id(session_id)
+                    and _recent.decision_scope is DecisionScope.SESSION
+                ):
+                    try:
+                        await self._repo.insert_session_allow(
+                            session_id=session_id,
+                            zone_id=zone_id,
+                            kind=kind,
+                            subject=subject,
+                            decided_by=_recent.decided_by or "system",
+                            decided_at=_vrace_now,
+                            request_id=None,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "approvals: vanished-conflict session_allow insert failed "
+                            "zone=%s kind=%s subject=%s",
+                            zone_id,
+                            kind,
+                            subject,
+                            exc_info=True,
+                        )
+                return Decision.APPROVED
             raise GatewayClosed("coalesced pending row vanished (concurrent decide); retry")
 
         # Was it newly inserted under our id, or an existing coalesced row?
@@ -353,9 +381,9 @@ class ApprovalService:
                 # missing), so no other waiter has remaining time under
                 # the row's own expiry. Best-effort: a failed transition
                 # means the sweeper handles the row.
-                _expired_ok = False
+                _expired_row = None
                 try:
-                    await self._repo.transition(
+                    _expired_row = await self._repo.transition(
                         request_id=req.id,
                         new_status=ApprovalRequestStatus.EXPIRED,
                         decided_by="system",
@@ -364,7 +392,21 @@ class ApprovalService:
                         source=DecisionSource.SYSTEM_TIMEOUT,
                         now=_now_ts,
                     )
-                    _expired_ok = True
+                    # Round-5 (#3790): transition() returns None when the row
+                    # was decided concurrently (approved or denied). If we
+                    # proceeded to fan-out DENIED we would lie to local
+                    # waiters about a row that may already be APPROVED.
+                    if _expired_row is None:
+                        # Concurrent decision won; re-read and honor it.
+                        _concurrent = await self._repo.get(req.id)
+                        if (
+                            _concurrent is not None
+                            and _concurrent.status is not ApprovalRequestStatus.PENDING
+                        ):
+                            try:
+                                return _row_to_decision(_concurrent, timeout=timeout)
+                            except ApprovalTimeout:
+                                pass
                 except Exception:
                     logger.warning(
                         "approvals.request_and_wait: best-effort EXPIRED transition "
@@ -372,6 +414,7 @@ class ApprovalService:
                         req.id,
                         exc_info=True,
                     )
+                _expired_ok = _expired_row is not None
 
                 if _expired_ok:
                     # Round-4 (#3790): wake coalesced waiters so they do
@@ -690,12 +733,32 @@ class ApprovalService:
     # Sweeper callback
     # ------------------------------------------------------------------
 
-    def _on_expired_ids(self, ids: list[str]) -> None:
-        for rid in ids:
+    async def _on_expired_ids(self, rows: list[tuple[str, str]]) -> None:
+        """Round-5 (#3790 F3): async sweeper callback with zone info.
+
+        Resolves local dispatcher futures, broadcasts zone-scoped watch
+        events, and publishes cross-worker NOTIFY so remote workers'
+        waiters unblock promptly instead of waiting for the reconcile
+        watchdog tick. Zone-scoped Watch streams also receive the event
+        now that we carry the actual zone_id instead of the empty string.
+        """
+        for rid, zone in rows:
             self._dispatcher.resolve(rid, Decision.DENIED)
             self._broadcast(
-                WatchEvent(type="decided", request_id=rid, zone_id="", decision="expired")
+                WatchEvent(type="decided", request_id=rid, zone_id=zone, decision="expired")
             )
+            try:
+                await self._notify.notify(
+                    CHANNEL_DECIDED,
+                    json.dumps({"request_id": rid, "decision": Decision.DENIED.value}),
+                )
+            except Exception:
+                logger.warning(
+                    "approvals.sweeper: notify(decided) failed rid=%s zone=%s",
+                    rid,
+                    zone,
+                    exc_info=True,
+                )
 
     # ------------------------------------------------------------------
     # NOTIFY handlers

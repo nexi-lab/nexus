@@ -298,8 +298,13 @@ class ApprovalRepository:
             row = (await session.execute(stmt)).scalar_one_or_none()
             return _to_domain(row) if row else None
 
-    async def sweep_expired(self, now: datetime) -> list[str]:
-        """Mark all pending past-expires rows as expired and return their ids."""
+    async def sweep_expired(self, now: datetime) -> list[tuple[str, str]]:
+        """Mark all pending past-expires rows as expired.
+
+        Returns list of (request_id, zone_id) tuples so callers can
+        broadcast zone-scoped watch events and cross-worker NOTIFYs
+        (Round-5 #3790 F3).
+        """
         async with self._session_factory() as session:
             stmt = (
                 update(ApprovalRequestModel)
@@ -313,10 +318,10 @@ class ApprovalRepository:
                     decided_by="system",
                     decision_scope=DecisionScope.ONCE.value,
                 )
-                .returning(ApprovalRequestModel.id)
+                .returning(ApprovalRequestModel.id, ApprovalRequestModel.zone_id)
             )
-            ids = list((await session.execute(stmt)).scalars().all())
-            for rid in ids:
+            rows = list((await session.execute(stmt)).all())
+            for rid, _zone in rows:
                 await session.execute(
                     insert(ApprovalDecisionModel).values(
                         request_id=rid,
@@ -329,4 +334,4 @@ class ApprovalRepository:
                     )
                 )
             await session.commit()
-            return ids
+            return [(rid, zone) for rid, zone in rows]

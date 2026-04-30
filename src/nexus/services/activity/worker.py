@@ -81,8 +81,8 @@ class ActivityWorker:
         Wakes early if the stopping event fires; cancels the queue get without
         losing items that landed in flight.
         """
-        getter = asyncio.ensure_future(self._queue.get())
-        stopper = asyncio.ensure_future(self._stopping.wait())
+        getter = asyncio.create_task(self._queue.get())
+        stopper = asyncio.create_task(self._stopping.wait())
         try:
             await asyncio.wait(
                 {getter, stopper},
@@ -107,9 +107,10 @@ class ActivityWorker:
         if first is None:
             return []
         batch = [first]
-        deadline = asyncio.get_event_loop().time() + self._batch_timeout_s
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._batch_timeout_s
         while len(batch) < self._batch_size:
-            remaining = deadline - asyncio.get_event_loop().time()
+            remaining = deadline - loop.time()
             if remaining <= 0:
                 break
             nxt = await self._get_with_stop(remaining)

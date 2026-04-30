@@ -100,3 +100,54 @@ async def test_stop_drains_remaining_queue() -> None:
         queue.put_nowait(_ev(i))
     await worker.stop(timeout=1.0)
     assert len(sink.events) == 5
+
+
+@pytest.mark.asyncio
+async def test_double_stop_is_safe() -> None:
+    queue: asyncio.Queue[ActivityEvent] = asyncio.Queue()
+    sink = RecordingSink()
+    worker = ActivityWorker(queue=queue, sinks=[sink], batch_size=10, batch_timeout_s=0.01)
+    await worker.start()
+    queue.put_nowait(_ev(0))
+    await worker.stop(timeout=1.0)
+    await worker.stop(timeout=1.0)  # second stop must not raise
+    assert len(sink.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_start_after_stop_resumes() -> None:
+    queue: asyncio.Queue[ActivityEvent] = asyncio.Queue()
+    sink = RecordingSink()
+    worker = ActivityWorker(queue=queue, sinks=[sink], batch_size=10, batch_timeout_s=0.01)
+    await worker.start()
+    queue.put_nowait(_ev(1))
+    await asyncio.sleep(0.1)
+    await worker.stop(timeout=1.0)
+    # Restart and verify it actually consumes again
+    await worker.start()
+    queue.put_nowait(_ev(2))
+    await asyncio.sleep(0.1)
+    await worker.stop(timeout=1.0)
+    assert len(sink.events) == 2
+
+
+@pytest.mark.asyncio
+async def test_stop_before_start_is_safe() -> None:
+    queue: asyncio.Queue[ActivityEvent] = asyncio.Queue()
+    sink = RecordingSink()
+    worker = ActivityWorker(queue=queue, sinks=[sink], batch_size=10, batch_timeout_s=0.01)
+    # stop() before start() must be a no-op, not raise
+    await worker.stop(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_double_start_is_idempotent() -> None:
+    queue: asyncio.Queue[ActivityEvent] = asyncio.Queue()
+    sink = RecordingSink()
+    worker = ActivityWorker(queue=queue, sinks=[sink], batch_size=10, batch_timeout_s=0.01)
+    await worker.start()
+    await worker.start()  # second start must not create a duplicate task
+    queue.put_nowait(_ev(0))
+    await asyncio.sleep(0.1)
+    await worker.stop(timeout=1.0)
+    assert len(sink.events) == 1

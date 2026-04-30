@@ -304,6 +304,8 @@ def upgrade() -> None:
     table_names = set(inspector.get_table_names())
 
     if "file_paths" in table_names:
+        file_path_columns = set(_table_columns(inspector, "file_paths"))
+        _set_tenant_default(bind, "file_paths", file_path_columns)
         _drop_not_null_if_needed(bind, inspector, "file_paths", "backend_id")
         _drop_not_null_if_needed(bind, inspector, "file_paths", "physical_path")
         _widen_varchar_if_needed(bind, inspector, "file_paths", "content_id", 255)

@@ -76,6 +76,7 @@ def test_postgres_schema_invariants_repair_zone_schema_gaps(monkeypatch) -> None
                 "indexed_content_id",
                 "backend_id",
                 "physical_path",
+                "tenant_id",
             },
             "version_history": {
                 "version_id",
@@ -169,6 +170,7 @@ def test_postgres_schema_invariants_repair_zone_schema_gaps(monkeypatch) -> None
         in executed_sql
     )
     assert "ALTER TABLE tiger_cache ALTER COLUMN tenant_id SET DEFAULT 'root'" in executed_sql
+    assert "ALTER TABLE file_paths ALTER COLUMN tenant_id SET DEFAULT 'root'" in executed_sql
     assert "ALTER TABLE tiger_cache_queue ALTER COLUMN tenant_id SET DEFAULT 'root'" in executed_sql
     assert (
         "ALTER TABLE rebac_group_closure ALTER COLUMN tenant_id SET DEFAULT 'root'" in executed_sql

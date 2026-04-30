@@ -270,10 +270,15 @@ class ApprovalService:
                 subject=subject,
                 since=_vrace_since,
             )
-            if (
-                _recent is not None
-                and _recent.status is ApprovalRequestStatus.APPROVED
+            # Round-6 (#3790): SESSION-scope requires a real session_id —
+            # same rule as _maybe_inherit_recent_decision.
+            if _recent is not None and (
+                _recent.status is ApprovalRequestStatus.APPROVED
                 and _recent.decision_scope in _INHERITABLE_SCOPES
+                and not (
+                    _recent.decision_scope is DecisionScope.SESSION
+                    and (session_id is None or _is_fabricated_session_id(session_id))
+                )
             ):
                 if (
                     session_id is not None
@@ -497,6 +502,17 @@ class ApprovalService:
             return None
         scope = recent.decision_scope
         if scope is None or scope not in _INHERITABLE_SCOPES:
+            return None
+        # Round-6 (#3790): SESSION-scope inheritance requires a real
+        # caller session_id. Without one (empty Submit, or fabricated
+        # hub: prefix) the caller has no session lifetime to bind the
+        # grant to; inheriting here would defeat the empty-session
+        # contract and let the caller re-use the prior operator decision
+        # without a fresh queueing. PERSIST_* scopes carry their own
+        # lifetime semantics and do not require a session_id.
+        if scope is DecisionScope.SESSION and (
+            session_id is None or _is_fabricated_session_id(session_id)
+        ):
             return None
 
         # Flip our late-inserted row to APPROVED with the inherited scope.

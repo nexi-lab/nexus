@@ -423,6 +423,89 @@ def test_orphan_log_lru_refresh_keeps_hot_keys():
     )
 
 
+def test_enforcer_batch_drops_false_under_partial_resolution():
+    """Issue #3951 round 10: has_accessible_descendants_batch must not
+    return hard False for prefixes whose match could be in an unresolved
+    orphan int_id. Under fully_resolved=False, drop False entries so the
+    caller (search_service uses dict.get(prefix, True)) defaults to
+    including the directory rather than hiding it on a transient orphan."""
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.enforcer import PermissionEnforcer
+
+    rebac_mgr = MagicMock()
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths_with_status.return_value = (
+        {"/workspace/data/file.txt"},  # matches /workspace, not /other
+        False,  # partial — orphan int_id might be the match for /other
+    )
+    rebac_mgr._tiger_cache = tiger_cache
+
+    enforcer = PermissionEnforcer.__new__(PermissionEnforcer)
+    enforcer.rebac_manager = rebac_mgr
+
+    ctx = MagicMock()
+    ctx.get_subject.return_value = ("user", "alice")
+    ctx.zone_id = "z1"
+
+    results = enforcer.has_accessible_descendants_batch(["/workspace", "/other"], ctx)
+
+    # /workspace had a real match → True is trusted and returned.
+    # /other had no match in the resolved set, but might match an orphan
+    # int_id → drop from result so caller defaults to True (include).
+    assert results.get("/workspace") is True
+    assert "/other" not in results  # caller default kicks in (True)
+
+
+def test_enforcer_batch_all_orphan_returns_empty_dict():
+    """If every int_id is orphaned (catastrophic resource_map gap), drop
+    all entries — caller defaults to including all directories rather
+    than hiding the user's whole listing."""
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.enforcer import PermissionEnforcer
+
+    rebac_mgr = MagicMock()
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths_with_status.return_value = (set(), False)
+    rebac_mgr._tiger_cache = tiger_cache
+
+    enforcer = PermissionEnforcer.__new__(PermissionEnforcer)
+    enforcer.rebac_manager = rebac_mgr
+
+    ctx = MagicMock()
+    ctx.get_subject.return_value = ("user", "alice")
+    ctx.zone_id = "z1"
+
+    results = enforcer.has_accessible_descendants_batch(["/a", "/b"], ctx)
+
+    assert results == {}  # caller defaults indeterminate to True
+
+
+def test_enforcer_batch_empty_bitmap_when_fully_resolved_returns_all_false():
+    """Empty bitmap with fully_resolved=True is authoritative no-access —
+    every prefix gets False (existing fail-closed semantic)."""
+    from unittest.mock import MagicMock
+
+    from nexus.bricks.rebac.enforcer import PermissionEnforcer
+
+    rebac_mgr = MagicMock()
+    tiger_cache = MagicMock()
+    tiger_cache.get_accessible_paths_with_status.return_value = (set(), True)
+    rebac_mgr._tiger_cache = tiger_cache
+
+    enforcer = PermissionEnforcer.__new__(PermissionEnforcer)
+    enforcer.rebac_manager = rebac_mgr
+
+    ctx = MagicMock()
+    ctx.get_subject.return_value = ("user", "alice")
+    ctx.zone_id = "z1"
+
+    results = enforcer.has_accessible_descendants_batch(["/a", "/b"], ctx)
+
+    assert results == {"/a": False, "/b": False}
+
+
 def test_compute_from_tiger_bitmap_skips_negative_cache_on_partial():
     """Issue #3951 round 9: when get_accessible_paths_with_status returns
     (paths, fully_resolved=False) and the prefix doesn't match, compute

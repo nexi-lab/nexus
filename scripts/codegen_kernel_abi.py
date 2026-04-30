@@ -981,6 +981,17 @@ def generate_stubs(
         "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
     )
     lines.append("")
+    # ── Audit-node stream registration (services::audit::prepare_stream_only)
+    #    — hand-written companion to install_audit_hook for nodes that
+    #    only collect (not generate) audit traces.
+    lines.append("# " + "-" * 75)
+    lines.append("# Audit stream-only registration (rust/services/src/python/mod.rs)")
+    lines.append("# " + "-" * 75)
+    lines.append("")
+    lines.append(
+        "def prepare_audit_stream_only(kernel: Any, zone_id: str, stream_path: str) -> None: ..."
+    )
+    lines.append("")
     # ── ManagedAgentService PyO3 surface (services::python) -- hand-written,
     # not codegen. Boot-installer for AgentKind::MANAGED hooks +
     # session lifecycle.

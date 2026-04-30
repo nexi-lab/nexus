@@ -170,6 +170,26 @@ pub fn install(kernel: &Kernel, zone_id: &str, stream_path: &str) -> Result<(), 
     Ok(())
 }
 
+/// Register the audit DT_STREAM locally without installing the
+/// generator hook.  Used by audit-node deployments that join
+/// production zones as raft learners — they need the WAL stream
+/// registered in the local `stream_manager` so `stream_read_batch`
+/// returns committed records (replicated by raft into their local
+/// MetaStore), but they do NOT generate VFS ops of their own and so
+/// must not register the `AuditHook` writer.
+///
+/// Mirrors `install`'s idempotency on the stream side; safe to call
+/// repeatedly per zone (the underlying `StreamManager.register`
+/// rejects duplicates with `Ok` for the same path).
+pub fn prepare_stream_only(
+    kernel: &Kernel,
+    zone_id: &str,
+    stream_path: &str,
+) -> Result<(), KernelError> {
+    let _stream = kernel.prepare_audit_stream(zone_id, stream_path)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

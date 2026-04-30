@@ -44,6 +44,27 @@ fn install_audit_hook_py(
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))
 }
 
+/// Register the audit DT_STREAM locally on `kernel` without
+/// installing the generator hook.  Used by audit-node deployments
+/// that join production zones as raft learners and only collect
+/// (not generate) audit traces.
+///
+/// Python signature:
+///
+/// ```python
+/// nexus_runtime.prepare_audit_stream_only(kernel, zone_id="root", stream_path="/audit/traces/")
+/// ```
+#[pyfunction]
+#[pyo3(name = "prepare_audit_stream_only")]
+fn prepare_audit_stream_only_py(
+    kernel: PyRef<'_, PyKernel>,
+    zone_id: &str,
+    stream_path: &str,
+) -> PyResult<()> {
+    audit::prepare_stream_only(kernel.kernel_ref(), zone_id, stream_path)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))
+}
+
 /// Install `ManagedAgentService` on `kernel`. Registers the chat-with-me
 /// mailbox stamping hook, the workspace-boundary teaching hook, and
 /// enlists the service into `ServiceRegistry` so the gRPC `Call`
@@ -96,6 +117,7 @@ fn nx_kernel_dispatch_rust_call<'py>(
 /// Called from `nexus-cdylib`'s `#[pymodule] fn nexus_runtime`.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(install_audit_hook_py, m)?)?;
+    m.add_function(wrap_pyfunction!(prepare_audit_stream_only_py, m)?)?;
     // ManagedAgentService — boot install (kernel doesn't auto-call
     // because services lives in a peer crate; Python-side wiring
     // calls this from `_wired.py` after `Kernel::new` returns).

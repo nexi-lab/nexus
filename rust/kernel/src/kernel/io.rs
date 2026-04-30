@@ -1070,9 +1070,37 @@ impl Kernel {
                 }
             }
         } else {
-            // Same-mount: atomic rename_path (redb single txn). Errors
-            // surface to the caller so a quorum-loss raft propose
-            // doesn't silently corrupt the rename.
+            // Same-mount rename.
+            //
+            // For PAS (path-addressed) backends, rename bytes on storage BEFORE
+            // committing the metastore update. If the backend rename fails the
+            // metastore is untouched and the caller sees the error; no orphaned
+            // metadata or aliased content_id is created. CAS backends return
+            // None/NotSupported from rename_file (bytes are hash-addressed and
+            // never moved), so the ordering does not matter for them.
+            //
+            // Errors from rename_file are propagated for PAS; for CAS/unsupported
+            // backends the None result is silently accepted and only the metastore
+            // rewrite happens (metadata-only rename, which is correct for CAS).
+            // For PAS backends: rename bytes first so a storage failure never
+            // leaves metadata committed to a path where no bytes were moved.
+            // CAS backends do not move bytes on rename; drive them after metadata.
+            if !old_route.is_cas {
+                if let Some(Err(e)) = self.vfs_router.rename_file(
+                    &old_route.mount_point,
+                    &old_route.backend_path,
+                    &new_route.backend_path,
+                ) {
+                    release_locks(&self.lock_manager, lock1, lock2);
+                    return Err(KernelError::IOError(format!(
+                        "sys_rename: backend rename failed: {e:?}"
+                    )));
+                }
+                // None = backend does not implement rename (external connectors);
+                // fall through to metadata-only rename for those.
+            }
+
+            // Commit metadata after PAS bytes are moved (or immediately for CAS).
             let rename_result = self
                 .with_metastore(&old_route.mount_point, |ms| {
                     ms.rename_path(&old_zone_path, &new_zone_path)
@@ -1086,11 +1114,15 @@ impl Kernel {
             rename_result.map_err(|e| {
                 KernelError::IOError(format!("sys_rename: metastore.rename_path: {e:?}"))
             })?;
-            let _ = self.vfs_router.rename_file(
-                &old_route.mount_point,
-                &old_route.backend_path,
-                &new_route.backend_path,
-            );
+
+            // CAS: drive backend rename (no-op for hash-addressed content) after metadata.
+            if old_route.is_cas {
+                let _ = self.vfs_router.rename_file(
+                    &old_route.mount_point,
+                    &old_route.backend_path,
+                    &new_route.backend_path,
+                );
+            }
         }
 
         // 9. DCache: evict old + put new; evict children prefix for directories.
@@ -1304,14 +1336,23 @@ impl Kernel {
             ) {
                 Some(wr) => Ok((wr.content_id, wr.size)),
                 None => {
-                    // CAS backend or copy_file not supported — metadata-only copy
-                    // (content deduplicated by hash, just create new metastore entry)
-                    let content_id = src_meta.content_id.clone().unwrap_or_default();
-                    if !content_id.is_empty() {
-                        // CAS: same content_id, just new path
-                        Ok((content_id, src_meta.size))
+                    // Backend returned None: either CAS (copy not meaningful since
+                    // content is hash-addressed) or backend does not implement copy.
+                    // For CAS: metadata-only copy is correct — same content_id,
+                    // different path entry.
+                    // For PAS: None means the backend's copy_file is not implemented;
+                    // fall back to read+write to avoid creating a metadata alias
+                    // pointing at source bytes.
+                    if src_route.is_cas {
+                        let content_id = src_meta.content_id.clone().unwrap_or_default();
+                        if !content_id.is_empty() {
+                            Ok((content_id, src_meta.size))
+                        } else {
+                            self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
+                        }
                     } else {
-                        // Fallback: read + write
+                        // PAS backend copy_file returned None (not implemented) —
+                        // read bytes from source and write to destination.
                         self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
                     }
                 }

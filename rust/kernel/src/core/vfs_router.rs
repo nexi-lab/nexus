@@ -564,13 +564,10 @@ impl VFSRouter {
         canonical_key: &str,
         old_backend_path: &str,
         new_backend_path: &str,
-    ) -> Option<()> {
+    ) -> Option<Result<(), crate::abc::object_store::StorageError>> {
         let entry = self.entries.get(canonical_key)?;
-        entry
-            .backend
-            .as_ref()?
-            .rename(old_backend_path, new_backend_path)
-            .ok()
+        let backend = entry.backend.as_ref()?;
+        Some(backend.rename(old_backend_path, new_backend_path))
     }
 
     /// Copy a file via the mount's backend (PAS server-side copy).

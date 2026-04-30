@@ -84,12 +84,13 @@ print("CRUD OK")
         "nexus.backends.connectors.oauth_base",
     ],
 )
-def test_slim_base_module_imports(slim_venv: Path, base_module: str) -> None:
+def test_slim_base_module_imports(slim_base_venv: Path, base_module: str) -> None:
     """Base-wheel modules must import without connector extras installed."""
     script = f"import {base_module}; print('OK')"
-    result = run_in_slim_venv(slim_venv, script)
+    result = run_in_slim_venv(slim_base_venv, script)
     assert result.returncode == 0, (
-        f"base module {base_module} requires an extra dep not in base deps:\n"
+        f"base module {base_module} failed in a no-extras slim install — "
+        f"it likely requires a dep that is not in base dependencies:\n"
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
     assert "OK" in result.stdout

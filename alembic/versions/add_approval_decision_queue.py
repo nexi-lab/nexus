@@ -16,6 +16,7 @@ from typing import Union
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.types import JSON
 
 from alembic import op
 
@@ -24,8 +25,19 @@ down_revision: Union[str, Sequence[str], None] = "3b2a1c5d7e8f"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+# Dialect-conditional JSON type: JSONB on Postgres (indexable, typed),
+# plain JSON on SQLite (migration test harness). Mirrors the ORM model
+# definition in db_models.py (a3a9944b4).
+_JSONB_PORTABLE = postgresql.JSONB().with_variant(JSON(), "sqlite")
+
 
 def upgrade() -> None:
+    # Detect dialect for server_default: Postgres wants '{}' cast as jsonb;
+    # SQLite accepts a plain string default '{}' without the cast.
+    _bind = op.get_bind()
+    _is_pg = _bind.dialect.name == "postgresql"
+    _metadata_default = sa.text("'{}'::jsonb") if _is_pg else sa.text("'{}'")
+
     op.create_table(
         "approval_requests",
         sa.Column("id", sa.String(64), primary_key=True, nullable=False),
@@ -38,9 +50,9 @@ def upgrade() -> None:
         sa.Column("reason", sa.Text, nullable=False, server_default=""),
         sa.Column(
             "metadata",
-            postgresql.JSONB,
+            _JSONB_PORTABLE,
             nullable=False,
-            server_default=sa.text("'{}'::jsonb"),
+            server_default=_metadata_default,
         ),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),

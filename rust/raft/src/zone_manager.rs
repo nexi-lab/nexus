@@ -389,8 +389,26 @@ impl ZoneManager {
         &self.default_peers
     }
 
-    /// Get an existing zone handle, or create one with the remembered
-    /// `default_peers()` and return a handle to it. Called from
+    /// Current cluster-wide peer roster in `id@host:port` form.
+    ///
+    /// The env-derived `default_peers` are only the cold-start seed. Once
+    /// root membership changes through wipe-rejoin rotation, root's live
+    /// peer map is the authoritative address roster for newly-created
+    /// zones.
+    pub fn current_peer_strings(&self) -> Vec<String> {
+        if let Some(peers) = self.registry.get_peers("root") {
+            if !peers.is_empty() {
+                let mut out: Vec<String> =
+                    peers.values().map(NodeAddress::to_raft_peer_str).collect();
+                out.sort();
+                return out;
+            }
+        }
+        self.default_peers.clone()
+    }
+
+    /// Get an existing zone handle, or create one with the current
+    /// root-zone peer roster and return a handle to it. Called from
     /// `Kernel::sys_setattr(DT_MOUNT)` leader path so the caller
     /// doesn't have to specify peers (same federation = same peers).
     /// Idempotent: subsequent calls for an existing zone skip the
@@ -399,7 +417,7 @@ impl ZoneManager {
         if let Some(h) = self.get_zone(zone_id) {
             return Ok(h);
         }
-        self.create_zone(zone_id, self.default_peers.clone())
+        self.create_zone(zone_id, self.current_peer_strings())
     }
 
     /// This node's ID.

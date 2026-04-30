@@ -226,21 +226,25 @@ impl Default for RaftDistributedCoordinator {
     }
 }
 
-/// Parse `NEXUS_PEERS` value (`host:port,host:port`) into raft's
-/// `id@host:port` format using `hostname_to_node_id` for stable ids.
-fn parse_peer_list_to_raft_format(peers_csv: &str) -> Result<Vec<String>, String> {
-    let mut out = Vec::new();
-    for entry in peers_csv
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        let (host, _port) = entry
-            .rsplit_once(':')
-            .ok_or_else(|| format!("peer '{entry}' missing ':port'"))?;
-        let id = hostname_to_node_id(host);
-        out.push(format!("{id}@{entry}"));
+fn peer_addrs_with_effective_self_id(
+    peer_addrs: &[NodeAddress],
+    hostname: &str,
+    self_address: &str,
+    node_id: u64,
+    use_tls: bool,
+) -> Result<Vec<NodeAddress>, String> {
+    let mut out = peer_addrs.to_vec();
+    let advertised_self = NodeAddress::parse(self_address, use_tls)
+        .map_err(|e| format!("NEXUS_ADVERTISE_ADDR parse '{self_address}': {e}"))?;
+    let mut replacement = advertised_self;
+    replacement.id = node_id;
+
+    if let Some(peer) = out.iter_mut().find(|peer| peer.hostname == hostname) {
+        *peer = replacement;
+    } else {
+        out.push(replacement);
     }
+
     Ok(out)
 }
 
@@ -743,11 +747,6 @@ impl RaftDistributedCoordinator {
                     .map_err(|e| format!("NEXUS_PEERS parse '{entry}': {e}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // `id@host:port` strings derived from the same NodeAddress
-        // entries — ZoneManager re-parses internally; we just provide
-        // the standard format raft expects.  Self entry will get
-        // overridden by ZoneManager::with_node_id below.
-        let peers: Vec<String> = peer_addrs.iter().map(|p| p.to_raft_peer_str()).collect();
 
         let tls = if tls_disabled {
             None
@@ -781,6 +780,17 @@ impl RaftDistributedCoordinator {
         // ConfChangeV2 atomic commit — no transient quorum gap.
         let membership =
             self.ensure_voter_membership(&hostname, &self_addr, &zones_dir, &peer_addrs)?;
+        let effective_peer_addrs = peer_addrs_with_effective_self_id(
+            &peer_addrs,
+            &hostname,
+            &self_addr,
+            membership.node_id,
+            use_tls_for_endpoints,
+        )?;
+        let peers: Vec<String> = effective_peer_addrs
+            .iter()
+            .map(NodeAddress::to_raft_peer_str)
+            .collect();
 
         let zm = ZoneManager::with_node_id(
             &hostname,
@@ -824,11 +834,16 @@ impl RaftDistributedCoordinator {
             if zm.get_zone(zone_id).is_some() {
                 return Ok(());
             }
+            let zone_peers = if zone_id == "root" {
+                peers.clone()
+            } else {
+                zm.current_peer_strings()
+            };
             if auto_join || joiner_hint {
-                zm.join_zone(zone_id, peers.clone(), false)
+                zm.join_zone(zone_id, zone_peers, false)
                     .map_err(|e| format!("join_zone({zone_id}): {e}"))?;
             } else {
-                zm.create_zone(zone_id, peers.clone())
+                zm.create_zone(zone_id, zone_peers)
                     .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
             }
             Ok(())
@@ -996,11 +1011,7 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
 
     fn join_zone(&self, kernel: &Kernel, zone_id: &str, as_learner: bool) -> CoordinatorResult<()> {
         let zm = self.zm().ok_or("federation not active")?;
-        // Re-derive peers from env at join time — the cluster topology is
-        // process-config rather than per-call.
-        let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
-        let peers = parse_peer_list_to_raft_format(&peers_csv)
-            .map_err(|e| format!("NEXUS_PEERS parse: {e}"))?;
+        let peers = zm.current_peer_strings();
         zm.join_zone(zone_id, peers, as_learner)
             .map_err(|e| e.to_string())?;
         self.install_apply_cb_for_zone(kernel, zone_id);
@@ -1508,5 +1519,41 @@ mod tests {
             Some("http://leader:2126")
         ));
         assert!(!is_not_leader_without_hint(Some("permission denied"), None));
+    }
+
+    #[test]
+    fn effective_peer_addrs_replace_self_with_membership_id() {
+        let peers = vec![
+            NodeAddress::parse("nexus-1:2126", false).expect("parse nexus-1"),
+            NodeAddress::parse("nexus-2:2126", false).expect("parse nexus-2"),
+        ];
+
+        let effective =
+            peer_addrs_with_effective_self_id(&peers, "nexus-2", "nexus-2:2126", 42, false)
+                .expect("effective peers");
+
+        let self_peer = effective
+            .iter()
+            .find(|peer| peer.hostname == "nexus-2")
+            .expect("self peer");
+        assert_eq!(self_peer.id, 42);
+        assert_eq!(self_peer.to_raft_peer_str(), "42@nexus-2:2126");
+        assert!(!effective
+            .iter()
+            .any(|peer| peer.id == hostname_to_node_id("nexus-2")));
+    }
+
+    #[test]
+    fn effective_peer_addrs_add_missing_self() {
+        let peers = vec![NodeAddress::parse("nexus-1:2126", false).expect("parse nexus-1")];
+
+        let effective =
+            peer_addrs_with_effective_self_id(&peers, "nexus-2", "nexus-2:2126", 42, false)
+                .expect("effective peers");
+
+        assert_eq!(effective.len(), 2);
+        assert!(effective
+            .iter()
+            .any(|peer| peer.hostname == "nexus-2" && peer.id == 42));
     }
 }

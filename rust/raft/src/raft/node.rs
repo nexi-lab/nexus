@@ -85,6 +85,39 @@ fn channel_try_send_err<T>(e: mpsc::error::TrySendError<T>) -> RaftError {
 #[cfg(all(feature = "grpc", has_protos))]
 use crate::transport::{NodeAddress, RaftClientPool, SharedPeerMap};
 
+#[cfg(all(feature = "grpc", has_protos))]
+fn node_address_from_conf_context(node_id: u64, context: &[u8]) -> Option<NodeAddress> {
+    if context.is_empty() {
+        return None;
+    }
+
+    let address = String::from_utf8_lossy(context).to_string();
+    let endpoint = if address.starts_with("http://") || address.starts_with("https://") {
+        address
+    } else {
+        format!("http://{}", address)
+    };
+    let use_tls = endpoint.starts_with("https://");
+    let target = endpoint
+        .strip_prefix("http://")
+        .or_else(|| endpoint.strip_prefix("https://"))
+        .unwrap_or(&endpoint)
+        .to_string();
+
+    match NodeAddress::parse(&format!("{node_id}@{target}"), use_tls) {
+        Ok(addr) => Some(addr),
+        Err(e) => {
+            tracing::warn!(
+                node_id,
+                endpoint,
+                error = %e,
+                "failed to parse ConfChange peer address; falling back to endpoint-only address"
+            );
+            Some(NodeAddress::new(node_id, endpoint))
+        }
+    }
+}
+
 /// Configuration for a Raft node.
 #[derive(Debug, Clone)]
 pub struct RaftConfig {
@@ -1575,19 +1608,10 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     if let Some(ref peer_map) = self.peer_map {
                         match cc.get_change_type() {
                             ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
-                                if !cc.context.is_empty() {
-                                    let address = String::from_utf8_lossy(&cc.context).to_string();
-                                    // Normalize: tonic Endpoint requires a URI scheme.
-                                    // JoinZone may send bare "host:port" — add http:// if missing.
-                                    let endpoint = if address.starts_with("http") {
-                                        address
-                                    } else {
-                                        format!("http://{}", address)
-                                    };
-                                    peer_map
-                                        .write()
-                                        .unwrap()
-                                        .insert(cc.node_id, NodeAddress::new(cc.node_id, endpoint));
+                                if let Some(address) =
+                                    node_address_from_conf_context(cc.node_id, &cc.context)
+                                {
+                                    peer_map.write().unwrap().insert(cc.node_id, address);
                                 }
                             }
                             ConfChangeType::RemoveNode => {
@@ -1678,18 +1702,10 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                             match single.get_change_type() {
                                 ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
                                     has_add = true;
-                                    if !cc.context.is_empty() {
-                                        let address =
-                                            String::from_utf8_lossy(&cc.context).to_string();
-                                        let endpoint = if address.starts_with("http") {
-                                            address.clone()
-                                        } else {
-                                            format!("http://{}", address)
-                                        };
-                                        peer_map.write().unwrap().insert(
-                                            single.node_id,
-                                            NodeAddress::new(single.node_id, endpoint),
-                                        );
+                                    if let Some(address) =
+                                        node_address_from_conf_context(single.node_id, &cc.context)
+                                    {
+                                        peer_map.write().unwrap().insert(single.node_id, address);
                                     }
                                 }
                                 ConfChangeType::RemoveNode => {
@@ -1879,6 +1895,25 @@ mod tests {
 
         let (handle, driver) = ZoneConsensus::new(config, storage, state_machine, None).unwrap();
         (handle, driver, dir)
+    }
+
+    #[cfg(all(feature = "grpc", has_protos))]
+    #[test]
+    fn conf_context_address_preserves_explicit_node_id_and_hostname() {
+        let addr = node_address_from_conf_context(42, b"nexus-2:2126").expect("address");
+        assert_eq!(addr.id, 42);
+        assert_eq!(addr.hostname, "nexus-2");
+        assert_eq!(addr.port, 2126);
+        assert_eq!(addr.endpoint, "http://nexus-2:2126");
+    }
+
+    #[cfg(all(feature = "grpc", has_protos))]
+    #[test]
+    fn conf_context_address_accepts_uri_context() {
+        let addr = node_address_from_conf_context(42, b"https://nexus-2:2126").expect("address");
+        assert_eq!(addr.id, 42);
+        assert_eq!(addr.hostname, "nexus-2");
+        assert_eq!(addr.endpoint, "https://nexus-2:2126");
     }
 
     #[tokio::test]

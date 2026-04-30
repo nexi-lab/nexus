@@ -273,6 +273,22 @@ async def test_resolver_preserves_first_content_cache_candidate() -> None:
     assert resolved[0].content == "canonical content"
 
 
+def test_lookup_values_cast_lookup_rank_for_asyncpg() -> None:
+    resolver = MutationResolver(file_reader=None, async_session_factory=None)
+
+    values_sql, params = resolver._build_lookup_values(
+        [
+            ("root", "/docs/readme.md", "/docs/readme.md", 0),
+            ("root", "/zone/root/docs/readme.md", "/docs/readme.md", 1),
+        ]
+    )
+
+    assert "CAST(:lookup_rank_0 AS INTEGER)" in values_sql
+    assert "CAST(:lookup_rank_1 AS INTEGER)" in values_sql
+    assert params["lookup_rank_0"] == 0
+    assert params["lookup_rank_1"] == 1
+
+
 @pytest.mark.asyncio
 async def test_resolver_includes_scoped_candidate_for_unscoped_event_paths() -> None:
     file_reader = AsyncMock()

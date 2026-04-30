@@ -528,15 +528,24 @@ async def test_submit_session_id_bound_to_authenticated_token(
 
 
 @pytest.mark.asyncio
-async def test_submit_empty_session_id_falls_back_to_token_namespace(
+async def test_submit_empty_session_id_passes_none_and_no_session_allow_on_session_scope(
     approval_service: ApprovalService,
 ) -> None:
-    """Submit with empty session_id still uses the bound ``grpc:{token_id}``
-    namespace so SESSION-scope cache continues to work per-token.
+    """Round-5 (#3790): Submit with empty session_id must pass session_id=None to
+    the service so a SESSION-scope approval does NOT write a durable
+    per-token ``approval_session_allow`` row.  Without this fix the old
+    ``grpc:{token_id}`` fallback created an indefinite per-token grant.
+
+    Assertions:
+    1. The pending row carries session_id=None (not "grpc:tokenC").
+    2. Approving with SESSION scope writes no session_allow row.
+    3. A subsequent empty-session Submit opens a fresh pending row rather
+       than short-circuiting via the allow cache.
     """
     tag = _tag()
     zone = f"z_{tag}"
     subject = f"empty-session.example:443:{tag}"
+    kind = ApprovalKind.EGRESS_HOST
 
     server = grpc.aio.server()
     approvals_pb2_grpc.add_ApprovalsV1Servicer_to_server(
@@ -552,10 +561,10 @@ async def test_submit_empty_session_id_falls_back_to_token_namespace(
             async def submit() -> Any:
                 return await stub.Submit(
                     approvals_pb2.SubmitRequest(
-                        kind=ApprovalKind.EGRESS_HOST.value,
+                        kind=kind.value,
                         subject=subject,
                         zone_id=zone,
-                        session_id="",  # client supplied nothing.
+                        session_id="",  # intentionally empty
                         reason="r",
                         metadata_json="{}",
                         timeout_override_seconds=10.0,
@@ -572,17 +581,56 @@ async def test_submit_empty_session_id_falls_back_to_token_namespace(
                     pending = match[0]
                     break
             assert pending is not None
-            assert pending.session_id == "grpc:tokenC"
+            # Assertion 1: session_id must be None (not a token-wide alias).
+            assert pending.session_id is None, (
+                f"expected session_id=None but got {pending.session_id!r}"
+            )
 
+            # Approve with SESSION scope — must NOT write session_allow.
             await approval_service.decide(
                 request_id=pending.id,
                 decision=Decision.APPROVED,
                 decided_by="op",
-                scope=DecisionScope.ONCE,
+                scope=DecisionScope.SESSION,
                 reason=None,
                 source=DecisionSource.GRPC,
             )
             await asyncio.wait_for(submit_task, 5.0)
+
+            # Assertion 2: no session_allow row exists for any "grpc:tokenC" prefix.
+            no_allow = not await approval_service.repository.session_allow_exists(
+                session_id="grpc:tokenC",
+                zone_id=zone,
+                kind=kind,
+                subject=subject,
+            )
+            assert no_allow, "session_allow must not be written for empty-session Submit"
+
+            # Assertion 3: a second empty-session Submit creates a fresh pending row
+            # (does not short-circuit through the allow cache).
+            submit2_task = asyncio.create_task(submit())
+            fresh_pending = None
+            for _ in range(50):
+                await asyncio.sleep(0.1)
+                rows = await approval_service.list_pending(zone_id=zone)
+                match = [p for p in rows if p.subject == subject]
+                if match:
+                    fresh_pending = match[0]
+                    break
+            assert fresh_pending is not None, (
+                "second empty-session Submit must queue a fresh pending row, not cache-hit"
+            )
+            # Clean up the second pending row.
+            await approval_service.decide(
+                request_id=fresh_pending.id,
+                decision=Decision.DENIED,
+                decided_by="op",
+                scope=DecisionScope.ONCE,
+                reason="cleanup",
+                source=DecisionSource.GRPC,
+            )
+            with pytest.raises((grpc.aio.AioRpcError, Exception)):  # denied → grpc error
+                await asyncio.wait_for(submit2_task, 5.0)
     finally:
         await server.stop(grace=0.1)
 

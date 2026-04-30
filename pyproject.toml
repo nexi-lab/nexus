@@ -756,6 +756,9 @@ module = [
     "nexus.grpc.vfs.vfs_pb2",
     "nexus.grpc.vfs.vfs_pb2_grpc",
     "nexus.grpc.vfs",
+    "nexus.grpc.approvals.approvals_pb2",
+    "nexus.grpc.approvals.approvals_pb2_grpc",
+    "nexus.grpc.approvals",
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
@@ -854,6 +857,8 @@ exclude = [
     "src/nexus/core/protocols/",               # Generated at install time
     "src/nexus/grpc/vfs/vfs_pb2.py",           # Generated gRPC stub
     "src/nexus/grpc/vfs/vfs_pb2_grpc.py",      # Generated gRPC stub
+    "src/nexus/grpc/approvals/approvals_pb2.py",       # Generated gRPC stub
+    "src/nexus/grpc/approvals/approvals_pb2_grpc.py",  # Generated gRPC stub
 ]
 
 [tool.ruff.lint]

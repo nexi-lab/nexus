@@ -11,6 +11,11 @@ services:
     restart: unless-stopped
     ports:
       - "${PORT:-2026}:2026"
+      # Approvals brick (Issue #3790, Task 21): expose the Python gRPC server so
+      # an out-of-process gRPC client (e.g. an operator UI or E2E test) can
+      # reach ApprovalsV1.{ListPending,Decide,...}. Disabled at the brick
+      # level when NEXUS_APPROVALS_ENABLED=false — port forward is harmless.
+      - "${NEXUS_APPROVALS_GRPC_PORT:-2029}:${NEXUS_APPROVALS_GRPC_PORT:-2029}"
     environment:
       - NEXUS_HOST=0.0.0.0
       - NEXUS_PORT=2026
@@ -19,6 +24,15 @@ services:
       - NEXUS_DATABASE_URL=${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}
       - NEXUS_API_KEY=${NEXUS_API_KEY:-}
       - NEXUS_BACKEND=${NEXUS_BACKEND:-local}
+      # Approvals brick (Issue #3790). Off by default; the lifespan starts the
+      # Python gRPC server only when NEXUS_APPROVALS_ENABLED=1 AND
+      # NEXUS_APPROVALS_ADMIN_TOKEN is set. NEXUS_APPROVALS_GRPC_BIND_ALL
+      # defaults to 1 inside the container so docker port-forward can reach
+      # the bound socket (loopback-only would be unreachable from the host).
+      - NEXUS_APPROVALS_ENABLED=${NEXUS_APPROVALS_ENABLED:-false}
+      - NEXUS_APPROVALS_ADMIN_TOKEN=${NEXUS_APPROVALS_ADMIN_TOKEN:-}
+      - NEXUS_APPROVALS_GRPC_PORT=${NEXUS_APPROVALS_GRPC_PORT:-2029}
+      - NEXUS_APPROVALS_GRPC_BIND_ALL=${NEXUS_APPROVALS_GRPC_BIND_ALL:-1}
       # GCS Backend (if using)
       - NEXUS_GCS_BUCKET_NAME=${NEXUS_GCS_BUCKET_NAME:-}
       - NEXUS_GCS_PROJECT_ID=${NEXUS_GCS_PROJECT_ID:-}

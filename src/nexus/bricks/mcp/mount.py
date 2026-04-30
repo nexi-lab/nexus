@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse
 
 from nexus.bricks.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 from nexus.config import SSRFConfig
@@ -19,11 +20,37 @@ from nexus.lib.security.ssrf_transport import make_pinned_client_factory
 from nexus.lib.security.url_validator import SSRFBlocked, validate_outbound_url
 
 if TYPE_CHECKING:
+    from nexus.bricks.approvals.policy_gate import PolicyGate
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
 
 logger = logging.getLogger(__name__)
+
+
+def _host_port_from_url(url: str) -> str | None:
+    """Return ``host:port`` for an http/https URL, or None if unparseable.
+
+    Used as the ``subject`` for ``EGRESS_HOST`` approval requests so
+    operators can decide once per host (not per URL path). Defaults to
+    443 for https and 80 for http when the URL omits an explicit port.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+    host = parsed.hostname
+    if not host:
+        return None
+    if parsed.port:
+        port = parsed.port
+    elif parsed.scheme == "https":
+        port = 443
+    elif parsed.scheme == "http":
+        port = 80
+    else:
+        return None
+    return f"{host}:{port}"
 
 
 class MCPMountError(Exception):
@@ -129,6 +156,8 @@ class MCPMountManager:
         filesystem: "NexusFS | None" = None,
         *,
         ssrf_config: "SSRFConfig | None" = None,
+        policy_gate: "PolicyGate | None" = None,
+        zone_id: str | None = None,
     ) -> None:
         """Initialize MCP mount manager.
 
@@ -138,9 +167,25 @@ class MCPMountManager:
                 validator for SSE/HTTP mounts uses these operator settings
                 (``allow_private`` / ``extra_deny_cidrs``). When None, a
                 conservative default ``SSRFConfig()`` is used.
+            policy_gate: Optional PolicyGate for approval-queue routing
+                (Issue #3790, Task 18). When provided, an SSRF-blocked egress
+                attempt for an unlisted host is offered to the gate first;
+                if an operator approves the host the connect proceeds, else
+                the original ``SSRFBlocked`` is re-raised. When None, the
+                manager preserves the existing fail-closed behavior.
+            zone_id: Optional zone identifier for approval-queue
+                attribution (Issue #3790, F4). When set, SSRF-blocked
+                egress requests are filed against this zone; when ``None``
+                the manager fails closed instead of charging the request
+                to ROOT_ZONE_ID. Operators wire this from the daemon's
+                primary zone (or per-mount config when multi-zone is
+                supported in a future revision); see
+                :meth:`set_zone` for post-construction attachment.
         """
         self._filesystem = filesystem
         self._ssrf_config_override = ssrf_config
+        self._policy_gate = policy_gate
+        self._zone_id = zone_id
 
         # Active mount configurations (keyed by name, may include tier info)
         self._mounts: dict[str, MCPMount] = {}
@@ -153,6 +198,17 @@ class MCPMountManager:
 
         # Mount configs loaded lazily on first async access (syscalls are async)
         self._mounts_loaded = False
+
+    def set_zone(self, zone_id: str | None) -> None:
+        """Attach (or detach) the daemon zone after construction.
+
+        F4 (Issue #3790): the approvals lifespan determines the daemon's
+        primary zone after MCP services are constructed, so callers may
+        attach the zone post-hoc. ``None`` triggers fail-closed routing
+        in :meth:`_ssrf_blocked_via_gate` (the gate is bypassed entirely
+        and the original ``SSRFBlocked`` is re-raised).
+        """
+        self._zone_id = zone_id
 
     async def _load_mounts_config(self) -> None:
         """Load mount configurations from per-folder mount.json files.
@@ -402,7 +458,29 @@ class MCPMountManager:
         except SSRFBlocked as exc:
             self._emit_ssrf_audit(mount_config, exc)
             logger.warning("SSRF blocked for MCP mount %r: %s", mount_config.name, exc)
-            raise
+            if not await self._ssrf_blocked_via_gate(
+                mount_config, mount_config.url, "mcp_mount_connect"
+            ):
+                raise
+            # Operator approved the host via the approvals queue. Re-validate
+            # with private ranges relaxed so RFC 1918 / ULA hosts become
+            # reachable; metadata, loopback, and the operator-configured
+            # ``extra_deny_cidrs`` remain enforced. Operator approval covers
+            # "this host" only — it must not silently disable the operator's
+            # own deny list (e.g. internal service mesh CIDRs).
+            try:
+                validated = validate_outbound_url(
+                    mount_config.url,
+                    allow_private=True,
+                    extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
+                )
+            except SSRFBlocked:
+                logger.warning(
+                    "approvals-approved mount %r still failed SSRF re-validation; "
+                    "honoring the original block",
+                    mount_config.name,
+                )
+                raise exc from None
 
         # Start with custom headers from mount config
         headers: dict[str, str] = dict(mount_config.headers) if mount_config.headers else {}
@@ -446,6 +524,85 @@ class MCPMountManager:
         if self._ssrf_config_override is not None:
             return self._ssrf_config_override
         return SSRFConfig()
+
+    async def _ssrf_blocked_via_gate(
+        self,
+        mount_config: MCPMount,
+        url: str,
+        operation: str,
+    ) -> bool:
+        """Consult the PolicyGate when SSRF would block this URL.
+
+        Issue #3790, Task 18: route unlisted-host egress through the
+        approval queue. Returns True iff an operator approved the host
+        within the gate's timeout, in which case the caller may proceed
+        as if SSRF had passed. Returns False on missing gate, denial,
+        timeout, or any unexpected gate error (graceful degradation —
+        the original ``SSRFBlocked`` is then re-raised by the caller).
+
+        F4 (#3790): the zone is the daemon's configured zone (set via
+        ``__init__`` or :meth:`set_zone`). When the manager has no zone
+        bound, the gate is bypassed and the original ``SSRFBlocked`` is
+        re-raised — this is fail-closed behavior. We do NOT silently
+        charge approvals to ROOT_ZONE_ID, because that would let any
+        operator with root-zone ``approvals:decide`` approve egress for
+        every other zone's traffic.
+        """
+        gate = self._policy_gate
+        if gate is None:
+            return False
+
+        host_port = _host_port_from_url(url)
+        if host_port is None:
+            # Cannot derive a meaningful subject — keep fail-closed.
+            return False
+
+        # F4 (#3790): require a bound zone. Without one we cannot scope
+        # the approval to a single operator-decide capability set, so
+        # routing the request through the queue would be a privilege
+        # escalation. Fail closed; the caller will re-raise SSRFBlocked.
+        if not self._zone_id:
+            logger.warning(
+                "MCPMountManager has no zone bound (mount=%r); "
+                "skipping approval-queue routing and honoring SSRF block",
+                mount_config.name,
+            )
+            return False
+
+        # Lazy imports keep ``mcp`` brick free of an eager top-level
+        # cross-brick import (boundary checker enforces this; see
+        # `.pre-commit-hooks/check_brick_imports.py`).
+        from nexus.bricks.approvals.models import ApprovalKind, Decision
+
+        zone_id = self._zone_id
+        # Mount-time admin operations have no agent token. Synthesize a
+        # stable token_id from the mount name so operators can correlate
+        # repeated requests for the same mount in the queue UI.
+        token_id = f"mcp_mount:{mount_config.name}" if mount_config.name else "mcp_mount"
+        try:
+            decision = await gate.check(
+                kind=ApprovalKind.EGRESS_HOST,
+                subject=host_port,
+                zone_id=zone_id,
+                token_id=token_id,
+                session_id=None,
+                agent_id=mount_config.name or None,
+                reason=operation,
+                metadata={
+                    "url": url,
+                    "mount_name": mount_config.name,
+                    "operation": operation,
+                },
+            )
+        except Exception:
+            logger.warning(
+                "approvals gate raised for mount %r (%s); falling back to deny",
+                mount_config.name,
+                operation,
+                exc_info=True,
+            )
+            return False
+        return decision is Decision.APPROVED
 
     def _emit_ssrf_audit(self, mount_config: MCPMount, exc: SSRFBlocked) -> None:
         """Emit a security.ssrf_blocked event; never raises."""
@@ -662,7 +819,24 @@ class MCPMountManager:
         except SSRFBlocked as exc:
             self._emit_ssrf_audit(mount, exc)
             logger.warning("SSRF blocked for MCP mount %r (list_tools): %s", mount.name, exc)
-            raise
+            if not await self._ssrf_blocked_via_gate(mount, mount.url, "mcp_mount_list_tools"):
+                raise
+            # Preserve operator-configured ``extra_deny_cidrs`` on
+            # approval re-validation — see ``_create_sse_client`` for
+            # rationale.
+            try:
+                validated = validate_outbound_url(
+                    mount.url,
+                    allow_private=True,
+                    extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
+                )
+            except SSRFBlocked:
+                logger.warning(
+                    "approvals-approved mount %r still failed SSRF re-validation "
+                    "(list_tools); honoring the original block",
+                    mount.name,
+                )
+                raise exc from None
 
         # Start with custom headers from mount config
         headers: dict[str, str] = dict(mount.headers) if mount.headers else {}

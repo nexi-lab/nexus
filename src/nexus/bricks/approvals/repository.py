@@ -74,8 +74,12 @@ class ApprovalRepository:
         metadata: dict[str, Any],
         now: datetime,
         expires_at: datetime,
-    ) -> ApprovalRequest:
+    ) -> ApprovalRequest | None:
         """Insert pending row OR return the existing one for the coalesce key.
+
+        Returns None in the rare race where the conflicting row was decided
+        between the ON CONFLICT and the follow-up SELECT (Round-4 #3790).
+        Callers must handle None by checking for a recent terminal decision.
 
         Race-safe: relies on the partial unique index
         approval_requests_pending_coalesce.
@@ -108,7 +112,13 @@ class ApprovalRepository:
                 await session.commit()
                 return _to_domain(row)
 
-            # Conflict: fetch the existing pending row
+            # Conflict: fetch the existing pending row. Use
+            # scalar_one_or_none() — an operator decision can commit
+            # between the ON CONFLICT and this SELECT, removing the row
+            # from the partial index (Round-4 #3790). If that happens
+            # return None so request_and_wait can fall through to the
+            # recent-decision inherit path rather than raising
+            # GatewayClosed.
             existing = (
                 await session.execute(
                     select(ApprovalRequestModel).where(
@@ -118,8 +128,10 @@ class ApprovalRepository:
                         ApprovalRequestModel.status == ApprovalRequestStatus.PENDING.value,
                     )
                 )
-            ).scalar_one()
+            ).scalar_one_or_none()
             await session.commit()
+            if existing is None:
+                return None
             return _to_domain(existing)
 
     async def get(self, request_id: str) -> ApprovalRequest | None:

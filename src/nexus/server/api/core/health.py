@@ -41,7 +41,7 @@ async def health_check(request: Request) -> HealthResponse | Any:
         enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
 
         # Phase H: federation readiness is observed through the
-        # FederationProvider HAL trait via the
+        # DistributedCoordinator HAL trait via the
         # ``nexus_runtime.federation_is_initialized`` module helper.
         # Treats federation-disabled (no env vars) as ready so the
         # slim / tests path sails through unchanged.

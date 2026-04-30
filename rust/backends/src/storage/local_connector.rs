@@ -1,6 +1,5 @@
 //! `LocalConnectorBackend` — local-folder reference connector.
 //!
-//! Phase 2 lifted this out of `kernel/src/_backend_impls.rs`.
 //! Reference mode: mounts an external local folder into Nexus
 //! without copying.  Files stay at their original location (Single
 //! Source of Truth).  Optional symlink following with escape
@@ -120,7 +119,7 @@ impl ObjectStore for LocalConnectorBackend {
             });
         }
 
-        // R20.10 pwrite slow path — see PathLocalBackend for rationale.
+        // pwrite slow path — see PathLocalBackend for rationale.
         use std::io::{Seek, SeekFrom, Write};
         let mut f = fs::OpenOptions::new()
             .create(true)

@@ -1,16 +1,15 @@
-//! Concrete `FederationProvider` implementation.
+//! Concrete `DistributedCoordinator` implementation.
 //!
-//! Phase H of the rust-workspace restructure put the
-//! `RaftFederationProvider` impl in the raft crate (after the `kernel
-//! → raft` Cargo edge flipped to `raft → kernel`).  The kernel
-//! installs an `Arc<dyn FederationProvider>` into its `federation` slot
-//! via the cdylib boot path; federation-aware syscalls dispatch through
-//! the trait.
+//! `RaftDistributedCoordinator` is the raft-crate impl of the
+//! `DistributedCoordinator` trait the kernel exposes. The Cargo edge
+//! runs `raft → kernel`; the kernel installs an
+//! `Arc<dyn DistributedCoordinator>` into its `federation` slot via the
+//! cdylib boot path, and federation-aware syscalls dispatch through the
+//! trait.
 //!
 //! ## Provider shape
 //!
-//! `RaftFederationProvider` owns the federation-side state that pre-Phase-5
-//! lived directly on `Kernel`:
+//! `RaftDistributedCoordinator` owns the federation-side state:
 //!
 //! * `Arc<ZoneManager>` — per-zone Raft groups + gRPC server.
 //! * `Arc<ZoneRaftRegistry>` — zone-id → ZoneConsensus lookup.
@@ -31,7 +30,9 @@ use dashmap::DashMap;
 use kernel::abc::meta_store::MetaStore;
 use kernel::core::dcache::CachedEntry;
 use kernel::core::vfs_router::canonicalize_mount_path as canonicalize;
-use kernel::hal::federation::{BlobFetcherSlot, FederationProvider, FederationResult};
+use kernel::hal::distributed_coordinator::{
+    ClusterInfo, CoordinatorResult, DistributedCoordinator, ShareInfo,
+};
 use kernel::kernel::Kernel;
 
 use crate::transport::{
@@ -62,12 +63,12 @@ const NODE_INCARNATION_FILE: &str = ".node_incarnation";
 /// Triple keyed by target zone: `(parent_zone_id, mount_path, global_path)`.
 type CrossZoneMountTuple = (String, String, String);
 
-/// Raft-backed `FederationProvider` impl.
+/// Raft-backed `DistributedCoordinator` impl.
 ///
 /// All state is `OnceLock` so the provider is `Send + Sync + 'static`
 /// without interior mutability noise.  `init_from_env` populates the
 /// slots; subsequent calls observe a stable snapshot.
-pub struct RaftFederationProvider {
+pub struct RaftDistributedCoordinator {
     zone_manager: OnceLock<Arc<ZoneManager>>,
     runtime: OnceLock<tokio::runtime::Handle>,
     bootstrap_done: AtomicBool,
@@ -82,7 +83,7 @@ pub struct RaftFederationProvider {
     cross_zone_mounts: Arc<DashMap<String, Vec<CrossZoneMountTuple>>>,
 }
 
-impl RaftFederationProvider {
+impl RaftDistributedCoordinator {
     pub fn new() -> Self {
         Self {
             zone_manager: OnceLock::new(),
@@ -215,7 +216,7 @@ impl RaftFederationProvider {
     }
 }
 
-impl Default for RaftFederationProvider {
+impl Default for RaftDistributedCoordinator {
     fn default() -> Self {
         Self::new()
     }
@@ -239,7 +240,7 @@ fn parse_peer_list_to_raft_format(peers_csv: &str) -> Result<Vec<String>, String
     Ok(out)
 }
 
-/// Outcome of [`RaftFederationProvider::ensure_voter_membership`].
+/// Outcome of [`RaftDistributedCoordinator::ensure_voter_membership`].
 ///
 /// Drives both the ID `ZoneManager::with_node_id` is constructed with
 /// and whether `init_from_env` chooses `create_zone` (cold start) or
@@ -289,18 +290,12 @@ fn read_node_incarnation(zones_dir: &str) -> Result<Option<u64>, String> {
     match std::fs::read(&path) {
         Ok(bytes) => {
             let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {
-                format!(
-                    "node incarnation file '{}' is not 8 bytes",
-                    path.display()
-                )
+                format!("node incarnation file '{}' is not 8 bytes", path.display())
             })?;
             Ok(Some(u64::from_be_bytes(arr)))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!(
-            "read node incarnation '{}': {e}",
-            path.display(),
-        )),
+        Err(e) => Err(format!("read node incarnation '{}': {e}", path.display(),)),
     }
 }
 
@@ -319,24 +314,12 @@ fn write_node_incarnation(zones_dir: &str, incarnation: u64) -> Result<(), Strin
     let final_path = dir.join(NODE_INCARNATION_FILE);
     let tmp_path = dir.join(format!("{NODE_INCARNATION_FILE}.tmp"));
     {
-        let mut tmp = std::fs::File::create(&tmp_path).map_err(|e| {
-            format!(
-                "create tmp incarnation file '{}': {e}",
-                tmp_path.display(),
-            )
-        })?;
-        tmp.write_all(&incarnation.to_be_bytes()).map_err(|e| {
-            format!(
-                "write tmp incarnation file '{}': {e}",
-                tmp_path.display(),
-            )
-        })?;
-        tmp.sync_all().map_err(|e| {
-            format!(
-                "sync tmp incarnation file '{}': {e}",
-                tmp_path.display(),
-            )
-        })?;
+        let mut tmp = std::fs::File::create(&tmp_path)
+            .map_err(|e| format!("create tmp incarnation file '{}': {e}", tmp_path.display(),))?;
+        tmp.write_all(&incarnation.to_be_bytes())
+            .map_err(|e| format!("write tmp incarnation file '{}': {e}", tmp_path.display(),))?;
+        tmp.sync_all()
+            .map_err(|e| format!("sync tmp incarnation file '{}': {e}", tmp_path.display(),))?;
     }
     std::fs::rename(&tmp_path, &final_path).map_err(|e| {
         format!(
@@ -424,7 +407,7 @@ fn try_replace_voter_on_peers(
     false
 }
 
-impl RaftFederationProvider {
+impl RaftDistributedCoordinator {
     /// Decide this process's effective node ID and whether to bootstrap
     /// a fresh raft zone or join an already-running one.
     ///
@@ -504,13 +487,8 @@ impl RaftFederationProvider {
             .thread_name("ensure-voter-membership")
             .build()
             .map_err(|e| format!("rotation runtime: {e}"))?;
-        let rotated = try_replace_voter_on_peers(
-            &rotation_runtime,
-            peers,
-            hostname,
-            new_id,
-            self_address,
-        );
+        let rotated =
+            try_replace_voter_on_peers(&rotation_runtime, peers, hostname, new_id, self_address);
         drop(rotation_runtime);
 
         // Whether we rotated or fell through to cold-start, persist
@@ -547,8 +525,15 @@ impl RaftFederationProvider {
     }
 }
 
-impl FederationProvider for RaftFederationProvider {
-    fn init_from_env(&self, kernel: &Kernel) -> FederationResult<bool> {
+impl RaftDistributedCoordinator {
+    /// Boot-time init from environment variables (`NEXUS_HOSTNAME`,
+    /// `NEXUS_PEERS`, `NEXUS_BIND_ADDR`, `NEXUS_DATA_DIR`,
+    /// `NEXUS_RAFT_TLS`, …). Idempotent — `Ok(false)` when federation
+    /// was already initialised, `Ok(true)` on first successful init.
+    ///
+    /// Inherent (not on trait): boot-time wiring, fires once per
+    /// process from [`install`], outside the runtime trait surface.
+    pub fn init_from_env(&self, kernel: &Kernel) -> CoordinatorResult<bool> {
         // Idempotent — if zone manager already exists, treat as
         // "already initialised" and report no-op.
         if self.zone_manager.get().is_some() {
@@ -626,10 +611,7 @@ impl FederationProvider for RaftFederationProvider {
         // entries — ZoneManager re-parses internally; we just provide
         // the standard format raft expects.  Self entry will get
         // overridden by ZoneManager::with_node_id below.
-        let peers: Vec<String> = peer_addrs
-            .iter()
-            .map(|p| p.to_raft_peer_str())
-            .collect();
+        let peers: Vec<String> = peer_addrs.iter().map(|p| p.to_raft_peer_str()).collect();
 
         let tls = if tls_disabled {
             None
@@ -748,19 +730,9 @@ impl FederationProvider for RaftFederationProvider {
         tracing::info!("federation bootstrap complete (hostname={hostname})");
         Ok(true)
     }
+}
 
-    fn is_initialized(&self, _kernel: &Kernel) -> bool {
-        self.zone_manager.get().is_some()
-    }
-
-    fn bind_address(&self, kernel: &Kernel) -> Option<String> {
-        kernel.self_address_string()
-    }
-
-    fn hostname(&self, kernel: &Kernel) -> Option<String> {
-        kernel.self_address_string()
-    }
-
+impl DistributedCoordinator for RaftDistributedCoordinator {
     fn list_zones(&self, _kernel: &Kernel) -> Vec<String> {
         self.zm().map(|zm| zm.list_zones()).unwrap_or_default()
     }
@@ -769,7 +741,7 @@ impl FederationProvider for RaftFederationProvider {
         &self,
         _kernel: &Kernel,
         zone_id: &str,
-    ) -> FederationResult<Arc<dyn MetaStore>> {
+    ) -> CoordinatorResult<Arc<dyn MetaStore>> {
         let zm = self.zm().ok_or("federation not active")?;
         let consensus = zm
             .registry()
@@ -790,7 +762,7 @@ impl FederationProvider for RaftFederationProvider {
         Ok(store)
     }
 
-    fn locks_for_zone(&self, kernel: &Kernel, zone_id: &str) -> FederationResult<Arc<dyn Locks>> {
+    fn locks_for_zone(&self, kernel: &Kernel, zone_id: &str) -> CoordinatorResult<Arc<dyn Locks>> {
         let zm = self.zm().ok_or("federation not active")?;
         let runtime = self
             .runtime
@@ -806,48 +778,42 @@ impl FederationProvider for RaftFederationProvider {
         Ok(Arc::new(backend))
     }
 
-    fn remote_read_blob(
-        &self,
-        kernel: &Kernel,
-        _zone_id: &str,
-        path: &str,
-        content_id: &str,
-    ) -> FederationResult<Vec<u8>> {
-        let client = kernel.peer_client_arc();
-        let key = if !content_id.is_empty() {
-            content_id
-        } else {
-            path
-        };
-        client.fetch("", key)
-    }
-
     fn wire_mount(
         &self,
         kernel: &Kernel,
         parent_zone: &str,
         mount_path: &str,
         target_zone: &str,
-    ) -> FederationResult<()> {
+    ) -> CoordinatorResult<()> {
         wire_mount_impl(self, kernel, parent_zone, mount_path, target_zone)
     }
 
-    fn stash_blob_fetcher_slot(&self, kernel: &Kernel, slot: BlobFetcherSlot) {
-        kernel.stash_blob_fetcher_slot(slot);
+    fn unwire_mount(
+        &self,
+        kernel: &Kernel,
+        parent_zone: &str,
+        mount_path: &str,
+    ) -> CoordinatorResult<()> {
+        let vfs_router = kernel.vfs_router_arc();
+        let dcache = kernel.dcache_arc();
+        unwire_mount_core(
+            &vfs_router,
+            &dcache,
+            &self.cross_zone_mounts,
+            parent_zone,
+            mount_path,
+        );
+        Ok(())
     }
 
-    fn take_blob_fetcher_slot(&self, kernel: &Kernel) -> Option<BlobFetcherSlot> {
-        kernel.take_pending_blob_fetcher_slot()
-    }
-
-    fn create_zone(&self, kernel: &Kernel, zone_id: &str) -> FederationResult<()> {
+    fn create_zone(&self, kernel: &Kernel, zone_id: &str) -> CoordinatorResult<()> {
         let zm = self.zm().ok_or("federation not active")?;
         zm.get_or_create_zone(zone_id).map_err(|e| e.to_string())?;
         self.install_apply_cb_for_zone(kernel, zone_id);
         Ok(())
     }
 
-    fn remove_zone(&self, _kernel: &Kernel, zone_id: &str, force: bool) -> FederationResult<()> {
+    fn remove_zone(&self, _kernel: &Kernel, zone_id: &str, force: bool) -> CoordinatorResult<()> {
         let zm = self.zm().ok_or("federation not active")?;
         let runtime = self
             .runtime
@@ -892,7 +858,7 @@ impl FederationProvider for RaftFederationProvider {
         zm.remove_zone(zone_id, force).map_err(|e| e.to_string())
     }
 
-    fn join_zone(&self, kernel: &Kernel, zone_id: &str, as_learner: bool) -> FederationResult<()> {
+    fn join_zone(&self, kernel: &Kernel, zone_id: &str, as_learner: bool) -> CoordinatorResult<()> {
         let zm = self.zm().ok_or("federation not active")?;
         // Re-derive peers from env at join time — the cluster topology is
         // process-config rather than per-call.
@@ -905,71 +871,80 @@ impl FederationProvider for RaftFederationProvider {
         Ok(())
     }
 
-    fn zone_share(
+    fn share_zone(
         &self,
-        _kernel: &Kernel,
-        parent_zone: &str,
-        prefix: &str,
-        new_zone: &str,
-    ) -> FederationResult<u64> {
-        let zm = self.zm().ok_or("federation not active")?;
-        let copied = zm
-            .share_subtree_core(parent_zone, prefix, new_zone)
-            .map_err(|e| e.to_string())?;
-        Ok(copied as u64)
-    }
-
-    fn register_share(
-        &self,
-        _kernel: &Kernel,
+        kernel: &Kernel,
         local_path: &str,
-        zone_id: &str,
-    ) -> FederationResult<()> {
+        new_zone_id: &str,
+    ) -> CoordinatorResult<ShareInfo> {
         let zm = self.zm().ok_or("federation not active")?;
-        zm.register_share(local_path, zone_id)
-            .map_err(|e| e.to_string())
+        // Atomic create + copy + register: materialise the zone first
+        // so it is visible to followers before content lands.
+        zm.get_or_create_zone(new_zone_id)
+            .map_err(|e| e.to_string())?;
+        self.install_apply_cb_for_zone(kernel, new_zone_id);
+        // Decompose `local_path` via VFSRouter — the closest mount
+        // point's zone_id is the parent, and the path tail under that
+        // mount is the prefix passed to `share_subtree_core`.
+        let route = kernel
+            .vfs_router_arc()
+            .route(local_path, contracts::ROOT_ZONE_ID)
+            .map_err(|e| format!("share_zone route '{local_path}': {e:?}"))?;
+        let parent_zone = route.zone_id.clone();
+        let prefix = if route.backend_path.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", route.backend_path)
+        };
+        let copied = zm
+            .share_subtree_core(&parent_zone, &prefix, new_zone_id)
+            .map_err(|e| e.to_string())?;
+        zm.register_share(local_path, new_zone_id)
+            .map_err(|e| e.to_string())?;
+        Ok(ShareInfo {
+            zone_id: new_zone_id.to_string(),
+            copied_entries: copied as u64,
+        })
     }
 
     fn lookup_share(
         &self,
         _kernel: &Kernel,
         remote_path: &str,
-    ) -> FederationResult<Option<String>> {
+    ) -> CoordinatorResult<Option<ShareInfo>> {
         let zm = self.zm().ok_or("federation not active")?;
-        zm.lookup_share(remote_path).map_err(|e| e.to_string())
+        let zone_id = zm.lookup_share(remote_path).map_err(|e| e.to_string())?;
+        Ok(zone_id.map(|zid| ShareInfo {
+            zone_id: zid,
+            copied_entries: 0,
+        }))
     }
 
-    fn zone_links_count(&self, _kernel: &Kernel, zone_id: &str) -> FederationResult<i64> {
-        // Count comes from the provider's reverse index (mounts pointing
-        // at `zone_id`).  Node-local cache derived from DT_MOUNT entries —
-        // matches what `wire_mount` populates as apply-cb fires.
-        let count = self
+    fn cluster_info(&self, _kernel: &Kernel, zone_id: &str) -> CoordinatorResult<ClusterInfo> {
+        let zm = self.zm().ok_or("federation not active")?;
+        let status = zm.cluster_status(zone_id);
+        // links_count comes from the coordinator's reverse index
+        // (mounts pointing at `zone_id`). Node-local cache derived
+        // from DT_MOUNT entries — matches what `wire_mount` populates
+        // as apply-cb fires.
+        let links_count = self
             .cross_zone_mounts
             .get(zone_id)
             .map(|v| v.len() as i64)
             .unwrap_or(0);
-        Ok(count)
-    }
-
-    fn zone_cluster_info(
-        &self,
-        _kernel: &Kernel,
-        zone_id: &str,
-    ) -> FederationResult<Vec<(String, serde_json::Value)>> {
-        let zm = self.zm().ok_or("federation not active")?;
-        let status = zm.cluster_status(zone_id);
-        Ok(vec![
-            ("zone_id".to_string(), status.zone_id.into()),
-            ("node_id".to_string(), status.node_id.into()),
-            ("has_store".to_string(), status.has_store.into()),
-            ("is_leader".to_string(), status.is_leader.into()),
-            ("leader_id".to_string(), status.leader_id.into()),
-            ("term".to_string(), status.term.into()),
-            ("commit_index".to_string(), status.commit_index.into()),
-            ("applied_index".to_string(), status.applied_index.into()),
-            ("voter_count".to_string(), status.voter_count.into()),
-            ("witness_count".to_string(), status.witness_count.into()),
-        ])
+        Ok(ClusterInfo {
+            zone_id: status.zone_id,
+            node_id: status.node_id,
+            has_store: status.has_store,
+            is_leader: status.is_leader,
+            leader_id: status.leader_id,
+            term: status.term,
+            commit_index: status.commit_index,
+            applied_index: status.applied_index,
+            voter_count: status.voter_count,
+            witness_count: status.witness_count,
+            links_count,
+        })
     }
 }
 
@@ -1040,7 +1015,7 @@ fn wire_mount_core(
     parent_zone_id: &str,
     mount_path: &str,
     target_zone_id: &str,
-) -> FederationResult<()> {
+) -> CoordinatorResult<()> {
     tracing::debug!(
         parent_zone_id = %parent_zone_id,
         mount_path = %mount_path,
@@ -1266,12 +1241,12 @@ fn install_mount_apply_cb_impl(
 /// kernel.rs's `wire_mount` call is best-effort fast-path; correctness
 /// rests on the apply-cb.
 fn wire_mount_impl(
-    provider: &RaftFederationProvider,
+    provider: &RaftDistributedCoordinator,
     kernel: &Kernel,
     parent_zone_id: &str,
     mount_path: &str,
     target_zone_id: &str,
-) -> FederationResult<()> {
+) -> CoordinatorResult<()> {
     let zm = provider.zm().ok_or("federation not active")?;
     let runtime = provider
         .runtime
@@ -1301,14 +1276,18 @@ fn wire_mount_impl(
     Ok(())
 }
 
-/// Install `RaftFederationProvider` into the kernel's federation slot
-/// and run `init_from_env`.
+/// Install `RaftDistributedCoordinator` into the kernel's coordinator slot
+/// and run `init_from_env`. Also drains the pending blob-fetcher slot
+/// stashed by `init_from_env` and wires the `KernelBlobFetcher`
+/// server-side handler into the raft gRPC fabric — co-locating both
+/// halves keeps transport raft-free.
 ///
 /// Mirrors `transport::blob::peer_client::install` — called once per
-/// process from the cdylib boot path.  Idempotent for re-imports.
+/// process from the cdylib boot path. Idempotent for re-imports.
 pub fn install(kernel: &Kernel) -> Result<(), String> {
-    let provider = Arc::new(RaftFederationProvider::new());
-    kernel.set_federation(provider.clone() as Arc<dyn FederationProvider>);
-    provider.init_from_env(kernel)?;
+    let coordinator = Arc::new(RaftDistributedCoordinator::new());
+    kernel.set_distributed_coordinator(coordinator.clone() as Arc<dyn DistributedCoordinator>);
+    coordinator.init_from_env(kernel)?;
+    crate::blob_fetcher_handler::install(kernel);
     Ok(())
 }

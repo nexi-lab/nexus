@@ -1,8 +1,7 @@
 //! PipeBackend pillar — uniform interface for DT_PIPE IPC backends.
 //!
 //! In-memory reference impl `MemoryPipeBackend` lives in `crate::pipe`;
-//! SHM, stdio, and remote variants live in sibling files (and Phase F
-//! lifts the remote variant into `transport::pipe`).
+//! SHM, stdio, and remote variants live in sibling files.
 
 #[derive(Debug)]
 pub(crate) enum PipeError {

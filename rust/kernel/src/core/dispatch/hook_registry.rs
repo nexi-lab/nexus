@@ -195,7 +195,6 @@ impl HookRegistry {
     }
 }
 
-// ── ObserverRegistry DELETED (§11 Phase 22) ─────────────────────────
-//
-// Observer registration and dispatch moved to pure Python (DispatchMixin._observers).
-// Rust KernelObserverRegistry (kernel.rs) retained for future Rust-native observers.
+// Observer registration and dispatch live in pure Python
+// (DispatchMixin._observers). Rust KernelObserverRegistry (kernel.rs)
+// is retained for future Rust-native observers.

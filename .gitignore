@@ -20,12 +20,12 @@ eggs/
 lib/
 !src/nexus/lib/
 !tests/unit/lib/
-# Phase A renamed `rust/library/` → `rust/lib/`; the broad Python
-# build-dir `lib/` pattern above would otherwise silently un-track
-# every rust/lib file (including its Cargo.toml). Without this line
-# `cargo build` works locally — files exist on disk — but CI fails
-# at workspace-load time with "rust/lib/Cargo.toml: No such file".
-!rust/lib/
+# `rust/shared/lib/` is a workspace member; the broad Python build-dir
+# `lib/` pattern above would otherwise silently un-track every file
+# under it (including its Cargo.toml). Without this line `cargo build`
+# works locally — files exist on disk — but CI fails at workspace-load
+# time with "rust/shared/lib/Cargo.toml: No such file".
+!rust/shared/lib/
 lib64/
 parts/
 sdist/

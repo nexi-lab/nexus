@@ -34,7 +34,7 @@ use tokio::task::JoinHandle;
 
 /// Per-zone concurrent-op guard. Prevents concurrent `setup_zone` and
 /// `remove_zone` calls for the same zone_id from interleaving their
-/// disk-dir ops (R20.13). Different zone_ids proceed in parallel.
+/// disk-dir ops. Different zone_ids proceed in parallel.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ZoneOp {
     Creating,
@@ -50,14 +50,14 @@ struct ZoneEntry {
     /// This node's ID within the zone.
     #[expect(
         dead_code,
-        reason = "needed for ConfChange in Phase 3; remove expect when used"
+        reason = "reserved for future ConfChange use; remove expect when used"
     )]
     node_id: u64,
     /// Shutdown signal for the transport loop.
     shutdown_tx: watch::Sender<bool>,
     /// Transport loop task handle (for join on removal).
     transport_handle: JoinHandle<()>,
-    /// On-disk lifecycle owner (R20.13). Committed (not armed) post-insert —
+    /// On-disk lifecycle owner. Committed (not armed) post-insert —
     /// Drop on process shutdown is a no-op; explicit `destroy()` during
     /// `remove_zone` deletes the dir.
     persistence: ZonePersistence,
@@ -254,7 +254,7 @@ impl ZoneRaftRegistry {
             }
             let zone_id = entry.file_name().to_string_lossy().into_owned();
 
-            // R20.13: a tombstone means the prior run started removing this
+            // A tombstone means the prior run started removing this
             // zone but died before `destroy()`. Finish the cleanup rather
             // than resurrecting a zombie zone that would send raft messages
             // to peers who (correctly) return NotFound.
@@ -286,10 +286,10 @@ impl ZoneRaftRegistry {
             count += 1;
         }
 
-        // R20.13 invariant: post-enumeration, the in-memory zone count must
-        // match the on-disk zone count. Violation means we failed to open
-        // something that should have been opened — a regression of the
-        // "disk is SSOT for zone membership" rule.
+        // Invariant: post-enumeration, the in-memory zone count must
+        // match the on-disk zone count. Violation means we failed to
+        // open something that should have been opened — a regression
+        // of the "disk is SSOT for zone membership" rule.
         debug_assert_eq!(
             self.zones.len(),
             count,
@@ -315,7 +315,7 @@ impl ZoneRaftRegistry {
             return Ok(entry.node.clone());
         }
 
-        // R20.13: per-zone concurrent-op guard using DashMap::entry for atomic
+        // Per-zone concurrent-op guard using DashMap::entry for atomic
         // check-and-insert. Prevents (a) two threads concurrently opening the
         // same RedbStore ("Database already open") and (b) a fresh setup
         // racing an in-progress remove on the same zone_id. Different
@@ -366,7 +366,7 @@ impl ZoneRaftRegistry {
             return Ok(entry.node.clone());
         }
 
-        // R20.13: open the zone dir via ZonePersistence. Existing dir →
+        // Open the zone dir via ZonePersistence. Existing dir →
         // `open()` (not armed). Fresh zone → `create()` (armed; rolled back
         // on any `?` return between here and the DashMap insert). Tombstone
         // check is redundant in practice — `open_existing_zones_from_disk`
@@ -522,7 +522,7 @@ impl ZoneRaftRegistry {
             shared_peers.read().unwrap().len()
         );
 
-        // R20.13: commit the on-disk handle before publishing the entry.
+        // Commit the on-disk handle before publishing the entry.
         // Post-commit, Drop is a no-op on disk (process shutdown preserves
         // persisted zones). Only explicit `destroy()` in `remove_zone`
         // deletes the dir.
@@ -591,7 +591,7 @@ impl ZoneRaftRegistry {
     }
 
     /// Remove a zone — shut down its transport loop and delete its on-disk
-    /// dir atomically via tombstone (R20.13).
+    /// dir atomically via tombstone.
     ///
     /// Sequence:
     /// 1. Take the entry out of the DashMap (further `get_node` returns None).
@@ -819,9 +819,9 @@ mod tests {
         await_shutdown_cleanup().await;
     }
 
-    // R20.13 regression tests — zone lifecycle is crash-safe and
-    // disk-dir existence is the authoritative answer to "does this
-    // node host zone X?".
+    // Zone lifecycle regression tests — zone lifecycle is crash-safe
+    // and disk-dir existence is the authoritative answer to "does
+    // this node host zone X?".
 
     #[tokio::test]
     async fn test_remove_zone_deletes_disk_dir() {

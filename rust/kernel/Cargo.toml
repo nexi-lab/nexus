@@ -4,30 +4,25 @@ version = "0.10.0"
 edition = "2021"
 
 [lib]
-# Phase 0 — kernel is rlib-only. The Python cdylib (`nexus_runtime.so`)
-# now lives in `rust/nexus-cdylib/`, which depends on this rlib plus
-# its peers (lib, raft, …) and owns the `#[pymodule]` envelope. This
-# cycle-breaks `<peer-crate> → kernel` (compile dep) ↔ `kernel →
-# <peer-crate>` (cdylib registration) — the latter is now wholly
-# inside `nexus-cdylib`. Lib name matches the package name (was
-# `nexus_runtime` while kernel was the cdylib; that name belongs to
-# the cdylib build artifact now).
+# Kernel is rlib-only. The Python cdylib (`nexus_runtime.so`) lives in
+# `rust/nexus-cdylib/`, depends on this rlib plus its peers, and owns
+# the `#[pymodule]` envelope. This cycle-breaks
+# `<peer-crate> → kernel` (compile dep) ↔ `kernel → <peer-crate>`
+# (cdylib registration) — the latter sits wholly inside `nexus-cdylib`.
 name = "kernel"
 crate-type = ["rlib"]
 
 [dependencies]
 contracts = { workspace = true }
 lib = { workspace = true, features = ["python"] }
-# Phase 3: kernel does NOT depend on `services` — direction is one-way
-# `services -> kernel`.  The pre-Phase-3 dep was an artefact of
-# AgentTable being miscategorised as service-tier; it moved to
-# `crate::core::agents::table` (kernel SSOT) so the cycle clears.
-# Phase H (Phase 5 federation DI): the `kernel -> raft` edge is
-# inverted — raft now depends on kernel for `kernel::abc::MetaStore`,
-# `kernel::hal::federation::FederationProvider`, etc.  Raft state-
-# machine impls (raft_meta_store, replication_scanner,
-# wal_stream_backend) live in the raft crate alongside the
-# `RaftFederationProvider` trait impl.
+# Kernel depends on `contracts` and `shared/` only; the dep direction
+# is one-way `services -> kernel`. AgentTable is the kernel SSOT at
+# `crate::core::agents::table`. Raft depends on kernel for
+# `kernel::abc::MetaStore`,
+# `kernel::hal::distributed_coordinator::DistributedCoordinator`, etc.
+# Raft state-machine impls (zone_meta_store, replication_scanner) live
+# in the raft crate alongside the `RaftDistributedCoordinator` trait
+# impl.
 # `extension-module` lives on the `nexus-cdylib` pyo3 dep only — Cargo
 # unifies pyo3 features at link time, so all transitive users see the
 # cdylib-correct linkage. rlibs must NOT enable it themselves (would
@@ -57,10 +52,10 @@ lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
-# Phase 4 (full): kernel uses `transport-primitives` (the low-level
-# crate after the split) for TlsConfig / connection-pool / peer
-# addressing; the high-level `transport` crate depends on kernel,
-# so we can't depend on it back without closing the cycle.
+# Kernel consumes `transport-primitives` for TlsConfig / connection-pool
+# / peer addressing — the lowest shared transport layer. The high-level
+# `transport` crate depends on kernel, so kernel only takes the
+# primitives crate to keep the dep direction one-way.
 transport-primitives = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
@@ -82,9 +77,9 @@ default = ["mimalloc", "connectors", "py-hook-adapters"]
 mimalloc = ["dep:mimalloc"]
 connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
 nostr = ["dep:tokio-tungstenite", "dep:k256", "dep:sha2", "dep:futures-util"]
-# §11 Phase 14: Python hook/resolver adapters. Enabled by default (POST hooks
-# still use PyInterceptHookAdapter). Disable to compile out all Python-to-Rust
-# adapter bridging — requires ALL hooks to be NativeInterceptHook impls.
+# Python hook/resolver adapters. Enabled by default (POST hooks still use
+# PyInterceptHookAdapter). Disable to compile out all Python-to-Rust adapter
+# bridging — requires ALL hooks to be NativeInterceptHook impls.
 py-hook-adapters = []
 
 [build-dependencies]
@@ -102,4 +97,3 @@ tempfile = "3"
 [[bench]]
 name = "prefix_bench"
 harness = false
-# §11 observer Rust-ification

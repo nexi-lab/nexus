@@ -1832,6 +1832,7 @@ dependencies = [
  "lib",
  "pyo3",
  "raft 0.1.0",
+ "rpc",
  "services",
  "transport",
 ]
@@ -2723,6 +2724,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpc"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "contracts",
+ "dashmap",
+ "futures",
+ "kernel",
+ "parking_lot",
+ "prost",
+ "pyo3",
+ "raft 0.1.0",
+ "rcgen",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tonic",
+ "tracing",
+ "transport-primitives",
+ "uuid",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2933,7 +2960,6 @@ dependencies = [
  "libc",
  "parking_lot",
  "pyo3",
- "raft 0.1.0",
  "redb",
  "serde",
  "serde_json",
@@ -3540,7 +3566,6 @@ dependencies = [
  "parking_lot",
  "prost",
  "pyo3",
- "raft 0.1.0",
  "rcgen",
  "serde",
  "serde_json",
@@ -3558,10 +3583,18 @@ dependencies = [
 name = "transport-primitives"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "dashmap",
  "parking_lot",
+ "pem",
+ "pyo3",
+ "rcgen",
+ "serde",
+ "serde_json",
  "sha2",
+ "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tonic",
  "tracing",

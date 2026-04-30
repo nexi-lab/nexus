@@ -14,17 +14,24 @@ pub use contracts::ROOT_ZONE_ID;
 // ── §3 / §4 / HAL surface ────────────────────────────────────────────
 // Three-way split inside the kernel crate (see
 // `docs/architecture/KERNEL-ARCHITECTURE.md` §3 / §4 / §6.1):
-//   * `crate::abc`  — §3 ABC pillars (ObjectStore / MetaStore /
-//                     CacheStore). Trait declarations only.
-//   * `crate::hal`  — kernel-defined extension interfaces alongside
-//                     the §3 pillars (LlmStreamingBackend,
-//                     PeerBlobClient, BackendFactory).
+//   * `crate::abc`  — §3.A Storage HAL pillars (ObjectStore / MetaStore
+//                     / CacheStore). Trait declarations only.
+//   * `crate::hal`  — §3.B Control-Plane HAL DI surfaces
+//                     (DistributedCoordinator, ObjectStoreProvider).
 //   * `crate::core` — §4 kernel primitives (vfs_router, dlc, dcache,
 //                     locks, dispatch, in-memory reference impls of
-//                     the §3 pillars).
+//                     the §3.A pillars).
 pub mod abc;
 pub mod core;
 pub mod hal;
+
+// §3.A.2 ObjectStore extension hook — connector-backend SSE streaming.
+// Lives at crate root (sibling to abc/, hal/, core/) because it
+// extends a §3.A storage pillar through ObjectStore::as_llm_streaming
+// without declaring a §3.B Control-Plane HAL DI surface. Concrete
+// protocol-specific impls (`OpenAIBackend`, `AnthropicBackend`) live
+// in `backends/src/transports/api/ai/*`.
+pub mod llm_streaming;
 
 // ── Flat re-exports of `core::*` ─────────────────────────────────────
 // `pyclass` registrations in `python.rs` use `m.add_class::<MOD::Name>()`
@@ -96,25 +103,27 @@ pub mod kernel;
 pub mod generated_kernel_abi_pyo3;
 pub use generated_kernel_abi_pyo3 as generated_pyo3;
 
-// Phase H of the rust-workspace restructure inverted the kernel↔raft
-// Cargo edge.  Raft state-machine impls (zone_meta_store,
-// replication_scanner, wal_stream_backend) and the
-// `RaftFederationProvider` trait impl live in the raft crate now.
+// kernel↔raft Cargo edge direction: `raft → kernel`. Raft state-machine
+// impls (zone_meta_store, replication_scanner) and the
+// `RaftDistributedCoordinator` trait impl live in the raft crate.
 // Kernel reaches them through the
-// `kernel::hal::federation::FederationProvider` trait dispatch
-// installed by the cdylib boot path.
+// `kernel::hal::distributed_coordinator::DistributedCoordinator`
+// trait dispatch installed by the cdylib boot path.
 
 // Client-side RPC transport for `RemoteBackend` (the
 // `backends::storage::remote::RemoteBackend` ObjectStore impl that
-// proxies all syscalls over gRPC to a remote `nexusd`).  `pub` so
-// the `BackendFactory` impl in `backends/` can construct
-// `RpcTransport` for the `"remote"` backend type.
+// proxies all syscalls over gRPC to a remote `nexusd`). The driver-
+// layer `rpc` crate re-exports this module as `rpc::vfs` so peer
+// crates name a single canonical path; the file lives here in the
+// kernel because the kernel-internal `RemoteMetaStore` /
+// `RemotePipeBackend` / `RemoteStreamBackend` wrappers also wrap
+// `RpcTransport` directly.
 pub mod rpc_transport;
 
-// Phase 0 — `#[pymodule] fn nexus_runtime` lives in `rust/nexus-cdylib/`
-// now (the dedicated cdylib build artifact). Kernel's pyclass /
-// pyfunction surface is registered through `kernel::python::register`,
-// called by the cdylib alongside `lib::python::register`,
-// `nexus_raft::pyo3_bindings::register_python_classes`, and (post-
-// Phase-2/3/4) the parallel-crate registers.
+// `#[pymodule] fn nexus_runtime` lives in `rust/nexus-cdylib/` (the
+// dedicated cdylib build artifact). Kernel's pyclass / pyfunction
+// surface is registered through `kernel::python::register`, called by
+// the cdylib alongside `lib::python::register`,
+// `nexus_raft::pyo3_bindings::register_python_classes`, and the
+// parallel-crate registers.
 pub mod python;

@@ -93,10 +93,9 @@ impl RemoteChunkFetcher for GrpcChunkFetcher {
             return None;
         }
 
-        // Phase 4 (full): the HAL trait `PeerBlobClient` exposes only a
-        // sync `fetch` — its concrete impl in
-        // `transport::blob::peer_client` does the runtime block_on
-        // internally.  Fan-out is therefore done with OS threads here:
+        // The HAL trait `PeerBlobClient` exposes only a sync `fetch`
+        // — its concrete impl in `transport::blob::peer_client` does
+        // the runtime block_on internally. Fan-out uses OS threads:
         //   * ≤5 candidate origins (bounded by replication factor)
         //   * first-success-wins via mpsc channel + abandon flag
         //   * losing threads short-circuit on `cancelled` before issuing
@@ -236,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_candidate_origins_filters_self() {
-        // Phase 4: peer_blob_client moved to transport — Noop sufficient for unit test
+        // Noop peer_blob_client is sufficient for this unit test.
         let client = crate::hal::peer::NoopPeerBlobClient::arc();
         let fetcher = GrpcChunkFetcher::new(client, Some("nexus-self:2126".into()));
         let filtered = fetcher.candidate_origins(&[
@@ -250,7 +249,7 @@ mod tests {
 
     #[test]
     fn test_grpc_fetcher_returns_none_for_empty_candidates() {
-        // Phase 4: peer_blob_client moved to transport — Noop sufficient for unit test
+        // Noop peer_blob_client is sufficient for this unit test.
         let client = crate::hal::peer::NoopPeerBlobClient::arc();
         let fetcher = GrpcChunkFetcher::new(client, Some("nexus-self:2126".into()));
         // Only candidate is self — filtered out.

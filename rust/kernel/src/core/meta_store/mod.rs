@@ -1,9 +1,7 @@
 //! MetaStore pillar — kernel-internal concrete impls.
 //!
-//! Phase 1 lifted the trait declaration + helper types
-//! (`FileMetadata`, `MetaStoreError`, `PutIfVersionResult`,
-//! `PathValueStr`, `PathEtag`, `PaginatedList`) out of this file into
-//! `crate::abc::meta_store`, leaving this module as the home for the
+//! The trait declaration + helper types live in
+//! `crate::abc::meta_store`; this module is the home for the
 //! kernel-internal *implementations*:
 //!
 //! * [`MemoryMetaStore`] — in-memory reference impl (used by tests
@@ -11,21 +9,18 @@
 //! * [`LocalMetaStore`] — redb-backed durable impl (~5μs reads).
 //!
 //! Remote / federation impls live in their respective neighbours:
-//! [`remote`] (gRPC proxy) today; `raft::meta_store` after Phase 5.
+//! [`remote`] (gRPC proxy) and `raft::meta_store`.
 //!
-//! Issue #1868: Pure Rust ABI — no PyO3 dependency. PyO3 adapters live
-//! in `generated_kernel_abi_pyo3.rs` (auto-generated).
+//! Pure Rust ABI — no PyO3 dependency. PyO3 adapters live in
+//! `generated_kernel_abi_pyo3.rs` (auto-generated).
 
-// Phase C nested layout:
-//   core/meta_store/mod.rs    — was kernel/src/metastore.rs
-//   core/meta_store/remote.rs — was kernel/src/remote_metastore.rs
 pub mod remote;
 
-// Phase 1 — re-export the trait surface from `abc/` so existing callers
-// writing `use crate::core::meta_store::{MetaStore, FileMetadata, …}`
-// (or the flat `crate::meta_store::…` shim) keep compiling unchanged.
-// The canonical home for the trait is `crate::abc::meta_store`; this
-// re-export is a stable compat alias, not a parallel declaration.
+// Re-export the trait surface from `abc/` so callers writing
+// `use crate::core::meta_store::{MetaStore, FileMetadata, …}` (or the
+// flat `crate::meta_store::…` shim) reach the canonical declaration in
+// `crate::abc::meta_store` without churn. This is a stable compat
+// alias, not a parallel declaration.
 pub use crate::abc::meta_store::{
     FileMetadata, MetaStore, MetaStoreError, PaginatedList, PathEtag, PathValueStr,
     PutIfVersionResult,
@@ -202,9 +197,8 @@ impl MetaStore for MemoryMetaStore {
 
 // ── LocalMetaStore — single-node redb-backed metastore ──────────────────
 //
-// Historic name: RedbMetaStore. Renamed R20.4 because "redb" is a
-// shared implementation detail — the Raft state machine also uses
-// redb underneath. The distinguishing axis is "single-node vs
+// "redb" is a shared implementation detail — the Raft state machine
+// also uses redb underneath. The distinguishing axis is "single-node vs
 // raft-replicated", captured by the Local / Zone naming pair.
 
 use redb::{Database, ReadableTable, TableDefinition};
@@ -292,9 +286,9 @@ fn fm_composite_key(path: &str, key: &str) -> String {
 /// version_tag distinguishes v1 (no timestamps) from v2 (timestamps appended).
 /// v1 has no leading tag; the first byte is the path length, which always
 /// has a high byte of 0 for paths shorter than 16M, while v2 starts with 2.
-/// Older redb files that carry a trailing ``target_zone_id`` extension
-/// (R16.1a, reverted in R20.1) deserialize fine — the reader stops at the
-/// last tracked field and ignores any remaining bytes.
+/// Older redb files that carry trailing extension bytes deserialize
+/// fine — the reader stops at the last tracked field and ignores any
+/// remaining bytes.
 fn serialize_metadata(meta: &FileMetadata) -> Vec<u8> {
     let mut buf = Vec::with_capacity(280);
 

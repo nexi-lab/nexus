@@ -4,22 +4,19 @@
 //! Pillars in `KERNEL-ARCHITECTURE.md` §3). Provides ordered key-value
 //! storage for file metadata (inodes, config, topology).
 //!
-//! Phase 1 lifted the trait + supporting types out of
-//! `core/meta_store/mod.rs` so the `abc/` directory becomes the strict
-//! §3 invariant set (3 trait files, period). Concrete impls
-//! (`MemoryMetaStore` reference impl + `LocalMetaStore` redb impl)
-//! continue to live in `crate::core::meta_store`. The remote / raft
-//! impls live in their respective parallel crates (`raft::meta_store`
-//! after Phase 5).
+//! The `abc/` directory holds the strict §3 invariant set (3 trait
+//! files, period). Concrete impls (`MemoryMetaStore` reference impl +
+//! `LocalMetaStore` redb impl) live in `crate::core::meta_store`. The
+//! remote / raft impls live in their respective parallel crates
+//! (`raft::meta_store`).
 //!
-//! Issue #1868: Pure Rust ABI — no PyO3 dependency. PyO3 adapters live
-//! in `generated_kernel_abi_pyo3.rs` (auto-generated).
+//! Pure Rust ABI — no PyO3 dependency. PyO3 adapters live in
+//! `generated_kernel_abi_pyo3.rs` (auto-generated).
 //!
-//! Naming note: Phase 0.5 renamed the Rust trait from `Metastore` to
-//! `MetaStore` for visual symmetry with `ObjectStore` / `CacheStore`.
-//! Python ABC stays `MetastoreABC` (sunset path); the cross-language
-//! asymmetry is anchored at exactly one PyO3 boundary in
-//! `raft/src/pyo3_bindings.rs`.
+//! Naming note: the Rust trait is `MetaStore` for visual symmetry with
+//! `ObjectStore` / `CacheStore`. The Python ABC stays `MetastoreABC`
+//! (sunset path); the cross-language asymmetry is anchored at exactly
+//! one PyO3 boundary in `raft/src/pyo3_bindings.rs`.
 
 /// Metadata record for a single file/directory.
 ///
@@ -124,7 +121,7 @@ pub struct PaginatedList {
 /// 5 abstract methods matching the Python ABC:
 ///   - get, put, delete, list, exists
 ///
-/// **Key contract (R20.3)**: callers always pass full global paths —
+/// **Key contract**: callers always pass full global paths —
 /// including the mount-point prefix. Impls that store zone-relative
 /// internally (``ZoneMetaStore``) translate at their boundary so
 /// federation-layer concerns never leak up. Returned ``FileMetadata.path``
@@ -327,15 +324,14 @@ pub trait MetaStore: Send + Sync {
         Ok(out)
     }
 
-    /// Opaque identity for "stores backed by the SAME underlying state"
-    /// (R20.6 option B).
+    /// Opaque identity for "stores backed by the SAME underlying state".
     ///
     /// Two ``Arc<dyn MetaStore>`` can correspond to different VFS mount
     /// points yet share the same physical storage — the canonical case
     /// is a single federation zone surfaced under ``/corp`` AND
-    /// ``/family/work`` (crosslink). R20.3 gave each crosslink its own
+    /// ``/family/work`` (crosslink). Each crosslink gets its own
     /// ``ZoneMetaStore`` (different ``mount_point``), so ``Arc::ptr_eq``
-    /// no longer suffices to find every mount that shares the same zone.
+    /// does not suffice to find every mount that shares the same zone.
     ///
     /// Return ``Some(usize)`` with a stable integer key for all
     /// metastores that share physical storage (``Arc::as_ptr`` of the

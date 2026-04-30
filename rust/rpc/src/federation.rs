@@ -1,8 +1,7 @@
-//! Rust client for federation peer RPCs (R16.5b).
+//! Rust client for federation peer RPCs.
 //!
-//! Replaces the Python ``_discover_mount`` (VFS sys_stat) and
-//! ``_request_membership`` (ZoneApiService.JoinZone) helpers that
-//! previously lived in ``src/nexus/raft/federation.py``. Runs every
+//! Drives ``_discover_mount`` (VFS sys_stat) and
+//! ``_request_membership`` (ZoneApiService.JoinZone) flows. Runs every
 //! gRPC call through a shared tokio runtime and a per-peer tonic
 //! ``Channel`` pool so repeated calls reuse the HTTP/2 connection.
 //!
@@ -13,11 +12,11 @@
 //! have a bundle path can skip the store lookup and pass raw PEM bytes
 //! directly.
 //!
-//! This module lives in ``kernel`` (not ``raft``) because it needs
-//! access to BOTH proto families — ``vfs.proto`` is built only here
-//! (for the ``ReadBlob`` client used by [`crate::peer_blob_client`]),
-//! and ``transport.proto`` ships in the raft rlib that kernel
-//! already depends on. No cross-crate proto duplication.
+//! This module lives in the ``rpc`` driver-layer crate where both
+//! proto families are reachable: ``vfs.proto`` stubs come through
+//! ``kernel::kernel::vfs_proto`` (kernel re-exports the generated
+//! module) and ``transport.proto`` ships in the raft rlib that rpc
+//! depends on for proto stubs.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -507,7 +506,7 @@ mod tests {
     /// Smoke-construct the client so the plumbing (runtime build, TLS
     /// material parse, channel pool init) doesn't regress. End-to-end
     /// discover / join flows are exercised by the federation E2E
-    /// suite gated at R12 — they need a running peer.
+    /// suite — they need a running peer.
     #[test]
     fn client_constructs_with_and_without_tls() {
         let rt = Arc::new(

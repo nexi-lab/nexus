@@ -243,7 +243,7 @@ impl ObjectStore for S3Backend {
         offset: u64,
     ) -> Result<WriteResult, StorageError> {
         if offset != 0 {
-            // R20.10: S3 PutObject replaces the whole object; there is no
+            // S3 PutObject replaces the whole object; there is no
             // native pwrite(2) equivalent. A read-splice-PUT fallback
             // would silently turn O(content.len()) writes into O(blob)
             // network I/O — never acceptable for a file-system surface.

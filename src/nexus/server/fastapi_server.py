@@ -138,7 +138,7 @@ SANDBOX_HTTP_ALLOWLIST: frozenset[str] = frozenset(
 def _federation_rpc_active(kernel: Any) -> bool:
     """Decide whether to mount FederationRPCService on the RPC surface.
 
-    Gates on the FederationProvider readiness probe — Phase H made
+    Gates on the DistributedCoordinator readiness probe — Phase H made
     zone lifecycle a kernel-internal HAL trait, so the kernel no
     longer exposes ``mount_reconciliation_done`` / ``zone_list`` as
     PyO3 methods.  ``nexus_runtime.federation_is_initialized(kernel)``

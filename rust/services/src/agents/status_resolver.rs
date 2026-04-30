@@ -6,12 +6,10 @@
 //! shared via `Arc`, so the resolver remains valid for as long as any caller
 //! holds it, independent of the Kernel's lifetime or field layout.
 //!
-//! Phase 3: moved from `kernel/src/agent_status_resolver.rs` into the
-//! services crate.  The resolver IS service-tier (it serves a virtual
-//! procfs view); the trait it impls (`PathResolver`) is the kernel's
-//! in-tree Rust API for that virtual-path mechanism, accessible via
-//! `kernel::core::dispatch::PathResolver` after Phase 1's hal/core
-//! visibility bump.
+//! The resolver is service-tier (it serves a virtual procfs view); the
+//! trait it impls (`PathResolver`) is the kernel's in-tree Rust API for
+//! that virtual-path mechanism, exposed via
+//! `kernel::core::dispatch::PathResolver`.
 
 use kernel::core::agents::table::AgentTable;
 use kernel::core::dispatch::PathResolver;

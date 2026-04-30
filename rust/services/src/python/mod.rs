@@ -9,9 +9,8 @@
 //!
 //! * `install_audit_hook(kernel, zone_id, stream_path)` — service-tier
 //!   DI entry point that builds + registers a `services::audit::AuditHook`
-//!   on the given Kernel.  Replaces the old `kernel.start_audit_hook()`
-//!   PyO3 method on PyKernel — Phase 3 moved hook construction out of
-//!   the kernel cdylib boundary into the owning service tier.
+//!   on the given Kernel.  Hook construction lives in the owning service
+//!   tier rather than the kernel cdylib boundary.
 
 use kernel::generated_kernel_abi_pyo3::PyKernel;
 use pyo3::exceptions::PyRuntimeError;
@@ -24,11 +23,10 @@ use crate::managed_agent::ManagedAgentService;
 /// Install an `AuditHook` on `kernel` for `zone_id`, backed by a
 /// WAL-replicated DT_STREAM at `stream_path`.
 ///
-/// Replaces the pre-Phase-3 `kernel.start_audit_hook(zone_id, stream_path)`
-/// PyO3 method on PyKernel.  Service-tier owns hook lifecycle now —
-/// kernel only exposes `prepare_audit_stream` (stream lifecycle) +
-/// `register_native_hook` (LSM-style in-tree API), and this function
-/// composes the two with the local `AuditHook::new`.
+/// Service-tier owns hook lifecycle: kernel exposes
+/// `prepare_audit_stream` (stream lifecycle) + `register_native_hook`
+/// (LSM-style in-tree API), and this function composes the two with the
+/// local `AuditHook::new`.
 ///
 /// Python signature:
 ///
@@ -119,9 +117,8 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // grow per-service shortcuts that each need their own
     // audit-bypass review.
     m.add_function(wrap_pyfunction!(nx_kernel_dispatch_rust_call, m)?)?;
-    // Phase 3 restructure plan #6: tasks pyclasses (PyTaskEngine /
-    // PyTaskRecord / PyQueueStats) folded into nexus_runtime cdylib —
-    // standalone _nexus_tasks.so retired.
+    // Tasks pyclasses (PyTaskEngine / PyTaskRecord / PyQueueStats) ship
+    // inside the nexus_runtime cdylib.
     crate::tasks::register_python(m)?;
     Ok(())
 }

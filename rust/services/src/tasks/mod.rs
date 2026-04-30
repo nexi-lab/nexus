@@ -1,12 +1,9 @@
-//! Durable task queue engine — service-tier impl folded in from the
-//! standalone `rust/tasks/` crate.
+//! Durable task queue engine — service-tier impl.
 //!
-//! Phase 3 restructure plan #6: `_nexus_tasks.so` standalone cdylib
-//! retired; the PyTaskEngine / PyTaskRecord / PyQueueStats pyclasses
-//! register through `services::python::register` into the unified
-//! `nexus_runtime` cdylib so the runtime ships a single Python wheel
-//! instead of two.  Kernel never names task types — services owns
-//! the boundary.
+//! The PyTaskEngine / PyTaskRecord / PyQueueStats pyclasses register
+//! through `services::python::register` into the unified
+//! `nexus_runtime` cdylib so the runtime ships a single Python wheel.
+//! Kernel never names task types — services owns the boundary.
 
 pub mod engine;
 pub mod error;

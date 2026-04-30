@@ -15,7 +15,6 @@
 //!
 //! References:
 //!     - Python: `src/nexus/backends/base/cas_addressing_engine.py`
-//!     - Issue #1866: Phase D — Rust CASEngine
 
 use std::io;
 use std::sync::{Arc, RwLock};
@@ -36,12 +35,10 @@ pub enum CASError {
     IOError(io::Error),
 }
 
-/// `From<CASError> for StorageError` — Phase 2 moved this out of
-/// `kernel/src/abc/object_store.rs` (where it lived alongside
-/// `StorageError`) into the file that owns `CASError`.  Both types
-/// are kernel-local so the impl satisfies orphan rules; the move
-/// keeps `abc/object_store.rs` free of `cas_engine` references and
-/// puts the conversion next to the canonical `CASError` site.
+/// `From<CASError> for StorageError` lives next to the canonical
+/// `CASError` site so `abc/object_store.rs` stays free of
+/// `cas_engine` references. Both types are kernel-local, so the
+/// impl satisfies orphan rules.
 impl From<CASError> for crate::abc::object_store::StorageError {
     fn from(e: CASError) -> Self {
         match e {
@@ -71,7 +68,7 @@ impl From<io::Error> for CASError {
 
 /// Pure Rust CAS engine: hash + dedup + local blob I/O.
 ///
-/// Combines `LocalCASTransport` (Phase C) with BLAKE3 hashing to provide
+/// Combines `LocalCASTransport` with BLAKE3 hashing to provide
 /// complete content-addressable read/write without Python involvement.
 ///
 /// CDC chunk reassembly uses the `ChunkAssembler` DI trait (composition,

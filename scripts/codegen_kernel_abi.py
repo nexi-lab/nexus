@@ -81,12 +81,12 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
     "kernel": "kernel/mod.rs",
 }
 
-# Phase H/I: PyO3 wrappers for the lib algorithms now live in
-# rust/lib/src/python/. The codegen still uses flat module names
+# PyO3 wrappers for the lib algorithms live in
+# rust/shared/lib/src/python/. The codegen uses flat module names
 # (rebac, search, glob, io, prefix, simd, trigram, path_utils, bitmap,
 # bloom, hash) in the registration calls; this map locates the actual
 # .rs file for each.
-LIB_PYTHON_DIR = ROOT / "rust" / "lib" / "src" / "python"
+LIB_PYTHON_DIR = ROOT / "rust" / "shared" / "lib" / "src" / "python"
 LIB_PYTHON_MODULES: set[str] = {
     "bitmap",
     "bloom",
@@ -106,7 +106,7 @@ def _resolve_module_path(mod_name: str) -> Path | None:
     """Return the on-disk `.rs` file for a flat module name, or None.
 
     Resolution order:
-      1. `rust/lib/src/python/<mod>.rs` for algorithm wrappers under lib.
+      1. `rust/shared/lib/src/python/<mod>.rs` for algorithm wrappers under lib.
       2. Nested file aliases in the kernel `core/*` tree.
       3. Flat `rust/kernel/src/<mod>.rs`.
       4. Peer crates' `src/<mod>.rs` — `transport::python::register` adds
@@ -972,16 +972,10 @@ def generate_stubs(
         "def federation_join_zone(kernel: Any, zone_id: str, as_learner: bool = False) -> str: ..."
     )
     lines.append(
-        "def federation_zone_share(kernel: Any, parent_zone: str, prefix: str, new_zone: str) -> int: ..."
-    )
-    lines.append(
-        "def federation_register_share(kernel: Any, local_path: str, zone_id: str) -> None: ..."
+        "def federation_share_zone(kernel: Any, local_path: str, new_zone_id: str) -> dict[str, Any]: ..."
     )
     lines.append("def federation_lookup_share(kernel: Any, remote_path: str) -> str | None: ...")
-    lines.append("def federation_zone_links_count(kernel: Any, zone_id: str) -> int: ...")
-    lines.append(
-        "def federation_zone_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ..."
-    )
+    lines.append("def federation_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ...")
     lines.append(
         "def federation_start_replication_scanner("
         "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
@@ -3461,27 +3455,27 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        remote_timeout: f64,",
             "        link_target: Option<&str>,",
             "    ) -> PyResult<Py<PyAny>> {",
-            "        // Phase 2: 17-way backend-type construction moved to",
-            "        // `backends::python::factory::DefaultBackendFactory`.  Kernel",
-            "        // can no longer reference concrete backend types directly",
-            "        // (they live in `backends/` after Phase 2); the global",
-            "        // `BackendFactory` is installed by `nexus-cdylib` at module init.",
-            "        let factory = crate::hal::backend_factory::get_factory()",
+            "        // 17-way backend-type construction lives in",
+            "        // `backends::python::factory::DefaultObjectStoreProvider`.",
+            "        // Kernel reaches concrete backend types through the §3.B.2",
+            "        // `ObjectStoreProvider` trait, installed by `nexus-cdylib`",
+            "        // at module init.",
+            "        let provider = crate::hal::object_store_provider::get_provider()",
             "            .ok_or_else(|| {",
             "                pyo3::exceptions::PyRuntimeError::new_err(",
-            '                    "sys_setattr: BackendFactory not registered — non-cdylib build needs to call kernel::hal::backend_factory::set_factory at boot",',
+            '                    "sys_setattr: ObjectStoreProvider not registered — non-cdylib build needs to call kernel::hal::object_store_provider::set_provider at boot",',
             "                )",
             "            })?;",
             "        let chunk_fetcher_dyn: Arc<dyn crate::cas_remote::RemoteChunkFetcher> =",
             "            Arc::clone(&self.inner.chunk_fetcher);",
-            "        // Phase 4 (full): peer_client is a `RwLock<Arc<dyn PeerBlobClient>>`",
-            "        // so the cdylib's `install_transport_wiring` can swap the Noop",
-            "        // default for the real concrete impl post-boot.  Lock and clone",
-            "        // the inner `Arc` for the factory call so the read guard does not",
-            "        // outlive this scope.",
+            "        // peer_client is a `RwLock<Arc<dyn PeerBlobClient>>` so the",
+            "        // cdylib's `install_transport_wiring` swaps the Noop default",
+            "        // for the real concrete impl post-boot. Lock and clone the",
+            "        // inner `Arc` for the provider call so the read guard does",
+            "        // not outlive this scope.",
             "        let peer_client_arc: Arc<dyn crate::hal::peer::PeerBlobClient> =",
             "            Arc::clone(&self.inner.peer_client.read());",
-            "        let factory_args = crate::hal::backend_factory::BackendArgs {",
+            "        let provider_args = crate::hal::object_store_provider::ObjectStoreProviderArgs {",
             "            backend_type, backend_name,",
             "            local_root, fsync, follow_symlinks,",
             "            openai_base_url, openai_api_key, openai_model, openai_blob_root,",
@@ -3498,7 +3492,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "            chunk_fetcher: chunk_fetcher_dyn,",
             "            runtime: self.inner.runtime(),",
             "        };",
-            "        let backend_result = factory.build(&factory_args)",
+            "        let backend_result = provider.build(&provider_args)",
             "            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;",
             "        let backend = backend_result.backend;",
             "        if let Some(remote_ms) = backend_result.pending_remote_meta_store {",
@@ -4761,7 +4755,7 @@ def collect_all() -> tuple[
     if kernel_python_path.exists():
         kernel_python_text = kernel_python_path.read_text()
     lib_python_text = ""
-    lib_python_mod = ROOT / "rust" / "lib" / "src" / "python" / "mod.rs"
+    lib_python_mod = ROOT / "rust" / "shared" / "lib" / "src" / "python" / "mod.rs"
     if lib_python_mod.exists():
         lib_python_text = lib_python_mod.read_text()
     # Phase 4 (full): peer-crate `python::register` fns also expose

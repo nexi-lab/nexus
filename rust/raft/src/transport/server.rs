@@ -76,8 +76,8 @@ pub struct RaftGrpcServer {
     ca_key_pem: Option<Vec<u8>>,
     /// SHA-256 hash of the join token password — for JoinCluster verification.
     join_token_hash: Option<String>,
-    /// R20.18.7: slot the kernel binds a `BlobFetcher` into after its
-    /// root mount backend is wired. `None` while the slot is empty —
+    /// Slot the kernel binds a `BlobFetcher` into after its root mount
+    /// backend is wired. `None` while the slot is empty —
     /// `ReadBlob` returns `NotFound` until the kernel installs one.
     blob_fetcher_slot: Option<BlobFetcherSlot>,
 }
@@ -100,7 +100,7 @@ impl RaftGrpcServer {
         self
     }
 
-    /// R20.18.7: attach the late-bindable `BlobFetcher` slot so
+    /// Attach the late-bindable `BlobFetcher` slot so
     /// `ZoneApiService::read_blob` can serve CAS reads once the kernel
     /// installs an impl. Callers typically share the slot with the
     /// owning `ZoneManager` so both halves reach the same `Arc`.
@@ -242,9 +242,8 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
             max_holders: 1, // Default to mutex
             ttl_secs: ms_to_secs_ceil(al.ttl_ms),
             holder_info: al.holder_id,
-            // Witness-path gRPC transport predates F4 C1. The
-            // `AcquireLock` proto has no `mode` field; default to
-            // Exclusive to preserve pre-F4 semantics.
+            // Witness-path `AcquireLock` proto has no `mode` field;
+            // default to Exclusive.
             mode: crate::prelude::LockMode::Exclusive,
             now_secs: crate::prelude::FullStateMachine::now(),
         }),
@@ -525,8 +524,8 @@ struct ZoneApiServiceImpl {
     ca_key_pem: Option<Vec<u8>>,
     /// SHA-256 hash of the join token password — for JoinCluster verification.
     join_token_hash: Option<String>,
-    /// R20.18.7: optional late-bound `BlobFetcher` for `ReadBlob`.
-    /// Empty slot (or `None` here) → `read_blob` returns `NotFound`.
+    /// Optional late-bound `BlobFetcher` for `ReadBlob`. Empty slot
+    /// (or `None` here) → `read_blob` returns `NotFound`.
     blob_fetcher_slot: Option<BlobFetcherSlot>,
 }
 
@@ -1192,9 +1191,9 @@ impl ZoneApiService for ZoneApiServiceImpl {
         }))
     }
 
-    /// Return search capabilities for a zone (Issue #3147, Phase 2).
+    /// Return search capabilities for a zone.
     ///
-    /// R20.12: reads `{base_path}/{zone_id}/search_caps.json` on each RPC.
+    /// Reads `{base_path}/{zone_id}/search_caps.json` on each RPC.
     /// Python search daemon writes the file at startup. Falls back to
     /// keyword-only defaults if the file is missing or malformed.
     async fn get_search_capabilities(
@@ -1221,7 +1220,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
         }))
     }
 
-    /// Serve a peer's content fetch (R20.18.7 → store-and-forward refactor).
+    /// Serve a peer's content fetch — store-and-forward.
     ///
     /// One addressing mode: ``content_id`` is opaque to the kernel; the
     /// installed ``BlobFetcher`` impl drives the local read path which

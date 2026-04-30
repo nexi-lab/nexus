@@ -6,12 +6,13 @@
 //! across the workspace and pulls together the rlibs that compose
 //! the runtime:
 //!
-//! * [`lib`]              — pure-Rust algorithms (libc analogue)
-//! * [`kernel`]           — pillars + primitives + syscalls
-//! * [`nexus_raft`]       — Raft / federation
-//! * (Phase 2)             `backends`  — driver impls
-//! * (Phase 3)             `services`  — audit / permission / agents / tasks
-//! * (Phase 4)             `transport` — gRPC / RPC / IPC / federation client / blob fetch
+//! * [`lib`]         — pure-Rust algorithms (libc analogue)
+//! * [`kernel`]      — pillars + primitives + syscalls
+//! * [`nexus_raft`]  — Raft / federation
+//! * `backends`      — driver impls
+//! * `services`      — post-syscall hooks (audit / permission / agents / tasks)
+//! * `transport`     — front-door VFS gRPC server + IPC envelope helpers
+//! * `rpc`           — driver-outgoing RPC clients (VFS / peer-blob / federation)
 //!
 //! Each peer rlib exposes its own `python::register(&Bound<PyModule>)`
 //! function; this cdylib is just the envelope that calls all of them.
@@ -27,32 +28,34 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     // §6 lib (libc analogue) — pure-Rust algorithm wrappers.
     lib::python::register(m)?;
     // §3 / §4 kernel — pillars + primitives + #[pyclass] surface.
-    // Also exposes `install_federation_wiring(kernel)` (Phase 5
-    // anchor): swaps the kernel's NoopFederationProvider for the
-    // real RaftFederationProvider so federation-aware syscalls
-    // dispatch through the trait.
+    // The cdylib boot path calls `install_federation_wiring(kernel)`
+    // to swap the kernel's `NoopDistributedCoordinator` for the real
+    // `RaftDistributedCoordinator` so federation-aware syscalls
+    // dispatch through the §3.B Control-Plane HAL trait.
     kernel::python::register(m)?;
     // Raft / federation — ZoneManager / ZoneHandle / MetaStore.
     nexus_raft::pyo3_bindings::register_python_classes(m)?;
-    // Phase 3: services-tier PyO3 entry points (install_audit_hook,
-    // PyTaskEngine / PyTaskRecord / PyQueueStats — task-queue pyclasses
-    // folded in by Phase 3 restructure plan #6).  Registered after
-    // `kernel` so PyKernel is in the module's type registry by the
-    // time `install_audit_hook` accepts a `PyRef<PyKernel>` parameter.
+    // Services-tier PyO3 entry points (install_audit_hook +
+    // PyTaskEngine / PyTaskRecord / PyQueueStats task-queue pyclasses).
+    // Registered after `kernel` so PyKernel is in the module's type
+    // registry by the time `install_audit_hook` accepts a
+    // `PyRef<PyKernel>` parameter.
     services::python::register(m)?;
-    // Phase 2: backends-tier PyO3 entry points (BlobPackEngine pyclass)
-    // **and** the `BackendFactory` registration — `backends::python::
-    // register` calls `kernel::hal::backend_factory::set_factory(
-    // Arc::new(DefaultBackendFactory))` so `PyKernel.sys_setattr` can
-    // construct concrete backends without the kernel ever knowing the
-    // concrete types live in the backends crate.
+    // Backends-tier PyO3 entry points (BlobPackEngine pyclass) **and**
+    // the `ObjectStoreProvider` registration — `backends::python::
+    // register` calls `kernel::hal::object_store_provider::set_provider(
+    // Arc::new(DefaultObjectStoreProvider))` so `PyKernel.sys_setattr`
+    // constructs concrete backends through the §3.B.2 trait without
+    // the kernel reaching into the backends crate.
     backends::python::register(m)?;
-    // Phase 4 (full): transport-tier PyO3 surface (gRPC server +
-    // federation client) AND the install function that wires the
-    // kernel-side `peer_client` slot + `pending_blob_fetcher_slot`
-    // to the real concrete impls in transport.  Python's NexusFS
-    // boot calls `nexus_runtime.install_transport_wiring(kernel)`
-    // exactly once after federation env vars are read.
+    // Front-door services tier: VFS gRPC server pyclass + starter.
     transport::python::register(m)?;
+    // Driver-outgoing RPC clients: PyFederationClient pyclass +
+    // `install_transport_wiring(kernel)` Python entry point that
+    // wires kernel's `peer_client` slot to the real
+    // `rpc::peer_blob::PeerBlobClient` impl. Python's NexusFS boot
+    // calls `nexus_runtime.install_transport_wiring(kernel)` once
+    // after federation env vars are read.
+    rpc::python::register(m)?;
     Ok(())
 }

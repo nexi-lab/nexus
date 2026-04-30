@@ -1,14 +1,11 @@
-//! `DefaultBackendFactory` — backends-side impl of
-//! `kernel::hal::backend_factory::BackendFactory`.
+//! `DefaultObjectStoreProvider` — backends-side impl of
+//! `kernel::hal::object_store_provider::ObjectStoreProvider`.
 //!
-//! Phase 2 lifted the 17-way backend-type construction switch out of
-//! `kernel/src/generated_kernel_abi_pyo3.rs::sys_setattr` (where it
-//! used to inline `crate::openai_backend::OpenAIBackend::new(…)`,
-//! `crate::s3_backend::S3Backend::new(…)`, etc.) into this module.
-//! Kernel can no longer reference the concrete backend types after
-//! they moved here — the cycle break is the
-//! `kernel::hal::backend_factory::BackendFactory` trait + the
-//! `OnceLock` slot installed by `crate::python::register`.
+//! The 17-way backend-type construction switch lives here, lifted out
+//! of `sys_setattr` so kernel does not reference concrete backend
+//! types (`OpenAIBackend`, `S3Backend`, …). Cycle break is the
+//! `kernel::hal::object_store_provider::ObjectStoreProvider` trait +
+//! the `OnceLock` slot installed by `crate::python::register`.
 //!
 //! The single switch lives here so adding / removing a backend type
 //! is one file change instead of editing `generated_kernel_abi_pyo3`
@@ -18,16 +15,19 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kernel::abc::object_store::ObjectStore;
-use kernel::hal::backend_factory::{BackendArgs, BackendBuildResult, BackendFactory};
+use kernel::hal::object_store_provider::{
+    ObjectStoreBuildResult, ObjectStoreProvider, ObjectStoreProviderArgs,
+};
 use kernel::meta_store::MetaStore;
 
-/// The canonical backend factory installed by `nexus-cdylib` at boot.
+/// The canonical `ObjectStoreProvider` installed by `nexus-cdylib` at
+/// boot.
 ///
 /// Stateless — every `build()` call constructs fresh instances.
-pub struct DefaultBackendFactory;
+pub struct DefaultObjectStoreProvider;
 
-impl BackendFactory for DefaultBackendFactory {
-    fn build(&self, args: &BackendArgs<'_>) -> Result<BackendBuildResult, String> {
+impl ObjectStoreProvider for DefaultObjectStoreProvider {
+    fn build(&self, args: &ObjectStoreProviderArgs<'_>) -> Result<ObjectStoreBuildResult, String> {
         let backend_name = args.backend_name;
         let backend_type = args.backend_type;
 
@@ -260,8 +260,7 @@ impl BackendFactory for DefaultBackendFactory {
         } else if let Some(root) = args.local_root {
             // local_root branch: backend_type ∈ { "local_connector",
             // "path_local", default cas-local }.  The three impls live
-            // in `crate::storage::*` after the Phase 2 split of the
-            // old kernel `_backend_impls.rs`.
+            // in `crate::storage::*`.
             if backend_type == "local_connector" {
                 let b = crate::storage::local_connector::LocalConnectorBackend::new(
                     Path::new(root),
@@ -280,8 +279,7 @@ impl BackendFactory for DefaultBackendFactory {
                 // chunk_fetcher pre-wired so local chunk misses on this
                 // mount fall through to peer RPCs against
                 // `backend_name.origins`.  The chunk_fetcher Arc is
-                // smuggled in via `args.peer_client.chunk_fetcher_arc()`
-                // (added on Kernel during Phase 2).
+                // smuggled in via `args.peer_client.chunk_fetcher_arc()`.
                 let fetcher: Arc<dyn kernel::cas_remote::RemoteChunkFetcher> =
                     Arc::clone(&args.chunk_fetcher);
                 let b = crate::storage::cas_local::CasLocalBackend::new_with_fetcher(
@@ -296,7 +294,7 @@ impl BackendFactory for DefaultBackendFactory {
             None
         };
 
-        Ok(BackendBuildResult {
+        Ok(ObjectStoreBuildResult {
             backend,
             pending_remote_meta_store,
         })

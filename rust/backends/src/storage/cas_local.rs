@@ -1,11 +1,10 @@
 //! `CasLocalBackend` — CAS-addressed local-disk ObjectStore impl.
 //!
-//! Phase 2 lifted this out of `kernel/src/_backend_impls.rs`.
 //! Composes the kernel's CAS primitive
 //! ([`kernel::cas_engine::CASEngine`]) with
 //! [`kernel::cas_transport::LocalCASTransport`] for the on-disk
 //! blob layout, exposing the result as an `ObjectStore` impl that
-//! mounts plug into via the `BackendFactory`.
+//! mounts plug into via the `ObjectStoreProvider`.
 
 use std::io;
 use std::path::Path;
@@ -75,7 +74,7 @@ impl ObjectStore for CasLocalBackend {
                 content_id: hash,
             });
         }
-        // R20.10 partial write: splice `content` at `offset` against the
+        // Partial write: splice `content` at `offset` against the
         // OLD CAS object identified by `content_id`. CASEngine handles
         // both chunked (CDC re-chunk affected region) and non-chunked
         // (RMW single blob) cases, and honors POSIX zero-fill when
@@ -228,7 +227,11 @@ mod tests {
             .write_content(content, "docs/file.txt", &ctx, 0)
             .unwrap();
         assert_eq!(wr.size, content.len() as u64);
-        assert_eq!(wr.content_id.len(), 64); // hash
+        // PAS: content_id is the backend_path (so peer reads via
+        // KernelBlobFetcher route through the same path), version
+        // carries the SHA-256 hex hash for OCC.
+        assert_eq!(wr.content_id, "docs/file.txt");
+        assert_eq!(wr.version.len(), 64);
 
         let data = backend.read_content("docs/file.txt", &ctx).unwrap();
         assert_eq!(data, content);
@@ -337,7 +340,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ── R20.10: partial-write (pwrite semantics) tests ────────────────
+    // ── partial-write (pwrite semantics) tests ────────────────────────
 
     #[test]
     fn test_path_local_partial_write_splices_middle() {

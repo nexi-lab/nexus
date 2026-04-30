@@ -1,7 +1,7 @@
 //! Replication WAL for True Local-First EC writes.
 //!
 //! EC writes bypass Raft consensus and apply directly to the local state machine.
-//! This log records those writes for async replication to peers (Phase C, future).
+//! This log records those writes for async background replication to peers.
 //!
 //! The WAL sequence number serves as the WriteToken — callers poll
 //! `is_committed(seq)` to check if a write has been replicated to a majority.
@@ -42,7 +42,7 @@ const KEY_EARLIEST_SEQ: &[u8] = b"__earliest_seq__";
 /// An entry in the EC replication WAL.
 ///
 /// Stored in redb keyed by sequence number (u64 big-endian).
-/// Used by the background replication task (Phase C) to send writes to peers.
+/// Used by the background replication task to send writes to peers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplicationEntry {
     /// Serialized `Command` bytes.
@@ -228,8 +228,8 @@ impl ReplicationLog {
 
     /// Advance the replicated watermark after peer confirmation.
     ///
-    /// Called by the background replication task (Phase C) when writes
-    /// have been acknowledged by a majority of peers.
+    /// Called by the background replication task when writes have
+    /// been acknowledged by a majority of peers.
     pub fn advance_watermark(&self, new_watermark: u64) -> Result<()> {
         let current = self.replicated_watermark.load(Ordering::Relaxed);
         if new_watermark > current {

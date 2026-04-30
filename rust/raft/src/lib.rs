@@ -44,9 +44,9 @@
 //!
 //! Part of Issue #1159: P2P Federation and Consensus Zones
 
-// F2 C8: mimalloc allocator moved to the final cdylib (nexus_runtime).
-// An rlib cannot declare ``#[global_allocator]`` — only the final
-// binary (cdylib/bin) can.
+// The mimalloc `#[global_allocator]` lives in the final cdylib
+// (nexus_runtime). An rlib cannot declare a global allocator — only the
+// final binary (cdylib/bin) can.
 
 pub mod storage;
 
@@ -98,25 +98,33 @@ pub mod transport;
 
 /// Python bindings via PyO3 (requires `python` feature).
 ///
-/// F2 C8 (Option A): raft is an rlib inside the ``nexus_runtime`` cdylib.
-/// The PyO3 classes are registered by calling
+/// Raft is an rlib inside the ``nexus_runtime`` cdylib; the PyO3
+/// classes are registered by calling
 /// ``_nexus_raft::register_python_classes(m)`` from kernel's
 /// ``#[pymodule]`` entry point.
 #[cfg(feature = "python")]
 pub mod pyo3_bindings;
 
-// Phase H of the rust-workspace restructure (Phase 5 federation DI):
-// state-machine impls + the `FederationProvider` trait impl that
-// previously lived in the kernel crate moved here when the kernel ↔
-// raft Cargo edge was inverted.
+// Driver-layer impls of kernel HAL surfaces:
 //
-//   federation_provider.rs    — `RaftFederationProvider` impl FederationProvider
-//   zone_meta_store.rs        — Raft-backed `kernel::abc::MetaStore` impl
-//   replication_scanner.rs    — EC replication background scanner
-//   wal_stream_backend.rs     — `kernel::stream::StreamBackend` impl that
-//                               persists each entry through Raft
+//   distributed_coordinator.rs — `RaftDistributedCoordinator` impl of the
+//                                Control-Plane HAL §3.B.1 trait
+//   zone_meta_store.rs         — Raft-backed `kernel::abc::MetaStore` impl
+//   replication_scanner.rs     — EC replication background scanner
+//   blob_fetcher_handler.rs    — `KernelBlobFetcher` server-side handler
+//                                co-located with `ZoneApiService` on the
+//                                raft port; reaches kernel data plane
+//                                through `VFSRouter` + `DCache`
+//
+// Distributed state (`ZoneManager`, `ZoneRaftRegistry`, tokio runtime,
+// cross-zone mounts reverse index) lives on the coordinator. WAL stream
+// / pipe backends live in `kernel::core::stream::wal` / `kernel::core::pipe::wal`
+// — kernel primitives that compose whatever distributed `MetaStore` impl
+// the coordinator DI's (typically `ZoneMetaStore` below).
 #[cfg(all(feature = "grpc", has_protos))]
-pub mod federation_provider;
+pub mod blob_fetcher_handler;
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod distributed_coordinator;
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod replication_scanner;
 // WAL stream / pipe backends moved into the kernel crate

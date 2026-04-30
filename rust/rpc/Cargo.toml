@@ -1,0 +1,55 @@
+[package]
+name = "rpc"
+version = "0.1.0"
+edition = "2021"
+description = "Driver-outgoing RPC clients for Nexus — VFS gRPC client (used by RemoteBackend), peer-blob client (used by raft replication apply path), federation peer client (used by Python federation_rpc shim).  Driver-layer crate alongside backends/raft; reaches kernel through the in-tree Rust API surface and shares wire types with `shared/transport-primitives`."
+
+[lib]
+name = "rpc"
+crate-type = ["rlib"]
+
+[features]
+default = []
+# `python` aggregates the PyO3 entry points (PyFederationClient install,
+# peer_blob client install) into `rpc::python::register(m)`. Pulls
+# pyo3 in directly; kernel pyclass surface is unconditional and raft
+# already has its own `python` feature wired by the workspace dep.
+python = ["dep:pyo3"]
+
+[dependencies]
+contracts = { workspace = true }
+# Driver-layer crate — uses kernel runtime API (Kernel, vfs_proto stubs,
+# OperationContext, peer_client slot). default-features = false keeps
+# the kernel rlib lean; the cdylib opts back into mimalloc/connectors.
+kernel = { workspace = true }
+# rpc -> raft is a deliberate edge (single directed edge between
+# driver-layer crates): rpc is a "raft protocol client" so it must
+# reference raft's wire-format types (JoinZoneRequest etc.) for the
+# federation client. Same shape as a Postgres client crate referencing
+# libpq. Raft does not import rpc, so no cycle.
+raft = { workspace = true }
+# Shared transport primitives (TLS / pool / addressing / TOFU /
+# PeerBlobClient trait). Same low-level types that raft and transport
+# also consume.
+transport-primitives = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time", "macros"] }
+parking_lot = "0.12"
+dashmap = "6.1"
+thiserror = "2"
+tracing = "0.1"
+sha2 = "0.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
+# pyo3 feature unioned by cargo when nexus-cdylib enables `extension-module`
+# on its own pyo3 dep.
+pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+
+[dev-dependencies]
+# federation.rs unit tests generate self-signed CAs and write to tempdirs.
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+tempfile = "3"

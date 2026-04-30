@@ -2,7 +2,7 @@
 name = "transport"
 version = "0.1.0"
 edition = "2021"
-description = "Phase 4 parallel-layers crate — high-level transport tier (gRPC server, IPC envelope, federation peer client, peer blob fetch).  Depends on kernel + transport-primitives.  raft consumes transport-primitives directly to keep the dep graph cycle-free (`raft -> transport-primitives` only)."
+description = "Front-door services tier — VFS gRPC server (port 2028) + IPC envelope helpers. Depends on `kernel` + `shared/transport-primitives`. Driver-outgoing RPC clients (peer-blob, federation, VFS) live in the `rpc` driver-layer crate; transport keeps zero `nexus_raft::*` references so the orthogonality invariant `services ⊥ backends ⊥ transport ⊥ raft` reads off the dep graph."
 
 [lib]
 name = "transport"
@@ -11,27 +11,19 @@ crate-type = ["rlib"]
 [features]
 default = []
 # `python` aggregates the PyO3 entry points (`PyVfsGrpcServerHandle`,
-# `start_vfs_grpc_server`, `PyFederationClient`) into
-# `transport::python::register(m)`.  Implies the kernel + raft deps
-# this crate already pulls; `pyo3` itself is the only optional dep.
+# `start_vfs_grpc_server`) into `transport::python::register(m)`.
 python = ["dep:pyo3"]
 
 [dependencies]
 contracts = { workspace = true }
-# Phase 4: transport depends on kernel for the in-tree Rust API surface
+# Transport depends on kernel for the in-tree Rust API surface
 # (`Kernel`, `KernelError`, `OperationContext`, `vfs_proto` generated
-# stubs, `hal::peer::PeerBlobClient` trait).  `default-features = false`
-# keeps the kernel runtime defaults (mimalloc allocator, connectors HTTP,
-# py-hook adapters) off in this rlib; the cdylib pulls them via its own
-# kernel dep.
+# stubs). `default-features = false` keeps the kernel runtime defaults
+# (mimalloc allocator, connectors HTTP, py-hook adapters) off in this
+# rlib; the cdylib pulls them via its own kernel dep.
 kernel = { workspace = true }
-# `nexus_raft` for `TofuTrustStore` + JoinZone proto stubs that
-# `transport::federation` calls into.
-raft = { workspace = true }
-# `transport-primitives` provides TlsConfig / PeerAddress / NodeAddress
-# / connection pool — the low-level types that raft also depends on.
-# Splitting these into a separate crate is what breaks the
-# `raft -> transport -> kernel -> raft` cycle.
+# Shared transport primitives (TLS / pool / addressing) — same low-level
+# types raft and rpc consume.
 transport-primitives = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }

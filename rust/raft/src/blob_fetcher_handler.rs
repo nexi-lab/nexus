@@ -1,9 +1,11 @@
-//! KernelBlobFetcher — kernel-side impl of `nexus_raft::BlobFetcher`.
+//! KernelBlobFetcher — server-side handler for the driver-to-driver
+//! `ReadBlob` RPC, co-located with `ZoneApiService` on the raft port.
 //!
-//! R20.18.7 co-locates the driver-to-driver `ReadBlob` RPC with
-//! `ZoneApiService` on the raft port. The raft crate owns the trait
-//! and the gRPC handler; the kernel owns the data plane (mount
-//! backends). This module bridges the two.
+//! Lives in the raft crate alongside the `BlobFetcher` trait + the
+//! gRPC server: raft owns the wire-format and dispatch fabric, kernel
+//! owns the data plane (mount backends). This handler bridges the two
+//! by reaching kernel-side state (`VFSRouter`, `DCache`) through the
+//! kernel's runtime API surface.
 //!
 //! Store-and-forward: ``content_id`` is opaque. The fetcher resolves
 //! it via the local ``VFSRouter`` — for federation reads ``content_id``
@@ -20,7 +22,7 @@
 
 use std::sync::Arc;
 
-use nexus_raft::blob_fetcher::BlobFetcher;
+use crate::blob_fetcher::BlobFetcher;
 
 use kernel::core::dcache::DCache;
 use kernel::kernel::OperationContext;
@@ -110,27 +112,25 @@ impl BlobFetcher for KernelBlobFetcher {
     }
 }
 
-/// Phase 4 (full) install hook.  Called from `nexus-cdylib`'s
-/// `#[pymodule]` boot after `kernel::python::register` so that, by
-/// the time Python starts firing federation reads, the raft server's
-/// `BlobFetcherSlot` already has a kernel-backed fetcher.
+/// Install hook called from `nexus-cdylib`'s `#[pymodule]` boot after
+/// `kernel::python::register` so the raft server's `BlobFetcherSlot`
+/// carries a kernel-backed fetcher before the first federation read.
 ///
-/// No-op if `Kernel::pending_blob_fetcher_slot` is empty (federation
+/// No-op when `Kernel::pending_blob_fetcher_slot` is empty (federation
 /// disabled — `NEXUS_HOSTNAME` was unset).
 ///
-/// Phase 5: kernel hands back the slot as `Box<dyn Any + Send + Sync>`
-/// — transport downcasts to the concrete `BlobFetcherSlot` type
-/// here because transport already depends on raft (the kernel side
-/// no longer does).
+/// Kernel hands back the slot as `Box<dyn Any + Send + Sync>`; this
+/// handler downcasts to the concrete `BlobFetcherSlot` here, which
+/// is fine because the handler lives in raft alongside the type.
 pub fn install(kernel: &kernel::kernel::Kernel) {
     let Some(any_slot) = kernel.take_pending_blob_fetcher_slot() else {
         return;
     };
-    let slot = match any_slot.downcast::<nexus_raft::blob_fetcher::BlobFetcherSlot>() {
+    let slot = match any_slot.downcast::<crate::blob_fetcher::BlobFetcherSlot>() {
         Ok(boxed) => *boxed,
         Err(_) => {
             tracing::error!(
-                "transport::blob::fetcher::install: pending slot type mismatch \
+                "blob_fetcher_handler::install: pending slot type mismatch \
                  (expected nexus_raft::blob_fetcher::BlobFetcherSlot)"
             );
             return;

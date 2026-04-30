@@ -2,7 +2,7 @@
 //!
 //! Reimplements the hot-path subset of Python `LocalTransport.fetch/store/exists`
 //! combined with `CASAddressingEngine._blob_key()`, eliminating FFI overhead for
-//! the Kernel fast path (Phase E).
+//! the Kernel fast path.
 //!
 //! This module is `pub(crate)` — consumed only by `CASEngine` and `Kernel`,
 //! never exposed as a PyO3 class.
@@ -13,7 +13,6 @@
 //! References:
 //!     - Python: `src/nexus/backends/base/cas_addressing_engine.py` (`_blob_key`)
 //!     - Python: `src/nexus/backends/transports/local_transport.py` (`fetch/store/exists`)
-//!     - Issue #1865: Phase C — Rust LocalCASTransport
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};

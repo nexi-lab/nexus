@@ -10,11 +10,7 @@
 //! pairing.  Kernel constructs + mutates the table; service-tier
 //! procfs views (`fs/proc/`) read it through shared references.
 //!
-//! Phase 3: moved here from `rust/services/src/agent_table.rs`.  The
-//! original placement was wrong — it predated the parallel-layers
-//! crate split and put a kernel-owned SSOT field's type in services,
-//! which forced kernel to depend on services and made the post-Phase-3
-//! `services -> kernel` dependency cyclic.  The fix slots it where it
-//! actually belongs: kernel owns the data, services owns the views.
+//! Kernel owns the data; services owns the views (preserves the
+//! one-way `services -> kernel` dependency).
 
 pub mod table;

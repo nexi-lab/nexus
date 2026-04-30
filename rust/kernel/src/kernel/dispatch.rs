@@ -1,17 +1,15 @@
 //! Native INTERCEPT hook dispatch — `dispatch_native_pre`,
 //! `dispatch_native_post`, `register_native_hook`.
 //!
-//! Phase G of Phase 3 restructure plan extracted these methods from
-//! the monolithic `kernel.rs`.  The split is a file-organization
-//! change — every method stays a member of [`Kernel`] via the
-//! submodule's `impl Kernel { ... }` block.
+//! Every method stays a member of [`Kernel`] via this submodule's
+//! `impl Kernel { ... }` block.
 
 use crate::dispatch::{HookContext, NativeInterceptHook};
 
 use super::{Kernel, KernelError, RwLockExt};
 
 impl Kernel {
-    // ── Native INTERCEPT hook dispatch (§11 Phase 14) ─────────────────
+    // ── Native INTERCEPT hook dispatch ─────────────────
 
     /// Dispatch PRE-INTERCEPT hooks from NativeHookRegistry.
     /// Returns Err(KernelError) if any hook aborts.
@@ -53,9 +51,9 @@ impl Kernel {
     /// VFS operation.
     ///
     /// Visibility is `pub` (not `pub(crate)`) so peer crates can install
-    /// their own hook impls — Phase 3 onwards services own their hook
-    /// lifecycle (services::audit, etc.) and call this from their PyO3
-    /// entry points.
+    /// their own hook impls — services own their hook lifecycle
+    /// (services::audit, etc.) and call this from their PyO3 entry
+    /// points.
     pub fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
         self.native_hooks.write().register(hook);
     }

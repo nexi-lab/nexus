@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from nexus_runtime import (
     BloomFilter,
-    PyFederationClient,
     PyKernel,
     PyOperationContext,
     PySysReadResult,
@@ -77,7 +76,6 @@ from nexus_runtime import (
 
 __all__ = [
     "BloomFilter",
-    "PyFederationClient",
     "PyKernel",
     "PyOperationContext",
     "PySysReadResult",

@@ -1,24 +1,25 @@
 //! Kernel `core/` — kernel primitives only (§4 of
 //! `docs/architecture/KERNEL-ARCHITECTURE.md`).
 //!
-//! Phase 1 enforced a strict 3-way split inside `kernel/src/`:
+//! Strict split inside `kernel/src/`:
 //!
-//! * `crate::abc::*` — §3 ABC pillars (`ObjectStore`, `MetaStore`,
-//!   `CacheStore`).  Three trait files, period.
-//! * `crate::hal::*` — kernel-defined extension interfaces that aren't
-//!   §3 pillars (`LlmStreamingBackend`, `PeerBlobClient`).
-//! * `crate::core::*` — §4 kernel primitives (this module).  No traits,
+//! * `crate::abc::*` — §3.A Storage HAL pillars (`ObjectStore`,
+//!   `MetaStore`, `CacheStore`).
+//! * `crate::hal::*` — §3.B Control-Plane HAL DI surfaces
+//!   (`DistributedCoordinator`, `ObjectStoreProvider`,
+//!   `PeerBlobClient`).
+//! * `crate::core::*` — §4 kernel primitives (this module). No traits,
 //!   no extension interfaces — only the runtime mechanisms the syscall
 //!   layer needs (vfs_router, dlc, dcache, locks, dispatch, plus the
-//!   in-memory reference impls of the §3 pillars that are too small to
-//!   justify their own crate).
+//!   in-memory reference impls of the §3.A pillars that are too small
+//!   to justify their own crate).
 //!
-//! The `lib.rs` crate root still exposes the pre-Phase-C flat names
+//! The `lib.rs` crate root re-exposes the flat names
 //! (`crate::vfs_router::*`, `crate::pipe::*`, `crate::stream::*`, …)
-//! via `pub use core::… as <flat>` shims, so callers do not churn;
-//! later phases retire the shims as impls migrate to parallel crates.
+//! via `pub use core::… as <flat>` shims, so callers can name a single
+//! canonical path regardless of the internal `core/` nesting.
 
-// §4.0 — agent table SSOT (Phase 3 moved here from services/).
+// §4.0 — agent table SSOT.
 pub mod agents;
 
 // §4.1 — VFS routing + dcache + DLC mount lifecycle.
@@ -37,9 +38,8 @@ pub mod lock;
 pub mod dispatch;
 
 // §4.6 — metastore primitive impls (MemoryMetaStore + LocalMetaStore +
-// remote proxy).  The trait declaration itself lives in
-// `crate::abc::meta_store` after Phase 1; this module only holds the
-// kernel-internal concrete impls.
+// remote proxy). The trait declaration lives in `crate::abc::meta_store`;
+// this module only holds the kernel-internal concrete impls.
 pub mod meta_store;
 
 // §4.2 — DT_PIPE / DT_STREAM IPC pillars.

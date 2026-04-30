@@ -1,15 +1,13 @@
-//! Per-zone search capabilities (R20.12).
+//! Per-zone search capabilities.
 //!
 //! Stored in `{base_path}/{zone_id}/search_caps.json`. Python search daemon
 //! writes the file at startup; the Rust `GetSearchCapabilities` gRPC handler
 //! reads it on each RPC. File-SSOT — no in-memory cache in the registry.
 //!
 //! Rationale: search capabilities are *search-service* state, not raft state.
-//! They were previously held in `ZoneRaftRegistry.search_capabilities` — a
-//! DashMap unrelated to raft lifecycle. Moving to a per-zone file keeps the
-//! lifecycle coupled to the zone dir (`remove_dir_all` during zone removal
-//! drops the caps with no extra bookkeeping) and removes the "double SSOT"
-//! smell (Rule 2 in the v20.3 SSOT framework).
+//! Keeping them on the zone dir couples their lifecycle to the zone
+//! directory (`remove_dir_all` during zone removal drops the caps
+//! with no extra bookkeeping) and keeps the SSOT single.
 
 use std::path::{Path, PathBuf};
 

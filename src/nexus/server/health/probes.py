@@ -43,7 +43,7 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
         if nx_fs is None:
             return True, ""
         # Phase H: federation readiness is observed through the
-        # FederationProvider HAL trait via the
+        # DistributedCoordinator HAL trait via the
         # ``nexus_runtime.federation_is_initialized`` module helper —
         # the kernel itself no longer exposes a ``mount_reconciliation_done``
         # PyO3 method (zone lifecycle is kernel-internal HAL state).

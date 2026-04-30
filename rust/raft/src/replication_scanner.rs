@@ -291,10 +291,10 @@ fn parse_policies(policies_json: &str) -> Result<Vec<MountReplicationPolicy>, St
 /// `policies_json`.  Returns the running scanner as an opaque handle so
 /// callers can drop it / read stats / call `stop()`.
 ///
-/// Surfaced as a federation control-plane entry, not part of the
-/// `FederationProvider` HAL trait — kernel never invokes the scanner;
-/// the Python boot path opts in per zone+mount via the cdylib's
-/// `federation_start_replication_scanner` PyO3 binding.
+/// Surfaced as a federation control-plane entry, parallel to but
+/// outside the `DistributedCoordinator` HAL trait — the scanner is
+/// kernel-uninvoked; the Python boot path opts in per zone+mount via
+/// the cdylib's `federation_start_replication_scanner` PyO3 binding.
 pub fn install_for_zone(
     kernel: Arc<kernel::kernel::Kernel>,
     zone_id: &str,

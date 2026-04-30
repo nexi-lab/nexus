@@ -2,12 +2,11 @@
 name = "nexus-cdylib"
 version = "0.10.0"
 edition = "2021"
-description = "Python entry-point cdylib (produces nexus_runtime.so / nexus_runtime.pyd). Composes the kernel + lib + raft + backends + services + transport rlibs into the single shared object Python imports as `nexus_runtime`. Build artifact only — not an architectural tier; see KERNEL-ARCHITECTURE.md §6.1."
+description = "Python entry-point cdylib (produces nexus_runtime.so / nexus_runtime.pyd). Composes the kernel + lib + raft + backends + services + transport + rpc rlibs into the single shared object Python imports as `nexus_runtime`. Build artifact; see KERNEL-ARCHITECTURE.md §6.1."
 
 [lib]
-# Wheel module name: `nexus_runtime` (Phase 3 restructure plan #5
-# rename — the cdylib aggregates the whole runtime, not just the
-# kernel rlib).  `kernel` stays the rlib name on the Rust side.
+# Wheel module name `nexus_runtime` aggregates the whole runtime;
+# `kernel` is the rlib name on the Rust side.
 name = "nexus_runtime"
 crate-type = ["cdylib"]
 
@@ -26,21 +25,25 @@ lib = { workspace = true, features = ["python"] }
 # `raft` already enters the workspace dep map with
 # `features = ["python", "grpc"]` — nothing to add.
 raft = { workspace = true }
-# Phase 3: services with the `python` feature enabled so its PyO3
-# entry points (currently `install_audit_hook`) compose into the
-# single `nexus_runtime.so` cdylib.
+# Services with the `python` feature enabled so its PyO3 entry points
+# (currently `install_audit_hook`) compose into the single
+# `nexus_runtime.so` cdylib.
 services = { workspace = true, features = ["python"] }
-# Phase 2: backends with the `python` feature enabled so the
-# `BlobPackEngine` pyclass + `DefaultBackendFactory` registration
-# compose into the single `nexus_runtime.so` cdylib.  This is the
-# crate that owns the 17-way `BackendFactory::build` switch the
-# kernel calls through `kernel::hal::backend_factory::get_factory()`.
+# Backends with the `python` feature enabled so the `BlobPackEngine`
+# pyclass + `DefaultObjectStoreProvider` registration compose into
+# the single `nexus_runtime.so` cdylib. Backends owns the 17-way
+# `ObjectStoreProvider::build` switch the kernel calls through
+# `kernel::hal::object_store_provider::get_provider()`.
 backends = { workspace = true, features = ["python"] }
-# Phase 4 (full): transport with `python` feature enabled — registers
-# `PyVfsGrpcServerHandle`, `start_vfs_grpc_server`, `PyFederationClient`
-# into nexus_runtime module + installs the kernel-side
-# peer-blob-client + blob-fetcher wiring (DI for the moved files).
+# Transport with `python` feature enabled — registers
+# `PyVfsGrpcServerHandle` + `start_vfs_grpc_server` (front-door VFS
+# gRPC server) into nexus_runtime module.
 transport = { workspace = true, features = ["python"] }
+# rpc with `python` feature enabled — registers `PyFederationClient`
+# + `install_transport_wiring` (peer-blob client wiring) into the
+# nexus_runtime module. Driver-outgoing RPC clients (peer-blob,
+# federation, VFS) consolidate here in the rpc driver-layer crate.
+rpc = { workspace = true, features = ["python"] }
 # Sole crate that enables `extension-module`. Cargo unifies pyo3
 # features across the workspace, so every transitive pyo3 user
 # (kernel, lib, raft, backends, …) sees the cdylib-correct

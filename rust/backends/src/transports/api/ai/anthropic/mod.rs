@@ -102,7 +102,7 @@ impl ObjectStore for AnthropicBackend {
         offset: u64,
     ) -> Result<WriteResult, StorageError> {
         if offset != 0 {
-            // R20.10: LLM streaming backends model one-shot completions,
+            // LLM streaming backends model one-shot completions,
             // not seekable files. Partial writes are semantically
             // meaningless here.
             return Err(StorageError::NotSupported(

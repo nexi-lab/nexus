@@ -9,11 +9,8 @@
 //!   - FileEvent / FileEventType: kernel I/O event mirror of Python `FileEvent`
 //!   - PathTrie: O(path_depth) lookup (~50ns) for virtual path resolvers
 //!
-//! Issue #1868: PR 22 — dispatch.rs fully pure Rust.
+//! Pure Rust — no PyO3 dependency.
 
-// Phase C nested layout:
-//   core/dispatch/mod.rs            — was kernel/src/dispatch.rs
-//   core/dispatch/hook_registry.rs  — was kernel/src/hook_registry.rs
 pub mod hook_registry;
 
 use parking_lot::RwLock;
@@ -255,10 +252,10 @@ fn now_iso8601() -> String {
 /// Rust equivalent of Python `VFSPathResolver`.
 /// Returns Some(content) to claim the path, None to pass through.
 ///
-/// Phase 3: visibility bumped from `pub(crate)` to `pub` so peer
-/// crates (e.g. `services::agents::status_resolver`) can impl this
-/// trait.  Same in-tree Rust API model as `NativeInterceptHook` —
-/// not an ABI, just a kernel API surface for in-tree services.
+/// Visibility is `pub` so peer crates (e.g.
+/// `services::agents::status_resolver`) can impl this trait. Same
+/// in-tree Rust API model as `NativeInterceptHook` — not an ABI, just
+/// a kernel API surface for in-tree services.
 #[allow(dead_code)]
 pub trait PathResolver: Send + Sync {
     fn try_read(&self, path: &str) -> Option<Vec<u8>>;
@@ -275,19 +272,16 @@ pub trait PathResolver: Send + Sync {
 /// Contract: OBSERVE is fire-and-forget by definition. The dispatch
 /// loop submits each call to the kernel's background `ThreadPool`
 /// (`Kernel::observer_pool`) so `on_mutation` runs **off** the syscall
-/// hot path. There is no other mode — `OBSERVE_INLINE` (the legacy
-/// "run on caller's thread" flag) was deleted in §11 Phase 2 because
-/// inline observers were functionally identical to INTERCEPT POST hooks
-/// and violated dispatch-contract orthogonality. Linux's analogous
-/// primitive (fsnotify) makes the same choice: fire-and-forget only.
-/// Observers needing causal ordering or sync blocking on the syscall
-/// return path belong in INTERCEPT POST, not OBSERVE.
+/// hot path. Linux's analogous primitive (fsnotify) makes the same
+/// choice: fire-and-forget only. Observers needing causal ordering or
+/// sync blocking on the syscall return path belong in INTERCEPT POST,
+/// not OBSERVE.
 #[allow(dead_code)]
 pub trait MutationObserver: Send + Sync {
     fn on_mutation(&self, event: &FileEvent);
 }
 
-// ── INTERCEPT hook context structs (§11 Phase 9) ─────────────────────
+// ── INTERCEPT hook context structs (§11) ─────────────────────────────
 //
 // Pure Rust equivalents of Python vfs_hooks dataclasses.
 // Used by InterceptHook trait — eliminates GIL crossing for Rust hooks.
@@ -453,25 +447,12 @@ impl HookContext {
     }
 }
 
-// ── INTERCEPT hook trait (§11 Phase 10) ──────────────────────────────
+// ── INTERCEPT hook trait (§11) ───────────────────────────────────────
 //
 // Pure Rust hook trait — no GIL crossing for Rust-native hooks.
-// Python hooks wrapped via PyInterceptHookAdapter (generated_pyo3.rs)
-// which converts HookContext → Py<PyAny> for backward compat.
+// Python hooks wrap via PyInterceptHookAdapter (generated_pyo3.rs)
+// which converts HookContext → Py<PyAny>.
 
-/// INTERCEPT hook — called before/after each syscall.
-///
-/// Pre-hooks can abort by returning Err (message becomes PermissionError).
-/// Post-hooks are fire-and-forget (errors logged, never abort).
-///
-/// Default implementation: no-op for all operations.
-///
-/// Phase 3: visibility bumped from `pub(crate)` to `pub` so peer
-/// crates (services::audit, services::permission, …) can impl this
-/// trait and register their concrete hooks via
-/// [`Kernel::register_native_hook`].  Same in-tree Rust API model as
-/// Linux LSM's `security_add_hooks` — not an ABI, just a kernel API
-/// surface for in-tree kernel modules.
 /// Outcome of a pre-intercept call. `Pass` lets the operation proceed
 /// unchanged; `Replace(bytes)` substitutes the bytes for the original
 /// write content before the backend sees it. Replacement is only
@@ -485,6 +466,18 @@ pub enum HookOutcome {
     Replace(Vec<u8>),
 }
 
+/// INTERCEPT hook — called before/after each syscall.
+///
+/// Pre-hooks can abort by returning Err (message becomes PermissionError).
+/// Post-hooks are fire-and-forget (errors logged, never abort).
+///
+/// Default implementation: no-op for all operations.
+///
+/// `pub` so peer crates (services::audit, services::permission, …)
+/// implement this trait and register their concrete hooks via
+/// [`Kernel::register_native_hook`]. Same in-tree Rust API model as
+/// Linux LSM's `security_add_hooks` — a kernel API surface for
+/// in-tree kernel modules.
 #[allow(dead_code)]
 pub trait NativeInterceptHook: Send + Sync {
     fn name(&self) -> &str;

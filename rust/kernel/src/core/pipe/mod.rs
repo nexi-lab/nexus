@@ -14,12 +14,7 @@
 //! Error encoding: Rust raises `RuntimeError("PipeFull:…")` etc. Python translates
 //! to the matching exception class.
 
-// Phase C nested layout (§4.2 — DT_PIPE pillar):
-//   core/pipe/mod.rs     — MemoryPipeBackend  (was kernel/src/pipe.rs)
-//   core/pipe/manager.rs — PipeManager        (was kernel/src/pipe_manager.rs)
-//   core/pipe/shm.rs     — SharedMemoryPipe   (was kernel/src/shm_pipe.rs)
-//   core/pipe/stdio.rs   — StdioPipeBackend   (was kernel/src/stdio_pipe.rs)
-//   core/pipe/remote.rs  — RemotePipeBackend  (was kernel/src/remote_pipe.rs)
+// §4.2 — DT_PIPE pillar.
 pub mod backend;
 pub mod manager;
 pub mod remote;
@@ -71,13 +66,12 @@ unsafe impl Send for MemoryPipeBackend {}
 unsafe impl Sync for MemoryPipeBackend {}
 
 // ---------------------------------------------------------------------------
-// PipeBackend / PipeError live in this directory's `backend.rs` sub-file
-// (Phase 1 — moved out of the now-deleted `core/traits/`).  The trait is
-// kernel-internal — not a §3 ABC pillar, just an abstraction for the IPC
-// subsystem — so it sits with its primitive impl rather than under
-// `crate::abc/` or `crate::hal/`.  Re-exported here so
-// `crate::pipe::PipeBackend` / `crate::pipe::PipeError` paths used
-// throughout the kernel keep resolving without per-caller churn.
+// PipeBackend / PipeError live in this directory's `backend.rs`.
+// The trait is kernel-internal — not a §3 ABC pillar, just an
+// abstraction for the IPC subsystem — so it sits with its primitive
+// impl rather than under `crate::abc/` or `crate::hal/`. Re-exported
+// here so `crate::pipe::PipeBackend` / `crate::pipe::PipeError` paths
+// used throughout the kernel keep resolving without per-caller churn.
 // ---------------------------------------------------------------------------
 
 pub(crate) use backend::{PipeBackend, PipeError};

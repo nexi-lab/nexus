@@ -61,12 +61,16 @@ impl WalPipeCore {
 
 impl PipeBackend for WalPipeCore {
     fn push(&self, data: &[u8]) -> Result<usize, PipeError> {
-        // Reuse stream push; metastore replicates the entry.  Empty
-        // payload is a no-op — match MemoryPipeBackend semantics.
+        // Pipe contract is synchronous: a successful push means a
+        // sibling replica's `pop()` will see the entry. Use the
+        // stream's `write_sync` so the metastore commit (= raft
+        // commit on a real cluster) completes before this returns.
+        // Empty payload is a no-op — match `MemoryPipeBackend`
+        // semantics.
         if data.is_empty() {
             return Ok(0);
         }
-        match StreamBackend::push(&self.inner, data) {
+        match self.inner.write_sync(data) {
             Ok(_) => Ok(data.len()),
             Err(_) => Err(PipeError::Closed("wal pipe closed")),
         }
@@ -197,17 +201,12 @@ mod tests {
 
     #[test]
     fn per_replica_heads_diverge_under_concurrent_consumers() {
-        // Two `WalPipeCore` instances over the same MetaStore — model
-        // two replicas.  Each replica owns its head; both should pop
-        // every entry independently.
-        //
-        // Reader replicas can only see the writer's pushes after the
-        // bg flush thread has committed them to the shared MetaStore
-        // (each WalPipeCore wraps its own WalStreamCore with its own
-        // inflight map, so the writer's pre-flush state is invisible
-        // to the readers).  Poll briefly to dodge the async-flush race
-        // rather than sleeping a fixed duration.
-        use std::time::{Duration, Instant};
+        // Two `WalPipeCore` reader instances over the same MetaStore —
+        // model two replicas. Each replica owns its head; both pop
+        // every entry independently. `WalPipeCore::push` is
+        // synchronous (uses `write_sync` internally), so reader pops
+        // can run immediately after the writer returns without
+        // observing a flush race.
         let store: Arc<dyn MetaStore> = Arc::new(MemKvStore {
             inner: Mutex::new(BTreeMap::new()),
         });
@@ -218,23 +217,8 @@ mod tests {
         for i in 0u8..5 {
             writer.push(&[i]).unwrap();
         }
-
-        let pop_with_retry = |reader: &WalPipeCore| -> Vec<Vec<u8>> {
-            let deadline = Instant::now() + Duration::from_secs(2);
-            let mut out = Vec::with_capacity(5);
-            while out.len() < 5 {
-                match reader.pop() {
-                    Ok(data) => out.push(data),
-                    Err(PipeError::Empty) if Instant::now() < deadline => {
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    other => panic!("expected pop within 2s, got {other:?}"),
-                }
-            }
-            out
-        };
-        let popped_a = pop_with_retry(&reader_a);
-        let popped_b = pop_with_retry(&reader_b);
+        let popped_a: Vec<Vec<u8>> = (0..5).map(|_| reader_a.pop().unwrap()).collect();
+        let popped_b: Vec<Vec<u8>> = (0..5).map(|_| reader_b.pop().unwrap()).collect();
         assert_eq!(popped_a, popped_b);
         assert_eq!(popped_a, vec![vec![0], vec![1], vec![2], vec![3], vec![4]]);
     }

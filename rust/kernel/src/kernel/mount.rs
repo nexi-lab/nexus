@@ -1,10 +1,8 @@
 //! Mount-table primitives — router proxy methods that compose into
 //! the `sys_setattr(DT_MOUNT)` syscall.
 //!
-//! Phase G of the Phase 3 restructure plan extracted these methods
-//! from the monolithic `kernel.rs` into a dedicated submodule.  The
-//! split is a file-organization change — every method stays a member
-//! of [`Kernel`] via the submodule's `impl Kernel { ... }` block.
+//! Every method stays a member of [`Kernel`] via this submodule's
+//! `impl Kernel { ... }` block.
 //!
 //! Mount-related responsibilities split across three layers:
 //!
@@ -33,8 +31,8 @@ impl Kernel {
     /// federation mounts that replayed before the root mount landed.
     ///
     /// Visibility: ``pub(crate)`` — ``DLC::mount`` is the sole intended
-    /// caller (R20.5). Python-driven mounts flow ``sys_setattr(DT_MOUNT)
-    /// → DLC::mount → add_mount``; bypassing DLC skips the metastore
+    /// caller. Python-driven mounts flow ``sys_setattr(DT_MOUNT) →
+    /// DLC::mount → add_mount``; bypassing DLC skips the metastore
     /// DT_MOUNT write + dcache seed + mount-info bookkeeping.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn add_mount(
@@ -54,7 +52,8 @@ impl Kernel {
             let canonical = canonicalize(mount_point, zone_id);
             self.vfs_router.install_metastore(&canonical, ms);
         }
-        // Boot-order fix: on restart, `reconcile_mounts_from_zones` runs
+        // Boot-order fix: on restart,
+        // `RaftDistributedCoordinator::replay_existing_mounts` runs
         // before Python mounts root, so every federation mount it
         // replays gets `backend=None`. Once root lands with its CAS
         // backend, propagate it back into those stranded federation
@@ -71,13 +70,12 @@ impl Kernel {
                 }
             }
         }
-        // Phase H of the rust-workspace restructure: the federation
-        // distributed-lock install moved to the trait surface
-        // (`FederationProvider::locks_for_zone`).  RaftFederationProvider
-        // — installed by the cdylib boot path — wires the
-        // `DistributedLocks` backend the first time a federated mount
-        // lands.  Kernel sees only `Box<dyn Any>` here so the raft
-        // edge stays inverted.
+        // Federation distributed-lock install lives on the trait
+        // surface (`DistributedCoordinator::locks_for_zone` — §3.B.1).
+        // `RaftDistributedCoordinator`, installed by the cdylib boot
+        // path, wires the `DistributedLocks` backend the first time
+        // a federated mount lands. Kernel sees only `Box<dyn Any>`
+        // here so the raft edge stays inverted.
         let _ = raft_backend;
         Ok(())
     }

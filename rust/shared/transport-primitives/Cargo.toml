@@ -1,0 +1,31 @@
+[package]
+name = "transport-primitives"
+version = "0.1.0"
+edition = "2021"
+description = "Shared gRPC transport primitives for Nexus crates — TLS, pool, addressing, TOFU trust store, PeerBlobClient trait"
+
+[features]
+default = []
+python = ["dep:pyo3"]
+
+[dependencies]
+tonic = { workspace = true }
+tokio = { version = "1", features = ["rt", "net", "sync", "time"] }
+parking_lot = "0.12"
+dashmap = "6.1"
+thiserror = "2"
+tracing = "0.1"
+sha2 = "0.10"
+# TOFU trust store dependencies (peer zone CA cert pinning, JSONL on-disk format).
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+time = { version = "0.3", features = ["parsing", "formatting"] }
+pem = "3"
+base64 = "0.22"
+# `python` feature enables pyo3 bindings for PyTofuTrustStore / PyTrustedZone.
+pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+
+[dev-dependencies]
+# TOFU tests generate self-signed certs and write to tempdirs.
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+tempfile = "3"

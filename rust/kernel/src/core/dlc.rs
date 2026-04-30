@@ -52,7 +52,7 @@ impl DriverLifecycleCoordinator {
     /// - `backend` — optional Rust backend (None = Python-side backend)
     /// - `metastore` — optional per-mount metastore (ZoneMetaStore or LocalMetaStore)
     /// - `raft_backend` — opaque raft handle for federation DI; downcast by
-    ///   the `RaftFederationProvider` impl when wiring distributed locks.
+    ///   the `RaftDistributedCoordinator` impl when wiring distributed locks.
     #[allow(clippy::too_many_arguments)]
     pub fn mount(
         &self,
@@ -101,10 +101,9 @@ impl DriverLifecycleCoordinator {
             });
         }
 
-        // R20.6: apply-side dcache coherence (the per-zone invalidate
-        // callback that fires on every committed metadata mutation) is
-        // no longer wired here — it's installed by the
-        // ``sys_setattr(DT_MOUNT)`` dispatcher via
+        // Apply-side dcache coherence (the per-zone invalidate callback
+        // that fires on every committed metadata mutation) is installed
+        // by the ``sys_setattr(DT_MOUNT)`` dispatcher via
         // ``Kernel::install_federation_dcache_coherence`` AFTER this
         // mount() returns. DLC stays federation-unaware; the install
         // sees only kernel primitives (dcache handle + metastore Arc

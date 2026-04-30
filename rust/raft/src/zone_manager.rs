@@ -1,14 +1,8 @@
 //! Pure-Rust `ZoneManager` — multi-zone raft registry owner.
 //!
-//! Extracted from `PyZoneManager` (pyo3_bindings.rs) in R20.18.1 so the
-//! kernel crate can own an `Arc<ZoneManager>` internally, reading env
-//! vars at `Kernel::new()` time to bootstrap federation without any
-//! PyO3 seam.
-//!
-//! Per v20.10 boundary rule: `ZoneManager` is kernel-internal and MUST
-//! NOT be exposed to Python. The `PyZoneManager` wrapper in
-//! pyo3_bindings.rs is transitional — R20.18.6 deletes it after Python
-//! callers are cut over to syscalls in R20.18.5.
+//! Kernel-internal: the kernel crate owns an `Arc<ZoneManager>` and
+//! reads env vars at `Kernel::new()` time to bootstrap federation
+//! without any PyO3 seam. Never exposed to Python.
 
 #![cfg(all(feature = "grpc", has_protos))]
 
@@ -186,17 +180,17 @@ pub struct ZoneManager {
     shutdown_tx: tokio::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     node_id: u64,
     use_tls: bool,
-    /// R20.18.3: remembered peer list (the `peers` arg from construction),
-    /// in `id@host:port` form. Used when `get_or_create_zone` auto-creates
-    /// a zone during `sys_setattr(DT_MOUNT)` — every zone in a federation
-    /// shares the same raft peer topology, so the peer list is cluster-
-    /// wide not per-zone.
+    /// Remembered peer list (the `peers` arg from construction), in
+    /// `id@host:port` form. Used when `get_or_create_zone` auto-creates
+    /// a zone during `sys_setattr(DT_MOUNT)` — every zone in a
+    /// federation shares the same raft peer topology, so the peer
+    /// list is cluster-wide, not per-zone.
     default_peers: Vec<String>,
-    /// R20.18.7: late-bindable slot the kernel populates with a
-    /// `BlobFetcher` once its root mount backend is ready. Shared with
-    /// the gRPC server so `ZoneApiService::read_blob` serves once the
-    /// kernel installs an impl. Stays empty on slim / no-federation
-    /// runtimes (the RPC is still advertised but returns `NotFound`).
+    /// Late-bindable slot the kernel populates with a `BlobFetcher`
+    /// once its root mount backend is ready. Shared with the gRPC
+    /// server so `ZoneApiService::read_blob` serves once the kernel
+    /// installs an impl. Stays empty on slim / no-federation runtimes
+    /// (the RPC is still advertised but returns `NotFound`).
     blob_fetcher_slot: crate::blob_fetcher::BlobFetcherSlot,
     /// Static topology mounts staged by `bootstrap_static`, drained
     /// incrementally by `apply_topology` as parent + target zones'
@@ -380,27 +374,27 @@ impl ZoneManager {
         }))
     }
 
-    /// R20.18.7: hand the shared `BlobFetcher` slot back to the kernel
-    /// so it can install a concrete fetcher once its root mount backend
-    /// is wired. Clone-cheap (just an `Arc`).
+    /// Hand the shared `BlobFetcher` slot back to the kernel so it
+    /// can install a concrete fetcher once its root mount backend is
+    /// wired. Clone-cheap (just an `Arc`).
     pub fn blob_fetcher_slot(&self) -> crate::blob_fetcher::BlobFetcherSlot {
         self.blob_fetcher_slot.clone()
     }
 
-    /// R20.18.3: cluster-wide peer list remembered from construction,
-    /// in `id@host:port` form. Used by `sys_setattr(DT_MOUNT)`'s
+    /// Cluster-wide peer list remembered from construction, in
+    /// `id@host:port` form. Used by `sys_setattr(DT_MOUNT)`'s
     /// leader-side create-on-mount path so zone auto-creation picks
     /// up the federation's peer topology without re-parsing env vars.
     pub fn default_peers(&self) -> &[String] {
         &self.default_peers
     }
 
-    /// R20.18.3: get an existing zone handle, or create one with the
-    /// remembered `default_peers()` and return a handle to it.
-    /// Called from `Kernel::sys_setattr(DT_MOUNT)` leader path so the
-    /// caller doesn't have to specify peers (same federation = same
-    /// peers). Idempotent: subsequent calls for an existing zone
-    /// skip the raft ConfState bootstrap and return the cached node.
+    /// Get an existing zone handle, or create one with the remembered
+    /// `default_peers()` and return a handle to it. Called from
+    /// `Kernel::sys_setattr(DT_MOUNT)` leader path so the caller
+    /// doesn't have to specify peers (same federation = same peers).
+    /// Idempotent: subsequent calls for an existing zone skip the
+    /// raft ConfState bootstrap and return the cached node.
     pub fn get_or_create_zone(&self, zone_id: &str) -> Result<Arc<ZoneHandle>> {
         if let Some(h) = self.get_zone(zone_id) {
             return Ok(h);
@@ -558,11 +552,12 @@ impl ZoneManager {
     ///          match against already-applied mounts (nested mount
     ///          handling: e.g. `/corp/eng` is owned by `corp`, not
     ///          root).
-    ///        * Phase A: write DT_DIR + DT_MOUNT in the parent zone.
-    ///          Skipped if a DT_MOUNT to the same target is already
-    ///          present (idempotency).
-    ///        * Phase B: bump the target zone's `i_links_count` to
-    ///          reflect every pending mount referencing it.
+    ///        * Step 1 — DT_MOUNT write: write DT_DIR + DT_MOUNT in
+    ///          the parent zone. Skipped if a DT_MOUNT to the same
+    ///          target is already present (idempotency).
+    ///        * Step 2 — link bump: bump the target zone's
+    ///          `i_links_count` to reflect every pending mount
+    ///          referencing it.
     ///   3. Per-mount errors leave that mount in `pending_mounts` for
     ///      the next call. Only `Ok(true)` indicates full convergence.
     pub fn apply_topology(&self, root_zone_id: &str) -> Result<bool> {
@@ -607,10 +602,10 @@ impl ZoneManager {
                 }
             }
 
-            // Phase A: DT_MOUNT in parent zone.
+            // Step 1: DT_MOUNT in parent zone.
             if let Err(err) = self.write_mount_entry(&parent_zone, &local_path, target_zone) {
                 tracing::debug!(
-                    "Phase A deferred for {} (parent={} target={}): {}",
+                    "DT_MOUNT write deferred for {} (parent={} target={}): {}",
                     global_path,
                     parent_zone,
                     target_zone,
@@ -618,16 +613,16 @@ impl ZoneManager {
                 );
                 remaining.insert(global_path.clone(), target_zone.clone());
                 // Still treat as active so deeper mounts route correctly
-                // once Phase A lands on a later tick.
+                // once the DT_MOUNT write lands on a later tick.
                 active.insert(global_path.clone(), target_zone.clone());
                 continue;
             }
 
-            // Phase B: ensure target zone's i_links_count >= expected.
+            // Step 2: ensure target zone's i_links_count >= expected.
             let want = expected.get(target_zone).copied().unwrap_or(0);
             if let Err(err) = self.ensure_links_count(target_zone, want) {
                 tracing::debug!(
-                    "Phase B deferred for {} (target={}): {}",
+                    "link-count bump deferred for {} (target={}): {}",
                     global_path,
                     target_zone,
                     err
@@ -1119,7 +1114,7 @@ impl ZoneManager {
         Ok(copied)
     }
 
-    // ── Shared-zone registry (R20.17a peer discovery) ─────────────────
+    // ── Shared-zone registry (peer discovery) ────────────────────────
     //
     // SSOT for federation share metadata lives in the root zone's raft
     // state machine, keyed under `SHARE_REGISTRY_PREFIX + origin_path`.

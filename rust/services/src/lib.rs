@@ -1,4 +1,4 @@
-//! `services` — kernel-adjacent service-tier impls (Phase 3 parallel-layers crate).
+//! `services` — kernel-adjacent service-tier impls (parallel-layers crate).
 //!
 //! Per `docs/architecture/KERNEL-ARCHITECTURE.md` §1, services sit
 //! parallel to the kernel: they consume kernel primitives (syscalls,
@@ -18,7 +18,7 @@
 //!   audit/           — AuditHook (NativeInterceptHook) + factory
 //!   managed_agent/   — ManagedAgentService (mailbox + workspace hooks
 //!                      plus session lifecycle for AgentKind::MANAGED)
-//!   permission/      — PermissionHook scaffolding (§11 Phase 11; dead today)
+//!   permission/      — PermissionHook scaffolding (§11; dead today)
 //!   python/          — `#[cfg(feature = "python")]` PyO3 sub-module
 //! ```
 //!
@@ -53,17 +53,15 @@ pub mod audit;
 // teaching hook, and the `start_session_v1` / `cancel_v1` /
 // `get_session_v1` lifecycle for `AgentKind::MANAGED` agents.
 pub mod managed_agent;
-// `tasks` was previously a standalone `_nexus_tasks.so` cdylib.  Phase
-// 3 restructure plan #6 folded it in here so the runtime ships a
-// single Python wheel; `services::python::register` exposes the
-// PyTaskEngine / PyTaskRecord / PyQueueStats pyclasses.
+// `tasks` lives in this crate so the runtime ships a single Python
+// wheel; `services::python::register` exposes the PyTaskEngine /
+// PyTaskRecord / PyQueueStats pyclasses.
 #[cfg(feature = "python")]
 pub mod tasks;
 // `permission` is gated behind the `python` feature because its only
 // caller path is `Python::attach(...)` → `PermissionChecker.check(...)`
 // (the slow path).  Pure-Rust builds (e.g. WASM, raft-witness) drop it.
-// §11 Phase 11 will wire up the kernel registration; today this is
-// scaffolding only.
+// Kernel registration of §11 PermissionHook is scaffolded here only.
 #[cfg(feature = "python")]
 pub mod permission;
 

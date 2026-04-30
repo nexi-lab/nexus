@@ -47,11 +47,11 @@ COPY proto/ ./proto/
 # linked against.  Everything else is stubbed below.
 COPY rust/raft/ ./rust/raft/
 COPY rust/kernel/ ./rust/kernel/
-COPY rust/lib/ ./rust/lib/
+COPY rust/shared/lib/ ./rust/shared/lib/
 COPY rust/transport/ ./rust/transport/
 COPY rust/contracts/ ./rust/contracts/
-# Copy transport-primitives — raft depends on it directly (Phase 4 split).
-COPY rust/transport-primitives/ ./rust/transport-primitives/
+# Copy transport-primitives — raft depends on it directly.
+COPY rust/shared/transport-primitives/ ./rust/shared/transport-primitives/
 # Stub out workspace members the witness binary does not depend on.
 # nexus-cdylib + cluster + services + tasks + backends only matter at
 # the cdylib / cluster-binary boundary; the slim witness binary links
@@ -59,7 +59,7 @@ COPY rust/transport-primitives/ ./rust/transport-primitives/
 # primitives + transport + contracts already copied above).  Empty
 # ``lib.rs`` keeps the workspace manifest resolvable without dragging
 # in the heavier pyo3 / tokio surface those crates carry.
-RUN for d in services tasks backends nexus-cdylib; do \
+RUN for d in services backends nexus-cdylib rpc; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \

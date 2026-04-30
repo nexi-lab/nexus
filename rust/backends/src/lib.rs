@@ -1,9 +1,9 @@
-//! `backends` — ObjectStore driver impls (Phase 2 parallel-layers crate).
+//! `backends` — ObjectStore driver impls (driver-layer crate).
 //!
 //! Per `docs/architecture/KERNEL-ARCHITECTURE.md` §1 / §3 the driver
 //! layer sits parallel to the kernel: it implements
 //! `kernel::abc::object_store::ObjectStore` (and where applicable
-//! `kernel::hal::llm_streaming::LlmStreamingBackend`) without
+//! `kernel::llm_streaming::LlmStreamingBackend`) without
 //! adding new kernel surface. Concrete backends compose an *addressing*
 //! strategy (CAS, path) with a *transport* (local fs, S3, GCS, HTTP API).
 //!
@@ -28,18 +28,18 @@
 //!     blob_pack/          — BlobPackEngine + BlobPackIndex
 //!                           (Volume rename from kernel::volume_*)
 //!   python/               — `#[cfg(feature = "python")]` PyO3 sub-module
-//!     factory.rs          — `DefaultBackendFactory` impl (the 17-way
-//!                           backend-type dispatch that PyKernel.sys_setattr
-//!                           used to do inline)
+//!     factory.rs          — `DefaultObjectStoreProvider` impl (the
+//!                           17-way backend-type dispatch that
+//!                           `PyKernel.sys_setattr` used to do inline)
 //! ```
 //!
-//! Direction: `backends -> kernel` (backends impls `kernel::abc::*`
-//! traits and consumes `Kernel`'s in-tree Rust API surface).  Kernel
-//! does **not** depend on backends — Phase 2's factory pattern
-//! (`kernel::hal::backend_factory::BackendFactory`) is the cycle break:
-//! kernel holds an `Arc<dyn BackendFactory>` set at cdylib boot, and
-//! `sys_setattr`'s 17-way construction switch lives here in
-//! `backends::python::factory` instead of in the kernel.
+//! Direction: `backends -> kernel`. Backends impls `kernel::abc::*`
+//! traits and consumes `Kernel`'s in-tree Rust API surface; kernel
+//! reaches concrete backends through the §3.B.2
+//! `kernel::hal::object_store_provider::ObjectStoreProvider` trait.
+//! Kernel holds an `Arc<dyn ObjectStoreProvider>` set at cdylib boot,
+//! and `sys_setattr`'s 17-way construction switch lives in
+//! `backends::python::factory`.
 
 pub mod addressing;
 pub mod storage;

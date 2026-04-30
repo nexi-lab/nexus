@@ -1,16 +1,12 @@
 //! Advisory lock syscalls — `sys_lock`, `sys_unlock`, lock listing.
 //!
-//! Phase G of Phase 3 restructure plan extracted these methods from the
-//! monolithic `kernel.rs` into a dedicated submodule.  The methods are
-//! still members of [`Kernel`] via `impl Kernel { ... }` blocks — the
-//! split is a file-organization change, not an API change.
+//! Methods stay members of [`Kernel`] via `impl Kernel { ... }` blocks.
 //!
-//! Phase H of the same plan moved the federation distributed-lock
-//! install (`install_federation_locks` — formerly here) into the raft
-//! crate's `RaftFederationProvider` impl, where it can name
-//! `nexus_raft::federation::DistributedLocks` directly.  Kernel-side
-//! callers reach the install through the `FederationProvider` trait
-//! dispatch.
+//! The federation distributed-lock install lives on the raft crate's
+//! `RaftDistributedCoordinator` impl, where it can name
+//! `nexus_raft::federation::DistributedLocks` directly. Kernel-side
+//! callers reach the install through the `DistributedCoordinator`
+//! trait dispatch (§3.B.1).
 
 use super::{Kernel, KernelError};
 

@@ -2,21 +2,18 @@
 //!
 //! Sits above the raft ``ZoneManager`` as an orchestration layer:
 //!
-//! - [`tofu::TofuTrustStore`] — SSH-style TOFU trust store for peer
-//!   zone CA fingerprints.
+//! - [`distributed_locks::DistributedLocks`] — Raft-replicated
+//!   distributed-lock backend installed through
+//!   `DistributedCoordinator::locks_for_zone`.
 //! - [`topology`] — env-var parsers for static Day-1 cluster topology
 //!   (consumed by the cluster binary's bootstrap_static / apply_topology
 //!   loop).
-//! - (R16.5b — pending) gRPC client helpers for peer discovery
-//!   (VFS sys_stat) and membership requests (ZoneApiService.JoinZone).
-//! - (R16.5c — pending) ``NexusFederation`` orchestrator composing the
-//!   above with the ``ZoneManager`` for share() / join() flows.
+//!
+//! TOFU trust store lives in `transport-primitives` (shared across
+//! raft + rpc) — re-exported from the workspace crate, not here.
 
 pub mod distributed_locks;
 pub mod topology;
-
-#[cfg(feature = "grpc")]
-pub mod tofu;
 
 pub use distributed_locks::DistributedLocks;
 pub use topology::{
@@ -24,5 +21,8 @@ pub use topology::{
     ENV_FEDERATION_ZONES,
 };
 
+// TOFU trust store re-exports from the shared `transport-primitives`
+// crate so existing `nexus_raft::federation::TofuTrustStore` callers
+// keep working through the move.
 #[cfg(feature = "grpc")]
-pub use tofu::{TofuError, TofuResult, TofuTrustStore, TrustedZone};
+pub use transport_primitives::{TofuError, TofuResult, TofuTrustStore, TrustedZone};

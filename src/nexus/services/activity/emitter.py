@@ -8,11 +8,12 @@ before lifespan startup is a safe no-op.
 from __future__ import annotations
 
 import threading
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from nexus.services.activity.events import EventKind, Result
 
 
+@runtime_checkable
 class Emitter(Protocol):
     """Contract for emitter implementations.
 
@@ -39,7 +40,20 @@ class Emitter(Protocol):
 class NoopEmitter:
     """Discards every event. Default emitter pre-startup and when disabled."""
 
-    def emit(self, **_: Any) -> None:
+    def emit(
+        self,
+        *,
+        kind: EventKind,
+        result: Result,
+        actor_token_hash: str | None = None,
+        actor_agent: str | None = None,
+        actor_user: str | None = None,
+        subject_zone: str | None = None,
+        subject_extra: dict[str, Any] | None = None,
+        latency_ms: int | None = None,
+        trace_id: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
         return None
 
 

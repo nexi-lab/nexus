@@ -414,13 +414,66 @@ class ApprovalService:
         except Exception:
             logger.warning("bad approvals_decided payload: %s", payload)
             return
+
+        # F2 (Issue #3790): cross-worker SESSION fan-out. Before resolving
+        # the local dispatcher (which drops the session_ids of any
+        # in-process waiters), snapshot every waiter's session_id so we
+        # can write idempotent ``session_allow`` rows on this worker too.
+        # The deciding worker already wrote rows for ITS own local
+        # waiters (in ``decide``); without this branch, any caller who
+        # registered on a DIFFERENT worker would be unblocked by the
+        # NOTIFY but never have their session_allow row persisted —
+        # subsequent same-session calls would hit a fresh PENDING row
+        # instead of short-circuiting.
+        local_session_ids = self._dispatcher.session_ids_for(rid)
+
+        # Resolve local futures first (latency-sensitive — same shape as
+        # before; the session_allow inserts are best-effort followups).
         self._dispatcher.resolve(rid, decision)
-        # zone is not on the payload; look it up if we have it.
+
+        # zone is not on the payload; look it up so we can broadcast
+        # the WatchEvent with the right zone AND so the SESSION fan-out
+        # below has the kind/subject/zone tuple.
         row = await self._repo.get(rid)
         zone = row.zone_id if row else ""
         self._broadcast(
             WatchEvent(type="decided", request_id=rid, zone_id=zone, decision=decision.value)
         )
+
+        # F2: only fan out for APPROVED + SESSION scope. The repo's
+        # ``insert_session_allow`` is keyed on the partial unique index
+        # ``uq_approval_session_allow`` so duplicates from the
+        # deciding-worker insert (same row) are silently skipped.
+        if (
+            decision is Decision.APPROVED
+            and row is not None
+            and row.decision_scope is DecisionScope.SESSION
+            and local_session_ids
+        ):
+            decided_at = row.decided_at or datetime.now(UTC)
+            decided_by = row.decided_by or "system"
+            for sid in local_session_ids:
+                try:
+                    await self._repo.insert_session_allow(
+                        session_id=sid,
+                        zone_id=row.zone_id,
+                        kind=row.kind,
+                        subject=row.subject,
+                        decided_by=decided_by,
+                        decided_at=decided_at,
+                        request_id=row.id,
+                    )
+                except Exception:
+                    # Best-effort: a failure here only means the
+                    # session_allow short-circuit won't fire on the
+                    # *next* same-session call from this caller. The
+                    # current waiter is already resolved.
+                    logger.warning(
+                        "approvals: cross-worker session_allow insert failed rid=%s sid=%s",
+                        rid,
+                        sid,
+                        exc_info=True,
+                    )
 
     async def _on_new_payload(self, payload: str) -> None:
         try:

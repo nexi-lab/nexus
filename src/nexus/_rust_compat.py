@@ -226,3 +226,7 @@ extract_zone_id = _get("extract_zone_id")
 grep_bulk = _get("grep_bulk")
 grep_files_mmap = _get("grep_files_mmap")
 glob_match_bulk = _get("glob_match_bulk")
+
+# Prefix / bitmap helpers (Issue #3951)
+any_path_starts_with = _get("any_path_starts_with")
+batch_prefix_check = _get("batch_prefix_check")

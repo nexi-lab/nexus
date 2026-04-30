@@ -28,7 +28,9 @@ classifiers = [
 # monorepo package; nexus-fs is the slim standalone subset. A future release
 # will formalize the dependency direction (nexus-ai-fs depends on nexus-fs).
 
-# ~17 base dependencies — slim by design (httpx enables universal OAuth)
+# ~12 base dependencies — slim contract: kernel + lib + auth bricks + search primitives.
+# nexus-runtime is the Rust kernel wheel; required for sys_*, metastore, and rust_compat
+# accelerators. Slim does NOT mean "no Rust" — it means "no server / raft / factory".
 dependencies = [
     "pydantic[email]>=2.0",
     "click>=8.0",
@@ -41,6 +43,9 @@ dependencies = [
     "platformdirs>=4.0",
     "cryptography>=41.0",
     "httpx>=0.28",
+    # Rust kernel (PyKernel + Rust-accelerated primitives). Required at runtime;
+    # NexusFS.sys_* and metastore both go through nexus_runtime.PyKernel.
+    "nexus-runtime>=0.10,<0.11",
 ]
 
 [project.optional-dependencies]
@@ -142,6 +147,17 @@ exclude = [
     # nexus/config/ directory (keep only config.py as a sibling)
     "**/nexus/config/**",
 ]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Carve specific bricks subtrees back into the slim wheel.
+# The broad `**/bricks/**` exclude above keeps server/raft/sync/etc. off slim,
+# but the auth bricks (oauth/factory/profile/credential_pool/classifiers) and
+# the search primitives (glob_helpers/trigram_fast) are needed by connectors
+# that ship in the slim wheel. force-include overrides exclude for these paths.
+"../../src/nexus/bricks/__init__.py" = "nexus/bricks/__init__.py"
+"../../src/nexus/bricks/search/__init__.py" = "nexus/bricks/search/__init__.py"
+"../../src/nexus/bricks/search/primitives" = "nexus/bricks/search/primitives"
+"../../src/nexus/bricks/auth" = "nexus/bricks/auth"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

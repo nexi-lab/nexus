@@ -487,6 +487,7 @@ class FederationMountParams:
     parent_zone: str
     path: str
     target_zone: str
+    source: str | None = None
 
 
 @dataclass

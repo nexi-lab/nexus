@@ -339,6 +339,7 @@ class FederationRPCService(FederationRPCMixin):
         parent_zone: str,
         path: str,
         target_zone: str,
+        source: str | None = None,
     ) -> dict[str, Any]:
         """Mount ``target_zone`` at ``path`` (global VFS) inside
         ``parent_zone`` via ``sys_setattr(DT_MOUNT)`` — the standard
@@ -346,6 +347,22 @@ class FederationRPCService(FederationRPCMixin):
         auto-creates the target zone if it does not yet exist on this
         node and registers the apply-cb so peers see the mount via
         raft.
+
+        Mount-direction model (NFS / sshfs convention) selects creator
+        vs joiner semantics:
+
+        * ``source=None``: ``mount /local-path remote-zone-id`` —
+          caller contributes a fresh 1-voter zone (creator semantics).
+          Kernel's auto-create branch instantiates the raft group
+          locally; subsequent peers join via the source-given path.
+        * ``source="grpc://leader-addr:2126"``: ``mount
+          remote-addr:/zone-id /local-path`` — caller picks up remote
+          metadata via the joiner-side path: kernel sets up a local
+          raft replica with ``skip_bootstrap=true``, sends the
+          ``JoinZone`` RPC to ``source``, leader proposes
+          ConfChangeV2 AddNode + pushes a snapshot.  Bridges the
+          dynamic-bootstrap multi-node onboarding workflow into the
+          standard mount API.
         """
         # DT_MOUNT entry_type=2 (see rust/kernel/src/core/dcache.rs).
         # Backend params unused for federation mounts — the kernel
@@ -355,12 +372,14 @@ class FederationRPCService(FederationRPCMixin):
             entry_type=2,
             backend_name="federation",
             zone_id=target_zone,
+            source=source,
         )
         self._register_mount_in_python_dlc(path, parent_zone)
         return {
             "parent_zone": parent_zone,
             "path": path,
             "target_zone": target_zone,
+            "source": source,
         }
 
     @rpc_expose(admin_only=True)

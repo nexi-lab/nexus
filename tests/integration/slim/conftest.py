@@ -99,7 +99,13 @@ def slim_venv(
             check=True,
         )
 
-    subprocess.run([str(py), "-m", "pip", "install", str(slim_wheel)], check=True)
+    # Install slim wheel with the connector extras that the import smoke tests
+    # need. Each connector extra pulls the Python deps (e.g. requests-oauthlib
+    # for [x], google-* for [gdrive,gmail,gcalendar], slack-sdk for [slack]).
+    subprocess.run(
+        [str(py), "-m", "pip", "install", f"{slim_wheel}[x,gdrive,gmail,gcalendar,slack]"],
+        check=True,
+    )
     return venv_dir
 
 

@@ -290,6 +290,22 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Auth keys routes: %s", e)
 
+    # ---- MCP mount management router (Issue #3790) ----
+    try:
+        from nexus.server.api.v2.routers.mcp import router as mcp_router
+
+        registry.add(RouterEntry(router=mcp_router, name="mcp", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import MCP mount routes: %s", e)
+
+    # ---- ReBAC tuple-write router (Issue #3790 follow-up) ----
+    try:
+        from nexus.server.api.v2.routers.rebac import router as rebac_router
+
+        registry.add(RouterEntry(router=rebac_router, name="rebac", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import ReBAC tuple routes: %s", e)
+
     # ---- Eviction router (Issue #2170) ----
     try:
         from nexus.server.api.v2.routers.eviction import router as eviction_router

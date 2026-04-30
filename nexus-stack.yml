@@ -163,6 +163,15 @@ services:
       NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
       NEXUS_GRPC_BIND_ALL: "true"  # Required: Docker port-forwarding needs 0.0.0.0
       NEXUS_GRPC_TLS: "${NEXUS_GRPC_TLS:-false}"  # Disable mTLS for standalone Docker (Issue #3192)
+      # Approvals brick (Issue #3790). Off by default; the lifespan starts the
+      # Python gRPC server only when NEXUS_APPROVALS_ENABLED=1 AND
+      # NEXUS_APPROVALS_ADMIN_TOKEN is set. NEXUS_APPROVALS_GRPC_BIND_ALL
+      # defaults to 1 inside the container so docker port-forward can reach
+      # the bound socket (loopback-only would be unreachable from the host).
+      NEXUS_APPROVALS_ENABLED: "${NEXUS_APPROVALS_ENABLED:-false}"
+      NEXUS_APPROVALS_ADMIN_TOKEN: "${NEXUS_APPROVALS_ADMIN_TOKEN:-}"
+      NEXUS_APPROVALS_GRPC_PORT: "${NEXUS_APPROVALS_GRPC_PORT:-2029}"
+      NEXUS_APPROVALS_GRPC_BIND_ALL: "${NEXUS_APPROVALS_GRPC_BIND_ALL:-1}"
       # Federation/Raft — forwarded from host only when set (null-value form skips unset vars).
       # Empty strings override Rust fallbacks, so these are absent in single-node mode.
       # Single-node: NEXUS_PEERS=127.0.0.1:2126 NEXUS_HOSTNAME=127.0.0.1 nexus up
@@ -196,6 +205,9 @@ services:
       - "${NEXUS_PORT:-2026}:2026"
       # gRPC: host port = container port (server binds to NEXUS_GRPC_PORT)
       - "${NEXUS_GRPC_PORT:-2028}:${NEXUS_GRPC_PORT:-2028}"
+      # Approvals gRPC (Issue #3790). Disabled at the brick level when
+      # NEXUS_APPROVALS_ENABLED=false — port forward is harmless.
+      - "${NEXUS_APPROVALS_GRPC_PORT:-2029}:${NEXUS_APPROVALS_GRPC_PORT:-2029}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
       interval: 10s

@@ -203,6 +203,53 @@ DEFAULT_TRAJECTORY_NAMESPACE = NamespaceConfig(
 )
 
 # ---------------------------------------------------------------------------
+# Approvals namespace (Issue #3790)
+#
+# Drives ReBACCapabilityAuth on the ApprovalsV1 gRPC servicer. The brick
+# uses per-zone ReBAC objects ``("approvals", <zone_id>)`` so capability
+# grants are strictly scoped to a single zone (Issue #3790, F1) — a
+# subject granted ``viewer`` on ``("approvals", "z1")`` can read
+# approvals in zone ``z1`` but NOT zone ``z2``, even with the same
+# token. Operators (or auth_keys.py grants) write any of the standard
+# ``viewer``/``editor``/``owner`` direct relations against
+# ``("approvals", <zone_id>)``; the relation→permission expansion below
+# matches the three capability strings ``ApprovalsServicer`` checks today:
+#
+#   approvals:read    -> ReBAC ``read``   (viewer | editor | owner)
+#   approvals:decide  -> ReBAC ``write``  (editor | owner)
+#   approvals:request -> ReBAC ``create`` (editor | owner)
+#
+# Without this namespace registered the manager has no way to expand
+# ``viewer -> read``: ``rebac_check`` falls back to looking for a literal
+# ``read`` direct tuple, which never exists, and every non-admin call hits
+# PERMISSION_DENIED even with a valid grant.
+# ---------------------------------------------------------------------------
+DEFAULT_APPROVALS_NAMESPACE = NamespaceConfig(
+    namespace_id=str(uuid.uuid5(_NEXUS_NS, "approvals")),
+    object_type="approvals",
+    config={
+        "relations": {
+            # Direct relations granted explicitly via
+            # POST /api/v2/rebac/tuples (or auth_keys.py grants).
+            "viewer": {},
+            "editor": {},
+            "owner": {},
+        },
+        # Capability-string mapping consumed by
+        # nexus.bricks.approvals.grpc_auth._CAPABILITY_TO_PERMISSION:
+        #   approvals:read    -> "read"
+        #   approvals:decide  -> "write"
+        #   approvals:request -> "create"
+        "permissions": {
+            "read": ["viewer", "editor", "owner"],
+            "write": ["editor", "owner"],
+            "create": ["editor", "owner"],
+        },
+    },
+)
+
+
+# ---------------------------------------------------------------------------
 # v0.5.0 Skills System: Skill namespace
 # ---------------------------------------------------------------------------
 DEFAULT_SKILL_NAMESPACE = NamespaceConfig(

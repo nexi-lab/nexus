@@ -18,9 +18,11 @@ from nexus.services.activity.events import (
     Result,
     Subject,
 )
+from nexus.services.activity.worker import ActivityWorker
 
 __all__ = [
     "ActivityEvent",
+    "ActivityWorker",
     "Actor",
     "Emitter",
     "EventKind",

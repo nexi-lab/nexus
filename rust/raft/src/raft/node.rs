@@ -1203,11 +1203,13 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
         use raft::eraftpb::{ConfChangeSingle, ConfChangeV2};
 
-        let mut v2 = ConfChangeV2::default();
         // Address travels in the V2 envelope's `context` field; the
         // apply path decodes it as UTF-8 and feeds it into the peer
         // map for both removed and added entries (Remove ignores it).
-        v2.context = new_address.clone().into();
+        let mut v2 = ConfChangeV2 {
+            context: new_address.clone().into(),
+            ..Default::default()
+        };
         if old_id != 0 && old_id != new_id {
             let mut remove = ConfChangeSingle::default();
             remove.set_change_type(ConfChangeType::RemoveNode);

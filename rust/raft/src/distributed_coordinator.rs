@@ -290,18 +290,12 @@ fn read_node_incarnation(zones_dir: &str) -> Result<Option<u64>, String> {
     match std::fs::read(&path) {
         Ok(bytes) => {
             let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {
-                format!(
-                    "node incarnation file '{}' is not 8 bytes",
-                    path.display()
-                )
+                format!("node incarnation file '{}' is not 8 bytes", path.display())
             })?;
             Ok(Some(u64::from_be_bytes(arr)))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!(
-            "read node incarnation '{}': {e}",
-            path.display(),
-        )),
+        Err(e) => Err(format!("read node incarnation '{}': {e}", path.display(),)),
     }
 }
 
@@ -320,24 +314,12 @@ fn write_node_incarnation(zones_dir: &str, incarnation: u64) -> Result<(), Strin
     let final_path = dir.join(NODE_INCARNATION_FILE);
     let tmp_path = dir.join(format!("{NODE_INCARNATION_FILE}.tmp"));
     {
-        let mut tmp = std::fs::File::create(&tmp_path).map_err(|e| {
-            format!(
-                "create tmp incarnation file '{}': {e}",
-                tmp_path.display(),
-            )
-        })?;
-        tmp.write_all(&incarnation.to_be_bytes()).map_err(|e| {
-            format!(
-                "write tmp incarnation file '{}': {e}",
-                tmp_path.display(),
-            )
-        })?;
-        tmp.sync_all().map_err(|e| {
-            format!(
-                "sync tmp incarnation file '{}': {e}",
-                tmp_path.display(),
-            )
-        })?;
+        let mut tmp = std::fs::File::create(&tmp_path)
+            .map_err(|e| format!("create tmp incarnation file '{}': {e}", tmp_path.display(),))?;
+        tmp.write_all(&incarnation.to_be_bytes())
+            .map_err(|e| format!("write tmp incarnation file '{}': {e}", tmp_path.display(),))?;
+        tmp.sync_all()
+            .map_err(|e| format!("sync tmp incarnation file '{}': {e}", tmp_path.display(),))?;
     }
     std::fs::rename(&tmp_path, &final_path).map_err(|e| {
         format!(
@@ -505,13 +487,8 @@ impl RaftDistributedCoordinator {
             .thread_name("ensure-voter-membership")
             .build()
             .map_err(|e| format!("rotation runtime: {e}"))?;
-        let rotated = try_replace_voter_on_peers(
-            &rotation_runtime,
-            peers,
-            hostname,
-            new_id,
-            self_address,
-        );
+        let rotated =
+            try_replace_voter_on_peers(&rotation_runtime, peers, hostname, new_id, self_address);
         drop(rotation_runtime);
 
         // Whether we rotated or fell through to cold-start, persist
@@ -634,10 +611,7 @@ impl RaftDistributedCoordinator {
         // entries — ZoneManager re-parses internally; we just provide
         // the standard format raft expects.  Self entry will get
         // overridden by ZoneManager::with_node_id below.
-        let peers: Vec<String> = peer_addrs
-            .iter()
-            .map(|p| p.to_raft_peer_str())
-            .collect();
+        let peers: Vec<String> = peer_addrs.iter().map(|p| p.to_raft_peer_str()).collect();
 
         let tls = if tls_disabled {
             None

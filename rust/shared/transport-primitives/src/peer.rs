@@ -250,7 +250,10 @@ mod tests {
     fn test_compute_node_id_deterministic_per_input() {
         // Same inputs → same output across calls.
         for inc in [0u64, 1, 42, u64::MAX] {
-            assert_eq!(compute_node_id("nexus-1", inc), compute_node_id("nexus-1", inc));
+            assert_eq!(
+                compute_node_id("nexus-1", inc),
+                compute_node_id("nexus-1", inc)
+            );
         }
     }
 

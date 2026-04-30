@@ -442,13 +442,16 @@ class MCPMountManager:
             ):
                 raise
             # Operator approved the host via the approvals queue. Re-validate
-            # with private ranges relaxed so RFC 1918 / ULA / extra_deny hosts
-            # become reachable; metadata and loopback remain blocked.
+            # with private ranges relaxed so RFC 1918 / ULA hosts become
+            # reachable; metadata, loopback, and the operator-configured
+            # ``extra_deny_cidrs`` remain enforced. Operator approval covers
+            # "this host" only — it must not silently disable the operator's
+            # own deny list (e.g. internal service mesh CIDRs).
             try:
                 validated = validate_outbound_url(
                     mount_config.url,
                     allow_private=True,
-                    extra_deny_cidrs=(),
+                    extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
                 )
             except SSRFBlocked:
                 logger.warning(
@@ -786,11 +789,14 @@ class MCPMountManager:
             logger.warning("SSRF blocked for MCP mount %r (list_tools): %s", mount.name, exc)
             if not await self._ssrf_blocked_via_gate(mount, mount.url, "mcp_mount_list_tools"):
                 raise
+            # Preserve operator-configured ``extra_deny_cidrs`` on
+            # approval re-validation — see ``_create_sse_client`` for
+            # rationale.
             try:
                 validated = validate_outbound_url(
                     mount.url,
                     allow_private=True,
-                    extra_deny_cidrs=(),
+                    extra_deny_cidrs=ssrf_cfg.extra_deny_cidrs,
                 )
             except SSRFBlocked:
                 logger.warning(

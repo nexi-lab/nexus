@@ -179,18 +179,27 @@ async def startup_approvals(app: "FastAPI", svc: "LifespanServices") -> list[asy
     _wire_policy_gate_into_mcp(app, stack.gate)
 
     # Diag HTTP router — bearer-token-gated by NEXUS_APPROVALS_DIAG_TOKEN.
+    # SECURITY: Only register when the token is non-empty. The diag dump
+    # leaks pending-approval rows (subjects, session_ids, agent_ids,
+    # reasons, metadata) to any HTTP caller, so we refuse to register an
+    # unauthenticated dump endpoint by default. Operators that genuinely
+    # want diag access must set NEXUS_APPROVALS_DIAG_TOKEN explicitly.
     if stack.service is not None:
-        try:
-            from nexus.bricks.approvals.http_diag import register_diag_router
-
-            diag_token = os.environ.get("NEXUS_APPROVALS_DIAG_TOKEN") or None
-            register_diag_router(app, stack.service, allow_subject=diag_token)
-            logger.info(
-                "[APPROVALS] diag router registered at GET /hub/approvals/dump (auth=%s)",
-                "bearer" if diag_token else "none (LOCAL DEV ONLY)",
+        diag_token = os.environ.get("NEXUS_APPROVALS_DIAG_TOKEN") or None
+        if diag_token is None:
+            logger.warning(
+                "[APPROVALS] NEXUS_APPROVALS_DIAG_TOKEN unset — /hub/approvals/dump disabled"
             )
-        except Exception as e:
-            logger.warning("[APPROVALS] failed to register diag router: %s", e, exc_info=True)
+        else:
+            try:
+                from nexus.bricks.approvals.http_diag import register_diag_router
+
+                register_diag_router(app, stack.service, allow_subject=diag_token)
+                logger.info(
+                    "[APPROVALS] diag router registered at GET /hub/approvals/dump (auth=bearer)"
+                )
+            except Exception as e:
+                logger.warning("[APPROVALS] failed to register diag router: %s", e, exc_info=True)
 
     # Python gRPC server (separate from the Rust-native VFS server on :2028).
     # We bind a fresh `grpc.aio.Server` on `NEXUS_APPROVALS_GRPC_PORT` (default

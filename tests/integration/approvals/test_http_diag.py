@@ -30,6 +30,25 @@ async def _wait_pending(service: ApprovalService, rid: str) -> None:
     raise AssertionError(f"pending row {rid} never landed in DB")
 
 
+def test_register_diag_router_refuses_empty_token(approval_service: ApprovalService) -> None:
+    """Regression guard for #3790 follow-up security review:
+    ``register_diag_router`` must refuse ``allow_subject=None`` /
+    empty-string so the unauthenticated leak path is unreachable.
+
+    A real misconfiguration where the env-var lookup returns None is
+    cast through str here to keep register_diag_router's strict
+    signature satisfied at type-check time. The runtime ``ValueError``
+    is what we care about.
+    """
+    from typing import cast
+
+    app = FastAPI()
+    with pytest.raises(ValueError):
+        register_diag_router(app, approval_service, allow_subject=cast(str, None))
+    with pytest.raises(ValueError):
+        register_diag_router(app, approval_service, allow_subject="")
+
+
 @pytest.mark.asyncio
 async def test_diag_dump_returns_pending_rows(approval_service: ApprovalService) -> None:
     tag = _tag()

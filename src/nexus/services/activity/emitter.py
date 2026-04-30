@@ -161,6 +161,25 @@ class QueueEmitter:
             meta=meta,
         )
         try:
+            from nexus.services.activity.metrics import record_metrics
+
+            record_metrics(
+                kind=kind,
+                result=result,
+                actor_token_hash=actor_token_hash,
+                subject_zone=subject_zone,
+                subject_extra=subject_extra,
+                latency_ms=latency_ms,
+            )
+        except Exception:  # metrics must never break the hot path
+            pass
+        try:
             self._queue.put_nowait(event)
         except asyncio.QueueFull:
             self._drop_count += 1
+            try:
+                from nexus.services.activity.metrics import ACTIVITY_DROPS
+
+                ACTIVITY_DROPS.inc()
+            except Exception:
+                pass

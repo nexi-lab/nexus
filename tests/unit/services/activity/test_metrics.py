@@ -1,0 +1,85 @@
+"""Unit tests for the activity metrics catalog."""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from prometheus_client import REGISTRY
+
+from nexus.services.activity import EventKind, Result
+from nexus.services.activity.emitter import QueueEmitter
+from nexus.services.activity.metrics import (
+    ACTIVITY_DROPS,
+    APPROVALS_PENDING,
+    MCP_TOOL_CALLS,
+    POLICY_BLOCKS,
+    SEARCH_LATENCY,
+    SEARCH_REQUESTS,
+)
+
+
+def _sample(metric, **labels) -> float:
+    """Return the current value of a Prom metric for the given label set."""
+    for fam in REGISTRY.collect():
+        for s in fam.samples:
+            if s.name.startswith(metric._name) and all(
+                s.labels.get(k) == v for k, v in labels.items()
+            ):
+                return s.value
+    return 0.0
+
+
+def test_search_request_increments_counter() -> None:
+    before = _sample(SEARCH_REQUESTS, zone="eng", token_hash="x", status="ok")
+    SEARCH_REQUESTS.labels(zone="eng", token_hash="x", status="ok").inc()
+    after = _sample(SEARCH_REQUESTS, zone="eng", token_hash="x", status="ok")
+    assert after == before + 1
+
+
+def test_search_latency_observed() -> None:
+    SEARCH_LATENCY.labels(zone="eng").observe(0.05)
+
+
+def test_mcp_tool_calls_counter_present() -> None:
+    MCP_TOOL_CALLS.labels(tool="search", status="ok").inc()
+
+
+def test_policy_blocks_counter_present() -> None:
+    POLICY_BLOCKS.labels(kind="zone_access").inc()
+
+
+def test_approvals_pending_gauge_inc_dec_balanced() -> None:
+    APPROVALS_PENDING.inc()
+    APPROVALS_PENDING.dec()
+
+
+def test_activity_drops_counter_present() -> None:
+    ACTIVITY_DROPS.inc()
+
+
+@pytest.mark.asyncio
+async def test_queue_emitter_records_metrics() -> None:
+    q: asyncio.Queue = asyncio.Queue(maxsize=10)
+    emitter = QueueEmitter(queue=q)
+    before_search = _sample(SEARCH_REQUESTS, zone="eng", token_hash="abc", status="ok")
+    emitter.emit(
+        kind=EventKind.SEARCH,
+        result=Result.OK,
+        actor_token_hash="abc",
+        subject_zone="eng",
+        latency_ms=42,
+    )
+    after_search = _sample(SEARCH_REQUESTS, zone="eng", token_hash="abc", status="ok")
+    assert after_search == before_search + 1
+
+
+@pytest.mark.asyncio
+async def test_queue_emitter_drops_increment_drop_metric() -> None:
+    q: asyncio.Queue = asyncio.Queue(maxsize=1)
+    emitter = QueueEmitter(queue=q)
+    before = _sample(ACTIVITY_DROPS)
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)
+    emitter.emit(kind=EventKind.SEARCH, result=Result.OK)  # overflow → drop
+    after = _sample(ACTIVITY_DROPS)
+    assert after == before + 1

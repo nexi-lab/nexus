@@ -315,17 +315,27 @@ jobs:
           check-wheel-contents dist-nexus-fs/*.whl || echo "::warning::check-wheel-contents found issues (non-fatal)"
           pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist-nexus-fs/*.whl
 
+      - name: Download nexus-runtime artifacts (built by publish-rust)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rust-wheel-*
+          path: /tmp/nexus-runtime-artifacts
+          merge-multiple: true
+
       - name: Smoke test — install in clean environment
         run: |
           python -m venv /tmp/nexus-fs-release-test
-          # nexus-runtime is a hard dep of nexus-fs. Install it first so pip
-          # can resolve the dependency when installing the local nexus-fs wheel.
-          # publish-rust (which runs before this job) publishes nexus-runtime to
-          # the NEXUS_FAST_PYPI index; fall back to PyPI if not configured.
-          if [ -n "${{ env.NEXUS_FAST_PYPI_API_TOKEN }}" ]; then
-            /tmp/nexus-fs-release-test/bin/pip install nexus-runtime --extra-index-url https://pypi.nexus.internal/simple/ || \
-              /tmp/nexus-fs-release-test/bin/pip install nexus-runtime
+          # Install the exact nexus-runtime wheel built and ordered by publish-rust.
+          # Using the local artifact (not PyPI) proves the ordered dep is installable
+          # on this platform before nexus-fs users encounter the constraint.
+          RUNTIME_WHL=$(find /tmp/nexus-runtime-artifacts -name "nexus_runtime-*linux*manylinux*.whl" | head -1)
+          if [ -z "$RUNTIME_WHL" ]; then
+            RUNTIME_WHL=$(find /tmp/nexus-runtime-artifacts -name "nexus_runtime-*.whl" | head -1)
+          fi
+          if [ -n "$RUNTIME_WHL" ]; then
+            /tmp/nexus-fs-release-test/bin/pip install "$RUNTIME_WHL"
           else
+            echo "::warning::nexus-runtime wheel not found in artifacts; falling back to PyPI"
             /tmp/nexus-fs-release-test/bin/pip install nexus-runtime
           fi
           /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl

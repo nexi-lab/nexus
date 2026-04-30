@@ -321,16 +321,30 @@ class PermissionEnforcer:
 
             # Get accessible paths via Tiger cache public API (Issue #1565)
             # Fix(#3709): was get_accessible_paths_list (non-existent method).
-            # Issue #3951: use the tri-state status variant so a transient
+            # Issue #3951: prefer the tri-state status variant so a transient
             # resource_map orphan does not produce a hard False for prefixes
-            # whose only matching descendant was an unresolved int_id.
-            accessible_paths, fully_resolved = tiger_cache.get_accessible_paths_with_status(
-                subject_type=subject_type,
-                subject_id=subject_id,
-                permission="read",
-                resource_type="file",
-                zone_id=zone_id,
-            )
+            # whose only matching descendant was an unresolved int_id. Older
+            # cache implementations / test doubles that only implement the
+            # legacy get_accessible_paths() are treated as fully_resolved=True
+            # — they have no orphan-detection signal to surface.
+            _with_status = getattr(tiger_cache, "get_accessible_paths_with_status", None)
+            if _with_status is not None:
+                accessible_paths, fully_resolved = _with_status(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission="read",
+                    resource_type="file",
+                    zone_id=zone_id,
+                )
+            else:
+                accessible_paths = tiger_cache.get_accessible_paths(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission="read",
+                    resource_type="file",
+                    zone_id=zone_id,
+                )
+                fully_resolved = True
 
             if accessible_paths is None:
                 # Fix(#3709): Tiger cache miss must fail-closed (deny), not

@@ -37,6 +37,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_paths_with_status(tiger_cache, **kwargs):
+    """Call get_accessible_paths_with_status() if available, else fall back
+    to legacy get_accessible_paths() and assume fully_resolved=True.
+
+    Issue #3951: keeps the visibility cache compatible with older Tiger
+    cache implementations and test doubles that only expose the legacy
+    method, while still benefiting from orphan detection on the concrete
+    TigerCache.
+    """
+    with_status = getattr(tiger_cache, "get_accessible_paths_with_status", None)
+    if with_status is not None:
+        return with_status(**kwargs)
+    return tiger_cache.get_accessible_paths(**kwargs), True
+
+
 @dataclass
 class VisibilityEntry:
     """Cache entry for directory visibility."""
@@ -201,7 +216,8 @@ class DirectoryVisibilityCache:
 
         self._bitmap_computes += 1
 
-        accessible_paths, fully_resolved = self._tiger_cache.get_accessible_paths_with_status(
+        accessible_paths, fully_resolved = _resolve_paths_with_status(
+            self._tiger_cache,
             subject_type=subject_type,
             subject_id=subject_id,
             permission=permission,
@@ -262,7 +278,8 @@ class DirectoryVisibilityCache:
         if not self._tiger_cache:
             return {}
 
-        accessible_paths, fully_resolved = self._tiger_cache.get_accessible_paths_with_status(
+        accessible_paths, fully_resolved = _resolve_paths_with_status(
+            self._tiger_cache,
             subject_type=subject_type,
             subject_id=subject_id,
             permission=permission,

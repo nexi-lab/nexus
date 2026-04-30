@@ -94,7 +94,10 @@ import pytest
 
 from nexus.grpc.approvals import approvals_pb2, approvals_pb2_grpc
 
-pytestmark = pytest.mark.e2e
+# Allow up to 600s — ``nexus up --build`` rebuilds the Docker image on cold
+# CI runners, which can take 2-5 minutes before the stack is health-ready.
+# The global --timeout=120 is too tight for the first test in each class.
+pytestmark = [pytest.mark.e2e, pytest.mark.timeout(600)]
 
 
 def _tag() -> str:

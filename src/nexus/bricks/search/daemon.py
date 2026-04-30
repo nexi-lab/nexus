@@ -2264,7 +2264,7 @@ class SearchDaemon:
 
         if self._chunk_store is not None:
             for mutation in resolved:
-                if mutation.path_id != mutation.virtual_path:
+                if self._has_resolved_path_id(mutation):
                     await self._chunk_store.delete_document_chunks(mutation.path_id)
 
         if self._backend is not None:
@@ -2327,6 +2327,40 @@ class SearchDaemon:
                 result.append(p)
 
         return result
+
+    @staticmethod
+    def _has_resolved_path_id(mutation: ResolvedMutation) -> bool:
+        return bool(
+            getattr(
+                mutation,
+                "path_id_resolved",
+                mutation.path_id != mutation.virtual_path,
+            )
+        )
+
+    @staticmethod
+    def _path_lookup_candidates(zone_id: str, scoped_path: str, virtual_path: str) -> list[str]:
+        candidates: list[str] = []
+
+        def add(candidate: str) -> None:
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        add(virtual_path)
+        add(scoped_path)
+        if virtual_path.startswith("/"):
+            add(f"/zone/{zone_id}{virtual_path}")
+        return candidates
+
+    @staticmethod
+    def _build_path_lookup_values(candidates: list[str]) -> tuple[str, dict[str, str | int]]:
+        params: dict[str, str | int] = {}
+        values_parts: list[str] = []
+        for idx, candidate in enumerate(candidates):
+            params[f"candidate_{idx}"] = candidate
+            params[f"rank_{idx}"] = idx
+            values_parts.append(f"(:candidate_{idx}, :rank_{idx})")
+        return ", ".join(values_parts), params
 
     @staticmethod
     def _build_naive_chunks(content: str, chunk_size: int = 1000) -> list[ChunkRecord]:
@@ -2664,10 +2698,12 @@ class SearchDaemon:
                 # When embedding consumer is active, it owns deletes for
                 # document_chunks (Issue #3708). FTS only handles deletes
                 # when it is the sole writer.
-                if not embedding_active:
+                if not embedding_active and self._has_resolved_path_id(mutation):
                     await self._chunk_store.delete_document_chunks(mutation.path_id)
                 continue
             if mutation.content:
+                if not self._has_resolved_path_id(mutation):
+                    continue
                 # When embedding is active, skip in-scope paths — the
                 # embedding consumer writes strictly better chunks for
                 # those. Keep FTS as the writer for out-of-scope paths
@@ -2695,10 +2731,12 @@ class SearchDaemon:
             # document_chunks writer when active (Issue #3708), so it must
             # propagate DELETE ops that the FTS consumer used to handle.
             if mutation.event.op == SearchMutationOp.DELETE:
-                if self._chunk_store is not None:
+                if self._chunk_store is not None and self._has_resolved_path_id(mutation):
                     await self._chunk_store.delete_document_chunks(mutation.path_id)
                 continue
             if not mutation.content:
+                continue
+            if not self._has_resolved_path_id(mutation):
                 continue
             # Early-skip for out-of-scope paths (Issue #3698). The central
             # gate in IndexingPipeline.index_documents would also catch
@@ -2789,9 +2827,12 @@ class SearchDaemon:
             try:
                 # Strip /zone/{zone_id} prefix for DB virtual_path lookup
                 virtual_path = strip_zone_prefix(path)
+                zone_id = extract_zone_id(path)
+                lookup_candidates = self._path_lookup_candidates(zone_id, path, virtual_path)
 
                 # Read file content via file reader or database
                 content: str | None = None
+                content_path_id: str | None = None
                 if self._file_reader:
                     import contextlib
 
@@ -2806,23 +2847,31 @@ class SearchDaemon:
                 # Fallback: read from content_cache table
                 if not content and self._async_session:
                     try:
-                        from sqlalchemy import text as sa_text
-
                         async with self._async_session() as sess:
+                            values_sql, params = self._build_path_lookup_values(lookup_candidates)
+                            params["zone_id"] = zone_id
                             row = (
                                 await sess.execute(
                                     sa_text(
-                                        "SELECT cc.content_text FROM content_cache cc "
-                                        "JOIN file_paths fp ON cc.path_id = fp.path_id "
-                                        "WHERE fp.virtual_path = :vp "
+                                        "WITH lookup(virtual_path, lookup_rank) AS "
+                                        f"(VALUES {values_sql}) "
+                                        "SELECT cc.content_text, fp.path_id FROM lookup l "
+                                        "JOIN file_paths fp "
+                                        "ON fp.zone_id = :zone_id "
+                                        "AND fp.virtual_path = l.virtual_path "
+                                        "JOIN content_cache cc ON cc.path_id = fp.path_id "
+                                        "WHERE fp.deleted_at IS NULL "
                                         "AND cc.content_text IS NOT NULL "
+                                        "ORDER BY l.lookup_rank "
                                         "LIMIT 1"
                                     ),
-                                    {"vp": virtual_path},
+                                    params,
                                 )
                             ).first()
                             if row and row[0]:
                                 content = str(row[0])
+                                if len(row) > 1 and row[1]:
+                                    content_path_id = str(row[1])
                     except Exception as db_err:
                         logger.debug("DB content read failed for %s: %s", path, db_err)
 
@@ -2832,22 +2881,34 @@ class SearchDaemon:
 
                 # Resolve path_id from file_paths table
                 path_id = virtual_path  # fallback
-                if self._async_session:
+                path_id_resolved = False
+                if content_path_id is not None:
+                    path_id = content_path_id
+                    path_id_resolved = True
+                elif self._async_session:
                     try:
-                        from sqlalchemy import text as sa_text
-
                         async with self._async_session() as sess:
+                            values_sql, params = self._build_path_lookup_values(lookup_candidates)
+                            params["zone_id"] = zone_id
                             row = (
                                 await sess.execute(
                                     sa_text(
-                                        "SELECT path_id FROM file_paths "
-                                        "WHERE virtual_path = :vp LIMIT 1"
+                                        "WITH lookup(virtual_path, lookup_rank) AS "
+                                        f"(VALUES {values_sql}) "
+                                        "SELECT fp.path_id FROM lookup l "
+                                        "JOIN file_paths fp "
+                                        "ON fp.zone_id = :zone_id "
+                                        "AND fp.virtual_path = l.virtual_path "
+                                        "WHERE fp.deleted_at IS NULL "
+                                        "ORDER BY l.lookup_rank "
+                                        "LIMIT 1"
                                     ),
-                                    {"vp": virtual_path},
+                                    params,
                                 )
                             ).first()
                             if row:
                                 path_id = row[0]
+                                path_id_resolved = True
                     except Exception as e:
                         logger.debug("path_id lookup failed for %s: %s", virtual_path, e)
 
@@ -2868,21 +2929,22 @@ class SearchDaemon:
                 )
 
                 if embedding_active and self._indexing_pipeline is not None:
-                    try:
-                        result = await self._indexing_pipeline.index_document(
-                            path, content, path_id
-                        )
-                        if result.error:
-                            logger.warning(
-                                "Embedding pipeline failed for %s: %s — falling back to FTS",
-                                path,
-                                result.error,
+                    if path_id_resolved:
+                        try:
+                            result = await self._indexing_pipeline.index_document(
+                                path, content, path_id
                             )
+                            if result.error:
+                                logger.warning(
+                                    "Embedding pipeline failed for %s: %s — falling back to FTS",
+                                    path,
+                                    result.error,
+                                )
+                                await self._index_to_document_chunks(path_id, path, content)
+                        except Exception as ie:
+                            logger.warning("Indexing pipeline error for %s: %s", path, ie)
                             await self._index_to_document_chunks(path_id, path, content)
-                    except Exception as ie:
-                        logger.warning("Indexing pipeline error for %s: %s", path, ie)
-                        await self._index_to_document_chunks(path_id, path, content)
-                elif self._async_session:
+                elif self._async_session and path_id_resolved:
                     await self._index_to_document_chunks(path_id, path, content)
 
                 indexed_count += 1
@@ -2891,14 +2953,13 @@ class SearchDaemon:
                 if self._backend is not None and path_in_scope:
                     # Fixed DRY bug (Issue #3698): use the shared
                     # extract_zone_id helper instead of an inline regex.
-                    _zone = extract_zone_id(path)
-                    _doc_id = f"{_zone}:{virtual_path}" if _zone != "root" else virtual_path
-                    _txtai_batch.setdefault(_zone, []).append(
+                    _doc_id = f"{zone_id}:{virtual_path}" if zone_id != "root" else virtual_path
+                    _txtai_batch.setdefault(zone_id, []).append(
                         {
                             "id": _doc_id,
                             "text": content,
                             "path": virtual_path,
-                            "zone_id": _zone,
+                            "zone_id": zone_id,
                         }
                     )
 
@@ -2932,8 +2993,6 @@ class SearchDaemon:
             # BM25S not available — count from DB document_chunks table
             session_factory = self._async_session
             try:
-                from sqlalchemy import text as sa_text
-
                 async with session_factory() as sess:
                     row = (
                         await sess.execute(

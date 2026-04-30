@@ -153,6 +153,18 @@ class TestRecordStorePoolConfig:
             call_kwargs = mock_create.call_args[1]
             assert call_kwargs["pool_pre_ping"] is True
 
+    def test_sqlite_memory_uses_static_pool(self):
+        """In-memory SQLite uses one shared connection across TestClient threads."""
+        from sqlalchemy.pool import StaticPool
+
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=False)
+        try:
+            assert isinstance(store.engine.pool, StaticPool)
+        finally:
+            store.close()
+
 
 class TestRecordStoreAsyncURLConversion:
     """Tests for sync→async URL conversion."""

@@ -837,24 +837,35 @@ impl Kernel {
             return miss(entry.entry_type);
         }
 
-        // 6. Atomic delete — metastore (raft) first, dcache evict on
-        // success. If raft propose fails (quorum unreachable), the
-        // entry stays in BOTH the state machine and the dcache so a
-        // retry sees a consistent view rather than a phantom miss.
+        // 6. PAS: delete backend bytes BEFORE metastore so failures are clean.
+        // If the backend delete fails with a real error (not NotFound), return
+        // without modifying metastore — the file stays fully accessible and
+        // the caller can retry. For CAS or no-backend mounts, skip (bytes are
+        // hash-addressed or managed externally).
+        if !route.is_cas {
+            if let Some(Err(e)) = self
+                .vfs_router
+                .delete_file(&route.mount_point, &route.backend_path)
+            {
+                use crate::abc::object_store::StorageError;
+                if !matches!(e, StorageError::NotFound(_)) {
+                    self.lock_manager.do_release(lock_handle);
+                    return Err(KernelError::IOError(format!(
+                        "sys_unlink: backend delete failed: {e:?}"
+                    )));
+                }
+                // NotFound — file already absent from backend; proceed to
+                // commit the metastore delete so the namespace stays clean.
+            }
+        }
+
+        // 7. Atomic metastore delete + dcache evict.
+        // If raft propose fails (quorum unreachable), the entry stays in BOTH
+        // the state machine and the dcache so a retry sees a consistent view.
         if let Err(e) = self.commit_delete(path, &route.mount_point) {
             self.lock_manager.do_release(lock_handle);
             return Err(e);
         }
-
-        // 7. Backend delete (best-effort, PAS only) — only after
-        // metastore commit succeeded; otherwise we'd orphan the file
-        // on the filesystem with no metadata pointing at it.
-        // Failure here is intentionally non-fatal: metadata is already deleted,
-        // so the file is invisible to the kernel; a dangling backend object is
-        // cleaned up by a future GC sweep rather than blocking this unlink.
-        let _ = self
-            .vfs_router
-            .delete_file(&route.mount_point, &route.backend_path);
 
         // 8. Release VFS lock
         self.lock_manager.do_release(lock_handle);
@@ -1335,6 +1346,10 @@ impl Kernel {
         // 7. Copy content (strategy depends on same-mount vs cross-mount)
         let same_mount = src_route.mount_point == dst_route.mount_point;
 
+        // Track whether this operation created destination bytes so rollback only
+        // deletes bytes we wrote (not pre-existing untracked backend objects).
+        let mut wrote_dst_bytes = false;
+
         let copy_result: Result<(String, u64), KernelError> = if same_mount {
             // Try server-side copy first (PAS backends)
             match self.vfs_router.copy_file(
@@ -1342,7 +1357,10 @@ impl Kernel {
                 &src_route.backend_path,
                 &dst_route.backend_path,
             ) {
-                Some(Ok(wr)) => Ok((wr.content_id, wr.size)),
+                Some(Ok(wr)) => {
+                    wrote_dst_bytes = true;
+                    Ok((wr.content_id, wr.size))
+                }
                 Some(Err(crate::abc::object_store::StorageError::NotSupported(_))) | None => {
                     // No backend / operation not supported: fall back per addressing mode.
                     // For CAS: metadata-only copy is correct — same content_id, different path.
@@ -1353,10 +1371,19 @@ impl Kernel {
                         if !content_id.is_empty() {
                             Ok((content_id, src_meta.size))
                         } else {
-                            self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
+                            let r =
+                                self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx);
+                            if r.is_ok() {
+                                wrote_dst_bytes = true;
+                            }
+                            r
                         }
                     } else {
-                        self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
+                        let r = self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx);
+                        if r.is_ok() {
+                            wrote_dst_bytes = true;
+                        }
+                        r
                     }
                 }
                 Some(Err(e)) => {
@@ -1366,7 +1393,11 @@ impl Kernel {
             }
         } else {
             // Cross-mount: read from src backend, write to dst backend
-            self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
+            let r = self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx);
+            if r.is_ok() {
+                wrote_dst_bytes = true;
+            }
+            r
         };
 
         let (content_id, size) = match copy_result {
@@ -1414,12 +1445,14 @@ impl Kernel {
         };
         if let Err(e) = put_result {
             // Metastore failed after bytes were written to the destination backend.
-            // Delete the destination bytes to avoid leaving a file that has no
-            // committed metadata entry (backend-fallback reads would serve it
-            // silently, creating invisible data with no event or stat record).
-            let rollback_err = self
-                .vfs_router
-                .delete_file(&dst_route.mount_point, &dst_route.backend_path);
+            // Only delete the destination if this operation created those bytes
+            // (wrote_dst_bytes=true); never delete pre-existing untracked backend objects.
+            let rollback_err = if wrote_dst_bytes {
+                self.vfs_router
+                    .delete_file(&dst_route.mount_point, &dst_route.backend_path)
+            } else {
+                None
+            };
             release_locks(&self.lock_manager, lock1, lock2);
             return Err(match rollback_err {
                 Some(Err(del_err)) => KernelError::IOError(format!(

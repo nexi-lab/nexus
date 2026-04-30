@@ -115,6 +115,31 @@ def create_nexus_services(
             _factory_profile = DeploymentProfile.FULL
     _profile_tuning = resolve_profile_tuning(_factory_profile)
 
+    # --- Driver gate (DeploymentProfile-driven) ----------------------------
+    # Install the profile's enabled-driver set into the kernel's BackendFactory
+    # gate before any sys_setattr(DT_MOUNT) fires.  Disabled drivers fail at
+    # mount time with a clear error instead of silently falling through to the
+    # local-default branch.  Local CAS / path / connector backends are kernel
+    # defaults and skip the gate (see
+    # `rust/kernel/src/hal/backend_factory.rs::is_driver_enabled`).
+    try:
+        import nexus_runtime as _nx_runtime
+
+        _enabled_drivers = sorted(_factory_profile.default_drivers())
+        _nx_runtime.nx_set_enabled_drivers(_enabled_drivers)
+        logger.info(
+            "Factory: enabled_drivers=%d %s (profile=%s)",
+            len(_enabled_drivers),
+            _enabled_drivers,
+            _factory_profile.value,
+        )
+    except Exception as _exc:  # pragma: no cover — startup-only path
+        logger.warning(
+            "Factory: driver gate install skipped (%s): %s",
+            type(_exc).__name__,
+            _exc,
+        )
+
     perm = permissions or _PermissionConfig()
     audit_cfg = audit or _AuditConfig()
     cache_cfg = cache or _CacheConfig()

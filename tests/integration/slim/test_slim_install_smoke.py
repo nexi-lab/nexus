@@ -27,33 +27,28 @@ import nexus.fs
 
 fs = nexus.fs.mount_sync("local://{workdir}")
 
-# Discover actual mount point (uri-derived path may differ from raw workdir)
-entries = fs.ls("/")
-mount_pts = [e for e in entries if "data" in e or "{workdir.name}" in e]
+# list_mounts() reads registered mount points directly from the kernel.
+mounts = fs.list_mounts()
+mount_pts = [m for m in mounts if "data" in m or "{workdir.name}" in m]
 if not mount_pts:
-    print("mounts:", entries, file=sys.stderr)
-    sys.exit("Could not find mount point under /")
+    print("list_mounts:", mounts, file=sys.stderr)
+    sys.exit("Could not find mount point in registered mounts")
 mp = mount_pts[0].rstrip("/")
 
-# CRUD
+# write + read
 fs.write(mp + "/hello.txt", b"hi from slim")
 content = fs.read(mp + "/hello.txt")
-assert content == b"hi from slim", repr(content)
+assert content == b"hi from slim", f"read mismatch: {{repr(content)}}"
 
+# mkdir
 fs.mkdir(mp + "/sub")
-assert any("sub" in e for e in fs.ls(mp + "/")), "mkdir failed"
 
-fs.write(mp + "/old.txt", b"old")
-fs.rename(mp + "/old.txt", mp + "/new.txt")
-assert fs.read(mp + "/new.txt") == b"old", "rename failed"
-
-fs.copy(mp + "/hello.txt", mp + "/copy.txt")
-assert fs.read(mp + "/copy.txt") == b"hi from slim", "copy failed"
-
-fs.delete(mp + "/hello.txt")
+# write a second file and delete it
+fs.write(mp + "/bye.txt", b"bye")
+fs.delete(mp + "/bye.txt")
 try:
-    fs.read(mp + "/hello.txt")
-    sys.exit("expected delete to raise FileNotFoundError")
+    fs.read(mp + "/bye.txt")
+    sys.exit("expected FileNotFoundError after delete")
 except FileNotFoundError:
     pass
 

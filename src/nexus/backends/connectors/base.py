@@ -240,7 +240,10 @@ class ReadmeDocMixin:
     def get_doc_generator(self) -> "ReadmeDocGenerator":
         """Get or create the cached ReadmeDocGenerator."""
         if self._cached_doc_generator is None:
-            from nexus.backends.connectors.schema_generator import ReadmeDocGenerator
+            from nexus.backends.connectors.schema_generator import (
+                ReadmeDocGenerator,
+                resolve_readme_short_description,
+            )
 
             # Extract write paths from CLIConnectorConfig if available
             write_paths: dict[str, str] = {}
@@ -256,7 +259,9 @@ class ReadmeDocMixin:
                 error_registry=self.ERROR_REGISTRY,
                 examples=self.EXAMPLES,
                 readme_dir=self.README_DIR,
-                short_description=self.SHORT_DESCRIPTION,
+                short_description=resolve_readme_short_description(
+                    type(self), self.SHORT_DESCRIPTION
+                ),
                 nested_examples=self.NESTED_EXAMPLES or None,
                 field_examples=self.FIELD_EXAMPLES or None,
                 write_paths=write_paths or None,

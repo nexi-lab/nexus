@@ -6,7 +6,10 @@ import pytest
 from pydantic import BaseModel
 
 from nexus.backends.connectors.base import ConfirmLevel, ErrorDef, OpTraits, Reversibility
-from nexus.backends.connectors.schema_generator import ReadmeDocGenerator
+from nexus.backends.connectors.schema_generator import (
+    ReadmeDocGenerator,
+    resolve_readme_short_description,
+)
 
 # ---------------------------------------------------------------------------
 # Test schemas
@@ -192,6 +195,66 @@ class TestGenerateReadme:
         front = doc[:closing]
         assert "description:" in front
         assert "Manage calendar events" in front
+
+    def test_ensure_frontmatter_adds_to_static_readme(self) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="gmail",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+            short_description="Gmail with OAuth 2.0 authentication",
+        )
+        doc = gen.ensure_frontmatter("# Gmail Connector\n\nStatic docs.\n")
+
+        assert doc.startswith("---\n")
+        closing = doc.find("---", 4)
+        assert closing != -1
+        front = doc[:closing]
+        assert "title: Gmail" in front
+        assert "description: Gmail with OAuth 2.0 authentication" in front
+        assert "# Gmail Connector" in doc
+
+    def test_ensure_frontmatter_preserves_existing_frontmatter(self) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="gmail",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+            short_description="Gmail with OAuth 2.0 authentication",
+        )
+        doc = "---\ntitle: Custom\ndescription: Existing docs\n---\n# Existing\n"
+
+        assert gen.ensure_frontmatter(doc) == doc
+
+    def test_ensure_frontmatter_upgrades_incomplete_frontmatter(self) -> None:
+        gen = ReadmeDocGenerator(
+            skill_name="gmail",
+            schemas={},
+            operation_traits={},
+            error_registry={},
+            examples={},
+            short_description="Gmail with OAuth 2.0 authentication",
+        )
+        doc = gen.ensure_frontmatter("---\nname: gmail\n---\n# Gmail Connector\n")
+
+        assert doc.startswith("---\n")
+        assert "name: gmail" in doc
+        assert "title: Gmail" in doc
+        assert "description: Gmail with OAuth 2.0 authentication" in doc
+        assert "# Gmail Connector" in doc
+
+    def test_short_description_falls_back_to_manifest(self) -> None:
+        ManifestBackedBackend = type(
+            "PathHNBackend",
+            (),
+            {"__module__": "nexus.backends.connectors.hn.connector"},
+        )
+
+        assert (
+            resolve_readme_short_description(ManifestBackedBackend) == "HackerNews API (read-only)"
+        )
 
 
 # ===========================================================================

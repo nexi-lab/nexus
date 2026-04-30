@@ -1,0 +1,49 @@
+name: Slim Wheel Smoke
+
+# Verify that the nexus-fs slim wheel builds correctly, installs cleanly into
+# a fresh venv (pulling nexus-runtime as a declared dependency), and passes
+# the wheel-content audit that enforces the bricks carve-out contract.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    paths:
+      - "packages/nexus-fs/**"
+      - "src/nexus/fs/**"
+      - "src/nexus/backends/connectors/**"
+      - "src/nexus/bricks/auth/**"
+      - "src/nexus/bricks/search/primitives/**"
+      - "tests/integration/slim/**"
+      - ".github/workflows/slim-wheel-smoke.yml"
+
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slim-wheel-smoke:
+    name: Slim wheel smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build and pytest
+        run: pip install build pytest
+
+      - name: Run slim wheel smoke tests
+        run: pytest tests/integration/slim/ -v

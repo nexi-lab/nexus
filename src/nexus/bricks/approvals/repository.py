@@ -148,22 +148,37 @@ class ApprovalRepository:
         source: DecisionSource,
         now: datetime,
     ) -> ApprovalRequest | None:
-        """Atomic UPDATE pending → new_status. Returns None if not pending."""
+        """Atomic UPDATE pending → new_status. Returns None if not pending.
+
+        F1 (#3790): when transitioning to APPROVED/REJECTED, the row's
+        ``expires_at`` MUST also be in the future. Without this guard
+        ``request_and_wait`` callers who time out locally leave a stale
+        pending row in the DB until the periodic sweeper runs — and an
+        operator decision arriving in that window would write a
+        SESSION-scope ``session_allow`` row for an already-auto-denied
+        request, granting future calls the original gate already rejected.
+        EXPIRED transitions are exempt: the sweeper (and the local
+        timeout path in service.request_and_wait) drive rows past their
+        expiry into EXPIRED, by definition operating on rows where
+        ``expires_at <= now``.
+        """
         async with self._session_factory() as session:
-            stmt = (
-                update(ApprovalRequestModel)
-                .where(
-                    ApprovalRequestModel.id == request_id,
-                    ApprovalRequestModel.status == ApprovalRequestStatus.PENDING.value,
-                )
-                .values(
-                    status=new_status.value,
-                    decided_at=now,
-                    decided_by=decided_by,
-                    decision_scope=scope.value,
-                )
-                .returning(ApprovalRequestModel)
+            stmt = update(ApprovalRequestModel).where(
+                ApprovalRequestModel.id == request_id,
+                ApprovalRequestModel.status == ApprovalRequestStatus.PENDING.value,
             )
+            # F1 (#3790): refuse APPROVED/REJECTED on rows whose
+            # ``expires_at`` is already past. EXPIRED transitions
+            # bypass this guard — those are exactly the rows the
+            # sweeper / local-timeout path needs to flip.
+            if new_status is not ApprovalRequestStatus.EXPIRED:
+                stmt = stmt.where(ApprovalRequestModel.expires_at > now)
+            stmt = stmt.values(
+                status=new_status.value,
+                decided_at=now,
+                decided_by=decided_by,
+                decision_scope=scope.value,
+            ).returning(ApprovalRequestModel)
             row = (await session.execute(stmt)).scalar_one_or_none()
             if row is None:
                 await session.commit()

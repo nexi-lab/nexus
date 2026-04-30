@@ -209,6 +209,87 @@ async def test_sweep_expired_marks_past_due_rows(session_factory):
     assert row is not None and row.status.value == "expired"
 
 
+@pytest.mark.asyncio
+async def test_transition_refuses_approved_when_expires_at_past(session_factory):
+    """F1 (#3790): an operator decision arriving after expires_at must NOT
+    flip a stale pending row to APPROVED/REJECTED.
+
+    Without this guard, ``request_and_wait`` callers who time out locally
+    leave a pending row in the DB until the periodic sweeper runs; an
+    operator decision in that gap would write a SESSION-scope
+    ``session_allow`` for an already-auto-denied request, granting
+    future calls the original gate already rejected.
+
+    EXPIRED transitions still succeed (the sweeper / local-timeout path
+    drives those).
+    """
+    repo = await _new_repo(session_factory)
+    now = datetime.now(UTC)
+    past = now - timedelta(seconds=30)
+    tag = _tag()
+    rid = f"req_stale_{tag}"
+    # Insert a pending row whose expires_at is already in the past.
+    await repo.insert_or_fetch_pending(
+        request_id=rid,
+        zone_id=f"z_{tag}",
+        kind=ApprovalKind.EGRESS_HOST,
+        subject=f"stale.example:443:{tag}",
+        agent_id=None,
+        token_id="tok",
+        session_id=None,
+        reason="",
+        metadata={},
+        now=past,
+        expires_at=past,
+    )
+
+    # APPROVED transition must be refused.
+    refused = await repo.transition(
+        request_id=rid,
+        new_status=ApprovalRequestStatus.APPROVED,
+        decided_by="op",
+        scope=DecisionScope.SESSION,
+        reason="op clicked approve",
+        source=DecisionSource.GRPC,
+        now=now,
+    )
+    assert refused is None
+    row = await repo.get(rid)
+    assert row is not None and row.status is ApprovalRequestStatus.PENDING
+
+    # REJECTED transition is similarly refused.
+    refused2 = await repo.transition(
+        request_id=rid,
+        new_status=ApprovalRequestStatus.REJECTED,
+        decided_by="op",
+        scope=DecisionScope.ONCE,
+        reason=None,
+        source=DecisionSource.GRPC,
+        now=now,
+    )
+    assert refused2 is None
+    row = await repo.get(rid)
+    assert row is not None and row.status is ApprovalRequestStatus.PENDING
+
+    # EXPIRED transition still succeeds (this is the sweeper path).
+    # Under xdist a sibling test's running sweeper may have already
+    # expired our row before we get here — assert on the resulting row
+    # status, not on the transition() return. The point of the test is
+    # that the new ``expires_at > now`` predicate is bypassed for the
+    # EXPIRED branch; the row reaching EXPIRED state proves it.
+    await repo.transition(
+        request_id=rid,
+        new_status=ApprovalRequestStatus.EXPIRED,
+        decided_by="system",
+        scope=DecisionScope.ONCE,
+        reason="auto_deny_after_timeout",
+        source=DecisionSource.SYSTEM_TIMEOUT,
+        now=now,
+    )
+    row = await repo.get(rid)
+    assert row is not None and row.status is ApprovalRequestStatus.EXPIRED
+
+
 def _select_decisions(request_id: str):
     from sqlalchemy import select
 

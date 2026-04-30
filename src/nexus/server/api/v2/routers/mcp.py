@@ -13,23 +13,12 @@ Endpoints
 
 Auth
 ----
-All endpoints are admin-only. Two admission paths:
-
-1. The standard Nexus admin path (``Depends(require_admin)``) — works
-   when ``NEXUS_API_KEY`` or a configured ``auth_provider`` recognises
-   the bearer token as ``is_admin=True``. This is what production
-   deployments use.
-
-2. ``NEXUS_APPROVALS_ADMIN_TOKEN`` fallback. The Issue #3790 E2E
-   ``running_nexus`` fixture sets this token but does not seed
-   ``NEXUS_API_KEY``, so the router accepts a Bearer token that
-   matches ``NEXUS_APPROVALS_ADMIN_TOKEN`` (constant-time compare) as
-   admin-equivalent. This is intentionally narrow: the env var is
-   already trusted by ``ApprovalsServicer`` for gRPC bypass, so reusing
-   it for MCP mount admin parity is consistent. We do NOT introduce a
-   third auth mode and do NOT bypass any safety check downstream — the
-   URL still goes through ``MCPService.mcp_mount`` which enforces
-   SSRF + PolicyGate as usual.
+All endpoints are admin-only via the standard Nexus admin pipeline:
+``Depends(require_followup_admin)`` requires ``NEXUS_API_KEY`` or an
+``auth_provider`` that recognises the bearer as ``is_admin=True``. The
+``NEXUS_APPROVALS_ADMIN_TOKEN`` env var is intentionally NOT honored
+here — that token is scoped to the approvals gRPC server and must not
+gate stdio mount creation (arbitrary subprocess execution).
 """
 
 from __future__ import annotations

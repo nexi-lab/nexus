@@ -14,7 +14,9 @@ Endpoints
 - ``DELETE /api/v2/rebac/tuples``  — delete a tuple by exact match
 
 All endpoints are admin-only via the shared ``require_followup_admin``
-gate (standard admin pipeline OR ``NEXUS_APPROVALS_ADMIN_TOKEN``).
+gate (standard admin pipeline only — ``NEXUS_APPROVALS_ADMIN_TOKEN`` is
+NOT a fallback here; that token is scoped to the approvals gRPC
+server only).
 
 This router is intentionally minimal. ``auth_keys.py`` already creates
 file-scoped ReBAC tuples (direct_viewer/editor/owner on

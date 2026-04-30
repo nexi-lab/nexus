@@ -173,7 +173,21 @@ exclude = [
 "../../src/nexus/bricks/auth/profile.py" = "nexus/bricks/auth/profile.py"
 "../../src/nexus/bricks/auth/credential_backend.py" = "nexus/bricks/auth/credential_backend.py"
 "../../src/nexus/bricks/auth/credential_pool.py" = "nexus/bricks/auth/credential_pool.py"
-"../../src/nexus/bricks/auth/oauth" = "nexus/bricks/auth/oauth"
+# auth/oauth: enumerate files individually to exclude the tests/ subdir
+# (force-include of a directory brings everything recursively — no sub-exclude).
+"../../src/nexus/bricks/auth/oauth/__init__.py" = "nexus/bricks/auth/oauth/__init__.py"
+"../../src/nexus/bricks/auth/oauth/base_provider.py" = "nexus/bricks/auth/oauth/base_provider.py"
+"../../src/nexus/bricks/auth/oauth/config.py" = "nexus/bricks/auth/oauth/config.py"
+"../../src/nexus/bricks/auth/oauth/credential_service.py" = "nexus/bricks/auth/oauth/credential_service.py"
+"../../src/nexus/bricks/auth/oauth/crypto.py" = "nexus/bricks/auth/oauth/crypto.py"
+"../../src/nexus/bricks/auth/oauth/factory.py" = "nexus/bricks/auth/oauth/factory.py"
+"../../src/nexus/bricks/auth/oauth/pending.py" = "nexus/bricks/auth/oauth/pending.py"
+"../../src/nexus/bricks/auth/oauth/protocol.py" = "nexus/bricks/auth/oauth/protocol.py"
+"../../src/nexus/bricks/auth/oauth/token_manager.py" = "nexus/bricks/auth/oauth/token_manager.py"
+"../../src/nexus/bricks/auth/oauth/token_resolver.py" = "nexus/bricks/auth/oauth/token_resolver.py"
+"../../src/nexus/bricks/auth/oauth/types.py" = "nexus/bricks/auth/oauth/types.py"
+"../../src/nexus/bricks/auth/oauth/user_auth.py" = "nexus/bricks/auth/oauth/user_auth.py"
+"../../src/nexus/bricks/auth/oauth/providers" = "nexus/bricks/auth/oauth/providers"
 "../../src/nexus/bricks/auth/classifiers" = "nexus/bricks/auth/classifiers"
 
 [tool.pytest.ini_options]

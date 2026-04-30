@@ -1,0 +1,125 @@
+# Audit-Node E2E Test — federation + a dedicated audit-node learner
+# =========================================================================
+# Stacks on top of `docker-compose.dynamic-federation-test.yml` to add the
+# audit-node — a federation peer that joins production zones as a raft
+# learner and runs the AuditNode collect/gather loop.  The voter set
+# (nexus-1, nexus-2, witness) and the SSE mock are inherited verbatim
+# from the federation compose; this file only adds the audit-node
+# service + the test runner that exercises the long-workflow audit
+# integration test.
+#
+# Usage:
+#   docker compose \
+#     -f dockerfiles/docker-compose.dynamic-federation-test.yml \
+#     -f dockerfiles/docker-compose.audit-node-test.yml \
+#     up -d
+#   docker compose \
+#     -f dockerfiles/docker-compose.dynamic-federation-test.yml \
+#     -f dockerfiles/docker-compose.audit-node-test.yml \
+#     run --rm audit-test
+#
+# The audit-node container only joins the cluster *dynamically* (via
+# `federation_join_zone(as_learner=true)` invoked by the AuditNode
+# Python service inside the test runner) — it is intentionally NOT in
+# the voter set's NEXUS_PEERS so adding it does not perturb the
+# pre-existing federation tests.
+
+services:
+  audit-node:
+    image: nexus-fullnode:latest
+    container_name: nexus-dyn-audit-node
+    hostname: audit-node
+    restart: unless-stopped
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+      nexus-1:
+        condition: service_healthy
+      nexus-2:
+        condition: service_healthy
+    environment:
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 2026
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_PROFILE: cluster
+
+      # The audit-node runs as a single-node degenerate cluster of
+      # *itself* until the test suite calls
+      # federation_join_zone(production_zone, as_learner=true) — at
+      # which point it joins the production raft groups dynamically.
+      # Sharing a peer list with the voter set would auto-bootstrap
+      # this node as a 4th voter and break the existing 3-voter
+      # tests.
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: audit-node:2126
+      NEXUS_PEERS: "audit-node:2126"
+      NEXUS_RAFT_TLS: "false"
+      NEXUS_GRPC_BIND_ALL: "true"
+
+      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}
+      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
+      NEXUS_USE_UVLOOP: "true"
+      RUST_LOG: info,nexus_raft=debug
+
+      # Marks this node as the audit collector — `audit-test` below
+      # uses this to know which container hosts the AuditNode loop.
+      NEXUS_AUDIT_NODE_ROLE: "true"
+      NEXUS_AUDIT_NODE_ZONE_ID: "audit"
+    volumes:
+      - dyn_audit_node_data:/app/data
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:2026/healthz/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s
+
+  # =========================================================================
+  # E2E Test Runner — audit-node long-workflow tests.  Inherits the
+  # `dyn-nexus-network` network from the federation compose and reaches
+  # every node by hostname (nexus-1, nexus-2, audit-node).
+  # =========================================================================
+  audit-test:
+    image: nexus-fullnode:latest
+    container_name: nexus-dyn-audit-test
+    profiles:
+      - run
+    working_dir: /app
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+      nexus-2:
+        condition: service_healthy
+      audit-node:
+        condition: service_healthy
+    entrypoint: []
+    user: "0:0"
+    volumes:
+      - ..:/app
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app/src
+      PYTEST_ADDOPTS: "-o cache_dir=/tmp/.pytest_cache"
+      # The skip guard inside test_federation_audit.py only enables
+      # the live test when this is set — keeps the test silent in the
+      # host-side pytest pass.
+      NEXUS_DOCKER_E2E: "1"
+    command: >
+      bash -c '
+        set -e
+        echo "Installing missing test dependencies..."
+        pip install --retries 10 --timeout 60 -q \
+          -i "${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}" \
+          pytest pytest-asyncio pytest-timeout
+        echo "Running audit-node long-workflow E2E tests..."
+        python -m pytest tests/e2e/docker/test_federation_audit.py -v --no-header -o "addopts=" --timeout=300
+      '
+    networks:
+      - dyn-nexus-network
+
+volumes:
+  dyn_audit_node_data:
+    name: nexus-dyn-audit-node-data

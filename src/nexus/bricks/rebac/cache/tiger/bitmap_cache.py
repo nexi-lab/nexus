@@ -732,14 +732,11 @@ class TigerCache:
             return None
 
         # Convert int IDs back to paths using resource map.
-        # Use get_resource_id() (not direct _int_to_uuid lookup) so that
-        # cold in-memory maps fall back to DB — otherwise valid bitmap
-        # entries silently drop, producing false-negative visibility.
-        paths: set[str] = set()
-        for int_id in int_ids:
-            key = self._resource_map.get_resource_id(int_id)
-            if key and key[0] == resource_type:
-                paths.add(key[1])  # key is (type, path)
+        # Use bulk_get_resource_ids() so cold in-memory maps fall back to
+        # the DB in a single batched query — otherwise large bitmaps
+        # produce N round-trips and saturate the DB on hot auth paths.
+        id_to_key = self._resource_map.bulk_get_resource_ids(int_ids)
+        paths: set[str] = {key[1] for key in id_to_key.values() if key[0] == resource_type}
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(

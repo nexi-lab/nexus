@@ -181,11 +181,16 @@ Static-mode requirements:
 
 **Dynamic bootstrap** — `NEXUS_PEERS` empty.
 
-The daemon brings up the raft transport server but does NOT auto-create the root zone. The cluster is formed by explicit RPC drive, matching the etcd / TiKV operator model:
+The daemon brings up the raft transport server but does NOT auto-create the root zone. The cluster is formed by explicit operator/agent syscall drive, matching the etcd / TiKV operator model. The **explicit mount-direction** model (NFS / sshfs convention) selects creator vs joiner semantics through the `source` parameter on `sys_setattr DT_MOUNT`:
 
-1. **First node**: invoke `federation_create_zone("root")` (PyO3 entry point: `nexus_runtime.federation_create_zone(kernel, "root")`; equivalent gRPC-side path on `ZoneApiService`). Internally calls `create_zone("root", peers=vec![])` → ConfState=[`self.node_id`], quorum=1, raft-rs `campaign=true` → self-elects leader on first tick.
-2. **Subsequent nodes**: each starts with empty `NEXUS_PEERS`, then invokes `JoinZone` RPC against the leader's address (or any node — followers redirect via `JoinZoneResponse.leader_address`). Leader proposes `ConfChangeV2 AddNode(joiner_id, joiner_addr)`, commits via existing voter quorum, then pushes a snapshot to populate the joiner's `ConfState` and log.
-3. **Subsequent witness**: same as node 2, learner flag may be set if witness should not be a full Voter.
+```
+mount /local-path remote-zone-id            # source=None: caller contributes a fresh zone (creator)
+mount remote-addr:/zone-id /local-path      # source=addr: caller picks up remote metadata (joiner)
+```
+
+1. **First node** (creator): invoke `sys_setattr(path="/some-mount", entry_type=DT_MOUNT, zone_id="root", source=None)`. Kernel calls `coordinator.create_zone("root")` → 1-voter ConfState (`peers=vec![]`), quorum=1, `campaign=true` → self-elects leader on first tick.
+2. **Subsequent nodes** (joiners): invoke `sys_setattr(path="/some-mount", entry_type=DT_MOUNT, zone_id="root", source="http://leader-addr:2126")`. Kernel calls `coordinator.join_cluster("root", leader_addr, as_learner=false)` → sets up local raft replica with `skip_bootstrap=true` → sends `JoinZone` RPC to the leader (followers redirect via `JoinZoneResponse.leader_address`) → leader proposes `ConfChangeV2 AddNode(joiner_id, joiner_addr)`, commits via existing voter quorum, then pushes a snapshot to populate the joiner's `ConfState` and log.
+3. **Subsequent witness**: same as node 2 with `as_learner=true` so the leader proposes `AddLearnerNode` instead of `AddNode`.
 
 Dynamic-mode use cases:
 - Ad-hoc / agent-driven cluster bring-up where topology emerges over time (multi-tenant SaaS, federated personal devices joining an org cluster, etc.).
@@ -193,6 +198,22 @@ Dynamic-mode use cases:
 - Cluster expansion: an existing static-bootstrapped cluster can absorb a new dynamic-mode joiner without re-deploying every existing node.
 
 Both modes share the same trait surface (`DistributedCoordinator`); choice is signalled by the presence/absence of `NEXUS_PEERS` at boot. There is no separate "mode" env var — the absence of static seed *is* the dynamic signal, keeping the operator config minimal (no shadow SSOT between mode flag and peers list).
+
+#### 6.3.2 Federation Control-Plane API Surface
+
+The federation control plane has two layers; they are NOT shortcuts for each other and live at different trust boundaries.
+
+| Operation | Syscall path (preferred) | RPC path (legacy / pending migration) | Notes |
+|-----------|--------------------------|----------------------------------------|-------|
+| **Create zone (mount-tied)** | `sys_setattr(path, DT_MOUNT, zone_id, source=None)` | `federation_create_zone(zone_id)` + `federation_mount(parent, path, zone)` | Syscall is the architectural target — service tier should always go through syscall. The two-step RPC pattern remains for legacy callers. |
+| **Join zone (mount-tied)** | `sys_setattr(path, DT_MOUNT, zone_id, source="http://leader:2126")` | `federation_join(peer_addr, remote_path, local_path)` (share-registry-based) | Syscall covers raw cluster join via leader address; the RPC covers subtree share/join via the raft-replicated share registry — two distinct workflows. |
+| **Unmount zone** | `sys_unlink(mount_path)` | `federation_unmount(parent_zone, path)` | Equivalent surfaces. |
+| **Remove zone (standalone)** | (no syscall — zone removal without a path has no filesystem analog) | `federation_remove_zone(zone_id, force=false)` | Cluster-control plane only. Cascade-unmount happens inside the impl. |
+| **Read replicated state** | `sys_read(path)` / `sys_stat(path)` / `sys_readdir(path)` | — | Filesystem syscalls reach federated zones via the mount table; no special federation API needed. |
+
+The `_nr.federation_create_zone` / `federation_remove_zone` / `federation_join_zone` PyO3 bindings are direct service-tier shortcuts to the `DistributedCoordinator` HAL trait. They predate the syscall-only contract and are scheduled for removal once all callers migrate. **Do not add new callers** — go through `sys_setattr` / `sys_unlink` instead.
+
+Architectural principle: service tier (`@rpc_expose` methods in `nexus.server.rpc.services.*`) interacts with the kernel **only** through syscalls — same trust boundary as any external user. Direct PyO3 trait shortcuts collapse the boundary and make permission / audit / hook injection harder to reason about.
 
 ### 6.4 DT_MOUNT Entry Structure
 

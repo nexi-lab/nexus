@@ -51,7 +51,7 @@ EXCLUDED_MODULES = frozenset(
         "nexus.validation",
         "nexus.config",  # the subpackage; nexus/config.py is kept
         # Single-file module excludes
-        "nexus._kernel_api_groups",
+        # nexus._kernel_api_groups is intentionally included in slim (see pyproject.toml include list)
         "nexus.auth_config",
         "nexus.sync",
         "nexus.utils.timing",

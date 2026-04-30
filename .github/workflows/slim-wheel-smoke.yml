@@ -64,7 +64,11 @@ jobs:
         run: pip install "hatchling>=1.27" pytest
 
       - name: Run slim wheel smoke tests
-        run: pytest tests/integration/slim/ -v
+        # --override-ini=addopts= clears the root pyproject.toml addopts
+        # (which include -n auto --dist loadgroup for pytest-xdist) since
+        # pytest-xdist is not installed here and session-scoped wheel/venv
+        # fixtures must not be parallelized across workers.
+        run: pytest tests/integration/slim/ -v --override-ini="addopts="
         env:
           # conftest.slim_venv pre-installs the wheel from this dir so pip
           # doesn't try PyPI for nexus-runtime.

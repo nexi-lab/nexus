@@ -255,6 +255,19 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
         # protobuf double defaults to 0.0; treat that as "no override".
         timeout = request.timeout_override_seconds or None
         request_id = f"req_push_{uuid.uuid4().hex[:12]}"
+        # F1 (#3790): bind the session_id to the authenticated token_id so a
+        # caller cannot replay a session_allow row written for a different
+        # token. ``approval_session_allow`` is keyed on
+        # ``(session_id, zone_id, kind, subject)``; without this prefix any
+        # caller with ``approvals:request`` who knows or guesses another
+        # caller's session_id could short-circuit operator decisions.
+        # The client's value is preserved as a sub-component (so callers
+        # can still correlate their own requests across calls) but the
+        # ``grpc:{token_id}:`` namespace is forced server-side.
+        if request.session_id:
+            bound_session_id: str | None = f"grpc:{token_id}:{request.session_id}"
+        else:
+            bound_session_id = f"grpc:{token_id}"
         try:
             decision = await self._svc.request_and_wait(
                 request_id=request_id,
@@ -263,7 +276,7 @@ class ApprovalsServicer(approvals_pb2_grpc.ApprovalsV1Servicer):
                 subject=request.subject,
                 agent_id=request.agent_id or None,
                 token_id=token_id,
-                session_id=request.session_id or None,
+                session_id=bound_session_id,
                 reason=request.reason,
                 metadata=metadata,
                 timeout_override=timeout,

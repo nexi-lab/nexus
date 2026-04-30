@@ -56,6 +56,11 @@ message SubmitRequest {
   string subject = 2;
   string zone_id = 3;
   string token_id = 4;
+  // Client-supplied session hint. The servicer prefixes this value with
+  // the authenticated ``grpc:{token_id}:`` namespace before passing it to
+  // the approvals service, so cross-token sharing of session_allow rows
+  // is not possible (#3790 F1). May be empty — the server falls back to
+  // ``grpc:{token_id}`` so SESSION-scope approvals still cache per-token.
   string session_id = 5;
   string agent_id = 6;
   string reason = 7;

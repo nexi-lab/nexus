@@ -56,7 +56,7 @@ fn install_audit_hook_py(
 #[pyfunction]
 #[pyo3(name = "nx_managed_agent_install")]
 fn nx_managed_agent_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
-    ManagedAgentService::install(py_kernel.kernel_ref()).map_err(PyRuntimeError::new_err)
+    ManagedAgentService::install(&py_kernel.kernel_arc()).map_err(PyRuntimeError::new_err)
 }
 
 /// Generic in-process Rust-service dispatch entry point.

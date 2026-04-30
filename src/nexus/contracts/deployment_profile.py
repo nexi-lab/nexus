@@ -68,6 +68,59 @@ BRICK_TASK_MANAGER = "task_manager"
 
 BRICK_FEDERATION = "federation"
 
+# ---------------------------------------------------------------------------
+# Driver constants — `BackendFactory.build` matches `backend_type` strings
+# ---------------------------------------------------------------------------
+#
+# Drivers are kernel-side dynamic backends instantiated at
+# `sys_setattr(DT_MOUNT)` time.  Profile gating limits which `backend_type`
+# strings the active deployment will accept; mounts requesting a disabled
+# driver fail with a clear error instead of silently falling through to the
+# kernel-default local-root branch.
+#
+# `local`/`path_local`/`local_connector`/`cas-local` are kernel defaults
+# available in every profile and skip the gate (see
+# `rust/kernel/src/hal/backend_factory.rs::is_driver_enabled`).
+
+# Storage drivers (CAS / cloud / remote)
+DRIVER_LOCAL = "local"
+DRIVER_S3 = "s3"
+DRIVER_GCS = "gcs"
+DRIVER_GDRIVE = "gdrive"
+DRIVER_REMOTE = "remote"
+
+# AI / LLM connectors
+DRIVER_OPENAI = "openai"
+DRIVER_ANTHROPIC = "anthropic"
+
+# Communication / messaging connectors
+DRIVER_GMAIL = "gmail"
+DRIVER_SLACK = "slack"
+DRIVER_X = "x"
+DRIVER_HN = "hn"
+DRIVER_NOSTR = "nostr"
+
+# Generic CLI proxy
+DRIVER_CLI = "cli"
+
+ALL_DRIVER_NAMES: frozenset[str] = frozenset(
+    {
+        DRIVER_LOCAL,
+        DRIVER_S3,
+        DRIVER_GCS,
+        DRIVER_GDRIVE,
+        DRIVER_REMOTE,
+        DRIVER_OPENAI,
+        DRIVER_ANTHROPIC,
+        DRIVER_GMAIL,
+        DRIVER_SLACK,
+        DRIVER_X,
+        DRIVER_HN,
+        DRIVER_NOSTR,
+        DRIVER_CLI,
+    }
+)
+
 # All brick names for validation
 ALL_BRICK_NAMES: frozenset[str] = frozenset(
     {
@@ -137,6 +190,20 @@ class DeploymentProfile(StrEnum):
     def is_brick_enabled(self, brick: str) -> bool:
         """Check if a brick is enabled by default in this profile."""
         return brick in self.default_bricks()
+
+    def default_drivers(self) -> frozenset[str]:
+        """Return the default set of enabled drivers for this profile.
+
+        Drivers are kernel-side dynamic backends (`backend_type` for
+        `sys_setattr(DT_MOUNT)`).  Local CAS / path / connector backends
+        are always available and are not listed here — see
+        `rust/kernel/src/hal/backend_factory.rs::is_driver_enabled`.
+        """
+        return _PROFILE_DRIVERS[self]
+
+    def is_driver_enabled(self, driver: str) -> bool:
+        """Check if a driver is enabled by default in this profile."""
+        return driver in self.default_drivers()
 
     def tuning(self) -> "ProfileTuning":
         """Return the performance tuning configuration for this profile.
@@ -226,6 +293,69 @@ _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Profile-to-driver mappings (frozen — immutable at runtime)
+# ---------------------------------------------------------------------------
+#
+# Driver gating mirrors brick gating: each profile lists the
+# `backend_type` strings its active deployment can mount.  Local CAS /
+# path / connector backends are always available (kernel default) and
+# are not listed.  See `default_drivers()` for the surface; see
+# `rust/kernel/src/hal/backend_factory.rs::is_driver_enabled` for the
+# enforcement point.
+
+# Cluster — Raft-replicated multi-node profile.  Federation needs the
+# cross-node `remote` backend; storage / connectors stay disabled
+# until an operator explicitly enables them per deployment.
+_CLUSTER_DRIVERS: frozenset[str] = frozenset({DRIVER_REMOTE})
+
+# Embedded / lite — single-machine, no remote storage.
+_EMBEDDED_DRIVERS: frozenset[str] = frozenset()
+_LITE_DRIVERS: frozenset[str] = frozenset()
+
+# Sandbox — agent sandbox with Nostr cross-instance messaging + LLM
+# connectors so chat-with-me / model calls work end-to-end.
+_SANDBOX_DRIVERS: frozenset[str] = frozenset(
+    {
+        DRIVER_OPENAI,
+        DRIVER_ANTHROPIC,
+        DRIVER_NOSTR,
+        DRIVER_CLI,
+    }
+)
+
+# Full — desktop / laptop deployments. Adds cloud storage + connector
+# integrations on top of the sandbox set.
+_FULL_DRIVERS: frozenset[str] = _SANDBOX_DRIVERS | frozenset(
+    {
+        DRIVER_S3,
+        DRIVER_GCS,
+        DRIVER_GDRIVE,
+        DRIVER_GMAIL,
+        DRIVER_SLACK,
+        DRIVER_X,
+        DRIVER_HN,
+        DRIVER_REMOTE,
+    }
+)
+
+# Cloud — multi-tenant superset.
+_CLOUD_DRIVERS: frozenset[str] = _FULL_DRIVERS
+
+# Remote — NFS-client model: no local mounts, only the remote proxy.
+_REMOTE_DRIVERS: frozenset[str] = frozenset({DRIVER_REMOTE})
+
+_PROFILE_DRIVERS: dict[DeploymentProfile, frozenset[str]] = {
+    DeploymentProfile.CLUSTER: _CLUSTER_DRIVERS,
+    DeploymentProfile.EMBEDDED: _EMBEDDED_DRIVERS,
+    DeploymentProfile.LITE: _LITE_DRIVERS,
+    DeploymentProfile.SANDBOX: _SANDBOX_DRIVERS,
+    DeploymentProfile.FULL: _FULL_DRIVERS,
+    DeploymentProfile.CLOUD: _CLOUD_DRIVERS,
+    DeploymentProfile.REMOTE: _REMOTE_DRIVERS,
+}
+
+
 def resolve_enabled_bricks(
     profile: DeploymentProfile,
     *,
@@ -266,5 +396,50 @@ def resolve_enabled_bricks(
                 enabled.add(brick_name)
             else:
                 enabled.discard(brick_name)
+
+    return frozenset(enabled)
+
+
+def resolve_enabled_drivers(
+    profile: DeploymentProfile,
+    *,
+    overrides: dict[str, bool] | None = None,
+) -> frozenset[str]:
+    """Resolve the effective set of enabled drivers for a profile.
+
+    Mirrors :func:`resolve_enabled_bricks` for the driver dimension.
+    Starts with the profile's default driver set, then applies explicit
+    overrides.  Explicit overrides always win over profile defaults.
+
+    Args:
+        profile: The deployment profile providing defaults.
+        overrides: Dict of driver_name -> enabled.  Unknown driver names
+            raise ValueError.
+
+    Returns:
+        Frozen set of enabled driver names.
+    """
+    enabled = set(profile.default_drivers())
+
+    if overrides:
+        unknown = set(overrides.keys()) - ALL_DRIVER_NAMES
+        if unknown:
+            raise ValueError(f"Unknown driver names in overrides: {unknown}")
+
+        for driver_name, is_enabled in overrides.items():
+            default_enabled = driver_name in profile.default_drivers()
+            if is_enabled != default_enabled:
+                action = "enabling" if is_enabled else "disabling"
+                logger.warning(
+                    "Driver override: %s '%s' (profile '%s' default: %s)",
+                    action,
+                    driver_name,
+                    profile.value,
+                    "enabled" if default_enabled else "disabled",
+                )
+            if is_enabled:
+                enabled.add(driver_name)
+            else:
+                enabled.discard(driver_name)
 
     return frozenset(enabled)

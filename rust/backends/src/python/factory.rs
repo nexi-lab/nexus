@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use kernel::abc::object_store::ObjectStore;
 use kernel::hal::object_store_provider::{
-    ObjectStoreBuildResult, ObjectStoreProvider, ObjectStoreProviderArgs,
+    is_driver_enabled, ObjectStoreBuildResult, ObjectStoreProvider, ObjectStoreProviderArgs,
 };
 use kernel::meta_store::MetaStore;
 
@@ -30,6 +30,23 @@ impl ObjectStoreProvider for DefaultObjectStoreProvider {
     fn build(&self, args: &ObjectStoreProviderArgs<'_>) -> Result<ObjectStoreBuildResult, String> {
         let backend_name = args.backend_name;
         let backend_type = args.backend_type;
+
+        // ── DeploymentProfile-driven driver gate ───────────────────
+        // Disabled drivers surface a clear error before the per-driver
+        // construction switch.  See `kernel::hal::object_store_provider`
+        // for the gate-set lifecycle.  The empty-string + the four
+        // local roots (`""`, `"path_local"`, `"local_connector"`,
+        // `"cas-local"`) skip the gate — they are kernel defaults
+        // available in every profile.
+        let is_local_default = backend_type.is_empty()
+            || backend_type == "path_local"
+            || backend_type == "local_connector"
+            || backend_type == "cas-local";
+        if !is_local_default && !is_driver_enabled(backend_type) {
+            return Err(format!(
+                "driver {backend_type:?} not enabled in current deployment profile"
+            ));
+        }
 
         let mut pending_remote_meta_store: Option<Arc<dyn MetaStore>> = None;
 

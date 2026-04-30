@@ -56,7 +56,9 @@ class ApprovalRequestModel(Base):
         Index("ix_approval_requests_status_expires", "status", "expires_at"),
         Index("ix_approval_requests_zone_status", "zone_id", "status"),
         # Load-bearing for request coalescing — only one pending row per
-        # (zone_id, kind, subject). See alembic migration add_approval_decision_queue.
+        # (zone_id, kind, subject). Both dialect predicates are required:
+        # postgresql_where for production, sqlite_where for SQLite test
+        # fixtures via create_all() / migration harness (#3790 round-13).
         Index(
             "approval_requests_pending_coalesce",
             "zone_id",
@@ -64,6 +66,7 @@ class ApprovalRequestModel(Base):
             "subject",
             unique=True,
             postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
         ),
     )
 

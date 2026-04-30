@@ -76,7 +76,13 @@ def upgrade() -> None:
         "approval_requests",
         ["zone_id", "kind", "subject"],
         unique=True,
+        # Both dialects need the partial predicate so the index only
+        # enforces uniqueness for PENDING rows. Without sqlite_where,
+        # SQLite ignores the postgresql_where and creates a full unique
+        # index — decided/expired rows would block new pending inserts
+        # for the same coalesce key (#3790 round-13).
         postgresql_where=sa.text("status = 'pending'"),
+        sqlite_where=sa.text("status = 'pending'"),
     )
 
     op.create_table(

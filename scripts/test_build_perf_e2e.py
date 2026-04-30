@@ -21,11 +21,15 @@ import sys
 import time
 import urllib.request
 
+from nexus.cli.commands.demo_data import HERB_QA_SET
+
 NEXUS_CLI = os.environ.get("NEXUS_CLI", "nexus")
 NEXUS_URL = os.environ.get("NEXUS_URL", "http://localhost:2027")
 ADMIN_KEY = os.environ.get("NEXUS_API_KEY", "")
 USER_KEY = os.environ.get("NEXUS_DEMO_USER_KEY", "")
 GRPC_PORT = os.environ.get("NEXUS_GRPC_PORT", "2029")
+HERB_SEARCH_PATH = "/workspace/demo/herb"
+AUTO_INDEX_MARKER = "zephyr marker"
 
 passed = 0
 failed = 0
@@ -347,8 +351,8 @@ def main() -> None:
     step("waiting for search index to process demo files (up to 120s)")
     print("    Waiting for search index to process demo files...", flush=True)
     for _wait in range(24):  # 24×5s = 120s — semantic embedding pipeline is async
-        r = cli("search", "query", "Nexus Core", "--limit", "1")
-        if "prod-001" in r.stdout:
+        r = cli("search", "query", "Nexus Core", "--path", HERB_SEARCH_PATH, "--limit", "1")
+        if "/workspace/demo/herb/products/prod-001.md" in r.stdout:
             print(f"    Search index ready after {(_wait + 1) * 5}s", flush=True)
             break
         print(f"    not ready yet (attempt {_wait + 1}/24), waiting 5s...", flush=True)
@@ -356,32 +360,33 @@ def main() -> None:
     else:
         print("    Warning: search index may not be fully populated after 120s", flush=True)
 
-    qa_set = [
-        ("Which customer uses Nexus for medical document management?", "cust-002"),
-        ("Who is the staff engineer working on semantic search quality?", "emp-002"),
-        ("What is the pricing model for Nexus Core?", "prod-001"),
-        ("Which customer has been active since 2019 in manufacturing?", "cust-001"),
-        ("Who manages the permissions engineering team?", "emp-003"),
-        ("What product provides multi-node Raft-based federation?", "prod-003"),
-        ("Which customer operates in the renewable energy sector?", "cust-004"),
-        ("What product integrates with existing search infrastructure?", "prod-002"),
-    ]
+    qa_set = [(qa["question"], qa["expected_file"]) for qa in HERB_QA_SET]
     hits = 0
     search_latencies: list[float] = []
     for i, (q, expected) in enumerate(qa_set, 1):
-        step(f"HERB QA {i}/8: expected={expected!r}")
+        step(f"HERB QA {i}/{len(qa_set)}: expected={expected.rsplit('/', 1)[-1]!r}")
         start = time.perf_counter()
-        r = cli("search", "query", q, "--limit", "5")
+        r = cli("search", "query", q, "--path", HERB_SEARCH_PATH, "--limit", "5")
         elapsed = (time.perf_counter() - start) * 1000
         search_latencies.append(elapsed)
         hit = expected in r.stdout
         if hit:
             hits += 1
-            print(f"    hit: {expected} found in results  ({elapsed:.0f}ms)", flush=True)
+            print(
+                f"    hit: {expected.rsplit('/', 1)[-1]} found in results  ({elapsed:.0f}ms)",
+                flush=True,
+            )
         else:
-            print(f"    miss: {expected} NOT in results  ({elapsed:.0f}ms)", flush=True)
+            print(
+                f"    miss: {expected.rsplit('/', 1)[-1]} NOT in results  ({elapsed:.0f}ms)",
+                flush=True,
+            )
             print(f"    stdout: {r.stdout[:300]!r}", file=sys.stderr, flush=True)
-    check(f"HERB hit rate {hits}/8 >= 90%", hits >= 7, f"{hits}/8")
+    check(
+        f"HERB hit rate {hits}/{len(qa_set)} >= 90%",
+        hits >= 7,
+        f"{hits}/{len(qa_set)}",
+    )
     search_latencies.sort()
     p50 = search_latencies[len(search_latencies) // 2]
     print(f"    Search latency (incl CLI): p50={p50:.0f}ms", flush=True)
@@ -392,7 +397,15 @@ def main() -> None:
 
     if USER_KEY:
         step("admin search for Meridian Health")
-        r = cli("search", "query", "Meridian Health", "--limit", "3")
+        r = cli(
+            "search",
+            "query",
+            "Meridian Health",
+            "--path",
+            HERB_SEARCH_PATH,
+            "--limit",
+            "3",
+        )
         check(
             "admin finds cust-002",
             "cust-002" in r.stdout,
@@ -400,7 +413,16 @@ def main() -> None:
         )
 
         step("viewer search for Meridian Health (dir inheritance)")
-        r = cli("search", "query", "Meridian Health", "--limit", "3", api_key=USER_KEY)
+        r = cli(
+            "search",
+            "query",
+            "Meridian Health",
+            "--path",
+            HERB_SEARCH_PATH,
+            "--limit",
+            "3",
+            api_key=USER_KEY,
+        )
         check(
             "viewer finds cust-002 (dir inheritance)",
             "cust-002" in r.stdout,
@@ -455,31 +477,43 @@ def main() -> None:
     section("9. AUTO-INDEX ON EDIT")
     # =========================================================================
 
-    step("RPC edit: write 'Kubernetes orchestration' to plan.md")
+    step(f"RPC edit: write '{AUTO_INDEX_MARKER}' to plan.md")
     t.call_rpc(
         "edit",
         {
             "path": "/workspace/demo/plan.md",
-            "edits": [["Deploy to production", "Deploy using Kubernetes orchestration"]],
+            "edits": [["Deploy to production", f"Deploy using {AUTO_INDEX_MARKER}"]],
         },
     )
     indexed = False
     for attempt in range(6):
         step(f"waiting 10s for daemon auto-index (attempt {attempt + 1}/6)")
         time.sleep(10)
-        r = cli("search", "query", "Kubernetes orchestration", "--limit", "3")
+        r = cli(
+            "search",
+            "query",
+            AUTO_INDEX_MARKER,
+            "--path",
+            "/workspace/demo/plan.md",
+            "--limit",
+            "3",
+        )
         print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
-        if "plan.md" in r.stdout:
+        if "plan.md" in r.stdout and AUTO_INDEX_MARKER in r.stdout:
             indexed = True
             break
-    check("auto-index after edit", indexed, "plan.md never appeared in search results after 6×10s")
+    check(
+        "auto-index after edit",
+        indexed,
+        "updated plan.md content never appeared in search results after 6×10s",
+    )
 
     step("RPC edit: restore original plan.md text")
     t.call_rpc(
         "edit",
         {
             "path": "/workspace/demo/plan.md",
-            "edits": [["Deploy using Kubernetes orchestration", "Deploy to production"]],
+            "edits": [[f"Deploy using {AUTO_INDEX_MARKER}", "Deploy to production"]],
             "fuzzy_threshold": 0.8,
         },
     )
@@ -497,7 +531,15 @@ def main() -> None:
     for attempt in range(8):
         step(f"waiting 10s for auto-index (attempt {attempt + 1}/8)")
         time.sleep(10)
-        r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
+        r = cli(
+            "search",
+            "query",
+            "quantum entanglement teleportation",
+            "--path",
+            "/workspace/demo",
+            "--limit",
+            "3",
+        )
         print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
         if "delete-test" in r.stdout:
             indexed = True
@@ -514,7 +556,15 @@ def main() -> None:
     for attempt in range(5):
         step(f"waiting 10s for delete to propagate (attempt {attempt + 1}/5)")
         time.sleep(10)
-        r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
+        r = cli(
+            "search",
+            "query",
+            "quantum entanglement teleportation",
+            "--path",
+            "/workspace/demo",
+            "--limit",
+            "3",
+        )
         print(f"    stdout: {r.stdout[:200]!r}", file=sys.stderr, flush=True)
         if "delete-test" not in r.stdout:
             stale = False

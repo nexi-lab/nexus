@@ -537,13 +537,51 @@ class ApprovalService:
         """Re-resolve futures for any in-flight request that already terminated.
 
         Call after a LISTEN reconnect to recover from missed notifications.
+
+        F3 (#3790): mirrors ``_on_decided_payload``'s SESSION fan-out so
+        callers waiting on a SESSION-scope APPROVED row that arrived via
+        a missed NOTIFY still get their ``session_allow`` rows persisted
+        — without this, a subsequent same-session call would reopen a
+        fresh PENDING instead of short-circuiting via the cache.
         """
         for rid in self._dispatcher.in_flight_request_ids():
             row = await self._repo.get(rid)
             if row is None:
                 continue
+            # F3 (#3790): snapshot session_ids BEFORE resolve drops the
+            # dispatcher entry. We reuse the same fan-out shape as
+            # ``_on_decided_payload`` (best-effort, fabricated-id
+            # filter, idempotent inserts via the partial unique index).
+            local_session_ids = self._dispatcher.session_ids_for(rid)
             if row.status is ApprovalRequestStatus.APPROVED:
                 self._dispatcher.resolve(rid, Decision.APPROVED)
+                if row.decision_scope is DecisionScope.SESSION and local_session_ids:
+                    decided_at = row.decided_at or datetime.now(UTC)
+                    decided_by = row.decided_by or "system"
+                    for sid in local_session_ids:
+                        if _is_fabricated_session_id(sid):
+                            continue
+                        try:
+                            await self._repo.insert_session_allow(
+                                session_id=sid,
+                                zone_id=row.zone_id,
+                                kind=row.kind,
+                                subject=row.subject,
+                                decided_by=decided_by,
+                                decided_at=decided_at,
+                                request_id=row.id,
+                            )
+                        except Exception:
+                            # Best-effort: the future is already
+                            # resolved; a failed insert only means the
+                            # next same-session caller goes back through
+                            # the queue.
+                            logger.warning(
+                                "approvals.reconcile: session_allow insert failed rid=%s sid=%s",
+                                rid,
+                                sid,
+                                exc_info=True,
+                            )
             elif row.status in (
                 ApprovalRequestStatus.REJECTED,
                 ApprovalRequestStatus.EXPIRED,

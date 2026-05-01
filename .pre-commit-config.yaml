@@ -60,6 +60,13 @@ repos:
         files: \.py$
         pass_filenames: true
 
+      - id: extensions-index-verify
+        name: Verify extensions.json is up to date
+        entry: bash -c 'PYTHONPATH=src python -m nexus.extensions.index verify'
+        language: system
+        pass_filenames: false
+        files: ^(src/nexus/extensions/|src/nexus/(backends|bricks|plugins)/.*/_manifest\.py$)
+
       # DISABLED: RPC Parity test (pytest, slow) - runs in CI instead
       # Uncomment to re-enable:
       # - id: rpc-parity

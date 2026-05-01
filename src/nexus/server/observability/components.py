@@ -7,6 +7,7 @@ FunctionPairComponent replaces 5 near-identical adapter classes with a
 single generic class parameterized by start/shutdown callables.
 """
 
+import inspect
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -25,8 +26,11 @@ class FunctionPairComponent:
 
     Args:
         component_name: Human-readable name for logging.
-        start_fn: Callable invoked during ``start()``.
-        stop_fn: Optional callable invoked during ``shutdown()``.
+        start_fn: Callable invoked during ``start()``. May be sync or async;
+            an awaitable return value is awaited so providers can perform
+            real async setup (e.g. await a worker's start coroutine).
+        stop_fn: Optional callable invoked during ``shutdown()``. May be sync
+            or async — see ``start_fn``.
         start_kwargs: Keyword arguments forwarded to ``start_fn``.
     """
 
@@ -49,7 +53,9 @@ class FunctionPairComponent:
         return self._name
 
     async def start(self) -> None:
-        self._start_fn(**self._start_kwargs)
+        result = self._start_fn(**self._start_kwargs)
+        if inspect.isawaitable(result):
+            await result
         self._started = True
 
     async def shutdown(self, timeout_ms: int = 5000) -> None:  # noqa: ARG002
@@ -57,7 +63,9 @@ class FunctionPairComponent:
             return
         if self._stop_fn is not None:
             try:
-                self._stop_fn()
+                result = self._stop_fn()
+                if inspect.isawaitable(result):
+                    await result
             except Exception:
                 logger.warning("Error in %s shutdown", self._name, exc_info=True)
         self._started = False

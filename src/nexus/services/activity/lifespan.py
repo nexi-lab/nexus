@@ -1,9 +1,9 @@
 """Setup / shutdown hooks for the activity subsystem.
 
-Both functions are synchronous so they can be registered on
-``FunctionPairComponent`` from ``nexus.server.lifespan.observability``.
-The asyncio tasks they spawn require a running event loop — which is
-present because the registry calls them inside ``async def start()``.
+Both functions are async so ``FunctionPairComponent`` (the registry-side
+adapter) can await them. Awaiting matters at shutdown: the worker has
+queued events that must drain to the SQLite sink before the registry
+declares the component stopped.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _STATE: dict[str, object] = {"worker": None, "retention": None, "queue": None}
 
 
-def setup_activity() -> None:
+async def setup_activity() -> None:
     """Start activity worker + retention task. Safe to call once per process."""
     cfg = ActivityConfig.from_env()
     if not cfg.enabled:
@@ -44,10 +44,20 @@ def setup_activity() -> None:
         logger.info("activity SQLite sink open at %s", cfg.db_path)
     except Exception:
         logger.error(
-            "activity SQLiteSink failed to open at %s — falling back to NoopSink",
+            "activity SQLiteSink failed to open at %s — falling back to NoopSink. "
+            "Durable activity_events store is DISABLED for this process.",
             cfg.db_path,
             exc_info=True,
         )
+        # Surface the degradation in /metrics so operators have an alertable
+        # signal — without this, ACTIVITY_SINK_ERRORS stays at 0 while every
+        # event is silently discarded.
+        try:
+            from nexus.services.activity.metrics import ACTIVITY_SINK_ERRORS
+
+            ACTIVITY_SINK_ERRORS.labels(sink="SQLiteSink").inc()
+        except Exception:
+            pass
         sinks.append(NoopSink())
 
     worker = ActivityWorker(
@@ -59,37 +69,47 @@ def setup_activity() -> None:
     retention = RetentionTask(db_path=cfg.db_path, retention_days=cfg.retention_days)
 
     loop = asyncio.get_running_loop()
-    startup_tasks: set[asyncio.Task[None]] = set()
-    t1 = loop.create_task(worker.start())
-    t2 = loop.create_task(retention.start())
-    startup_tasks.add(t1)
-    startup_tasks.add(t2)
-    t1.add_done_callback(startup_tasks.discard)
-    t2.add_done_callback(startup_tasks.discard)
-    _STATE["startup_tasks"] = startup_tasks
+    await worker.start()
+    await retention.start()
 
-    set_emitter(QueueEmitter(queue=queue))
+    queue_emitter = QueueEmitter(queue=queue, loop=loop)
+    set_emitter(queue_emitter)
 
     _STATE["worker"] = worker
     _STATE["retention"] = retention
     _STATE["queue"] = queue
+    _STATE["emitter"] = queue_emitter
 
 
-def shutdown_activity() -> None:
-    """Stop worker + retention. Safe to call when setup_activity skipped."""
+async def shutdown_activity() -> None:
+    """Stop worker + retention. Safe to call when setup_activity skipped.
+
+    Order matters:
+    1. Install NoopEmitter so new emit() calls become no-ops.
+    2. Quiesce the previous QueueEmitter — off-loop emits schedule
+       call_soon_threadsafe callbacks that have not yet enqueued, and
+       must run before the worker drain closes the queue.
+    3. Stop retention BEFORE the worker so retention's VACUUM cannot
+       hold the SQLite write lock during the final drain.
+    4. Stop the worker and close sinks.
+    """
+    prev_emitter = _STATE.pop("emitter", None)
     set_emitter(NoopEmitter())  # stop accepting new events first
     worker = _STATE.pop("worker", None)
     retention = _STATE.pop("retention", None)
     _STATE.pop("queue", None)
-    shutdown_tasks: set[asyncio.Task[None]] = set()
-    if isinstance(worker, ActivityWorker) or isinstance(retention, RetentionTask):
-        loop = asyncio.get_running_loop()
-        if isinstance(worker, ActivityWorker):
-            t = loop.create_task(worker.stop(timeout=5.0))
-            shutdown_tasks.add(t)
-            t.add_done_callback(shutdown_tasks.discard)
-        if isinstance(retention, RetentionTask):
-            t = loop.create_task(retention.stop())
-            shutdown_tasks.add(t)
-            t.add_done_callback(shutdown_tasks.discard)
-    _STATE["shutdown_tasks"] = shutdown_tasks
+    if isinstance(prev_emitter, QueueEmitter):
+        try:
+            await prev_emitter.quiesce_pending(timeout=2.0)
+        except Exception:
+            logger.warning("activity emitter quiesce failed", exc_info=True)
+    if isinstance(retention, RetentionTask):
+        try:
+            await retention.stop()
+        except Exception:
+            logger.warning("activity retention stop failed", exc_info=True)
+    if isinstance(worker, ActivityWorker):
+        try:
+            await worker.stop(timeout=10.0)
+        except Exception:
+            logger.warning("activity worker stop failed", exc_info=True)

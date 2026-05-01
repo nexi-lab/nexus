@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import insert, select, text, update
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -148,6 +148,23 @@ class ApprovalRepository:
                 stmt = stmt.where(ApprovalRequestModel.zone_id == zone_id)
             rows = (await session.execute(stmt)).scalars().all()
             return [_to_domain(r) for r in rows]
+
+    async def count_pending(self, zone_id: str | None = None) -> int:
+        """Return PENDING row count without materializing the rows.
+
+        Used by the activity gauge reseed (#3791) to keep
+        APPROVALS_PENDING authoritative without scanning every row on
+        every transition.
+        """
+        async with self._session_factory() as session:
+            stmt = (
+                select(func.count())
+                .select_from(ApprovalRequestModel)
+                .where(ApprovalRequestModel.status == ApprovalRequestStatus.PENDING.value)
+            )
+            if zone_id is not None:
+                stmt = stmt.where(ApprovalRequestModel.zone_id == zone_id)
+            return int((await session.execute(stmt)).scalar_one())
 
     async def transition(
         self,

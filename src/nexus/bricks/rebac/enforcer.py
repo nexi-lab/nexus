@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import OperationalError
 
 from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
+from nexus.contracts.protocols.activity import EventKind, Result, emit
 from nexus.contracts.types import OperationContext, Permission
 
 # Issue #3786: Zone-perms resurrection cache primitives live in
@@ -28,7 +29,6 @@ from nexus.lib.zone_perms_cache import (  # noqa: F401 — re-export
 from nexus.lib.zone_perms_cache import (
     lookup_zone_perms as _lookup_zone_perms,
 )
-from nexus.services.activity import EventKind, Result, emit
 
 
 def check_stale_session(agent_registry: Any, context: OperationContext) -> None:

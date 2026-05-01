@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,27 @@ class ActivityConfig:
     queue_size: int = 10_000
     batch_size: int = 200
     batch_timeout_s: float = 0.5
+
+    def __post_init__(self) -> None:
+        # Bounded-queue contract: a non-positive queue_size disables
+        # asyncio.Queue back-pressure (treated as unbounded), which would let
+        # bursts grow memory without hitting the drop counter. Reject early
+        # with a clear error rather than silently breaking the contract.
+        if self.queue_size <= 0:
+            raise ValueError(f"NEXUS_ACTIVITY_QUEUE_SIZE must be > 0, got {self.queue_size}")
+        if self.batch_size <= 0:
+            raise ValueError(f"NEXUS_ACTIVITY_BATCH_SIZE must be > 0, got {self.batch_size}")
+        if self.batch_timeout_s <= 0 or not math.isfinite(self.batch_timeout_s):
+            # NaN passes <= 0 (NaN comparisons are False); inf would prevent
+            # partial-batch flushes. Both break the worker contract.
+            raise ValueError(
+                "NEXUS_ACTIVITY_BATCH_TIMEOUT_S must be a finite positive "
+                f"float, got {self.batch_timeout_s}"
+            )
+        if self.retention_days < 0:
+            raise ValueError(
+                f"NEXUS_ACTIVITY_RETENTION_DAYS must be >= 0, got {self.retention_days}"
+            )
 
     @classmethod
     def from_env(cls) -> ActivityConfig:

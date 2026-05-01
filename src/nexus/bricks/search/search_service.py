@@ -25,6 +25,7 @@ from cachetools import TTLCache
 from nexus.bricks.search.primitives import glob_helpers, trigram_fast
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
+from nexus.contracts.protocols.activity import EventKind, Result, emit
 from nexus.contracts.search_types import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
@@ -38,7 +39,6 @@ from nexus.contracts.search_types import (
 )
 from nexus.contracts.types import Permission
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.services.activity import EventKind, Result, emit
 
 # List directory traversal thresholds (Issue #901)
 # Issue #2071: LIST_PARALLEL_WORKERS now sourced from ProfileTuning.search.list_parallel_workers
@@ -3492,6 +3492,60 @@ class SearchService:
 
     @rpc_expose(description="Search documents using natural language queries")
     async def semantic_search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        search_mode: str = "semantic",
+        context: "OperationContext | None" = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Public semantic-search entry point with activity-event instrumentation (#3791).
+
+        Wraps :meth:`_semantic_search_impl` to record SEARCH events on
+        success and BLOCKED events on exceptions. Mirrors the ``grep``
+        wrapper pattern so all primary SearchService surfaces feed the
+        same activity stream.
+        """
+        _start = time.monotonic()
+        _zone: str | None = None
+        try:
+            _zone, _, _ = self._get_routing_params(context)
+        except Exception:  # pragma: no cover - never fail emit setup
+            _zone = None
+        try:
+            result = await self._semantic_search_impl(
+                query=query,
+                path=path,
+                limit=limit,
+                filters=filters,
+                search_mode=search_mode,
+                context=context,
+            )
+        except Exception:
+            emit(
+                kind=EventKind.SEARCH,
+                result=Result.BLOCKED,
+                actor_token_hash=None,
+                subject_zone=_zone,
+                subject_extra={"mode": search_mode},
+                latency_ms=int((time.monotonic() - _start) * 1000),
+            )
+            raise
+        emit(
+            kind=EventKind.SEARCH,
+            result=Result.OK,
+            actor_token_hash=None,
+            subject_zone=_zone,
+            subject_extra={
+                "mode": search_mode,
+                "hits": len(result) if hasattr(result, "__len__") else None,
+            },
+            latency_ms=int((time.monotonic() - _start) * 1000),
+        )
+        return result
+
+    async def _semantic_search_impl(
         self,
         query: str,
         path: str = "/",

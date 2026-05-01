@@ -13,7 +13,7 @@ from typing import Any
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from nexus.services.activity import EventKind, Result, emit
+from nexus.contracts.protocols.activity import EventKind, Result, emit
 
 logger = logging.getLogger("nexus.mcp.audit")
 

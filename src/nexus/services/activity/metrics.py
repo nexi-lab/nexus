@@ -11,6 +11,7 @@ from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram
 
+from nexus.contracts.protocols.activity import register_approvals_pending_gauge
 from nexus.services.activity.events import EventKind, Result
 
 # Issue's named catalog ───────────────────────────────────────────────────────
@@ -18,7 +19,7 @@ from nexus.services.activity.events import EventKind, Result
 SEARCH_REQUESTS = Counter(
     "nexus_search_requests_total",
     "Total Nexus search requests",
-    ["zone", "token_hash", "status"],
+    ["zone", "status"],
 )
 
 SEARCH_LATENCY = Histogram(
@@ -43,6 +44,11 @@ APPROVALS_PENDING = Gauge(
     "nexus_approvals_pending",
     "Number of approval requests currently in PENDING state",
 )
+
+# Wire the contracts-side reseed entrypoint to this gauge so brick callers
+# (which only import nexus.contracts.protocols.activity) can update it
+# without crossing the contracts→services boundary.
+register_approvals_pending_gauge(APPROVALS_PENDING.set)
 
 # Internal subsystem health ───────────────────────────────────────────────────
 
@@ -74,24 +80,27 @@ def record_metrics(
 ) -> None:
     """Update the Prom catalog for one emitted event.
 
-    APPROVALS_PENDING contract: producers MUST emit exactly one
-    PENDING_APPROVAL when an approval is created and exactly one
-    non-PENDING result (OK | BLOCKED) when it resolves. Across a
-    process restart the gauge may go negative for in-flight approvals
-    that resolve after restart — Task 15 (ApprovalService wiring)
-    should reseed APPROVALS_PENDING from a DB count at startup if
-    accuracy is required.
+    Token attribution lives in the SQLite activity event payload, not in
+    Prometheus labels — token rotation produces unbounded series otherwise.
+
+    APPROVALS_PENDING is NOT updated here. The gauge is authoritative —
+    ``ApprovalService`` reseeds it from the durable ``list_pending`` count
+    at startup and after every transition (create / decide / local-timeout
+    expire / sweeper expire / cross-worker NOTIFY / reconcile) via
+    ``reseed_approvals_pending``. Event-delta accounting cannot stay
+    consistent across cross-worker decisions where the decrement and the
+    increment happen in different processes.
 
     MCP_TOOL_CALL contract: producers MUST populate
     ``subject_extra={"tool": ...}`` for the MCP_TOOL_CALLS counter
     label to reflect the actual tool name (otherwise it falls back
     to "unknown").
     """
+    _ = actor_token_hash  # retained for SQLite payload; not a Prom label
     zone = subject_zone or "unknown"
-    token = actor_token_hash or "anonymous"
 
     if kind is EventKind.SEARCH:
-        SEARCH_REQUESTS.labels(zone=zone, token_hash=token, status=result.value).inc()
+        SEARCH_REQUESTS.labels(zone=zone, status=result.value).inc()
         if latency_ms is not None:
             SEARCH_LATENCY.labels(zone=zone).observe(latency_ms / 1000.0)
     elif kind is EventKind.MCP_TOOL_CALL:
@@ -100,9 +109,5 @@ def record_metrics(
     elif kind in (EventKind.ZONE_ACCESS, EventKind.POLICY_BLOCK):
         if result is Result.BLOCKED:
             POLICY_BLOCKS.labels(kind=kind.value).inc()
-    elif kind is EventKind.APPROVAL:
-        if result is Result.PENDING_APPROVAL:
-            APPROVALS_PENDING.inc()
-        else:
-            APPROVALS_PENDING.dec()
+    # APPROVAL: gauge is reseeded from durable state by the producer.
     # FETCH currently has no metric in the catalog.

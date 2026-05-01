@@ -3,6 +3,11 @@
 See ``docs/superpowers/specs/2026-04-30-3791-activity-event-foundation-design.md``.
 """
 
+# Side-effect import: registers the APPROVALS_PENDING gauge setter with the
+# contracts-side reseed entrypoint so brick callers can update the gauge
+# without crossing the contracts→services boundary. Imported here (not lazily)
+# so the wiring is in place before any brick calls reseed_approvals_pending().
+from nexus.services.activity import metrics as _metrics  # noqa: F401
 from nexus.services.activity.emitter import (
     Emitter,
     NoopEmitter,

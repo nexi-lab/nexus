@@ -53,3 +53,45 @@ def test_negative_retention_disables(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "0")
     cfg = ActivityConfig.from_env()
     assert cfg.retention_days == 0
+
+
+def test_zero_queue_size_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-positive queue_size makes asyncio.Queue unbounded — that breaks
+    the bounded-telemetry contract and prevents drop accounting."""
+    monkeypatch.setenv("NEXUS_ACTIVITY_QUEUE_SIZE", "0")
+    with pytest.raises(ValueError, match="NEXUS_ACTIVITY_QUEUE_SIZE"):
+        ActivityConfig.from_env()
+
+
+def test_negative_queue_size_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXUS_ACTIVITY_QUEUE_SIZE", "-1")
+    with pytest.raises(ValueError, match="NEXUS_ACTIVITY_QUEUE_SIZE"):
+        ActivityConfig.from_env()
+
+
+def test_zero_batch_size_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_SIZE", "0")
+    with pytest.raises(ValueError, match="NEXUS_ACTIVITY_BATCH_SIZE"):
+        ActivityConfig.from_env()
+
+
+def test_zero_batch_timeout_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_TIMEOUT_S", "0")
+    with pytest.raises(ValueError, match="NEXUS_ACTIVITY_BATCH_TIMEOUT_S"):
+        ActivityConfig.from_env()
+
+
+def test_negative_retention_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """retention_days=0 disables prune (valid); negative is invalid."""
+    monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "-1")
+    with pytest.raises(ValueError, match="NEXUS_ACTIVITY_RETENTION_DAYS"):
+        ActivityConfig.from_env()
+
+
+@pytest.mark.parametrize("bad_value", ["nan", "inf", "-inf"])
+def test_non_finite_batch_timeout_rejected(monkeypatch: pytest.MonkeyPatch, bad_value: str) -> None:
+    """NaN passes <=0 (NaN comparisons are False); inf would prevent partial-
+    batch flushes. Both must be rejected at config-parse time."""
+    monkeypatch.setenv("NEXUS_ACTIVITY_BATCH_TIMEOUT_S", bad_value)
+    with pytest.raises(ValueError, match="NEXUS_ACTIVITY_BATCH_TIMEOUT_S"):
+        ActivityConfig.from_env()

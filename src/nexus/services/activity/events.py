@@ -1,30 +1,21 @@
 """ActivityEvent schema for issue #3791 foundation slice.
 
-Frozen dataclasses + enums. No I/O, no side effects — safe to import from
-any layer. ``actor.token_hash`` is the SHA256[:16] of the raw bearer token
-(matches ``bricks/mcp/middleware_audit.py``); raw tokens are NEVER stored.
+Frozen dataclasses for the wire/storage shape of events. ``EventKind`` and
+``Result`` live in ``nexus.contracts.protocols.activity`` so bricks can
+import them without touching ``nexus.services``; this module re-exports
+them for service-side imports. ``actor.token_hash`` is the SHA256[:16] of
+the raw bearer token (matches ``bricks/mcp/middleware_audit.py``); raw
+tokens are NEVER stored.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
 
+from nexus.contracts.protocols.activity import EventKind, Result
 
-class EventKind(StrEnum):
-    SEARCH = "search"
-    FETCH = "fetch"
-    MCP_TOOL_CALL = "mcp_tool_call"
-    ZONE_ACCESS = "zone_access"
-    POLICY_BLOCK = "policy_block"
-    APPROVAL = "approval"
-
-
-class Result(StrEnum):
-    OK = "ok"
-    BLOCKED = "blocked"
-    PENDING_APPROVAL = "pending_approval"
+__all__ = ["ActivityEvent", "Actor", "EventKind", "Result", "Subject"]
 
 
 @dataclass(frozen=True, slots=True)

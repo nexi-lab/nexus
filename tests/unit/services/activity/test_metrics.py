@@ -32,9 +32,9 @@ def _sample(metric, **labels) -> float:
 
 
 def test_search_request_increments_counter() -> None:
-    before = _sample(SEARCH_REQUESTS, zone="eng", token_hash="x", status="ok")
-    SEARCH_REQUESTS.labels(zone="eng", token_hash="x", status="ok").inc()
-    after = _sample(SEARCH_REQUESTS, zone="eng", token_hash="x", status="ok")
+    before = _sample(SEARCH_REQUESTS, zone="eng", status="ok")
+    SEARCH_REQUESTS.labels(zone="eng", status="ok").inc()
+    after = _sample(SEARCH_REQUESTS, zone="eng", status="ok")
     assert after == before + 1
 
 
@@ -63,7 +63,7 @@ def test_activity_drops_counter_present() -> None:
 async def test_queue_emitter_records_metrics() -> None:
     q: asyncio.Queue = asyncio.Queue(maxsize=10)
     emitter = QueueEmitter(queue=q)
-    before_search = _sample(SEARCH_REQUESTS, zone="eng", token_hash="abc", status="ok")
+    before_search = _sample(SEARCH_REQUESTS, zone="eng", status="ok")
     emitter.emit(
         kind=EventKind.SEARCH,
         result=Result.OK,
@@ -71,7 +71,7 @@ async def test_queue_emitter_records_metrics() -> None:
         subject_zone="eng",
         latency_ms=42,
     )
-    after_search = _sample(SEARCH_REQUESTS, zone="eng", token_hash="abc", status="ok")
+    after_search = _sample(SEARCH_REQUESTS, zone="eng", status="ok")
     assert after_search == before_search + 1
 
 
@@ -87,7 +87,7 @@ async def test_queue_emitter_drops_increment_drop_metric() -> None:
 
 
 def test_record_metrics_dispatches_search() -> None:
-    before = _sample(SEARCH_REQUESTS, zone="d-eng", token_hash="d-tok", status="ok")
+    before = _sample(SEARCH_REQUESTS, zone="d-eng", status="ok")
     record_metrics(
         kind=EventKind.SEARCH,
         result=Result.OK,
@@ -96,7 +96,7 @@ def test_record_metrics_dispatches_search() -> None:
         subject_extra=None,
         latency_ms=10,
     )
-    after = _sample(SEARCH_REQUESTS, zone="d-eng", token_hash="d-tok", status="ok")
+    after = _sample(SEARCH_REQUESTS, zone="d-eng", status="ok")
     assert after == before + 1
 
 
@@ -157,32 +157,37 @@ def test_record_metrics_zone_access_ok_does_not_increment_blocks() -> None:
     assert after == before
 
 
-def test_record_metrics_dispatches_approval_pending_inc() -> None:
+def test_record_metrics_does_not_mutate_approvals_pending() -> None:
+    """APPROVALS_PENDING is reseeded from durable state by ApprovalService at
+    every transition (and at startup); record_metrics must not touch it.
+    Otherwise per-process delta accounting drifts on cross-worker decisions.
+    """
     before = _sample(APPROVALS_PENDING)
-    record_metrics(
-        kind=EventKind.APPROVAL,
-        result=Result.PENDING_APPROVAL,
-        actor_token_hash=None,
-        subject_zone=None,
-        subject_extra=None,
-        latency_ms=None,
-    )
+    for result in (Result.PENDING_APPROVAL, Result.OK, Result.BLOCKED):
+        record_metrics(
+            kind=EventKind.APPROVAL,
+            result=result,
+            actor_token_hash=None,
+            subject_zone=None,
+            subject_extra=None,
+            latency_ms=None,
+        )
     after = _sample(APPROVALS_PENDING)
-    assert after == before + 1
+    assert after == before
 
 
-def test_record_metrics_dispatches_approval_resolved_dec() -> None:
-    before = _sample(APPROVALS_PENDING)
-    record_metrics(
-        kind=EventKind.APPROVAL,
-        result=Result.OK,
-        actor_token_hash=None,
-        subject_zone=None,
-        subject_extra=None,
-        latency_ms=None,
-    )
-    after = _sample(APPROVALS_PENDING)
-    assert after == before - 1
+def test_reseed_approvals_pending_sets_gauge_authoritatively() -> None:
+    """The contracts-layer reseed function must overwrite the gauge with the
+    durable count, not increment/decrement."""
+    from nexus.contracts.protocols.activity import reseed_approvals_pending
+
+    reseed_approvals_pending(0)
+    assert _sample(APPROVALS_PENDING) == 0
+    reseed_approvals_pending(7)
+    assert _sample(APPROVALS_PENDING) == 7
+    reseed_approvals_pending(3)
+    assert _sample(APPROVALS_PENDING) == 3
+    reseed_approvals_pending(0)
 
 
 def test_record_metrics_fetch_is_noop() -> None:

@@ -30,22 +30,30 @@ _OBSERVABILITY_PROVIDERS: list[tuple[str, str, str, str]] = [
 ]
 
 
-def _make_start(mod: str, fn: str) -> Callable[..., None]:
-    """Factory for lazy-import start functions (avoids closure-over-loop-variable bugs)."""
+def _make_start(mod: str, fn: str) -> Callable[..., Any]:
+    """Factory for lazy-import start functions (avoids closure-over-loop-variable bugs).
 
-    def _start(**kwargs: Any) -> None:
+    Returns the invocation result so async providers (whose setup_fn is a
+    coroutine function) propagate the awaitable up to FunctionPairComponent.
+    """
+
+    def _start(**kwargs: Any) -> Any:
         module = importlib.import_module(mod)
-        getattr(module, fn)(**kwargs)
+        return getattr(module, fn)(**kwargs)
 
     return _start
 
 
-def _make_stop(mod: str, fn: str) -> Callable[[], None]:
-    """Factory for lazy-import stop functions (avoids closure-over-loop-variable bugs)."""
+def _make_stop(mod: str, fn: str) -> Callable[[], Any]:
+    """Factory for lazy-import stop functions (avoids closure-over-loop-variable bugs).
 
-    def _stop() -> None:
+    Returns the invocation result so async providers' shutdown coroutines are
+    awaited by FunctionPairComponent rather than silently discarded.
+    """
+
+    def _stop() -> Any:
         module = importlib.import_module(mod)
-        getattr(module, fn)()
+        return getattr(module, fn)()
 
     return _stop
 

@@ -19,7 +19,7 @@ async def test_metrics_exposed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("NEXUS_ACTIVITY_DB_PATH", str(db))
     monkeypatch.setenv("NEXUS_ACTIVITY_RETENTION_DAYS", "0")
 
-    setup_activity()
+    await setup_activity()
     try:
         emit(
             kind=EventKind.SEARCH,
@@ -33,8 +33,7 @@ async def test_metrics_exposed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         emit(kind=EventKind.APPROVAL, result=Result.PENDING_APPROVAL)
         await asyncio.sleep(0.2)
     finally:
-        shutdown_activity()
-        await asyncio.sleep(0.1)
+        await shutdown_activity()
 
     body = generate_latest().decode()
     assert "nexus_search_requests_total" in body

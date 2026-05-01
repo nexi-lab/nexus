@@ -133,7 +133,14 @@ async def test_retention_task_runs_and_prunes(tmp_path: Path) -> None:
     _seed(db)
     task = RetentionTask(db_path=db, retention_days=30, interval_s=0.05, vacuum_threshold=1)
     await task.start()
-    await asyncio.sleep(0.2)
+    # Poll for the first prune to complete instead of relying on a fixed
+    # sleep — under heavy parallel load (xdist) the asyncio scheduler may
+    # not run the task body within a small window, making any hard-coded
+    # delay flaky.
+    for _ in range(200):
+        if task.total_pruned >= 2:
+            break
+        await asyncio.sleep(0.02)
     await task.stop()
     assert task.total_pruned == 2
     conn = sqlite3.connect(db)

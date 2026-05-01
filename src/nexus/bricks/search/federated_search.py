@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from nexus.bricks.search.fusion import rrf_multi_fusion
-from nexus.services.activity import EventKind, Result, emit
+from nexus.contracts.protocols.activity import EventKind, Result, emit
 
 logger = logging.getLogger(__name__)
 

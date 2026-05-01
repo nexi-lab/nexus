@@ -1,12 +1,16 @@
 """Append-only SQLite sink for activity events.
 
-Single-writer connection (``check_same_thread=False`` to allow the worker
-to await ``write_batch`` while the connection lives on a different thread
-in tests). Caller is the activity worker, which serializes calls.
+Single-writer connection (``check_same_thread=False`` because writes are
+dispatched via ``asyncio.to_thread`` so the executor thread, not the loop
+thread, owns each ``executemany`` call). Caller is the activity worker,
+which serializes calls — there is never more than one writer thread at a
+time. Keeping I/O off the loop ensures a SQLite busy-wait (e.g. against
+the retention VACUUM connection) cannot stall unrelated request handlers.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -87,21 +91,29 @@ class SQLiteSink:
             )
             for e in events
         ]
+        # Shield the executor write from task cancellation: the to_thread
+        # future cannot stop the underlying thread, so cancelling here would
+        # leave a partial executemany running while shutdown closes the same
+        # connection in close(). asyncio.shield ensures the future completes
+        # before the awaiter is cancelled.
         try:
-            self._conn.executemany(
-                "INSERT OR IGNORE INTO activity_events "
-                "(id, ts, kind, result, latency_ms, trace_id, "
-                " actor_token_hash, actor_agent, actor_user, "
-                " subject_zone, subject_extra, meta) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rows,
-            )
+            await asyncio.shield(asyncio.to_thread(self._executemany, rows))
         except sqlite3.Error:
             logger.warning("activity SQLiteSink batch insert failed", exc_info=True)
             raise
 
+    def _executemany(self, rows: Sequence[tuple[object, ...]]) -> None:
+        self._conn.executemany(
+            "INSERT OR IGNORE INTO activity_events "
+            "(id, ts, kind, result, latency_ms, trace_id, "
+            " actor_token_hash, actor_agent, actor_user, "
+            " subject_zone, subject_extra, meta) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+
     async def close(self) -> None:
         try:
-            self._conn.close()
+            await asyncio.to_thread(self._conn.close)
         except sqlite3.Error:
             logger.warning("activity SQLiteSink close failed", exc_info=True)

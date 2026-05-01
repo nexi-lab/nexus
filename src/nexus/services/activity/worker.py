@@ -41,16 +41,59 @@ class ActivityWorker:
             return
         self._stopping.clear()
         self._task = asyncio.create_task(self._consume())
+        self._task.add_done_callback(self._on_task_done)
 
-    async def stop(self, *, timeout: float = 5.0) -> None:
+    def _on_task_done(self, task: asyncio.Task[None]) -> None:
+        """Surface unexpected worker death via the sink-errors counter.
+
+        ``stop()`` sets ``_stopping`` before letting the task exit, so a
+        completion with the flag clear is a crash. The component-level
+        health flag and /metrics need an alertable signal so operators
+        notice that activity persistence stopped happening.
+        """
+        if self._stopping.is_set():
+            return
+        if task.cancelled():
+            logger.warning("activity worker cancelled unexpectedly")
+        else:
+            exc = task.exception()
+            if exc is not None:
+                logger.error("activity worker died unexpectedly", exc_info=exc)
+            else:
+                logger.warning("activity worker exited without stop signal")
+        try:
+            from nexus.services.activity.metrics import ACTIVITY_SINK_ERRORS
+
+            ACTIVITY_SINK_ERRORS.labels(sink="ActivityWorker").inc()
+        except Exception:
+            pass
+
+    def is_healthy(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    async def stop(self, *, timeout: float = 10.0) -> None:
+        """Drain the queue and close sinks.
+
+        Cancellation cannot stop the SQLite executor thread mid-write, so
+        cancelling the consumer task while it is awaiting ``write_batch``
+        would let the thread keep using the connection while ``close()``
+        runs against it. Instead we set the stopping flag and wait for the
+        consumer to exit naturally — it polls the flag between batches and
+        terminates after the current flush completes. ``timeout`` is a
+        soft budget: when it elapses we log a warning and keep waiting,
+        because closing under a wedged write is the worse failure mode.
+        """
         self._stopping.set()
         if self._task is None:
             return
         try:
-            await asyncio.wait_for(self._task, timeout=timeout)
+            await asyncio.wait_for(asyncio.shield(self._task), timeout=timeout)
         except TimeoutError:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            logger.warning(
+                "activity worker drain exceeded %ss; waiting for in-flight write to finish",
+                timeout,
+            )
+            with contextlib.suppress(Exception):
                 await self._task
         self._task = None
         for sink in self._sinks:
@@ -124,6 +167,12 @@ class ActivityWorker:
             try:
                 await sink.write_batch(batch)
             except Exception:
+                try:
+                    from nexus.services.activity.metrics import ACTIVITY_SINK_ERRORS
+
+                    ACTIVITY_SINK_ERRORS.labels(sink=type(sink).__name__).inc()
+                except Exception:
+                    pass
                 logger.warning(
                     "activity sink %s failed batch write", type(sink).__name__, exc_info=True
                 )

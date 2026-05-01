@@ -87,10 +87,19 @@ class RetentionTask:
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
+        """Wait for the in-flight prune (if any) to finish, then exit.
+
+        Cancellation cannot stop the executor thread mid-VACUUM, so a
+        cancel here would let the thread keep holding the SQLite write
+        lock after stop() returns — and the worker's final drain would
+        then race that lock. Setting the stopping flag is sufficient:
+        ``_run`` checks the flag between iterations and waits on it
+        instead of sleeping, so the loop exits as soon as the current
+        prune finishes.
+        """
         self._stopping.set()
         if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
+            with contextlib.suppress(Exception):
                 await self._task
             self._task = None
 

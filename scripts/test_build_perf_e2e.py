@@ -345,13 +345,23 @@ def main() -> None:
     )
 
     # =========================================================================
-    section("6. HERB QUALITY GATE (BM25+pgvector+SPLADE+reranker)")
+    section("6. HERB QUALITY GATE (hybrid retrieval)")
     # =========================================================================
 
     step("waiting for search index to process demo files (up to 120s)")
     print("    Waiting for search index to process demo files...", flush=True)
     for _wait in range(24):  # 24×5s = 120s — semantic embedding pipeline is async
-        r = cli("search", "query", "Nexus Core", "--path", HERB_SEARCH_PATH, "--limit", "1")
+        r = cli(
+            "search",
+            "query",
+            "Nexus Core",
+            "--path",
+            HERB_SEARCH_PATH,
+            "--mode",
+            "hybrid",
+            "--limit",
+            "1",
+        )
         if "/workspace/demo/herb/products/prod-001.md" in r.stdout:
             print(f"    Search index ready after {(_wait + 1) * 5}s", flush=True)
             break
@@ -366,7 +376,17 @@ def main() -> None:
     for i, (q, expected) in enumerate(qa_set, 1):
         step(f"HERB QA {i}/{len(qa_set)}: expected={expected.rsplit('/', 1)[-1]!r}")
         start = time.perf_counter()
-        r = cli("search", "query", q, "--path", HERB_SEARCH_PATH, "--limit", "5")
+        r = cli(
+            "search",
+            "query",
+            q,
+            "--path",
+            HERB_SEARCH_PATH,
+            "--mode",
+            "hybrid",
+            "--limit",
+            "5",
+        )
         elapsed = (time.perf_counter() - start) * 1000
         search_latencies.append(elapsed)
         hit = expected in r.stdout
@@ -403,6 +423,8 @@ def main() -> None:
             "Meridian Health",
             "--path",
             HERB_SEARCH_PATH,
+            "--mode",
+            "hybrid",
             "--limit",
             "3",
         )
@@ -419,6 +441,8 @@ def main() -> None:
             "Meridian Health",
             "--path",
             HERB_SEARCH_PATH,
+            "--mode",
+            "hybrid",
             "--limit",
             "3",
             api_key=USER_KEY,

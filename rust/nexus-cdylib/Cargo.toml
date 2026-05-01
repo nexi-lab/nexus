@@ -50,8 +50,3 @@ rpc = { workspace = true, features = ["python"] }
 # linkage shape: pyo3 does NOT link libpython itself; the .so is
 # loaded by the running Python which provides the symbols.
 pyo3 = { version = "0.27.2", features = ["extension-module"] }
-
-[features]
-# Pass-through for the optional `nostr` backend so Docker / CI
-# `--features nostr` flags keep working at the new entry point.
-nostr = ["kernel/nostr"]

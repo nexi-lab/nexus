@@ -17,7 +17,6 @@ python = ["dep:pyo3"]
 # Connector HTTP / streaming dependency stack — pulled when any of the
 # cloud / API backends are compiled in.
 connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
-nostr = ["dep:tokio-tungstenite", "dep:k256", "dep:sha2", "dep:futures-util"]
 
 [dependencies]
 contracts = { workspace = true }
@@ -60,8 +59,6 @@ reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], defau
 hmac = { version = "0.12", optional = true }
 sha2 = { version = "0.10", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["sink"], optional = true }
-tokio-tungstenite = { version = "0.26", optional = true }
-k256 = { version = "0.13", features = ["schnorr"], optional = true }
 
 [dev-dependencies]
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }

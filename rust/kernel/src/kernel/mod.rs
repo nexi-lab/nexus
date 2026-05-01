@@ -1589,7 +1589,7 @@ impl Kernel {
                 // Without the same-zone guard, wire_mount_core
                 // overwrites our typed backend with the parent zone's
                 // backend (regression caught by openai unit tests).
-                let parent_zone = "root";
+                let parent_zone = contracts::ROOT_ZONE_ID;
                 if federation_active && !zone_id.is_empty() && zone_id != parent_zone {
                     let _ = coordinator.wire_mount(self, parent_zone, path, zone_id);
                 }

@@ -1391,6 +1391,13 @@ class TestLeaderFailover:
             assert "error" not in r, f"Pre-fetch read ({zone}) on node-2 failed: {r}"
             assert _decode_content(r) == content
 
+        _wait_nodes_caught_up(
+            [grpc1, grpc2],
+            ["corp", "corp-eng", "corp-sales", "family"],
+            api_key,
+            timeout=30,
+        )
+
         # Stop node-1 via Docker SDK (more portable than CLI)
         node1_container = docker_client.containers.get("nexus-dyn-node-1")
         node1_container.stop(timeout=10)

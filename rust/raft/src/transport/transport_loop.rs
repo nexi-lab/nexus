@@ -47,6 +47,13 @@ const EC_BACKOFF_CAP: Duration = Duration::from_secs(60);
 /// Kept short because Raft heartbeats/votes must be fast.
 const RAFT_SEND_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 
+/// Timeout for a single EC replication send.
+///
+/// EC replication is background data movement; it must not stall the transport
+/// loop that drives Raft ticks and elections. Unreachable peers are retried by
+/// the per-peer backoff below.
+const EC_SEND_TIMEOUT: StdDuration = StdDuration::from_millis(250);
+
 /// Maximum entries to send per peer per EC replication cycle.
 /// Caps memory and prevents the tonic request timeout from being exceeded
 /// on large backlogs.
@@ -399,20 +406,23 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 let node_id = self.node_id;
 
                 join_set.spawn(async move {
-                    // No extra timeout here — tonic's 10s request timeout
-                    // (client.rs:131) handles slow peers. A hard 5s wrapper
-                    // would wedge EC catch-up on legitimately large batches.
-                    match send_ec_entries(
+                    let send = send_ec_entries(
                         &client_pool,
                         &task.peer_addr,
                         zone_id,
                         task.entries,
                         node_id,
-                    )
-                    .await
-                    {
-                        Ok(applied_up_to) => (task.peer_id, Ok(applied_up_to)),
-                        Err(e) => (task.peer_id, Err(e)),
+                    );
+                    match tokio::time::timeout(EC_SEND_TIMEOUT, send).await {
+                        Ok(Ok(applied_up_to)) => (task.peer_id, Ok(applied_up_to)),
+                        Ok(Err(e)) => (task.peer_id, Err(e)),
+                        Err(_) => (
+                            task.peer_id,
+                            Err(format!(
+                                "EC replication timed out after {:?}",
+                                EC_SEND_TIMEOUT
+                            )),
+                        ),
                     }
                 });
             }

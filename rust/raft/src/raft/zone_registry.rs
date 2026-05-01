@@ -26,11 +26,57 @@ use crate::transport::{
     TransportLoop,
 };
 use dashmap::DashMap;
-use std::collections::HashMap;
+use raft::eraftpb::ConfState;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+
+/// Reconcile a static peer roster with persisted Raft membership.
+///
+/// Dynamic voter replacement can preserve a node's hostname/port while changing
+/// its Raft node ID. On restart, NEXUS_PEERS still contains the cold ID, but
+/// persisted ConfState is authoritative. If there is exactly one stale ID and
+/// one persisted ID missing from the transport map, carry the known address over
+/// to the persisted ID so membership checks and message routing agree.
+pub(crate) fn reconcile_peers_with_conf_state(
+    zone_id: &str,
+    peers: &mut [NodeAddress],
+    conf_state: &ConfState,
+) {
+    let conf_ids: HashSet<u64> = conf_state
+        .voters
+        .iter()
+        .chain(conf_state.voters_outgoing.iter())
+        .chain(conf_state.learners.iter())
+        .chain(conf_state.learners_next.iter())
+        .copied()
+        .collect();
+    if conf_ids.is_empty() {
+        return;
+    }
+
+    let peer_ids: HashSet<u64> = peers.iter().map(|peer| peer.id).collect();
+    let missing_conf_ids: Vec<u64> = conf_ids.difference(&peer_ids).copied().collect();
+    let stale_peer_ids: Vec<u64> = peer_ids.difference(&conf_ids).copied().collect();
+    if missing_conf_ids.len() != 1 || stale_peer_ids.len() != 1 {
+        return;
+    }
+
+    let old_id = stale_peer_ids[0];
+    let new_id = missing_conf_ids[0];
+    if let Some(peer) = peers.iter_mut().find(|peer| peer.id == old_id) {
+        tracing::warn!(
+            zone = %zone_id,
+            old_id,
+            new_id,
+            endpoint = %peer.endpoint,
+            "Reconciled peer ID from persisted Raft ConfState",
+        );
+        peer.id = new_id;
+    }
+}
 
 /// Per-zone concurrent-op guard. Prevents concurrent `setup_zone` and
 /// `remove_zone` calls for the same zone_id from interleaving their
@@ -306,7 +352,7 @@ impl ZoneRaftRegistry {
         &self,
         zone_id: &str,
         config: RaftConfig,
-        peers: Vec<NodeAddress>,
+        mut peers: Vec<NodeAddress>,
         campaign: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
@@ -412,6 +458,10 @@ impl ZoneRaftRegistry {
         let raft_storage = RaftStorage::open(persistence.raft_path()).map_err(|e| {
             TransportError::Connection(format!("Failed to open raft storage: {}", e))
         })?;
+        use raft::Storage;
+        if let Ok(initial_state) = raft_storage.initial_state() {
+            reconcile_peers_with_conf_state(zone_id, &mut peers, &initial_state.conf_state);
+        }
         let mut state_machine = FullStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
         })?;
@@ -433,7 +483,6 @@ impl ZoneRaftRegistry {
         // last compact would be lost on restart. Rehydrating here
         // keeps the post-restart state machine consistent with other
         // replicas that are caught up via the normal log-replay path.
-        use raft::Storage;
         if let Ok(snap) = raft_storage.snapshot(0, 0) {
             let meta = snap.get_metadata();
             if meta.index > 0 && !snap.data.is_empty() {
@@ -762,6 +811,49 @@ mod tests {
     /// the explicit transport shutdown handshake, not a sleep.
     async fn await_shutdown_cleanup() {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    #[test]
+    fn test_reconcile_peers_with_conf_state_repairs_single_rotated_id() {
+        let mut peers = vec![
+            NodeAddress::parse("nexus-1:2126", false).unwrap(),
+            NodeAddress::parse("nexus-2:2126", false).unwrap(),
+            NodeAddress::parse("witness:2126", false).unwrap(),
+        ];
+        let stale_id = peers[1].id;
+        let rotated_id = 13569616949052319723;
+        let conf_state = ConfState {
+            voters: vec![peers[0].id, rotated_id, peers[2].id],
+            ..Default::default()
+        };
+
+        reconcile_peers_with_conf_state("root", &mut peers, &conf_state);
+
+        assert!(!peers.iter().any(|peer| peer.id == stale_id));
+        let repaired = peers
+            .iter()
+            .find(|peer| peer.id == rotated_id)
+            .expect("rotated peer id should be present");
+        assert_eq!(repaired.hostname, "nexus-2");
+        assert_eq!(repaired.endpoint, "http://nexus-2:2126");
+    }
+
+    #[test]
+    fn test_reconcile_peers_with_conf_state_ignores_ambiguous_mismatch() {
+        let mut peers = vec![
+            NodeAddress::parse("nexus-1:2126", false).unwrap(),
+            NodeAddress::parse("nexus-2:2126", false).unwrap(),
+            NodeAddress::parse("witness:2126", false).unwrap(),
+        ];
+        let original = peers.clone();
+        let conf_state = ConfState {
+            voters: vec![peers[0].id, 42],
+            ..Default::default()
+        };
+
+        reconcile_peers_with_conf_state("root", &mut peers, &conf_state);
+
+        assert_eq!(peers, original);
     }
 
     #[tokio::test]

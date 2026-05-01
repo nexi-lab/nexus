@@ -1587,21 +1587,29 @@ impl Kernel {
                 // "root") are local, non-replicated mounts and must
                 // keep the backend the provider just constructed.
                 //
-                // Parent zone is derived from the parent directory's
-                // sys_stat — matches the contract `services::federation
-                // ::join` already uses (line 188).  For nested mounts
-                // like ``/family/work`` (target=corp), the parent is
-                // ``/family`` whose zone is ``family`` — NOT root.
-                // Wiring with the wrong parent zone makes follower-side
-                // apply_cb fire on root's raft instead of family's,
-                // and ContentMap mutations replicated through family's
-                // log never reach the crosslink consumers (caught by
-                // TestCrossZoneDailyWorkflow).
+                // Parent zone derived via the SAME longest-prefix route
+                // ``DLC::mount`` uses to write the DT_MOUNT entry into
+                // the parent zone's metastore (rust/kernel/src/core/dlc.rs
+                // line 80).  For ``/family/work`` (target=corp), the
+                // parent path ``/family`` routes to the family zone —
+                // the entry replicates through family's raft log, so
+                // the apply_cb that observes the new mount must be the
+                // one installed on family (NOT root, which never sees
+                // the entry).  Caught by TestCrossZoneDailyWorkflow's
+                // crosslink read on the follower peer.
+                //
+                // We route the PARENT directory, not the path itself,
+                // because by this point ``dlc.mount`` has already
+                // registered ``path`` — routing it would resolve to
+                // the new mount's own ``target_zone`` (corp), giving
+                // the wrong answer for the same-zone-guard below.
                 let parent_dir = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("/");
                 let parent_dir = if parent_dir.is_empty() { "/" } else { parent_dir };
                 let parent_zone = self
-                    .sys_stat(parent_dir, contracts::ROOT_ZONE_ID)
-                    .and_then(|s| s.zone_id)
+                    .vfs_router
+                    .route(parent_dir, contracts::ROOT_ZONE_ID)
+                    .ok()
+                    .map(|r| r.zone_id)
                     .filter(|z| !z.is_empty())
                     .unwrap_or_else(|| contracts::ROOT_ZONE_ID.to_string());
                 if federation_active && !zone_id.is_empty() && zone_id != parent_zone {

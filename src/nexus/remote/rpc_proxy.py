@@ -81,22 +81,13 @@ class RPCProxyBase:
             # Lazy import to avoid circular dependency
             from nexus.core.nexus_fs import NexusFS
 
-            # Try NexusFS first, then RPC params
             method = getattr(NexusFS, method_name, None)
-            if method is None:
-                try:
-                    import dataclasses as _dc
-
-                    from nexus.server._rpc_params_generated import METHOD_PARAMS
-
-                    params_cls = METHOD_PARAMS.get(method_name)
-                    if params_cls and _dc.is_dataclass(params_cls):
-                        names = [f.name for f in _dc.fields(params_cls)]
-                        cls._param_name_cache[method_name] = names
-                        return names
-                except (ImportError, AttributeError):
-                    pass
-
+            # METHOD_PARAMS fallback for service-tier RPCs not on NexusFS
+            # was deleted along with the auto-generated params dataclass
+            # machinery (#45) — service-tier wire dispatch is now Rust-
+            # native via python_ffi, so no Python-side dataclass exists
+            # for those methods.  Callers with positional args for
+            # non-NexusFS RPCs must switch to kwargs.
             if method and callable(method):
                 try:
                     sig = inspect.signature(method)

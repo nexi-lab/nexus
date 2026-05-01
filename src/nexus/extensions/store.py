@@ -267,11 +267,15 @@ class ManifestStore:
             from nexus.extensions.manifest import PluginManifest
 
             try:
+                # metadata_complete=False — synthesized legacy entry has no
+                # hooks/commands/runtime_deps; consumers must treat empty
+                # defaults as unknown rather than authoritative.
                 return PluginManifest(
                     name=ep.name,
                     module=module_path,
                     factory=attr or ep.name,
                     entry_point_group=group,
+                    metadata_complete=False,
                 )
             except Exception as exc:  # noqa: BLE001 — surface validation failure
                 logger.warning("Skipping invalid entry-point %s in %s: %s", ep.name, group, exc)
@@ -438,20 +442,35 @@ class ManifestStore:
             for d in manifest.runtime_deps
             if d.kind == "binary" and shutil.which(d.name) is None
         ]
-        unchecked_services = tuple(d.name for d in manifest.runtime_deps if d.kind == "service")
+
+        # Service deps: defer to the legacy availability check
+        # (``nexus.server`` importable). On full installs this is True so
+        # service-dependent extensions report available; on slim it's False
+        # and the same extensions correctly surface as missing.
+        try:
+            from nexus.backends.base.runtime_deps import _server_available
+
+            server_present = _server_available()
+        except ImportError:
+            # Legacy module isn't shipped — assume service is reachable so we
+            # don't false-positive every connector that declares a service dep.
+            server_present = True
+        missing_services = tuple(
+            d.name for d in manifest.runtime_deps if d.kind == "service" and not server_present
+        )
 
         available = (
             not probe_failures
             and not missing_python
             and not missing_binary
-            and not unchecked_services
+            and not missing_services
         )
 
         return CheckReport(
             available=available,
             missing_python_deps=tuple(missing_python),
             missing_binary_deps=tuple(missing_binary),
-            missing_services=unchecked_services,
+            missing_services=missing_services,
             import_probe_failures=tuple(probe_failures),
             profile_gate_disabled=False,
         )

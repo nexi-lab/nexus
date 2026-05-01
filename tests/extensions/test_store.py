@@ -629,9 +629,14 @@ class TestCheckSemantics:
         report = ManifestStore().check(m)
         assert report.missing_binary_deps == ()
 
-    def test_service_dep_is_unchecked_and_blocks_available(self):
-        """Services can't be probed without a connection — report as unchecked
-        and treat the manifest as not-known-available."""
+    def test_service_dep_blocked_only_when_server_runtime_absent(self, monkeypatch):
+        """Service deps now defer to the legacy `_server_available` probe.
+        On a slim build (no nexus.server) they're surfaced; on a full build
+        they're treated as reachable. This test covers the slim case."""
+        from nexus.backends.base import runtime_deps as legacy
+
+        monkeypatch.setattr(legacy, "_server_available", lambda: False)
+
         from nexus.extensions.manifest import PluginManifest, RuntimeDep
 
         m = PluginManifest(
@@ -695,6 +700,67 @@ class TestCheckSemantics:
         )
         report = ManifestStore().check(m)
         assert chosen not in report.missing_python_deps
+
+
+class TestServiceDepAvailability:
+    """Regression: service deps must not gate `available` on full installs.
+    The legacy `_server_available()` probe is the source of truth — when
+    nexus.server is importable, service deps are considered satisfied."""
+
+    def test_service_dep_does_not_block_available_when_server_present(self, monkeypatch):
+        from nexus.backends.base import runtime_deps as legacy
+
+        monkeypatch.setattr(legacy, "_server_available", lambda: True)
+
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        m = PluginManifest(
+            name="svc_user",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="service", name="token_manager"),),
+        )
+        report = ManifestStore().check(m)
+        assert report.available is True
+        assert report.missing_services == ()
+
+    def test_service_dep_blocks_available_when_server_absent(self, monkeypatch):
+        from nexus.backends.base import runtime_deps as legacy
+
+        monkeypatch.setattr(legacy, "_server_available", lambda: False)
+
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        m = PluginManifest(
+            name="needs_svc",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="service", name="token_manager"),),
+        )
+        report = ManifestStore().check(m)
+        assert report.available is False
+        assert "token_manager" in report.missing_services
+
+
+class TestSyntheticPluginPartialMetadata:
+    """Regression: synthesized legacy `module:Class` plugin entry-points
+    must carry metadata_complete=False; their hooks/commands/runtime_deps
+    are unknown, not empty-as-authoritative."""
+
+    def test_synthesized_plugin_marked_partial(self, monkeypatch):
+        from nexus.extensions import store as store_mod
+
+        ep = _FakeEntryPoint(name="legacy", value="pkg.mod:LegacyPlugin")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.plugins" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+        m = store.get("legacy", kind="plugin")
+        assert m.metadata_complete is False
 
 
 class TestProbeIsolation:

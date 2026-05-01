@@ -127,9 +127,11 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
         "nexus.bricks.portability.signer",
         "nexus.bricks.portability.tests.test_signer",
         # Task 9 (#3793): _check_embedding_compat raises ArchiveEmbeddingDimMismatch.
+        # Task 10 (#3793): _check_target_empty raises ArchiveTargetNotEmpty.
         # TODO(#3793): move shared archive errors to contracts when archive brick stabilises.
         "nexus.bricks.portability.import_service",
         "nexus.bricks.portability.tests.test_import_embedding",
+        "nexus.bricks.portability.tests.test_import_target_guard",
     ],
 }
 

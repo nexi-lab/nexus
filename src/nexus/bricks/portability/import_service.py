@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.archive.errors import ArchiveEmbeddingDimMismatch
+from nexus.bricks.archive.errors import ArchiveEmbeddingDimMismatch, ArchiveTargetNotEmpty
 from nexus.bricks.portability.bundle import BundleReader
 from nexus.bricks.portability.models import (
     ConflictMode,
@@ -84,6 +84,22 @@ def _apply_injections(rows: list[dict], injections: dict[str, str]) -> list[dict
                 new_row[k] = _PLACEHOLDER_RE.sub(_sub, v)
         out.append(new_row)
     return out
+
+
+def _check_target_empty(*, existing_zones: list[str], force: bool) -> None:
+    """Raise ArchiveTargetNotEmpty if the restore target has existing zones.
+
+    Args:
+        existing_zones: Zone IDs already present in the target nexus instance.
+        force: When ``True`` the operator has acknowledged the risk; the check
+               is skipped and the restore proceeds (DESTRUCTIVE).
+
+    Raises:
+        ArchiveTargetNotEmpty: When *existing_zones* is non-empty and
+            *force* is ``False``.
+    """
+    if existing_zones and not force:
+        raise ArchiveTargetNotEmpty(existing_zones)
 
 
 def _check_embedding_compat(

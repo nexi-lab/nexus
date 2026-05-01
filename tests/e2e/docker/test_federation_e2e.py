@@ -2301,7 +2301,7 @@ class TestPartialReplicationFailure:
             converged = False
             while time.time() < deadline:
                 st = _grpc_call(grpc2, "sys_stat", {"path": path}, api_key=api_key, timeout=5)
-                meta = st.get("result", {}).get("metadata") if "error" not in st else None
+                meta = _stat_metadata(grpc2, path, api_key) if "error" not in st else None
                 if meta is not None and meta.get("last_writer_address"):
                     converged = True
                     break
@@ -2588,9 +2588,10 @@ class TestDayAtTheOffice:
         spec_gone = False
         while time.time() < deadline:
             rr = _grpc_call(grpc2, "sys_stat", {"path": spec}, api_key=api_key)
-            # sys_stat on a missing path returns ``{"result": {"metadata": None}}``
-            # (not an "error" field, and result itself is the outer dict).
-            if "error" in rr or rr.get("result", {}).get("metadata") is None:
+            # After Rust dispatch migration, sys_stat on a missing
+            # path returns ``{"result": None}``; legacy nested
+            # ``{"result": {"metadata": None}}`` no longer applies.
+            if "error" in rr or rr.get("result") is None:
                 spec_gone = True
                 break
             time.sleep(0.5)
@@ -3049,10 +3050,10 @@ class TestCrossZoneDailyWorkflow:
         rr: dict = {}
         while time.time() < deadline:
             rr = _grpc_call(grpc1, "sys_stat", {"path": work_path}, api_key=api_key)
-            # sys_stat returns ``{"result": {"metadata": None}}`` for a
-            # missing path — the outer "result" dict is still present,
-            # we must drill into "metadata" to see the miss.
-            if "error" in rr or rr.get("result", {}).get("metadata") is None:
+            # After the Rust dispatch migration, sys_stat returns
+            # ``{"result": <StatResult dict>}`` on hit and
+            # ``{"result": None}`` on miss (no nested "metadata" key).
+            if "error" in rr or rr.get("result") is None:
                 return
             time.sleep(0.3)
         pytest.fail(f"File still visible at work path after crosslink unlink: {rr}")
@@ -3252,20 +3253,30 @@ class TestFullFailoverRecovery:
             )
             r3 = _grpc_call(grpc1, "sys_stat", {"path": f"{base}/doc3.txt"}, api_key=api_key)
 
-            # sys_stat on a deleted/absent path returns {"result": {"metadata": None}},
-            # not {"result": None} — the kernel always emits a result envelope and
-            # signals "gone" via metadata:None (mirrors POSIX stat returning -ENOENT).
+            # After the Rust dispatch migration, sys_stat returns
+            # ``{"result": <StatResult dict>}`` on hit and
+            # ``{"result": None}`` on miss.  Accept both the new flat
+            # shape and the legacy nested ``{"metadata": ...}`` shape
+            # so this test works against any pre-migration backports.
             def _is_gone(resp):
                 if "error" in resp:
                     return True
                 r = resp.get("result")
-                return r is None or r.get("metadata") is None
+                if r is None:
+                    return True
+                if isinstance(r, dict) and "metadata" in r:
+                    return r["metadata"] is None
+                return False  # flat StatResult dict means present
 
             def _is_present(resp):
                 if "error" in resp:
                     return False
-                r = resp.get("result") or {}
-                return r.get("metadata") is not None
+                r = resp.get("result")
+                if r is None:
+                    return False
+                if isinstance(r, dict) and "metadata" in r:
+                    return r["metadata"] is not None
+                return isinstance(r, dict)  # flat StatResult dict means present
 
             s_gone = _is_gone(s)
             r2_present = _is_present(r2)
@@ -3426,12 +3437,25 @@ _NODE2_ADVERTISE = "nexus-2:2126"
 
 
 def _stat_metadata(target: str, path: str, api_key: str, timeout: float = 5.0) -> dict | None:
-    """Run sys_stat via gRPC and return the metadata dict (or None)."""
+    """Run sys_stat via gRPC and return the metadata dict (or None).
+
+    After the Rust dispatch migration, sys_stat returns
+    ``{"result": <StatResult dict>}`` on hit and ``{"result": None}``
+    on miss — the legacy ``{"result": {"metadata": <dict|None>}}``
+    nested envelope is gone.  Accept both shapes so this helper works
+    against the migrated cluster + any pre-migration backports.
+    """
     info = _grpc_call(target, "sys_stat", {"path": path}, api_key=api_key, timeout=timeout)
     if "error" in info:
         return None
-    result = info.get("result", info)
-    return result.get("metadata") if isinstance(result, dict) else None
+    result = info.get("result")
+    if not isinstance(result, dict):
+        return None
+    nested = result.get("metadata")
+    if nested is not None and isinstance(nested, dict):
+        return nested
+    # Treat the flat StatResult dict as the metadata itself.
+    return result
 
 
 def _wait_meta_field(

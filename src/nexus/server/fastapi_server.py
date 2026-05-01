@@ -489,6 +489,31 @@ def create_app(
             _rpc_sources.append(SnapshotsRPCService(_snap))
         app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_rpc_sources)
 
+        # ── Legacy non-@rpc_expose handlers adapter ──────────────────
+        # admin_*, delta_*, copy, glob, grep, search, semantic_* all
+        # live as positional handlers in `server/rpc/handlers/`. Wrap
+        # them in a kwarg-style adapter and register with python_ffi
+        # so dispatch.py + handlers/ can be deleted after this PR.
+        try:
+            from nexus.server._legacy_handlers_adapter import (
+                LEGACY_HANDLER_WIRE_NAMES,
+                LegacyHandlersAdapter,
+            )
+
+            _legacy_adapter = LegacyHandlersAdapter(
+                nexus_fs=nexus_fs,
+                auth_provider=getattr(app.state, "auth_provider", None),
+            )
+            _rpc_sources.append(_legacy_adapter)
+            # Stash for the python_ffi sweep below — registers wire
+            # names against this adapter directly.
+            app.state._legacy_handlers_adapter = (
+                _legacy_adapter,
+                LEGACY_HANDLER_WIRE_NAMES,
+            )
+        except Exception as _exc:
+            logger.warning("[BOOT] LegacyHandlersAdapter setup failed: %s", _exc)
+
         # Sweep every @rpc_expose-discovered method onto the Rust
         # `python_ffi` router so the gRPC tonic Call handler can
         # serve them via Kernel::dispatch_rust_call(\"python_ffi\",
@@ -501,6 +526,23 @@ def create_app(
 
             _kernel_handle = getattr(nexus_fs, "_kernel", None)
             if _kernel_handle is not None and hasattr(_nr, "nx_python_ffi_register"):
+                # Register the legacy-handlers adapter explicitly with
+                # its wire-name list (these methods are NOT @rpc_expose'd
+                # on the adapter so the discovery sweep below would miss
+                # them).
+                _legacy_pair = getattr(app.state, "_legacy_handlers_adapter", None)
+                if _legacy_pair is not None:
+                    _legacy_inst, _legacy_names = _legacy_pair
+                    try:
+                        _nr.nx_python_ffi_register(
+                            _kernel_handle, list(_legacy_names), _legacy_inst
+                        )
+                        logger.debug(
+                            "[BOOT] python_ffi: legacy adapter registered (%d methods)",
+                            len(_legacy_names),
+                        )
+                    except Exception as _exc:
+                        logger.warning("[BOOT] python_ffi register legacy adapter failed: %s", _exc)
                 # Group by service instance so each instance is
                 # registered once with all its wire names — fewer
                 # cross-FFI calls.

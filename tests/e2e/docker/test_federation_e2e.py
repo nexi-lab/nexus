@@ -370,11 +370,22 @@ def _wait_zone_ready(
     timeout: float = 30,
 ) -> None:
     """Poll until *zone_id* exists on the target AND its raft group has a
-    leader.  Waiting for leader election is what protects the early
-    workflow tests from timing flakes: the first write to a freshly
+    *stable* leader.  Waiting for leader election is what protects the
+    early workflow tests from timing flakes: the first write to a freshly
     created zone otherwise blocks 10+ s on raft leader election before
-    the gRPC client deadline trips."""
+    the gRPC client deadline trips.
+
+    Stability requirement: the same ``leader_id`` must be observed for
+    at least ``stable_window`` seconds. The previous version returned on
+    the first non-zero ``leader_id`` sighting, which lets a churning
+    cluster (e.g. node-1 elected, immediately stepped down) pass the
+    readiness gate. Tests then issue writes that race the next election
+    and fail with ``leader hint: None``.
+    """
     deadline = time.time() + timeout
+    stable_window = 2.0
+    last_leader = 0
+    leader_first_seen: float | None = None
     while True:
         r = _grpc_call(target, "federation_list_zones", {}, api_key=api_key, timeout=5)
         if "error" not in r:
@@ -388,8 +399,20 @@ def _wait_zone_ready(
                     api_key=api_key,
                     timeout=5,
                 )
-                if "error" not in ci and ci.get("result", {}).get("leader_id"):
-                    return
+                if "error" not in ci:
+                    leader = ci.get("result", {}).get("leader_id", 0)
+                    if leader:
+                        if leader != last_leader:
+                            last_leader = leader
+                            leader_first_seen = time.time()
+                        elif (
+                            leader_first_seen is not None
+                            and time.time() - leader_first_seen >= stable_window
+                        ):
+                            return
+                    else:
+                        last_leader = 0
+                        leader_first_seen = None
         if time.time() >= deadline:
             pytest.fail(f"Zone '{zone_id}' not ready on {target} within {timeout}s")
         time.sleep(1)

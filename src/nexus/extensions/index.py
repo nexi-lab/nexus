@@ -94,16 +94,40 @@ def verify_index(
 
 
 def _discover_in_tree_manifests() -> list[AnyManifest]:
-    """Walk the source tree for `_manifest.py` files and return their MANIFEST."""
-    from nexus.extensions.store import ManifestStore
+    """Walk the source tree for `_manifest.py` files and return their MANIFEST.
 
-    store = ManifestStore()
+    Strict mode: collisions on ``(kind, name)`` across files raise so a stray
+    duplicate in-tree manifest fails the build/verify hook instead of silently
+    being dropped on first-wins precedence.
+    """
+    from nexus.extensions.store import _load_manifest_module
+
     repo_root = Path(__file__).parent.parent  # src/nexus/
+    by_key: dict[tuple[str, str], tuple[AnyManifest, Path]] = {}
+    duplicates: list[str] = []
+
     for subdir in ("backends/connectors", "bricks", "plugins"):
         root = repo_root / subdir
-        if root.exists():
-            store.load_filesystem(root)
-    return store.list()
+        if not root.exists():
+            continue
+        for child in sorted(root.iterdir()):
+            manifest_file = child / "_manifest.py"
+            if not child.is_dir() or not manifest_file.exists():
+                continue
+            manifest = _load_manifest_module(manifest_file)
+            if manifest is None:
+                continue
+            key = (manifest.kind, manifest.name)
+            if key in by_key:
+                _, prev = by_key[key]
+                duplicates.append(f"{key[0]}/{key[1]} declared in {prev} and {manifest_file}")
+                continue
+            by_key[key] = (manifest, manifest_file)
+
+    if duplicates:
+        raise RuntimeError("duplicate in-tree manifests: " + "; ".join(sorted(duplicates)))
+
+    return [m for m, _ in by_key.values()]
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -471,3 +471,157 @@ class TestLazyInvariant:
         assert factory() == 1
         assert "lazy_impl_target" in sys.modules
         assert probe_file.read_text() == "imported\n"
+
+
+class _FakeEntryPoint:
+    """Minimal stand-in for importlib.metadata.EntryPoint — name + value only."""
+
+    def __init__(self, name: str, value: str) -> None:
+        self.name = name
+        self.value = value
+
+
+class TestEntryPointLegacyFormat:
+    """Regression: legacy `module:Class` plugin entry points must register
+    a synthesized PluginManifest WITHOUT importing the implementation."""
+
+    def test_legacy_class_target_is_registered_without_import(self, monkeypatch, tmp_path):
+        import sys
+
+        from nexus.extensions import store as store_mod
+
+        # Build an impl-like module that would explode if imported.
+        impl_path = tmp_path / "fake_legacy_plugin.py"
+        impl_path.write_text("raise RuntimeError('must not import')\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("fake_legacy_plugin", None)
+
+        ep = _FakeEntryPoint(name="legacy", value="fake_legacy_plugin:LegacyPlugin")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.plugins" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+
+        m = store.get("legacy", kind="plugin")
+        assert m.module == "fake_legacy_plugin"
+        assert m.factory == "LegacyPlugin"
+        assert "fake_legacy_plugin" not in sys.modules
+
+    def test_module_style_target_imports_and_reads_manifest(self, monkeypatch, tmp_path):
+        import sys
+
+        from nexus.extensions import store as store_mod
+
+        manifest_mod = tmp_path / "fake_module_target.py"
+        manifest_mod.write_text(
+            "from nexus.extensions.manifest import PluginManifest\n"
+            "MANIFEST = PluginManifest(name='modstyle', module='m', factory='F')\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("fake_module_target", None)
+
+        ep = _FakeEntryPoint(name="modstyle", value="fake_module_target")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.plugins" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+        assert store.get("modstyle", kind="plugin").module == "m"
+
+
+class TestCheckSemantics:
+    """Regression: check() must surface unchecked services and missing binaries."""
+
+    def test_missing_binary_dep_marks_unavailable(self):
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        m = PluginManifest(
+            name="needs_bin",
+            module="m",
+            factory="F",
+            runtime_deps=(
+                RuntimeDep(kind="binary", name="this_binary_is_definitely_not_on_path_xyz"),
+            ),
+        )
+        report = ManifestStore().check(m)
+        assert report.available is False
+        assert "this_binary_is_definitely_not_on_path_xyz" in report.missing_binary_deps
+
+    def test_present_binary_dep_does_not_falsely_block(self):
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        # `sh` is on PATH on every POSIX system the test suite runs on.
+        m = PluginManifest(
+            name="needs_sh",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="binary", name="sh"),),
+        )
+        report = ManifestStore().check(m)
+        assert report.missing_binary_deps == ()
+
+    def test_service_dep_is_unchecked_and_blocks_available(self):
+        """Services can't be probed without a connection — report as unchecked
+        and treat the manifest as not-known-available."""
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        m = PluginManifest(
+            name="needs_db",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="service", name="postgres"),),
+        )
+        report = ManifestStore().check(m)
+        assert "postgres" in report.missing_services
+        assert report.available is False
+
+    def test_python_dep_uses_find_spec_not_string_match(self):
+        """Python deps must be checked against the import system, not against
+        whether the name happens to appear in the import_probes tuple."""
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        m = PluginManifest(
+            name="needs_pkg",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="python", name="totally_made_up_pkg_qwerty"),),
+            import_probes=(),  # no probe overlap — must still be flagged
+        )
+        report = ManifestStore().check(m)
+        assert report.available is False
+        assert "totally_made_up_pkg_qwerty" in report.missing_python_deps
+
+
+class TestSingletonThreadSafety:
+    """Regression: concurrent first calls to get_store must all see the same
+    instance (no torn writes, no lost registrations)."""
+
+    def test_concurrent_first_call_returns_same_instance(self):
+        import threading
+
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        results: list[ManifestStore] = []
+        barrier = threading.Barrier(8)
+
+        def worker():
+            barrier.wait()
+            results.append(get_store())
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(results) == 8
+        first = results[0]
+        assert all(r is first for r in results), "torn singleton init"

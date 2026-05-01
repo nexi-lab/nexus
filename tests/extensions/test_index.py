@@ -69,3 +69,38 @@ class TestVerifyIndex:
         # Re-run with no frozen_time and a different wall clock.
         result = verify_index(manifests=all_manifests, expected_path=out)
         assert result.is_clean is True
+
+
+class TestStrictDuplicateDetection:
+    """Regression: two `_manifest.py` files with same (kind, name) must fail
+    the build/verify hook instead of silently letting the first one win."""
+
+    def test_duplicate_in_tree_manifests_raise(self, tmp_path, monkeypatch):
+        from nexus.extensions import index as index_mod
+
+        # Build a fake source tree: two connectors both naming "dup".
+        connectors_root = tmp_path / "src" / "nexus" / "backends" / "connectors"
+        for sub in ("a", "b"):
+            child = connectors_root / sub
+            child.mkdir(parents=True)
+            (child / "_manifest.py").write_text(
+                "from nexus.extensions.manifest import ConnectorManifest\n"
+                "MANIFEST = ConnectorManifest(name='dup', module='m', factory='F',"
+                " service_name='svc')\n"
+            )
+
+        fake_extensions_dir = tmp_path / "src" / "nexus" / "extensions"
+        fake_extensions_dir.mkdir(parents=True)
+
+        # Point _discover_in_tree_manifests at the fake tree by patching
+        # the module's __file__ resolution.
+        monkeypatch.setattr(
+            index_mod,
+            "__file__",
+            str(fake_extensions_dir / "index.py"),
+        )
+
+        import pytest
+
+        with pytest.raises(RuntimeError, match="duplicate in-tree manifests"):
+            index_mod._discover_in_tree_manifests()

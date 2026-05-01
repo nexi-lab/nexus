@@ -17,6 +17,7 @@ import importlib.util
 import json
 import logging
 import os
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points as _stdlib_entry_points
@@ -39,6 +40,30 @@ logger = logging.getLogger(__name__)
 def _entry_points(group: str):
     """Indirection so tests can monkeypatch without touching the stdlib import."""
     return _stdlib_entry_points(group=group)
+
+
+def _load_manifest_module(manifest_file: Path) -> AnyManifest | None:
+    """Import a `_manifest.py` file in isolation and return its MANIFEST constant.
+
+    Returns None on any failure (broken module, missing MANIFEST). Failures are
+    logged at WARN level so siblings keep loading.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"_nexus_manifest_{manifest_file.parent.name}", manifest_file
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"could not build spec for {manifest_file}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001 — isolation is intentional
+        logger.warning("Skipping broken manifest at %s: %s", manifest_file, exc)
+        return None
+
+    manifest = getattr(module, "MANIFEST", None)
+    if manifest is None:
+        logger.warning("No MANIFEST constant in %s; skipping", manifest_file)
+    return manifest
 
 
 @dataclass(frozen=True)
@@ -120,35 +145,62 @@ class ManifestStore:
     def load_entry_points(self) -> None:
         """Discover manifests via importlib.metadata entry points.
 
-        Entry-point targets must be `_manifest` modules — i.e., the entry-point
-        value points to a module whose top level defines `MANIFEST` as a
-        manifest instance. This is the documented contract for third-party
-        extensions.
+        Two entry-point conventions are supported:
+
+        1. Manifest modules — value is a plain module path (no colon). The
+           module is imported and its top-level ``MANIFEST`` constant is
+           registered. New extensions should ship this way.
+        2. Legacy class targets — value is ``module:attr`` (e.g. existing
+           ``nexus.plugins`` entries pointing at a NexusPlugin subclass). For
+           these we synthesize a PluginManifest from the entry-point metadata
+           WITHOUT importing the implementation, so introspection still lists
+           the plugin even when its optional dependencies are missing.
         """
         for group in self._ENTRY_POINT_GROUPS:
             for ep in _entry_points(group):
-                try:
-                    module = importlib.import_module(ep.value)
-                except Exception as exc:  # noqa: BLE001 — isolation
-                    logger.warning(
-                        "Failed to load entry point %s in group %s: %s",
-                        ep.name,
-                        group,
-                        exc,
-                    )
-                    continue
-                manifest = getattr(module, "MANIFEST", None)
+                manifest = self._manifest_from_entry_point(group, ep)
                 if manifest is None:
-                    logger.warning(
-                        "Entry point %s in group %s has no MANIFEST",
-                        ep.name,
-                        group,
-                    )
                     continue
                 try:
                     self._register(manifest, source=f"entry_point:{group}/{ep.name}")
                 except DuplicateManifestError as exc:
                     logger.warning("Duplicate entry-point manifest: %s", exc)
+
+    def _manifest_from_entry_point(self, group: str, ep) -> AnyManifest | None:  # noqa: ANN001
+        """Build a manifest for one entry point without importing extension impl.
+
+        Class-style targets (``module:attr``) get a synthesized PluginManifest;
+        module-style targets are imported only to read the MANIFEST constant.
+        """
+        value = ep.value or ""
+        if ":" in value:
+            # Legacy class target — synthesize without import.
+            module_path, _, attr = value.partition(":")
+            from nexus.extensions.manifest import PluginManifest
+
+            try:
+                return PluginManifest(
+                    name=ep.name,
+                    module=module_path,
+                    factory=attr or ep.name,
+                    entry_point_group=group,
+                )
+            except Exception as exc:  # noqa: BLE001 — surface validation failure
+                logger.warning("Skipping invalid entry-point %s in %s: %s", ep.name, group, exc)
+                return None
+
+        # Module-style target — import and read MANIFEST. Per-entry isolation:
+        # a broken module must not block siblings.
+        try:
+            module = importlib.import_module(value)
+        except Exception as exc:  # noqa: BLE001 — isolation
+            logger.warning("Failed to load entry point %s in group %s: %s", ep.name, group, exc)
+            return None
+        manifest = getattr(module, "MANIFEST", None)
+        if manifest is None:
+            logger.warning("Entry point %s in group %s has no MANIFEST", ep.name, group)
+            return None
+        return manifest
 
     def load_json_index(self, path: Path) -> None:
         """Load manifests from a pre-built `extensions.json` index.
@@ -200,23 +252,9 @@ class ManifestStore:
             manifest_file = child / "_manifest.py"
             if not manifest_file.exists():
                 continue
-            try:
-                spec = importlib.util.spec_from_file_location(
-                    f"_nexus_manifest_{child.name}", manifest_file
-                )
-                if spec is None or spec.loader is None:
-                    raise ImportError(f"could not build spec for {manifest_file}")
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-            except Exception as exc:  # noqa: BLE001 — isolation is intentional
-                logger.warning("Skipping broken manifest at %s: %s", manifest_file, exc)
-                continue
-
-            manifest = getattr(module, "MANIFEST", None)
+            manifest = _load_manifest_module(manifest_file)
             if manifest is None:
-                logger.warning("No MANIFEST constant in %s; skipping", manifest_file)
                 continue
-
             try:
                 self._register(manifest, source=f"fs_scan:{manifest_file}")
             except DuplicateManifestError as exc:
@@ -225,12 +263,19 @@ class ManifestStore:
     # --- introspection API ---
 
     def check(self, manifest: AnyManifest) -> CheckReport:
-        """Run import probes and dependency declarations to report availability.
+        """Run import probes and per-dep checks to report availability.
 
-        Does NOT import the manifest's impl module. Only `import_probes` are
-        attempted; binary/service deps are reported as declared (we don't
-        execute them here).
+        - python deps: ``importlib.util.find_spec`` (does NOT execute the module).
+        - binary deps: ``shutil.which`` against PATH.
+        - service deps: marked unchecked (we can't probe a service without
+          opening a connection); they are surfaced via ``unchecked_services``
+          so callers know the report is incomplete and ``available`` is False
+          unless every declared service is reachable out-of-band.
+        - import_probes: ``importlib.import_module`` (the only thing that may
+          actually execute extension-adjacent code).
         """
+        import shutil
+
         probe_failures: list[str] = []
         for probe in manifest.import_probes:
             try:
@@ -238,22 +283,36 @@ class ManifestStore:
             except ImportError:
                 probe_failures.append(probe)
 
-        missing_python = tuple(
-            d.name for d in manifest.runtime_deps if d.kind == "python" and d.name in probe_failures
-        )
-        # Binary and service deps are advisory until we add active checkers
-        # (out of scope for PR 1). Surface them only when something else is
-        # already wrong, so a healthy extension's report stays clean.
-        missing_binary = tuple(d.name for d in manifest.runtime_deps if d.kind == "binary")
-        missing_service = tuple(d.name for d in manifest.runtime_deps if d.kind == "service")
+        missing_python: list[str] = []
+        for d in manifest.runtime_deps:
+            if d.kind != "python":
+                continue
+            try:
+                spec = importlib.util.find_spec(d.name)
+            except (ImportError, ValueError):
+                spec = None
+            if spec is None:
+                missing_python.append(d.name)
 
-        available = not probe_failures
+        missing_binary = [
+            d.name
+            for d in manifest.runtime_deps
+            if d.kind == "binary" and shutil.which(d.name) is None
+        ]
+        unchecked_services = tuple(d.name for d in manifest.runtime_deps if d.kind == "service")
+
+        available = (
+            not probe_failures
+            and not missing_python
+            and not missing_binary
+            and not unchecked_services
+        )
 
         return CheckReport(
             available=available,
-            missing_python_deps=missing_python,
-            missing_binary_deps=() if available else missing_binary,
-            missing_services=() if available else missing_service,
+            missing_python_deps=tuple(missing_python),
+            missing_binary_deps=tuple(missing_binary),
+            missing_services=unchecked_services,
             import_probe_failures=tuple(probe_failures),
             profile_gate_disabled=False,
         )
@@ -289,6 +348,7 @@ class ManifestStore:
 
 
 _STORE: ManifestStore | None = None
+_STORE_LOCK = threading.Lock()
 
 
 def get_store() -> ManifestStore:
@@ -296,32 +356,41 @@ def get_store() -> ManifestStore:
 
     Population order: JSON index > entry points > (optional) filesystem scan.
     The filesystem scan is gated behind the NEXUS_EXTENSIONS_DEV_SCAN env var.
+
+    Thread-safe: concurrent first calls all return the same fully-populated
+    store. Population happens inside a lock; the unlocked fast path returns
+    the singleton once it's been published.
     """
     global _STORE
     if _STORE is not None:
         return _STORE
 
-    store = ManifestStore()
+    with _STORE_LOCK:
+        if _STORE is not None:
+            return _STORE
 
-    # 1. JSON index (shipped with the wheel). Path resolved at import time.
-    index_path = Path(__file__).parent / "_index" / "extensions.json"
-    store.load_json_index(index_path)
+        store = ManifestStore()
 
-    # 2. Entry points (third-party packages declaring nexus.* groups).
-    store.load_entry_points()
+        # 1. JSON index (shipped with the wheel). Path resolved at import time.
+        index_path = Path(__file__).parent / "_index" / "extensions.json"
+        store.load_json_index(index_path)
 
-    # 3. Filesystem scan (dev-only fallback).
-    if os.environ.get("NEXUS_EXTENSIONS_DEV_SCAN") == "1":
-        for subdir in ("backends/connectors", "bricks", "plugins"):
-            root = Path(__file__).parent.parent / subdir
-            if root.exists():
-                store.load_filesystem(root)
+        # 2. Entry points (third-party packages declaring nexus.* groups).
+        store.load_entry_points()
 
-    _STORE = store
-    return store
+        # 3. Filesystem scan (dev-only fallback).
+        if os.environ.get("NEXUS_EXTENSIONS_DEV_SCAN") == "1":
+            for subdir in ("backends/connectors", "bricks", "plugins"):
+                root = Path(__file__).parent.parent / subdir
+                if root.exists():
+                    store.load_filesystem(root)
+
+        _STORE = store
+        return store
 
 
 def reset_store() -> None:
     """Drop the cached singleton. Test-only; production code should not call this."""
     global _STORE
-    _STORE = None
+    with _STORE_LOCK:
+        _STORE = None

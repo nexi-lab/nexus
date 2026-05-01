@@ -155,6 +155,10 @@ exclude = [
     "**/utils/timing.py",
     # nexus/config/ directory (keep only config.py as a sibling)
     "**/nexus/config/**",
+    # The shared extensions.json index references full-runtime modules
+    # (e.g. brick factories) that are excluded above. Slim falls back to
+    # entry-points + filesystem scan, which only see what actually ships.
+    "**/nexus/extensions/_index/**",
 ]
 
 [tool.hatch.build.targets.wheel.force-include]

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, cast, get_args
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from nexus.extensions.introspect import (
@@ -18,10 +18,15 @@ from nexus.extensions.introspect import (
     list_extensions,
 )
 from nexus.extensions.types import Kind
+from nexus.server.dependencies import require_admin
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["extensions"], prefix="/api/v2/extensions")
+router = APIRouter(
+    tags=["extensions"],
+    prefix="/api/v2/extensions",
+    dependencies=[Depends(require_admin)],
+)
 
 _KINDS: tuple[str, ...] = get_args(Kind)
 

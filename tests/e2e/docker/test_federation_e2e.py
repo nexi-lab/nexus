@@ -1106,29 +1106,28 @@ class TestDistributedLockWorkflow:
         )
         assert "error" not in wr
 
-        # Step 1: agent A on node-1 acquires the lock. RPC schema
-        # (LockAcquireParams): {path, mode, ttl, max_holders}; result
-        # has `acquired` + `lock_id`.
-        acq_a = _grpc_call(grpc1, "lock_acquire", {"path": lock_path, "ttl": 30}, api_key=api_key)
-        assert "error" not in acq_a, f"lock_acquire: {acq_a}"
-        a_data = acq_a.get("result") or {}
-        assert a_data.get("acquired"), f"agent-a not granted: {acq_a}"
-        lock_id_a = a_data.get("lock_id")
-        assert lock_id_a, f"lock_id missing from acquire response: {acq_a}"
+        # Step 1: agent A on node-1 acquires the lock via `sys_lock`
+        # (the Tier 1 syscall — `lock_acquire` Tier 2 dict-wrapper was
+        # dropped in commit 231620c3c).  Result is the raw lock_id
+        # string when granted, falsy when the lock is held by someone
+        # else; "acquired" is `lock_id is not None`.
+        acq_a = _grpc_call(grpc1, "sys_lock", {"path": lock_path, "ttl": 30}, api_key=api_key)
+        assert "error" not in acq_a, f"sys_lock: {acq_a}"
+        lock_id_a = acq_a.get("result")
+        assert lock_id_a, f"agent-a not granted (result={lock_id_a}): {acq_a}"
 
         # Step 2: agent B on node-2 attempts the same lock — must be
-        # blocked (raft serializes lock_acquire per zone).
+        # blocked (raft serializes sys_lock per zone).
         acq_b = _grpc_call(
             grpc2,
-            "lock_acquire",
+            "sys_lock",
             {"path": lock_path, "ttl": 30},
             api_key=api_key,
         )
-        b_blocked = "error" in acq_b or not (acq_b.get("result") or {}).get("acquired", False)
+        b_blocked = "error" in acq_b or not acq_b.get("result")
         assert b_blocked, f"contended lock on node-2 should not have been granted: {acq_b}"
 
-        # Step 3: agent A releases via sys_unlock (the actual release
-        # RPC — there's no separate `lock_release`).
+        # Step 3: agent A releases via sys_unlock.
         rel = _grpc_call(
             grpc1,
             "sys_unlock",
@@ -1144,16 +1143,16 @@ class TestDistributedLockWorkflow:
         while time.time() < deadline:
             acq_b2 = _grpc_call(
                 grpc2,
-                "lock_acquire",
+                "sys_lock",
                 {"path": lock_path, "ttl": 5},
                 api_key=api_key,
             )
-            if "error" not in acq_b2 and (acq_b2.get("result") or {}).get("acquired"):
+            if "error" not in acq_b2 and acq_b2.get("result"):
                 break
             time.sleep(0.5)
         else:
             pytest.fail(f"agent-b could not acquire lock after agent-a released: {acq_b2}")
-        lock_id_b = (acq_b2.get("result") or {}).get("lock_id")
+        lock_id_b = acq_b2.get("result")
         assert lock_id_b, f"agent-b acquire missing lock_id: {acq_b2}"
 
         # Step 5: TTL expiry — agent B's lock has 5s ttl. Wait past it,
@@ -1162,17 +1161,16 @@ class TestDistributedLockWorkflow:
         time.sleep(7)
         acq_c = _grpc_call(
             grpc1,
-            "lock_acquire",
+            "sys_lock",
             {"path": lock_path, "ttl": 10},
             api_key=api_key,
         )
         if "error" in acq_c:
             pytest.fail(f"post-expiry acquire should succeed: {acq_c}")
-        c_data = acq_c.get("result") or {}
-        assert c_data.get("acquired"), f"agent-c not granted post-expiry: {acq_c}"
+        c_id = acq_c.get("result")
+        assert c_id, f"agent-c not granted post-expiry: {acq_c}"
 
         # Cleanup
-        c_id = c_data.get("lock_id")
         if c_id:
             _grpc_call(
                 grpc1,
@@ -2379,20 +2377,47 @@ def _bootstrap_standalone_fs(tmp_path):
     at tests/unit/backends/test_openai_compat_rust.py::_bootstrap does.
     No RPC surface is added — the test drives kernel syscalls in-process
     via the PyO3 bindings (the pattern validated for R20.14).
+
+    Federation env isolation: this container also runs the federation
+    cluster, so ``NEXUS_PEERS`` / ``NEXUS_FEDERATION_ZONES`` /
+    ``NEXUS_HOSTNAME`` are set globally.  Without unsetting them,
+    ``create_nexus_fs`` → ``nx_federation_install`` reads them and
+    installs ZoneMetaStore on top of the local DictMetastore, after which
+    every metadata write hits the not-leader path (this fs has no real
+    raft peers).  The fixture's intent is "standalone" — clear those
+    vars for the duration of construction so the fs gets a plain local
+    metastore.
     """
+    import os
+
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import ParseConfig, PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.record_store import SQLAlchemyRecordStore
     from tests.helpers.dict_metastore import DictMetastore
 
-    return create_nexus_fs(
-        backend=CASLocalBackend(tmp_path / "data"),
-        metadata_store=DictMetastore(),
-        record_store=SQLAlchemyRecordStore(db_path=tmp_path / "meta.db"),
-        parsing=ParseConfig(auto_parse=False),
-        permissions=PermissionConfig(enforce=False),
+    fed_env_keys = (
+        "NEXUS_PEERS",
+        "NEXUS_FEDERATION_ZONES",
+        "NEXUS_HOSTNAME",
+        "NEXUS_BIND_ADDR",
+        "NEXUS_ADVERTISE_ADDR",
+        "NEXUS_DATA_DIR",
+        "NEXUS_STATE_DIR",
     )
+    saved: dict[str, str | None] = {k: os.environ.pop(k, None) for k in fed_env_keys}
+    try:
+        return create_nexus_fs(
+            backend=CASLocalBackend(tmp_path / "data"),
+            metadata_store=DictMetastore(),
+            record_store=SQLAlchemyRecordStore(db_path=tmp_path / "meta.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
+        )
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
 
 
 def _llm_round_trip(nx, mount, request, session_suffix="0"):
@@ -2565,16 +2590,12 @@ class TestDayAtTheOffice:
         assert "error" not in r, f"read on follower failed: {r}"
         assert _decode_content(r) == versions[-1]
 
-        acq = _grpc_call_or_skip(
-            grpc1,
-            "lock_acquire",
-            {"path": spec, "ttl": 30},
-            api_key=api_key,
-            skip_msg="Lock API not available",
-        )
-        if "error" in acq or not acq.get("result", acq).get("acquired"):
-            pytest.skip("lock_acquire failed — cannot test locked update")
-        lock_id = acq["result"]["lock_id"]
+        # sys_lock returns the raw lock_id (or falsy when held). Tier 2
+        # `lock_acquire` dict-wrapper was dropped in 231620c3c.
+        acq = _grpc_call(grpc1, "sys_lock", {"path": spec, "ttl": 30}, api_key=api_key)
+        if "error" in acq or not acq.get("result"):
+            pytest.fail(f"sys_lock failed: {acq}")
+        lock_id = acq["result"]
 
         final = f"final-{uid}"
         wr = _grpc_call(grpc1, "write", {"path": spec, "content": final}, api_key=api_key)
@@ -3076,26 +3097,22 @@ class TestConcurrentLockEdit:
 
         _grpc_call(grpc1, "write", {"path": lock_path, "content": f"init-{uid}"}, api_key=api_key)
 
-        acq = _grpc_call_or_skip(
-            grpc1,
-            "lock_acquire",
-            {"path": lock_path, "ttl": 10},
-            api_key=api_key,
-            skip_msg="Lock API not available",
-        )
-        acq_data = acq.get("result", {})
-        if "error" in acq or not acq_data.get("acquired"):
-            pytest.skip("lock_acquire failed")
-        lock_a = acq_data["lock_id"]
+        # Tier 1 sys_lock: result is the raw lock_id when granted, falsy
+        # otherwise. The Tier 2 lock_acquire dict-wrapper was dropped in
+        # 231620c3c — tests follow the modern raw contract.
+        acq = _grpc_call(grpc1, "sys_lock", {"path": lock_path, "ttl": 10}, api_key=api_key)
+        if "error" in acq or not acq.get("result"):
+            pytest.fail(f"sys_lock on grpc1 failed: {acq}")
+        lock_a = acq["result"]
 
         def _node_b_write():
             deadline = time.time() + 15
             while time.time() < deadline:
                 r = _grpc_call(
-                    grpc2, "lock_acquire", {"path": lock_path, "ttl": 10}, api_key=api_key
+                    grpc2, "sys_lock", {"path": lock_path, "ttl": 10}, api_key=api_key
                 )
-                if "error" not in r and r.get("result", {}).get("acquired"):
-                    lid = r["result"]["lock_id"]
+                if "error" not in r and r.get("result"):
+                    lid = r["result"]
                     wr = _grpc_call(
                         grpc2,
                         "write",

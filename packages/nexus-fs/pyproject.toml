@@ -114,6 +114,7 @@ include = [
     "nexus/core/**",
     "nexus/contracts/**",
     "nexus/backends/**",
+    "nexus/extensions/**",
     "nexus/lib/**",
     "nexus/storage/**",
     "nexus/utils/__init__.py",

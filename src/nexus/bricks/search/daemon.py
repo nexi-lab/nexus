@@ -1354,19 +1354,41 @@ class SearchDaemon:
         effective_zone_id = zone_id or ROOT_ZONE_ID
         start = time.perf_counter()
         self.last_search_timing = {}
+        hybrid_keyword_results: list[SearchResult] = []
+        hybrid_keyword_ms = 0.0
 
         try:
-            # For keyword search: Zoekt first (code search), then txtai BM25.
-            # Zoekt has no zone metadata — only safe for root zone / unscoped.
-            is_zone_safe = effective_zone_id == ROOT_ZONE_ID
-            if search_type == "keyword" and self.stats.zoekt_available and is_zone_safe:
-                zoekt_results = await self._search_zoekt(query, limit, path_filter)
-                if zoekt_results:
+            if search_type == "keyword":
+                # Keyword mode should use the daemon's keyword stack first.
+                # The txtai backend search path is zone-aware, but its SQL
+                # builder uses `similar(...)`; it is not a deterministic BM25
+                # keyword query. `_keyword_search` only uses Zoekt/BM25S when
+                # zone-safe and otherwise falls through to zone-aware FTS.
+                keyword_start = time.perf_counter()
+                keyword_results = await self._keyword_search(
+                    query,
+                    limit,
+                    path_filter,
+                    zone_id=effective_zone_id,
+                )
+                keyword_ms = (time.perf_counter() - keyword_start) * 1000
+                self.last_search_timing = {"backend_ms": keyword_ms, "rerank_ms": 0.0}
+                if keyword_results:
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
-                    self.last_search_timing["backend_ms"] = latency_ms
-                    await self._attach_path_contexts(zoekt_results, zone_id=effective_zone_id)
-                    return zoekt_results
+                    await self._attach_path_contexts(keyword_results, zone_id=effective_zone_id)
+                    return keyword_results
+            elif search_type == "hybrid":
+                # Make lexical candidates explicit in hybrid mode so exact
+                # matches are not lost before backend semantic ranking.
+                keyword_start = time.perf_counter()
+                hybrid_keyword_results = await self._keyword_search(
+                    query,
+                    limit * 3,
+                    path_filter,
+                    zone_id=effective_zone_id,
+                )
+                hybrid_keyword_ms = (time.perf_counter() - keyword_start) * 1000
 
             # Delegate to txtai backend for all search types (Issue #2663)
             if self._backend is not None and (
@@ -1386,6 +1408,8 @@ class SearchDaemon:
                     "backend_ms": backend_ms,
                     "rerank_ms": rerank_ms,
                 }
+                if hybrid_keyword_ms:
+                    self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
 
                 if backend_results:
                     results = [
@@ -1405,6 +1429,12 @@ class SearchDaemon:
                         )
                         for r in backend_results
                     ]
+                    if search_type == "hybrid" and hybrid_keyword_results:
+                        results = self._fuse_ranked_results(
+                            hybrid_keyword_results,
+                            results,
+                            limit,
+                        )
 
                     latency_ms = (time.perf_counter() - start) * 1000
                     self._track_latency(latency_ms)
@@ -1430,6 +1460,8 @@ class SearchDaemon:
             # Track latency
             latency_ms = (time.perf_counter() - start) * 1000
             self._track_latency(latency_ms)
+            if hybrid_keyword_ms and "backend_ms" in self.last_search_timing:
+                self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
 
             await self._attach_path_contexts(results, zone_id=effective_zone_id)
             return results
@@ -1437,6 +1469,53 @@ class SearchDaemon:
         except TimeoutError:
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
             return []
+
+    @staticmethod
+    def _fuse_ranked_results(
+        keyword_results: list[SearchResult],
+        backend_results: list[SearchResult],
+        limit: int,
+    ) -> list[SearchResult]:
+        """Fuse daemon keyword and backend-ranked results with RRF."""
+        rrf_k = 60
+        scores: dict[tuple[str, str, int], float] = {}
+        best: dict[tuple[str, str, int], SearchResult] = {}
+
+        for source_results in (keyword_results, backend_results):
+            for rank, result in enumerate(source_results):
+                key = (result.zone_id or "", result.path, result.chunk_index)
+                scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
+                existing = best.get(key)
+                if existing is None or result.score > existing.score:
+                    best[key] = result
+
+        fused: list[SearchResult] = []
+        for key in sorted(scores, key=lambda item: scores[item], reverse=True)[:limit]:
+            result = best[key]
+            fused.append(
+                SearchResult(
+                    path=result.path,
+                    chunk_text=result.chunk_text,
+                    score=scores[key],
+                    chunk_index=result.chunk_index,
+                    start_offset=result.start_offset,
+                    end_offset=result.end_offset,
+                    line_start=result.line_start,
+                    line_end=result.line_end,
+                    keyword_score=result.keyword_score,
+                    vector_score=result.vector_score,
+                    splade_score=result.splade_score,
+                    reranker_score=result.reranker_score,
+                    matched_field=result.matched_field,
+                    attribute_boost=result.attribute_boost,
+                    original_score=result.original_score,
+                    zone_id=result.zone_id,
+                    context=result.context,
+                    semantic_degraded=result.semantic_degraded,
+                    search_type="hybrid",
+                )
+            )
+        return fused
 
     async def batch_search(
         self,

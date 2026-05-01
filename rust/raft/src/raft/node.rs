@@ -194,6 +194,7 @@ const WITNESS_ELECTION_TICK: usize = 10_000_000;
 impl RaftConfig {
     /// Create a configuration for a witness node.
     pub fn witness(id: u64, peers: Vec<u64>) -> Self {
+        let peers = peers.into_iter().filter(|peer_id| *peer_id != id).collect();
         Self {
             id,
             peers,
@@ -1583,6 +1584,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
 
         for entry in entries {
             if entry.data.is_empty() {
+                sm.apply(entry.index, &Command::Noop)?;
                 continue;
             }
 
@@ -1647,6 +1649,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         voters = ?cs.voters,
                         "raft.conf_change.applied",
                     );
+                    sm.apply(entry.index, &Command::Noop)?;
 
                     // After AddNode: create snapshot and compact log so raft-rs
                     // sends snapshot (not AppendEntries) to the new follower.
@@ -1755,6 +1758,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         voters = ?cs.voters,
                         "raft.conf_change_v2.applied",
                     );
+                    sm.apply(entry.index, &Command::Noop)?;
 
                     if has_add {
                         let sm_data = sm.snapshot().map_err(|e| {

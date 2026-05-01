@@ -20,11 +20,11 @@ use super::proto::nexus::raft::{
     ReplicateEntriesRequest, ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest,
     StepMessageResponse,
 };
-use super::{NodeAddress, Result, TransportError};
+use super::{NodeAddress, Result, SharedPeerMap, TransportError};
 use crate::blob_fetcher::BlobFetcherSlot;
 use crate::raft::{
-    Command, CommandResult, FullStateMachine, RaftError, WitnessStateMachine, ZoneConsensus,
-    ZoneRaftRegistry,
+    reconcile_peers_with_conf_state, Command, CommandResult, FullStateMachine, RaftError,
+    WitnessStateMachine, ZoneConsensus, ZoneRaftRegistry,
 };
 use crate::storage::RedbStore;
 use bincode;
@@ -1365,6 +1365,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
 /// A single witness zone entry.
 struct WitnessZoneEntry {
     node: ZoneConsensus<WitnessStateMachine>,
+    peers: SharedPeerMap,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     _transport_handle: JoinHandle<()>,
 }
@@ -1446,18 +1447,37 @@ impl WitnessZoneRegistry {
             return Ok(existing.node.clone());
         }
 
-        // skip_bootstrap=true: empty ConfState, leader sends snapshot
-        let config = RaftConfig {
-            id: self.node_id,
-            peers: vec![],
-            is_witness: true,
-            skip_bootstrap: true,
-            election_tick: 10_000_000, // witness never initiates election
-            ..Default::default()
+        let peers = self.current_auto_join_peers();
+        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
+        let config = if peer_ids.is_empty() {
+            // No known roster yet: start uninitialized and wait for a
+            // snapshot to carry ConfState.
+            RaftConfig {
+                id: self.node_id,
+                peers: vec![],
+                is_witness: true,
+                skip_bootstrap: true,
+                election_tick: 10_000_000, // witness never initiates election
+                ..Default::default()
+            }
+        } else {
+            // Dynamic federation zones are initially bootstrapped from a
+            // static voter roster; that ConfState is not a log entry. If the
+            // witness auto-joins with an empty ConfState it can replay appends
+            // but never learn that it may vote, so failover loses quorum.
+            RaftConfig::witness(self.node_id, peer_ids)
         };
-
-        let peers: Vec<NodeAddress> = self.peers.clone();
         self.setup_witness_zone(zone_id, config, peers, runtime_handle)
+    }
+
+    fn current_auto_join_peers(&self) -> Vec<NodeAddress> {
+        if let Some(root) = self.zones.get(contracts::ROOT_ZONE_ID) {
+            let peers = root.peers.read().unwrap();
+            if !peers.is_empty() {
+                return peers.values().cloned().collect();
+            }
+        }
+        self.peers.clone()
     }
 
     /// Internal: open storage, create ZoneConsensus + driver, spawn transport loop, register zone.
@@ -1468,11 +1488,12 @@ impl WitnessZoneRegistry {
         &self,
         zone_id: &str,
         config: crate::raft::RaftConfig,
-        peers: Vec<NodeAddress>,
+        mut peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<WitnessStateMachine>> {
         use crate::raft::RaftStorage;
         use crate::transport::{ClientConfig, RaftClientPool, TransportLoop};
+        use raft::Storage;
 
         // Zone-specific storage
         let zone_path = self.base_path.join(zone_id);
@@ -1481,6 +1502,9 @@ impl WitnessZoneRegistry {
         let raft_storage = RaftStorage::open(zone_path.join("raft")).map_err(|e| {
             TransportError::Connection(format!("Failed to open raft storage: {}", e))
         })?;
+        if let Ok(initial_state) = raft_storage.initial_state() {
+            reconcile_peers_with_conf_state(zone_id, &mut peers, &initial_state.conf_state);
+        }
         let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create witness state machine: {}", e))
         })?;
@@ -1502,7 +1526,7 @@ impl WitnessZoneRegistry {
         };
         let transport_loop = TransportLoop::new(
             driver,
-            shared_peers,
+            shared_peers.clone(),
             RaftClientPool::with_config(client_config),
         )
         .with_zone_id(zone_id.to_string());
@@ -1520,6 +1544,7 @@ impl WitnessZoneRegistry {
             zone_id.to_string(),
             WitnessZoneEntry {
                 node: handle.clone(),
+                peers: shared_peers,
                 shutdown_tx,
                 _transport_handle: transport_handle,
             },
@@ -1717,6 +1742,43 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::NotFound);
         // Registry must remain empty — no side-effect reopen.
         assert!(registry.list_zones().is_empty());
+    }
+
+    #[test]
+    fn test_witness_auto_join_bootstraps_known_peer_roster() {
+        use tempfile::TempDir;
+
+        let tmp_dir = TempDir::new().unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let witness_id = NodeAddress::parse("witness:2126", false).unwrap().id;
+        let mut registry = WitnessZoneRegistry::new(tmp_dir.path().to_path_buf(), witness_id, None);
+        registry.set_peers(vec![
+            NodeAddress::parse("nexus-1:2126", false).unwrap(),
+            NodeAddress::parse("nexus-2:2126", false).unwrap(),
+            NodeAddress::parse("witness:2126", false).unwrap(),
+        ]);
+
+        let node = registry
+            .auto_join_zone("corp-eng", runtime.handle())
+            .expect("witness auto-join");
+
+        assert!(
+            !node.config().skip_bootstrap,
+            "known witness rosters must bootstrap ConfState so the witness can vote"
+        );
+        let mut peers = node.config().peers.clone();
+        peers.sort_unstable();
+        let mut expected = vec![
+            NodeAddress::parse("nexus-1:2126", false).unwrap().id,
+            NodeAddress::parse("nexus-2:2126", false).unwrap().id,
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            peers, expected,
+            "witness RaftConfig.peers must include full voters and exclude self"
+        );
+
+        registry.shutdown_all();
     }
 
     // ---------------------------------------------------------------

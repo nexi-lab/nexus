@@ -72,6 +72,8 @@ pub use storage::RaftStorage;
 #[cfg(all(feature = "grpc", has_protos))]
 pub use zone_persistence::ZonePersistence;
 #[cfg(all(feature = "grpc", has_protos))]
+pub(crate) use zone_registry::reconcile_peers_with_conf_state;
+#[cfg(all(feature = "grpc", has_protos))]
 pub use zone_registry::ZoneRaftRegistry;
 
 /// A proposal to be replicated through Raft.

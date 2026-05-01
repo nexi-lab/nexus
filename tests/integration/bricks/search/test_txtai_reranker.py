@@ -201,15 +201,99 @@ class TestDaemonBackendDelegation:
         mock_backend = AsyncMock()
         daemon._backend = mock_backend
 
-        results = await daemon.search("test", search_type="keyword", zone_id="z")
+        results = await daemon.search("test", search_type="keyword")
 
         # Zoekt was used, backend was not
         assert len(results) == 1
         mock_backend.search.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_root_keyword_uses_bm25_before_backend(self) -> None:
+        """Root keyword search should use BM25S before semantic txtai search."""
+        daemon = SearchDaemon()
+        daemon._initialized = True
+        daemon.stats.zoekt_available = False
+        daemon._bm25s_index = MagicMock()
+
+        mock_bm25 = AsyncMock(
+            return_value=[
+                SearchResult(
+                    path="/workspace/demo/herb/customers/cust-002.md",
+                    chunk_text="Uses Nexus for medical document management",
+                    score=1.0,
+                    keyword_score=1.0,
+                    search_type="keyword",
+                )
+            ]
+        )
+        daemon._search_bm25s = mock_bm25
+
+        mock_backend = AsyncMock()
+        daemon._backend = mock_backend
+
+        results = await daemon.search(
+            "medical document management",
+            search_type="keyword",
+            path_filter="/workspace/demo/herb",
+        )
+
+        assert [r.path for r in results] == ["/workspace/demo/herb/customers/cust-002.md"]
+        mock_bm25.assert_awaited_once_with(
+            "medical document management",
+            10,
+            "/workspace/demo/herb",
+        )
+        mock_backend.search.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_hybrid_fuses_keyword_candidates_with_backend(self) -> None:
+        """Hybrid search should keep lexical candidates in the final ranking."""
+        daemon = SearchDaemon()
+        daemon._initialized = True
+
+        keyword_result = SearchResult(
+            path="/workspace/demo/herb/customers/cust-002.md",
+            chunk_text="Meridian Health uses Nexus for medical document management",
+            score=1.0,
+            keyword_score=1.0,
+            search_type="keyword",
+        )
+        daemon._keyword_search = AsyncMock(return_value=[keyword_result])
+
+        mock_backend = AsyncMock()
+        mock_backend.search.return_value = [
+            BaseSearchResult(
+                path="/workspace/demo/herb/products/prod-001.md",
+                chunk_text="Nexus Core is the foundation product",
+                score=0.9,
+                vector_score=0.9,
+            ),
+        ]
+        mock_backend.last_rerank_ms = 0.0
+        daemon._backend = mock_backend
+
+        results = await daemon.search(
+            "medical document management",
+            search_type="hybrid",
+            path_filter="/workspace/demo/herb",
+            limit=2,
+        )
+
+        assert [r.path for r in results] == [
+            "/workspace/demo/herb/customers/cust-002.md",
+            "/workspace/demo/herb/products/prod-001.md",
+        ]
+        daemon._keyword_search.assert_awaited_once_with(
+            "medical document management",
+            6,
+            "/workspace/demo/herb",
+            zone_id="root",
+        )
+        mock_backend.search.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_keyword_falls_to_backend_when_no_zoekt(self) -> None:
-        """When Zoekt unavailable, keyword search falls to txtai backend."""
+        """Non-root keyword search can still fall to the zone-aware txtai backend."""
         daemon = SearchDaemon()
         daemon._initialized = True
         daemon.stats.zoekt_available = False

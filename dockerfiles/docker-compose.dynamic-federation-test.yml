@@ -219,9 +219,6 @@ services:
     container_name: nexus-dyn-test
     profiles:
       - run
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     working_dir: /app
     depends_on:
       nexus-1:
@@ -261,19 +258,22 @@ services:
         # nexus-fullnode image. Already-present (httpx, grpcio,
         # docker, google.protobuf, click) are NOT reinstalled —
         # cuts ~25-30s off cold runs vs the prior superset list.
-        # `--retries 10 --timeout 60` rides through transient PyPI
-        # outages (regression-tested when grpcio-tools once 404`d).
+        # Keep pytest-timeout out of this runtime install: pyproject
+        # intentionally avoids per-test timeouts, and making the plugin
+        # mandatory has made this Docker-only job fail on PyPI resolver
+        # edge cases before tests even start.
         echo "Installing missing test dependencies..."
-        pip install --retries 10 --timeout 60 -q \
-          -i "${PIP_INDEX_URL:-https://mirrors.cloud.tencent.com/pypi/simple}" \
-          pytest pytest-asyncio pytest-timeout
+        python -m pip install --retries 10 --timeout 60 -q \
+          --index-url "${PIP_INDEX_URL:-https://pypi.org/simple}" \
+          pytest pytest-asyncio
         echo "Running dynamic federation E2E tests..."
         # Glob, not a single file: any future `test_federation_*.py`
         # in the same dir is auto-picked up by both local invocation
         # and the CI workflow (.github/workflows/federation-e2e.yml)
         # without further config. Non-federation docker E2E (sandbox
         # perf/security, validation) keep their own files + workflows.
-        python -m pytest tests/e2e/docker/test_federation*.py -v --no-header -o "addopts=" --timeout=300
+        timeout "${PYTEST_PROCESS_TIMEOUT:-30m}" \
+          python -m pytest tests/e2e/docker/test_federation*.py -v --no-header -o "addopts="
       '
     networks:
       - dyn-nexus-network

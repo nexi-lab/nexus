@@ -28,6 +28,7 @@ from nexus.bricks.approvals.models import (
 )
 from nexus.bricks.approvals.repository import ApprovalRepository
 from nexus.bricks.approvals.sweeper import Sweeper
+from nexus.services.activity import EventKind, Result, emit
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +348,22 @@ class ApprovalService:
                 )
             except Exception:
                 logger.warning("notify(approvals_new) failed; queue still durable", exc_info=True)
+
+            # Activity event (#3791): mark a fresh pending row queued so the
+            # APPROVALS_PENDING gauge increments. Only emitted when the row
+            # was newly inserted (not coalesced) and inheritance did not
+            # short-circuit it — those paths do not generate operator wait.
+            emit(
+                kind=EventKind.APPROVAL,
+                result=Result.PENDING_APPROVAL,
+                actor_user=getattr(req, "agent_id", None),
+                subject_zone=getattr(req, "zone_id", None),
+                subject_extra={
+                    "request_id": getattr(req, "id", None),
+                    "kind": getattr(getattr(req, "kind", None), "value", None)
+                    or getattr(req, "kind", None),
+                },
+            )
 
         fut = self._dispatcher.register(req.id, session_id=session_id)
 
@@ -686,6 +703,23 @@ class ApprovalService:
                 request_id,
                 exc_info=True,
             )
+
+        # Activity event (#3791): pair the pending emit with a terminal
+        # resolution emit so the APPROVALS_PENDING gauge decrements. The
+        # paired emit is only fired by the worker that calls ``decide``
+        # — sweeper-driven expiry and inherited-decision paths bypass
+        # this method (see service docstring / report).
+        decision_value = decision.value  # "approved" | "denied"
+        emit(
+            kind=EventKind.APPROVAL,
+            result=Result.OK if decision_value == "approved" else Result.BLOCKED,
+            actor_user=decided_by,
+            subject_zone=getattr(updated, "zone_id", None),
+            subject_extra={
+                "request_id": getattr(updated, "id", None) or request_id,
+                "decision": decision_value,
+            },
+        )
 
         return updated
 

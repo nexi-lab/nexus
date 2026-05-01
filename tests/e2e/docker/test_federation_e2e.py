@@ -132,7 +132,20 @@ def _grpc_call(
                         continue
             if resp.is_error:
                 return {"error": result}
-            return result  # already {"result": <data>} from servicer
+            # Normalise the success envelope.  After the Rust dispatch
+            # migration responses come back flat (a top-level dict, a
+            # bare list, a string, etc.) — Python @rpc_expose used to
+            # wrap them in ``{"result": <body>}``.  Tests consume the
+            # response with ``r["result"]`` or ``r.get("result", {})``,
+            # so always wrap unless the body already carries that key.
+            already_wrapped = (
+                isinstance(result, dict)
+                and "result" in result
+                and "jsonrpc" not in result  # raw flat dict containing a "result" sub-key
+            )
+            if not already_wrapped:
+                return {"result": result}
+            return result
         finally:
             channel.close()
     return {"error": result}

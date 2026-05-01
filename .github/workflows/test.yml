@@ -241,7 +241,11 @@ jobs:
           uv run python -Xfaulthandler -m pytest tests/e2e/self_contained/ -v \
             --timeout=120 --timeout-method=signal \
             -o faulthandler_timeout=60 -o addopts=
-        timeout-minutes: 20
+        # Suite runs ~20 min on fast runners, longer on slow ones — PR
+        # #3961 reruns hit the 20 min cap mid-suite at 63-97% with every
+        # test passing. 30 min matches the federation-e2e budget; the
+        # per-test 120s --timeout still catches real hangs fast.
+        timeout-minutes: 30
 
   e2e-postgres:
     name: E2E Tests (PostgreSQL)

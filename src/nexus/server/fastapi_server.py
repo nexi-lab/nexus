@@ -762,6 +762,7 @@ def _register_routes(app: FastAPI) -> None:
     # Features endpoint (Issue #1389) — public, rate-limit exempt
     # ---- Core API routers (extracted from inline endpoints, #1602) ----
     from nexus.server.api.core.debug import router as debug_router
+    from nexus.server.api.core.extensions import router as extensions_router
     from nexus.server.api.core.features import router as features_router
     from nexus.server.api.core.health import router as health_router
     from nexus.server.api.core.rpc import router as rpc_router
@@ -777,6 +778,8 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(debug_router)
     app.include_router(streaming_router)
     app.include_router(rpc_router)
+    # Issue #3962: cross-kind extension introspection
+    app.include_router(extensions_router)
 
     # Authentication routes — fail fast. A server that boots without auth
     # endpoints looks healthy but silently 404s every login/OAuth request,

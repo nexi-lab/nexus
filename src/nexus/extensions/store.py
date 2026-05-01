@@ -425,11 +425,17 @@ class ManifestStore:
             with contextlib.suppress(DuplicateManifestError):
                 self._register(manifest, source="legacy_inventory")
 
-    def load_filesystem(self, root: Path) -> None:
+    def load_filesystem(self, root: Path, *, expected_kind: Kind | None = None) -> None:
         """Scan `root/*/  _manifest.py` and register every `MANIFEST` constant.
 
         Per-extension import isolation: a broken `_manifest.py` is logged at
         WARN level and skipped; siblings continue loading.
+
+        ``expected_kind`` enforces the path<->kind contract so a manifest
+        accidentally declared with the wrong kind for its directory (e.g.
+        a ``backends/connectors/foo/_manifest.py`` exposing PluginManifest)
+        is logged and skipped rather than registered under the wrong kind.
+        Pass ``None`` to disable the check (test fixtures, ad-hoc scans).
         """
         for child in sorted(Path(root).iterdir()):
             if not child.is_dir():
@@ -439,6 +445,14 @@ class ManifestStore:
                 continue
             manifest = _load_manifest_module(manifest_file)
             if manifest is None:
+                continue
+            if expected_kind is not None and manifest.kind != expected_kind:
+                logger.warning(
+                    "Skipping %s: manifest declares kind=%r but its directory expects kind=%r",
+                    manifest_file,
+                    manifest.kind,
+                    expected_kind,
+                )
                 continue
             try:
                 self._register(manifest, source=f"fs_scan:{manifest_file}")
@@ -614,18 +628,40 @@ def get_store() -> ManifestStore:
         store = ManifestStore()
 
         # 1. JSON index (shipped with the wheel). Path resolved at import time.
+        #    A corrupt or schema-skewed index must NOT abort store init —
+        #    fallback discovery sources below can recover the same built-ins.
         index_path = Path(__file__).parent / "_index" / "extensions.json"
-        store.load_json_index(index_path)
+        try:
+            store.load_json_index(index_path)
+        except IndexCorruptError as exc:
+            logger.warning(
+                "Ignoring corrupt extensions.json at %s; falling back to live discovery. Cause: %s",
+                index_path,
+                exc,
+            )
+        except Exception as exc:  # noqa: BLE001 — discovery must keep going
+            logger.warning(
+                "Unexpected error loading extensions.json at %s; falling back "
+                "to live discovery. Cause: %s",
+                index_path,
+                exc,
+            )
 
         # 2. Filesystem scan of shipped manifest modules. The store's
         #    first-source-wins precedence means this is a no-op for keys
         #    already loaded from the index, so it adds zero overhead when
-        #    the index is fresh.
+        #    the index is fresh. Each subtree carries an expected kind so
+        #    a misfiled _manifest.py cannot register under the wrong kind.
         nexus_root = Path(__file__).parent.parent
-        for subdir in ("backends/connectors", "bricks", "plugins"):
+        _SUBDIR_KIND: tuple[tuple[str, Kind], ...] = (
+            ("backends/connectors", "connector"),
+            ("bricks", "brick"),
+            ("plugins", "plugin"),
+        )
+        for subdir, expected_kind in _SUBDIR_KIND:
             root = nexus_root / subdir
             if root.exists():
-                store.load_filesystem(root)
+                store.load_filesystem(root, expected_kind=expected_kind)
 
         # 3. Legacy connector inventory (CONNECTOR_MANIFEST tuple).
         store.load_legacy_connector_manifest()

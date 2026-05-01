@@ -568,6 +568,83 @@ class TestEntryPointLegacyFormat:
         assert store.list() == []
 
 
+class TestCorruptIndexFallback:
+    """Regression: a corrupt or schema-skewed extensions.json on disk must
+    not abort singleton initialization. The store should log and fall
+    through to filesystem/legacy/entry-point discovery so the CLI/HTTP
+    surface keeps working."""
+
+    def test_get_store_recovers_from_corrupt_index(self, monkeypatch, tmp_path):
+        from nexus.extensions import store as store_mod
+
+        # Point the index path at a bogus file that will raise IndexCorruptError.
+        bad_index = tmp_path / "_index" / "extensions.json"
+        bad_index.parent.mkdir()
+        bad_index.write_text("{not valid json")
+
+        # Redirect both the file resolution and the singleton state.
+        monkeypatch.setattr(
+            store_mod,
+            "__file__",
+            str(tmp_path / "store.py"),
+        )
+        # Reset the cached singleton so get_store() re-runs population.
+        monkeypatch.setattr(store_mod, "_STORE", None)
+
+        # Should NOT raise.
+        store = store_mod.get_store()
+        # Store is populated (filesystem scan + legacy adapter still work).
+        assert isinstance(store, store_mod.ManifestStore)
+
+
+class TestPathKindMismatch:
+    """Regression: a `_manifest.py` whose declared kind disagrees with its
+    parent directory must be rejected by the strict index build and skipped
+    by the runtime filesystem fallback."""
+
+    def test_load_filesystem_skips_wrong_kind(self, tmp_path):
+        from nexus.extensions.manifest import PluginManifest as _PM  # noqa: F401
+
+        # Build a fake "backends/connectors/foo" tree exposing a PluginManifest
+        # — that kind does not belong here.
+        connectors = tmp_path / "backends" / "connectors"
+        bad = connectors / "foo"
+        bad.mkdir(parents=True)
+        (bad / "_manifest.py").write_text(
+            "from nexus.extensions.manifest import PluginManifest\n"
+            "MANIFEST = PluginManifest(name='foo', module='m', factory='F')\n"
+        )
+
+        store = ManifestStore()
+        store.load_filesystem(connectors, expected_kind="connector")
+        # No registrations: the misfiled plugin must NOT slip in as a connector.
+        assert store.list() == []
+
+    def test_index_build_rejects_wrong_kind(self, tmp_path, monkeypatch):
+        from nexus.extensions import index as index_mod
+
+        connectors = tmp_path / "src" / "nexus" / "backends" / "connectors" / "foo"
+        connectors.mkdir(parents=True)
+        (connectors / "_manifest.py").write_text(
+            "from nexus.extensions.manifest import PluginManifest\n"
+            "MANIFEST = PluginManifest(name='foo', module='m', factory='F')\n"
+        )
+
+        # Point the discovery root at the fake tree.
+        fake_extensions = tmp_path / "src" / "nexus" / "extensions"
+        fake_extensions.mkdir(parents=True)
+        monkeypatch.setattr(
+            index_mod,
+            "__file__",
+            str(fake_extensions / "index.py"),
+        )
+
+        import pytest
+
+        with pytest.raises(RuntimeError, match="kind mismatch"):
+            index_mod._discover_in_tree_manifests()
+
+
 class TestEntryPointSpoofingDefense:
     """Regression: third-party entry points must not be able to register a
     manifest under a different kind than the group declares (e.g. a

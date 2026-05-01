@@ -19,12 +19,13 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from nexus.extensions.manifest import AnyManifest
 from nexus.extensions.store import INDEX_SCHEMA_VERSION
 
 
-def _canonicalize(value):
+def _canonicalize(value: Any) -> Any:
     """Recursively normalize a JSON-serializable value for cross-process determinism.
 
     Pydantic dumps frozensets in hash iteration order (PYTHONHASHSEED-dependent),
@@ -111,20 +112,34 @@ def verify_index(
     return VerifyResult(is_clean=False, diff=diff)
 
 
+# Source-tree subdir <-> manifest kind contract. Used by both the index
+# build (strict — reject mismatches so they don't end up in the wheel) and
+# the runtime filesystem fallback (warn and skip — sibling isolation).
+_SUBDIR_TO_KIND: tuple[tuple[str, str], ...] = (
+    ("backends/connectors", "connector"),
+    ("bricks", "brick"),
+    ("plugins", "plugin"),
+)
+
+
 def _discover_in_tree_manifests() -> list[AnyManifest]:
     """Walk the source tree for `_manifest.py` files and return their MANIFEST.
 
     Strict mode: collisions on ``(kind, name)`` across files raise so a stray
     duplicate in-tree manifest fails the build/verify hook instead of silently
-    being dropped on first-wins precedence.
+    being dropped on first-wins precedence. Path/kind mismatch (e.g. a
+    ``backends/connectors/foo/_manifest.py`` that exposes a PluginManifest)
+    also raises so a wheel cannot ship a manifest under the wrong subtree
+    and become invisible to its own kind's introspection.
     """
     from nexus.extensions.store import _load_manifest_module
 
     repo_root = Path(__file__).parent.parent  # src/nexus/
     by_key: dict[tuple[str, str], tuple[AnyManifest, Path]] = {}
     duplicates: list[str] = []
+    kind_mismatches: list[str] = []
 
-    for subdir in ("backends/connectors", "bricks", "plugins"):
+    for subdir, expected_kind in _SUBDIR_TO_KIND:
         root = repo_root / subdir
         if not root.exists():
             continue
@@ -135,6 +150,12 @@ def _discover_in_tree_manifests() -> list[AnyManifest]:
             manifest = _load_manifest_module(manifest_file, strict=True)
             if manifest is None:  # pragma: no cover — strict raises instead
                 continue
+            if manifest.kind != expected_kind:
+                kind_mismatches.append(
+                    f"{manifest_file} declares kind={manifest.kind!r} "
+                    f"but lives under {subdir}/ (expected {expected_kind!r})"
+                )
+                continue
             key = (manifest.kind, manifest.name)
             if key in by_key:
                 _, prev = by_key[key]
@@ -142,6 +163,8 @@ def _discover_in_tree_manifests() -> list[AnyManifest]:
                 continue
             by_key[key] = (manifest, manifest_file)
 
+    if kind_mismatches:
+        raise RuntimeError("in-tree manifest kind mismatch: " + "; ".join(sorted(kind_mismatches)))
     if duplicates:
         raise RuntimeError("duplicate in-tree manifests: " + "; ".join(sorted(duplicates)))
 

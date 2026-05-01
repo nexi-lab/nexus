@@ -7,8 +7,6 @@ import pytest
 from nexus.extensions.errors import DuplicateManifestError
 from nexus.extensions.store import CheckReport, ManifestStore
 
-pytest_plugins = ["tests.extensions.fixtures.conftest"]
-
 
 class TestStoreBasics:
     def test_empty_store_lists_nothing(self):
@@ -412,6 +410,29 @@ class TestCheckMethod:
         report = store.check(m)
         assert report.available is True
         assert "impl_no_import" not in sys.modules
+
+
+class TestSingleton:
+    def test_get_store_returns_same_instance(self):
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        s1 = get_store()
+        s2 = get_store()
+        assert s1 is s2
+
+    def test_reset_store_clears_state(self, hn_manifest):
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        s1 = get_store()
+        s1._register(hn_manifest, source="test")
+        assert any(m.name == "hn" for m in s1.list())
+
+        reset_store()
+        s2 = get_store()
+        assert s2 is not s1
+        assert all(m.name != "hn" for m in s2.list())
 
 
 class TestLazyInvariant:

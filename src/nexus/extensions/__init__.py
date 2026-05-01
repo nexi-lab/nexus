@@ -23,12 +23,14 @@ from nexus.extensions.manifest import (
     RuntimeDep,
     parse_manifest,
 )
+from nexus.extensions.store import CheckReport, ManifestStore, get_store
 from nexus.extensions.types import ArgType, ConnectionArg, Kind
 
 __all__ = [
     "AnyManifest",
     "ArgType",
     "BrickManifest",
+    "CheckReport",
     "ConnectionArg",
     "ConnectorManifest",
     "DuplicateManifestError",
@@ -37,9 +39,11 @@ __all__ = [
     "FactoryResolutionError",
     "IndexCorruptError",
     "Kind",
+    "ManifestStore",
     "ManifestValidationError",
     "PluginManifest",
     "ReservedNameError",
     "RuntimeDep",
+    "get_store",
     "parse_manifest",
 ]

@@ -16,6 +16,7 @@ import importlib
 import importlib.util
 import json
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import entry_points as _stdlib_entry_points
@@ -285,3 +286,42 @@ class ManifestStore:
                 factory=manifest.factory,
                 detail="attribute not found in module",
             ) from None
+
+
+_STORE: ManifestStore | None = None
+
+
+def get_store() -> ManifestStore:
+    """Return the process-wide manifest store, lazily populating on first call.
+
+    Population order: JSON index > entry points > (optional) filesystem scan.
+    The filesystem scan is gated behind the NEXUS_EXTENSIONS_DEV_SCAN env var.
+    """
+    global _STORE
+    if _STORE is not None:
+        return _STORE
+
+    store = ManifestStore()
+
+    # 1. JSON index (shipped with the wheel). Path resolved at import time.
+    index_path = Path(__file__).parent / "_index" / "extensions.json"
+    store.load_json_index(index_path)
+
+    # 2. Entry points (third-party packages declaring nexus.* groups).
+    store.load_entry_points()
+
+    # 3. Filesystem scan (dev-only fallback).
+    if os.environ.get("NEXUS_EXTENSIONS_DEV_SCAN") == "1":
+        for subdir in ("backends/connectors", "bricks", "plugins"):
+            root = Path(__file__).parent.parent / subdir
+            if root.exists():
+                store.load_filesystem(root)
+
+    _STORE = store
+    return store
+
+
+def reset_store() -> None:
+    """Drop the cached singleton. Test-only; production code should not call this."""
+    global _STORE
+    _STORE = None

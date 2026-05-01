@@ -88,6 +88,10 @@ jobs:
           NEXUS_FS_VERSION: ${{ needs.verify-version.outputs.version }}
         run: |
           python -m venv /tmp/nexus-fs-release-test
+          # nexus-runtime is a hard dep of nexus-fs. It must be available on
+          # PyPI (published via the main release.yml publish-rust job or
+          # independently) before this standalone nexus-fs release runs.
+          /tmp/nexus-fs-release-test/bin/pip install nexus-runtime
           /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
           RUNTIME_VERSION=$(/tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(nexus.fs.__version__)")
           echo "Runtime __version__: $RUNTIME_VERSION"

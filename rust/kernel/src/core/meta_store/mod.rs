@@ -22,8 +22,8 @@ pub mod remote;
 // `crate::abc::meta_store` without churn. This is a stable compat
 // alias, not a parallel declaration.
 pub use crate::abc::meta_store::{
-    FileMetadata, MetaStore, MetaStoreError, PaginatedList, PathEtag, PathValueStr,
-    PutIfVersionResult,
+    pas_update_content_id, FileMetadata, MetaStore, MetaStoreError, PaginatedList, PathEtag,
+    PathValueStr, PutIfVersionResult,
 };
 
 // PyMetaStoreAdapter + conversion helpers (extract_metadata, to_python_metadata)
@@ -135,12 +135,20 @@ impl MetaStore for MemoryMetaStore {
         }
     }
 
-    fn rename_path(&self, old_path: &str, new_path: &str) -> Result<(), MetaStoreError> {
+    fn rename_path(
+        &self,
+        old_path: &str,
+        new_path: &str,
+        is_pas: bool,
+    ) -> Result<(), MetaStoreError> {
         if old_path == new_path {
             return Ok(());
         }
         if let Some((_, mut meta)) = self.entries.remove(old_path) {
             meta.path = new_path.to_string();
+            if is_pas {
+                pas_update_content_id(&mut meta, old_path, new_path);
+            }
             self.entries.insert(new_path.to_string(), meta);
             if let Some((_, fm)) = self.file_metadata.remove(old_path) {
                 self.file_metadata.insert(new_path.to_string(), fm);
@@ -167,6 +175,9 @@ impl MetaStore for MemoryMetaStore {
                     .unwrap_or_default();
                 let new_child = format!("{}{}", new_prefix, suffix);
                 meta.path = new_child.clone();
+                if is_pas {
+                    pas_update_content_id(&mut meta, &old_child, &new_child);
+                }
                 self.entries.insert(new_child.clone(), meta);
                 if let Some((_, fm)) = self.file_metadata.remove(&old_child) {
                     self.file_metadata.insert(new_child, fm);
@@ -194,6 +205,9 @@ impl MetaStore for MemoryMetaStore {
             .and_then(|inner| inner.get(key).map(|v| v.value().clone())))
     }
 }
+
+// pas_update_content_id is defined in crate::abc::meta_store and re-exported
+// above. MemoryMetaStore and LocalMetaStore use it via the re-export.
 
 // ── LocalMetaStore — single-node redb-backed metastore ──────────────────
 //
@@ -700,7 +714,12 @@ impl MetaStore for LocalMetaStore {
     /// Single write txn: rewrite `old_path` and all children under
     /// `old_path + "/"` to their new names. Keys are rewritten in place
     /// (remove + insert) since redb has no rename primitive.
-    fn rename_path(&self, old_path: &str, new_path: &str) -> Result<(), MetaStoreError> {
+    fn rename_path(
+        &self,
+        old_path: &str,
+        new_path: &str,
+        is_pas: bool,
+    ) -> Result<(), MetaStoreError> {
         if old_path == new_path {
             return Ok(());
         }
@@ -747,6 +766,9 @@ impl MetaStore for LocalMetaStore {
             for (old_key, new_key, bytes) in to_rewrite {
                 let mut meta = deserialize_metadata(&bytes)?;
                 meta.path = new_key.clone();
+                if is_pas {
+                    pas_update_content_id(&mut meta, &old_key, &new_key);
+                }
                 let new_bytes = serialize_metadata(&meta);
                 table
                     .remove(old_key.as_str())
@@ -907,7 +929,7 @@ mod tests {
         ms.set_file_metadata("/old/child", "tag", "value".to_string())
             .unwrap();
 
-        ms.rename_path("/old", "/new").unwrap();
+        ms.rename_path("/old", "/new", true).unwrap();
 
         assert!(ms.get("/old").unwrap().is_none());
         assert!(ms.get("/old/child").unwrap().is_none());

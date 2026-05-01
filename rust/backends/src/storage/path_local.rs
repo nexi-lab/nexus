@@ -163,10 +163,15 @@ impl ObjectStore for PathLocalBackend {
         Ok(())
     }
 
-    fn get_content_size(&self, _content_id: &str) -> Result<u64, StorageError> {
-        Err(StorageError::NotSupported(
-            "PathLocalBackend.get_content_size requires backend_path",
-        ))
+    fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
+        let path = self.resolve_path(content_id)?;
+        match fs::metadata(&path) {
+            Ok(m) => Ok(m.len()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                Err(StorageError::NotFound(content_id.to_string()))
+            }
+            Err(e) => Err(StorageError::IOError(e)),
+        }
     }
 
     fn mkdir(&self, path: &str, parents: bool, _exist_ok: bool) -> Result<(), StorageError> {
@@ -217,8 +222,11 @@ impl ObjectStore for PathLocalBackend {
         let size = fs::copy(&src, &dst).map_err(StorageError::IOError)?;
         let content = fs::read(&dst).map_err(StorageError::IOError)?;
         let hash = lib::hash::hash_content(&content);
+        // PAS contract: content_id = backend path, not content hash.
+        // The hash goes in version for OCC; content_id must equal dst_path
+        // so sys_read can resolve the file on disk after a copy.
         Ok(WriteResult {
-            content_id: hash.clone(),
+            content_id: dst_path.to_string(),
             version: hash,
             size,
         })

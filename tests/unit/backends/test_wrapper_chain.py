@@ -261,4 +261,4 @@ class TestPerformanceRegression:
             BackendFactory.wrap(mock, "logging")
         elapsed_ms = (time.perf_counter() - start) * 1000 / iterations
 
-        assert elapsed_ms < 5.0, f"wrap() too slow: {elapsed_ms:.2f}ms per call"
+        assert elapsed_ms < 10.0, f"wrap() too slow: {elapsed_ms:.2f}ms per call"

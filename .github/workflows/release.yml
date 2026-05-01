@@ -280,7 +280,9 @@ jobs:
   # Uses the same PYPI_API_TOKEN as nexus-ai-fs (org-scoped token).
   publish-nexus-fs:
     name: Publish nexus-fs to PyPI
-    needs: [verify-version]
+    # nexus-fs declares nexus-runtime as a hard dep; ensure nexus-runtime is
+    # published first so the smoke-test pip install can resolve it.
+    needs: [verify-version, publish-rust]
     runs-on: ubuntu-latest
 
     steps:
@@ -313,11 +315,58 @@ jobs:
           check-wheel-contents dist-nexus-fs/*.whl || echo "::warning::check-wheel-contents found issues (non-fatal)"
           pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist-nexus-fs/*.whl
 
+      - name: Download nexus-runtime artifacts (built by publish-rust)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rust-wheel-*
+          path: /tmp/nexus-runtime-artifacts
+          merge-multiple: true
+
+      - name: Verify nexus-runtime is on PyPI before publishing nexus-fs
+        run: |
+          # nexus-runtime is a hard dep of nexus-fs. Guard the publish step by
+          # verifying the exact version declared in pyproject.toml is resolvable
+          # from PyPI. If publish-rust skipped (token absent), this check catches
+          # the gap before nexus-fs is uploaded and users encounter a broken dep.
+          # Read the exact version from the nexus-runtime source (nexus-cdylib).
+          EXACT_RUNTIME=$(grep '^version = ' rust/nexus-cdylib/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Exact nexus-runtime version for this release: $EXACT_RUNTIME"
+          python - "$EXACT_RUNTIME" <<'PY'
+          import sys, urllib.request, urllib.error, json
+          exact = sys.argv[1]
+          if not exact:
+              print("FATAL: could not read nexus-runtime version from rust/nexus-cdylib/pyproject.toml", file=sys.stderr)
+              sys.exit(1)
+          try:
+              with urllib.request.urlopen(f"https://pypi.org/pypi/nexus-runtime/{exact}/json") as r:
+                  json.load(r)  # 200 means the exact version exists
+          except urllib.error.HTTPError as e:
+              if e.code == 404:
+                  print(f"FATAL: nexus-runtime {exact} is not on PyPI; publish-rust must publish first", file=sys.stderr)
+                  sys.exit(1)
+              raise
+          print(f"OK: nexus-runtime {exact} is on PyPI")
+          PY
+
       - name: Smoke test — install in clean environment
         run: |
           python -m venv /tmp/nexus-fs-release-test
+          # Install nexus-runtime from local artifacts using pip's own wheel
+          # compatibility logic (--no-index --find-links avoids OS/arch mismatch).
+          /tmp/nexus-fs-release-test/bin/pip install \
+            --no-index --find-links /tmp/nexus-runtime-artifacts \
+            nexus-runtime
           /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
-          /tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(f'nexus-fs v{nexus.fs.__version__}')"
+          PKG_VERSION=$(grep '^version = ' packages/nexus-fs/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          /tmp/nexus-fs-release-test/bin/python - "$PKG_VERSION" <<'PY'
+          import sys, nexus.fs
+          pkg_ver = sys.argv[1]
+          runtime_ver = nexus.fs.__version__
+          print(f"nexus-fs __version__ = {runtime_ver}, pyproject.toml = {pkg_ver}")
+          if runtime_ver != pkg_ver:
+              print(f"FATAL: __version__ {runtime_ver!r} != pyproject.toml {pkg_ver!r}", file=sys.stderr)
+              sys.exit(1)
+          PY
           /tmp/nexus-fs-release-test/bin/nexus-fs --help
 
       - name: Detect existing nexus-fs PyPI version

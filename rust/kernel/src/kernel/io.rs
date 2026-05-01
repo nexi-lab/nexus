@@ -833,18 +833,22 @@ impl Kernel {
             return miss(entry.entry_type);
         }
 
-        // 6. Atomic delete — metastore (raft) first, dcache evict on
-        // success. If raft propose fails (quorum unreachable), the
-        // entry stays in BOTH the state machine and the dcache so a
-        // retry sees a consistent view rather than a phantom miss.
+        // 6. Atomic metastore delete + dcache evict (metadata-first ordering).
+        // Metadata is deleted first so the file becomes invisible immediately;
+        // on metastore failure the entry remains fully consistent for retry.
+        // Backend bytes are cleaned up afterward (best-effort); orphaned objects
+        // from a failed backend delete are collected by a background GC sweep.
+        // The inverse ordering (backend-first) risks deleting bytes while leaving
+        // live metadata if the metastore call fails — unrecoverable data loss.
         if let Err(e) = self.commit_delete(path, &route.mount_point) {
             self.lock_manager.do_release(lock_handle);
             return Err(e);
         }
 
-        // 7. Backend delete (best-effort, PAS only) — only after
-        // metastore commit succeeded; otherwise we'd orphan the file
-        // on the filesystem with no metadata pointing at it.
+        // 7. Backend delete (PAS only, best-effort after metastore commit).
+        // Errors are not surfaced to the caller — the namespace is already clean
+        // and orphaned bytes are harmless pending GC. CAS backends do not track
+        // content by path; their GC handles unreferenced blobs independently.
         let _ = self
             .vfs_router
             .delete_file(&route.mount_point, &route.backend_path);
@@ -966,13 +970,10 @@ impl Kernel {
             return miss();
         }
 
-        // 4. Existence check: get old metadata (per-mount or global) — zone-relative keys
-        let old_zone_path = Self::zone_key(&old_route.backend_path);
-        let new_zone_path = Self::zone_key(&new_route.backend_path);
+        // 4. Existence check: get old metadata — use full VFS paths (R20.3 contract).
+        // backend_path is used only for backend I/O and PAS content_id calculation.
         let old_meta = self
-            .with_metastore(&old_route.mount_point, |ms| {
-                ms.get(&old_zone_path).ok().flatten()
-            })
+            .with_metastore(&old_route.mount_point, |ms| ms.get(old_path).ok().flatten())
             .flatten();
 
         // Also check dcache
@@ -983,7 +984,7 @@ impl Kernel {
             (None, Some(e)) => (e.entry_type == DT_DIR, e.entry_type),
             (None, None) => {
                 // Check for implicit directory: no explicit entry, but has children
-                let child_prefix = format!("{}/", old_zone_path.trim_end_matches('/'));
+                let child_prefix = format!("{}/", old_path.trim_end_matches('/'));
                 let has_children = self
                     .with_metastore(&old_route.mount_point, |ms| {
                         ms.list(&child_prefix)
@@ -1015,10 +1016,10 @@ impl Kernel {
             _ => {}
         }
 
-        // 5. Destination conflict check — use new_route's metastore for cross-mount
+        // 5. Destination conflict check — full VFS path (R20.3 contract)
         let new_exists = self
             .with_metastore(&new_route.mount_point, |ms| {
-                ms.exists(&new_zone_path).unwrap_or(false)
+                ms.exists(new_path).unwrap_or(false)
             })
             .unwrap_or(false);
         if new_exists {
@@ -1033,39 +1034,63 @@ impl Kernel {
         let is_cross_mount = old_route.mount_point != new_route.mount_point;
 
         if is_cross_mount {
-            // Cross-mount: PUT→new metastore, DELETE→old metastore.
-            // Both must commit; if the PUT fails we don't even try
-            // the DELETE (entry stays at old path — caller can retry).
-            // If PUT succeeds but DELETE fails, the entry exists at
-            // BOTH paths until the next reconcile sweep — at-least-
-            // once semantics, no data loss.
-            if let Some(old_m) = old_meta.as_ref() {
-                let mut new_m = old_m.clone();
-                new_m.path = new_zone_path.clone();
-                self.commit_metadata(&new_zone_path, &new_route.mount_point, new_m)?;
-                self.commit_delete(&old_zone_path, &old_route.mount_point)?;
-            }
-            // Directory children: list→put→delete (each child atomic)
-            let old_prefix = format!("{}/", old_zone_path.trim_end_matches('/'));
-            if let Some(Ok(children)) =
-                self.with_metastore(&old_route.mount_point, |ms| ms.list(&old_prefix))
-            {
-                for child in children {
-                    let suffix = &child.path[old_zone_path.len()..];
-                    let child_new_path = format!("{}{}", new_zone_path, suffix);
-                    let mut child_meta = child.clone();
-                    child_meta.path = child_new_path.clone();
-                    self.commit_metadata(&child_new_path, &new_route.mount_point, child_meta)?;
-                    self.commit_delete(&child.path, &old_route.mount_point)?;
-                }
-            }
+            // Cross-mount rename is always rejected regardless of addressing mode.
+            //
+            // For PAS: physically moving bytes requires a distributed 2PC that is
+            // not atomic and cannot be compensated without a WAL.
+            // For CAS-to-PAS or CAS-to-different-CAS: cloning metadata across
+            // content-addressed namespaces leaves the destination pointing at a
+            // content_id the destination backend cannot resolve, making the file
+            // inaccessible after the source metastore entry is deleted.
+            //
+            // Callers must use sys_copy + sys_unlink for cross-mount moves.
+            release_locks(&self.lock_manager, lock1, lock2);
+            return Err(KernelError::IOError(
+                "sys_rename: cross-mount rename not supported; use copy + delete instead"
+                    .to_string(),
+            ));
         } else {
-            // Same-mount: atomic rename_path (redb single txn). Errors
-            // surface to the caller so a quorum-loss raft propose
-            // doesn't silently corrupt the rename.
+            // Same-mount rename.
+            //
+            // For PAS (path-addressed) backends, rename bytes on storage BEFORE
+            // committing the metastore update. If the backend rename fails the
+            // metastore is untouched and the caller sees the error; no orphaned
+            // metadata or aliased content_id is created. CAS backends return
+            // None/NotSupported from rename_file (bytes are hash-addressed and
+            // never moved), so the ordering does not matter for them.
+            //
+            // Errors from rename_file are propagated for PAS; for CAS/unsupported
+            // backends the None result is silently accepted and only the metastore
+            // rewrite happens (metadata-only rename, which is correct for CAS).
+            // For PAS backends: rename bytes first so a storage failure never
+            // leaves metadata committed to a path where no bytes were moved.
+            // CAS backends do not move bytes on rename; drive them after metadata.
+            let backend_renamed = if !old_route.is_cas {
+                match self.vfs_router.rename_file(
+                    &old_route.mount_point,
+                    &old_route.backend_path,
+                    &new_route.backend_path,
+                ) {
+                    Some(Err(e)) => {
+                        release_locks(&self.lock_manager, lock1, lock2);
+                        return Err(KernelError::IOError(format!(
+                            "sys_rename: backend rename failed: {e:?}"
+                        )));
+                    }
+                    Some(Ok(())) => true,
+                    // None = backend does not implement rename (external connectors);
+                    // fall through to metadata-only rename for those.
+                    None => false,
+                }
+            } else {
+                false
+            };
+
+            // Commit metadata after PAS bytes are moved (or immediately for CAS).
+            // Use full VFS paths — metastore entries written by sys_write use full paths.
             let rename_result = self
                 .with_metastore(&old_route.mount_point, |ms| {
-                    ms.rename_path(&old_zone_path, &new_zone_path)
+                    ms.rename_path(old_path, new_path, !old_route.is_cas)
                 })
                 .ok_or_else(|| {
                     KernelError::IOError(format!(
@@ -1073,19 +1098,58 @@ impl Kernel {
                         old_route.mount_point
                     ))
                 })?;
-            rename_result.map_err(|e| {
-                KernelError::IOError(format!("sys_rename: metastore.rename_path: {e:?}"))
-            })?;
-            let _ = self.vfs_router.rename_file(
-                &old_route.mount_point,
-                &old_route.backend_path,
-                &new_route.backend_path,
-            );
+            if let Err(meta_err) = rename_result {
+                // PAS: bytes already moved to new path — try to roll back so the
+                // file is accessible again. If rollback also fails, report both
+                // errors; data is at new backend path but metadata is at old path.
+                if backend_renamed {
+                    if let Some(Err(rollback_err)) = self.vfs_router.rename_file(
+                        &old_route.mount_point,
+                        &new_route.backend_path,
+                        &old_route.backend_path,
+                    ) {
+                        release_locks(&self.lock_manager, lock1, lock2);
+                        return Err(KernelError::IOError(format!(
+                            "sys_rename: metastore failed and storage rollback also failed \
+                             (data at {new_path} is inaccessible): meta={meta_err:?} \
+                             rollback={rollback_err:?}"
+                        )));
+                    }
+                }
+                release_locks(&self.lock_manager, lock1, lock2);
+                return Err(KernelError::IOError(format!(
+                    "sys_rename: metastore.rename_path: {meta_err:?}"
+                )));
+            }
+
+            // CAS: drive backend rename (no-op for hash-addressed content) after metadata.
+            if old_route.is_cas {
+                let _ = self.vfs_router.rename_file(
+                    &old_route.mount_point,
+                    &old_route.backend_path,
+                    &new_route.backend_path,
+                );
+            }
         }
 
-        // 9. DCache: evict old + put new; evict children prefix for directories
-        if let Some(entry) = self.dcache.get_entry(old_path) {
+        // 9. DCache: evict old + put new; evict children prefix for directories.
+        // For PAS backends, content_id is the backend-relative path. After a rename
+        // the disk file is at the new backend path, so we must update content_id in
+        // the cached entry before inserting it at new_path — otherwise sys_read
+        // fetches the stale old-path backend file (which no longer exists).
+        if let Some(mut entry) = self.dcache.get_entry(old_path) {
             self.dcache.evict(old_path);
+            // PAS only: update content_id to new backend path.
+            // Use the route's authoritative is_cas flag rather than a
+            // string-shape heuristic — a PAS file named like a BLAKE3 hex
+            // digest would otherwise be incorrectly treated as CAS.
+            if !old_route.is_cas {
+                if let Some(ref cid) = entry.content_id.clone() {
+                    if *cid == old_route.backend_path {
+                        entry.content_id = Some(new_route.backend_path.clone());
+                    }
+                }
+            }
             self.dcache.put(new_path, entry);
         }
         if is_directory {
@@ -1199,15 +1263,13 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 3. Get source metadata (dcache or metastore) — zone-relative keys
-        let src_zone_path = Self::zone_key(&src_route.backend_path);
-        let dst_zone_path = Self::zone_key(&dst_route.backend_path);
+        // 3. Get source metadata (dcache or metastore) — full VFS paths (R20.3 contract)
         let src_meta = match self.dcache.get_entry(src_path) {
             Some(e) => e,
             None => {
                 match self
                     .with_metastore(&src_route.mount_point, |ms| {
-                        ms.get(&src_zone_path).ok().flatten().map(|m| (&m).into())
+                        ms.get(src_path).ok().flatten().map(|m| (&m).into())
                     })
                     .flatten()
                 {
@@ -1225,16 +1287,32 @@ impl Kernel {
             )));
         }
 
-        // 5. Check destination doesn't already exist (zone-relative key)
+        // 5. Check destination doesn't already exist — full VFS path (R20.3 contract)
         let dst_exists = self
             .with_metastore(&dst_route.mount_point, |ms| {
-                ms.exists(&dst_zone_path).unwrap_or(false)
+                ms.exists(dst_path).unwrap_or(false)
             })
             .unwrap_or(false);
         if dst_exists {
             return Err(KernelError::IOError(format!(
                 "sys_copy: destination already exists: {dst_path}"
             )));
+        }
+
+        // 5b. For PAS backends, also check backend existence so rollback never
+        // deletes a pre-existing untracked file at the destination path.
+        // If the backend path already exists (untracked by metastore), reject
+        // the copy rather than silently overwriting and potentially losing bytes
+        // if the subsequent metastore commit fails.
+        if !dst_route.is_cas {
+            if let Some(true) = self
+                .vfs_router
+                .backend_path_exists(&dst_route.mount_point, &dst_route.backend_path)
+            {
+                return Err(KernelError::IOError(format!(
+                    "sys_copy: destination backend path already exists (untracked): {dst_path}"
+                )));
+            }
         }
 
         // 6. VFS lock both paths (sorted, deadlock-free)
@@ -1270,6 +1348,10 @@ impl Kernel {
         // 7. Copy content (strategy depends on same-mount vs cross-mount)
         let same_mount = src_route.mount_point == dst_route.mount_point;
 
+        // Track whether this operation created destination bytes so rollback only
+        // deletes bytes we wrote (not pre-existing untracked backend objects).
+        let mut wrote_dst_bytes = false;
+
         let copy_result: Result<(String, u64), KernelError> = if same_mount {
             // Try server-side copy first (PAS backends)
             match self.vfs_router.copy_file(
@@ -1277,23 +1359,47 @@ impl Kernel {
                 &src_route.backend_path,
                 &dst_route.backend_path,
             ) {
-                Some(wr) => Ok((wr.content_id, wr.size)),
-                None => {
-                    // CAS backend or copy_file not supported — metadata-only copy
-                    // (content deduplicated by hash, just create new metastore entry)
-                    let content_id = src_meta.content_id.clone().unwrap_or_default();
-                    if !content_id.is_empty() {
-                        // CAS: same content_id, just new path
-                        Ok((content_id, src_meta.size))
+                Some(Ok(wr)) => {
+                    wrote_dst_bytes = true;
+                    Ok((wr.content_id, wr.size))
+                }
+                Some(Err(crate::abc::object_store::StorageError::NotSupported(_))) | None => {
+                    // No backend / operation not supported: fall back per addressing mode.
+                    // For CAS: metadata-only copy is correct — same content_id, different path.
+                    // For PAS: read+write to avoid creating a metadata alias pointing at
+                    // source bytes that haven't been physically duplicated.
+                    if src_route.is_cas {
+                        let content_id = src_meta.content_id.clone().unwrap_or_default();
+                        if !content_id.is_empty() {
+                            Ok((content_id, src_meta.size))
+                        } else {
+                            let r =
+                                self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx);
+                            if r.is_ok() {
+                                wrote_dst_bytes = true;
+                            }
+                            r
+                        }
                     } else {
-                        // Fallback: read + write
-                        self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
+                        let r = self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx);
+                        if r.is_ok() {
+                            wrote_dst_bytes = true;
+                        }
+                        r
                     }
+                }
+                Some(Err(e)) => {
+                    // Real backend error (disk full, permission denied, etc.) — propagate.
+                    Err(KernelError::BackendError(format!("sys_copy: {e:?}")))
                 }
             }
         } else {
             // Cross-mount: read from src backend, write to dst backend
-            self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx)
+            let r = self.copy_via_read_write(&src_route, &dst_route, &src_meta, ctx);
+            if r.is_ok() {
+                wrote_dst_bytes = true;
+            }
+            r
         };
 
         let (content_id, size) = match copy_result {
@@ -1310,8 +1416,9 @@ impl Kernel {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
         let new_version = 1u32;
+        // Use full VFS dst_path for metastore key to match R20.3 convention.
         let meta = self.build_metadata(
-            &dst_zone_path,
+            dst_path,
             &dst_route.zone_id,
             DT_REG,
             size,
@@ -1322,13 +1429,9 @@ impl Kernel {
             Some(now_ms),
         );
         // 9. Atomic commit — metastore (raft) first, dcache on success.
-        // dcache uses the caller-visible dst_path; metastore uses the
-        // zone-relative key from meta.path.
         let cache_entry: CachedEntry = (&meta).into();
         let put_result = self
-            .with_metastore(&dst_route.mount_point, move |ms| {
-                ms.put(&dst_zone_path, meta)
-            })
+            .with_metastore(&dst_route.mount_point, move |ms| ms.put(dst_path, meta))
             .ok_or_else(|| {
                 KernelError::IOError(format!(
                     "sys_copy: no metastore for {}",
@@ -1343,10 +1446,24 @@ impl Kernel {
             }
         };
         if let Err(e) = put_result {
+            // Metastore failed after bytes were written to the destination backend.
+            // Only delete the destination if this operation created those bytes
+            // (wrote_dst_bytes=true); never delete pre-existing untracked backend objects.
+            let rollback_err = if wrote_dst_bytes {
+                self.vfs_router
+                    .delete_file(&dst_route.mount_point, &dst_route.backend_path)
+            } else {
+                None
+            };
             release_locks(&self.lock_manager, lock1, lock2);
-            return Err(KernelError::IOError(format!(
-                "sys_copy: metastore.put: {e:?}"
-            )));
+            return Err(match rollback_err {
+                Some(Err(del_err)) => KernelError::IOError(format!(
+                    "sys_copy: metastore.put failed ({e:?}) and rollback delete \
+                     also failed ({del_err:?}); destination bytes at {} may remain",
+                    dst_route.backend_path
+                )),
+                _ => KernelError::IOError(format!("sys_copy: metastore.put: {e:?}")),
+            });
         }
         self.dcache.put(dst_path, cache_entry);
 

@@ -38,6 +38,7 @@ from nexus.contracts.search_types import (
 )
 from nexus.contracts.types import Permission
 from nexus.lib.rpc_decorator import rpc_expose
+from nexus.services.activity import EventKind, Result, emit
 
 # List directory traversal thresholds (Issue #901)
 # Issue #2071: LIST_PARALLEL_WORKERS now sourced from ProfileTuning.search.list_parallel_workers
@@ -1883,6 +1884,69 @@ class SearchService:
 
     @rpc_expose(description="Search file contents")
     async def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 100,
+        search_mode: str = "auto",
+        context: Any = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
+        files: builtins.list[str] | None = None,
+        block_type: str | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Public grep entry point with activity-event instrumentation (#3791).
+
+        Wraps :meth:`_grep_impl` to record SEARCH events on success and
+        BLOCKED events on exceptions.  Wall-clock latency is captured.
+        ``zone_id`` is derived from the operation context when available;
+        ``token_hash`` is not currently extractable from the search
+        ``context`` object so it is left as ``None``.
+        """
+        _start = time.monotonic()
+        _zone: str | None = None
+        try:
+            _zone, _, _ = self._get_routing_params(context)
+        except Exception:  # pragma: no cover - never fail emit setup
+            _zone = None
+        try:
+            result = await self._grep_impl(
+                pattern=pattern,
+                path=path,
+                file_pattern=file_pattern,
+                ignore_case=ignore_case,
+                max_results=max_results,
+                search_mode=search_mode,
+                context=context,
+                before_context=before_context,
+                after_context=after_context,
+                invert_match=invert_match,
+                files=files,
+                block_type=block_type,
+            )
+        except Exception:
+            emit(
+                kind=EventKind.SEARCH,
+                result=Result.BLOCKED,
+                actor_token_hash=None,
+                subject_zone=_zone,
+                latency_ms=int((time.monotonic() - _start) * 1000),
+            )
+            raise
+        emit(
+            kind=EventKind.SEARCH,
+            result=Result.OK,
+            actor_token_hash=None,
+            subject_zone=_zone,
+            subject_extra={"hits": len(result) if hasattr(result, "__len__") else None},
+            latency_ms=int((time.monotonic() - _start) * 1000),
+        )
+        return result
+
+    async def _grep_impl(
         self,
         pattern: str,
         path: str = "/",

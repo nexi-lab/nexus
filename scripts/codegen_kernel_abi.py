@@ -4998,6 +4998,13 @@ _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     # PyKernel says sys_mkdir / sys_rmdir; NexusFS Tier 2 says mkdir / rmdir.
     "sys_mkdir": "mkdir",
     "sys_rmdir": "rmdir",
+    # Bare ``mkdir`` / ``rmdir`` are the canonical wire forms used by
+    # nexus-test, the Python remote proxy, and the docker E2E suite.  They
+    # carry through directly to the same NexusFS Tier 2 methods.  Without
+    # these entries the gRPC ``Call`` handler would 404 on bare ``mkdir`` —
+    # caught by the federation E2E concurrent-create test.
+    "mkdir": "mkdir",
+    "rmdir": "rmdir",
     # ``sys_write`` wire name routes to ``NexusFS.write`` (Tier 2 with
     # content_id dict return) — preserves the OCC (if_match /
     # if_none_match) handling.  The Tier 2 ``write`` RPC name does

@@ -118,6 +118,15 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
         "nexus.bricks.memory.coref_resolver",
         "nexus.bricks.memory.relationship_extractor",
     ],
+    # Issue #3793: portability signer raises ArchiveSignatureError which lives in
+    # archive.errors. The portability brick is the foundation layer that archive
+    # extends — signer.py is owned by the archive feature set and references its
+    # own error hierarchy. TODO(#3793): move ArchiveSignatureError to a shared
+    # contracts module when the archive brick is fully stabilised.
+    ("portability", "archive"): [
+        "nexus.bricks.portability.signer",
+        "nexus.bricks.portability.tests.test_signer",
+    ],
 }
 
 # Known exceptions for bricks importing from nexus.core (non-protocol) or

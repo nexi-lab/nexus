@@ -2122,7 +2122,11 @@ class TestPartialReplicationFailure:
             # through immediately.
             for i in range(5):
                 path = f"/corp/eng/partition-{uid}-{i}.txt"
-                deadline = time.time() + 15
+                # 60s window — election timeout is 100-200 ms so this
+                # never matters on a healthy runner, but constrained CI
+                # bridges can take 30+ s after `network disconnect` to
+                # finish reconverging on the (node-1, witness) majority.
+                deadline = time.time() + 60
                 last_err: dict | None = None
                 while time.time() < deadline:
                     wr = _grpc_call(
@@ -3404,8 +3408,15 @@ class TestFreshJoinToRunningCluster:
         #    appear in logs (covers both exited-due-to-panic and the
         #    soft-fail "running but unhealthy" path).
         panic_check_logs = ""
+        # 240s window — fresh-join refuses to boot until the live cluster
+        # commits a ReplaceVoter for node-1's stale voter ID. On constrained
+        # CI runners that propagation can take well past 60 s after the
+        # ``efbbbfe87`` retry fix, especially when corp-eng's witness is
+        # still draining post-restart MsgApp catch-up before it can ack
+        # the voter rotation entry.
+        fresh_join_timeout = 240
         try:
-            _wait_healthy([cluster["node1"]], timeout=120)
+            _wait_healthy([cluster["node1"]], timeout=fresh_join_timeout)
         except BaseException as exc:
             panic_check_logs = n1_container.logs(tail=500, stderr=True).decode(errors="replace")
             if (
@@ -3418,7 +3429,7 @@ class TestFreshJoinToRunningCluster:
                     f"--- node-1 logs (tail 500) ---\n{panic_check_logs}"
                 )
             pytest.fail(
-                f"node-1 not healthy within 120s after fresh-join: {exc}\n"
+                f"node-1 not healthy within {fresh_join_timeout}s after fresh-join: {exc}\n"
                 f"--- node-1 logs (tail 500) ---\n{panic_check_logs}"
             )
 

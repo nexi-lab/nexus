@@ -25,6 +25,7 @@ from cachetools import TTLCache
 from nexus.bricks.search.primitives import glob_helpers, trigram_fast
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import PermissionDeniedError
+from nexus.contracts.protocols.activity import EventKind, Result, emit
 from nexus.contracts.search_types import (
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
@@ -1889,6 +1890,69 @@ class SearchService:
         file_pattern: str | None = None,
         ignore_case: bool = False,
         max_results: int = 100,
+        search_mode: str = "auto",
+        context: Any = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
+        files: builtins.list[str] | None = None,
+        block_type: str | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Public grep entry point with activity-event instrumentation (#3791).
+
+        Wraps :meth:`_grep_impl` to record SEARCH events on success and
+        BLOCKED events on exceptions.  Wall-clock latency is captured.
+        ``zone_id`` is derived from the operation context when available;
+        ``token_hash`` is not currently extractable from the search
+        ``context`` object so it is left as ``None``.
+        """
+        _start = time.monotonic()
+        _zone: str | None = None
+        try:
+            _zone, _, _ = self._get_routing_params(context)
+        except Exception:  # pragma: no cover - never fail emit setup
+            _zone = None
+        try:
+            result = await self._grep_impl(
+                pattern=pattern,
+                path=path,
+                file_pattern=file_pattern,
+                ignore_case=ignore_case,
+                max_results=max_results,
+                search_mode=search_mode,
+                context=context,
+                before_context=before_context,
+                after_context=after_context,
+                invert_match=invert_match,
+                files=files,
+                block_type=block_type,
+            )
+        except Exception:
+            emit(
+                kind=EventKind.SEARCH,
+                result=Result.BLOCKED,
+                actor_token_hash=None,
+                subject_zone=_zone,
+                latency_ms=int((time.monotonic() - _start) * 1000),
+            )
+            raise
+        emit(
+            kind=EventKind.SEARCH,
+            result=Result.OK,
+            actor_token_hash=None,
+            subject_zone=_zone,
+            subject_extra={"hits": len(result) if hasattr(result, "__len__") else None},
+            latency_ms=int((time.monotonic() - _start) * 1000),
+        )
+        return result
+
+    async def _grep_impl(
+        self,
+        pattern: str,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 100,
         search_mode: str = "auto",  # noqa: ARG002
         context: Any = None,
         before_context: int = 0,
@@ -3428,6 +3492,60 @@ class SearchService:
 
     @rpc_expose(description="Search documents using natural language queries")
     async def semantic_search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        search_mode: str = "semantic",
+        context: "OperationContext | None" = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Public semantic-search entry point with activity-event instrumentation (#3791).
+
+        Wraps :meth:`_semantic_search_impl` to record SEARCH events on
+        success and BLOCKED events on exceptions. Mirrors the ``grep``
+        wrapper pattern so all primary SearchService surfaces feed the
+        same activity stream.
+        """
+        _start = time.monotonic()
+        _zone: str | None = None
+        try:
+            _zone, _, _ = self._get_routing_params(context)
+        except Exception:  # pragma: no cover - never fail emit setup
+            _zone = None
+        try:
+            result = await self._semantic_search_impl(
+                query=query,
+                path=path,
+                limit=limit,
+                filters=filters,
+                search_mode=search_mode,
+                context=context,
+            )
+        except Exception:
+            emit(
+                kind=EventKind.SEARCH,
+                result=Result.BLOCKED,
+                actor_token_hash=None,
+                subject_zone=_zone,
+                subject_extra={"mode": search_mode},
+                latency_ms=int((time.monotonic() - _start) * 1000),
+            )
+            raise
+        emit(
+            kind=EventKind.SEARCH,
+            result=Result.OK,
+            actor_token_hash=None,
+            subject_zone=_zone,
+            subject_extra={
+                "mode": search_mode,
+                "hits": len(result) if hasattr(result, "__len__") else None,
+            },
+            latency_ms=int((time.monotonic() - _start) * 1000),
+        )
+        return result
+
+    async def _semantic_search_impl(
         self,
         query: str,
         path: str = "/",

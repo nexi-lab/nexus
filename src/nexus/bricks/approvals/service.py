@@ -28,6 +28,12 @@ from nexus.bricks.approvals.models import (
 )
 from nexus.bricks.approvals.repository import ApprovalRepository
 from nexus.bricks.approvals.sweeper import Sweeper
+from nexus.contracts.protocols.activity import (
+    EventKind,
+    Result,
+    emit,
+    reseed_approvals_pending,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +141,21 @@ class ApprovalService:
         """Public accessor — used by PolicyGate (Task 13) for session_allow."""
         return self._repo
 
+    async def _reseed_pending_gauge(self) -> None:
+        """Reseed the APPROVALS_PENDING gauge from durable state.
+
+        Called at every transition (create / decide / expire / cross-worker
+        NOTIFY / reconcile) so each process's /metrics matches the current
+        database row count. Uses an indexed COUNT(*) instead of materializing
+        rows so this stays O(1) regardless of pending queue depth.
+        Best-effort: telemetry must never break the approval flow.
+        """
+        try:
+            count = await self._repo.count_pending()
+            reseed_approvals_pending(count)
+        except Exception:
+            logger.debug("approvals: APPROVALS_PENDING reseed failed", exc_info=True)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -155,6 +176,11 @@ class ApprovalService:
             on_reconnect=self.reconcile_in_flight,
         )
         await self._sweeper.start()
+        # Activity gauge (#3791): seed APPROVALS_PENDING from durable state
+        # so /metrics reflects the live row count from the moment the
+        # service starts. Subsequent reseeds at every transition keep the
+        # gauge authoritative across restarts and cross-worker decisions.
+        await self._reseed_pending_gauge()
         # F3 (#3790): start the reconcile watchdog if configured. The
         # watchdog runs at ``reconcile_interval_seconds`` cadence and
         # makes cross-worker decisions converge even when NOTIFY drops a
@@ -348,6 +374,23 @@ class ApprovalService:
             except Exception:
                 logger.warning("notify(approvals_new) failed; queue still durable", exc_info=True)
 
+            # Activity event (#3791): mark a fresh pending row queued so
+            # the audit stream records operator wait. Only emitted when the
+            # row was newly inserted (not coalesced) and inheritance did
+            # not short-circuit it.
+            emit(
+                kind=EventKind.APPROVAL,
+                result=Result.PENDING_APPROVAL,
+                actor_user=getattr(req, "agent_id", None),
+                subject_zone=getattr(req, "zone_id", None),
+                subject_extra={
+                    "request_id": getattr(req, "id", None),
+                    "kind": getattr(getattr(req, "kind", None), "value", None)
+                    or getattr(req, "kind", None),
+                },
+            )
+            await self._reseed_pending_gauge()
+
         fut = self._dispatcher.register(req.id, session_id=session_id)
 
         # If the row is already terminal (race: decided between insert and register),
@@ -435,6 +478,22 @@ class ApprovalService:
                 _expired_ok = _expired_row is not None
 
                 if _expired_ok:
+                    # Activity event (#3791): local-timeout path resolved the
+                    # row to EXPIRED — emit the paired terminal event so the
+                    # APPROVALS_PENDING gauge balances against the PENDING
+                    # emit from request_and_wait's insert path.
+                    emit(
+                        kind=EventKind.APPROVAL,
+                        result=Result.BLOCKED,
+                        actor_user="system",
+                        subject_zone=getattr(_expired_row, "zone_id", None),
+                        subject_extra={
+                            "request_id": req.id,
+                            "decision": "expired",
+                            "source": "local_timeout",
+                        },
+                    )
+                    await self._reseed_pending_gauge()
                     # Round-4 (#3790): wake coalesced waiters so they do
                     # not block until the watchdog or their own timeout.
                     # Mirrors ``_on_expired_ids`` but scoped to this row.
@@ -687,6 +746,22 @@ class ApprovalService:
                 exc_info=True,
             )
 
+        # Activity event (#3791): record the terminal decision in the audit
+        # stream. The APPROVALS_PENDING gauge is reseeded from durable state
+        # immediately after.
+        decision_value = decision.value  # "approved" | "denied"
+        emit(
+            kind=EventKind.APPROVAL,
+            result=Result.OK if decision_value == "approved" else Result.BLOCKED,
+            actor_user=decided_by,
+            subject_zone=getattr(updated, "zone_id", None),
+            subject_extra={
+                "request_id": getattr(updated, "id", None) or request_id,
+                "decision": decision_value,
+            },
+        )
+        await self._reseed_pending_gauge()
+
         return updated
 
     async def list_pending(self, zone_id: str | None) -> list[ApprovalRequest]:
@@ -752,6 +827,10 @@ class ApprovalService:
                 ApprovalRequestStatus.EXPIRED,
             ):
                 self._dispatcher.resolve(rid, Decision.DENIED)
+        # Activity gauge (#3791): reconcile may have observed cross-worker
+        # transitions. Reseed APPROVALS_PENDING from durable state so the
+        # gauge converges with the database after a missed-NOTIFY recovery.
+        await self._reseed_pending_gauge()
 
     async def watch(self, zone_id: str | None) -> AsyncIterator[WatchEvent]:
         q: asyncio.Queue[WatchEvent] = asyncio.Queue(maxsize=self._cfg.watch_buffer_size)
@@ -779,6 +858,20 @@ class ApprovalService:
         now that we carry the actual zone_id instead of the empty string.
         """
         for rid, zone in rows:
+            # Activity event (#3791): sweeper-driven expiry is a terminal
+            # transition. Emit the paired event so the APPROVALS_PENDING
+            # gauge balances against the PENDING emit from request_and_wait.
+            emit(
+                kind=EventKind.APPROVAL,
+                result=Result.BLOCKED,
+                actor_user="system",
+                subject_zone=zone,
+                subject_extra={
+                    "request_id": rid,
+                    "decision": "expired",
+                    "source": "sweeper",
+                },
+            )
             self._dispatcher.resolve(rid, Decision.DENIED)
             self._broadcast(
                 WatchEvent(type="decided", request_id=rid, zone_id=zone, decision="expired")
@@ -795,6 +888,8 @@ class ApprovalService:
                     zone,
                     exc_info=True,
                 )
+        if rows:
+            await self._reseed_pending_gauge()
 
     # ------------------------------------------------------------------
     # NOTIFY handlers
@@ -819,6 +914,12 @@ class ApprovalService:
         if row is None or row.status is ApprovalRequestStatus.PENDING:
             # No durable terminal decision yet — ignore.
             return
+
+        # Activity gauge (#3791): cross-worker decision — reseed our
+        # local APPROVALS_PENDING from the durable count so this process's
+        # /metrics reflects the post-decision state, not the pre-decision
+        # delta from when we created the row.
+        await self._reseed_pending_gauge()
 
         if row.status is ApprovalRequestStatus.APPROVED:
             decision = Decision.APPROVED

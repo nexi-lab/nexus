@@ -898,6 +898,7 @@ ignore = [
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
 "src/nexus/server/rpc/handlers/filesystem.py" = ["ARG001"]  # Handler signature requires context param
 "src/nexus/storage/raft_metadata_store.py" = ["ARG002", "SIM105", "SIM108", "SIM102"]  # Interface + datetime parsing + style
+"src/nexus/services/activity/emitter.py" = ["ARG002"]  # NoopEmitter discards all args — full typed signature required by Emitter Protocol
 "scripts/*.py" = ["ARG001"]  # Utility scripts
 
 [tool.ruff.lint.isort]

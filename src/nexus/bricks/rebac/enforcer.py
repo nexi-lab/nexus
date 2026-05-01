@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import OperationalError
 
 from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
+from nexus.contracts.protocols.activity import EventKind, Result, emit
 from nexus.contracts.types import OperationContext, Permission
 
 # Issue #3786: Zone-perms resurrection cache primitives live in
@@ -457,7 +458,12 @@ class PermissionEnforcer:
                     context, path, permission_str, "admin", "kill_switch_disabled"
                 )
                 # Fall through to ReBAC check instead of denying
-                return self._check_rebac(path, permission, context)
+                _r = self._check_rebac(path, permission, context)
+                if not _r:
+                    self._emit_zone_access_block(
+                        context, path, permission_str, "rebac_deny_after_bypass_disabled"
+                    )
+                return _r
 
             # P0-4: Check path-based allowlist (scoped bypass)
             if self.admin_bypass_paths and not self._path_matches_allowlist(
@@ -467,7 +473,12 @@ class PermissionEnforcer:
                     context, path, permission_str, "admin", "path_not_in_allowlist"
                 )
                 # Fall through to ReBAC check
-                return self._check_rebac(path, permission, context)
+                _r = self._check_rebac(path, permission, context)
+                if not _r:
+                    self._emit_zone_access_block(
+                        context, path, permission_str, "rebac_deny_after_path_not_in_allowlist"
+                    )
+                return _r
 
             # Import AdminCapability here to avoid circular imports
             from nexus.bricks.rebac.permissions_enhanced import AdminCapability
@@ -521,7 +532,12 @@ class PermissionEnforcer:
                     f"missing_capability_{required_capability}",
                 )
                 # Fall through to ReBAC check
-                return self._check_rebac(path, permission, context)
+                _r = self._check_rebac(path, permission, context)
+                if not _r:
+                    self._emit_zone_access_block(
+                        context, path, permission_str, "rebac_deny_after_missing_capability"
+                    )
+                return _r
 
             self._log_bypass(context, path, permission_str, "admin", allowed=True)
             return True
@@ -569,8 +585,15 @@ class PermissionEnforcer:
                 perm_char = "w" if permission == Permission.WRITE else "r"
                 for zone, perms in _effective_zone_perms:
                     if zone == _zp_path_zone:
-                        return perm_char in perms or "x" in perms
+                        if perm_char in perms or "x" in perms:
+                            return True
+                        # Zone in allow-list but lacks the requested perm.
+                        self._emit_zone_access_block(
+                            context, path, permission_str, "zone_perms_insufficient"
+                        )
+                        return False
                 # Zone not in token's allow-list
+                self._emit_zone_access_block(context, path, permission_str, "zone_not_in_allowlist")
                 return False
 
         # Issue #1239: Namespace visibility check (Agent OS Phase 0)
@@ -591,7 +614,11 @@ class PermissionEnforcer:
         check_stale_session(self.agent_registry, context)
 
         # Normal ReBAC check
-        return self._check_rebac(path, permission, context)
+        result = self._check_rebac(path, permission, context)
+        if not result:
+            # Issue #3791: Emit ZONE_ACCESS block for the normal-flow deny.
+            self._emit_zone_access_block(context, path, permission_str, "rebac_deny")
+        return result
 
     def _check_rebac(
         self,
@@ -970,6 +997,28 @@ class PermissionEnforcer:
         reason: str,
     ) -> None:
         """Log denied bypass attempt (P0-4)."""
+        # Issue #3791: Emit activity event for every bypass denial. Done here
+        # (not at every call site) so it covers all paths in `check()` that
+        # funnel through this method. Suppressed so emit failures never break
+        # the enforcement path.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            emit(
+                kind=EventKind.POLICY_BLOCK,
+                result=Result.BLOCKED,
+                actor_token_hash=getattr(context, "token_hash", None),
+                actor_user=getattr(context, "user_id", None),
+                actor_agent=getattr(context, "agent_id", None),
+                subject_zone=getattr(context, "zone_id", None),
+                subject_extra={
+                    "path": path,
+                    "permission": permission,
+                    "bypass_type": bypass_type,
+                    "reason": reason,
+                },
+            )
+
         if not self.audit_store:
             return
 
@@ -991,6 +1040,37 @@ class PermissionEnforcer:
         )
 
         self.audit_store.log_bypass(entry)
+
+    def _emit_zone_access_block(
+        self,
+        context: OperationContext,
+        path: str,
+        permission: str,
+        reason: str,
+    ) -> None:
+        """Issue #3791: Emit ZONE_ACCESS block event for ReBAC deny.
+
+        Centralized helper so every deny return path in `check()` /
+        `_check_rebac*` can record an activity event without duplicating
+        field extraction. Suppressed so emit failures never break
+        enforcement.
+        """
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            emit(
+                kind=EventKind.ZONE_ACCESS,
+                result=Result.BLOCKED,
+                actor_token_hash=getattr(context, "token_hash", None),
+                actor_user=getattr(context, "user_id", None),
+                actor_agent=getattr(context, "agent_id", None),
+                subject_zone=getattr(context, "zone_id", None),
+                subject_extra={
+                    "path": path,
+                    "permission": permission,
+                    "reason": reason,
+                },
+            )
 
     def _permission_to_string(self, permission: Permission) -> str:
         """Convert Permission enum to string."""

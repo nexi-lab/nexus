@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.archive.errors import ArchiveEmbeddingDimMismatch
 from nexus.bricks.portability.bundle import BundleReader
 from nexus.bricks.portability.models import (
     ConflictMode,
@@ -83,6 +84,49 @@ def _apply_injections(rows: list[dict], injections: dict[str, str]) -> list[dict
                 new_row[k] = _PLACEHOLDER_RE.sub(_sub, v)
         out.append(new_row)
     return out
+
+
+def _check_embedding_compat(
+    *,
+    archive_model: str | None,
+    archive_dim: int | None,
+    current_model: str,
+    current_dim: int,
+    rebuild_embeddings: bool,
+) -> None:
+    """Raise ArchiveEmbeddingDimMismatch if archive embeddings are incompatible.
+
+    Returns None on compatibility (or if ``rebuild_embeddings`` overrides), or
+    if the archive carries no embedding metadata (v1 bundles).
+
+    Args:
+        archive_model: Embedding model name stored in the bundle manifest.
+                       ``None`` for v1 bundles that pre-date embedding metadata.
+        archive_dim: Embedding vector dimension stored in the bundle manifest.
+                     ``None`` for v1 bundles.
+        current_model: Active embedding model in the running Nexus instance.
+        current_dim: Active embedding dimension in the running Nexus instance.
+        rebuild_embeddings: When ``True`` the caller intends to re-embed all
+                            documents after restore, so a mismatch is safe and
+                            the check is skipped.
+
+    Raises:
+        ArchiveEmbeddingDimMismatch: When the archive model or dimension differs
+            from the current configuration and ``rebuild_embeddings`` is False.
+    """
+    if archive_model is None or archive_dim is None:
+        # v1 bundle — no embedding metadata to check.
+        return
+    if rebuild_embeddings:
+        return
+    if archive_model == current_model and archive_dim == current_dim:
+        return
+    raise ArchiveEmbeddingDimMismatch(
+        archive_model=archive_model,
+        archive_dim=archive_dim,
+        current_model=current_model,
+        current_dim=current_dim,
+    )
 
 
 def _create_import_context(zone_id: str | None = None) -> "OperationContext":

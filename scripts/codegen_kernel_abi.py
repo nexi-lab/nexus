@@ -5196,52 +5196,37 @@ def _apply_result_adapter(
     raw_result: Any,
     params: dict[str, Any],
 ) -> Any:
-    """Re-shape NexusFS results into the wire format Tier 2 callers expect.
+    """Re-shape NexusFS results into the wire format with real consumers.
 
-    Mirrors the response shapes the legacy ``handle_*`` wrappers
-    produced so deleting the legacy chain is a no-op on the wire.
+    Audit found that most legacy wrapper shapes (``{{"deleted": True}}``
+    / ``{{"renamed": True}}`` / ``{{"created": True}}`` /
+    ``{{"removed": True}}`` / ``{{"released": ...}}`` / ``{{"metadata":
+    ...}}`` for sys_stat / ``{{"is_directory": ...}}`` /
+    ``{{"bytes_written": ...}}`` for write) had ZERO production
+    consumers — only test mocks asserted on them.  Dropped: callers
+    receive the raw NexusFS return.
 
-    Path-bearing dicts (sys_stat metadata, sys_readdir entries) get
-    their internal ``/zone/<id>/...`` prefix stripped via
-    ``unscope_internal_dict`` so RPC callers see user-facing paths.
+    Adapters that survive (real production consumers):
+
+      * ``{{"exists": bool}}``  — ``access`` alias; ``fuse/rust_client.py``
+        reads ``result["exists"]``.
+      * ``{{"files": ..., "has_more": ..., "next_cursor": ..., "total_count": ...}}``
+        — ``sys_readdir`` / ``list`` aliases; ``backends/storage/remote``,
+        ``fuse/rust_client``, ``services/lifecycle/user_provisioning``
+        all read these fields.
+      * ``{{"acquired": ..., "lock_id": ...}}`` — ``lock_acquire``
+        wire-name; Tier 2 callers expect the dict shape.
+
+    Path-bearing dicts (readdir entries) still get ``unscope_internal_dict``
+    so RPC callers see user-facing paths.
     """
     from nexus.server.path_utils import (
         unscope_internal_dict,
         unscope_internal_path,
     )
 
-    if method in ("delete", "sys_unlink"):
-        return {{"deleted": True}}
-    if method in ("rename", "sys_rename"):
-        return {{"renamed": True}}
-    if method in ("mkdir", "sys_mkdir"):
-        return {{"created": True}}
-    if method in ("rmdir", "sys_rmdir"):
-        return {{"removed": True}}
-    if method in ("write", "sys_write"):
-        content = params.get("content") or params.get("buf") or b""
-        content_len = (
-            len(content.encode("utf-8")) if isinstance(content, str) else len(content)
-        )
-        wire: dict[str, Any] = {{"bytes_written": content_len}}
-        if isinstance(raw_result, dict):
-            wire.update(raw_result)
-        return wire
-    if method == "sys_stat":
-        meta = raw_result
-        if isinstance(meta, dict):
-            meta = unscope_internal_dict(meta, ["path"])
-        return {{"metadata": meta}}
     if method in ("access", "exists"):
         return {{"exists": bool(raw_result)}}
-    if method == "is_directory":
-        return {{"is_directory": bool(raw_result)}}
-    if method == "sys_unlock":
-        return {{"released": bool(raw_result)}}
-    if method == "sys_lock":
-        # NexusFS.sys_lock returns the lock_id (or None on contention).
-        # Tier 2 callers expect a dict like ``lock_acquire``.
-        return {{"acquired": raw_result is not None, "lock_id": raw_result}}
     if method == "lock_acquire":
         return {{"acquired": raw_result is not None, "lock_id": raw_result}}
     if method in ("sys_readdir", "list"):

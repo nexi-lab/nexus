@@ -125,6 +125,29 @@ def _load_manifest_module(manifest_file: Path, *, strict: bool = False) -> AnyMa
     return _validate_manifest(raw, strict=strict, where=str(manifest_file))
 
 
+# Module-path prefix -> expected manifest kind. Mirrors the source-tree
+# layout enforced by the index builder. Used by load_json_index to reject
+# same-schema stale entries whose declared kind disagrees with the subtree
+# implied by their dotted module path.
+_MODULE_PREFIX_TO_KIND: tuple[tuple[str, Kind], ...] = (
+    ("nexus.backends.connectors.", "connector"),
+    ("nexus.bricks.", "brick"),
+    ("nexus.plugins.", "plugin"),
+)
+
+
+def _kind_from_module_path(module: str) -> Kind | None:
+    """Infer the expected kind from a manifest's dotted ``module`` path.
+
+    Returns ``None`` for paths that don't match a known nexus subtree —
+    third-party manifests can live anywhere, so we can't validate those.
+    """
+    for prefix, kind in _MODULE_PREFIX_TO_KIND:
+        if module.startswith(prefix):
+            return kind
+    return None
+
+
 def _translate_legacy_dep(dep: Any) -> Any:
     """Convert a legacy nexus.backends.base.runtime_deps.RuntimeDep to a new
     nexus.extensions.manifest.RuntimeDep, or return None if untranslatable."""
@@ -327,8 +350,21 @@ class ManifestStore:
                 logger.warning("Skipping invalid entry-point %s in %s: %s", ep.name, group, exc)
                 return None
 
-        # Module-style target — import and read MANIFEST. Per-entry isolation:
-        # a broken module must not block siblings.
+        # Module-style target — must point at a manifest module. Importing an
+        # arbitrary module would defeat the lazy/no-impl-import boundary: a
+        # third-party (or misconfigured) package could trigger optional-dep
+        # imports and arbitrary side effects just by listing extensions. We
+        # require the value to end with ``._manifest`` (or be exactly
+        # ``_manifest``) so only the metadata-only module convention applies.
+        if not (value == "_manifest" or value.endswith("._manifest")):
+            logger.warning(
+                "Entry point %s in group %s has value %r which does not point to "
+                "a manifest module (expected suffix '._manifest'). Skipping.",
+                ep.name,
+                group,
+                value,
+            )
+            return None
         try:
             module = importlib.import_module(value)
         except Exception as exc:  # noqa: BLE001 — isolation
@@ -369,6 +405,25 @@ class ManifestStore:
                 manifest = parse_manifest(raw)
             except Exception as exc:  # noqa: BLE001 — surfacing in log
                 logger.warning("Skipping malformed manifest in index: %s", exc)
+                continue
+            # Path<->kind reconciliation: a stale or hand-edited index can
+            # carry a same-schema record whose declared kind disagrees with
+            # the subtree implied by ``manifest.module``. Without this check
+            # the index entry would shadow the real (correctly-filed)
+            # manifest because of first-source-wins precedence. We infer the
+            # subtree from the module dotted path and reject mismatches.
+            implied = _kind_from_module_path(manifest.module)
+            if implied is not None and implied != manifest.kind:
+                logger.warning(
+                    "Skipping index entry %s/%s: module %r implies kind=%r but "
+                    "the entry declares kind=%r. The index is stale or has been "
+                    "edited by hand; falling back to live discovery for this name.",
+                    manifest.kind,
+                    manifest.name,
+                    manifest.module,
+                    implied,
+                    manifest.kind,
+                )
                 continue
             try:
                 self._register(manifest, source="json_index")

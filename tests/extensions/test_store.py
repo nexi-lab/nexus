@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from nexus.extensions.errors import DuplicateManifestError
@@ -517,15 +519,19 @@ class TestEntryPointLegacyFormat:
 
         from nexus.extensions import store as store_mod
 
-        manifest_mod = tmp_path / "fake_module_target.py"
-        manifest_mod.write_text(
+        # Convention: module-style entry-point values must end with ``._manifest``.
+        pkg = tmp_path / "fake_modstyle_pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "_manifest.py").write_text(
             "from nexus.extensions.manifest import PluginManifest\n"
             "MANIFEST = PluginManifest(name='modstyle', module='m', factory='F')\n"
         )
         monkeypatch.syspath_prepend(str(tmp_path))
-        sys.modules.pop("fake_module_target", None)
+        for mod in ("fake_modstyle_pkg", "fake_modstyle_pkg._manifest"):
+            sys.modules.pop(mod, None)
 
-        ep = _FakeEntryPoint(name="modstyle", value="fake_module_target")
+        ep = _FakeEntryPoint(name="modstyle", value="fake_modstyle_pkg._manifest")
         monkeypatch.setattr(
             store_mod,
             "_entry_points",
@@ -565,6 +571,110 @@ class TestEntryPointLegacyFormat:
 
         store = ManifestStore()
         store.load_entry_points()
+        assert store.list() == []
+
+
+class TestEntryPointModuleSuffixGate:
+    """Regression: module-style entry points must point at a manifest module.
+    Importing an arbitrary impl module during discovery would defeat the
+    lazy/no-impl-import boundary — third parties (or misconfigurations)
+    could trigger optional-dep imports just by listing extensions."""
+
+    def test_non_manifest_module_value_is_rejected_without_import(self, monkeypatch, tmp_path):
+        import sys
+
+        from nexus.extensions import store as store_mod
+
+        # Build a module that would explode if imported.
+        bomb = tmp_path / "fake_impl_bomb.py"
+        bomb.write_text("raise RuntimeError('discovery imported impl module')\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("fake_impl_bomb", None)
+
+        # Value is NOT *._manifest — must be skipped without importing.
+        ep = _FakeEntryPoint(name="bomb", value="fake_impl_bomb")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.connectors" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+        assert store.list() == []
+        assert "fake_impl_bomb" not in sys.modules
+
+    def test_manifest_suffix_value_is_imported(self, monkeypatch, tmp_path):
+        import sys
+
+        from nexus.extensions import store as store_mod
+
+        # Convention-compliant manifest module path ends with ._manifest.
+        pkg_dir = tmp_path / "good_pkg"
+        pkg_dir.mkdir()
+        (pkg_dir / "__init__.py").write_text("")
+        (pkg_dir / "_manifest.py").write_text(
+            "from nexus.extensions.manifest import ConnectorManifest\n"
+            "MANIFEST = ConnectorManifest(name='good', module='m', factory='F',"
+            " service_name='svc')\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        for mod in ("good_pkg", "good_pkg._manifest"):
+            sys.modules.pop(mod, None)
+
+        ep = _FakeEntryPoint(name="good", value="good_pkg._manifest")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.connectors" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+        assert store.get("good", kind="connector").module == "m"
+
+
+class TestStaleIndexPathKindMismatch:
+    """Regression: a stale or hand-edited extensions.json record whose
+    declared kind disagrees with the subtree implied by its module path
+    must be skipped at load time. Otherwise first-source-wins precedence
+    lets the bad index entry shadow the path-kind-validated filesystem
+    manifest discovered later."""
+
+    def test_index_entry_with_inconsistent_module_path_is_skipped(self, tmp_path):
+        from nexus.extensions.store import INDEX_SCHEMA_VERSION
+
+        # PluginManifest claiming a connector module path — module dotted
+        # path implies "connector" but record declares "plugin".
+        bad_record = {
+            "kind": "plugin",
+            "name": "spoof",
+            "module": "nexus.backends.connectors.spoof.connector",
+            "factory": "SpoofConnector",
+            "description": "",
+            "runtime_deps": [],
+            "config_schema": None,
+            "profile_gate": None,
+            "import_probes": [],
+            "metadata_complete": True,
+            "entry_point_group": "nexus.plugins",
+            "hooks": {},
+            "commands": {},
+        }
+        index_path = tmp_path / "extensions.json"
+        index_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": INDEX_SCHEMA_VERSION,
+                    "generated_at": "2026-01-01T00:00:00Z",
+                    "manifests": [bad_record],
+                }
+            )
+        )
+
+        store = ManifestStore()
+        store.load_json_index(index_path)
+        # The bad record must be skipped — store stays empty.
         assert store.list() == []
 
 

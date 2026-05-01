@@ -330,3 +330,81 @@ class TestIndexFullRebuild:
         result_b = await backend.search("q", limit=10, zone_id="B")
         assert len(result_b) == 1
         assert result_b[0].chunk_text == "a-zone-B"
+
+
+class TestPerLoopLocks:
+    """Issue #3976: a single backend reused across event loops must not
+    raise "bound to a different event loop" on Python 3.14."""
+
+    def test_op_locks_are_distinct_per_event_loop(self) -> None:
+        import asyncio
+        import threading
+
+        backend = SqliteVecBackend(
+            db_path=":memory:", embedding_model="fake-model", embedding_dim=TEST_DIM
+        )
+        seen: list[asyncio.Lock] = []
+        errors: list[BaseException] = []
+
+        async def acquire_once() -> None:
+            async with backend._get_loop_lock(backend._op_locks):
+                seen.append(backend._get_loop_lock(backend._op_locks))
+
+        def runner() -> None:
+            try:
+                asyncio.run(acquire_once())
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        t1 = threading.Thread(target=runner)
+        t2 = threading.Thread(target=runner)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        assert errors == [], f"acquire raised across loops: {errors!r}"
+        assert len(seen) == 2
+        assert seen[0] is not seen[1]
+
+    def test_native_lock_serialises_across_loops(self) -> None:
+        import asyncio
+        import threading
+        import time as _time
+
+        backend = SqliteVecBackend(
+            db_path=":memory:", embedding_model="fake-model", embedding_dim=TEST_DIM
+        )
+        active = 0
+        max_active = 0
+        active_lock = threading.Lock()
+        errors: list[BaseException] = []
+
+        def native_op() -> None:
+            nonlocal active, max_active
+            with active_lock:
+                active += 1
+                if active > max_active:
+                    max_active = active
+            _time.sleep(0.05)
+            with active_lock:
+                active -= 1
+
+        async def critical() -> None:
+            await backend._run_native(native_op)
+
+        def runner() -> None:
+            try:
+                asyncio.run(critical())
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=runner) for _ in range(4)]
+        t0 = _time.perf_counter()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        elapsed = _time.perf_counter() - t0
+        assert errors == [], f"native section raised: {errors!r}"
+        assert max_active == 1, f"cross-loop critical sections overlapped: max={max_active}"
+        assert elapsed >= 0.18, f"sections did not serialise: elapsed={elapsed:.3f}s"

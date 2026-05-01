@@ -59,3 +59,66 @@ class TestCheckReport:
             profile_gate_disabled=False,
         )
         assert report.available is True
+
+
+class TestSourcePrecedence:
+    def test_first_source_wins(self, hn_manifest):
+        """When the same (kind, name) is registered from different sources,
+        the first one wins — JSON index > entry-points > fs scan."""
+        from nexus.extensions.manifest import ConnectorManifest
+
+        store = ManifestStore()
+        store._register(hn_manifest, source="json_index")
+        alt = ConnectorManifest(
+            name="hn",
+            module="some.other.module",
+            factory="Other",
+            service_name="hn",
+        )
+        store._register(alt, source="entry_point")  # ignored
+        got = store.get("hn", kind="connector")
+        assert got.module == hn_manifest.module
+
+    def test_get_returns_winning_source(self, hn_manifest):
+        store = ManifestStore()
+        store._register(hn_manifest, source="entry_point")
+        store._register(hn_manifest, source="fs_scan")  # ignored
+        assert store.get("hn", kind="connector") is hn_manifest
+
+    def test_different_kinds_same_name_coexist(self):
+        from nexus.extensions.manifest import ConnectorManifest, PluginManifest
+
+        store = ManifestStore()
+        c = ConnectorManifest(name="foo", module="m", factory="F", service_name="foo")
+        p = PluginManifest(name="foo", module="m", factory="F")
+        store._register(c, source="test")
+        store._register(p, source="test")
+        assert store.get("foo", kind="connector") is c
+        assert store.get("foo", kind="plugin") is p
+
+
+class TestProfileFilter:
+    def test_no_profile_filter_returns_all(self, all_manifests):
+        store = ManifestStore()
+        for m in all_manifests:
+            store._register(m, source="test")
+        assert len(store.list()) == 3
+
+    def test_profile_filter_includes_ungated(self, all_manifests):
+        """Manifests with profile_gate=None always appear; gated ones filtered."""
+        store = ManifestStore()
+        for m in all_manifests:
+            store._register(m, source="test")
+        listed = store.list(profile=frozenset({"other"}))
+        names = {m.name for m in listed}
+        assert "hn" in names
+        assert "koi" in names
+        assert "search" not in names
+
+    def test_profile_filter_includes_matching_gate(self, all_manifests):
+        store = ManifestStore()
+        for m in all_manifests:
+            store._register(m, source="test")
+        listed = store.list(profile=frozenset({"search"}))
+        names = {m.name for m in listed}
+        assert "search" in names

@@ -63,6 +63,10 @@ use crate::{TlsFiles, ZoneManager};
 const NODE_INCARNATION_FILE: &str = ".node_incarnation";
 const ROTATION_NO_LEADER_RETRY_SECS: u64 = 30;
 const ROTATION_NO_LEADER_RETRY_INTERVAL_MS: u64 = 250;
+// Zone not yet initialized on peer (transient boot-time state):
+// retry up to this window before falling back.
+const ROTATION_ZONE_NOT_READY_RETRY_SECS: u64 = 60;
+const ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS: u64 = 500;
 
 /// Triple keyed by target zone: `(parent_zone_id, mount_path, global_path)`.
 type CrossZoneMountTuple = (String, String, String);
@@ -404,6 +408,12 @@ fn try_replace_voter_on_peers(
     let mut last_failure: Option<String> = None;
     let no_leader_retry_deadline =
         Instant::now() + Duration::from_secs(ROTATION_NO_LEADER_RETRY_SECS);
+    // Separate deadline for zone-not-yet-initialized retries. During cluster
+    // boot both nodes start concurrently; node-2 can reach node-1's gRPC port
+    // before node-1 has registered the root zone. Retry instead of treating
+    // the peer as "reachable but refusing" which would block cold-start.
+    let zone_not_ready_retry_deadline =
+        Instant::now() + Duration::from_secs(ROTATION_ZONE_NOT_READY_RETRY_SECS);
 
     for peer in peers {
         if peer.hostname == self_hostname {
@@ -479,6 +489,25 @@ fn try_replace_voter_on_peers(
                     // that's safe to fold into the cold-start sentinel.
                     eprintln!("[ensure_voter_membership] peer unreachable {endpoint}: {msg}");
                     break;
+                }
+                Err(TransportError::Rpc(ref msg))
+                    if msg.contains("NotFound")
+                        && msg.contains("not found on this node")
+                        && Instant::now() < zone_not_ready_retry_deadline =>
+                {
+                    // The peer's gRPC port is up but its zone registry hasn't
+                    // been populated yet — transient boot-time race. Retry
+                    // rather than marking the peer as "reachable-but-refusing"
+                    // which would permanently block cold-start on this node.
+                    eprintln!(
+                        "[ensure_voter_membership] {endpoint}: zone not yet initialized \
+                         (boot race) — retrying in {}ms",
+                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
+                    );
+                    std::thread::sleep(Duration::from_millis(
+                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
+                    ));
+                    // Don't set any_reachable — peer isn't serving yet.
                 }
                 Err(e) => {
                     // TCP succeeded, post-connect RPC failed (handler

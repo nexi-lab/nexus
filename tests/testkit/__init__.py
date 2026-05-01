@@ -1,5 +1,11 @@
 """Reusable Nexus testkit helpers."""
 
+from tests.testkit.assertions import (
+    assert_dependency_failure,
+    assert_event_matches,
+    assert_metadata_contains,
+    assert_permission_denied,
+)
 from tests.testkit.auth import TEST_ADMIN_CONTEXT, TEST_CONTEXT, operation_context
 from tests.testkit.backends import FailingBackend
 from tests.testkit.containers import ServiceInfo
@@ -21,6 +27,10 @@ __all__ = [
     "TEST_ADMIN_CONTEXT",
     "TEST_CONTEXT",
     "TestProfile",
+    "assert_dependency_failure",
+    "assert_event_matches",
+    "assert_metadata_contains",
+    "assert_permission_denied",
     "make_test_nexus",
     "operation_context",
     "profile_matrix",

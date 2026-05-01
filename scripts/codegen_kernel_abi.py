@@ -5193,7 +5193,6 @@ def _build_kwargs(
 def _apply_result_adapter(
     method: str,
     raw_result: Any,
-    params: dict[str, Any],
 ) -> Any:
     """Re-shape NexusFS results into the wire format with real consumers.
 
@@ -5406,7 +5405,7 @@ async def dispatch_kernel_syscall(
         else:
             raw_result = func(**kwargs)
 
-    result = _apply_result_adapter(method, raw_result, params)
+    result = _apply_result_adapter(method, raw_result)
 
     await _fire_event(subscription_manager, method, params, result, context)
 

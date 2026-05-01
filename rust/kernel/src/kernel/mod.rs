@@ -1586,12 +1586,26 @@ impl Kernel {
                 // zone_id defaults to "root" and the parent is also
                 // "root") are local, non-replicated mounts and must
                 // keep the backend the provider just constructed.
-                // Without the same-zone guard, wire_mount_core
-                // overwrites our typed backend with the parent zone's
-                // backend (regression caught by openai unit tests).
-                let parent_zone = contracts::ROOT_ZONE_ID;
+                //
+                // Parent zone is derived from the parent directory's
+                // sys_stat — matches the contract `services::federation
+                // ::join` already uses (line 188).  For nested mounts
+                // like ``/family/work`` (target=corp), the parent is
+                // ``/family`` whose zone is ``family`` — NOT root.
+                // Wiring with the wrong parent zone makes follower-side
+                // apply_cb fire on root's raft instead of family's,
+                // and ContentMap mutations replicated through family's
+                // log never reach the crosslink consumers (caught by
+                // TestCrossZoneDailyWorkflow).
+                let parent_dir = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("/");
+                let parent_dir = if parent_dir.is_empty() { "/" } else { parent_dir };
+                let parent_zone = self
+                    .sys_stat(parent_dir, contracts::ROOT_ZONE_ID)
+                    .and_then(|s| s.zone_id)
+                    .filter(|z| !z.is_empty())
+                    .unwrap_or_else(|| contracts::ROOT_ZONE_ID.to_string());
                 if federation_active && !zone_id.is_empty() && zone_id != parent_zone {
-                    let _ = coordinator.wire_mount(self, parent_zone, path, zone_id);
+                    let _ = coordinator.wire_mount(self, &parent_zone, path, zone_id);
                 }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),

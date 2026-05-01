@@ -5197,29 +5197,29 @@ def _apply_result_adapter(
 ) -> Any:
     """Re-shape NexusFS results into the wire format with real consumers.
 
-    Audit found that most legacy wrapper shapes (``{{"deleted": True}}``
-    / ``{{"renamed": True}}`` / ``{{"created": True}}`` /
-    ``{{"removed": True}}`` / ``{{"released": ...}}`` / ``{{"metadata":
-    ...}}`` for sys_stat / ``{{"is_directory": ...}}`` /
-    ``{{"bytes_written": ...}}`` for write) had ZERO production
-    consumers — only test mocks asserted on them.  Dropped: callers
+    Per-method shape wrappers ({{"deleted"}} / {{"renamed"}} /
+    {{"created"}} / {{"removed"}} / {{"released"}} / {{"metadata"}} /
+    {{"is_directory"}} / {{"bytes_written"}} / {{"exists"}} /
+    {{"acquired"+"lock_id"}}) all dropped after audit found ZERO
+    production consumers — only test mocks asserted on them.  Callers
     receive the raw NexusFS return.
 
-    Adapter that survives (real wire-only logic, not just shape):
+    Adapter that survives:
 
       * ``{{"files": ..., "has_more": ..., "next_cursor": ..., "total_count": ...}}``
         — ``sys_readdir`` / ``list`` aliases.  Three things bundled:
         normalize ``list[str] | list[dict] | PaginatedResult`` into a
         single dict shape, run ``unscope_internal_dict`` to strip
         ``/zone/<id>/`` prefixes from per-entry paths, and forward
-        pagination cursors.  Real wire-layer concerns; production
+        pagination cursors.  Real wire-layer logic; production
         consumers in ``backends/storage/remote``, ``fuse/rust_client``,
         ``services/lifecycle/user_provisioning``, ``core/metastore``.
 
-    ``access`` previously wrapped ``bool`` into ``{{"exists": bool}}`` —
-    dropped, callers read raw bool.  ``lock_acquire`` previously
-    wrapped ``sys_lock``'s return into ``{{"acquired", "lock_id"}}`` —
-    wire-name dropped entirely (no production callers; tests adapt).
+    NOTE: this should eventually move into a Tier 2 NexusFS / kernel
+    method (parallel to ``read``/``write``/``mkdir``/``rmdir`` Tier 2
+    wrappers), but that's part of the broader Tier 2 → Rust migration
+    rather than a single-method speculative refactor.  Keeping the
+    adapter for now.
     """
     from nexus.server.path_utils import (
         unscope_internal_dict,

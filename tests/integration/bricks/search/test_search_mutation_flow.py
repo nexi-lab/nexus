@@ -160,6 +160,19 @@ class _SequentialSessionFactory:
         return self._sessions.pop(0)
 
 
+class _FakeFileReader:
+    async def read_text(self, _path: str) -> str:
+        return "priority account: renewal escalation"
+
+
+class _CapturingBM25SIndex:
+    def __init__(self) -> None:
+        self.indexed_documents: list[tuple[str, str, str]] = []
+
+    async def index_document(self, path_id: str, path: str, content: str) -> None:
+        self.indexed_documents.append((path_id, path, content))
+
+
 @pytest.mark.asyncio
 async def test_refresh_indexes_reuses_cached_content_path_id() -> None:
     daemon = SearchDaemon()
@@ -181,6 +194,23 @@ async def test_refresh_indexes_reuses_cached_content_path_id() -> None:
         "scoped content",
         "pid-scoped",
     )
+
+
+@pytest.mark.asyncio
+async def test_refresh_indexes_indexes_bm25s_with_virtual_path() -> None:
+    daemon = SearchDaemon()
+    daemon._file_reader = _FakeFileReader()
+    daemon._bm25s_index = _CapturingBM25SIndex()
+
+    await daemon._refresh_indexes(["/zone/root/workspace/demo/herb/customers/cust-002.md"])
+
+    assert daemon._bm25s_index.indexed_documents == [
+        (
+            "/workspace/demo/herb/customers/cust-002.md",
+            "/workspace/demo/herb/customers/cust-002.md",
+            "priority account: renewal escalation",
+        )
+    ]
 
 
 def test_refresh_index_lookup_values_cast_rank_for_asyncpg() -> None:

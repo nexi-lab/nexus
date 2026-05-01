@@ -346,6 +346,11 @@ class ZoneExportOptions:
     # Security
     encryption_key: bytes | None = None
 
+    # Signing (v2+)
+    sign: bool = True
+    strip_credentials: bool = True
+    signing_key_path: Path | None = None  # default ~/.nexus/archive_signing_key
+
     def __post_init__(self) -> None:
         """Validate options after initialization."""
         if isinstance(self.output_path, str):

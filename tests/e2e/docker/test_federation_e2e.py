@@ -731,32 +731,30 @@ class TestZoneLifecycleWorkflow:
                 timeout=20,
             )
 
-        # Step 1: concurrent create on node-1 via sys_setattr DT_MOUNT
-        # — auto-creates the zone, raft must serialize the underlying
-        # ConfState bootstraps without producing split-brain.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-            futures = [ex.submit(_create_via_syscall, grpc1, z) for z in zones]
+        # Step 1: concurrent create on BOTH nodes via sys_setattr DT_MOUNT.
+        # Each node must instantiate its own local raft replica before
+        # the multi-voter ConfState seeded from NEXUS_PEERS can reach
+        # quorum and elect a leader — calling on one node only would
+        # leave the other voters' replicas absent and the new zone's
+        # raft group wedged at term=0 / leader_id=0.  The same fixture
+        # pattern (`for target in [grpc1, grpc2]`) is what
+        # `federation_zones` already uses for the standard topology.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            futures = [
+                ex.submit(_create_via_syscall, target, z)
+                for z in zones
+                for target in (grpc1, grpc2)
+            ]
             results = [f.result() for f in futures]
-        for z, r in zip(zones, results, strict=True):
+        for r in results:
             if "error" in r:
                 msg = str(r.get("error", {}).get("message", "")).lower()
-                assert "already" in msg or "exists" in msg, f"concurrent create {z}: {r}"
+                assert "already" in msg or "exists" in msg, f"concurrent create: {r}"
 
-        # Step 2: every zone visible on node-1 (the creator).
+        # Step 2: every zone visible on both nodes — quorum reached on
+        # the multi-voter ConfState, leader elected.
         for z in zones:
             _wait_zone_ready(grpc1, z, api_key, timeout=20)
-
-        # Step 3: same zones visible on node-2 (raft replication
-        # invariant — joining the raft group is mandatory before
-        # cluster_info reports them).  Calling sys_setattr DT_MOUNT
-        # again on node-2 with the same path/zone_id ensures node-2
-        # has a local raft replica for the zone.
-        for z in zones:
-            r = _create_via_syscall(grpc2, z)
-            # Already-exists is fine — node-2 may have caught up via raft.
-            if "error" in r:
-                msg = str(r["error"].get("message", "")).lower()
-                assert "already" in msg or "exists" in msg, f"node-2 create {z}: {r}"
             _wait_zone_ready(grpc2, z, api_key, timeout=20)
 
         # Step 4: remove the middle zone, leave the other two.

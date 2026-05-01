@@ -1893,6 +1893,23 @@ impl ZoneConsensus<super::state_machine::FullStateMachine> {
             Err(_) => Ok(Vec::new()),
         }
     }
+
+    /// Sync handle to the state machine's shared advisory lock state.
+    ///
+    /// Avoids ``runtime.block_on(node.with_state_machine(...))`` from
+    /// install paths that may run inside the same tokio runtime that
+    /// drives ``state_machine.read().await`` — block_on inside a
+    /// runtime panics on a current_thread runtime and risks worker
+    /// exhaustion on a multi_thread one.  Uses ``blocking_read`` from
+    /// ``tokio::sync::RwLock`` which suspends the OS thread without
+    /// reentrant runtime contention; the lock is read-mostly so this
+    /// is essentially uncontended in practice.
+    pub fn advisory_state_blocking(
+        &self,
+    ) -> Arc<parking_lot::Mutex<crate::raft::state_machine::LockState>> {
+        let sm = self.state_machine.blocking_read();
+        sm.advisory_state()
+    }
 }
 
 #[cfg(test)]

@@ -133,6 +133,17 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
         "nexus.bricks.portability.tests.test_import_embedding",
         "nexus.bricks.portability.tests.test_import_target_guard",
     ],
+    # Issue #3793 Task 20: archive.verify and archive.cli_glue import from portability
+    # (ArchiveSigner, canonical_json_bytes, ZoneImportService, ZoneImportOptions, TrustStore).
+    # The archive brick is the consumer layer built on top of portability — these are
+    # thin CLI-glue and verifier modules, not brick internals.
+    # TODO(#3793): eliminate when CLI glue moves to nexus.cli.archive after brick stabilises.
+    ("archive", "portability"): [
+        "nexus.bricks.archive.verify",
+        "nexus.bricks.archive.cli_glue",
+        # Test helpers legitimately import the portability signer to build test fixtures.
+        "nexus.bricks.archive.tests.unit.test_verify",
+    ],
 }
 
 # Known exceptions for bricks importing from nexus.core (non-protocol) or

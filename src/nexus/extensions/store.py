@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,9 +22,15 @@ from importlib.metadata import entry_points as _stdlib_entry_points
 from pathlib import Path
 from typing import Any
 
-from nexus.extensions.errors import DuplicateManifestError, FactoryResolutionError
-from nexus.extensions.manifest import AnyManifest
+from nexus.extensions.errors import (
+    DuplicateManifestError,
+    FactoryResolutionError,
+    IndexCorruptError,
+)
+from nexus.extensions.manifest import AnyManifest, parse_manifest
 from nexus.extensions.types import Kind
+
+INDEX_SCHEMA_VERSION = 1
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +148,44 @@ class ManifestStore:
                     self._register(manifest, source=f"entry_point:{group}/{ep.name}")
                 except DuplicateManifestError as exc:
                     logger.warning("Duplicate entry-point manifest: %s", exc)
+
+    def load_json_index(self, path: Path) -> None:
+        """Load manifests from a pre-built `extensions.json` index.
+
+        Behavior:
+        - Missing file → INFO log, return (callers fall back to entry-points + fs scan).
+        - Malformed JSON → IndexCorruptError.
+        - Schema-version mismatch → WARN, skip.
+        """
+        path = Path(path)
+        if not path.exists():
+            logger.info("No extensions.json at %s; falling back to live discovery", path)
+            return
+
+        try:
+            payload = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            raise IndexCorruptError(f"extensions.json at {path} is not valid JSON: {exc}") from exc
+
+        version = payload.get("schema_version")
+        if version != INDEX_SCHEMA_VERSION:
+            logger.warning(
+                "extensions.json schema_version=%s does not match expected %s; ignoring index",
+                version,
+                INDEX_SCHEMA_VERSION,
+            )
+            return
+
+        for raw in payload.get("manifests", []):
+            try:
+                manifest = parse_manifest(raw)
+            except Exception as exc:  # noqa: BLE001 — surfacing in log
+                logger.warning("Skipping malformed manifest in index: %s", exc)
+                continue
+            try:
+                self._register(manifest, source="json_index")
+            except DuplicateManifestError as exc:
+                logger.warning("Duplicate index manifest: %s", exc)
 
     def load_filesystem(self, root: Path) -> None:
         """Scan `root/*/  _manifest.py` and register every `MANIFEST` constant.

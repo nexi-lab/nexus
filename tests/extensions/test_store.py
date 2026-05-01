@@ -175,6 +175,64 @@ class TestResolveFactory:
         assert "missing_callable" in str(excinfo.value)
 
 
+class TestJsonIndexLoader:
+    SCHEMA_VERSION = 1
+
+    def _index_payload(self, manifests):
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "generated_at": "2026-04-30T12:00:00Z",
+            "manifests": sorted(
+                (m.model_dump(mode="json") for m in manifests),
+                key=lambda d: (d["kind"], d["name"]),
+            ),
+        }
+
+    def test_load_index_round_trip(self, tmp_path, all_manifests):
+        import json
+
+        index_file = tmp_path / "extensions.json"
+        index_file.write_text(json.dumps(self._index_payload(all_manifests)))
+
+        store = ManifestStore()
+        store.load_json_index(index_file)
+
+        assert {m.name for m in store.list()} == {"hn", "search", "koi"}
+
+    def test_missing_index_falls_back_silently(self, tmp_path, caplog):
+        import logging
+
+        store = ManifestStore()
+        with caplog.at_level(logging.INFO):
+            store.load_json_index(tmp_path / "does_not_exist.json")
+
+        assert store.list() == []
+        assert any("extensions.json" in r.message for r in caplog.records)
+
+    def test_corrupt_json_raises(self, tmp_path):
+        from nexus.extensions.errors import IndexCorruptError
+
+        bad = tmp_path / "extensions.json"
+        bad.write_text("{ not json")
+        store = ManifestStore()
+        with pytest.raises(IndexCorruptError):
+            store.load_json_index(bad)
+
+    def test_schema_version_mismatch_warns_and_skips(self, tmp_path, caplog):
+        import json
+        import logging
+
+        bad = tmp_path / "extensions.json"
+        bad.write_text(json.dumps({"schema_version": 999, "generated_at": "x", "manifests": []}))
+
+        store = ManifestStore()
+        with caplog.at_level(logging.WARNING):
+            store.load_json_index(bad)
+
+        assert store.list() == []
+        assert any("schema_version" in r.message for r in caplog.records)
+
+
 class TestEntryPointLoader:
     def test_load_from_entry_points(self, monkeypatch):
         """Entry points whose target is a `_manifest` module are registered."""

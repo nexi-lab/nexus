@@ -8,12 +8,12 @@ extension impl module — that boundary keeps introspection lazy.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from nexus.extensions.errors import ReservedNameError
-from nexus.extensions.types import Kind
+from nexus.extensions.types import ConnectionArg, Kind
 
 
 class RuntimeDep(BaseModel):
@@ -80,3 +80,49 @@ class ExtensionManifest(BaseModel):
         if not v:
             raise ValueError("must be non-empty")
         return v
+
+
+class ConnectorManifest(ExtensionManifest):
+    """Connector-specific manifest fields."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    kind: Literal["connector"] = "connector"
+    service_name: str
+    capabilities: frozenset[str] = frozenset()
+    connection_args: dict[str, ConnectionArg] = Field(default_factory=dict)
+    user_scoped: bool = False
+    config_mapping: dict[str, str] = Field(default_factory=dict)
+
+
+class BrickManifest(ExtensionManifest):
+    """Brick-specific manifest fields."""
+
+    kind: Literal["brick"] = "brick"
+    tier: Literal["independent", "dependent"]
+    result_key: str
+    produces: tuple[str, ...] = ()
+    consumes: tuple[str, ...] = ()
+
+
+class PluginManifest(ExtensionManifest):
+    """Plugin-specific manifest fields."""
+
+    kind: Literal["plugin"] = "plugin"
+    entry_point_group: str = "nexus.plugins"
+    hooks: dict[str, str] = Field(default_factory=dict)
+    commands: dict[str, str] = Field(default_factory=dict)
+
+
+AnyManifest = Annotated[
+    ConnectorManifest | BrickManifest | PluginManifest,
+    Field(discriminator="kind"),
+]
+
+
+_ANY_ADAPTER: TypeAdapter[AnyManifest] = TypeAdapter(AnyManifest)
+
+
+def parse_manifest(data: dict[str, Any]) -> AnyManifest:
+    """Parse a raw dict into the correct manifest subclass via discriminator."""
+    return _ANY_ADAPTER.validate_python(data)

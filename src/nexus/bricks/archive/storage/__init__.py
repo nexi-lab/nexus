@@ -11,3 +11,10 @@ try:
     __all__.append("S3ArchiveStorage")
 except ImportError:
     pass  # boto3 optional in slim images
+
+try:
+    from nexus.bricks.archive.storage.gcs import GCSArchiveStorage  # noqa: F401
+
+    __all__.append("GCSArchiveStorage")
+except ImportError:
+    pass  # google-cloud-storage optional in slim images

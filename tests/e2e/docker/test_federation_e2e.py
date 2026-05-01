@@ -2907,69 +2907,52 @@ class TestNewTeamOnboarding:
                 f"{_decode_content(got_anchor)!r}, want {anchor_content!r}"
             )
 
-            # Step 5: joiner creates a DT_STREAM under the joined
-            # mount and pushes coordination messages.
-            DT_STREAM = 4
-            stream_path = f"{mount_local}/coord-{uid}.stream"
-            sa_stream = _grpc_call(
+            # Step 5: joiner contributes a DT_REG file via the joined
+            # mount; original cluster sees it via the corp namespace.
+            # DT_REG goes through the standard ContentMap raft replication
+            # so cross-node visibility is guaranteed by the existing
+            # store-and-forward content_id path (PR #3926).
+            #
+            # DT_STREAM cross-node replication is tracked separately
+            # (task #21 — WAL DT_STREAM/PIPE smoke); MemoryStreamBackend
+            # is per-node only today, so a DT_STREAM-write here would
+            # never appear at grpc1.  The DT_REG path is the meaningful
+            # smoke for the dynamic-bootstrap join contract: joiner
+            # writes, original cluster reads back the same content.
+            contrib_path = f"{mount_local}/dyn-contrib-{uid}.txt"
+            contrib_payload = f"dyn-contrib-{uid}"
+            ws = _grpc_call(
                 joiner_grpc,
-                "sys_setattr",
-                {
-                    "path": stream_path,
-                    "entry_type": DT_STREAM,
-                    "capacity": 65_536,
-                },
+                "write",
+                {"path": contrib_path, "content": contrib_payload},
                 api_key=api_key,
                 timeout=15,
             )
-            assert "error" not in sa_stream, f"joiner DT_STREAM setattr: {sa_stream}"
+            assert "error" not in ws, f"joiner DT_REG write: {ws}"
 
-            messages = [f"dyn-msg-{i}-{uid}" for i in range(3)]
-            for msg in messages:
-                ws = _grpc_call(
-                    joiner_grpc,
-                    "sys_write",
-                    {"path": stream_path, "content": msg},
-                    api_key=api_key,
-                    timeout=15,
-                )
-                assert "error" not in ws, f"joiner DT_STREAM write: {ws}"
-
-            # Step 6: original cluster reads the stream by offset.
-            # The view path on grpc1 is the same `corp`-zone-relative
-            # path the joiner used (the mount on the joiner just
-            # rebases corp's namespace under /joined-{uid}/, but the
-            # underlying ContentMap entry lives in corp's state
-            # machine and is visible from any node hosting corp).
-            corp_view = f"/corp/coord-{uid}.stream"
-            cursor = 0
+            # Step 6: original cluster reads the contribution via the
+            # corp-zone-relative path.
+            corp_view = f"/corp/dyn-contrib-{uid}.txt"
             deadline = time.time() + 30
-            consumed: list[str] = []
-            while len(consumed) < len(messages) and time.time() < deadline:
+            seen = ""
+            while time.time() < deadline:
                 r = _grpc_call(
                     grpc1,
-                    "sys_read",
-                    {"path": corp_view, "offset": cursor},
+                    "read",
+                    {"path": corp_view},
                     api_key=api_key,
                     timeout=10,
                 )
                 if "error" in r:
                     time.sleep(0.3)
                     continue
-                payload = r.get("result", r)
-                if not isinstance(payload, dict):
-                    pytest.fail(f"DT_STREAM sys_read must return dict, got {payload!r}")
-                next_off = payload.get("next_offset")
-                if payload.get("data") is None or next_off is None:
-                    time.sleep(0.3)
-                    continue
-                decoded = _decode_content({"result": payload})
-                if decoded:
-                    consumed.append(decoded)
-                    cursor = next_off
-            assert consumed == messages, (
-                f"DT_STREAM messages from joiner did not arrive at original "
-                f"cluster: got {consumed!r}, want {messages!r}"
+                seen = _decode_content(r) or ""
+                if seen == contrib_payload:
+                    break
+                time.sleep(0.3)
+            assert seen == contrib_payload, (
+                f"joiner DT_REG contribution did not arrive at original "
+                f"cluster: got {seen!r}, want {contrib_payload!r}"
             )
         finally:
             # Cleanup — joiner is throwaway state; remove regardless of

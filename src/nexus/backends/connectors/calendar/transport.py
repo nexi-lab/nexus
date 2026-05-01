@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from nexus.backends.connectors.cli.display_path import sanitize_filename
+from nexus.backends.base.cli_backend import sanitize_filename
 from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:

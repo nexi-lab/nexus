@@ -36,7 +36,6 @@ import logging
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.runtime_deps import (
@@ -111,93 +110,11 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
 )
 
 
-class ArgType(Enum):
-    """Types for connection arguments.
-
-    Used to indicate how arguments should be handled in UI/CLI and validation.
-    """
-
-    STRING = "string"
-    """Regular string value."""
-
-    SECRET = "secret"
-    """Sensitive value that should be masked in logs/UI."""
-
-    PASSWORD = "password"
-    """Password field, never displayed after entry."""
-
-    INTEGER = "integer"
-    """Integer value."""
-
-    BOOLEAN = "boolean"
-    """Boolean flag."""
-
-    PATH = "path"
-    """File system path (validated for existence optionally)."""
-
-    OAUTH = "oauth"
-    """OAuth credential reference (handled by TokenManager)."""
-
-
-@dataclass
-class ConnectionArg:
-    """Definition of a connection argument for a connector.
-
-    This class describes a single configuration parameter that a connector
-    accepts. It provides metadata for:
-    - CLI help generation
-    - UI form generation
-    - Validation
-    - Secret masking in logs
-
-    Example:
-        >>> ConnectionArg(
-        ...     type=ArgType.STRING,
-        ...     description="GCS bucket name",
-        ...     required=True,
-        ... )
-    """
-
-    type: ArgType
-    """The type of this argument."""
-
-    description: str
-    """Human-readable description of this argument."""
-
-    required: bool = True
-    """Whether this argument is required."""
-
-    default: Any = None
-    """Default value if not provided."""
-
-    secret: bool = False
-    """Whether this value should be masked in logs/UI."""
-
-    env_var: str | None = None
-    """Environment variable to read from if not provided."""
-
-    config_key: str | None = None
-    """External config key that maps to this constructor param.
-
-    When set, this is the key used in backend_config dicts (e.g., ``"bucket"``
-    maps to constructor param ``bucket_name``).  When ``None``, the
-    CONNECTION_ARGS dict key is used as both config key and param name
-    (identity mapping).
-    """
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        result = {
-            "type": self.type.value,
-            "description": self.description,
-            "required": self.required,
-            "default": self.default,
-            "secret": self.secret,
-            "env_var": self.env_var,
-        }
-        if self.config_key is not None:
-            result["config_key"] = self.config_key
-        return result
+# ArgType and ConnectionArg are defined in nexus.extensions.types and
+# re-exported below for backwards compatibility — every existing import
+# of `ArgType` / `ConnectionArg` from this module continues to work.
+from nexus.extensions.types import ArgType as ArgType  # noqa: E402
+from nexus.extensions.types import ConnectionArg as ConnectionArg  # noqa: E402
 
 
 @dataclass

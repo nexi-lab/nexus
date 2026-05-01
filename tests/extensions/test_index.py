@@ -1,0 +1,71 @@
+"""Index generator — deterministic JSON build + drift detection."""
+
+from __future__ import annotations
+
+import json
+
+from nexus.extensions.index import build_index, verify_index
+from nexus.extensions.store import INDEX_SCHEMA_VERSION
+
+
+class TestBuildIndex:
+    def test_build_serializes_manifests(self, tmp_path, all_manifests):
+        out = tmp_path / "extensions.json"
+        build_index(manifests=all_manifests, output_path=out)
+
+        payload = json.loads(out.read_text())
+        assert payload["schema_version"] == INDEX_SCHEMA_VERSION
+        assert "generated_at" in payload
+        names = {m["name"] for m in payload["manifests"]}
+        assert names == {"hn", "search", "koi"}
+
+    def test_build_is_deterministic(self, tmp_path, all_manifests):
+        """Same input → same bytes (excluding generated_at)."""
+        out1 = tmp_path / "a.json"
+        out2 = tmp_path / "b.json"
+        build_index(manifests=all_manifests, output_path=out1, frozen_time="X")
+        build_index(
+            manifests=list(reversed(all_manifests)),
+            output_path=out2,
+            frozen_time="X",
+        )
+
+        # Output is deterministic: sorted by (kind, name), stable formatting.
+        assert out1.read_text() == out2.read_text()
+
+    def test_index_round_trip_via_store(self, tmp_path, all_manifests):
+        from nexus.extensions.store import ManifestStore
+
+        out = tmp_path / "extensions.json"
+        build_index(manifests=all_manifests, output_path=out)
+
+        store = ManifestStore()
+        store.load_json_index(out)
+        assert {m.name for m in store.list()} == {"hn", "search", "koi"}
+
+
+class TestVerifyIndex:
+    def test_verify_passes_on_match(self, tmp_path, all_manifests):
+        out = tmp_path / "extensions.json"
+        build_index(manifests=all_manifests, output_path=out, frozen_time="X")
+        # Re-run with same input → no drift.
+        result = verify_index(manifests=all_manifests, expected_path=out, frozen_time="X")
+        assert result.is_clean is True
+        assert result.diff is None
+
+    def test_verify_detects_drift(self, tmp_path, all_manifests):
+        out = tmp_path / "extensions.json"
+        build_index(manifests=all_manifests, output_path=out, frozen_time="X")
+        # Drop one manifest → drift expected.
+        without_hn = [m for m in all_manifests if m.name != "hn"]
+        result = verify_index(manifests=without_hn, expected_path=out, frozen_time="X")
+        assert result.is_clean is False
+        assert result.diff is not None
+
+    def test_verify_ignores_generated_at_clock_drift(self, tmp_path, all_manifests):
+        """Verify pulls generated_at from disk so wall-clock differences don't trigger drift."""
+        out = tmp_path / "extensions.json"
+        build_index(manifests=all_manifests, output_path=out, frozen_time="2026-01-01T00:00:00Z")
+        # Re-run with no frozen_time and a different wall clock.
+        result = verify_index(manifests=all_manifests, expected_path=out)
+        assert result.is_clean is True

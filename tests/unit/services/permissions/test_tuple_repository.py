@@ -27,7 +27,7 @@ from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVers
 from nexus.bricks.rebac.domain import Entity
 from nexus.bricks.rebac.tuples.repository import TupleRepository
 from nexus.storage.models import Base
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ============================================================================
 # Fixtures

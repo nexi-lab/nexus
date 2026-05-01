@@ -153,7 +153,7 @@ class TestProtocolConformance:
 
     @pytest.fixture()
     def session_factory(self):
-        from tests.helpers.in_memory_record_store import InMemoryRecordStore
+        from tests.testkit.records import InMemoryRecordStore
 
         store = InMemoryRecordStore()
         yield store.session_factory
@@ -191,7 +191,7 @@ class TestProtocolConformance:
 
     def test_settings_store_satisfies_protocol(self):
         from nexus.storage.auth_stores import MetastoreSettingsStore
-        from tests.helpers.dict_metastore import DictMetastore
+        from tests.testkit.metadata import DictMetastore
 
         store = MetastoreSettingsStore(DictMetastore())
         assert isinstance(store, SystemSettingsStoreProtocol)

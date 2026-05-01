@@ -31,7 +31,7 @@ def tmp_backend(tmp_path: Path) -> CASLocalBackend:
 @pytest.fixture
 def upload_service(tmp_backend: CASLocalBackend) -> ChunkedUploadService:
     """Create a service with an in-memory SQLite session store."""
-    from tests.helpers.in_memory_record_store import InMemoryRecordStore
+    from tests.testkit.records import InMemoryRecordStore
 
     record_store = InMemoryRecordStore()
 

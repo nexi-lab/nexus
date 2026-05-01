@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.fastapi_server import create_app
-from tests.conftest import make_test_nexus
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.testkit import make_test_nexus
+from tests.testkit.records import InMemoryRecordStore
 
 # Session-scoped shared server (matches test_secrets_api_automated.py)
 _server_app = None

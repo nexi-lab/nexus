@@ -23,7 +23,7 @@ from nexus.server.api.v2.routers.delegation import (
     DelegateResponse,
     _handle_delegation_error,
 )
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.testkit.records import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures

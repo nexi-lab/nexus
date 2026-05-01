@@ -15,7 +15,7 @@ from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult as ObjectStoreWriteResult
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.dict_metastore import DictMetastore
+from tests.testkit.metadata import DictMetastore
 
 
 class TestBackendWriteStreamDefault:

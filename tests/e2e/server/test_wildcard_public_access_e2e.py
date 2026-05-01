@@ -168,7 +168,7 @@ class TestWildcardDirectDB:
         from nexus.bricks.rebac.consistency.metastore_namespace_store import (
             MetastoreNamespaceStore,
         )
-        from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+        from tests.testkit.metadata import InMemoryNexusFS
 
         return MetastoreNamespaceStore(InMemoryNexusFS())
 
@@ -320,7 +320,7 @@ class TestWildcardPerformance:
         from nexus.bricks.rebac.consistency.metastore_namespace_store import (
             MetastoreNamespaceStore,
         )
-        from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+        from tests.testkit.metadata import InMemoryNexusFS
 
         return MetastoreNamespaceStore(InMemoryNexusFS())
 

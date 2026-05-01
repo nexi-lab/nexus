@@ -2397,7 +2397,7 @@ def _bootstrap_standalone_fs(tmp_path):
     from nexus.core.config import ParseConfig, PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.record_store import SQLAlchemyRecordStore
-    from tests.helpers.dict_metastore import DictMetastore
+    from tests.testkit.metadata import DictMetastore
 
     fed_env_keys = (
         "NEXUS_PEERS",

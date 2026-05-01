@@ -21,7 +21,7 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.test_context import TEST_CONTEXT
+from tests.testkit.auth import TEST_CONTEXT
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
@@ -62,7 +62,7 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore):
     raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
     if raft_store is None:
-        from tests.helpers.dict_metastore import DictMetastore
+        from tests.testkit.metadata import DictMetastore
 
         metadata_store = DictMetastore()
     else:

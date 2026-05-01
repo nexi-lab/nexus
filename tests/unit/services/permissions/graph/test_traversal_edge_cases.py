@@ -34,7 +34,7 @@ from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVers
 from nexus.bricks.rebac.domain import NamespaceConfig
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 

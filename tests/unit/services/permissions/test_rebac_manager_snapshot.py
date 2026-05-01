@@ -35,7 +35,7 @@ from nexus.contracts.rebac_types import (
     WriteResult,
 )
 from nexus.storage.models import Base
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
 
 
 @pytest.fixture

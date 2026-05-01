@@ -18,7 +18,7 @@ from pathlib import Path
 
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.test_context import TEST_CONTEXT
+from tests.testkit.auth import TEST_CONTEXT
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))

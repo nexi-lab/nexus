@@ -7,7 +7,6 @@ from typing import cast
 
 import pytest
 from fastapi import WebSocket
-from helpers.mock_websocket import MockWebSocket
 
 from nexus.server.websocket.manager import WebSocketManager
 from nexus.services.event_bus.subscriptions import (
@@ -16,6 +15,7 @@ from nexus.services.event_bus.subscriptions import (
 )
 from nexus.services.event_bus.types import FileEvent
 from nexus.storage.read_set import ReadSet, ReadSetRegistry
+from tests.testkit.websocket import MockWebSocket
 
 
 class TestReactiveWSIntegration:

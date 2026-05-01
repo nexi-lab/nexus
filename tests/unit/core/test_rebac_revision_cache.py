@@ -28,7 +28,7 @@ from nexus.bricks.rebac.consistency.metastore_namespace_store import (
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
 
 
 def _check_postgres_available():

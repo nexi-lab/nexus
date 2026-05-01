@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.testkit.records import InMemoryRecordStore
 
 
 @pytest.fixture

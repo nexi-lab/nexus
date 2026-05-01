@@ -726,7 +726,7 @@ class TestRecordStoreSessionContextManager:
 
     def test_read_session_uses_read_factory(self):
         """read_session() uses read_session_factory (which defaults to primary)."""
-        from tests.helpers.in_memory_record_store import InMemoryRecordStore
+        from tests.testkit.records import InMemoryRecordStore
 
         store = InMemoryRecordStore()
         try:
@@ -739,7 +739,7 @@ class TestRecordStoreSessionContextManager:
 
     def test_read_session_falls_back_to_primary(self):
         """read_session() falls back to primary when no replica configured."""
-        from tests.helpers.in_memory_record_store import InMemoryRecordStore
+        from tests.testkit.records import InMemoryRecordStore
 
         store = InMemoryRecordStore()
         try:

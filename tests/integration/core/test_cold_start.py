@@ -65,7 +65,7 @@ class TestColdStartNexusFSConstruction:
     @pytest.mark.asyncio
     def test_nexus_fs_minimal_construction(self, tmp_path) -> None:
         """NexusFS should construct via make_test_nexus with defaults."""
-        from tests.conftest import make_test_nexus
+        from tests.testkit import make_test_nexus
 
         nx = make_test_nexus(tmp_path)
 
@@ -79,7 +79,7 @@ class TestColdStartNexusFSConstruction:
         from unittest.mock import MagicMock
 
         from nexus.factory.service_routing import enlist_wired_services
-        from tests.conftest import make_test_nexus
+        from tests.testkit import make_test_nexus
 
         nx = make_test_nexus(tmp_path)
 

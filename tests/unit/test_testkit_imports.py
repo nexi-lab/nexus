@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -35,16 +36,6 @@ def test_common_helpers_exported_from_testkit() -> None:
 
 
 def test_compatibility_imports_point_to_canonical_objects() -> None:
-    from tests.conftest import make_test_nexus as compat_make_test_nexus
-    from tests.helpers.dict_metastore import DictMetastore as CompatDictMetastore
-    from tests.helpers.failing_backend import FailingBackend as CompatFailingBackend
-    from tests.helpers.failing_metastore import FailingMetastore as CompatFailingMetastore
-    from tests.helpers.failing_metastore import MetastoreError as CompatMetastoreError
-    from tests.helpers.in_memory_record_store import InMemoryRecordStore as CompatRecordStore
-    from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS as CompatNexusFS
-    from tests.helpers.mock_websocket import MockWebSocket as CompatMockWebSocket
-    from tests.helpers.test_context import TEST_CONTEXT as COMPAT_TEST_CONTEXT
-    from tests.helpers.test_context import operation_context as compat_operation_context
     from tests.testkit import (
         TEST_CONTEXT,
         DictMetastore,
@@ -58,24 +49,33 @@ def test_compatibility_imports_point_to_canonical_objects() -> None:
         operation_context,
     )
 
-    assert CompatDictMetastore is DictMetastore
-    assert CompatFailingBackend is FailingBackend
-    assert CompatFailingMetastore is FailingMetastore
-    assert CompatMetastoreError is MetastoreError
-    assert CompatRecordStore is InMemoryRecordStore
-    assert CompatNexusFS is InMemoryNexusFS
-    assert CompatMockWebSocket is MockWebSocket
-    assert COMPAT_TEST_CONTEXT is TEST_CONTEXT
-    assert compat_operation_context is operation_context
-    assert compat_make_test_nexus is make_test_nexus
+    conftest = importlib.import_module("tests.conftest")
+    dict_metastore = importlib.import_module("tests.helpers.dict_metastore")
+    failing_backend = importlib.import_module("tests.helpers.failing_backend")
+    failing_metastore = importlib.import_module("tests.helpers.failing_metastore")
+    record_store = importlib.import_module("tests.helpers.in_memory_record_store")
+    nexus_fs = importlib.import_module("tests.helpers.inmemory_nexus_fs")
+    mock_websocket = importlib.import_module("tests.helpers.mock_websocket")
+    test_context = importlib.import_module("tests.helpers.test_context")
+
+    assert dict_metastore.DictMetastore is DictMetastore
+    assert failing_backend.FailingBackend is FailingBackend
+    assert failing_metastore.FailingMetastore is FailingMetastore
+    assert failing_metastore.MetastoreError is MetastoreError
+    assert record_store.InMemoryRecordStore is InMemoryRecordStore
+    assert nexus_fs.InMemoryNexusFS is InMemoryNexusFS
+    assert mock_websocket.MockWebSocket is MockWebSocket
+    assert test_context.TEST_CONTEXT is TEST_CONTEXT
+    assert test_context.operation_context is operation_context
+    assert conftest.make_test_nexus is make_test_nexus
 
 
 def test_top_level_helpers_import_spelling_points_to_testkit() -> None:
-    from helpers.mock_websocket import MockWebSocket as TopLevelCompatMockWebSocket
-
     from tests.testkit import MockWebSocket
 
-    assert TopLevelCompatMockWebSocket is MockWebSocket
+    mock_websocket = importlib.import_module("helpers.mock_websocket")
+
+    assert mock_websocket.MockWebSocket is MockWebSocket
 
 
 def test_metadata_module_defines_public_interface() -> None:

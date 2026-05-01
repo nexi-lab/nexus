@@ -3,8 +3,8 @@ from fastapi.testclient import TestClient
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.fastapi_server import create_app
-from tests.conftest import make_test_nexus
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.testkit import make_test_nexus
+from tests.testkit.records import InMemoryRecordStore
 
 # Session 级别的变量，用于在所有测试中共享同一个服务器
 _server_app = None

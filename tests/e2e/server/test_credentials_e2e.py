@@ -23,8 +23,8 @@ import pytest
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.storage.models import Base
-from tests.helpers.dict_metastore import DictMetastore
-from tests.helpers.test_context import TEST_CONTEXT
+from tests.testkit.auth import TEST_CONTEXT
+from tests.testkit.metadata import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures

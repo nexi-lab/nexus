@@ -296,8 +296,17 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     # CLI changes that might stop forwarding the YAML value.
     up_env["NEXUS_API_KEY"] = admin_api_key
 
+    # CI pre-builds the nexus-server image once per job with buildx + GHA
+    # cache (see ``e2e-self-contained`` in test.yml) and exports
+    # ``NEXUS_E2E_SKIP_BUILD=1`` so each fixture invocation reuses the cached
+    # layers instead of paying ~5-10 min for ``docker compose build`` per
+    # test class. Local dev keeps ``--build`` so an out-of-date checkout
+    # still rebuilds before the stack comes up.
+    up_cmd = [nexus_bin, "up"]
+    if os.environ.get("NEXUS_E2E_SKIP_BUILD") != "1":
+        up_cmd.append("--build")
     up_result = subprocess.run(
-        [nexus_bin, "up", "--build"],
+        up_cmd,
         capture_output=True,
         text=True,
         timeout=600,

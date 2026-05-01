@@ -16,7 +16,8 @@ use crate::raft::{
     Command, CommandResult, FullStateMachine, RaftError, Result, ZoneConsensus, ZoneRaftRegistry,
 };
 use crate::transport::{
-    call_join_cluster, hostname_to_node_id, NodeAddress, RaftGrpcServer, ServerConfig, TlsConfig,
+    call_delete_zone, call_join_cluster, hostname_to_node_id, NodeAddress, RaftGrpcServer,
+    ServerConfig, TlsConfig,
 };
 use crate::zone_handle::ZoneHandle;
 
@@ -814,6 +815,26 @@ impl ZoneManager {
                 }
             }
         }
+
+        let peers = self.registry.get_peers(zone_id).unwrap_or_default();
+        let self_id = self.registry.node_id();
+        self.runtime.handle().block_on(async {
+            for (peer_id, peer) in peers {
+                if peer_id == self_id || peer.hostname.to_ascii_lowercase().starts_with("witness") {
+                    continue;
+                }
+                call_delete_zone(&peer.endpoint, zone_id, force, 2)
+                    .await
+                    .map_err(|e| {
+                        RaftError::Raft(format!(
+                            "Failed to remove zone '{zone_id}' from peer {}: {e}",
+                            peer.endpoint
+                        ))
+                    })?;
+            }
+            Ok::<(), RaftError>(())
+        })?;
+
         self.runtime
             .handle()
             .block_on(self.registry.remove_zone(zone_id))

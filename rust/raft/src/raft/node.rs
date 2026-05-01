@@ -357,6 +357,10 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     /// Cached raft log commit index, updated by driver after each advance().
     /// Monotonically non-decreasing — grows with every committed entry.
     cached_commit_index: Arc<AtomicU64>,
+    /// Cached raft log last index, updated by driver after each advance().
+    /// Used by the transport layer to reject impossible leader commit hints
+    /// before they reach raft-rs and trip its commit range assertion.
+    cached_last_index: Arc<AtomicU64>,
     /// Shared clone of the state machine's ``last_applied`` atomic — not
     /// a second cache, the state machine IS the SSOT for applied index.
     /// ``commit_index`` reflects ``raft_log.committed`` which raft-rs
@@ -403,6 +407,7 @@ impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
             cached_leader_id: self.cached_leader_id.clone(),
             cached_term: self.cached_term.clone(),
             cached_commit_index: self.cached_commit_index.clone(),
+            cached_last_index: self.cached_last_index.clone(),
             applied_index_atom: self.applied_index_atom.clone(),
             replication_log: self.replication_log.clone(),
             #[cfg(all(feature = "grpc", has_protos))]
@@ -468,6 +473,8 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     cached_term: Arc<AtomicU64>,
     /// Cached commit index (shared with handle for reads).
     cached_commit_index: Arc<AtomicU64>,
+    /// Cached last log index (shared with handle for transport validation).
+    cached_last_index: Arc<AtomicU64>,
     /// Shared peer map — updated when ConfChange adds/removes nodes.
     /// Set by `set_peer_map()` before the transport loop starts.
     #[cfg(all(feature = "grpc", has_protos))]
@@ -649,6 +656,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let cached_leader_id = Arc::new(AtomicU64::new(0));
         let cached_term = Arc::new(AtomicU64::new(0));
         let cached_commit_index = Arc::new(AtomicU64::new(0));
+        let cached_last_index = Arc::new(AtomicU64::new(0));
 
         // Bounded channel with backpressure
         let (msg_tx, msg_rx) = mpsc::channel(DRIVER_CHANNEL_CAPACITY);
@@ -661,6 +669,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             cached_leader_id: cached_leader_id.clone(),
             cached_term: cached_term.clone(),
             cached_commit_index: cached_commit_index.clone(),
+            cached_last_index: cached_last_index.clone(),
             applied_index_atom,
             replication_log,
             #[cfg(all(feature = "grpc", has_protos))]
@@ -686,6 +695,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             cached_leader_id,
             cached_term,
             cached_commit_index,
+            cached_last_index,
             #[cfg(all(feature = "grpc", has_protos))]
             peer_map: None,
             replication_log: handle.replication_log.clone(),
@@ -768,6 +778,16 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// replication checks).
     pub fn commit_index(&self) -> u64 {
         self.cached_commit_index.load(Ordering::Relaxed)
+    }
+
+    /// Get the current raft log last index (atomic read, no channel).
+    ///
+    /// This is a transport-safety hint, not a linearizability signal. It lets
+    /// inbound raft RPC handling avoid passing a leader commit index beyond
+    /// the local log into raft-rs while a fresh joiner is waiting for snapshot
+    /// catch-up.
+    pub fn last_index(&self) -> u64 {
+        self.cached_last_index.load(Ordering::Relaxed)
     }
 
     /// Get the highest raft log index that has actually been applied to
@@ -1852,6 +1872,8 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             .store(self.raw_node.raft.term, Ordering::Relaxed);
         self.cached_commit_index
             .store(self.raw_node.raft.raft_log.committed, Ordering::Relaxed);
+        self.cached_last_index
+            .store(self.raw_node.raft.raft_log.last_index(), Ordering::Relaxed);
     }
 }
 

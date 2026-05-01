@@ -59,6 +59,14 @@ service ZoneApiService {
   // a snapshot from the leader and becomes an equal Voter with a local sled replica.
   rpc JoinZone(JoinZoneRequest) returns (JoinZoneResponse);
 
+  // DeleteZone removes this node's local replica for a zone.
+  //
+  // Internal maintenance RPC used by federation_remove_zone fan-out. This is
+  // intentionally local-only: the caller coordinates peer fan-out, while the
+  // receiver only shuts down its in-memory raft group and deletes its on-disk
+  // replica. It is idempotent so retries and already-cleaned peers are safe.
+  rpc DeleteZone(DeleteZoneRequest) returns (DeleteZoneResponse);
+
   // JoinCluster provisions a new node with cluster TLS certificates.
   // Called by `nexus join` before `nexus serve`. The caller authenticates
   // with the join token password; the server signs a node cert and returns
@@ -201,6 +209,20 @@ message JoinZoneResponse {
   optional string leader_address = 3;
   // Current cluster config so the joiner knows all peers.
   optional ClusterConfig config = 4;
+}
+
+// DeleteZoneRequest asks a peer to remove its local zone replica.
+message DeleteZoneRequest {
+  string zone_id = 1;
+  // Reserved for future policy checks. The current maintenance RPC is local
+  // and idempotent; high-level mounted-zone safety is enforced by the caller.
+  bool force = 2;
+}
+
+// DeleteZoneResponse reports local replica deletion.
+message DeleteZoneResponse {
+  bool success = 1;
+  optional string error = 2;
 }
 
 // JoinClusterRequest is sent during TLS bootstrap to provision certificates.

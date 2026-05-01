@@ -610,7 +610,15 @@ fn resolve_rust_dispatch(method: &str) -> Option<(&str, &str)> {
     if method.starts_with("federation_") {
         return Some(("federation", method));
     }
-    None
+    // Fall-through: any wire-form name not matched above lands on the
+    // generic `python_ffi` router.  The router holds a method-name →
+    // Python service map populated at boot via
+    // `nx_python_ffi_register`.  If the method isn't registered there
+    // either, dispatch_rust_call returns NotFound and the tonic Call
+    // handler falls through to the legacy Python `dispatch_method`
+    // path — that fallback disappears in #45 once every wire RPC has
+    // a Rust route.
+    Some(("python_ffi", method))
 }
 
 // ── Auth result extraction ───────────────────────────────────────────

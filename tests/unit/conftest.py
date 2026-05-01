@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.testkit.fixtures import record_store as record_store
+
 # ---------------------------------------------------------------------------
 # Unit-test suite target: ~3 minutes (180s). We warn if over, but do not
 # fail (hard limits cause flaky CI on busy runners). See tests/unit/README.md.
@@ -153,17 +155,3 @@ def isolated_db(tmp_path, monkeypatch):
 
         with suppress(Exception):  # Best effort cleanup
             db_path.unlink()
-
-
-@pytest.fixture
-def record_store():
-    """Shared RecordStoreABC fixture for unit tests.
-
-    Provides an in-memory SQLite-backed RecordStoreABC with all tables created.
-    Use for tests that need real SQL operations against the storage pillar.
-    """
-    from tests.helpers.in_memory_record_store import InMemoryRecordStore
-
-    store = InMemoryRecordStore()
-    yield store
-    store.close()

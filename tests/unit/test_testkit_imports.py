@@ -124,3 +124,10 @@ def test_make_test_nexus_export_has_stable_name() -> None:
 
     assert isinstance(make_test_nexus, Callable)
     assert make_test_nexus.__name__ == "make_test_nexus"
+
+
+def test_testkit_fixture_functions_are_importable() -> None:
+    from tests.testkit.fixtures import isolated_db, record_store
+
+    assert isolated_db.__name__ == "isolated_db"
+    assert record_store.__name__ == "record_store"

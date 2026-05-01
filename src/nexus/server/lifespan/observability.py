@@ -26,6 +26,7 @@ _OBSERVABILITY_PROVIDERS: list[tuple[str, str, str, str]] = [
     ("sentry", "nexus.server.sentry", "setup_sentry", "shutdown_sentry"),
     ("pyroscope", "nexus.server.profiling", "setup_profiling", "shutdown_profiling"),
     ("prometheus", "nexus.server.metrics", "setup_prometheus", "shutdown_prometheus"),
+    ("activity", "nexus.services.activity.lifespan", "setup_activity", "shutdown_activity"),
 ]
 
 

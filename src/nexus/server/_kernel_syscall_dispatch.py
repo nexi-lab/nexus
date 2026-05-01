@@ -47,7 +47,6 @@ KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset(
         "delete",
         "exists",
         "list",
-        "lock_acquire",
         "read",
         "rename",
         "sys_copy",
@@ -71,7 +70,6 @@ _ALIASES: dict[str, str] = {
     "delete": "sys_unlink",
     "exists": "access",
     "list": "sys_readdir",
-    "lock_acquire": "sys_lock",
     "read": "read",
     "rename": "sys_rename",
     "sys_mkdir": "mkdir",
@@ -157,29 +155,27 @@ def _apply_result_adapter(
     consumers — only test mocks asserted on them.  Dropped: callers
     receive the raw NexusFS return.
 
-    Adapters that survive (real production consumers):
+    Adapter that survives (real wire-only logic, not just shape):
 
-      * ``{"exists": bool}``  — ``access`` alias; ``fuse/rust_client.py``
-        reads ``result["exists"]``.
       * ``{"files": ..., "has_more": ..., "next_cursor": ..., "total_count": ...}``
-        — ``sys_readdir`` / ``list`` aliases; ``backends/storage/remote``,
-        ``fuse/rust_client``, ``services/lifecycle/user_provisioning``
-        all read these fields.
-      * ``{"acquired": ..., "lock_id": ...}`` — ``lock_acquire``
-        wire-name; Tier 2 callers expect the dict shape.
+        — ``sys_readdir`` / ``list`` aliases.  Three things bundled:
+        normalize ``list[str] | list[dict] | PaginatedResult`` into a
+        single dict shape, run ``unscope_internal_dict`` to strip
+        ``/zone/<id>/`` prefixes from per-entry paths, and forward
+        pagination cursors.  Real wire-layer concerns; production
+        consumers in ``backends/storage/remote``, ``fuse/rust_client``,
+        ``services/lifecycle/user_provisioning``, ``core/metastore``.
 
-    Path-bearing dicts (readdir entries) still get ``unscope_internal_dict``
-    so RPC callers see user-facing paths.
+    ``access`` previously wrapped ``bool`` into ``{"exists": bool}`` —
+    dropped, callers read raw bool.  ``lock_acquire`` previously
+    wrapped ``sys_lock``'s return into ``{"acquired", "lock_id"}`` —
+    wire-name dropped entirely (no production callers; tests adapt).
     """
     from nexus.server.path_utils import (
         unscope_internal_dict,
         unscope_internal_path,
     )
 
-    if method in ("access", "exists"):
-        return {"exists": bool(raw_result)}
-    if method == "lock_acquire":
-        return {"acquired": raw_result is not None, "lock_id": raw_result}
     if method in ("sys_readdir", "list"):
         # PaginatedResult (from limit kwarg) → wire dict; bare list →
         # wire dict with has_more=False / next_cursor=None.

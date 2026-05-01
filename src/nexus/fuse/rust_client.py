@@ -417,9 +417,14 @@ class RustFUSEClient:
         Returns:
             True if path exists
         """
+        # Wire-form `exists` returns the raw bool (the dispatch layer
+        # used to wrap it in {"exists": bool} but that wrapper had no
+        # other production consumer).  Be tolerant of either shape so a
+        # mixed-version cluster works.
         result = self._send_request("exists", {"path": path})
-        exists_value: bool = result["exists"]
-        return exists_value
+        if isinstance(result, dict):
+            return bool(result.get("exists", False))
+        return bool(result)
 
     def close(self) -> None:
         """Close connection and shutdown daemon."""

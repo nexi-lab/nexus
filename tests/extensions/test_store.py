@@ -173,3 +173,41 @@ class TestResolveFactory:
         with pytest.raises(FactoryResolutionError) as excinfo:
             store.resolve_factory(m)
         assert "missing_callable" in str(excinfo.value)
+
+
+class TestLazyInvariant:
+    def test_list_does_not_import_impl(self, monkeypatch, tmp_path):
+        """list() and get() must not trigger impl module imports."""
+        import sys
+
+        # Create an impl module that records when it's imported.
+        impl_path = tmp_path / "lazy_impl_target.py"
+        impl_path.write_text(
+            "import os\n"
+            "with open(os.environ['LAZY_PROBE_FILE'], 'a') as f:\n"
+            "    f.write('imported\\n')\n"
+            "def F():\n"
+            "    return 1\n"
+        )
+        probe_file = tmp_path / "probe.txt"
+        monkeypatch.setenv("LAZY_PROBE_FILE", str(probe_file))
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("lazy_impl_target", None)
+
+        from nexus.extensions.manifest import PluginManifest
+
+        store = ManifestStore()
+        m = PluginManifest(name="lazy", module="lazy_impl_target", factory="F")
+        store._register(m, source="test")
+
+        # list() and get() — must NOT cause the import.
+        assert store.list() == [m]
+        assert store.get("lazy", kind="plugin") is m
+        assert "lazy_impl_target" not in sys.modules
+        assert not probe_file.exists()
+
+        # resolve_factory() — must cause the import.
+        factory = store.resolve_factory(m)
+        assert factory() == 1
+        assert "lazy_impl_target" in sys.modules
+        assert probe_file.read_text() == "imported\n"

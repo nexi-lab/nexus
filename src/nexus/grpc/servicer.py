@@ -235,7 +235,11 @@ class VFSCallDispatcher:
                     op_context.zone_id if op_context else None,
                 )
                 result = await dispatch_kernel_syscall(
-                    self._nexus_fs, method, params_dict, op_context
+                    self._nexus_fs,
+                    method,
+                    params_dict,
+                    op_context,
+                    subscription_manager=self._subscription_manager,
                 )
                 return False, encode_rpc_message({"result": result})
 

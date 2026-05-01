@@ -467,7 +467,7 @@ class NexusFS(  # type: ignore[misc]
         max_holders: int = 1,
         lock_id: str | None = None,
         *,
-        context: OperationContext | None = None,  # noqa: ARG002
+        context: OperationContext | None = None,
     ) -> str | None:
         """Acquire or extend advisory lock (POSIX fcntl(F_SETLK)).
 
@@ -477,6 +477,7 @@ class NexusFS(  # type: ignore[misc]
         Returns lock_id on success, None on failure.
         """
         path = self._validate_path(path)
+        self._enforce_lock_write_permission(path, context)
         return self._kernel.sys_lock(
             path,
             lock_id=lock_id or "",
@@ -492,7 +493,7 @@ class NexusFS(  # type: ignore[misc]
         lock_id: str | None = None,
         force: bool = False,
         *,
-        context: OperationContext | None = None,  # noqa: ARG002
+        context: OperationContext | None = None,
     ) -> bool:
         """Release advisory lock.
 
@@ -504,7 +505,42 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
         if not force and not lock_id:
             raise ValueError("lock_id is required for non-force release")
+        self._enforce_lock_write_permission(path, context)
         return self._kernel.sys_unlock(path, lock_id=lock_id or "", force=force)
+
+    def _enforce_lock_write_permission(
+        self,
+        path: str,
+        context: OperationContext | None,
+    ) -> None:
+        """Require WRITE on ``path`` before touching the Rust lock manager.
+
+        Issue #3786 / Codex Round 6 finding #2: NexusFS.sys_lock previously
+        ignored its ``context`` kwarg and the RPC-edge handler enforced WRITE.
+        With the legacy handler chain deleted, the enforcement gate now lives
+        on the NexusFS method directly so any caller (RPC or in-process)
+        gets the policy.  System contexts (server-internal callers) skip.
+        """
+        if context is None:
+            return
+        if getattr(context, "is_system", False):
+            return
+        enforcer = self.service("permission_enforcer") if hasattr(self, "service") else None
+        if enforcer is None:
+            return
+
+        from nexus.contracts.exceptions import PermissionDeniedError
+        from nexus.contracts.types import Permission
+        from nexus.lib.zone_perms_cache import request_zone_perms_scope
+
+        _zp = getattr(context, "zone_perms", ())
+        with request_zone_perms_scope(_zp):
+            allowed = enforcer.check(path, Permission.WRITE, context)
+        if not allowed:
+            raise PermissionDeniedError(
+                f"lock denied: WRITE not granted for {path!r}",
+                path=path,
+            )
 
     def _acquire_lock_sync(
         self,

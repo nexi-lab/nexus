@@ -72,74 +72,22 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
     from nexus.server.rpc.handlers.filesystem import (
         handle_ainitialize_semantic_search,
         handle_copy,
-        handle_delete,
-        handle_exists,
-        handle_get_metadata,
         handle_glob,
         handle_grep,
-        handle_is_directory,
-        handle_list,
-        handle_lock_acquire,
-        handle_mkdir,
-        handle_read_async,
-        handle_rename,
-        handle_rmdir,
         handle_search,
         handle_semantic_search,
         handle_semantic_search_index,
-        handle_sys_lock,
-        handle_sys_unlock,
-        handle_write,
     )
 
+    # Kernel syscalls (sys_*, mkdir, rmdir, access, is_directory, locks
+    # + aliases) are NOT in this table — they're routed by the thin
+    # dispatcher in ``nexus.server._kernel_syscall_dispatch`` which the
+    # gRPC servicer's ``Call`` handler consults BEFORE calling
+    # ``dispatch_method``.  Source of truth: PyKernel ``#[pymethods]`` in
+    # ``rust/kernel/src/generated_kernel_abi_pyo3.rs``.
     return {
-        # Core filesystem syscalls (sys_ prefix — Linux VFS aligned)
-        "sys_read": DispatchEntry(handle_read_async, is_async=True),
-        "sys_write": DispatchEntry(
-            handle_write, is_async=True, event_type="file_write", event_size_key="bytes_written"
-        ),
-        "access": DispatchEntry(handle_exists, is_async=True),
-        "sys_readdir": DispatchEntry(handle_list, is_async=True),
-        "sys_unlink": DispatchEntry(handle_delete, is_async=True, event_type="file_delete"),
-        "sys_rename": DispatchEntry(
-            handle_rename,
-            is_async=True,
-            event_type="file_rename",
-            event_path_attr="new_path",
-            event_old_path_attr="old_path",
-        ),
-        "copy": DispatchEntry(handle_copy),
-        "mkdir": DispatchEntry(handle_mkdir, is_async=True, event_type="dir_create"),
-        "sys_rmdir": DispatchEntry(handle_rmdir, is_async=True, event_type="dir_delete"),
-        "sys_stat": DispatchEntry(handle_get_metadata, is_async=True),
-        # NOTE: sys_setattr is served by the kernel-syscall thin dispatcher
-        # in `nexus.server._kernel_syscall_dispatch`; the legacy entry
-        # routed it to `handle_set_metadata` (a Python-side metastore put
-        # with incompatible `{path, metadata}` params shape) and hijacked
-        # the wire-form name.  Subsequent commits delete the rest of the
-        # syscall entries here as the thin dispatcher takes over.
-        # Short aliases for nexus-test / remote clients
-        "read": DispatchEntry(handle_read_async, is_async=True),
-        "write": DispatchEntry(
-            handle_write, is_async=True, event_type="file_write", event_size_key="bytes_written"
-        ),
-        "exists": DispatchEntry(handle_exists, is_async=True),
-        "list": DispatchEntry(handle_list, is_async=True),
-        "delete": DispatchEntry(handle_delete, is_async=True, event_type="file_delete"),
-        "rmdir": DispatchEntry(handle_rmdir, is_async=True, event_type="dir_delete"),
-        "rename": DispatchEntry(
-            handle_rename,
-            is_async=True,
-            event_type="file_rename",
-            event_path_attr="new_path",
-            event_old_path_attr="old_path",
-        ),
-        "is_directory": DispatchEntry(handle_is_directory, is_async=True),
-        # Advisory lock syscalls (Rust kernel-backed)
-        "sys_lock": DispatchEntry(handle_sys_lock),
-        "sys_unlock": DispatchEntry(handle_sys_unlock),
-        "lock_acquire": DispatchEntry(handle_lock_acquire),
         # User-space utilities (not syscalls, but dispatched via RPC)
+        "copy": DispatchEntry(handle_copy),
         "glob": DispatchEntry(handle_glob),
         "grep": DispatchEntry(handle_grep, is_async=True),
         "search": DispatchEntry(handle_search),

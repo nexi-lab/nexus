@@ -4951,20 +4951,20 @@ def collect_all() -> tuple[
 
 # Methods on PyKernel that map 1:1 to a NexusFS syscall and should be
 # served by the thin dispatcher.  Names match PyKernel's Python-facing
-# names — alias surface (read/exists/list/lock_acquire) is wired
-# separately below since some don't have a matching PyKernel symbol.
-#
-# Mutation syscalls that fire pub/sub events (sys_write, sys_unlink,
-# sys_rename, sys_mkdir, sys_rmdir) deliberately stay on the legacy
-# `dispatch.py` path until `subscription_manager` is plumbed into the
-# thin dispatcher and event firing moves over.  Tracked as the
-# next migration commit.
+# names — alias surface (read/write/delete/exists/list/rename/sys_mkdir
+# /sys_rmdir/lock_acquire) is wired separately below since some don't
+# have a matching PyKernel symbol.
 _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
     "sys_read",
+    "sys_write",
     "sys_setattr",
+    "sys_unlink",
+    "sys_rename",
     "sys_copy",
     "sys_stat",
     "sys_readdir",
+    "sys_mkdir",
+    "sys_rmdir",
     "sys_lock",
     "sys_unlock",
     "access",
@@ -4972,19 +4972,72 @@ _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
 )
 
 
-# Wire-name → canonical NexusFS method name.  Two reasons we need this:
-#   1. Aliases (``read`` / ``exists`` / ``list``) are short forms used
-#      by nexus-test and remote clients; canonical NexusFS methods keep
-#      the ``sys_`` prefix.
-#   2. ``lock_acquire`` is the Tier 2 dict-shaped wrapper — see the
+# Wire-name → canonical NexusFS method name.  Reasons:
+#   1. Aliases (``read`` / ``write`` / ``delete`` / ``exists`` /
+#      ``list`` / ``rename``) are short forms used by nexus-test and
+#      remote clients; canonical NexusFS methods keep the ``sys_``
+#      prefix (or are Tier 2 wrappers without it for mkdir/rmdir).
+#   2. PyKernel exposes ``sys_mkdir`` / ``sys_rmdir`` while NexusFS
+#      Tier 2 wrappers expose ``mkdir`` / ``rmdir`` (no ``sys_``
+#      prefix).  Backward-compat ``sys_mkdir`` / ``sys_rmdir`` keep
+#      working for older clients via the alias map.
+#   3. ``write`` (and the syscall-shaped ``sys_write`` alias) routes to
+#      ``NexusFS.write``: that's the HTTP-style write returning a
+#      content_id dict — the wire shape Tier 2 RPC callers depend on
+#      through the legacy ``handle_write`` wrapper, including OCC
+#      (if_match / if_none_match) handling.
+#   4. ``lock_acquire`` is the Tier 2 dict-shaped wrapper — see the
 #      Python helper that materializes the ``{acquired, lock_id}``
 #      response from ``sys_lock``.
 _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
-    "read": "sys_read",
+    "delete": "sys_unlink",
+    "rename": "sys_rename",
     "exists": "access",
     "list": "sys_readdir",
+    # PyKernel says sys_mkdir / sys_rmdir; NexusFS Tier 2 says mkdir / rmdir.
+    "sys_mkdir": "mkdir",
+    "sys_rmdir": "rmdir",
+    # ``sys_write`` wire name routes to ``NexusFS.write`` (Tier 2 with
+    # content_id dict return) — preserves the legacy ``handle_write``
+    # wire shape, including OCC (if_match / if_none_match) handling.
+    # The Tier 2 ``write`` RPC name does the same.
+    "sys_write": "write",
+    "write": "write",
+    # ``sys_read`` (POSIX) → ``NexusFS.sys_read`` (bytes); ``read``
+    # (Tier 2) → ``NexusFS.read`` (return_metadata-aware).  Both wire
+    # names exist; the alias map only needs ``read`` because
+    # ``sys_read`` resolves to itself.
+    "read": "read",
     # Tier 2 lock_acquire dispatches to sys_lock and shapes the result.
     "lock_acquire": "sys_lock",
+}
+
+
+# Mutation syscalls fire pub/sub events for file watchers via the gRPC
+# servicer's ``subscription_manager``.  Each entry: wire-form name →
+# event metadata.  Mirrors what the legacy ``dispatch.py`` table did
+# via ``DispatchEntry.event_*`` fields.
+_KERNEL_SYSCALL_EVENTS: dict[str, dict[str, str]] = {
+    # File mutations
+    "sys_write": {"event_type": "file_write", "path_attr": "path", "size_key": "bytes_written"},
+    "write": {"event_type": "file_write", "path_attr": "path", "size_key": "bytes_written"},
+    "sys_unlink": {"event_type": "file_delete", "path_attr": "path"},
+    "delete": {"event_type": "file_delete", "path_attr": "path"},
+    "sys_rename": {
+        "event_type": "file_rename",
+        "path_attr": "new_path",
+        "old_path_attr": "old_path",
+    },
+    "rename": {
+        "event_type": "file_rename",
+        "path_attr": "new_path",
+        "old_path_attr": "old_path",
+    },
+    # Directory mutations
+    "sys_mkdir": {"event_type": "dir_create", "path_attr": "path"},
+    "mkdir": {"event_type": "dir_create", "path_attr": "path"},
+    "sys_rmdir": {"event_type": "dir_delete", "path_attr": "path"},
+    "rmdir": {"event_type": "dir_delete", "path_attr": "path"},
 }
 
 
@@ -5023,6 +5076,16 @@ def generate_kernel_syscall_dispatch(classes: dict[str, "ClassDef"]) -> str:
         f'"{src}": "{dst}"' for src, dst in sorted(_KERNEL_SYSCALL_ALIASES.items())
     )
 
+    # Event metadata table — emitted as Python literal for the
+    # generated module.  repr() handles dict→str safely and keeps
+    # the keys sorted for deterministic output.
+    events_lines = []
+    for name in sorted(_KERNEL_SYSCALL_EVENTS.keys()):
+        meta = _KERNEL_SYSCALL_EVENTS[name]
+        meta_str = "{" + ", ".join(f'"{k}": "{v}"' for k, v in meta.items()) + "}"
+        events_lines.append(f'    "{name}": {meta_str}')
+    events_block = ",\n".join(events_lines)
+
     return f'''\
 # AUTO-GENERATED by scripts/codegen_kernel_abi.py — DO NOT EDIT
 """Thin gRPC `Call` dispatch for kernel syscalls.
@@ -5041,6 +5104,15 @@ the matching NexusFS method, so adding a new kernel syscall is just
 take ``**attrs`` (sys_setattr) get arbitrary extras forwarded
 unchanged.
 
+Mutation syscalls fire pub/sub events through the gRPC servicer's
+``subscription_manager`` (file_write / file_delete / file_rename /
+dir_create / dir_delete) — see ``_EVENTS`` for the wire-name →
+event-metadata mapping.  Tier 2 wire-shape adapters
+(``{{"deleted": True}}`` / ``{{"renamed": True}}`` / ``bytes_written``
+merge / ``{{"acquired", "lock_id"}}``) live in
+``_apply_result_adapter`` and preserve the legacy ``handle_*``
+wrapper response shapes.
+
 Re-generate: python scripts/codegen_kernel_abi.py
 """
 
@@ -5048,7 +5120,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from typing import Any
+
+from nexus.contracts.constants import ROOT_ZONE_ID
+
+logger = logging.getLogger(__name__)
+
 
 # Wire-form RPC method names this module handles. The gRPC servicer
 # tests membership BEFORE invoking the legacy ``dispatch_method`` path.
@@ -5060,6 +5138,13 @@ KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset({{
 # Wire name → canonical NexusFS method name (see codegen for the why).
 _ALIASES: dict[str, str] = {{
     {aliases_block},
+}}
+
+
+# Wire name → event metadata for pub/sub firing on mutation syscalls.
+# Mirrors the legacy ``DispatchEntry.event_*`` fields.
+_EVENTS: dict[str, dict[str, str]] = {{
+{events_block},
 }}
 
 
@@ -5106,40 +5191,242 @@ def _build_kwargs(
     return kwargs
 
 
+def _apply_result_adapter(
+    method: str,
+    raw_result: Any,
+    params: dict[str, Any],
+) -> Any:
+    """Re-shape NexusFS results into the wire format Tier 2 callers expect.
+
+    Mirrors the response shapes the legacy ``handle_*`` wrappers
+    produced so deleting the legacy chain is a no-op on the wire.
+
+    Path-bearing dicts (sys_stat metadata, sys_readdir entries) get
+    their internal ``/zone/<id>/...`` prefix stripped via
+    ``unscope_internal_dict`` so RPC callers see user-facing paths.
+    """
+    from nexus.server.path_utils import (
+        unscope_internal_dict,
+        unscope_internal_path,
+    )
+
+    if method in ("delete", "sys_unlink"):
+        return {{"deleted": True}}
+    if method in ("rename", "sys_rename"):
+        return {{"renamed": True}}
+    if method in ("mkdir", "sys_mkdir"):
+        return {{"created": True}}
+    if method in ("rmdir", "sys_rmdir"):
+        return {{"removed": True}}
+    if method in ("write", "sys_write"):
+        content = params.get("content") or params.get("buf") or b""
+        content_len = (
+            len(content.encode("utf-8")) if isinstance(content, str) else len(content)
+        )
+        wire: dict[str, Any] = {{"bytes_written": content_len}}
+        if isinstance(raw_result, dict):
+            wire.update(raw_result)
+        return wire
+    if method == "sys_stat":
+        meta = raw_result
+        if isinstance(meta, dict):
+            meta = unscope_internal_dict(meta, ["path"])
+        return {{"metadata": meta}}
+    if method in ("access", "exists"):
+        return {{"exists": bool(raw_result)}}
+    if method == "is_directory":
+        return {{"is_directory": bool(raw_result)}}
+    if method == "sys_unlock":
+        return {{"released": bool(raw_result)}}
+    if method == "sys_lock":
+        # NexusFS.sys_lock returns the lock_id (or None on contention).
+        # Tier 2 callers expect a dict like ``lock_acquire``.
+        return {{"acquired": raw_result is not None, "lock_id": raw_result}}
+    if method == "lock_acquire":
+        return {{"acquired": raw_result is not None, "lock_id": raw_result}}
+    if method in ("sys_readdir", "list"):
+        # PaginatedResult (from limit kwarg) → wire dict; bare list →
+        # wire dict with has_more=False / next_cursor=None.
+        if hasattr(raw_result, "to_dict"):
+            paginated = raw_result.to_dict()
+            items = [
+                unscope_internal_dict(f, ["path", "virtual_path"])
+                if isinstance(f, dict)
+                else unscope_internal_path(f)
+                for f in paginated["items"]
+            ]
+            return {{
+                "files": items,
+                "next_cursor": paginated["next_cursor"],
+                "has_more": paginated["has_more"],
+                "total_count": paginated.get("total_count"),
+            }}
+        raw_entries = raw_result if isinstance(raw_result, list) else []
+        entries = [
+            unscope_internal_dict(f, ["path", "virtual_path"])
+            if isinstance(f, dict)
+            else unscope_internal_path(f)
+            for f in raw_entries
+        ]
+        return {{"files": entries, "has_more": False, "next_cursor": None}}
+    return raw_result
+
+
+async def _fire_event(
+    subscription_manager: Any,
+    method: str,
+    params: dict[str, Any],
+    result: Any,
+    context: Any,
+) -> None:
+    """Fire pub/sub event for a mutation syscall (best-effort, non-blocking).
+
+    No-op when the wire method has no entry in ``_EVENTS`` or
+    ``subscription_manager`` is None.  Pulls path / old_path / size
+    from the params dict + result via ``_EVENTS`` metadata.
+    """
+    meta = _EVENTS.get(method)
+    if meta is None or subscription_manager is None:
+        return
+
+    try:
+        zone_id = getattr(context, "zone_id", None) or ROOT_ZONE_ID
+        path = params.get(meta.get("path_attr", "path"))
+        if not path:
+            return
+        data: dict[str, Any] = {{"file_path": path}}
+        old_path_attr = meta.get("old_path_attr")
+        if old_path_attr:
+            old_path = params.get(old_path_attr)
+            if old_path:
+                data["old_path"] = old_path
+        size_key = meta.get("size_key")
+        if size_key and isinstance(result, dict) and size_key in result:
+            data["size"] = result[size_key]
+        await subscription_manager.broadcast(meta["event_type"], data, zone_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[kernel-syscall-dispatch] event firing failed for %s on %s: %s",
+            meta.get("event_type"),
+            method,
+            exc,
+        )
+
+
+async def _occ_write_dispatch(
+    nexus_fs: Any,
+    params: dict[str, Any],
+    context: Any,
+) -> Any:
+    """Special-case write with OCC (``if_match`` / ``if_none_match``).
+
+    Mirrors what the legacy ``handle_write`` wrapper did — when the
+    RPC carries OCC kwargs and ``force`` is not set, route through
+    ``nexus.lib.occ.occ_write`` so the CAS check happens at the RPC
+    layer.  Otherwise fall through to plain ``NexusFS.write``.
+
+    Returned bytes_written count is always derived from the content
+    payload (see ``_apply_result_adapter``).
+    """
+    from nexus.lib.occ import occ_write
+
+    content = params.get("content") or params.get("buf") or b""
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    offset = int(params.get("offset", 0) or 0)
+    if_match = params.get("if_match") or None
+    if_none_match = bool(params.get("if_none_match"))
+    force = bool(params.get("force"))
+
+    if (if_match or if_none_match) and not force:
+        return await occ_write(
+            nexus_fs,
+            params["path"],
+            content,
+            context=context,
+            if_match=if_match,
+            if_none_match=if_none_match,
+            offset=offset,
+        )
+    return nexus_fs.write(params["path"], content, context=context, offset=offset)
+
+
+def _apply_pre_call_defaults(method: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Apply legacy-conservative defaults to wire params (Codex review of #3701).
+
+    ``NexusFS.mkdir`` defaults to ``parents=True, exist_ok=True``
+    (mkdir -p) and ``NexusFS.rmdir`` defaults to ``recursive=True``
+    (rm -rf), but the legacy ``mkdir`` / ``rmdir`` / ``sys_mkdir``
+    / ``sys_rmdir`` RPC aliases have always been conservative so
+    legacy clients sending only ``{{"path": "/foo"}}`` get a plain
+    mkdir that errors on missing parents / existing paths and a
+    non-recursive rmdir.  Dropping the override would silently turn
+    safe legacy calls into destructive recursive deletes / silent
+    mkdir-p — a real behavioral regression flagged by Codex.
+
+    Returns a (possibly defaulted) shallow copy of params; the
+    caller passes the result to ``_build_kwargs``.  Non-syscall
+    methods get back the same dict.
+    """
+    if method in ("mkdir", "sys_mkdir"):
+        out = dict(params)
+        out.setdefault("parents", False)
+        out.setdefault("exist_ok", False)
+        return out
+    if method in ("rmdir", "sys_rmdir"):
+        out = dict(params)
+        out.setdefault("recursive", False)
+        return out
+    return params
+
+
 async def dispatch_kernel_syscall(
     nexus_fs: Any,
     method: str,
     params: dict[str, Any],
     context: Any,
+    *,
+    subscription_manager: Any = None,
 ) -> Any:
     """Dispatch a kernel syscall RPC to the matching ``NexusFS`` method.
 
-    Returns the NexusFS method's result unchanged.  Caller (gRPC servicer)
-    encodes it into the wire response.
+    * Resolves wire alias to canonical NexusFS method via ``_ALIASES``.
+    * Filters params to the method's signature with ``_build_kwargs``;
+      ``**attrs`` methods (sys_setattr) get extras forwarded.
+    * Special-cases ``write`` / ``sys_write`` for OCC (if_match /
+      if_none_match) — routes through ``occ_write`` when those kwargs
+      are present.
+    * Applies legacy-conservative ``mkdir`` / ``rmdir`` defaults via
+      ``_apply_pre_call_defaults`` (Codex review of #3701).
+    * Reshapes the result via ``_apply_result_adapter`` so legacy
+      Tier 2 wire shapes are preserved (``{{"deleted": True}}`` etc.).
+    * Fires the matching pub/sub event via ``_fire_event`` when the
+      caller passes a ``subscription_manager``.
 
-    Wire-name aliases (``read`` / ``write`` / ``delete`` / ``exists``
-    / ``list`` / ``rename``, plus ``sys_mkdir`` / ``sys_rmdir`` /
-    ``lock_acquire``) all funnel into the same canonical NexusFS method
-    via ``_ALIASES``.  ``lock_acquire`` then re-shapes the bare lock_id
-    return into the dict response shape Tier 2 callers expect.
+    Returns the (possibly adapted) result; gRPC servicer encodes it.
     """
-    canonical = _resolve_method_name(method)
-    func = getattr(nexus_fs, canonical, None)
-    if func is None:
-        raise AttributeError(
-            f"NexusFS has no method {{canonical!r}} (from RPC method {{method!r}})"
-        )
+    params = _apply_pre_call_defaults(method, params)
 
-    kwargs = _build_kwargs(func, params, context)
-
-    if asyncio.iscoroutinefunction(func):
-        result = await func(**kwargs)
+    if method in ("write", "sys_write"):
+        raw_result = await _occ_write_dispatch(nexus_fs, params, context)
     else:
-        result = func(**kwargs)
+        canonical = _resolve_method_name(method)
+        func = getattr(nexus_fs, canonical, None)
+        if func is None:
+            raise AttributeError(
+                f"NexusFS has no method {{canonical!r}} (from RPC method {{method!r}})"
+            )
 
-    # Tier 2 lock_acquire shape: bare lock_id (or None) → ``{{"acquired": bool, "lock_id": str | None}}``.
-    if method == "lock_acquire":
-        return {{"acquired": result is not None, "lock_id": result}}
+        kwargs = _build_kwargs(func, params, context)
+
+        if asyncio.iscoroutinefunction(func):
+            raw_result = await func(**kwargs)
+        else:
+            raw_result = func(**kwargs)
+
+    result = _apply_result_adapter(method, raw_result, params)
+
+    await _fire_event(subscription_manager, method, params, result, context)
 
     return result
 '''

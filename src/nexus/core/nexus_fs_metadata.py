@@ -498,6 +498,23 @@ class MetadataMixin:
                 )
                 return result
 
+            # Federation auto-create: no Python-side backend required.  The
+            # kernel resolves a raft-backed metastore via the federation
+            # provider when ``zone_id`` is set and the coordinator is
+            # initialised — covers ``sys_setattr DT_MOUNT path zone_id=z``
+            # creator semantics and the joiner-side ``source=addr`` form
+            # used by the dynamic-bootstrap mount-with-source path.
+            if backend is None and zone_id:
+                _backend_name = attrs.get("backend_name", "")
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    zone_id=zone_id,
+                    is_external=bool(attrs.get("is_external", False)),
+                    source=attrs.get("source"),
+                )
+                return result
             if backend is None:
                 raise ValueError(
                     "sys_setattr(entry_type=DT_MOUNT) requires 'backend' attribute "

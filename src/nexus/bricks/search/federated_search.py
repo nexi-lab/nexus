@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from nexus.bricks.search.fusion import rrf_multi_fusion
+from nexus.services.activity import EventKind, Result, emit
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +437,59 @@ class FederatedSearchDispatcher:
         )
 
     async def search(
+        self,
+        query: str,
+        subject: tuple[str, str],
+        search_type: str = "hybrid",
+        limit: int = 10,
+        path_filter: str | None = None,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        zone_filter: frozenset[str] | None = None,  # NEW (#3785)
+    ) -> FederatedSearchResponse:
+        """Public federated search entry point with activity-event instrumentation (#3791).
+
+        Wraps :meth:`_search_impl` to record SEARCH events on success and
+        BLOCKED events on exceptions. Wall-clock latency is captured via
+        ``time.monotonic``. ``subject_zone`` is set to ``"federated"``
+        because the call spans zones; ``token_hash`` is not currently
+        extractable from the ``subject`` tuple so it is left as ``None``.
+        """
+        _start = time.monotonic()
+        try:
+            response = await self._search_impl(
+                query=query,
+                subject=subject,
+                search_type=search_type,
+                limit=limit,
+                path_filter=path_filter,
+                alpha=alpha,
+                fusion_method=fusion_method,
+                zone_filter=zone_filter,
+            )
+        except Exception:
+            emit(
+                kind=EventKind.SEARCH,
+                result=Result.BLOCKED,
+                actor_token_hash=None,
+                subject_zone="federated",
+                latency_ms=int((time.monotonic() - _start) * 1000),
+            )
+            raise
+        emit(
+            kind=EventKind.SEARCH,
+            result=Result.OK,
+            actor_token_hash=None,
+            subject_zone="federated",
+            subject_extra={
+                "hits": len(response.results) if hasattr(response, "results") else None,
+                "federated": True,
+            },
+            latency_ms=int((time.monotonic() - _start) * 1000),
+        )
+        return response
+
+    async def _search_impl(
         self,
         query: str,
         subject: tuple[str, str],

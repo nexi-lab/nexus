@@ -11,6 +11,7 @@ secret patterns as a backstop.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,4 +72,65 @@ class SchemaStripper:
         return StripResult(rows=out_rows, placeholders=placeholders)
 
 
-__all__ = ["SchemaStripper", "StripResult"]
+@dataclass
+class RegexMatch:
+    pattern_name: str
+    location: str
+    snippet: str
+
+
+@dataclass
+class RegexStripResult:
+    text: str
+    matches: list[RegexMatch]
+
+
+DEFAULT_REDACT_PATTERNS: list[dict[str, str]] = [
+    {"name": "anthropic", "pattern": r"sk-ant-[A-Za-z0-9_-]{20,}"},
+    {"name": "openai", "pattern": r"sk-[A-Za-z0-9]{20,}"},
+    {"name": "github_pat", "pattern": r"ghp_[A-Za-z0-9]{36}"},
+    {"name": "github_oauth", "pattern": r"gho_[A-Za-z0-9]{36}"},
+    {"name": "gitlab_pat", "pattern": r"glpat-[A-Za-z0-9_-]{20}"},
+    {"name": "slack_bot", "pattern": r"xoxb-[0-9]+-[0-9]+-[A-Za-z0-9]+"},
+    {"name": "aws_access_key", "pattern": r"AKIA[0-9A-Z]{16}"},
+    {"name": "google_api_key", "pattern": r"AIza[0-9A-Za-z_-]{35}"},
+]
+
+
+class RegexStripper:
+    """Backstop credential scanner over free-text fields."""
+
+    def __init__(self, patterns: list[dict[str, str]]) -> None:
+        self._compiled: list[tuple[str, re.Pattern[str]]] = []
+        for p in patterns:
+            try:
+                self._compiled.append((p["name"], re.compile(p["pattern"])))
+            except re.error as e:
+                raise ValueError(f"Invalid regex {p['name']!r}: {e}") from e
+
+    def scan(self, text: str, *, location: str) -> RegexStripResult:
+        if not text:
+            return RegexStripResult(text=text, matches=[])
+        matches: list[RegexMatch] = []
+        out = text
+        for name, rx in self._compiled:
+            for m in list(rx.finditer(out)):
+                matches.append(
+                    RegexMatch(
+                        pattern_name=name,
+                        location=location,
+                        snippet=m.group(0)[:8] + "…",
+                    )
+                )
+            out = rx.sub("***REDACTED***", out)
+        return RegexStripResult(text=out, matches=matches)
+
+
+__all__ = [
+    "SchemaStripper",
+    "StripResult",
+    "RegexStripper",
+    "RegexStripResult",
+    "RegexMatch",
+    "DEFAULT_REDACT_PATTERNS",
+]

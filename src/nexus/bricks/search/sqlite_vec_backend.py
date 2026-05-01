@@ -311,7 +311,8 @@ class SqliteVecBackend:
             return len(rows)
 
         async with self._get_loop_lock(self._op_locks):
-            return await self._run_native(_write)
+            written: int = await self._run_native(_write)
+            return written
 
     async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
         """Full-rebuild for *zone_id*: drop the zone's rows, then upsert all.
@@ -367,7 +368,8 @@ class SqliteVecBackend:
             return len(rows)
 
         async with self._get_loop_lock(self._op_locks):
-            return await self._run_native(_swap)
+            swapped: int = await self._run_native(_swap)
+            return swapped
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:
         """Delete rows by document id within *zone_id*.
@@ -390,7 +392,8 @@ class SqliteVecBackend:
                 return cur.rowcount or 0
 
         async with self._get_loop_lock(self._op_locks):
-            return await self._run_native(_delete)
+            deleted: int = await self._run_native(_delete)
+            return deleted
 
     async def search(
         self,

@@ -71,6 +71,32 @@ class TestVerifyIndex:
         assert result.is_clean is True
 
 
+class TestSetFieldDeterminism:
+    """Regression: frozenset fields (e.g. ConnectorManifest.capabilities) must
+    serialize in stable order across PYTHONHASHSEED values."""
+
+    def test_capabilities_serialize_stably(self, tmp_path):
+        from nexus.extensions.manifest import ConnectorManifest
+
+        m = ConnectorManifest(
+            name="multi",
+            module="m",
+            factory="F",
+            service_name="svc",
+            capabilities=frozenset({"alpha", "zeta", "mike", "bravo", "yankee"}),
+        )
+
+        out_a = tmp_path / "a.json"
+        out_b = tmp_path / "b.json"
+        build_index(manifests=[m], output_path=out_a, frozen_time="X")
+        build_index(manifests=[m], output_path=out_b, frozen_time="X")
+        assert out_a.read_text() == out_b.read_text()
+
+        payload = json.loads(out_a.read_text())
+        caps = payload["manifests"][0]["capabilities"]
+        assert caps == sorted(caps), f"capabilities not sorted: {caps}"
+
+
 class TestStrictDuplicateDetection:
     """Regression: two `_manifest.py` files with same (kind, name) must fail
     the build/verify hook instead of silently letting the first one win."""

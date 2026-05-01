@@ -24,9 +24,27 @@ from nexus.extensions.manifest import AnyManifest
 from nexus.extensions.store import INDEX_SCHEMA_VERSION
 
 
+def _canonicalize(value):
+    """Recursively normalize a JSON-serializable value for cross-process determinism.
+
+    Pydantic dumps frozensets in hash iteration order (PYTHONHASHSEED-dependent),
+    which makes the generated index drift between machines. We sort any list of
+    primitive values so frozenset-derived fields (e.g. ConnectorManifest.capabilities)
+    serialize stably without needing per-field custom serializers.
+    """
+    if isinstance(value, dict):
+        return {k: _canonicalize(v) for k, v in value.items()}
+    if isinstance(value, list):
+        canon = [_canonicalize(v) for v in value]
+        if all(isinstance(v, (str, int, float, bool)) or v is None for v in canon):
+            return sorted(canon, key=lambda x: (x is None, str(x)))
+        return canon
+    return value
+
+
 def _serialize(manifests: Iterable[AnyManifest], frozen_time: str | None) -> str:
     sorted_manifests = sorted(
-        (m.model_dump(mode="json") for m in manifests),
+        (_canonicalize(m.model_dump(mode="json")) for m in manifests),
         key=lambda d: (d["kind"], d["name"]),
     )
     payload = {

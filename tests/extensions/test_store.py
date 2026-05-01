@@ -697,6 +697,50 @@ class TestCheckSemantics:
         assert chosen not in report.missing_python_deps
 
 
+class TestProbeIsolation:
+    """Regression: a probe that raises something other than ImportError must
+    be reported as a probe failure, not crash check() / list / available_only."""
+
+    def test_probe_raising_runtime_error_is_recorded_as_failure(self, monkeypatch, tmp_path):
+        import sys
+
+        broken_probe = tmp_path / "broken_probe_module.py"
+        broken_probe.write_text("raise RuntimeError('native init failed')\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("broken_probe_module", None)
+
+        from nexus.extensions.manifest import PluginManifest
+
+        m = PluginManifest(
+            name="degraded",
+            module="m",
+            factory="F",
+            import_probes=("broken_probe_module",),
+        )
+        report = ManifestStore().check(m)
+        assert "broken_probe_module" in report.import_probe_failures
+        assert report.available is False
+
+    def test_probe_raising_oserror_does_not_crash(self, monkeypatch, tmp_path):
+        import sys
+
+        broken_probe = tmp_path / "oserror_probe.py"
+        broken_probe.write_text("raise OSError('no shared library on this platform')\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("oserror_probe", None)
+
+        from nexus.extensions.manifest import PluginManifest
+
+        m = PluginManifest(
+            name="needs_native",
+            module="m",
+            factory="F",
+            import_probes=("oserror_probe",),
+        )
+        report = ManifestStore().check(m)
+        assert "oserror_probe" in report.import_probe_failures
+
+
 class TestSlimDiscoveryFallback:
     """Regression: when the JSON index is absent (slim build), the runtime
     must still discover shipped `_manifest.py` modules via filesystem scan.

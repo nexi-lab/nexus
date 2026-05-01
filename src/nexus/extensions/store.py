@@ -305,7 +305,11 @@ class ManifestStore:
         for probe in manifest.import_probes:
             try:
                 importlib.import_module(probe)
-            except ImportError:
+            except Exception as exc:  # noqa: BLE001 — degraded probe must not crash check()
+                # Native libs, version skew, init-time RuntimeError, OSError on
+                # missing system deps — all valid "probe failed" signals. Logging
+                # at DEBUG keeps healthy paths quiet while preserving diagnostics.
+                logger.debug("Probe %s failed for %s: %s", probe, manifest.name, exc)
                 probe_failures.append(probe)
 
         missing_python: list[str] = []

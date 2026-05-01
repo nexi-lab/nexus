@@ -68,6 +68,11 @@ class ExtensionManifest(BaseModel):
     config_schema: str | None = None
     profile_gate: str | None = None
     import_probes: tuple[str, ...] = ()
+    metadata_complete: bool = True
+    """False when the manifest was synthesized from a partial source (e.g. the
+    legacy CONNECTOR_MANIFEST adapter that has no connection_args/capabilities).
+    Consumers should treat default-valued fields on ``metadata_complete=False``
+    records as unknown rather than authoritative."""
 
     @field_validator("name")
     @classmethod
@@ -88,7 +93,10 @@ class ConnectorManifest(ExtensionManifest):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     kind: Literal["connector"] = "connector"
-    service_name: str
+    service_name: str | None = None
+    """Canonical service id (matches nexus.backends.misc.service_map). May be
+    None for connectors that aren't mapped to a unified service (e.g. CAS
+    backends, local-only stores)."""
     capabilities: frozenset[str] = frozenset()
     connection_args: dict[str, ConnectionArg] = Field(default_factory=dict)
     user_scoped: bool = False

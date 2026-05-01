@@ -45,22 +45,43 @@ def _entry_points(group: str):
 def _validate_manifest(value: object, *, strict: bool, where: str) -> AnyManifest | None:
     """Coerce a loaded MANIFEST value into a typed AnyManifest.
 
-    Accepts an AnyManifest instance directly; for any other shape (dict,
-    None, stale type) defers to ``parse_manifest`` so a malformed MANIFEST
-    fails predictably instead of crashing _register on missing attributes.
+    Only accepts a discriminated-union subclass (ConnectorManifest,
+    BrickManifest, PluginManifest). The bare ExtensionManifest base IS
+    instantiable and only requires the base fields, so a manifest like
+    `MANIFEST = ExtensionManifest(kind='connector', ...)` would skip
+    per-kind required-field validation. We reject the base class explicitly
+    and route every accepted instance through parse_manifest so the index
+    contract is enforced uniformly.
     """
     if value is None:
         if strict:
             raise RuntimeError(f"no MANIFEST constant in {where}")
         logger.warning("No MANIFEST constant in %s; skipping", where)
         return None
-    # Already a typed instance? trust it.
+
     from nexus.extensions.manifest import ExtensionManifest
 
     if isinstance(value, ExtensionManifest):
-        return value
-    # Try to parse a dict-shaped manifest. parse_manifest accepts dict[str, Any];
-    # cast through Any to keep the strict-typing hook happy without suppression.
+        if type(value) is ExtensionManifest:
+            msg = (
+                f"MANIFEST in {where} is the abstract ExtensionManifest base; "
+                "use ConnectorManifest, BrickManifest, or PluginManifest"
+            )
+            if strict:
+                raise RuntimeError(msg)
+            logger.warning(msg)
+            return None
+        # Re-validate via the discriminated union so per-kind required fields
+        # get checked even when the user constructed a subclass directly.
+        try:
+            return parse_manifest(value.model_dump())
+        except Exception as exc:  # noqa: BLE001
+            if strict:
+                raise RuntimeError(f"MANIFEST in {where} failed re-validation: {exc}") from exc
+            logger.warning("Invalid MANIFEST in %s: %s", where, exc)
+            return None
+
+    # Try to parse a dict-shaped manifest.
     if not isinstance(value, dict):
         if strict:
             raise RuntimeError(f"MANIFEST in {where} is not a manifest instance or dict")
@@ -328,13 +349,21 @@ class ManifestStore:
         for entry in _LEGACY_CONNECTOR_MANIFEST:
             try:
                 runtime_deps = tuple(_translate_legacy_dep(d) for d in entry.runtime_deps)
+                # Preserve None service_name — several legacy entries
+                # (cas_*, local_connector, github_connector, gws_github)
+                # intentionally have no unified service mapping. Fabricating
+                # entry.name there would produce bogus service identifiers.
                 manifest = _CM(
                     name=entry.name,
                     module=entry.module_path,
                     factory=entry.class_name,
                     description=entry.description,
-                    service_name=entry.service_name or entry.name,
+                    service_name=entry.service_name,
                     runtime_deps=tuple(d for d in runtime_deps if d is not None),
+                    # Legacy inventory has no connection_args/capabilities/
+                    # config_mapping/user_scoped — flag the record as partial
+                    # so consumers don't treat empty defaults as authoritative.
+                    metadata_complete=False,
                 )
             except Exception as exc:  # noqa: BLE001 — isolation
                 logger.warning("Skipping legacy connector entry %s: %s", entry.name, exc)

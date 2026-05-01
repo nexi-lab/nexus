@@ -784,6 +784,94 @@ class TestLegacyConnectorInventory:
         reset_store()
 
 
+class TestBaseManifestRejection:
+    """Regression: bare ExtensionManifest base instances must be rejected so
+    per-kind required fields (e.g. service_name on connector, tier on brick)
+    are always validated."""
+
+    def test_base_extension_manifest_is_rejected(self, tmp_path):
+        from nexus.extensions.store import _load_manifest_module
+
+        bad = tmp_path / "base_man" / "_manifest.py"
+        bad.parent.mkdir()
+        bad.write_text(
+            "from nexus.extensions.manifest import ExtensionManifest\n"
+            "MANIFEST = ExtensionManifest(\n"
+            "    name='basesneaky', kind='connector',\n"
+            "    module='m', factory='F'\n"
+            ")\n"
+        )
+        # Non-strict: log + skip.
+        assert _load_manifest_module(bad) is None
+        # Strict: raise.
+        with pytest.raises(RuntimeError, match="abstract ExtensionManifest base"):
+            _load_manifest_module(bad, strict=True)
+
+    def test_subclass_instance_revalidated_for_required_fields(self):
+        """Even when a subclass instance is passed directly, missing per-kind
+        required fields must be caught — not silently trusted."""
+        # A BrickManifest instance via model_construct (skip Pydantic validation)
+        # to simulate a stale class. parse_manifest must catch the missing tier.
+        from nexus.extensions.manifest import BrickManifest
+        from nexus.extensions.store import _validate_manifest
+
+        with pytest.raises(Exception):  # noqa: B017,PT011
+            BrickManifest(name="missing_tier", module="m", factory="F", result_key="x")
+
+        # Direct shortcut: a partially-mocked instance reaches _validate_manifest.
+        # Build one safely via model_construct then assert it's caught.
+        bad = BrickManifest.model_construct(
+            name="incomplete",
+            kind="brick",
+            module="m",
+            factory="F",
+            result_key="r",
+            # tier intentionally missing
+        )
+        # _validate_manifest re-routes through parse_manifest which rejects.
+        result = _validate_manifest(bad, strict=False, where="test")
+        # Either rejected (None) or strictly equivalent to the constructed dict.
+        # The point is that no untyped attribute escapes.
+        assert result is None or result.tier in ("independent", "dependent")
+
+
+class TestLegacyAdapterMetadataCompleteness:
+    """Regression: legacy adapter records must flag themselves as partial so
+    consumers don't render empty connection_args/capabilities as authoritative."""
+
+    def test_legacy_records_flagged_metadata_incomplete(self):
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        store = get_store()
+        # Pick a connector that's only in the legacy inventory (not migrated).
+        m = store.get("path_s3", kind="connector")
+        assert m.metadata_complete is False, "legacy adapter must flag records as partial"
+        reset_store()
+
+    def test_migrated_records_remain_complete(self):
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        store = get_store()
+        # hn_connector has a real _manifest.py with full metadata.
+        m = store.get("hn_connector", kind="connector")
+        assert m.metadata_complete is True
+        reset_store()
+
+    def test_legacy_preserves_none_service_name(self):
+        """Connectors without a unified service mapping (cas_gcs, github_connector)
+        must keep service_name=None instead of being given a fabricated value."""
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        store = get_store()
+        # github_connector has service_name=None in the legacy inventory.
+        m = store.get("github_connector", kind="connector")
+        assert m.service_name is None, f"expected None, got {m.service_name!r}"
+        reset_store()
+
+
 class TestMalformedManifestIsolation:
     """Regression: a `_manifest.py` whose MANIFEST is the wrong type (dict,
     None, stale class) must not abort discovery for siblings."""

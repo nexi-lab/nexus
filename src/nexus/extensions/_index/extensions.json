@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-01T03:17:32Z",
+  "generated_at": "2026-05-01T03:25:24Z",
   "manifests": [
     {
       "config_schema": null,
@@ -8,6 +8,7 @@
       "factory": "create",
       "import_probes": [],
       "kind": "brick",
+      "metadata_complete": true,
       "module": "nexus.bricks.access_manifest.brick_factory",
       "name": "access_manifest",
       "produces": [],
@@ -57,6 +58,7 @@
         "httpx"
       ],
       "kind": "connector",
+      "metadata_complete": true,
       "module": "nexus.backends.connectors.hn.connector",
       "name": "hn_connector",
       "profile_gate": null,

@@ -13,6 +13,8 @@ from typing import Any
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from nexus.services.activity import EventKind, Result, emit
+
 logger = logging.getLogger("nexus.mcp.audit")
 
 
@@ -232,6 +234,19 @@ class MCPAuditLogMiddleware:
             _emit_stdout_record(record)
         except Exception:
             logger.warning("audit stdout emit failed", exc_info=True)
+
+        emit(
+            kind=EventKind.MCP_TOOL_CALL,
+            result=Result.OK if 200 <= status < 400 else Result.BLOCKED,
+            actor_token_hash=token_hash,
+            subject_zone=zone_id,
+            subject_extra={
+                "tool": tool_name or rpc_method or "unknown",
+                "rpc_method": rpc_method,
+            },
+            latency_ms=record["latency_ms"],
+            trace_id=None,
+        )
 
         # Schedule fire-and-forget publish and RETAIN the task reference
         # so it isn't garbage-collected mid-flight (asyncio docs warn about this).

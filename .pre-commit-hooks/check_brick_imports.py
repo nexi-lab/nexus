@@ -135,6 +135,8 @@ KNOWN_CORE_EXCEPTIONS: dict[str, list[str]] = {
     "nexus.bricks.rebac.enforcer": ["nexus.services"],
     # approvals.service emits activity events (#3791) via nexus.services.activity.
     "nexus.bricks.approvals.service": ["nexus.services"],
+    # mcp.middleware_audit emits activity events (#3791) via nexus.services.activity.
+    "nexus.bricks.mcp.middleware_audit": ["nexus.services"],
     # dispatch_consumer needs core.pipe + core.pipe_manager for DT_PIPE lifecycle
     "nexus.bricks.task_manager.dispatch_consumer": ["nexus.core"],
 }

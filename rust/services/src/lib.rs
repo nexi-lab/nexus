@@ -57,6 +57,13 @@ pub mod audit;
 // (the `*_zone` portability methods) live in a separate
 // `services::portability` module — they're not federation core.
 pub mod federation;
+// Generic Python-FFI service bridge — Rust dispatcher that forwards
+// `RustService::dispatch(method, payload)` calls to a Python service
+// instance via PyO3.  Lets every Python `@rpc_expose` service migrate
+// onto the Rust gRPC dispatch path without porting underlying business
+// logic.  Pure-Rust ports of internals follow as separate commits.
+#[cfg(feature = "python")]
+pub mod python_ffi;
 // ManagedAgentService — first Rust-flavoured service. Owns the
 // chat-with-me mailbox stamping hook, the workspace-boundary
 // teaching hook, and the `start_session_v1` / `cancel_v1` /

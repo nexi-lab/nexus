@@ -21,6 +21,7 @@ use pyo3::types::PyBytes;
 use crate::audit;
 use crate::federation::FederationService;
 use crate::managed_agent::ManagedAgentService;
+use crate::python_ffi::ServiceBridge;
 
 /// Install an `AuditHook` on `kernel` for `zone_id`, backed by a
 /// WAL-replicated DT_STREAM at `stream_path`.
@@ -113,6 +114,41 @@ fn nx_federation_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
     FederationService::install(&py_kernel.kernel_arc()).map_err(PyRuntimeError::new_err)
 }
 
+/// Generic FFI bridge install: register a Python service instance
+/// under `svc_name` in the kernel's `ServiceRegistry` so the gRPC
+/// `Call` dispatch path resolves `<wire_form>` RPCs to it via
+/// `ServiceBridge::dispatch` (Rust → Python over PyO3).
+///
+/// `method_prefix` is stripped from the wire-form method name before
+/// the Python attribute lookup — empty string means use the wire name
+/// verbatim.  Used by `mount` / `mcp` / `oauth` / `share_link` / etc.
+/// so the @rpc_expose decorator can be deleted while business logic
+/// stays Python (pending pure-Rust port as separate commits).
+///
+/// Python signature:
+///
+/// ```python
+/// nexus_runtime.nx_install_python_service_bridge(
+///     kernel,
+///     "mount",                 # Rust service name
+///     "",                      # method prefix to strip (or "")
+///     mount_service_instance,  # PyObject — the Python service instance
+/// )
+/// ```
+#[pyfunction]
+#[pyo3(name = "nx_install_python_service_bridge")]
+fn nx_install_python_service_bridge(
+    py: Python<'_>,
+    py_kernel: PyRef<'_, PyKernel>,
+    svc_name: &str,
+    method_prefix: &str,
+    py_service: pyo3::Bound<'_, pyo3::PyAny>,
+) -> PyResult<()> {
+    let _ = py;  // kept for parity with neighbour install hooks
+    let bridge = ServiceBridge::new(svc_name, method_prefix, py_service.unbind());
+    bridge.install(&py_kernel.kernel_arc()).map_err(PyRuntimeError::new_err)
+}
+
 /// Generic in-process Rust-service dispatch entry point.
 ///
 /// Mirrors the lookup the tonic `Call` handler runs internally
@@ -163,6 +199,10 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // FederationService — boot install. Replaces the Python
     // FederationRPCService at server/rpc/services/federation_rpc.py.
     m.add_function(wrap_pyfunction!(nx_federation_install, m)?)?;
+    // Generic Rust → Python FFI bridge — install hook for migrating
+    // any `@rpc_expose` Python service onto the Rust gRPC dispatch
+    // path without porting underlying business logic.
+    m.add_function(wrap_pyfunction!(nx_install_python_service_bridge, m)?)?;
     // ACP service wiring — hand-written hooks (boot install + Python
     // AgentRegistry bridge + on-terminate callbacks). Hosts
     // `AgentKind::UNMANAGED` agents (subprocess + ACP-over-stdio).

@@ -131,6 +131,8 @@ KNOWN_CORE_EXCEPTIONS: dict[str, list[str]] = {
     "nexus.bricks.search.search_service": ["nexus.core", "nexus.services"],
     # federated_search emits activity events (#3791) via nexus.services.activity.
     "nexus.bricks.search.federated_search": ["nexus.services"],
+    # rebac.enforcer emits activity events (#3791) via nexus.services.activity.
+    "nexus.bricks.rebac.enforcer": ["nexus.services"],
     # dispatch_consumer needs core.pipe + core.pipe_manager for DT_PIPE lifecycle
     "nexus.bricks.task_manager.dispatch_consumer": ["nexus.core"],
 }

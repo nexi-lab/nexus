@@ -121,6 +121,34 @@ def test_check_endpoint(monkeypatch):
     assert body["available"] is True
     assert body["name"] == "ok"
     assert body["kind"] == "plugin"
+    assert body["metadata_incomplete"] is False
+
+
+def test_check_endpoint_partial_manifest_surfaces_metadata_incomplete(monkeypatch):
+    """Regression: partial manifests must report metadata_incomplete=True
+    over the HTTP boundary so clients can distinguish "unverified" from
+    "failed dep probes"."""
+    from nexus.extensions.manifest import PluginManifest
+
+    _seed(
+        monkeypatch,
+        [
+            PluginManifest(
+                name="legacy",
+                module="m",
+                factory="F",
+                metadata_complete=False,
+            )
+        ],
+    )
+    resp = _client().get("/api/v2/extensions/plugin/legacy/check")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is False
+    assert body["metadata_incomplete"] is True
+    assert body["missing_python_deps"] == []
+    assert body["missing_binary_deps"] == []
+    assert body["missing_services"] == []
 
 
 def test_unauthenticated_is_rejected(monkeypatch, all_manifests):

@@ -40,6 +40,12 @@ class CheckReportResponse(BaseModel):
     missing_services: list[str] = Field(default_factory=list)
     import_probe_failures: list[str] = Field(default_factory=list)
     profile_gate_disabled: bool = False
+    metadata_incomplete: bool = False
+    """True when the manifest was synthesized from a partial source (e.g. the
+    legacy CONNECTOR_MANIFEST adapter or a class-style entry point) and lacks
+    the runtime_deps / import_probes needed to verify availability. Distinct
+    from ``available=False with missing deps``: empty missing-* lists plus
+    ``metadata_incomplete=True`` means "unverified", not "failed"."""
 
 
 def _validate_kind(kind: str | None) -> Kind | None:
@@ -99,4 +105,5 @@ async def check_endpoint(kind: str, name: str) -> CheckReportResponse:
         missing_services=list(report.missing_services),
         import_probe_failures=list(report.import_probe_failures),
         profile_gate_disabled=report.profile_gate_disabled,
+        metadata_incomplete=report.metadata_incomplete,
     )

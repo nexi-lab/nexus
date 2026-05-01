@@ -225,6 +225,16 @@ class ManifestStore:
         "nexus.plugins",
     )
 
+    # Maps each entry-point group to the manifest ``kind`` it must produce.
+    # Used to reject manifests whose discriminator disagrees with the group
+    # (e.g. a `nexus.plugins` entry that returns a ConnectorManifest), which
+    # would otherwise let third-party packages spoof other extension kinds.
+    _GROUP_TO_KIND: dict[str, Kind] = {
+        "nexus.connectors": "connector",
+        "nexus.bricks": "brick",
+        "nexus.plugins": "plugin",
+    }
+
     def load_entry_points(self) -> None:
         """Discover manifests via importlib.metadata entry points.
 
@@ -240,9 +250,36 @@ class ManifestStore:
            the plugin even when its optional dependencies are missing.
         """
         for group in self._ENTRY_POINT_GROUPS:
+            expected_kind = self._GROUP_TO_KIND[group]
             for ep in _entry_points(group):
                 manifest = self._manifest_from_entry_point(group, ep)
                 if manifest is None:
+                    continue
+                # Group ↔ kind contract: prevents a third-party package from
+                # registering a ConnectorManifest under nexus.plugins to
+                # shadow a built-in connector and intercept introspection.
+                if manifest.kind != expected_kind:
+                    logger.warning(
+                        "Entry point %s in group %s declares kind=%r; "
+                        "this group only accepts kind=%r. Skipping.",
+                        ep.name,
+                        group,
+                        manifest.kind,
+                        expected_kind,
+                    )
+                    continue
+                # Name contract: ep.name (the dist-controlled key) must match
+                # manifest.name. Mismatch means the wheel's metadata.toml
+                # disagrees with the embedded MANIFEST and we can't trust
+                # either as canonical.
+                if manifest.name != ep.name:
+                    logger.warning(
+                        "Entry point %s in group %s exposes manifest with name=%r; "
+                        "names must match. Skipping.",
+                        ep.name,
+                        group,
+                        manifest.name,
+                    )
                     continue
                 try:
                     self._register(manifest, source=f"entry_point:{group}/{ep.name}")
@@ -447,6 +484,13 @@ class ManifestStore:
                 distribution(d.name)
             except PackageNotFoundError:
                 missing_python.append(d.name)
+            except ValueError:
+                # Empty / malformed distribution name — treat as missing.
+                # Pydantic validates non-empty at parse time, but a manifest
+                # constructed in-process with model_construct() (skipping
+                # validation) could still slip through, and we'd rather
+                # report it as missing than crash the caller.
+                missing_python.append(d.name or "<empty>")
 
         missing_binary = [
             d.name
@@ -536,15 +580,24 @@ _STORE_LOCK = threading.Lock()
 def get_store() -> ManifestStore:
     """Return the process-wide manifest store, lazily populating on first call.
 
-    Population order:
+    Population order is **trust-tiered**: built-in / wheel-shipped sources
+    are loaded before third-party entry points so that — combined with the
+    store's first-source-wins precedence — a third-party package cannot
+    shadow a built-in extension by re-registering its name.
+
       1. JSON index shipped in the wheel (when present).
-      2. Entry points from importlib.metadata.
-      3. Filesystem scan of `nexus/{backends/connectors,bricks,plugins}/*/_manifest.py`.
+      2. Filesystem scan of `nexus/{backends/connectors,bricks,plugins}/*/_manifest.py`.
          Always runs in production: in slim builds the JSON index is excluded,
-         so this is the only source for shipped in-tree manifests. Cheap because
-         it only walks immediate children that contain a `_manifest.py` file.
-         The legacy `NEXUS_EXTENSIONS_DEV_SCAN` env var stays as a no-op for
-         compatibility — production behavior no longer depends on it.
+         so this is the only source for shipped in-tree manifests. Cheap
+         because it only walks immediate children that contain a
+         `_manifest.py` file. The legacy ``NEXUS_EXTENSIONS_DEV_SCAN`` env
+         var stays as a no-op for compatibility — production behavior no
+         longer depends on it.
+      3. Legacy connector inventory (``CONNECTOR_MANIFEST`` tuple) so the
+         new introspection surface lists every shipped connector even
+         before they're individually migrated to ``_manifest.py``.
+      4. Entry points from importlib.metadata. Loaded last so third-party
+         names cannot displace a built-in.
 
     Thread-safe: concurrent first calls all return the same fully-populated
     store. Population happens inside a lock; the unlocked fast path returns
@@ -564,23 +617,23 @@ def get_store() -> ManifestStore:
         index_path = Path(__file__).parent / "_index" / "extensions.json"
         store.load_json_index(index_path)
 
-        # 2. Entry points (third-party packages declaring nexus.* groups).
-        store.load_entry_points()
-
-        # 3. Filesystem scan of shipped manifest modules. The store's
+        # 2. Filesystem scan of shipped manifest modules. The store's
         #    first-source-wins precedence means this is a no-op for keys
-        #    already loaded from index/entry-points, so it adds zero overhead
-        #    when the index is fresh.
+        #    already loaded from the index, so it adds zero overhead when
+        #    the index is fresh.
         nexus_root = Path(__file__).parent.parent
         for subdir in ("backends/connectors", "bricks", "plugins"):
             root = nexus_root / subdir
             if root.exists():
                 store.load_filesystem(root)
 
-        # 4. Legacy connector inventory (CONNECTOR_MANIFEST tuple) so the
-        #    new introspection surface lists every shipped connector even
-        #    before they're individually migrated to _manifest.py.
+        # 3. Legacy connector inventory (CONNECTOR_MANIFEST tuple).
         store.load_legacy_connector_manifest()
+
+        # 4. Entry points (third-party packages). Loaded last so that the
+        #    built-in names registered above win on the first-source-wins
+        #    rule and third parties can only contribute new names.
+        store.load_entry_points()
 
         _STORE = store
         return store

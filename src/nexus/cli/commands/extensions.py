@@ -7,18 +7,27 @@ existing per-kind commands (`nexus connectors`, `nexus plugins`).
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import click
 
+from nexus.extensions.types import Kind
 
-def _format_status(report) -> str:  # noqa: ANN001 — local helper
+
+def _format_status(report: Any) -> str:
     if report.profile_gate_disabled:
         return "disabled"
-    return "available" if report.available else "missing-deps"
+    if report.available:
+        return "available"
+    # Distinguish "we tried and dependencies failed" from "we couldn't
+    # verify because the manifest is partial". Otherwise legacy adapters
+    # surface as generic missing-deps with empty missing_* lists.
+    if report.metadata_incomplete:
+        return "unverified"
+    return "missing-deps"
 
 
-def _row(manifest, report) -> dict[str, str]:  # noqa: ANN001 — local helper
+def _row(manifest: Any, report: Any) -> dict[str, str]:
     deps = ", ".join(d.name for d in manifest.runtime_deps) or "—"
     return {
         "kind": manifest.kind,
@@ -93,7 +102,8 @@ def list_cmd(
     from nexus.extensions.store import get_store
 
     profile_set = frozenset(profiles) if profiles else None
-    manifests = list_extensions(kind=kind, profile=profile_set, available_only=available_only)
+    typed_kind = cast(Kind, kind) if kind else None
+    manifests = list_extensions(kind=typed_kind, profile=profile_set, available_only=available_only)
 
     if fmt == "table":
         store = get_store()
@@ -135,7 +145,7 @@ def info_cmd(name: str, kind: str | None, fmt: str) -> None:
         manifest = candidates[0]
     else:
         try:
-            manifest = get_extension(name, kind=kind)
+            manifest = get_extension(name, kind=cast(Kind, kind))
         except KeyError as exc:
             raise click.ClickException(str(exc)) from exc
 
@@ -165,7 +175,7 @@ def check_cmd(name: str, kind: str | None) -> None:
         kind = candidates[0].kind
 
     try:
-        report = check_extension(name, kind=kind)
+        report = check_extension(name, kind=cast(Kind, kind))
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -178,6 +188,7 @@ def check_cmd(name: str, kind: str | None) -> None:
         "missing_services": list(report.missing_services),
         "import_probe_failures": list(report.import_probe_failures),
         "profile_gate_disabled": report.profile_gate_disabled,
+        "metadata_incomplete": report.metadata_incomplete,
     }
     click.echo(json.dumps(payload, indent=2, sort_keys=True))
 

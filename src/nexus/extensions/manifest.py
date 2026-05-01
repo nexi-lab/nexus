@@ -31,6 +31,18 @@ class RuntimeDep(BaseModel):
     extras: tuple[str, ...] = ()
     install_hint: str | None = None
 
+    @field_validator("name")
+    @classmethod
+    def _name_non_empty(cls, v: str) -> str:
+        # An empty name would crash availability probes downstream
+        # (``importlib.metadata.distribution("")`` raises ValueError;
+        # ``shutil.which("")`` returns None silently). Reject at parse time
+        # so a malformed manifest fails loudly instead of poisoning the
+        # availability check pipeline.
+        if not v or not v.strip():
+            raise ValueError("RuntimeDep.name must be a non-empty string")
+        return v
+
 
 # Reserved name patterns. Matched in order; first hit wins for the error message.
 _RESERVED_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (

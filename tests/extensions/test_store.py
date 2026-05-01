@@ -568,6 +568,87 @@ class TestEntryPointLegacyFormat:
         assert store.list() == []
 
 
+class TestEntryPointSpoofingDefense:
+    """Regression: third-party entry points must not be able to register a
+    manifest under a different kind than the group declares (e.g. a
+    ConnectorManifest under nexus.plugins) or with a name that disagrees
+    with ``ep.name``. Both vectors would let an external package shadow a
+    built-in extension and intercept introspection."""
+
+    def test_kind_mismatch_with_group_is_rejected(self, monkeypatch, tmp_path):
+        import sys
+
+        from nexus.extensions import store as store_mod
+
+        # nexus.plugins entry point exposes a ConnectorManifest -> reject.
+        manifest_mod = tmp_path / "fake_spoof_kind.py"
+        manifest_mod.write_text(
+            "from nexus.extensions.manifest import ConnectorManifest\n"
+            "MANIFEST = ConnectorManifest(name='spoof', module='m', factory='F',"
+            " service_name='svc')\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("fake_spoof_kind", None)
+
+        ep = _FakeEntryPoint(name="spoof", value="fake_spoof_kind")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.plugins" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+        assert store.list() == []
+
+    def test_name_mismatch_with_ep_is_rejected(self, monkeypatch, tmp_path):
+        import sys
+
+        from nexus.extensions import store as store_mod
+
+        manifest_mod = tmp_path / "fake_spoof_name.py"
+        manifest_mod.write_text(
+            "from nexus.extensions.manifest import PluginManifest\n"
+            "MANIFEST = PluginManifest(name='real_name', module='m', factory='F')\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("fake_spoof_name", None)
+
+        # ep.name says "advertised_name" but the embedded MANIFEST.name is
+        # "real_name". Refuse to register either.
+        ep = _FakeEntryPoint(name="advertised_name", value="fake_spoof_name")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.plugins" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+        assert store.list() == []
+
+    def test_builtin_wins_over_third_party_entry_point(self):
+        """get_store() loads built-ins before entry points so a third-party
+        wheel cannot shadow a built-in by reusing its name. Verified by
+        booting the real singleton and checking a known built-in connector
+        keeps its native source."""
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        store = get_store()
+        # `path_s3` is in CONNECTOR_MANIFEST (legacy) and ships in-tree.
+        # Whatever its source, it must NOT be from a third-party entry point.
+        try:
+            m = store.get("path_s3", kind="connector")
+        except KeyError:
+            return  # connector not present in this build; nothing to assert.
+        # Inspect the registered source label.
+        source = store._entries[(m.kind, m.name)][1]
+        assert not source.startswith("entry_point:"), (
+            f"built-in connector loaded from entry point: {source}"
+        )
+
+
 class TestStrictManifestLoader:
     """Regression: index build must fail loudly on broken manifests so CI
     catches them. Runtime loader stays warn-and-skip for sibling isolation."""
@@ -792,6 +873,43 @@ class TestSyntheticPluginPartialMetadata:
         store.load_entry_points()
         m = store.get("legacy", kind="plugin")
         assert m.metadata_complete is False
+
+
+class TestRuntimeDepNameValidation:
+    """Regression: ``RuntimeDep.name`` must reject empty/whitespace strings
+    at parse time. Empty distribution names crash
+    ``importlib.metadata.distribution("")`` with ValueError, which would
+    otherwise propagate out of ``check()`` and break every CLI/HTTP path
+    that hits the offending manifest."""
+
+    def test_empty_name_is_rejected_at_validation(self):
+        import pytest
+        from pydantic import ValidationError
+
+        from nexus.extensions.manifest import RuntimeDep
+
+        with pytest.raises(ValidationError):
+            RuntimeDep(kind="python", name="")
+        with pytest.raises(ValidationError):
+            RuntimeDep(kind="python", name="   ")
+
+    def test_check_treats_empty_name_as_missing_not_crash(self):
+        """Defense-in-depth: even a manifest constructed via
+        ``model_construct`` (skipping validation) must not crash check()."""
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        bad_dep = RuntimeDep.model_construct(kind="python", name="")
+        m = PluginManifest.model_construct(
+            name="weird",
+            kind="plugin",
+            module="m",
+            factory="F",
+            runtime_deps=(bad_dep,),
+            metadata_complete=True,
+        )
+        report = ManifestStore().check(m)
+        assert report.available is False
+        assert "<empty>" in report.missing_python_deps or "" in report.missing_python_deps
 
 
 class TestPartialManifestCheck:

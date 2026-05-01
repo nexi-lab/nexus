@@ -441,6 +441,12 @@ class ZoneImportOptions:
     batch_size: int = 1000
     max_concurrent_writes: int = 10
 
+    # Placeholder injection (v2+)
+    require_no_placeholders: bool = True
+    injections: dict[str, str] = field(default_factory=dict)
+    rebuild_embeddings: bool = False
+    force: bool = False
+
     def __post_init__(self) -> None:
         """Validate options after initialization."""
         if isinstance(self.bundle_path, str):

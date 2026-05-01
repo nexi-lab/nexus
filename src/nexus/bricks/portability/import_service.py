@@ -12,6 +12,7 @@ References:
 """
 
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +34,55 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
+
+_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z0-9_]+)\}", re.IGNORECASE)
+
+
+def _scan_for_placeholders(rows: list[dict]) -> set[str]:
+    """Return the set of ``${NAME}`` placeholder names found across all string values.
+
+    Args:
+        rows: List of row dicts to scan.
+
+    Returns:
+        Set of placeholder names (e.g. ``{"PROVIDER_KEY_anthropic"}``).
+    """
+    found: set[str] = set()
+    for row in rows:
+        for v in row.values():
+            if isinstance(v, str):
+                for m in _PLACEHOLDER_RE.finditer(v):
+                    found.add(m.group(1))
+    return found
+
+
+def _apply_injections(rows: list[dict], injections: dict[str, str]) -> list[dict]:
+    """Substitute every ``${NAME}`` placeholder for its injected value.
+
+    Placeholders whose names are not present in *injections* are left as-is
+    (so a subsequent :func:`_scan_for_placeholders` call will still find them).
+
+    Args:
+        rows: List of row dicts to process.
+        injections: Mapping of placeholder name → replacement string.
+
+    Returns:
+        New list of row dicts with substitutions applied.
+    """
+    if not injections:
+        return rows
+
+    def _sub(m: re.Match[str]) -> str:
+        return injections.get(m.group(1), m.group(0))
+
+    out: list[dict] = []
+    for row in rows:
+        new_row = dict(row)
+        for k, v in row.items():
+            if isinstance(v, str):
+                new_row[k] = _PLACEHOLDER_RE.sub(_sub, v)
+        out.append(new_row)
+    return out
 
 
 def _create_import_context(zone_id: str | None = None) -> "OperationContext":

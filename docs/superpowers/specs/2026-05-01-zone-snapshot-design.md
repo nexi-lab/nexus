@@ -158,15 +158,19 @@ Manifest declares `embedding_model` + `embedding_dim`. Restore behavior:
 
 ## CLI surface
 
+The top-level verb is `nexus archive` to avoid collision with the existing
+`nexus snapshot` group (which manages MVCC transactional filesystem snapshots,
+a different concept).
+
 | Command | Purpose |
 |---|---|
-| `nexus snapshot create [--zone <z>] [--output FILE] [--audit --from <d1> --to <d2>]` | Build a full snapshot of one zone or the whole hub. Audit mode filters to the date window and bundles the activity event slice. |
-| `nexus snapshot verify <file>` | Signature + Merkle + per-file SHA + version compatibility check. Exit 0 = valid, non-zero with structured error otherwise. |
-| `nexus snapshot restore <file> [--target <host>] [--require-trusted] [--rebuild-embeddings] [--force] [--inject KEY=VALUE]…` | Verify → strip-check → re-inject placeholders → write to fresh nexus. Refuses if target has existing zones unless `--force`. |
-| `nexus snapshot diff <a> <b> [--detail]` | Per-zone summary of doc/policy/embedding deltas. `--detail` lists doc paths and SHAs. |
-| `nexus snapshot inspect <file>` | Dump manifest + file tree without touching the running nexus. |
-| `nexus snapshot keys rotate` | Rotate signing keypair (keeps old pubkey verifiable for prior snapshots). |
-| `nexus snapshot keys trust <pubkey-b64> [--label <name>]` | Add a signer to TOFU trust store. |
+| `nexus archive create [--zone <z>] [--output FILE] [--audit --from <d1> --to <d2>]` | Build a full archive of one zone or the whole hub. Audit mode filters to the date window and bundles the activity event slice. |
+| `nexus archive verify <file>` | Signature + Merkle + per-file SHA + version compatibility check. Exit 0 = valid, non-zero with structured error otherwise. |
+| `nexus archive restore <file> [--target <host>] [--require-trusted] [--rebuild-embeddings] [--force] [--inject KEY=VALUE]…` | Verify → strip-check → re-inject placeholders → write to fresh nexus. Refuses if target has existing zones unless `--force`. |
+| `nexus archive diff <a> <b> [--detail]` | Per-zone summary of doc/policy/embedding deltas. `--detail` lists doc paths and SHAs. |
+| `nexus archive inspect <file>` | Dump manifest + file tree without touching the running nexus. |
+| `nexus archive keys rotate` | Rotate signing keypair (keeps old pubkey verifiable for prior archives). |
+| `nexus archive keys trust <pubkey-b64> [--label <name>]` | Add a signer to TOFU trust store. |
 
 CLI documented in `CLI.md`.
 

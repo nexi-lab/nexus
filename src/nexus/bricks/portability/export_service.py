@@ -21,7 +21,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.portability.models import (
     BUNDLE_PATHS,
@@ -32,6 +32,11 @@ from nexus.bricks.portability.models import (
     ZoneExportOptions,
 )
 from nexus.bricks.portability.signer import ArchiveSigner, canonical_json_bytes
+from nexus.bricks.portability.strip import (
+    DEFAULT_REDACT_PATTERNS,
+    RegexStripper,
+    SchemaStripper,
+)
 
 if TYPE_CHECKING:
     from nexus.contracts.portability_types import PortabilityFSProtocol
@@ -486,6 +491,55 @@ class ZoneExportService:
                     tar.add(item, arcname=str(arcname))
 
         logger.info("Created bundle: %s (%d bytes)", output_path, output_path.stat().st_size)
+
+
+def _apply_credential_stripping(
+    rows_by_table: dict[str, list[dict[str, Any]]],
+    *,
+    workspace_root: str | None,
+    extra_patterns: list[dict[str, str]] | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], list]:
+    """Run schema + regex strip across every row group.
+
+    Layer 1 (SchemaStripper): nulls known sensitive columns by table + field
+    name and replaces them with ``${PLACEHOLDER_NAME}`` strings.
+
+    Layer 2 (RegexStripper): scans every string value for known credential
+    patterns (API keys, PATs, etc.) as a backstop.
+
+    Args:
+        rows_by_table: Mapping of table name to list of row dicts.
+        workspace_root: Workspace root path for path-normalisation rules in
+            SchemaStripper (pass ``None`` to skip).
+        extra_patterns: Additional regex patterns to append to
+            ``DEFAULT_REDACT_PATTERNS`` (each dict has ``name`` + ``pattern``).
+
+    Returns:
+        A tuple of ``(stripped_rows_by_table, placeholders_list)`` where
+        *placeholders_list* is a flat list of :class:`PlaceholderRef` objects
+        collected across all tables.
+    """
+    schema = SchemaStripper(workspace_root=workspace_root)
+    patterns = list(DEFAULT_REDACT_PATTERNS) + list(extra_patterns or [])
+    regex = RegexStripper(patterns)
+
+    out: dict[str, list[dict[str, Any]]] = {}
+    placeholders: list = []
+
+    for table, rows in rows_by_table.items():
+        schema_result = schema.strip_table(table, rows)
+        cleaned: list[dict[str, Any]] = []
+        for i, row in enumerate(schema_result.rows):
+            new_row = dict(row)
+            for k, v in row.items():
+                if isinstance(v, str):
+                    scan = regex.scan(v, location=f"{table}:row={i}:field={k}")
+                    new_row[k] = scan.text
+            cleaned.append(new_row)
+        out[table] = cleaned
+        placeholders.extend(schema_result.placeholders)
+
+    return out, placeholders
 
 
 # Convenience function for CLI usage

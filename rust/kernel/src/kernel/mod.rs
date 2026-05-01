@@ -1580,9 +1580,18 @@ impl Kernel {
                 )?;
                 // Federation wire-mount: register apply-cb + replicate
                 // the DT_MOUNT entry so peers see the mount via raft
-                // commit.  No-op when federation is inactive.
-                if federation_active && !zone_id.is_empty() {
-                    let _ = coordinator.wire_mount(self, "root", path, zone_id);
+                // commit.  Only fires for cross-zone federation mounts
+                // (target_zone != parent_zone) — same-zone mounts (e.g.
+                // typed connector backends like openai/anthropic where
+                // zone_id defaults to "root" and the parent is also
+                // "root") are local, non-replicated mounts and must
+                // keep the backend the provider just constructed.
+                // Without the same-zone guard, wire_mount_core
+                // overwrites our typed backend with the parent zone's
+                // backend (regression caught by openai unit tests).
+                let parent_zone = "root";
+                if federation_active && !zone_id.is_empty() && zone_id != parent_zone {
+                    let _ = coordinator.wire_mount(self, parent_zone, path, zone_id);
                 }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),

@@ -17,7 +17,7 @@ MANIFEST = ConnectorManifest(
     module="nexus.backends.connectors.hn.connector",
     factory="PathHNBackend",
     description="Read-only HackerNews public API as a virtual filesystem",
-    service_name="hn",
+    service_name="hackernews",
     capabilities=frozenset({"readme_doc"}),
     connection_args={
         "cache_ttl": ConnectionArg(

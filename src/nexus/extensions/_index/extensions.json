@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-01T03:11:44Z",
+  "generated_at": "2026-05-01T03:17:32Z",
   "manifests": [
     {
       "config_schema": null,
@@ -61,7 +61,7 @@
       "name": "hn_connector",
       "profile_gate": null,
       "runtime_deps": [],
-      "service_name": "hn",
+      "service_name": "hackernews",
       "user_scoped": false
     }
   ],

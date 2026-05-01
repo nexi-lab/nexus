@@ -12,6 +12,7 @@ Only resolve_factory imports impl, and only on demand.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import json
@@ -41,11 +42,45 @@ def _entry_points(group: str):
     return _stdlib_entry_points(group=group)
 
 
+def _validate_manifest(value: object, *, strict: bool, where: str) -> AnyManifest | None:
+    """Coerce a loaded MANIFEST value into a typed AnyManifest.
+
+    Accepts an AnyManifest instance directly; for any other shape (dict,
+    None, stale type) defers to ``parse_manifest`` so a malformed MANIFEST
+    fails predictably instead of crashing _register on missing attributes.
+    """
+    if value is None:
+        if strict:
+            raise RuntimeError(f"no MANIFEST constant in {where}")
+        logger.warning("No MANIFEST constant in %s; skipping", where)
+        return None
+    # Already a typed instance? trust it.
+    from nexus.extensions.manifest import ExtensionManifest
+
+    if isinstance(value, ExtensionManifest):
+        return value
+    # Try to parse a dict-shaped manifest. parse_manifest accepts dict[str, Any];
+    # cast through Any to keep the strict-typing hook happy without suppression.
+    if not isinstance(value, dict):
+        if strict:
+            raise RuntimeError(f"MANIFEST in {where} is not a manifest instance or dict")
+        logger.warning("MANIFEST in %s is not a manifest instance or dict", where)
+        return None
+    try:
+        return parse_manifest(value)
+    except Exception as exc:  # noqa: BLE001 — surface in logs / strict raise
+        if strict:
+            raise RuntimeError(f"MANIFEST in {where} is not a valid manifest: {exc}") from exc
+        logger.warning("Invalid MANIFEST in %s: %s", where, exc)
+        return None
+
+
 def _load_manifest_module(manifest_file: Path, *, strict: bool = False) -> AnyManifest | None:
     """Import a `_manifest.py` file in isolation and return its MANIFEST constant.
 
-    ``strict=False`` (runtime default) — broken or MANIFEST-less modules are
-    logged at WARN level and return None so sibling extensions keep loading.
+    ``strict=False`` (runtime default) — broken modules, missing MANIFEST,
+    and invalid MANIFEST shapes are logged at WARN level and return None so
+    sibling extensions keep loading.
 
     ``strict=True`` (index build/verify) — any failure raises so the CI hook
     catches a malformed in-tree manifest instead of silently dropping it from
@@ -65,12 +100,23 @@ def _load_manifest_module(manifest_file: Path, *, strict: bool = False) -> AnyMa
         logger.warning("Skipping broken manifest at %s: %s", manifest_file, exc)  # noqa: BLE001
         return None
 
-    manifest = getattr(module, "MANIFEST", None)
-    if manifest is None:
-        if strict:
-            raise RuntimeError(f"no MANIFEST constant in {manifest_file}")
-        logger.warning("No MANIFEST constant in %s; skipping", manifest_file)
-    return manifest
+    raw = getattr(module, "MANIFEST", None)
+    return _validate_manifest(raw, strict=strict, where=str(manifest_file))
+
+
+def _translate_legacy_dep(dep: object) -> object:
+    """Convert a legacy nexus.backends.base.runtime_deps.RuntimeDep to a new
+    nexus.extensions.manifest.RuntimeDep, or return None if untranslatable."""
+    from nexus.extensions.manifest import RuntimeDep as _RD
+
+    cls_name = type(dep).__name__
+    if cls_name == "PythonDep":
+        return _RD(kind="python", name=getattr(dep, "package", None) or dep.module)
+    if cls_name == "BinaryDep":
+        return _RD(kind="binary", name=dep.name)
+    if cls_name == "ServiceDep":
+        return _RD(kind="service", name=dep.name)
+    return None
 
 
 @dataclass(frozen=True)
@@ -217,11 +263,8 @@ class ManifestStore:
         except Exception as exc:  # noqa: BLE001 — isolation
             logger.warning("Failed to load entry point %s in group %s: %s", ep.name, group, exc)
             return None
-        manifest = getattr(module, "MANIFEST", None)
-        if manifest is None:
-            logger.warning("Entry point %s in group %s has no MANIFEST", ep.name, group)
-            return None
-        return manifest
+        raw = getattr(module, "MANIFEST", None)
+        return _validate_manifest(raw, strict=False, where=f"entry_point:{group}/{ep.name}")
 
     def load_json_index(self, path: Path) -> None:
         """Load manifests from a pre-built `extensions.json` index.
@@ -260,6 +303,46 @@ class ManifestStore:
                 self._register(manifest, source="json_index")
             except DuplicateManifestError as exc:
                 logger.warning("Duplicate index manifest: %s", exc)
+
+    def load_legacy_connector_manifest(self) -> None:
+        """Bridge the legacy ``CONNECTOR_MANIFEST`` tuple into this store.
+
+        ``nexus.backends._manifest.CONNECTOR_MANIFEST`` predates this layer and
+        is the source of truth for built-in connector inventory. Reading it
+        does NOT import any connector module — the dataclass entries carry
+        only metadata. Without this adapter the new introspection surface
+        would silently omit every shipped connector except the few migrated
+        to ``_manifest.py``, producing false negatives in the CLI / HTTP /
+        ``available_only`` paths.
+        """
+        try:
+            from nexus.backends._manifest import (
+                CONNECTOR_MANIFEST as _LEGACY_CONNECTOR_MANIFEST,
+            )
+        except ImportError as exc:
+            logger.debug("Legacy connector manifest not present: %s", exc)
+            return
+
+        from nexus.extensions.manifest import ConnectorManifest as _CM
+
+        for entry in _LEGACY_CONNECTOR_MANIFEST:
+            try:
+                runtime_deps = tuple(_translate_legacy_dep(d) for d in entry.runtime_deps)
+                manifest = _CM(
+                    name=entry.name,
+                    module=entry.module_path,
+                    factory=entry.class_name,
+                    description=entry.description,
+                    service_name=entry.service_name or entry.name,
+                    runtime_deps=tuple(d for d in runtime_deps if d is not None),
+                )
+            except Exception as exc:  # noqa: BLE001 — isolation
+                logger.warning("Skipping legacy connector entry %s: %s", entry.name, exc)
+                continue
+            # The new _manifest.py path wins (it loaded first via the index
+            # or fs scan). Legacy entry is the fallback.
+            with contextlib.suppress(DuplicateManifestError):
+                self._register(manifest, source="legacy_inventory")
 
     def load_filesystem(self, root: Path) -> None:
         """Scan `root/*/  _manifest.py` and register every `MANIFEST` constant.
@@ -421,6 +504,11 @@ def get_store() -> ManifestStore:
             root = nexus_root / subdir
             if root.exists():
                 store.load_filesystem(root)
+
+        # 4. Legacy connector inventory (CONNECTOR_MANIFEST tuple) so the
+        #    new introspection surface lists every shipped connector even
+        #    before they're individually migrated to _manifest.py.
+        store.load_legacy_connector_manifest()
 
         _STORE = store
         return store

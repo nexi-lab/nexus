@@ -741,6 +741,78 @@ class TestProbeIsolation:
         assert "oserror_probe" in report.import_probe_failures
 
 
+class TestLegacyConnectorInventory:
+    """Regression: every shipped connector must show up in the store, not
+    only those individually migrated to `_manifest.py`. The legacy adapter
+    bridges nexus.backends._manifest.CONNECTOR_MANIFEST."""
+
+    def test_known_built_in_connectors_are_listed(self):
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        store = get_store()
+        names = {m.name for m in store.list(kind="connector")}
+        # Sample of well-known built-ins that pre-date this PR. If any of
+        # these go missing, the new introspection surface is lying.
+        expected = {"path_s3", "path_gcs", "path_local", "gdrive_connector", "hn_connector"}
+        missing = expected - names
+        assert not missing, f"missing built-in connectors from store: {missing}"
+        reset_store()
+
+    def test_legacy_adapter_does_not_import_connector_impl(self, monkeypatch):
+        """Legacy adapter is metadata-only — it must not import any
+        connector module from nexus.backends.storage.* / .connectors.*."""
+        import sys
+
+        from nexus.extensions.store import get_store, reset_store
+
+        reset_store()
+        before = set(sys.modules)
+        get_store()
+        after = set(sys.modules)
+        new = after - before
+        bad = [
+            m
+            for m in new
+            if (
+                m.startswith("nexus.backends.storage.")
+                or m.startswith("nexus.backends.connectors.")
+                and not m.endswith("._manifest")
+            )
+        ]
+        assert not bad, f"legacy adapter triggered impl imports: {bad}"
+        reset_store()
+
+
+class TestMalformedManifestIsolation:
+    """Regression: a `_manifest.py` whose MANIFEST is the wrong type (dict,
+    None, stale class) must not abort discovery for siblings."""
+
+    def test_dict_manifest_is_skipped(self, tmp_path):
+        from nexus.extensions.store import _load_manifest_module
+
+        bad = tmp_path / "dict_man" / "_manifest.py"
+        bad.parent.mkdir()
+        bad.write_text("MANIFEST = {'not': 'a manifest'}\n")
+
+        # Default — log + skip.
+        assert _load_manifest_module(bad) is None
+        # Strict — raise.
+        with pytest.raises(RuntimeError, match="not a valid manifest|no MANIFEST"):
+            _load_manifest_module(bad, strict=True)
+
+    def test_arbitrary_object_manifest_is_skipped(self, tmp_path):
+        from nexus.extensions.store import _load_manifest_module
+
+        bad = tmp_path / "obj_man" / "_manifest.py"
+        bad.parent.mkdir()
+        bad.write_text("class X: pass\nMANIFEST = X()\n")
+
+        assert _load_manifest_module(bad) is None
+        with pytest.raises(RuntimeError):
+            _load_manifest_module(bad, strict=True)
+
+
 class TestSlimDiscoveryFallback:
     """Regression: when the JSON index is absent (slim build), the runtime
     must still discover shipped `_manifest.py` modules via filesystem scan.

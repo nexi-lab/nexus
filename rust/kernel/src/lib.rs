@@ -56,13 +56,6 @@ pub(crate) use core::lock::semaphore;
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
 
-// NostrBackend ObjectStore stub — chat-with-me remote-identity leg.
-// Lives kernel-side here; later migration commits move it to
-// `rust/backends/src/nostr/` (the canonical home for ObjectStore
-// drivers per the post-#3932 architecture).
-#[cfg(feature = "nostr")]
-mod nostr_backend;
-
 // `acp` and `managed_agent` modules used to live here; both moved to
 // the `services` crate (`rust/services/src/{acp,managed_agent}/`) so
 // the kernel↔services dep direction stays one-way (services depends

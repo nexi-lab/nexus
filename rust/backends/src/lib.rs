@@ -18,7 +18,7 @@
 //!     api/                — External API transport (formerly Python connectors/)
 //!       ai/{anthropic,openai}/  — LLM connectors (SSE → DT_STREAM → CAS)
 //!       google/{gdrive,gmail}/  — Google API connectors
-//!       social/{slack,x,hn,nostr}/ — social/feed connectors
+//!       social/{slack,x,hn}/ — social/feed connectors
 //!       cli.rs            — CLI command-output backend
 //!   storage/              — Composed ObjectStore impls
 //!     cas_local.rs        — CasLocalBackend (was _backend_impls)

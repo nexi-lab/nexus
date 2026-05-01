@@ -25,18 +25,21 @@ impl Kernel {
         path: &str,
         ctx: &OperationContext,
     ) -> Result<SysReadResult, KernelError> {
+        // Outer entry point — one DT_LINK follow allowed (max_link_hops=1).
+        // The recursive call below passes 0 so a chained link rejects.
+        self.sys_read_with_link_depth(path, ctx, 1)
+    }
+
+    fn sys_read_with_link_depth(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        max_link_hops: u8,
+    ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
         // 1. Validate
         validate_path_fast(path)?;
-
-        // 1a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
-        // Non-link paths borrow the input; link paths produce an owned
-        // String for the resolved target. The rest of the syscall sees
-        // the resolved path and is otherwise indistinguishable from a
-        // direct read at the target.
-        let resolved = self.resolve_path_through_link(path)?;
-        let path = resolved.as_ref();
 
         // 1b. Trie-resolved virtual paths (§11 trie resolution) — Python's resolve_read
         // should have handled these before reaching us; treat as missing.
@@ -102,6 +105,20 @@ impl Kernel {
                 }
             }
         };
+
+        // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // Resolution runs AFTER routing + dcache+metastore populate so
+        // cold-cache and cross-mount links resolve against authoritative
+        // metadata instead of the hot dcache. Recursive call with
+        // `max_link_hops=0` rejects chained links via this same branch.
+        if let Some(target) = Self::dt_link_target(path, &entry)? {
+            if max_link_hops == 0 {
+                return Err(KernelError::PermissionDenied(format!(
+                    "DT_LINK chain rejected (ELOOP) at {path}"
+                )));
+            }
+            return self.sys_read_with_link_depth(target, ctx, max_link_hops - 1);
+        }
 
         // DT_PIPE — try Rust IPC registry (nowait pop)
         if entry.entry_type == DT_PIPE {
@@ -303,6 +320,19 @@ impl Kernel {
         content: &[u8],
         offset: u64,
     ) -> Result<SysWriteResult, KernelError> {
+        // Outer entry point — one DT_LINK follow allowed (max_link_hops=1).
+        // The recursive call below passes 0 so a chained link rejects.
+        self.sys_write_with_link_depth(path, ctx, content, offset, 1)
+    }
+
+    fn sys_write_with_link_depth(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        content: &[u8],
+        offset: u64,
+        max_link_hops: u8,
+    ) -> Result<SysWriteResult, KernelError> {
         let miss = || {
             Ok(SysWriteResult {
                 hit: false,
@@ -320,13 +350,6 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
-
-        // 1a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
-        // Same one-hop semantics as sys_read; sys_setattr's link branch
-        // rejects self-loops at write time so the resolver only handles
-        // chain rejection here.
-        let resolved = self.resolve_path_through_link(path)?;
-        let path = resolved.as_ref();
 
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
@@ -355,8 +378,43 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 3. DCache check — DT_PIPE/DT_STREAM: try Rust IPC registry
-        if let Some(entry) = self.dcache.get_entry(path) {
+        // 3. Load entry (dcache + metastore fallback) — needed both for
+        //    DT_LINK transparent follow (cold-cache + cross-mount safe)
+        //    and the existing DT_PIPE / DT_STREAM IPC registry dispatch.
+        //    The metastore fallback is what fixes the cold-cache DT_LINK
+        //    bug; for DT_PIPE / DT_STREAM it's a no-op in practice (those
+        //    entries normally only land in dcache via the IPC registry
+        //    setattr path) but is harmless on the rare cross-call cold
+        //    path.
+        let entry = self.dcache.get_entry(path).or_else(|| {
+            self.with_metastore(&route.mount_point, |ms| {
+                ms.get(path).ok().flatten().map(|m| (&m).into())
+            })
+            .flatten()
+        });
+
+        // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
+        // Recursive call with `max_link_hops=0` rejects chained links via
+        // this same branch.
+        if let Some(e) = &entry {
+            if let Some(target) = Self::dt_link_target(path, e)? {
+                if max_link_hops == 0 {
+                    return Err(KernelError::PermissionDenied(format!(
+                        "DT_LINK chain rejected (ELOOP) at {path}"
+                    )));
+                }
+                return self.sys_write_with_link_depth(
+                    target,
+                    ctx,
+                    content,
+                    offset,
+                    max_link_hops - 1,
+                );
+            }
+        }
+
+        // 3b. DT_PIPE / DT_STREAM: try Rust IPC registry
+        if let Some(entry) = entry {
             if entry.entry_type == DT_PIPE {
                 if let Some(buf) = self.pipe_manager.get(path) {
                     match buf.push(content) {
@@ -1228,6 +1286,21 @@ impl Kernel {
         dst_path: &str,
         ctx: &OperationContext,
     ) -> Result<SysCopyResult, KernelError> {
+        // Outer entry point — one DT_LINK follow allowed on `src_path`.
+        // The recursive call below passes 0 so a chained link rejects.
+        // `dst` is never a link follow target — copying INTO an existing
+        // link is a write operation that goes through sys_write's link
+        // follow path separately.
+        self.sys_copy_with_link_depth(src_path, dst_path, ctx, 1)
+    }
+
+    fn sys_copy_with_link_depth(
+        &self,
+        src_path: &str,
+        dst_path: &str,
+        ctx: &OperationContext,
+        max_link_hops: u8,
+    ) -> Result<SysCopyResult, KernelError> {
         let miss = || {
             Ok(SysCopyResult {
                 hit: false,
@@ -1242,16 +1315,6 @@ impl Kernel {
         // 1. Validate both paths
         validate_path_fast(src_path)?;
         validate_path_fast(dst_path)?;
-
-        // 1a. DT_LINK transparent follow on src — copy targets the
-        // content the link points at, not the link's metadata entry.
-        // (`cp -P` style "copy the link itself" is intentionally not
-        // the default; sys_unlink and sys_rename keep operating on the
-        // link entry directly.) dst is never a link follow target —
-        // copying INTO an existing link is a write operation that goes
-        // through sys_write's link follow path separately.
-        let src_resolved = self.resolve_path_through_link(src_path)?;
-        let src_path = src_resolved.as_ref();
 
         // 2. Route both (read access for src, write access for dst)
         let src_route = match self.vfs_router.route(src_path, &ctx.zone_id) {
@@ -1278,6 +1341,23 @@ impl Kernel {
                 }
             }
         };
+
+        // 3a. DT_LINK transparent follow on src — copy targets the
+        // content the link points at, not the link's metadata entry.
+        // (`cp -P` style "copy the link itself" is intentionally not
+        // the default; sys_unlink and sys_rename keep operating on the
+        // link entry directly.) Resolution runs AFTER routing + metadata
+        // load so cold-cache and cross-mount links resolve against
+        // authoritative metadata. Recursive call with `max_link_hops=0`
+        // rejects chained links via this same branch.
+        if let Some(target) = Self::dt_link_target(src_path, &src_meta)? {
+            if max_link_hops == 0 {
+                return Err(KernelError::PermissionDenied(format!(
+                    "DT_LINK chain rejected (ELOOP) at {src_path}"
+                )));
+            }
+            return self.sys_copy_with_link_depth(target, dst_path, ctx, max_link_hops - 1);
+        }
 
         // 4. Reject non-regular files (§12e: explicit error, not miss)
         if src_meta.entry_type != DT_REG {

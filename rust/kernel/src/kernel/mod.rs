@@ -1339,38 +1339,39 @@ impl Kernel {
         self.dcache.put(path, entry);
     }
 
-    /// Resolve `path` through DT_LINK indirection for content-touching
-    /// syscalls (`sys_read`, `sys_write`, etc.). Non-link paths and
-    /// missing entries borrow the input — zero allocation on the hot
-    /// path. Link entries follow one hop with cycle detection (see
-    /// `DCache::resolve_link`); chain / self-loop / missing-target
-    /// failures surface as `KernelError::PermissionDenied` so the
-    /// existing kernel-error handling chain doesn't need a new variant.
+    /// DT_LINK transparent follow for `sys_read` / `sys_write` /
+    /// `sys_copy`. Returns the absolute target path for a DT_LINK
+    /// `entry`, `None` for non-link entries (caller continues with the
+    /// original path). Self-loop and missing-target are surfaced here;
+    /// chained-link rejection is the caller's responsibility — the
+    /// recursive sys_* invocation re-loads the target's entry, sees
+    /// `entry_type == DT_LINK`, and rejects via its own
+    /// `max_link_hops == 0` branch.
     ///
-    /// `sys_stat` deliberately bypasses this helper — `lstat` semantics
+    /// Resolution must happen AFTER the entry is loaded from
+    /// authoritative storage (dcache + metastore fallback). The hot
+    /// dcache alone is not sufficient: cold-cache and cross-mount
+    /// follows would otherwise silently fall through as if the path
+    /// were a regular file.
+    ///
+    /// `sys_stat` deliberately bypasses link follow — `lstat` semantics
     /// require the raw DT_LINK metadata, not the resolved target.
-    pub(crate) fn resolve_path_through_link<'a>(
-        &self,
-        path: &'a str,
-    ) -> Result<std::borrow::Cow<'a, str>, KernelError> {
-        match self.dcache.resolve_link(path) {
-            Ok(resolved) => {
-                if resolved == path {
-                    Ok(std::borrow::Cow::Borrowed(path))
-                } else {
-                    Ok(std::borrow::Cow::Owned(resolved))
-                }
-            }
-            Err(crate::dcache::LinkResolveError::Chained) => Err(KernelError::PermissionDenied(
-                format!("DT_LINK chain rejected (ELOOP) at {path}"),
-            )),
-            Err(crate::dcache::LinkResolveError::SelfLoop) => Err(KernelError::PermissionDenied(
-                format!("DT_LINK self-loop at {path}"),
-            )),
-            Err(crate::dcache::LinkResolveError::MissingTarget) => Err(
-                KernelError::PermissionDenied(format!("DT_LINK at {path} has no link_target")),
-            ),
+    pub(crate) fn dt_link_target<'e>(
+        path: &str,
+        entry: &'e CachedEntry,
+    ) -> Result<Option<&'e str>, KernelError> {
+        if entry.entry_type != DT_LINK {
+            return Ok(None);
         }
+        let target = entry.link_target.as_deref().ok_or_else(|| {
+            KernelError::PermissionDenied(format!("DT_LINK at {path} has no link_target"))
+        })?;
+        if target == path {
+            return Err(KernelError::PermissionDenied(format!(
+                "DT_LINK self-loop at {path}"
+            )));
+        }
+        Ok(Some(target))
     }
 
     /// Get hot-path tuple: (entry_type, last_writer_address).
@@ -1597,11 +1598,12 @@ impl Kernel {
     }
 
     /// DT_LINK: create a VFS-internal symlink whose `link_target`
-    /// resolves at `route()` time (one hop, with cycle detection — see
-    /// `DCache::resolve_link`). Self-loops (`link_target == path`) are
-    /// rejected here so the resolver never has to handle them at lookup
-    /// time. Idempotent for an existing DT_LINK at the same path with
-    /// the same target.
+    /// resolves at sys_read / sys_write / sys_copy time (one hop, with
+    /// cycle detection — see `Kernel::dt_link_target` and the
+    /// `max_link_hops` parameter on `sys_read_with_link_depth` etc.).
+    /// Self-loops (`link_target == path`) are rejected here so the
+    /// resolver never has to handle them at lookup time. Idempotent for
+    /// an existing DT_LINK at the same path with the same target.
     fn setattr_create_link(
         &self,
         path: &str,
@@ -3443,6 +3445,181 @@ mod tests {
                 .unwrap()
                 .unwrap_err();
             assert!(matches!(err, RustCallError::NotFound));
+        }
+    }
+
+    // ── DT_LINK transparent follow ───────────────────────────────────
+    //
+    // Resolution lives in `Kernel::dt_link_target` and runs AFTER
+    // dcache + metastore populate inside sys_read / sys_write /
+    // sys_copy. The pre-fix implementation called `dcache.resolve_link`
+    // BEFORE routing, which silently fell through (returned the input
+    // path unchanged) on a cold dcache, masking both link follow and
+    // chain rejection. Tests below force the cold-cache path by
+    // creating links via sys_setattr (writes through to metastore),
+    // then evicting dcache before the syscall under test.
+
+    mod dt_link {
+        use super::*;
+        use crate::dcache::DT_LINK as DT_LINK_TYPE;
+
+        fn link_entry(target: &str) -> CachedEntry {
+            CachedEntry {
+                size: 0,
+                content_id: None,
+                version: 1,
+                entry_type: DT_LINK_TYPE,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+                last_writer_address: None,
+                link_target: Some(target.to_string()),
+            }
+        }
+
+        fn reg_entry() -> CachedEntry {
+            CachedEntry {
+                size: 0,
+                content_id: None,
+                version: 1,
+                entry_type: 0, // DT_REG
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+                last_writer_address: None,
+                link_target: None,
+            }
+        }
+
+        #[test]
+        fn dt_link_target_passthrough_for_non_link() {
+            let e = reg_entry();
+            assert_eq!(Kernel::dt_link_target("/x", &e).unwrap(), None);
+        }
+
+        #[test]
+        fn dt_link_target_returns_target_for_link() {
+            let e = link_entry("/agents/scode-standard");
+            assert_eq!(
+                Kernel::dt_link_target("/proc/p1/agent", &e).unwrap(),
+                Some("/agents/scode-standard"),
+            );
+        }
+
+        #[test]
+        fn dt_link_target_self_loop_rejected() {
+            let e = link_entry("/loop");
+            let err = Kernel::dt_link_target("/loop", &e).unwrap_err();
+            match err {
+                KernelError::PermissionDenied(msg) => assert!(msg.contains("self-loop")),
+                other => panic!("expected PermissionDenied, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn dt_link_target_missing_target_rejected() {
+            let mut e = link_entry("/x");
+            e.link_target = None;
+            let err = Kernel::dt_link_target("/broken", &e).unwrap_err();
+            match err {
+                KernelError::PermissionDenied(msg) => assert!(msg.contains("no link_target")),
+                other => panic!("expected PermissionDenied, got {other:?}"),
+            }
+        }
+
+        /// Cold-cache regression: chained-link rejection must work even
+        /// when the link entries are absent from dcache (only present in
+        /// metastore). The pre-fix dcache-only resolver would silently
+        /// pass `/data/a` through unchanged, masking the chain.
+        #[test]
+        fn sys_read_rejects_chained_link_through_metastore_only() {
+            let k = Kernel::new();
+            let ms = temp_metastore();
+            k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
+                .unwrap();
+
+            // /data/a -> /data/b -> /data/c (chain).
+            for (path, target) in &[("/data/a", "/data/b"), ("/data/b", "/data/c")] {
+                k.sys_setattr(
+                    path,
+                    6, // DT_LINK
+                    "",
+                    None,
+                    None,
+                    None,
+                    "memory",
+                    "root",
+                    false,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(target),
+                )
+                .unwrap();
+            }
+
+            // Evict dcache so resolution must hit metastore fallback.
+            k.dcache.evict("/data/a");
+            k.dcache.evict("/data/b");
+            k.dcache.evict("/data/c");
+
+            let ctx = OperationContext::new("test", "root", true, None, true);
+            match k.sys_read("/data/a", &ctx) {
+                Err(KernelError::PermissionDenied(msg)) => {
+                    assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
+                }
+                Err(other) => panic!("expected PermissionDenied(chain rejected), got {other:?}"),
+                Ok(_) => panic!("expected PermissionDenied, got Ok (chain silently followed)"),
+            }
+        }
+
+        /// Cold-cache regression: sys_write follows the link the same
+        /// way (so writes hit the target, not a phantom file at the
+        /// link path). Chain rejection at the second hop reuses the
+        /// same code path as sys_read.
+        #[test]
+        fn sys_write_rejects_chained_link_through_metastore_only() {
+            let k = Kernel::new();
+            let ms = temp_metastore();
+            k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
+                .unwrap();
+
+            for (path, target) in &[("/data/a", "/data/b"), ("/data/b", "/data/c")] {
+                k.sys_setattr(
+                    path,
+                    6,
+                    "",
+                    None,
+                    None,
+                    None,
+                    "memory",
+                    "root",
+                    false,
+                    0,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(target),
+                )
+                .unwrap();
+            }
+            k.dcache.evict("/data/a");
+            k.dcache.evict("/data/b");
+            k.dcache.evict("/data/c");
+
+            let ctx = OperationContext::new("test", "root", true, None, true);
+            match k.sys_write("/data/a", &ctx, b"payload", 0) {
+                Err(KernelError::PermissionDenied(msg)) => {
+                    assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
+                }
+                Err(other) => panic!("expected PermissionDenied(chain rejected), got {other:?}"),
+                Ok(_) => panic!("expected PermissionDenied, got Ok (chain silently followed)"),
+            }
         }
     }
 }

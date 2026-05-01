@@ -1,7 +1,5 @@
-//! Social / feed connectors — Slack, X (Twitter), Hacker News, Nostr.
+//! Social / feed connectors — Slack, X (Twitter), Hacker News.
 
 pub mod hn;
-#[cfg(feature = "nostr")]
-pub mod nostr;
 pub mod slack;
 pub mod x;

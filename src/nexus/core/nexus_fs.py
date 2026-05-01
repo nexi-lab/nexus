@@ -24,7 +24,6 @@ from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.nexus_fs_internal import InternalMixin
 from nexus.core.nexus_fs_metadata import MetadataMixin
 from nexus.core.nexus_fs_watch import WatchMixin
-from nexus.lib.rpc_decorator import rpc_expose
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -458,7 +457,8 @@ class NexusFS(  # type: ignore[misc]
     # _parse_context, _ensure_context_ttl,
     # _dispatch_write_events — all moved to InternalMixin (nexus_fs_internal.py)
 
-    @rpc_expose(description="Acquire or extend advisory lock on a path")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher
+    # in `nexus.server._kernel_syscall_dispatch`.
     def sys_lock(
         self,
         path: str,
@@ -486,7 +486,8 @@ class NexusFS(  # type: ignore[misc]
             ttl_secs=int(ttl),
         )
 
-    @rpc_expose(description="Release advisory lock (normal or force)")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher
+    # in `nexus.server._kernel_syscall_dispatch`.
     def sys_unlock(
         self,
         path: str,

@@ -244,7 +244,7 @@ class MetadataMixin:
         except (InvalidPathError, NexusFileNotFoundError):
             return False
 
-    @rpc_expose(description="Check if path is a directory")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def is_directory(
         self,
         path: str,
@@ -281,7 +281,7 @@ class MetadataMixin:
             names.add(top)
         return sorted(names)
 
-    @rpc_expose(description="Get file metadata for FUSE operations")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_stat(
         self,
         path: str,
@@ -352,7 +352,7 @@ class MetadataMixin:
 
         return result
 
-    @rpc_expose(description="Upsert file metadata attributes")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_setattr(
         self,
         path: str,
@@ -637,7 +637,7 @@ class MetadataMixin:
             path=paths[0] if paths else "/__sys__/",
         )
 
-    @rpc_expose(description="Create directory")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def mkdir(
         self,
         path: str,
@@ -678,7 +678,7 @@ class MetadataMixin:
                 ),
             )
 
-    @rpc_expose(description="Remove directory")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def rmdir(
         self,
         path: str,
@@ -694,7 +694,7 @@ class MetadataMixin:
 
     # ── Tier 1 delete/rename/copy ─────────────────────────────────────
 
-    @rpc_expose(description="Delete file")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_unlink(
         self,
         path: str,
@@ -825,7 +825,7 @@ class MetadataMixin:
         logger.warning("sys_unlink: unexpected entry_type=%d for %s", et, path)
         return {}
 
-    @rpc_expose(description="Rename/move file")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_rename(
         self,
         old_path: str,
@@ -922,7 +922,7 @@ class MetadataMixin:
     # sys_copy — Issue #3329 (Workstream 3: native copy/move)
     # ------------------------------------------------------------------
 
-    @rpc_expose(description="Copy file with native backend support")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_copy(
         self, src_path: str, dst_path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]:
@@ -1213,7 +1213,7 @@ class MetadataMixin:
 
         return results
 
-    @rpc_expose(description="Check if file exists")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Tier 2: check if path explicitly exists and is accessible.
 
@@ -1535,7 +1535,7 @@ class MetadataMixin:
         """Return True for system-internal metastore paths (bare keys)."""
         return path.startswith(MetadataMixin._INTERNAL_PATH_PREFIXES)
 
-    @rpc_expose(description="List directory entries")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_readdir(
         self,
         path: str = "/",

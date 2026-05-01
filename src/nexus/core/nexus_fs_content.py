@@ -61,7 +61,7 @@ class ContentMixin:
     # from `backend_name` and pulls the blob via `ZoneApiService.ReadBlob`
     # (R20.18.7 co-located on the raft port).
 
-    @rpc_expose(description="Read file content")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_read(
         self,
         path: str,
@@ -561,7 +561,7 @@ class ContentMixin:
         data = b"".join(chunks)
         return self.write(path, data, context=context)
 
-    @rpc_expose(description="Write file content")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_write(
         self,
         path: str,
@@ -659,7 +659,7 @@ class ContentMixin:
 
         return {"path": path, "bytes_written": len(buf)}
 
-    @rpc_expose(description="Read file with optional metadata")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def read(
         self,
         path: str,
@@ -702,7 +702,7 @@ class ContentMixin:
             )
         return result
 
-    @rpc_expose(description="Write file with metadata return")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def write(
         self,
         path: str,

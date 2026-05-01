@@ -25,7 +25,18 @@ on:
       - 'pyproject.toml'
       - 'rust/**'
       - 'proto/**'
-      - 'src/nexus/**'
+      # Federation-relevant Python surfaces only — avoid spinning up the
+      # full Docker matrix for unrelated src/nexus/ changes (e.g. search,
+      # rebac, sandbox, tui). The job builds the image from src/nexus
+      # via Dockerfile, but the *test* surface only exercises the raft +
+      # gRPC + federation handshake paths, so the trigger should match.
+      - 'src/nexus/raft/**'
+      - 'src/nexus/grpc/**'
+      - 'src/nexus/remote/**'
+      - 'src/nexus/server/rpc/services/federation_rpc.py'
+      - 'src/nexus/server/rpc/services/__init__.py'
+      - 'src/nexus/cli/commands/federation.py'
+      - 'src/nexus/cli/commands/zone.py'
       - 'tests/e2e/docker/test_federation*.py'
       - '.dockerignore'
       - '.github/workflows/federation-e2e.yml'
@@ -64,7 +75,7 @@ jobs:
           git diff --name-only "origin/${{ github.base_ref }}"...HEAD > /tmp/federation_changed_files.txt
           cat /tmp/federation_changed_files.txt
 
-          if grep -Eq '^(Dockerfile|dockerfiles/|Cargo\.toml$|Cargo\.lock$|pyproject\.toml$|rust/|proto/|src/nexus/|tests/e2e/docker/test_federation.*\.py$|\.dockerignore$|\.github/workflows/federation-e2e\.yml$)' /tmp/federation_changed_files.txt; then
+          if grep -Eq '^(Dockerfile|dockerfiles/|Cargo\.toml$|Cargo\.lock$|pyproject\.toml$|rust/|proto/|src/nexus/raft/|src/nexus/grpc/|src/nexus/remote/|src/nexus/server/rpc/services/federation_rpc\.py$|src/nexus/server/rpc/services/__init__\.py$|src/nexus/cli/commands/federation\.py$|src/nexus/cli/commands/zone\.py$|tests/e2e/docker/test_federation.*\.py$|\.dockerignore$|\.github/workflows/federation-e2e\.yml$)' /tmp/federation_changed_files.txt; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"

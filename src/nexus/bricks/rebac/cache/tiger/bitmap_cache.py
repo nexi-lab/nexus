@@ -151,6 +151,26 @@ class TigerCache:
         self._l2_executor: Any | None = None
         self._l2_max_workers = l2_max_workers
 
+        # Rate-limit orphan-id WARNING logs (Issue #3951): a stale resource_map
+        # row in a popular subject's bitmap would otherwise log on every auth
+        # check. Two-level limiter:
+        # - per-key 60s dedupe (zone,subject_type,subject_id,permission,type)
+        #   in a true LRU OrderedDict — refreshing a key moves it to the end
+        # - global cap of 16 WARNINGs per 60s window across all keys, so a
+        #   high-cardinality orphan event (many subjects) cannot flood logs;
+        #   excess emissions drop to DEBUG.
+        self._orphan_log_window_s = 60.0
+        self._orphan_log_max_keys = 1024
+        self._orphan_log_global_cap = 16
+        from collections import OrderedDict as _OrderedDict
+
+        self._orphan_log_last_emit: "_OrderedDict[tuple[str, str, str, str, str], float]" = (
+            _OrderedDict()
+        )
+        self._orphan_log_global_window_start = 0.0
+        self._orphan_log_global_count = 0
+        self._orphan_log_lock = threading.Lock()
+
     @property
     def resource_map(self) -> "TigerResourceMap":
         """Public accessor for the resource map."""
@@ -709,8 +729,9 @@ class TigerCache:
     ) -> set[str] | None:
         """Get all accessible resource paths from bitmap (for SQL WHERE clause).
 
-        Converts integer IDs from the bitmap back to string paths using the resource map.
-        This is used for predicate pushdown to filter at the database level.
+        Returns the (possibly partial) path set; callers that need to
+        distinguish fully-resolved from partial results should use
+        get_accessible_paths_with_status() instead.
 
         Args:
             subject_type: Type of subject (e.g., "user", "agent")
@@ -721,6 +742,31 @@ class TigerCache:
         Returns:
             Set of paths the subject can access, or None if no bitmap cached.
         """
+        paths, _ = self.get_accessible_paths_with_status(
+            subject_type, subject_id, permission, resource_type, zone_id=zone_id
+        )
+        return paths
+
+    def get_accessible_paths_with_status(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        zone_id: str = "",
+    ) -> tuple[set[str] | None, bool]:
+        """Get accessible paths with a fully-resolved flag (Issue #3951).
+
+        Returns:
+            (paths, fully_resolved):
+            - (None, True): no bitmap cached — caller treats as cache miss.
+            - (set(), True): bitmap cached but empty — authoritative no-access.
+            - (set(...), True): bitmap cached, every int_id resolved.
+            - (set(...), False): bitmap cached but resource_map could not
+              resolve every int_id (orphan/lag/race). The set may be a
+              partial view; callers that cache negative results should
+              treat False results as indeterminate and skip caching.
+        """
         int_ids = self.get_accessible_int_ids(
             subject_type,
             subject_id,
@@ -729,21 +775,66 @@ class TigerCache:
             zone_id=zone_id,
         )
         if int_ids is None:
-            return None
+            return None, True
 
-        # Convert int IDs back to paths using resource map
-        paths: set[str] = set()
-        with self._resource_map._lock:
-            for int_id in int_ids:
-                key = self._resource_map._int_to_uuid.get(int_id)
-                if key and key[0] == resource_type:
-                    paths.add(key[1])  # key is (type, path)
+        # Convert int IDs back to paths using resource map.
+        # Use bulk_get_resource_ids() so cold in-memory maps fall back to
+        # the DB in a single batched query — otherwise large bitmaps
+        # produce N round-trips and saturate the DB on hot auth paths.
+        id_to_key = self._resource_map.bulk_get_resource_ids(int_ids)
+
+        # Orphaned int IDs (bitmap row exists but resource_map row deleted —
+        # e.g. cleanup race, replication lag) are silently dropped from the
+        # path set. The fully_resolved flag in the tuple return surfaces
+        # this so visibility callers can avoid caching a False result that
+        # may flip back to True once the resource_map repairs.
+        unresolved = len(int_ids) - len(id_to_key)
+        fully_resolved = unresolved == 0
+        if unresolved > 0:
+            dedupe_key = (zone_id, subject_type, subject_id, permission, resource_type)
+            now = time.monotonic()
+            with self._orphan_log_lock:
+                # Reset global window if the previous one expired.
+                if (now - self._orphan_log_global_window_start) >= self._orphan_log_window_s:
+                    self._orphan_log_global_window_start = now
+                    self._orphan_log_global_count = 0
+
+                last = self._orphan_log_last_emit.get(dedupe_key, 0.0)
+                per_key_due = (now - last) >= self._orphan_log_window_s
+                under_global_cap = self._orphan_log_global_count < self._orphan_log_global_cap
+
+                if per_key_due and under_global_cap:
+                    level = logging.WARNING
+                    # True LRU: pop existing key so the re-insert lands at
+                    # the end. Bound to max_keys with FIFO eviction.
+                    if dedupe_key in self._orphan_log_last_emit:
+                        self._orphan_log_last_emit.pop(dedupe_key)
+                    elif len(self._orphan_log_last_emit) >= self._orphan_log_max_keys:
+                        self._orphan_log_last_emit.popitem(last=False)  # evict oldest
+                    self._orphan_log_last_emit[dedupe_key] = now
+                    self._orphan_log_global_count += 1
+                else:
+                    level = logging.DEBUG
+            logger.log(
+                level,
+                "[TIGER-PUSHDOWN] resource_map orphans: %d/%d int IDs unresolved "
+                "(zone=%s, subject=%s:%s, perm=%s, type=%s) — dropping silently",
+                unresolved,
+                len(int_ids),
+                zone_id or "-",
+                subject_type,
+                subject_id,
+                permission,
+                resource_type,
+            )
+
+        paths: set[str] = {key[1] for key in id_to_key.values() if key[0] == resource_type}
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "[TIGER-PUSHDOWN] Converted %d int IDs to %d paths", len(int_ids), len(paths)
             )
-        return paths
+        return paths, fully_resolved
 
     def _load_from_db(
         self, key: CacheKey, conn: "Connection | None" = None, skip_l2: bool = False

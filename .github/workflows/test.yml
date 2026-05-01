@@ -232,7 +232,33 @@ jobs:
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
+      # Pre-build the nexus-server image once with buildx + GHA layer cache.
+      # The ``running_nexus`` fixture in tests/e2e/self_contained/conftest.py
+      # otherwise calls ``nexus up --build`` for every approvals test class
+      # and pays the full Rust+Python image build (~5-10 min) on cold runners
+      # — a single fixture instantiation timed out at 600s in PR #3961
+      # reruns and consumed half the job budget before any test ran.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pre-build nexus-server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: |
+            ghcr.io/nexi-lab/nexus:latest
+            nexus-server:latest
+          cache-from: type=gha,scope=e2e-self-contained
+          cache-to: type=gha,scope=e2e-self-contained,mode=max
+
       - name: Run self-contained e2e tests
+        env:
+          # Image is already loaded into the local docker daemon via the
+          # pre-build step above, so the fixture can skip ``--build`` and
+          # call plain ``nexus up``. Cuts ~5-10 min off each approvals
+          # test class fixture invocation.
+          NEXUS_E2E_SKIP_BUILD: "1"
         run: |
           # ``-Xfaulthandler`` plus pytest's built-in ``faulthandler_timeout``
           # ini option dumps a Python + native stack trace from every thread
@@ -241,7 +267,10 @@ jobs:
           uv run python -Xfaulthandler -m pytest tests/e2e/self_contained/ -v \
             --timeout=120 --timeout-method=signal \
             -o faulthandler_timeout=60 -o addopts=
-        timeout-minutes: 20
+        # 30 min budget = pre-build (~3 min warm cache, ~10 min cold) +
+        # ~20 min for the test bodies. Per-test --timeout=120 still catches
+        # real hangs fast.
+        timeout-minutes: 30
 
   e2e-postgres:
     name: E2E Tests (PostgreSQL)

@@ -181,6 +181,59 @@ class TigerResourceMap:
 
         return info
 
+    def bulk_get_resource_ids(
+        self,
+        int_ids: "set[int] | list[int]",
+        conn: "Connection | None" = None,
+    ) -> dict[int, tuple[str, str]]:
+        """Bulk reverse-lookup int IDs to (resource_type, resource_id) tuples.
+
+        Used by hot read paths (e.g., get_accessible_paths) where the
+        in-memory _int_to_uuid map may be cold but the bitmap holds many
+        IDs. Falls back to a single batched DB query per chunk instead of
+        N per-id round trips.
+        """
+        if not int_ids:
+            return {}
+
+        results: dict[int, tuple[str, str]] = {}
+        to_fetch: list[int] = []
+
+        with self._lock:
+            for iid in int_ids:
+                cached = self._int_to_uuid.get(iid)
+                if cached is not None:
+                    results[iid] = cached
+                else:
+                    to_fetch.append(iid)
+
+        if not to_fetch:
+            return results
+
+        def _execute_chunks(connection: "Connection") -> None:
+            batch_size = 500
+            for i in range(0, len(to_fetch), batch_size):
+                chunk = to_fetch[i : i + batch_size]
+                stmt = select(TRM.resource_int_id, TRM.resource_type, TRM.resource_id).where(
+                    TRM.resource_int_id.in_(chunk)
+                )
+                rows = connection.execute(stmt).all()
+                with self._lock:
+                    for row in rows:
+                        key = (row.resource_type, row.resource_id)
+                        iid = int(row.resource_int_id)
+                        results[iid] = key
+                        self._int_to_uuid[iid] = key
+                        self._uuid_to_int[key] = iid
+
+        if conn is not None:
+            _execute_chunks(conn)
+        else:
+            with self._engine.connect() as new_conn:
+                _execute_chunks(new_conn)
+
+        return results
+
     def bulk_get_int_ids(
         self,
         resources: list[tuple[str, str]],  # List of (resource_type, resource_id)

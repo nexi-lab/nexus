@@ -8,6 +8,7 @@ and path lookup within a worker cycle.
 from __future__ import annotations
 
 import contextlib
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -15,8 +16,10 @@ from typing import Any
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import ProgrammingError
 
-from nexus.bricks.search.mutation_events import SearchMutationEvent
+from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutationOp
 from nexus.contracts.constants import ROOT_ZONE_ID
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,14 @@ class MutationResolver:
         unresolved_indices: list[int] = []
         lookup_candidates: list[tuple[str, str, str, int]] = []
 
+        # Issue #3951 follow-up: DELETE events race with the soft-delete write
+        # in file_paths — by the time we resolve, deleted_at is set, so the
+        # default `WHERE deleted_at IS NULL` filter drops the row and
+        # path_id_resolved=False, which gates _chunk_store.delete_document_chunks.
+        # Allow soft-deleted rows when any event is a DELETE so we still find
+        # the path_id needed to drop chunks.
+        include_deleted = any(event.op == SearchMutationOp.DELETE for event in events)
+
         for idx, event in enumerate(events):
             cached = self._cache.get(event.event_id)
             if cached is not None and (now - cached[0]) < self._cache_ttl_seconds:
@@ -83,7 +94,16 @@ class MutationResolver:
             unresolved_indices.append(idx)
             lookup_candidates.extend(self._lookup_candidates(event))
 
-        path_id_map = await self._lookup_path_ids(lookup_candidates)
+        logger.debug(
+            "resolve_batch: events=%d unresolved=%d include_deleted=%s",
+            len(events),
+            len(unresolved_indices),
+            include_deleted,
+        )
+
+        path_id_map = await self._lookup_path_ids(
+            lookup_candidates, include_deleted=include_deleted
+        )
         content_map = await self._lookup_content(events, unresolved_indices)
 
         for idx in unresolved_indices:
@@ -111,9 +131,22 @@ class MutationResolver:
     async def _lookup_path_ids(
         self,
         lookup_candidates: list[tuple[str, str, str, int]],
+        *,
+        include_deleted: bool = False,
     ) -> dict[tuple[str, str], str]:
         if not lookup_candidates or self._async_session_factory is None:
             return {}
+
+        # Issue #3951 follow-up: DELETE events arrive after the soft-delete
+        # write, so include_deleted=True drops the `deleted_at IS NULL` filter
+        # and prefers non-deleted rows first via ORDER BY so coexisting paths
+        # (e.g. delete-then-recreate) still resolve to the live row.
+        if include_deleted:
+            deleted_filter = ""
+            order_by = "ORDER BY (CASE WHEN fp.deleted_at IS NULL THEN 0 ELSE 1 END), l.lookup_rank"
+        else:
+            deleted_filter = "WHERE fp.deleted_at IS NULL"
+            order_by = "ORDER BY l.lookup_rank"
 
         path_id_map: dict[tuple[str, str], str] = {}
         unique_candidates = list(dict.fromkeys(lookup_candidates))
@@ -137,8 +170,8 @@ class MutationResolver:
                         JOIN lookup l
                           ON fp.zone_id = l.zone_id
                          AND fp.virtual_path = l.virtual_path
-                        WHERE fp.deleted_at IS NULL
-                        ORDER BY l.lookup_rank
+                        {deleted_filter}
+                        {order_by}
                         """
                     ),
                     params,
@@ -146,6 +179,12 @@ class MutationResolver:
                 for row in result.fetchall():
                     key = self._path_key(str(row[0]), str(row[1]))
                     path_id_map.setdefault(key, str(row[2]))
+        logger.debug(
+            "lookup_path_ids: candidates=%d resolved=%d include_deleted=%s",
+            len(unique_candidates),
+            len(path_id_map),
+            include_deleted,
+        )
         return path_id_map
 
     async def _lookup_content(

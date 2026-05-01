@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # Issue #3192: Rust-backed TTLCache for lock-free cache internals
 try:
@@ -35,6 +35,24 @@ if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_paths_with_status(
+    tiger_cache: "TigerCache", **kwargs: Any
+) -> tuple[set[str] | None, bool]:
+    """Call get_accessible_paths_with_status() if available, else fall back
+    to legacy get_accessible_paths() and assume fully_resolved=True.
+
+    Issue #3951: keeps the visibility cache compatible with older Tiger
+    cache implementations and test doubles that only expose the legacy
+    method, while still benefiting from orphan detection on the concrete
+    TigerCache.
+    """
+    with_status = getattr(tiger_cache, "get_accessible_paths_with_status", None)
+    if with_status is not None:
+        result: tuple[set[str] | None, bool] = with_status(**kwargs)
+        return result
+    return tiger_cache.get_accessible_paths(**kwargs), True
 
 
 @dataclass
@@ -194,15 +212,15 @@ class DirectoryVisibilityCache:
         Returns:
             True if directory is visible (has accessible descendants),
             False if not visible,
-            None if Tiger Cache is unavailable
+            None if Tiger Cache is unavailable or cache miss
         """
         if not self._tiger_cache:
             return None
 
         self._bitmap_computes += 1
 
-        # Get all accessible resource IDs from Tiger Cache
-        accessible_ids = self._tiger_cache.get_accessible_resources(
+        accessible_paths, fully_resolved = _resolve_paths_with_status(
+            self._tiger_cache,
             subject_type=subject_type,
             subject_id=subject_id,
             permission=permission,
@@ -210,46 +228,30 @@ class DirectoryVisibilityCache:
             zone_id=zone_id,
         )
 
-        if not accessible_ids:
-            # No accessible resources at all
-            self.set_visible(
-                zone_id, subject_type, subject_id, dir_path, False, "no_accessible_resources"
-            )
-            return False
+        if accessible_paths is None:
+            return None  # cache miss — caller falls through to slow path
 
-        # Normalize directory prefix for matching
-        prefix = dir_path.rstrip("/") + "/"
-        if dir_path == "/":
-            prefix = "/"
+        from nexus.lib.prefix_helpers import any_path_under_prefix
 
-        # Scan bitmap and check if any accessible resource is under this directory
-        # This is O(bitmap_size) but avoids N metadata queries
-        resource_map = self._tiger_cache._resource_map
+        result = any_path_under_prefix(accessible_paths, dir_path) if accessible_paths else False
 
-        for int_id in accessible_ids:
-            res_info = resource_map.get_resource_id(int_id)
-            if res_info:
-                res_type, res_path = res_info
+        # Issue #3951: when the resource_map could not resolve every int_id
+        # (orphan/lag/race), a False result may be a transient false-negative.
+        # Skip negative caching and return None so the caller falls through
+        # to the authoritative slow path; cache only positive results (those
+        # are backed by a real resolved path that matched the prefix).
+        if not result and not fully_resolved:
+            return None
 
-                # Check if resource is under the directory
-                if res_path == dir_path or res_path.startswith(prefix):
-                    self.set_visible(
-                        zone_id,
-                        subject_type,
-                        subject_id,
-                        dir_path,
-                        True,
-                        f"descendant:{res_path}",
-                    )
-                    logger.debug(f"[DirVisCache] BITMAP_COMPUTE: {dir_path} visible via {res_path}")
-                    return True
-
-        # No descendants found
-        self.set_visible(
-            zone_id, subject_type, subject_id, dir_path, False, "no_descendants_in_bitmap"
-        )
-        logger.debug(f"[DirVisCache] BITMAP_COMPUTE: {dir_path} not visible")
-        return False
+        if not accessible_paths:
+            reason = "no_accessible_resources"
+        elif result:
+            reason = f"bitmap_prefix:{dir_path}"
+        else:
+            reason = "no_descendants_in_bitmap"
+        self.set_visible(zone_id, subject_type, subject_id, dir_path, result, reason)
+        logger.debug("[DirVisCache] BITMAP_COMPUTE: %s visible=%s", dir_path, result)
+        return result
 
     def compute_batch_visibility(
         self,
@@ -279,10 +281,8 @@ class DirectoryVisibilityCache:
         if not self._tiger_cache:
             return {}
 
-        # Build cache keys for batch fetch
-
-        # Use single get_accessible_resources (already optimized with bloom + L1)
-        accessible_ids = self._tiger_cache.get_accessible_resources(
+        accessible_paths, fully_resolved = _resolve_paths_with_status(
+            self._tiger_cache,
             subject_type=subject_type,
             subject_id=subject_id,
             permission=permission,
@@ -290,31 +290,30 @@ class DirectoryVisibilityCache:
             zone_id=zone_id,
         )
 
+        if accessible_paths is None:
+            return {}  # cache miss
+
+        from nexus.lib.prefix_helpers import batch_paths_under_prefixes
+
+        visible_flags = (
+            batch_paths_under_prefixes(accessible_paths, dir_paths)
+            if accessible_paths
+            else [False] * len(dir_paths)
+        )
         results: dict[str, bool] = {}
-        if not accessible_ids:
-            for dp in dir_paths:
-                self.set_visible(
-                    zone_id, subject_type, subject_id, dp, False, "no_accessible_resources"
-                )
-                results[dp] = False
-            return results
-
-        # Build set of accessible paths for fast prefix matching
-        resource_map = self._tiger_cache._resource_map
-        accessible_paths: list[str] = []
-        for int_id in accessible_ids:
-            res_info = resource_map.get_resource_id(int_id)
-            if res_info:
-                accessible_paths.append(res_info[1])
-
-        # Check each directory against accessible paths
-        for dp in dir_paths:
-            prefix = dp.rstrip("/") + "/" if dp != "/" else "/"
-            visible = any(p == dp or p.startswith(prefix) for p in accessible_paths)
-            reason = "batch_bitmap" if visible else "no_descendants_in_bitmap"
+        for dp, visible in zip(dir_paths, visible_flags, strict=True):
+            # Issue #3951: as in compute_from_tiger_bitmap, only cache True
+            # when the resource_map fully resolved. False under partial
+            # resolution is dropped from the result so the caller falls
+            # through to per-dir authoritative checks.
+            if not visible and not fully_resolved:
+                continue
+            if not accessible_paths:
+                reason = "no_accessible_resources"
+            else:
+                reason = "batch_bitmap" if visible else "no_descendants_in_bitmap"
             self.set_visible(zone_id, subject_type, subject_id, dp, visible, reason)
             results[dp] = visible
-
         return results
 
     def invalidate(

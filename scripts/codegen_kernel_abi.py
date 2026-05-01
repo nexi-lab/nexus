@@ -220,6 +220,11 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
         "VFSSemaphore",
         "BlobPackEngine",
     ),
+    # Issue #3951: prefix matching helpers used in descendant-access hot paths
+    # (rebac visibility, descendant_access, enforcer batch). Gating them here
+    # ensures stale/version-skew binaries fall back to the Python implementation
+    # in _prefix_helpers.py instead of silently returning wrong auth results.
+    "prefix": ("any_path_starts_with", "batch_prefix_check"),
 }
 
 # ── Return-type overrides ──────────────────────────────────────────

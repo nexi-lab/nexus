@@ -115,8 +115,6 @@ if RUST_AVAILABLE:
                 _REBUILD_CMD,
             )
 
-    RUST_HASH_AVAILABLE = _group_ok.get("hash", False)
-
     _core_disabled = not _group_ok.get("core", False)
     if _core_disabled:
         RUST_AVAILABLE = False
@@ -149,17 +147,24 @@ if RUST_EXTENSION_INSTALLED and not RUST_AVAILABLE and _nf is None:
     for _syms in _CAPABILITY_GROUPS.values():
         _disabled_symbols.update(_syms)
 elif RUST_EXTENSION_INSTALLED and _nf is not None:
-    if _kernel_methods_stale:
-        # Kernel class has missing methods — disable ALL symbols to prevent
-        # partial Rust usage against a stale binary (Issue #3712).
+    if not RUST_AVAILABLE:
+        # Core ABI failure or kernel methods stale — disable ALL symbols to
+        # prevent partial Rust usage against an unsafe binary (Issue #3712,
+        # #3951). Without this, working sub-groups (e.g. prefix helpers)
+        # would still execute against a binary whose core ABI is broken.
         for _syms in _CAPABILITY_GROUPS.values():
             _disabled_symbols.update(_syms)
     else:
-        # Extension imported but some groups may be incomplete.
-        # Only disable symbols from failing groups — working groups stay live.
+        # Extension imported and core OK, but some non-core groups may be
+        # incomplete. Only disable symbols from failing groups — working
+        # groups stay live.
         for _g, _syms in _CAPABILITY_GROUPS.items():
             if not _group_ok.get(_g, False):
                 _disabled_symbols.update(_syms)
+
+# Capability flags (set after kill switch so a stale-core binary cannot
+# leak a True flag while the Rust symbol itself is disabled — #3951).
+RUST_HASH_AVAILABLE = RUST_AVAILABLE and bool(_group_ok) and _group_ok.get("hash", False)
 
 # Snapshot the module for re-exports.
 _nf_snapshot: Any = _nf
@@ -226,3 +231,7 @@ extract_zone_id = _get("extract_zone_id")
 grep_bulk = _get("grep_bulk")
 grep_files_mmap = _get("grep_files_mmap")
 glob_match_bulk = _get("glob_match_bulk")
+
+# Prefix / bitmap helpers (Issue #3951)
+any_path_starts_with = _get("any_path_starts_with")
+batch_prefix_check = _get("batch_prefix_check")

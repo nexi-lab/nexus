@@ -342,3 +342,40 @@ async def test_resolver_marks_unresolved_path_id_fallback() -> None:
 
     assert resolved[0].path_id == "/missing.txt"
     assert resolved[0].path_id_resolved is False
+
+
+@pytest.mark.asyncio
+async def test_resolver_includes_soft_deleted_rows_for_delete_events() -> None:
+    """DELETE events arrive after the soft-delete write — resolver must still
+    find the path_id so chunk_store.delete_document_chunks can drop the row.
+
+    Issue #3951 follow-up: previously the SQL filtered ``WHERE deleted_at IS
+    NULL`` for every lookup, silently dropping rows whose soft-delete had
+    already landed. The DELETE event then produced ``path_id_resolved=False``
+    and ``_chunk_store.delete_document_chunks`` was gated off, leaving stale
+    chunks in the index.
+    """
+    session = _SessionCtx([[("root", "/docs/gone.md", "pid-gone")]])
+    resolver = MutationResolver(
+        file_reader=None,
+        async_session_factory=_SequentialSessionFactory([session]),
+    )
+    event = SearchMutationEvent(
+        event_id="evt-del",
+        operation_id="op-del",
+        op=SearchMutationOp.DELETE,
+        path="/docs/gone.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+
+    assert resolved[0].path_id == "pid-gone"
+    assert resolved[0].path_id_resolved is True
+    # The lookup SQL must drop the WHERE deleted_at IS NULL filter so
+    # soft-deleted rows remain visible to the resolver. (The CASE WHEN
+    # expression in ORDER BY may still reference deleted_at to prefer
+    # live rows when both exist, which is fine.)
+    assert "WHERE fp.deleted_at IS NULL" not in session.statements[0]

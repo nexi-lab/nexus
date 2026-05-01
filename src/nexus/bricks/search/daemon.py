@@ -2325,6 +2325,8 @@ class SearchDaemon:
         if not paths:
             return
 
+        logger.debug("delete-propagation: start paths=%s", paths)
+
         events = [
             SearchMutationEvent(
                 event_id=f"legacy-delete:{path}",
@@ -2338,13 +2340,25 @@ class SearchDaemon:
             for path in paths
         ]
         resolved = await self._resolve_mutations(events)
+        logger.debug(
+            "delete-propagation: resolved=%d (resolved_path_id=%d)",
+            len(resolved),
+            sum(1 for m in resolved if self._has_resolved_path_id(m)),
+        )
         if not resolved:
             return
 
         if self._chunk_store is not None:
+            chunks_deleted = 0
             for mutation in resolved:
                 if self._has_resolved_path_id(mutation):
                     await self._chunk_store.delete_document_chunks(mutation.path_id)
+                    chunks_deleted += 1
+            logger.debug(
+                "delete-propagation: chunk_store dropped %d/%d documents",
+                chunks_deleted,
+                len(resolved),
+            )
 
         if self._backend is not None:
             deletes_by_zone: dict[str, list[str]] = {}
@@ -2352,11 +2366,18 @@ class SearchDaemon:
                 deletes_by_zone.setdefault(mutation.zone_id, []).append(mutation.doc_id)
             for zone_id, ids in deletes_by_zone.items():
                 await self._backend.delete(ids, zone_id=zone_id)
+                logger.debug(
+                    "delete-propagation: backend dropped %d ids for zone=%s",
+                    len(ids),
+                    zone_id,
+                )
 
         if self._bm25s_index is not None and hasattr(self._bm25s_index, "delete_document"):
             for mutation in resolved:
                 with contextlib.suppress(Exception):
                     await self._bm25s_index.delete_document(mutation.path_id)
+
+        logger.info("delete-propagation: completed for %d path(s)", len(paths))
 
     @staticmethod
     def _coalesce_subtrees(

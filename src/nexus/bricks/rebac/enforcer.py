@@ -320,14 +320,31 @@ class PermissionEnforcer:
             zone_id = context.zone_id
 
             # Get accessible paths via Tiger cache public API (Issue #1565)
-            # Fix(#3709): was get_accessible_paths_list (non-existent method)
-            accessible_paths = tiger_cache.get_accessible_paths(
-                subject_type=subject_type,
-                subject_id=subject_id,
-                permission="read",
-                resource_type="file",
-                zone_id=zone_id,
-            )
+            # Fix(#3709): was get_accessible_paths_list (non-existent method).
+            # Issue #3951: prefer the tri-state status variant so a transient
+            # resource_map orphan does not produce a hard False for prefixes
+            # whose only matching descendant was an unresolved int_id. Older
+            # cache implementations / test doubles that only implement the
+            # legacy get_accessible_paths() are treated as fully_resolved=True
+            # — they have no orphan-detection signal to surface.
+            _with_status = getattr(tiger_cache, "get_accessible_paths_with_status", None)
+            if _with_status is not None:
+                accessible_paths, fully_resolved = _with_status(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission="read",
+                    resource_type="file",
+                    zone_id=zone_id,
+                )
+            else:
+                accessible_paths = tiger_cache.get_accessible_paths(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission="read",
+                    resource_type="file",
+                    zone_id=zone_id,
+                )
+                fully_resolved = True
 
             if accessible_paths is None:
                 # Fix(#3709): Tiger cache miss must fail-closed (deny), not
@@ -341,29 +358,33 @@ class PermissionEnforcer:
                 return dict.fromkeys(prefixes, False)
 
             if not accessible_paths:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
-                return dict.fromkeys(prefixes, False)
-
-            # RUST_FALLBACK: rebac enforcer — nexus_runtime for batch permission checks
-            # Try Rust-accelerated prefix matching (Issue #1565)
-            try:
-                import nexus_runtime
-
-                results_list = nexus_runtime.batch_prefix_check(
-                    list(accessible_paths), list(prefixes)
+                if fully_resolved:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
+                    return dict.fromkeys(prefixes, False)
+                # All-orphan: indeterminate. Drop False entries so the
+                # caller (search_service uses dict.get(prefix, True)) falls
+                # back to including the directories rather than hiding them
+                # on a transient resource_map orphan.
+                logger.debug(
+                    "[BATCH-OPT] resource_map degraded (all-orphan) for %s:%s — "
+                    "returning empty dict to defer to caller default",
+                    subject_type,
+                    subject_id,
                 )
-                results = dict(zip(prefixes, results_list, strict=True))
-            except (ImportError, AttributeError):
-                # Python fallback (same logic, O(N×M))
-                results = {}
-                for prefix in prefixes:
-                    prefix_normalized = prefix.rstrip("/") + "/"
-                    prefix_exact = prefix.rstrip("/")
-                    results[prefix] = any(
-                        p.startswith(prefix_normalized) or p == prefix_exact
-                        for p in accessible_paths
-                    )
+                return {}
+
+            from nexus.lib.prefix_helpers import batch_paths_under_prefixes
+
+            results_list = batch_paths_under_prefixes(list(accessible_paths), list(prefixes))
+            results = dict(zip(prefixes, results_list, strict=True))
+
+            if not fully_resolved:
+                # Partial resolution: trust True (real match in resolved set),
+                # but drop False — they may flip True once orphan int_ids
+                # resolve. Caller's dict.get(prefix, True) defaults indeterminate
+                # to "include" (matches search_service.py:1027 semantics).
+                results = {k: v for k, v in results.items() if v}
 
             elapsed = (time.time() - start) * 1000
             found_count = sum(1 for v in results.values() if v)

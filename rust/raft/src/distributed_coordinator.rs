@@ -1581,6 +1581,40 @@ fn wire_mount_impl(
     let vfs_router = kernel.vfs_router_arc();
     let dcache = kernel.dcache_arc();
     let lock_manager = kernel.lock_manager_arc();
+
+    // Quorum-replication contract: a DT_MOUNT entry committed on the
+    // parent zone is observed by every voter via raft replication, so
+    // every peer's apply-cb fires here.  If the target zone's raft
+    // replica isn't loaded locally yet, create it now using the same
+    // peer roster as root — every peer derives the identical
+    // ConfState seed and the new zone's raft group converges on a
+    // leader once a quorum of peers have run through this path.
+    //
+    // Without this auto-create, only the originating peer's local
+    // sys_setattr ever instantiates the target zone; followers stay
+    // empty, the new zone's voter set has no quorum, and `cluster_info`
+    // never reports a leader_id — the symptom that broke
+    // `_wait_zone_ready` in the federation E2E suite.
+    if registry.get_node(target_zone_id).is_none() {
+        let zone_peers = zm.current_peer_strings();
+        if !zone_peers.is_empty() {
+            tracing::info!(
+                target_zone_id = %target_zone_id,
+                peers = ?zone_peers,
+                "wire_mount: target zone not loaded locally — auto-creating raft replica"
+            );
+            if let Err(e) = zm.create_zone(target_zone_id, zone_peers) {
+                tracing::warn!(
+                    target_zone_id = %target_zone_id,
+                    error = %e,
+                    "wire_mount: target zone auto-create failed; wire_mount_core will defer"
+                );
+            } else {
+                provider.install_apply_cb_for_zone(kernel, target_zone_id);
+            }
+        }
+    }
+
     wire_mount_core(
         &vfs_router,
         &dcache,

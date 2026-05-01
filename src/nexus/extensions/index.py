@@ -114,8 +114,8 @@ def _discover_in_tree_manifests() -> list[AnyManifest]:
             manifest_file = child / "_manifest.py"
             if not child.is_dir() or not manifest_file.exists():
                 continue
-            manifest = _load_manifest_module(manifest_file)
-            if manifest is None:
+            manifest = _load_manifest_module(manifest_file, strict=True)
+            if manifest is None:  # pragma: no cover — strict raises instead
                 continue
             key = (manifest.kind, manifest.name)
             if key in by_key:

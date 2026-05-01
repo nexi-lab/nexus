@@ -359,11 +359,12 @@ class TestCheckMethod:
         from nexus.extensions.manifest import PluginManifest, RuntimeDep
 
         store = ManifestStore()
+        # `pytest` is a real installed distribution name.
         m = PluginManifest(
             name="ok",
             module="m",
             factory="F",
-            runtime_deps=(RuntimeDep(kind="python", name="sys"),),
+            runtime_deps=(RuntimeDep(kind="python", name="pytest"),),
             import_probes=("sys",),
         )
         store._register(m, source="test")
@@ -535,6 +536,67 @@ class TestEntryPointLegacyFormat:
         store.load_entry_points()
         assert store.get("modstyle", kind="plugin").module == "m"
 
+    def test_colon_style_in_connector_group_is_skipped(self, monkeypatch):
+        """`module:attr` is only valid in nexus.plugins. In nexus.connectors /
+        nexus.bricks, a colon value would force a fake PluginManifest with the
+        wrong kind — better to skip with a warning."""
+        from nexus.extensions import store as store_mod
+
+        ep = _FakeEntryPoint(name="bad", value="pkg.mod:RegisterFn")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.connectors" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+        assert store.list() == []  # no fake plugin synthesized
+
+    def test_colon_style_in_brick_group_is_skipped(self, monkeypatch):
+        from nexus.extensions import store as store_mod
+
+        ep = _FakeEntryPoint(name="bad", value="pkg.mod:Brick")
+        monkeypatch.setattr(
+            store_mod,
+            "_entry_points",
+            lambda group: [ep] if group == "nexus.bricks" else [],
+        )
+
+        store = ManifestStore()
+        store.load_entry_points()
+        assert store.list() == []
+
+
+class TestStrictManifestLoader:
+    """Regression: index build must fail loudly on broken manifests so CI
+    catches them. Runtime loader stays warn-and-skip for sibling isolation."""
+
+    def test_strict_loader_raises_on_broken_module(self, tmp_path):
+        from nexus.extensions.store import _load_manifest_module
+
+        bad = tmp_path / "broken" / "_manifest.py"
+        bad.parent.mkdir()
+        bad.write_text("raise RuntimeError('broken at import time')\n")
+
+        # Default (non-strict) returns None and logs WARN.
+        assert _load_manifest_module(bad) is None
+
+        # Strict raises so the index build/verify hook fails.
+        with pytest.raises(RuntimeError, match="failed to load manifest"):
+            _load_manifest_module(bad, strict=True)
+
+    def test_strict_loader_raises_on_missing_manifest_constant(self, tmp_path):
+        from nexus.extensions.store import _load_manifest_module
+
+        bad = tmp_path / "no_manifest" / "_manifest.py"
+        bad.parent.mkdir()
+        bad.write_text("# No MANIFEST defined\nx = 1\n")
+
+        assert _load_manifest_module(bad) is None
+        with pytest.raises(RuntimeError, match="no MANIFEST constant"):
+            _load_manifest_module(bad, strict=True)
+
 
 class TestCheckSemantics:
     """Regression: check() must surface unchecked services and missing binaries."""
@@ -582,21 +644,93 @@ class TestCheckSemantics:
         assert "postgres" in report.missing_services
         assert report.available is False
 
-    def test_python_dep_uses_find_spec_not_string_match(self):
-        """Python deps must be checked against the import system, not against
-        whether the name happens to appear in the import_probes tuple."""
+    def test_python_dep_unknown_distribution_is_flagged(self):
+        """Python deps must be looked up against installed distributions.
+        An unknown distribution name must be reported as missing."""
         from nexus.extensions.manifest import PluginManifest, RuntimeDep
 
         m = PluginManifest(
             name="needs_pkg",
             module="m",
             factory="F",
-            runtime_deps=(RuntimeDep(kind="python", name="totally_made_up_pkg_qwerty"),),
+            runtime_deps=(RuntimeDep(kind="python", name="totally_made_up_dist_qwerty"),),
             import_probes=(),  # no probe overlap — must still be flagged
         )
         report = ManifestStore().check(m)
         assert report.available is False
-        assert "totally_made_up_pkg_qwerty" in report.missing_python_deps
+        assert "totally_made_up_dist_qwerty" in report.missing_python_deps
+
+    def test_python_dep_with_dist_name_differing_from_import_name(self):
+        """A distribution like ``pytest-asyncio`` (import name
+        ``pytest_asyncio``) must resolve via distribution lookup, not via
+        ``find_spec`` on the raw dep name."""
+        import importlib.util
+        from importlib.metadata import PackageNotFoundError, distribution
+
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        candidates = ("pytest-asyncio", "pytest-cov", "google-api-python-client")
+        chosen = None
+        for c in candidates:
+            try:
+                distribution(c)
+                chosen = c
+                break
+            except PackageNotFoundError:
+                continue
+        if chosen is None:
+            import pytest as _pytest
+
+            _pytest.skip("no hyphenated test distribution installed")
+
+        # The hyphenated name is NOT importable as a module — proves the
+        # check uses distribution lookup, not find_spec.
+        assert importlib.util.find_spec(chosen) is None
+
+        m = PluginManifest(
+            name=f"needs_{chosen}",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="python", name=chosen),),
+        )
+        report = ManifestStore().check(m)
+        assert chosen not in report.missing_python_deps
+
+
+class TestSlimDiscoveryFallback:
+    """Regression: when the JSON index is absent (slim build), the runtime
+    must still discover shipped `_manifest.py` modules via filesystem scan.
+    Without this, slim users see an empty extension list."""
+
+    def test_filesystem_scan_runs_unconditionally(self, monkeypatch, tmp_path):
+        """get_store() must scan the source tree even without
+        NEXUS_EXTENSIONS_DEV_SCAN set — that env var was a dev-only artifact
+        that broke slim discovery."""
+        from nexus.extensions import store as store_mod
+
+        # Make a fake nexus tree under tmp_path with one connector manifest.
+        connectors_dir = tmp_path / "src" / "nexus" / "backends" / "connectors" / "fake"
+        connectors_dir.mkdir(parents=True)
+        (connectors_dir / "_manifest.py").write_text(
+            "from nexus.extensions.manifest import ConnectorManifest\n"
+            "MANIFEST = ConnectorManifest(name='slimfake', module='m', "
+            "factory='F', service_name='svc')\n"
+        )
+        # Also create the nexus/extensions dir whose __file__ anchors the scan.
+        ext_dir = tmp_path / "src" / "nexus" / "extensions"
+        ext_dir.mkdir(parents=True)
+        fake_store_file = ext_dir / "store.py"
+        fake_store_file.write_text("# placeholder for __file__ anchoring\n")
+
+        monkeypatch.setattr(store_mod, "__file__", str(fake_store_file))
+        monkeypatch.delenv("NEXUS_EXTENSIONS_DEV_SCAN", raising=False)
+        store_mod.reset_store()
+
+        store = store_mod.get_store()
+        names = {m.name for m in store.list()}
+        assert "slimfake" in names
+
+        store_mod.reset_store()
 
 
 class TestSingletonThreadSafety:

@@ -16,7 +16,6 @@ import importlib
 import importlib.util
 import json
 import logging
-import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -42,11 +41,15 @@ def _entry_points(group: str):
     return _stdlib_entry_points(group=group)
 
 
-def _load_manifest_module(manifest_file: Path) -> AnyManifest | None:
+def _load_manifest_module(manifest_file: Path, *, strict: bool = False) -> AnyManifest | None:
     """Import a `_manifest.py` file in isolation and return its MANIFEST constant.
 
-    Returns None on any failure (broken module, missing MANIFEST). Failures are
-    logged at WARN level so siblings keep loading.
+    ``strict=False`` (runtime default) — broken or MANIFEST-less modules are
+    logged at WARN level and return None so sibling extensions keep loading.
+
+    ``strict=True`` (index build/verify) — any failure raises so the CI hook
+    catches a malformed in-tree manifest instead of silently dropping it from
+    the regenerated and committed indexes.
     """
     try:
         spec = importlib.util.spec_from_file_location(
@@ -56,12 +59,16 @@ def _load_manifest_module(manifest_file: Path) -> AnyManifest | None:
             raise ImportError(f"could not build spec for {manifest_file}")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-    except Exception as exc:  # noqa: BLE001 — isolation is intentional
-        logger.warning("Skipping broken manifest at %s: %s", manifest_file, exc)
+    except Exception as exc:
+        if strict:
+            raise RuntimeError(f"failed to load manifest at {manifest_file}: {exc}") from exc
+        logger.warning("Skipping broken manifest at %s: %s", manifest_file, exc)  # noqa: BLE001
         return None
 
     manifest = getattr(module, "MANIFEST", None)
     if manifest is None:
+        if strict:
+            raise RuntimeError(f"no MANIFEST constant in {manifest_file}")
         logger.warning("No MANIFEST constant in %s; skipping", manifest_file)
     return manifest
 
@@ -169,12 +176,26 @@ class ManifestStore:
     def _manifest_from_entry_point(self, group: str, ep) -> AnyManifest | None:  # noqa: ANN001
         """Build a manifest for one entry point without importing extension impl.
 
-        Class-style targets (``module:attr``) get a synthesized PluginManifest;
-        module-style targets are imported only to read the MANIFEST constant.
+        Conventions:
+        - ``nexus.plugins`` — historical group, values are ``module:Class``.
+          Synthesize a PluginManifest from the entry-point metadata so the
+          plugin shows up in introspection without importing it.
+        - ``nexus.connectors`` / ``nexus.bricks`` — new groups, values are
+          plain module paths pointing at a `_manifest.py`-style module that
+          exposes ``MANIFEST``. A colon here is a misconfiguration: refusing
+          to synthesize a fake plugin keeps the manifest's `kind` honest.
         """
         value = ep.value or ""
         if ":" in value:
-            # Legacy class target — synthesize without import.
+            if group != "nexus.plugins":
+                logger.warning(
+                    "Entry point %s in group %s uses class-style value %r; "
+                    "this group expects a manifest module path. Skipping.",
+                    ep.name,
+                    group,
+                    value,
+                )
+                return None
             module_path, _, attr = value.partition(":")
             from nexus.extensions.manifest import PluginManifest
 
@@ -265,16 +286,20 @@ class ManifestStore:
     def check(self, manifest: AnyManifest) -> CheckReport:
         """Run import probes and per-dep checks to report availability.
 
-        - python deps: ``importlib.util.find_spec`` (does NOT execute the module).
+        - python deps: looked up with ``importlib.metadata.distribution`` so
+          PyPI distribution names that don't match an importable module name
+          (``google-api-python-client``, ``slack-sdk``, etc.) resolve correctly.
         - binary deps: ``shutil.which`` against PATH.
         - service deps: marked unchecked (we can't probe a service without
-          opening a connection); they are surfaced via ``unchecked_services``
+          opening a connection); they are surfaced via ``missing_services``
           so callers know the report is incomplete and ``available`` is False
           unless every declared service is reachable out-of-band.
-        - import_probes: ``importlib.import_module`` (the only thing that may
-          actually execute extension-adjacent code).
+        - import_probes: ``importlib.import_module`` — the canonical
+          importability signal and the only thing that may execute
+          extension-adjacent code.
         """
         import shutil
+        from importlib.metadata import PackageNotFoundError, distribution
 
         probe_failures: list[str] = []
         for probe in manifest.import_probes:
@@ -288,10 +313,8 @@ class ManifestStore:
             if d.kind != "python":
                 continue
             try:
-                spec = importlib.util.find_spec(d.name)
-            except (ImportError, ValueError):
-                spec = None
-            if spec is None:
+                distribution(d.name)
+            except PackageNotFoundError:
                 missing_python.append(d.name)
 
         missing_binary = [
@@ -354,8 +377,15 @@ _STORE_LOCK = threading.Lock()
 def get_store() -> ManifestStore:
     """Return the process-wide manifest store, lazily populating on first call.
 
-    Population order: JSON index > entry points > (optional) filesystem scan.
-    The filesystem scan is gated behind the NEXUS_EXTENSIONS_DEV_SCAN env var.
+    Population order:
+      1. JSON index shipped in the wheel (when present).
+      2. Entry points from importlib.metadata.
+      3. Filesystem scan of `nexus/{backends/connectors,bricks,plugins}/*/_manifest.py`.
+         Always runs in production: in slim builds the JSON index is excluded,
+         so this is the only source for shipped in-tree manifests. Cheap because
+         it only walks immediate children that contain a `_manifest.py` file.
+         The legacy `NEXUS_EXTENSIONS_DEV_SCAN` env var stays as a no-op for
+         compatibility — production behavior no longer depends on it.
 
     Thread-safe: concurrent first calls all return the same fully-populated
     store. Population happens inside a lock; the unlocked fast path returns
@@ -378,12 +408,15 @@ def get_store() -> ManifestStore:
         # 2. Entry points (third-party packages declaring nexus.* groups).
         store.load_entry_points()
 
-        # 3. Filesystem scan (dev-only fallback).
-        if os.environ.get("NEXUS_EXTENSIONS_DEV_SCAN") == "1":
-            for subdir in ("backends/connectors", "bricks", "plugins"):
-                root = Path(__file__).parent.parent / subdir
-                if root.exists():
-                    store.load_filesystem(root)
+        # 3. Filesystem scan of shipped manifest modules. The store's
+        #    first-source-wins precedence means this is a no-op for keys
+        #    already loaded from index/entry-points, so it adds zero overhead
+        #    when the index is fresh.
+        nexus_root = Path(__file__).parent.parent
+        for subdir in ("backends/connectors", "bricks", "plugins"):
+            root = nexus_root / subdir
+            if root.exists():
+                store.load_filesystem(root)
 
         _STORE = store
         return store

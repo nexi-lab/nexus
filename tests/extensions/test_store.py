@@ -175,6 +175,82 @@ class TestResolveFactory:
         assert "missing_callable" in str(excinfo.value)
 
 
+class TestEntryPointLoader:
+    def test_load_from_entry_points(self, monkeypatch):
+        """Entry points whose target is a `_manifest` module are registered."""
+        import sys
+        import types
+        from importlib.metadata import EntryPoint
+
+        fake_mod = types.ModuleType("fake_pkg.alpha._manifest")
+        from nexus.extensions.manifest import ConnectorManifest
+
+        fake_mod.MANIFEST = ConnectorManifest(
+            name="alpha",
+            module="fake_pkg.alpha.connector",
+            factory="F",
+            service_name="alpha",
+        )
+        sys.modules["fake_pkg.alpha._manifest"] = fake_mod
+
+        ep = EntryPoint(
+            name="alpha",
+            value="fake_pkg.alpha._manifest",
+            group="nexus.connectors",
+        )
+
+        def fake_entry_points(group: str):
+            if group == "nexus.connectors":
+                return [ep]
+            return []
+
+        monkeypatch.setattr("nexus.extensions.store._entry_points", fake_entry_points)
+
+        store = ManifestStore()
+        store.load_entry_points()
+
+        names = {m.name for m in store.list()}
+        assert "alpha" in names
+
+    def test_entry_point_import_failure_isolated(self, monkeypatch, caplog):
+        """A broken entry point logs WARN and doesn't block others."""
+        import logging
+        import sys
+        import types
+        from importlib.metadata import EntryPoint
+
+        good_ep = EntryPoint(
+            name="good",
+            value="fake_pkg.good._manifest",
+            group="nexus.plugins",
+        )
+        bad_ep = EntryPoint(
+            name="bad",
+            value="nonexistent.module._manifest",
+            group="nexus.plugins",
+        )
+
+        good_mod = types.ModuleType("fake_pkg.good._manifest")
+        from nexus.extensions.manifest import PluginManifest
+
+        good_mod.MANIFEST = PluginManifest(name="good", module="m", factory="F")
+        sys.modules["fake_pkg.good._manifest"] = good_mod
+
+        def fake_entry_points(group: str):
+            if group == "nexus.plugins":
+                return [good_ep, bad_ep]
+            return []
+
+        monkeypatch.setattr("nexus.extensions.store._entry_points", fake_entry_points)
+
+        store = ManifestStore()
+        with caplog.at_level(logging.WARNING):
+            store.load_entry_points()
+
+        assert {m.name for m in store.list()} == {"good"}
+        assert any("bad" in r.message for r in caplog.records)
+
+
 class TestFilesystemLoader:
     def test_load_from_directory(self, tmp_path):
         """Scan a directory tree for `_manifest.py` files and register MANIFEST."""

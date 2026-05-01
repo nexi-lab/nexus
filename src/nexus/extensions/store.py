@@ -17,6 +17,7 @@ import importlib.util
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.metadata import entry_points as _stdlib_entry_points
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,11 @@ from nexus.extensions.manifest import AnyManifest
 from nexus.extensions.types import Kind
 
 logger = logging.getLogger(__name__)
+
+
+def _entry_points(group: str):
+    """Indirection so tests can monkeypatch without touching the stdlib import."""
+    return _stdlib_entry_points(group=group)
 
 
 @dataclass(frozen=True)
@@ -96,6 +102,45 @@ class ManifestStore:
         seen_in_source.add(key)
 
     # --- discovery loaders ---
+
+    _ENTRY_POINT_GROUPS: tuple[str, ...] = (
+        "nexus.connectors",
+        "nexus.bricks",
+        "nexus.plugins",
+    )
+
+    def load_entry_points(self) -> None:
+        """Discover manifests via importlib.metadata entry points.
+
+        Entry-point targets must be `_manifest` modules — i.e., the entry-point
+        value points to a module whose top level defines `MANIFEST` as a
+        manifest instance. This is the documented contract for third-party
+        extensions.
+        """
+        for group in self._ENTRY_POINT_GROUPS:
+            for ep in _entry_points(group):
+                try:
+                    module = importlib.import_module(ep.value)
+                except Exception as exc:  # noqa: BLE001 — isolation
+                    logger.warning(
+                        "Failed to load entry point %s in group %s: %s",
+                        ep.name,
+                        group,
+                        exc,
+                    )
+                    continue
+                manifest = getattr(module, "MANIFEST", None)
+                if manifest is None:
+                    logger.warning(
+                        "Entry point %s in group %s has no MANIFEST",
+                        ep.name,
+                        group,
+                    )
+                    continue
+                try:
+                    self._register(manifest, source=f"entry_point:{group}/{ep.name}")
+                except DuplicateManifestError as exc:
+                    logger.warning("Duplicate entry-point manifest: %s", exc)
 
     def load_filesystem(self, root: Path) -> None:
         """Scan `root/*/  _manifest.py` and register every `MANIFEST` constant.

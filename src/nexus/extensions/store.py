@@ -37,7 +37,7 @@ INDEX_SCHEMA_VERSION = 1
 logger = logging.getLogger(__name__)
 
 
-def _entry_points(group: str):
+def _entry_points(group: str) -> Any:
     """Indirection so tests can monkeypatch without touching the stdlib import."""
     return _stdlib_entry_points(group=group)
 
@@ -125,7 +125,7 @@ def _load_manifest_module(manifest_file: Path, *, strict: bool = False) -> AnyMa
     return _validate_manifest(raw, strict=strict, where=str(manifest_file))
 
 
-def _translate_legacy_dep(dep: object) -> object:
+def _translate_legacy_dep(dep: Any) -> Any:
     """Convert a legacy nexus.backends.base.runtime_deps.RuntimeDep to a new
     nexus.extensions.manifest.RuntimeDep, or return None if untranslatable."""
     from nexus.extensions.manifest import RuntimeDep as _RD
@@ -142,7 +142,15 @@ def _translate_legacy_dep(dep: object) -> object:
 
 @dataclass(frozen=True)
 class CheckReport:
-    """Result of ManifestStore.check() — what's missing for an extension to run."""
+    """Result of ManifestStore.check() — what's missing for an extension to run.
+
+    ``available`` is True only when every probed signal (python/binary/service
+    deps, import_probes) is satisfied AND the source manifest carried full
+    metadata (``metadata_complete=True``). Records synthesized from legacy
+    sources without rich dep/probe data are reported as ``available=False``
+    with ``metadata_incomplete=True`` — callers should treat them as
+    "unverified" rather than "broken".
+    """
 
     available: bool
     missing_python_deps: tuple[str, ...] = ()
@@ -150,6 +158,7 @@ class CheckReport:
     missing_services: tuple[str, ...] = ()
     import_probe_failures: tuple[str, ...] = ()
     profile_gate_disabled: bool = False
+    metadata_incomplete: bool = False
 
 
 class ManifestStore:
@@ -240,7 +249,7 @@ class ManifestStore:
                 except DuplicateManifestError as exc:
                     logger.warning("Duplicate entry-point manifest: %s", exc)
 
-    def _manifest_from_entry_point(self, group: str, ep) -> AnyManifest | None:  # noqa: ANN001
+    def _manifest_from_entry_point(self, group: str, ep: Any) -> AnyManifest | None:
         """Build a manifest for one entry point without importing extension impl.
 
         Conventions:
@@ -352,7 +361,9 @@ class ManifestStore:
 
         for entry in _LEGACY_CONNECTOR_MANIFEST:
             try:
-                runtime_deps = tuple(_translate_legacy_dep(d) for d in entry.runtime_deps)
+                runtime_deps: tuple[Any, ...] = tuple(
+                    _translate_legacy_dep(d) for d in entry.runtime_deps
+                )
                 # Preserve None service_name — several legacy entries
                 # (cas_*, local_connector, github_connector, gws_github)
                 # intentionally have no unified service mapping. Fabricating
@@ -443,28 +454,39 @@ class ManifestStore:
             if d.kind == "binary" and shutil.which(d.name) is None
         ]
 
-        # Service deps: defer to the legacy availability check
-        # (``nexus.server`` importable). On full installs this is True so
-        # service-dependent extensions report available; on slim it's False
-        # and the same extensions correctly surface as missing.
+        # Service deps: probe each named service through
+        # ``_service_available`` so per-service mappings (e.g.
+        # ``token_manager`` → ``nexus.bricks.auth.oauth.token_manager``) are
+        # honored. Falls back to the whole-server probe for unmapped names.
+        service_probe: Callable[[str], bool]
         try:
-            from nexus.backends.base.runtime_deps import _server_available
+            from nexus.backends.base.runtime_deps import _service_available
 
-            server_present = _server_available()
+            service_probe = _service_available
         except ImportError:
-            # Legacy module isn't shipped — assume service is reachable so we
-            # don't false-positive every connector that declares a service dep.
-            server_present = True
+            # Legacy module isn't shipped — assume every service is reachable
+            # so we don't false-positive connectors that declare service deps.
+            service_probe = lambda _name: True  # noqa: E731
+
         missing_services = tuple(
-            d.name for d in manifest.runtime_deps if d.kind == "service" and not server_present
+            d.name
+            for d in manifest.runtime_deps
+            if d.kind == "service" and not service_probe(d.name)
         )
 
-        available = (
+        all_probes_pass = (
             not probe_failures
             and not missing_python
             and not missing_binary
             and not missing_services
         )
+
+        # Partial manifests (legacy adapter, synthesized plugins from class-style
+        # entry points) lack the runtime_deps / import_probes that would let us
+        # verify availability. Treat them as unverified rather than authoritative
+        # so consumers don't act on false positives.
+        metadata_incomplete = not manifest.metadata_complete
+        available = all_probes_pass and not metadata_incomplete
 
         return CheckReport(
             available=available,
@@ -473,6 +495,7 @@ class ManifestStore:
             missing_services=missing_services,
             import_probe_failures=tuple(probe_failures),
             profile_gate_disabled=False,
+            metadata_incomplete=metadata_incomplete,
         )
 
     # --- runtime API (the only place that imports impl) ---
@@ -495,7 +518,8 @@ class ManifestStore:
             ) from exc
 
         try:
-            return getattr(module, manifest.factory)
+            factory: Callable[..., Any] = getattr(module, manifest.factory)
+            return factory
         except AttributeError:
             raise FactoryResolutionError(
                 manifest_name=manifest.name,

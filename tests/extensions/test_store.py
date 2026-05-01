@@ -703,14 +703,15 @@ class TestCheckSemantics:
 
 
 class TestServiceDepAvailability:
-    """Regression: service deps must not gate `available` on full installs.
-    The legacy `_server_available()` probe is the source of truth — when
-    nexus.server is importable, service deps are considered satisfied."""
+    """Regression: service deps probe per-service modules (not just the
+    whole-server package). A connector that needs `token_manager` is gated by
+    whether the token_manager module is importable, not by whether
+    nexus.server is present."""
 
-    def test_service_dep_does_not_block_available_when_server_present(self, monkeypatch):
+    def test_service_dep_does_not_block_available_when_service_present(self, monkeypatch):
         from nexus.backends.base import runtime_deps as legacy
 
-        monkeypatch.setattr(legacy, "_server_available", lambda: True)
+        monkeypatch.setattr(legacy, "_service_available", lambda _name: True)
 
         from nexus.extensions.manifest import PluginManifest, RuntimeDep
 
@@ -724,10 +725,10 @@ class TestServiceDepAvailability:
         assert report.available is True
         assert report.missing_services == ()
 
-    def test_service_dep_blocks_available_when_server_absent(self, monkeypatch):
+    def test_service_dep_blocks_available_when_service_absent(self, monkeypatch):
         from nexus.backends.base import runtime_deps as legacy
 
-        monkeypatch.setattr(legacy, "_server_available", lambda: False)
+        monkeypatch.setattr(legacy, "_service_available", lambda _name: False)
 
         from nexus.extensions.manifest import PluginManifest, RuntimeDep
 
@@ -740,6 +741,36 @@ class TestServiceDepAvailability:
         report = ManifestStore().check(m)
         assert report.available is False
         assert "token_manager" in report.missing_services
+
+    def test_service_dep_probes_per_service_not_whole_server(self, monkeypatch):
+        """Distinct services are queried independently — a missing
+        ``record_store`` service must not block a connector whose only
+        service dep is ``token_manager``."""
+        from nexus.backends.base import runtime_deps as legacy
+
+        # Token-manager service available; record_store service absent.
+        def fake_service(name: str) -> bool:
+            return name == "token_manager"
+
+        monkeypatch.setattr(legacy, "_service_available", fake_service)
+
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        only_tm = PluginManifest(
+            name="needs_tm",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="service", name="token_manager"),),
+        )
+        only_rs = PluginManifest(
+            name="needs_rs",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="service", name="record_store"),),
+        )
+        store = ManifestStore()
+        assert store.check(only_tm).available is True
+        assert "record_store" in store.check(only_rs).missing_services
 
 
 class TestSyntheticPluginPartialMetadata:
@@ -761,6 +792,42 @@ class TestSyntheticPluginPartialMetadata:
         store.load_entry_points()
         m = store.get("legacy", kind="plugin")
         assert m.metadata_complete is False
+
+
+class TestPartialManifestCheck:
+    """Regression: a manifest with metadata_complete=False must not be
+    reported as available=True even when its (empty) probes/deps satisfy.
+    Without rich runtime_deps/import_probes there's nothing to verify, so
+    the report flags ``metadata_incomplete`` and refuses the green light."""
+
+    def test_partial_manifest_is_unavailable_with_metadata_incomplete_flag(self):
+        from nexus.extensions.manifest import PluginManifest
+
+        m = PluginManifest(
+            name="legacy_plugin",
+            module="pkg.mod",
+            factory="LegacyPlugin",
+            metadata_complete=False,
+        )
+        report = ManifestStore().check(m)
+        assert report.available is False
+        assert report.metadata_incomplete is True
+        assert report.missing_python_deps == ()
+        assert report.missing_binary_deps == ()
+        assert report.import_probe_failures == ()
+
+    def test_complete_manifest_with_no_deps_is_available(self):
+        from nexus.extensions.manifest import PluginManifest
+
+        m = PluginManifest(
+            name="full_plugin",
+            module="pkg.mod",
+            factory="F",
+            metadata_complete=True,
+        )
+        report = ManifestStore().check(m)
+        assert report.available is True
+        assert report.metadata_incomplete is False
 
 
 class TestProbeIsolation:

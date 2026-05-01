@@ -376,8 +376,25 @@ impl NexusVfsService for VfsServiceImpl {
                 // the Python `dispatch_method` path so the existing
                 // 195 `@rpc_expose` services keep working without
                 // changes.
+                //
+                // Auth-context plumbing: the python_ffi router needs
+                // to construct OperationContext per request, so set
+                // the `nexus.server._auth_ctx_local` contextvar before
+                // dispatch and clear it after.  No-op for native Rust
+                // services (acp_/managed_agent_/federation_) — they
+                // don't read the var.
                 if let Some((svc_name, rust_method)) = resolve_rust_dispatch(&method) {
-                    match kernel.dispatch_rust_call(svc_name, rust_method, &payload) {
+                    let _ = py
+                        .import("nexus.server._auth_ctx_local")
+                        .and_then(|m| m.getattr("set_auth"))
+                        .and_then(|f| f.call1((auth_pyobj.clone_ref(py),)));
+                    let dispatch_result =
+                        kernel.dispatch_rust_call(svc_name, rust_method, &payload);
+                    let _ = py
+                        .import("nexus.server._auth_ctx_local")
+                        .and_then(|m| m.getattr("clear_auth"))
+                        .and_then(|f| f.call0());
+                    match dispatch_result {
                         Some(Ok(bytes)) => return Ok((false, bytes)),
                         Some(Err(kernel::service_registry::RustCallError::InvalidArgument(m))) => {
                             return Ok((

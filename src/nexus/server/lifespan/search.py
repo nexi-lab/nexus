@@ -24,18 +24,31 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("true", "1", "yes")
 
 
-def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str] | None]:
+# pgvector hnsw indexes cap at 2000 dims for full-precision `vector` columns
+# (PostgreSQL 8KB page-size limit). text-embedding-3-large is 3072d native, so
+# without Matryoshka truncation the daemon crashes on first index with
+# "column cannot have more than 2000 dimensions for hnsw index".
+_PGVECTOR_HNSW_DIM_CAP = 2000
+
+
+def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str | int] | None]:
     """Resolve txtai embedding model and optional vectors config from env.
 
     Supports an explicit API-backed mode for Docker/demo stacks so users can
     avoid local embedding model startup when they already have OpenAI creds.
+
+    For OpenAI text-embedding-3 models (Matryoshka-trained), passes a
+    ``dimensions`` parameter to the API for quality-preserving truncation. The
+    default of 1536 for text-embedding-3-large keeps the daemon under the
+    pgvector hnsw 2000-dim cap; operators can override with
+    NEXUS_TXTAI_DIMENSIONS.
     """
     use_api_embeddings = _env_truthy("NEXUS_TXTAI_USE_API_EMBEDDINGS")
     configured_model = os.environ.get("NEXUS_TXTAI_MODEL", "").strip()
     openai_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     openai_base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
     model = configured_model or "sentence-transformers/all-MiniLM-L6-v2"
-    vectors: dict[str, str] | None = None
+    vectors: dict[str, str | int] | None = None
 
     if use_api_embeddings:
         if not configured_model and openai_api_key:
@@ -46,7 +59,46 @@ def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str] | None]:
             if openai_base_url:
                 vectors["api_base"] = openai_base_url
 
+            dim = _resolve_embedding_dimensions(model)
+            if dim is not None:
+                vectors["dimensions"] = dim
+
     return model, vectors or None
+
+
+def _resolve_embedding_dimensions(model: str) -> int | None:
+    """Resolve the OpenAI ``dimensions`` parameter for Matryoshka truncation.
+
+    Returns ``None`` when no truncation should be applied (model not in the
+    text-embedding-3 family and no override set). Clamps user-supplied values
+    to the pgvector hnsw cap so a typo can't take the daemon down.
+    """
+    raw = os.environ.get("NEXUS_TXTAI_DIMENSIONS", "").strip()
+    if raw:
+        try:
+            requested = int(raw)
+        except ValueError:
+            logger.warning("Invalid NEXUS_TXTAI_DIMENSIONS=%r — ignoring (expected int)", raw)
+        else:
+            if requested <= 0:
+                logger.warning("NEXUS_TXTAI_DIMENSIONS=%d must be positive — ignoring", requested)
+            elif requested > _PGVECTOR_HNSW_DIM_CAP:
+                logger.warning(
+                    "NEXUS_TXTAI_DIMENSIONS=%d exceeds pgvector hnsw cap of %d — "
+                    "clamping. Use halfvec or ivfflat for higher dims.",
+                    requested,
+                    _PGVECTOR_HNSW_DIM_CAP,
+                )
+                return _PGVECTOR_HNSW_DIM_CAP
+            else:
+                return requested
+
+    # text-embedding-3-large is 3072d native — must truncate for pgvector hnsw.
+    # 1536 is the sweet spot per OpenAI's MTEB data (≈64.1 vs 64.6 at 3072d)
+    # and matches the trained Matryoshka level.
+    if "text-embedding-3-large" in model:
+        return 1536
+    return None
 
 
 async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
@@ -77,6 +129,20 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     "Invalid NEXUS_PATH_CONTEXT_MAX_ZONES=%r — falling back to 2048",
                     _path_ctx_max_zones_env,
                 )
+        # Issue #3980: page-aggregation toggles. Default on; unaggregated
+        # behavior reproduces the chunk-level dilution measured in the issue.
+        _page_aggregation_env = os.environ.get("NEXUS_SEARCH_PAGE_AGGREGATION", "true")
+        _page_aggregation = _page_aggregation_env.strip().lower() not in ("false", "0", "no")
+        _chunks_per_page_env = os.environ.get("NEXUS_SEARCH_CHUNKS_PER_PAGE", "")
+        _chunks_per_page = 2
+        if _chunks_per_page_env:
+            try:
+                _chunks_per_page = max(1, int(_chunks_per_page_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_SEARCH_CHUNKS_PER_PAGE=%r — falling back to 2",
+                    _chunks_per_page_env,
+                )
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
@@ -93,6 +159,8 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             # NEXUS_TXTAI_GRAPH=true to re-enable (at their own risk).
             txtai_graph=os.environ.get("NEXUS_TXTAI_GRAPH", "false").lower()
             in ("true", "1", "yes"),
+            page_aggregation=_page_aggregation,
+            chunks_per_page=_chunks_per_page,
         )
 
         # Inject async_session_factory from RecordStoreABC when available

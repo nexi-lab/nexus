@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 _RERANK_MAX_CHARS = 800
 _RERANK_MAX_WORDS = 128
 
+# Issue #3980: floor for the candidate pool when page-aggregation is on. The
+# rare-phrase chunk that should rank a page in the top-5 can land at chunk-rank
+# 30+ in the unaggregated SQL — over-fetching to ~50 candidates lets the
+# aggregation step recover it. Capped further down by ``_build_search_sql``'s
+# ``safe_limit`` (1000), so this floor is safe to tune up.
+_PAGE_AGGREGATION_FETCH_FLOOR = 50
+
 
 # =============================================================================
 # Protocol
@@ -133,6 +140,8 @@ class TxtaiBackend:
         sparse: bool | str = False,
         embedding_cache: Any | None = None,
         data_path: str | None = None,
+        page_aggregation: bool = True,
+        chunks_per_page: int = 2,
     ) -> None:
         self._database_url = database_url
         self._model = model
@@ -147,6 +156,10 @@ class TxtaiBackend:
         self.last_rerank_ms: float = 0.0
         self._started = False
         self._reranker_task: asyncio.Task[None] | None = None
+        # Page aggregation: fixes Issue #3980 chunk-level BM25 dilution. See
+        # ``_aggregate_chunks_to_pages`` for the algorithm.
+        self._page_aggregation = page_aggregation
+        self._chunks_per_page = max(1, int(chunks_per_page))
         # Path for txtai config.json — needed for pgvector persistence.
         # txtai stores index metadata (dimensions, offset) in a local file
         # and reads it back on load() to reconnect to pgvector tables.
@@ -837,6 +850,12 @@ class TxtaiBackend:
         # dense scorers can each emit the same id, so a `limit`-row page can
         # collapse to <limit unique results after dedupe.
         fetch_limit = limit * 2 if (self._reranker or search_type == "hybrid") else limit
+        # Issue #3980: when page-aggregation is on, the chunk that literally
+        # matches a rare phrase can land at chunk-rank 30+ even though its
+        # *page* belongs in the top-5. Over-fetch wide so the literal-match
+        # chunk lands in the candidate pool — aggregation does the rest.
+        if self._page_aggregation:
+            fetch_limit = max(fetch_limit, _PAGE_AGGREGATION_FETCH_FLOOR)
 
         sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit)
         # Even with pgvector, we must serialize against writes because txtai
@@ -860,8 +879,23 @@ class TxtaiBackend:
             if existing is None or float(r.get("score", 0.0)) > float(existing.get("score", 0.0)):
                 deduped[key] = r
 
+        # Issue #3980: max-pool chunks to page granularity, re-rank pages, emit
+        # at most ``chunks_per_page`` chunks per surviving page. Runs *before*
+        # BaseSearchResult conversion so we can keep the cheap dict shape.
+        if self._page_aggregation:
+            ranked_rows = _aggregate_chunks_to_pages(
+                list(deduped.values()),
+                chunks_per_page=self._chunks_per_page,
+            )
+        else:
+            ranked_rows = sorted(
+                deduped.values(),
+                key=lambda r: float(r.get("score", 0.0)),
+                reverse=True,
+            )
+
         results: list[BaseSearchResult] = []
-        for r in deduped.values():
+        for r in ranked_rows:
             score = float(r.get("score", 0.0))
             result = BaseSearchResult(
                 path=r.get("path", ""),
@@ -876,10 +910,6 @@ class TxtaiBackend:
                 result.keyword_score = score
                 result.vector_score = score
             results.append(result)
-
-        # Sort by score desc so the post-dedupe slice keeps the best rows
-        # when over-fetch returned more unique ids than the caller asked for.
-        results.sort(key=lambda r: r.score, reverse=True)
 
         # Cross-encoder reranking
         if self._reranker and results:
@@ -925,6 +955,10 @@ class TxtaiBackend:
             path_filter = q_spec.get("path")
             q_type = str(q_spec.get("type", "hybrid"))
             fetch_limit = limit * 2 if q_type == "hybrid" else limit
+            # Issue #3980: same over-fetch widening as ``search()`` so the
+            # literal-match chunk for rare-phrase queries lands in the pool.
+            if self._page_aggregation:
+                fetch_limit = max(fetch_limit, _PAGE_AGGREGATION_FETCH_FLOOR)
             sql = _build_search_sql(
                 q_text, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit
             )
@@ -960,19 +994,28 @@ class TxtaiBackend:
                     existing.get("score", 0.0)
                 ):
                     deduped[key] = r
-            results: list[BaseSearchResult] = []
-            for r in deduped.values():
-                score = float(r.get("score", 0.0))
-                results.append(
-                    BaseSearchResult(
-                        path=r.get("path", ""),
-                        chunk_text=r.get("text", ""),
-                        score=score,
-                        keyword_score=score,
-                        vector_score=score,
-                    )
+            # Issue #3980: page-level aggregation for batch path too.
+            if self._page_aggregation:
+                ranked_rows = _aggregate_chunks_to_pages(
+                    list(deduped.values()),
+                    chunks_per_page=self._chunks_per_page,
                 )
-            results.sort(key=lambda r: r.score, reverse=True)
+            else:
+                ranked_rows = sorted(
+                    deduped.values(),
+                    key=lambda r: float(r.get("score", 0.0)),
+                    reverse=True,
+                )
+            results: list[BaseSearchResult] = [
+                BaseSearchResult(
+                    path=r.get("path", ""),
+                    chunk_text=r.get("text", ""),
+                    score=float(r.get("score", 0.0)),
+                    keyword_score=float(r.get("score", 0.0)),
+                    vector_score=float(r.get("score", 0.0)),
+                )
+                for r in ranked_rows
+            ]
             all_results.append(results[:q_limit])
 
         return all_results
@@ -1162,6 +1205,67 @@ def _build_search_sql(
     where = " AND ".join(clauses)
     safe_limit = max(1, min(int(limit), 1000))
     return f"SELECT id, text, score, path, zone_id FROM txtai WHERE {where} LIMIT {safe_limit}"
+
+
+def _aggregate_chunks_to_pages(
+    chunks: list[dict[str, Any]],
+    *,
+    chunks_per_page: int,
+) -> list[dict[str, Any]]:
+    """Max-pool chunk scores to page (path) granularity, re-rank pages, emit
+    the top-K best chunks per surviving page.
+
+    Why this exists (Issue #3980): txtai's pgtext BM25 scores at chunk
+    granularity. For rare-phrase queries the chunk that literally contains the
+    phrase loses on local BM25 — a 360-word page split into three 120-word
+    chunks distributes term frequency across chunks, and a competing page
+    whose single chunk repeats a frequent token can outscore it. The page
+    that *should* rank in the top-5 ends up at chunk-rank 30+ across its
+    fragments. Page-level max-pool restores the right ranking with the
+    bonus that we keep chunk-grain context for downstream RAG.
+
+    Pattern matches Vespa's MaxSim long-context evaluation, ColBERT's
+    max-then-sum late-interaction, and gbrain's "Best-of-Page" dedup.
+
+    Args:
+        chunks: deduped raw rows from the txtai SQL search. Each row must
+            carry ``path`` and ``score``; rows missing ``path`` get treated
+            as their own page (``id`` fallback) so they're not silently
+            collapsed together.
+        chunks_per_page: cap on chunks emitted per page. Protects against
+            one-doc dominance at the top of the result list.
+
+    Returns:
+        A flat list of chunk rows, ordered by (page rank desc, chunk score
+        desc within page). Length is at most ``chunks_per_page * len(pages)``.
+    """
+    if not chunks:
+        return []
+
+    by_page: dict[str, list[dict[str, Any]]] = {}
+    for r in chunks:
+        # Use ``path`` as the page key. Fall back to ``id`` (and finally to a
+        # synthetic per-row key) so rows without a path don't collide on the
+        # empty string and silently merge.
+        path = r.get("path") or ""
+        key = path or str(r.get("id") or id(r))
+        by_page.setdefault(key, []).append(r)
+
+    ranked_pages: list[tuple[float, list[dict[str, Any]]]] = []
+    for page_chunks in by_page.values():
+        # Max-pool: page score = best chunk's score. Sum-pool conflates
+        # chunk count with relevance and over-rewards long pages; max keeps
+        # the rare-phrase signal intact.
+        page_chunks.sort(key=lambda r: float(r.get("score", 0.0)), reverse=True)
+        page_score = float(page_chunks[0].get("score", 0.0))
+        ranked_pages.append((page_score, page_chunks))
+
+    ranked_pages.sort(key=lambda item: item[0], reverse=True)
+
+    out: list[dict[str, Any]] = []
+    for _page_score, page_chunks in ranked_pages:
+        out.extend(page_chunks[:chunks_per_page])
+    return out
 
 
 def _stamp_zone_id(documents: list[dict[str, Any]], zone_id: str) -> list[dict[str, Any]]:

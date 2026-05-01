@@ -12,9 +12,12 @@ Only resolve_factory imports impl, and only on demand.
 
 from __future__ import annotations
 
+import importlib
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
-from nexus.extensions.errors import DuplicateManifestError
+from nexus.extensions.errors import DuplicateManifestError, FactoryResolutionError
 from nexus.extensions.manifest import AnyManifest
 from nexus.extensions.types import Kind
 
@@ -86,3 +89,32 @@ class ManifestStore:
             return
         self._entries[key] = (manifest, source)
         seen_in_source.add(key)
+
+    # --- runtime API (the only place that imports impl) ---
+
+    def resolve_factory(self, manifest: AnyManifest) -> Callable[..., Any]:
+        """Import the impl module and return the named factory callable.
+
+        This is the ONLY method on the store that imports an extension impl
+        module. Callers must accept that this triggers optional-dependency
+        imports and may raise ImportError chains.
+        """
+        try:
+            module = importlib.import_module(manifest.module)
+        except ImportError as exc:
+            raise FactoryResolutionError(
+                manifest_name=manifest.name,
+                module=manifest.module,
+                factory=manifest.factory,
+                detail=f"import failed: {exc}",
+            ) from exc
+
+        try:
+            return getattr(module, manifest.factory)
+        except AttributeError:
+            raise FactoryResolutionError(
+                manifest_name=manifest.name,
+                module=manifest.module,
+                factory=manifest.factory,
+                detail="attribute not found in module",
+            ) from None

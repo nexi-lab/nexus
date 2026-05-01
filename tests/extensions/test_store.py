@@ -122,3 +122,54 @@ class TestProfileFilter:
         listed = store.list(profile=frozenset({"search"}))
         names = {m.name for m in listed}
         assert "search" in names
+
+
+class TestResolveFactory:
+    def test_resolve_imports_target_module(self, monkeypatch, tmp_path):
+        """resolve_factory imports the impl module and returns the named attr."""
+        import sys
+
+        mod_path = tmp_path / "synthetic_target.py"
+        mod_path.write_text("def make(): return 'hi'\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("synthetic_target", None)
+
+        from nexus.extensions.manifest import PluginManifest
+
+        store = ManifestStore()
+        m = PluginManifest(name="synthetic", module="synthetic_target", factory="make")
+        store._register(m, source="test")
+
+        factory = store.resolve_factory(m)
+        assert callable(factory)
+        assert factory() == "hi"
+        assert "synthetic_target" in sys.modules
+
+    def test_resolve_unknown_module_raises(self):
+        from nexus.extensions.errors import FactoryResolutionError
+        from nexus.extensions.manifest import PluginManifest
+
+        store = ManifestStore()
+        m = PluginManifest(name="ghost", module="nonexistent.module.path", factory="X")
+        store._register(m, source="test")
+        with pytest.raises(FactoryResolutionError) as excinfo:
+            store.resolve_factory(m)
+        assert "nonexistent.module.path" in str(excinfo.value)
+
+    def test_resolve_unknown_factory_raises(self, monkeypatch, tmp_path):
+        import sys
+
+        mod_path = tmp_path / "has_no_factory.py"
+        mod_path.write_text("x = 1\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("has_no_factory", None)
+
+        from nexus.extensions.errors import FactoryResolutionError
+        from nexus.extensions.manifest import PluginManifest
+
+        store = ManifestStore()
+        m = PluginManifest(name="bad", module="has_no_factory", factory="missing_callable")
+        store._register(m, source="test")
+        with pytest.raises(FactoryResolutionError) as excinfo:
+            store.resolve_factory(m)
+        assert "missing_callable" in str(excinfo.value)

@@ -221,6 +221,42 @@ class ManifestStore:
             except DuplicateManifestError as exc:
                 logger.warning("Duplicate manifest skipped: %s", exc)
 
+    # --- introspection API ---
+
+    def check(self, manifest: AnyManifest) -> CheckReport:
+        """Run import probes and dependency declarations to report availability.
+
+        Does NOT import the manifest's impl module. Only `import_probes` are
+        attempted; binary/service deps are reported as declared (we don't
+        execute them here).
+        """
+        probe_failures: list[str] = []
+        for probe in manifest.import_probes:
+            try:
+                importlib.import_module(probe)
+            except ImportError:
+                probe_failures.append(probe)
+
+        missing_python = tuple(
+            d.name for d in manifest.runtime_deps if d.kind == "python" and d.name in probe_failures
+        )
+        # Binary and service deps are advisory until we add active checkers
+        # (out of scope for PR 1). Surface them only when something else is
+        # already wrong, so a healthy extension's report stays clean.
+        missing_binary = tuple(d.name for d in manifest.runtime_deps if d.kind == "binary")
+        missing_service = tuple(d.name for d in manifest.runtime_deps if d.kind == "service")
+
+        available = not probe_failures
+
+        return CheckReport(
+            available=available,
+            missing_python_deps=missing_python,
+            missing_binary_deps=() if available else missing_binary,
+            missing_services=() if available else missing_service,
+            import_probe_failures=tuple(probe_failures),
+            profile_gate_disabled=False,
+        )
+
     # --- runtime API (the only place that imports impl) ---
 
     def resolve_factory(self, manifest: AnyManifest) -> Callable[..., Any]:

@@ -356,6 +356,64 @@ class TestFilesystemLoader:
         assert any("broken" in r.message for r in caplog.records)
 
 
+class TestCheckMethod:
+    def test_check_all_available(self):
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        store = ManifestStore()
+        m = PluginManifest(
+            name="ok",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="python", name="sys"),),
+            import_probes=("sys",),
+        )
+        store._register(m, source="test")
+        report = store.check(m)
+        assert report.available is True
+        assert report.missing_python_deps == ()
+        assert report.import_probe_failures == ()
+
+    def test_check_missing_python_dep(self):
+        from nexus.extensions.manifest import PluginManifest, RuntimeDep
+
+        store = ManifestStore()
+        m = PluginManifest(
+            name="needs",
+            module="m",
+            factory="F",
+            runtime_deps=(RuntimeDep(kind="python", name="totally_not_a_real_pkg_xyz"),),
+            import_probes=("totally_not_a_real_pkg_xyz",),
+        )
+        store._register(m, source="test")
+        report = store.check(m)
+        assert report.available is False
+        assert "totally_not_a_real_pkg_xyz" in report.import_probe_failures
+
+    def test_check_does_not_import_impl(self, monkeypatch, tmp_path):
+        """check() must not import the impl module — only probes."""
+        import sys
+
+        impl = tmp_path / "impl_no_import.py"
+        impl.write_text("raise RuntimeError('impl import side-effect')\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        sys.modules.pop("impl_no_import", None)
+
+        from nexus.extensions.manifest import PluginManifest
+
+        store = ManifestStore()
+        m = PluginManifest(
+            name="lazy_check",
+            module="impl_no_import",
+            factory="F",
+            import_probes=("sys",),
+        )
+        store._register(m, source="test")
+        report = store.check(m)
+        assert report.available is True
+        assert "impl_no_import" not in sys.modules
+
+
 class TestLazyInvariant:
     def test_list_does_not_import_impl(self, monkeypatch, tmp_path):
         """list() and get() must not trigger impl module imports."""

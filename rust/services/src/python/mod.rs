@@ -19,6 +19,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use crate::audit;
+use crate::federation::FederationService;
 use crate::managed_agent::ManagedAgentService;
 
 /// Install an `AuditHook` on `kernel` for `zone_id`, backed by a
@@ -99,6 +100,19 @@ fn nx_managed_agent_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
     ManagedAgentService::install(&py_kernel.kernel_arc()).map_err(PyRuntimeError::new_err)
 }
 
+/// Install `FederationService` on `kernel`. Enlists the service into
+/// `ServiceRegistry` so the gRPC `Call` dispatch path resolves
+/// `federation_*` wire-form RPCs into the Rust service.
+///
+/// Replaces the Python `FederationRPCService` at
+/// `src/nexus/server/rpc/services/federation_rpc.py`. Mirrors
+/// `nx_managed_agent_install` boot pattern.
+#[pyfunction]
+#[pyo3(name = "nx_federation_install")]
+fn nx_federation_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
+    FederationService::install(&py_kernel.kernel_arc()).map_err(PyRuntimeError::new_err)
+}
+
 /// Generic in-process Rust-service dispatch entry point.
 ///
 /// Mirrors the lookup the tonic `Call` handler runs internally
@@ -146,6 +160,9 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // because services lives in a peer crate; Python-side wiring
     // calls this from `_wired.py` after `Kernel::new` returns).
     m.add_function(wrap_pyfunction!(nx_managed_agent_install, m)?)?;
+    // FederationService — boot install. Replaces the Python
+    // FederationRPCService at server/rpc/services/federation_rpc.py.
+    m.add_function(wrap_pyfunction!(nx_federation_install, m)?)?;
     // ACP service wiring — hand-written hooks (boot install + Python
     // AgentRegistry bridge + on-terminate callbacks). Hosts
     // `AgentKind::UNMANAGED` agents (subprocess + ACP-over-stdio).

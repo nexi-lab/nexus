@@ -14,6 +14,12 @@ from nexus.extensions.errors import (
     ManifestValidationError,
     ReservedNameError,
 )
+from nexus.extensions.introspect import (
+    check_extension,
+    get_extension,
+    list_extensions,
+    list_kinds,
+)
 from nexus.extensions.manifest import (
     AnyManifest,
     BrickManifest,
@@ -44,6 +50,10 @@ __all__ = [
     "PluginManifest",
     "ReservedNameError",
     "RuntimeDep",
+    "check_extension",
+    "get_extension",
     "get_store",
+    "list_extensions",
+    "list_kinds",
     "parse_manifest",
 ]

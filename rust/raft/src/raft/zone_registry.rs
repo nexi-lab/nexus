@@ -320,27 +320,37 @@ impl ZoneRaftRegistry {
         // same RedbStore ("Database already open") and (b) a fresh setup
         // racing an in-progress remove on the same zone_id. Different
         // zone_ids proceed in parallel — no global mutex.
-        {
+        let setup_wait_started = tokio::time::Instant::now();
+        loop {
             use dashmap::mapref::entry::Entry;
             match self.creating.entry(zone_id.to_string()) {
                 Entry::Occupied(_occupied) => {
                     drop(_occupied);
                     // Another setup is in progress, or a remove is tearing the
-                    // zone down. Wait briefly and return whatever we see.
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                    return self
-                        .zones
-                        .get(zone_id)
-                        .map(|e| e.node.clone())
-                        .ok_or_else(|| {
-                            TransportError::Connection(format!(
-                                "Zone '{}' concurrent op in progress",
-                                zone_id,
-                            ))
-                        });
+                    // zone down. Dynamic zone creation can race with the
+                    // transport auto-join path on followers, so wait for the
+                    // first setup to publish the handle before treating it as
+                    // an actual conflict.
+                    if let Some(entry) = self.zones.get(zone_id) {
+                        return Ok(entry.node.clone());
+                    }
+                    if setup_wait_started.elapsed() >= std::time::Duration::from_secs(3) {
+                        return self
+                            .zones
+                            .get(zone_id)
+                            .map(|e| e.node.clone())
+                            .ok_or_else(|| {
+                                TransportError::Connection(format!(
+                                    "Zone '{}' concurrent op in progress",
+                                    zone_id,
+                                ))
+                            });
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
                 }
                 Entry::Vacant(v) => {
                     v.insert(ZoneOp::Creating);
+                    break;
                 }
             }
         }

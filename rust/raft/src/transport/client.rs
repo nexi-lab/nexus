@@ -6,9 +6,9 @@ use super::proto::nexus::raft::{
     raft_command::Command as ProtoCommandVariant, raft_query::Query as ProtoQueryVariant,
     zone_api_service_client::ZoneApiServiceClient,
     zone_transport_service_client::ZoneTransportServiceClient, AcquireLock, DeleteMetadata,
-    EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata,
-    JoinClusterRequest, ListMetadata, ProposeRequest, PutMetadata, QueryRequest, RaftCommand,
-    RaftQuery, ReleaseLock, ReplaceVoterByHostnameRequest, ReplicateEntriesRequest,
+    DeleteZoneRequest, EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo,
+    GetMetadata, JoinClusterRequest, ListMetadata, ProposeRequest, PutMetadata, QueryRequest,
+    RaftCommand, RaftQuery, ReleaseLock, ReplaceVoterByHostnameRequest, ReplicateEntriesRequest,
     StepMessageRequest,
 };
 use super::{NodeAddress, Result, TransportError};
@@ -741,6 +741,55 @@ pub async fn call_replace_voter_by_hostname(
         leader_address: response.leader_address,
         removed_old_id: response.removed_old_id,
     })
+}
+
+/// Call `ZoneApiService::DeleteZone` on a single peer.
+///
+/// This is a local-only maintenance operation on the receiver; callers decide
+/// which peers to contact and continue treating missing/unimplemented peers as
+/// best-effort cleanup misses.
+pub async fn call_delete_zone(
+    peer_addr: &str,
+    zone_id: &str,
+    force: bool,
+    timeout_secs: u64,
+) -> Result<()> {
+    let ep = Endpoint::from_shared(peer_addr.to_string())
+        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
+        .connect_timeout(Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(timeout_secs));
+
+    let channel = ep.connect().await.map_err(|e| {
+        TransportError::Connection(format!("DeleteZone connect to {peer_addr} failed: {e}"))
+    })?;
+
+    let mut client = ZoneApiServiceClient::new(channel);
+    let response = client
+        .delete_zone(DeleteZoneRequest {
+            zone_id: zone_id.to_string(),
+            force,
+        })
+        .await
+        .map_err(|e| {
+            if e.code() == tonic::Code::Unimplemented {
+                TransportError::Connection(format!(
+                    "DeleteZone unimplemented at {peer_addr} \
+                     (peer is likely a witness binary): {e}"
+                ))
+            } else {
+                TransportError::Rpc(format!("DeleteZone RPC failed: {e}"))
+            }
+        })?
+        .into_inner();
+
+    if response.success {
+        Ok(())
+    } else {
+        Err(TransportError::Rpc(format!(
+            "DeleteZone rejected by {peer_addr}: {}",
+            response.error.unwrap_or_default()
+        )))
+    }
 }
 
 #[cfg(test)]

@@ -99,7 +99,7 @@ def create_connector_from_yaml(
     Returns:
         Configured PathCLIBackend instance.
     """
-    from nexus.backends.connectors.cli.base import PathCLIBackend
+    from nexus.backends.base.cli_backend import PathCLIBackend
 
     connector = PathCLIBackend(
         config=config,
@@ -157,8 +157,8 @@ def create_connector_class_from_yaml(
     Returns:
         A new PathCLIBackend subclass with config baked into class attributes.
     """
+    from nexus.backends.base.cli_backend import PathCLIBackend
     from nexus.backends.connectors.base import ConfirmLevel, OpTraits, Reversibility
-    from nexus.backends.connectors.cli.base import PathCLIBackend
 
     # Build SCHEMAS from config schema references
     schemas: dict[str, Any] = {}

@@ -132,8 +132,8 @@ def _apply_zone_override(
 async def _read_connector_by_physical_path(
     fs: Any,
     display_path: str,
-    _physical_path: str,
-    _context: Any,
+    physical_path: str,
+    context: Any,
 ) -> bytes | None:
     """Read connector file by resolving display path → physical backend path.
 
@@ -142,13 +142,41 @@ async def _read_connector_by_physical_path(
     if routing fails so the caller can fall back to standard fs.read().
     """
     try:
-        # Read via kernel syscall — sys_read_raw raises on missing path.
-        _py_kernel = getattr(fs, "_kernel", None)
-        if _py_kernel is None:
+        parts = display_path.split("/")
+        if len(parts) >= 3:
+            mount_point = "/".join(parts[:3])
+            router = getattr(fs, "router", None) or getattr(fs, "path_router", None)
+            route_fn = getattr(router, "route", None)
+            route = route_fn(mount_point) if callable(route_fn) else None
+            if route is not None:
+                from nexus.contracts.types import OperationContext
+
+                read_context = OperationContext(
+                    user_id=getattr(context, "user_id", "anonymous"),
+                    groups=getattr(context, "groups", []),
+                    zone_id=getattr(context, "zone_id", None),
+                    zone_set=getattr(context, "zone_set", ()),
+                    zone_perms=getattr(context, "zone_perms", ()),
+                    is_admin=getattr(context, "is_admin", False),
+                    is_system=getattr(context, "is_system", False),
+                    backend_path=physical_path,
+                    virtual_path=display_path,
+                    mount_path=mount_point,
+                )
+                content = route.backend.read_content("", context=read_context)
+                if isinstance(content, bytes):
+                    return content
+                return bytes(content) if content else None
+            if callable(route_fn):
+                return None
+
+        # Fallback for newer kernels that can read the display path directly.
+        py_kernel = getattr(fs, "_kernel", None)
+        if py_kernel is None:
             return None
 
         try:
-            content = _py_kernel.sys_read_raw(display_path, "root")
+            content = py_kernel.sys_read_raw(display_path, getattr(context, "zone_id", "root"))
         except Exception:
             return None
         if isinstance(content, bytes):

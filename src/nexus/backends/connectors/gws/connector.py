@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from nexus.backends.base.cli_backend import PathCLIBackend, sanitize_filename
 from nexus.backends.base.registry import register_connector
 from nexus.backends.connectors.base import (
     ConfirmLevel,
@@ -33,9 +34,7 @@ from nexus.backends.connectors.calendar.schemas import (
     DeleteEventSchema,
     UpdateEventSchema,
 )
-from nexus.backends.connectors.cli.base import PathCLIBackend
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
-from nexus.backends.connectors.cli.display_path import sanitize_filename
 
 # Gmail/Calendar schemas live in their own packages (existing API connectors)
 from nexus.backends.connectors.gmail.schemas import (
@@ -117,7 +116,7 @@ class SheetsConnector(PathCLIBackend):
 
     def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
         """List spreadsheets by querying Drive metadata and filtering by mime type."""
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         normalized = path.strip("/")
@@ -220,7 +219,7 @@ class DocsConnector(PathCLIBackend):
         ]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         try:
@@ -338,7 +337,7 @@ class DocsConnector(PathCLIBackend):
         ]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
 
         try:
             result = self._execute_cli(args, context=context, env=auth_env)
@@ -395,7 +394,7 @@ class ChatConnector(PathCLIBackend):
         args = ["gws", "chat", "spaces", "list"]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         try:
@@ -493,7 +492,7 @@ class DriveConnector(PathCLIBackend):
         args = ["gws", "drive", "files", "list"]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         try:
@@ -785,7 +784,7 @@ class GmailConnector(PathCLIBackend):
                     label_ids.append(gmail_label)
                     break
 
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         # Fetch triage metadata in one call. Add the category label to the
@@ -993,7 +992,7 @@ class GmailConnector(PathCLIBackend):
         """
         import json as _json
 
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         try:
@@ -1037,7 +1036,7 @@ class GmailConnector(PathCLIBackend):
         """
         import json as _json
 
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         try:
@@ -1093,7 +1092,7 @@ class GmailConnector(PathCLIBackend):
         context: Any = None,
     ) -> list[str]:
         """List Gmail labels, category subfolders, or messages."""
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         path = path.strip("/")
@@ -1138,7 +1137,7 @@ class GmailConnector(PathCLIBackend):
         Raises ``BackendError`` on CLI failure so callers get an explicit error
         instead of a silently empty file.
         """
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.backends.connectors.gws._gmail_utils import extract_body
         from nexus.contracts.exceptions import BackendError
 
@@ -1342,7 +1341,7 @@ class CalendarConnector(PathCLIBackend):
         """
         import re
 
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
 
         # Tolerate missing attribute (e.g., __new__ without __init__).
         if not hasattr(self, "_calendar_names"):
@@ -1469,7 +1468,7 @@ class CalendarConnector(PathCLIBackend):
         import json as _json
         import re
 
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         path = path.strip("/")
@@ -1593,7 +1592,7 @@ class CalendarConnector(PathCLIBackend):
 
         Root returns human-readable calendar folder names (via calendarList).
         """
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         try:
@@ -1730,7 +1729,7 @@ class CalendarConnector(PathCLIBackend):
         context: Any = None,
     ) -> bytes:
         """Read a calendar event as YAML via gws CLI."""
-        from nexus.backends.connectors.cli.base import ScopedAuthRequiredError
+        from nexus.backends.base.cli_backend import ScopedAuthRequiredError
         from nexus.contracts.exceptions import BackendError
 
         event_id = content_id

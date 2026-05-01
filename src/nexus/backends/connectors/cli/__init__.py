@@ -49,7 +49,7 @@ __all__ = [
 def __getattr__(name: str) -> object:
     """Lazy-load heavy modules to keep import time low."""
     if name == "PathCLIBackend":
-        from nexus.backends.connectors.cli.base import PathCLIBackend
+        from nexus.backends.base.cli_backend import PathCLIBackend
 
         return PathCLIBackend
     if name == "CLITransport":

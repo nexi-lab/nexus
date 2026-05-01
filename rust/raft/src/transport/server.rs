@@ -11,13 +11,14 @@ use super::proto::nexus::raft::{
     raft_response::Result as ProtoResponseResultVariant,
     zone_api_service_server::{ZoneApiService, ZoneApiServiceServer},
     zone_transport_service_server::{ZoneTransportService, ZoneTransportServiceServer},
-    ClusterConfig as ProtoClusterConfig, GetClusterInfoRequest, GetClusterInfoResponse,
-    GetMetadataResult, GetSearchCapabilitiesRequest, JoinClusterRequest, JoinClusterResponse,
-    JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
-    NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
-    RaftCommand, RaftQueryResponse, RaftResponse, ReadBlobRequest, ReadBlobResponse,
-    ReplaceVoterByHostnameRequest, ReplaceVoterByHostnameResponse, ReplicateEntriesRequest,
-    ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest, StepMessageResponse,
+    ClusterConfig as ProtoClusterConfig, DeleteZoneRequest, DeleteZoneResponse,
+    GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, GetSearchCapabilitiesRequest,
+    JoinClusterRequest, JoinClusterResponse, JoinZoneRequest, JoinZoneResponse, ListMetadataResult,
+    LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse,
+    QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse, ReadBlobRequest,
+    ReadBlobResponse, ReplaceVoterByHostnameRequest, ReplaceVoterByHostnameResponse,
+    ReplicateEntriesRequest, ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest,
+    StepMessageResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::blob_fetcher::BlobFetcherSlot;
@@ -334,7 +335,7 @@ async fn parse_and_step_message<S: crate::raft::StateMachine + Send + Sync + 'st
     zone_id: &str,
     log_prefix: &str,
 ) -> std::result::Result<Response<StepMessageResponse>, Status> {
-    let msg = match raft::eraftpb::Message::parse_from_bytes(message_bytes) {
+    let mut msg = match raft::eraftpb::Message::parse_from_bytes(message_bytes) {
         Ok(m) => m,
         Err(e) => {
             return Ok(Response::new(StepMessageResponse {
@@ -353,6 +354,35 @@ async fn parse_and_step_message<S: crate::raft::StateMachine + Send + Sync + 'st
         msg.to,
         msg.term,
     );
+
+    // raft-rs asserts when a heartbeat/append carries a committed index
+    // beyond the follower's local log. Fresh full-node auto-join can see
+    // exactly that window: the leader has compacted and will send a snapshot,
+    // but ordinary heartbeats/appends may arrive first. Clamp the commit hint
+    // to the highest index this message/local handle can actually account for;
+    // the later snapshot or append will advance commit normally.
+    if matches!(
+        msg.get_msg_type(),
+        raft::eraftpb::MessageType::MsgAppend | raft::eraftpb::MessageType::MsgHeartbeat
+    ) {
+        let local_last = node.last_index();
+        let msg_last = msg.get_entries().last().map(|e| e.index).unwrap_or(0);
+        let safe_commit = local_last.max(msg_last).max(node.applied_index());
+        if msg.get_commit() > safe_commit {
+            tracing::warn!(
+                zone = %zone_id,
+                from = msg.from,
+                to = msg.to,
+                msg_type = ?msg.get_msg_type(),
+                leader_commit = msg.get_commit(),
+                safe_commit,
+                local_last,
+                msg_last,
+                "Clamping inbound raft commit hint until follower catches up",
+            );
+            msg.set_commit(safe_commit);
+        }
+    }
 
     if let Err(e) = node.step(msg).await {
         return Ok(Response::new(StepMessageResponse {
@@ -442,14 +472,37 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
         request: Request<StepMessageRequest>,
     ) -> std::result::Result<Response<StepMessageResponse>, Status> {
         let req = request.into_inner();
-        let node = get_zone_node(&self.registry, &req.zone_id).map_err(|_| {
-            Status::not_found(format!("zone '{}' not found on this node", req.zone_id))
-        })?;
+        let peek = raft::eraftpb::Message::parse_from_bytes(&req.message).ok();
+        let node = match self.registry.get_node(&req.zone_id) {
+            Some(n) => n,
+            None => {
+                let root_peers = self
+                    .registry
+                    .get_peers(contracts::ROOT_ZONE_ID)
+                    .ok_or_else(|| {
+                        Status::not_found(format!("zone '{}' not found on this node", req.zone_id))
+                    })?;
+                if let Some(msg) = peek.as_ref() {
+                    check_zone_membership(&self.registry, contracts::ROOT_ZONE_ID, msg.from)?;
+                }
+                let peers: Vec<NodeAddress> = root_peers.values().cloned().collect();
+                let handle = tokio::runtime::Handle::current();
+                self.registry
+                    .join_zone(&req.zone_id, peers, false, &handle)
+                    .await
+                    .map_err(|e| {
+                        Status::internal(format!(
+                            "failed to auto-join zone '{}': {}",
+                            req.zone_id, e
+                        ))
+                    })?
+            }
+        };
 
         // Zone authorization: verify sender is a known zone member.
         // Parse once just to extract `from` for the membership check, then
         // delegate to the shared parse_and_step_message helper.
-        if let Ok(peek) = raft::eraftpb::Message::parse_from_bytes(&req.message) {
+        if let Some(peek) = peek.as_ref() {
             check_zone_membership(&self.registry, &req.zone_id, peek.from)?;
         }
 
@@ -941,6 +994,49 @@ impl ZoneApiService for ZoneApiServiceImpl {
                 error: Some(format!("JoinZone failed: {}", e)),
                 leader_address: None,
                 config: None,
+            })),
+        }
+    }
+
+    /// Remove this node's local replica for a zone.
+    ///
+    /// This is intentionally local-only. The caller is responsible for
+    /// coordinating peer fan-out; handling the RPC this way prevents recursive
+    /// delete storms while still making remove→recreate safe for dynamic zones.
+    async fn delete_zone(
+        &self,
+        request: Request<DeleteZoneRequest>,
+    ) -> std::result::Result<Response<DeleteZoneResponse>, Status> {
+        let req = request.into_inner();
+        let zone_id = req.zone_id.trim();
+        if zone_id.is_empty() {
+            return Ok(Response::new(DeleteZoneResponse {
+                success: false,
+                error: Some("zone_id must not be empty".to_string()),
+            }));
+        }
+        if zone_id == contracts::ROOT_ZONE_ID {
+            return Ok(Response::new(DeleteZoneResponse {
+                success: false,
+                error: Some("root zone cannot be deleted by DeleteZone".to_string()),
+            }));
+        }
+
+        if self.registry.get_node(zone_id).is_none() {
+            return Ok(Response::new(DeleteZoneResponse {
+                success: true,
+                error: None,
+            }));
+        }
+
+        match self.registry.remove_zone(zone_id).await {
+            Ok(()) => Ok(Response::new(DeleteZoneResponse {
+                success: true,
+                error: None,
+            })),
+            Err(e) => Ok(Response::new(DeleteZoneResponse {
+                success: false,
+                error: Some(e.to_string()),
             })),
         }
     }

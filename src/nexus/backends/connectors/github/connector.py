@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from nexus.backends.base.cli_backend import PathCLIBackend, sanitize_filename
 from nexus.backends.base.registry import register_connector
 from nexus.backends.connectors.base import (
     ConfirmLevel,
@@ -21,9 +22,7 @@ from nexus.backends.connectors.base import (
     Reversibility,
 )
 from nexus.backends.connectors.base_errors import TRAIT_ERRORS
-from nexus.backends.connectors.cli.base import PathCLIBackend
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
-from nexus.backends.connectors.cli.display_path import sanitize_filename
 from nexus.backends.connectors.github.schemas import (
     CloseIssueSchema,
     CommentIssueSchema,

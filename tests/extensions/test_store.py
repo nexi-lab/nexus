@@ -175,6 +175,53 @@ class TestResolveFactory:
         assert "missing_callable" in str(excinfo.value)
 
 
+class TestFilesystemLoader:
+    def test_load_from_directory(self, tmp_path):
+        """Scan a directory tree for `_manifest.py` files and register MANIFEST."""
+        (tmp_path / "alpha").mkdir()
+        (tmp_path / "alpha" / "_manifest.py").write_text(
+            "from nexus.extensions.manifest import ConnectorManifest\n"
+            "MANIFEST = ConnectorManifest(\n"
+            "    name='alpha', module='m.alpha', factory='F', service_name='alpha',\n"
+            ")\n"
+        )
+        (tmp_path / "beta").mkdir()
+        (tmp_path / "beta" / "_manifest.py").write_text(
+            "from nexus.extensions.manifest import BrickManifest\n"
+            "MANIFEST = BrickManifest(\n"
+            "    name='beta', module='m.beta', factory='F',\n"
+            "    tier='independent', result_key='r',\n"
+            ")\n"
+        )
+        # gamma has __init__.py but no _manifest.py — must be ignored.
+        (tmp_path / "gamma").mkdir()
+        (tmp_path / "gamma" / "__init__.py").write_text("")
+
+        store = ManifestStore()
+        store.load_filesystem(tmp_path)
+
+        assert {m.name for m in store.list()} == {"alpha", "beta"}
+
+    def test_filesystem_load_skips_broken_module(self, tmp_path, caplog):
+        """A broken `_manifest.py` doesn't block siblings; warning logged."""
+        import logging
+
+        (tmp_path / "good").mkdir()
+        (tmp_path / "good" / "_manifest.py").write_text(
+            "from nexus.extensions.manifest import PluginManifest\n"
+            "MANIFEST = PluginManifest(name='good', module='m', factory='F')\n"
+        )
+        (tmp_path / "broken").mkdir()
+        (tmp_path / "broken" / "_manifest.py").write_text("raise RuntimeError('intentional')\n")
+
+        store = ManifestStore()
+        with caplog.at_level(logging.WARNING):
+            store.load_filesystem(tmp_path)
+
+        assert {m.name for m in store.list()} == {"good"}
+        assert any("broken" in r.message for r in caplog.records)
+
+
 class TestLazyInvariant:
     def test_list_does_not_import_impl(self, monkeypatch, tmp_path):
         """list() and get() must not trigger impl module imports."""

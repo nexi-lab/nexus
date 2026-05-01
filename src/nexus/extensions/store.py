@@ -13,13 +13,18 @@ Only resolve_factory imports impl, and only on demand.
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from nexus.extensions.errors import DuplicateManifestError, FactoryResolutionError
 from nexus.extensions.manifest import AnyManifest
 from nexus.extensions.types import Kind
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,42 @@ class ManifestStore:
             return
         self._entries[key] = (manifest, source)
         seen_in_source.add(key)
+
+    # --- discovery loaders ---
+
+    def load_filesystem(self, root: Path) -> None:
+        """Scan `root/*/  _manifest.py` and register every `MANIFEST` constant.
+
+        Per-extension import isolation: a broken `_manifest.py` is logged at
+        WARN level and skipped; siblings continue loading.
+        """
+        for child in sorted(Path(root).iterdir()):
+            if not child.is_dir():
+                continue
+            manifest_file = child / "_manifest.py"
+            if not manifest_file.exists():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f"_nexus_manifest_{child.name}", manifest_file
+                )
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"could not build spec for {manifest_file}")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+            except Exception as exc:  # noqa: BLE001 — isolation is intentional
+                logger.warning("Skipping broken manifest at %s: %s", manifest_file, exc)
+                continue
+
+            manifest = getattr(module, "MANIFEST", None)
+            if manifest is None:
+                logger.warning("No MANIFEST constant in %s; skipping", manifest_file)
+                continue
+
+            try:
+                self._register(manifest, source=f"fs_scan:{manifest_file}")
+            except DuplicateManifestError as exc:
+                logger.warning("Duplicate manifest skipped: %s", exc)
 
     # --- runtime API (the only place that imports impl) ---
 

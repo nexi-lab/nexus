@@ -47,7 +47,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
-use kernel::core::agents::registry::{AgentDescriptor, AgentKind, AgentState, AgentRegistry};
+use kernel::core::agents::registry::{AgentDescriptor, AgentKind, AgentRegistry, AgentState};
 use kernel::service_registry::{RustCallError, RustService};
 
 pub(crate) mod mailbox_stamping_hook;
@@ -210,6 +210,34 @@ impl ManagedAgentService {
             Arc::clone(kernel),
             Arc::clone(&kernel.agent_registry),
         ));
+
+        // Reap the workspace on out-of-band termination — SIGKILL,
+        // orphan auto-reap, any path that flips an agent to Terminated
+        // without going through `cancel_session(Session)`.  The
+        // callback walks `sessions` for a matching pid; if a session
+        // row exists, tear down the DT_DIR + DT_LINK tree and drop the
+        // row so subsequent `get_session` returns `UnknownSession`.
+        // Cheap when no session matches — DashMap iter is O(N) and the
+        // sessions map is bounded by the per-process managed-agent
+        // count.
+        let svc_for_cb = Arc::clone(&svc);
+        kernel.agent_registry.register_on_terminate(
+            Self::NAME,
+            Arc::new(move |pid: &str| {
+                let pid_owned = pid.to_string();
+                let session_id_opt = svc_for_cb
+                    .sessions
+                    .iter()
+                    .find(|e| e.value().pid == pid_owned)
+                    .map(|e| e.key().clone());
+                if let Some(session_id) = session_id_opt {
+                    if let Some((_, sess)) = svc_for_cb.sessions.remove(&session_id) {
+                        svc_for_cb.reap_workspace(&sess.workspace_path, &sess.repo_aliases);
+                    }
+                }
+            }),
+        );
+
         kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())
     }
 
@@ -272,7 +300,9 @@ impl ManagedAgentService {
         // a failure here would drop us back to REGISTERED, which the
         // runtime crate will still see as "spawn me" so it's
         // recoverable.
-        let _ = self.agent_registry.update_state(&pid, AgentState::WarmingUp);
+        let _ = self
+            .agent_registry
+            .update_state(&pid, AgentState::WarmingUp);
 
         // Materialise the workspace inside the kernel — DT_DIR for the
         // workspace root, DT_LINK at chat-with-me pointing at the
@@ -501,22 +531,12 @@ fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), Stri
     const DT_DIR: i32 = 1;
     kernel
         .sys_setattr(
-            path,
-            DT_DIR,
-            /* backend_name */ "",
-            /* backend */ None,
-            /* metastore */ None,
-            /* raft_backend */ None,
-            /* io_profile */ "memory",
-            /* zone_id */ "root",
-            /* is_external */ false,
-            /* capacity */ 0,
-            /* read_fd */ None,
-            /* write_fd */ None,
-            /* mime_type */ None,
-            /* modified_at_ms */ None,
-            /* link_target */ None,
-            /* source */ None,
+            path, DT_DIR, /* backend_name */ "", /* backend */ None,
+            /* metastore */ None, /* raft_backend */ None,
+            /* io_profile */ "memory", /* zone_id */ "root",
+            /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
+            /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
+            /* link_target */ None, /* source */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
@@ -524,11 +544,7 @@ fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), Stri
 
 /// Create a DT_LINK at `path` pointing at `target`.  Wraps the kernel's
 /// `sys_setattr` so callers stay readable.
-fn create_dt_link(
-    kernel: &kernel::kernel::Kernel,
-    path: &str,
-    target: &str,
-) -> Result<(), String> {
+fn create_dt_link(kernel: &kernel::kernel::Kernel, path: &str, target: &str) -> Result<(), String> {
     // DT_LINK = 6.  See `create_dt_dir` for the same constant-
     // visibility note.
     const DT_LINK: i32 = 6;
@@ -860,11 +876,7 @@ mod tests {
         /// materialisation; the metastore is the kernel SSOT for
         /// FileMetadata and is what sys_setattr writes through.
         /// Returns `(entry_type, link_target)` when the path exists.
-        fn kernel_stat(
-            kernel: &Kernel,
-            path: &str,
-            _zone: &str,
-        ) -> Option<(u8, Option<String>)> {
+        fn kernel_stat(kernel: &Kernel, path: &str, _zone: &str) -> Option<(u8, Option<String>)> {
             let path = path.trim_end_matches('/');
             let entry = kernel.metastore_get(path).ok().flatten()?;
             Some((entry.entry_type, entry.link_target.clone()))
@@ -874,10 +886,8 @@ mod tests {
         /// the only setup needed is `Kernel::new` (no PyO3 boot).
         fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService) {
             let k = Arc::new(Kernel::new());
-            let svc = ManagedAgentService::with_kernel(
-                Arc::clone(&k),
-                Arc::clone(&k.agent_registry),
-            );
+            let svc =
+                ManagedAgentService::with_kernel(Arc::clone(&k), Arc::clone(&k.agent_registry));
             (k, svc)
         }
 
@@ -910,8 +920,8 @@ mod tests {
 
             // 2. chat-with-me link exists and points at /proc/{pid}/chat-with-me.
             let cwm = format!("{}chat-with-me", &resp.workspace_path);
-            let (et, target) = kernel_stat(&kernel, &cwm, "root")
-                .expect("chat-with-me DT_LINK should exist");
+            let (et, target) =
+                kernel_stat(&kernel, &cwm, "root").expect("chat-with-me DT_LINK should exist");
             assert_eq!(et, DT_LINK);
             assert_eq!(
                 target.as_deref(),
@@ -960,7 +970,7 @@ mod tests {
 
             // Sanity: pre-cancel, the link exists.
             let alias_link = format!("{}myrepo", &resp.workspace_path);
-            assert!(kernel_stat(&kernel,&alias_link, "root").is_some());
+            assert!(kernel_stat(&kernel, &alias_link, "root").is_some());
 
             svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
 
@@ -972,7 +982,7 @@ mod tests {
                 &resp.workspace_path,
             ] {
                 assert!(
-                    kernel_stat(&kernel,path, "root").is_none(),
+                    kernel_stat(&kernel, path, "root").is_none(),
                     "expected {path:?} to be reaped after cancel"
                 );
             }
@@ -988,8 +998,8 @@ mod tests {
             // Turn-mode cancel keeps the AgentRegistry record + workspace
             // alive — the runtime watches a separate signal.
             let cwm = format!("{}chat-with-me", &resp.workspace_path);
-            assert!(kernel_stat(&kernel,&cwm, "root").is_some());
-            assert!(kernel_stat(&kernel,&resp.workspace_path, "root").is_some());
+            assert!(kernel_stat(&kernel, &cwm, "root").is_some());
+            assert!(kernel_stat(&kernel, &resp.workspace_path, "root").is_some());
         }
     }
 }

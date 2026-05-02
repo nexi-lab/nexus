@@ -482,12 +482,49 @@ fn try_replace_voter_on_peers(
                     last_failure = Some(detail);
                     break;
                 }
-                Err(TransportError::Connection(msg)) | Err(TransportError::InvalidAddress(msg)) => {
-                    // TCP/connect-time failure or unparseable endpoint —
-                    // peer is down or unaddressable.  `any_reachable`
-                    // stays false on this leg; this is the only branch
-                    // that's safe to fold into the cold-start sentinel.
+                Err(TransportError::InvalidAddress(msg)) => {
+                    // Unparseable endpoint — operator config bug, no
+                    // amount of retry helps. Log and move on; cold-start
+                    // sentinel is safe.
                     eprintln!("[ensure_voter_membership] peer unreachable {endpoint}: {msg}");
+                    break;
+                }
+                Err(TransportError::Connection(msg))
+                    if Instant::now() < zone_not_ready_retry_deadline =>
+                {
+                    // TCP connect failed — peer is still booting (its
+                    // gRPC listener isn't open yet). This is the
+                    // dual of the "zone not yet initialized" branch
+                    // below: same boot-race transient, just caught one
+                    // layer earlier (TCP refuse vs RPC NotFound).
+                    // Without this retry, the *first* node to boot in
+                    // a fresh cluster never reaches its peers (they
+                    // start a fraction of a second later) and falls
+                    // into cold-start with id=hostname_to_node_id(0),
+                    // while the *second* node retries successfully and
+                    // rotates. Asymmetry breaks the wipe-rejoin
+                    // contract on TestLeaderFailover restart.
+                    eprintln!(
+                        "[ensure_voter_membership] {endpoint} TCP connect failed \
+                         (boot race: {msg}) — retrying in {}ms",
+                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
+                    );
+                    std::thread::sleep(Duration::from_millis(
+                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
+                    ));
+                    // Don't set any_reachable — peer isn't serving yet.
+                }
+                Err(TransportError::Connection(msg)) => {
+                    // Past the boot-race retry window. Peer is genuinely
+                    // down. Cold-start sentinel is safe — every fresh
+                    // peer will reach this branch and converge on the
+                    // same identical-ConfState bootstrap from
+                    // NEXUS_PEERS, raft-rs election kicks in once the
+                    // gRPC servers are all up.
+                    eprintln!(
+                        "[ensure_voter_membership] peer unreachable {endpoint}: {msg} \
+                         (past retry deadline)"
+                    );
                     break;
                 }
                 Err(TransportError::Rpc(ref msg))

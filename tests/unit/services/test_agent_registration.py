@@ -324,8 +324,15 @@ class TestCompensation:
     async def test_ipc_failure_does_not_rollback(
         self, service, mock_agent_registry_with_provisioner, mock_entity_registry
     ):
-        """IPC provisioning failure should NOT roll back the registration."""
-        mock_agent_registry_with_provisioner.provision.return_value = False
+        """IPC provisioning failure should NOT roll back the registration.
+
+        The provisioner contract is "raise on failure"; production code
+        catches and logs, returning ipc_provisioned=False without
+        rolling back the registration.
+        """
+        mock_agent_registry_with_provisioner.provision.side_effect = RuntimeError(
+            "provision failed"
+        )
 
         with patch("nexus.storage.api_key_ops.create_agent_api_key") as mock_key:
             mock_key.return_value = ("key-1", "sk-key")

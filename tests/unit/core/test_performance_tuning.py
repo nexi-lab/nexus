@@ -133,7 +133,29 @@ class TestAllProfilesHaveTuning:
 
 
 class TestHierarchyMonotonicity:
-    """Resource-scaling fields must not decrease as profiles grow."""
+    """Resource-scaling fields must not decrease as profiles grow.
+
+    Issue #3997: monotonicity (embedded ≤ lite ≤ full ≤ cloud) was relaxed
+    for the fields listed in ``_RELAXED_MONOTONIC_FIELDS`` because pool /
+    concurrency sizing is now driven by deployment shape (single-tenant vs
+    multi-tenant) rather than purely by feature richness. LITE
+    (lightweight feature set, but still potentially shared) and CLOUD
+    (multi-tenant) can both legitimately have larger pools than FULL
+    (single-tenant default; see issue #3997 right-sizing). Those fields
+    are therefore omitted from the parametrize lists below.
+    """
+
+    # Fields whose monotonicity invariant has been intentionally relaxed
+    # (deployment-shape driven, not feature-richness driven). See class
+    # docstring for rationale; do not re-add without revisiting #3997.
+    _RELAXED_MONOTONIC_FIELDS = frozenset(
+        {
+            "concurrency.thread_pool_size",
+            "storage.db_pool_size",
+            "storage.db_max_overflow",
+            "pool.httpx_max_connections",
+        }
+    )
 
     PROFILES_ORDERED = [
         DeploymentProfile.EMBEDDED,
@@ -146,7 +168,7 @@ class TestHierarchyMonotonicity:
         "field",
         [
             "default_workers",
-            "thread_pool_size",
+            # "thread_pool_size" — relaxed (#3997, see class docstring)
             "max_async_concurrency",
             "task_runner_workers",
         ],
@@ -179,8 +201,8 @@ class TestHierarchyMonotonicity:
     @pytest.mark.parametrize(
         "field",
         [
-            "db_pool_size",
-            "db_max_overflow",
+            # "db_pool_size" — relaxed (#3997, see class docstring)
+            # "db_max_overflow" — relaxed (#3997, see class docstring)
             "write_buffer_max_size",
             "changelog_chunk_size",
         ],
@@ -263,7 +285,7 @@ class TestHierarchyMonotonicity:
         [
             "asyncpg_min_size",
             "asyncpg_max_size",
-            "httpx_max_connections",
+            # "httpx_max_connections" — relaxed (#3997, see class docstring)
             "remote_pool_maxsize",
         ],
     )
@@ -287,7 +309,7 @@ class TestConcreteValues:
     def test_full_concurrency(self) -> None:
         c = DeploymentProfile.FULL.tuning().concurrency
         assert c.default_workers == 4
-        assert c.thread_pool_size == 200
+        assert c.thread_pool_size == 40  # was 200; anyio upstream default (#3997)
         assert c.max_async_concurrency == 10
         assert c.task_runner_workers == 4
 
@@ -302,8 +324,8 @@ class TestConcreteValues:
         assert s.write_buffer_flush_ms == 100
         assert s.write_buffer_max_size == 100
         assert s.changelog_chunk_size == 500
-        assert s.db_pool_size == 20
-        assert s.db_max_overflow == 30
+        assert s.db_pool_size == 5  # was 20; Cloud SQL sample sizing (#3997)
+        assert s.db_max_overflow == 5  # was 30; single-tenant burst (#3997)
 
     def test_full_search(self) -> None:
         s = DeploymentProfile.FULL.tuning().search
@@ -337,14 +359,14 @@ class TestConcreteValues:
         cn = DeploymentProfile.FULL.tuning().connector
         assert cn.blob_operation_timeout == 60.0
         assert cn.large_upload_timeout == 300.0
-        assert cn.connector_max_workers == 20
+        assert cn.connector_max_workers == 6  # was 20; blob ops are I/O-bound (#3997)
 
     def test_full_pool(self) -> None:
         p = DeploymentProfile.FULL.tuning().pool
         assert p.asyncpg_min_size == 2
         assert p.asyncpg_max_size == 5
-        assert p.httpx_max_connections == 100
-        assert p.remote_pool_maxsize == 20
+        assert p.httpx_max_connections == 20  # was 100; HTTP/2 collapses anyway (#3997)
+        assert p.remote_pool_maxsize == 10  # was 20 (#3997)
 
     def test_embedded_minimal(self) -> None:
         """Embedded should have the smallest resource allocation."""
@@ -375,12 +397,12 @@ class TestFullProfileMatchesPreviousDefaults:
     """
 
     def test_db_pool_size_matches_record_store_default(self) -> None:
-        """record_store.py _build_pool_kwargs default_pool_size=20."""
-        assert DeploymentProfile.FULL.tuning().storage.db_pool_size == 20
+        """record_store.py _build_pool_kwargs (Issue #3997: was 20, now 5 — Cloud SQL sample sizing)."""
+        assert DeploymentProfile.FULL.tuning().storage.db_pool_size == 5
 
     def test_db_max_overflow_matches_record_store_default(self) -> None:
-        """record_store.py _build_pool_kwargs default_max_overflow=30."""
-        assert DeploymentProfile.FULL.tuning().storage.db_max_overflow == 30
+        """record_store.py _build_pool_kwargs (Issue #3997: was 30, now 5 — single-tenant burst)."""
+        assert DeploymentProfile.FULL.tuning().storage.db_max_overflow == 5
 
     def test_task_runner_workers_matches_lifespan_default(self) -> None:
         """services.py AsyncTaskRunner max_workers=4."""

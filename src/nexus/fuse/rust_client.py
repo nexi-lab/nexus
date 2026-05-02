@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -176,7 +177,15 @@ class RustFUSEClient:
             raise RuntimeError(f"Socket not created: {self.socket_path}")
 
     def _connect(self) -> None:
-        """Connect to Rust daemon via Unix socket."""
+        """Connect to Rust daemon via Unix socket.
+
+        FUSE is POSIX-only (no Windows kernel module exists); the
+        platform check both documents the constraint and lets mypy's
+        Windows stubs (which omit ``socket.AF_UNIX``) skip the True
+        branch.
+        """
+        if sys.platform == "win32":
+            raise RuntimeError("Rust FUSE client is POSIX-only")
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(str(self.socket_path))
         logger.info("Connected to Rust daemon", socket_path=self.socket_path)

@@ -33,7 +33,7 @@ required-features = ["grpc"]
 # of truth with the kernel crate instead of hardcoding ``"root"``.
 contracts = { workspace = true }
 # raft → kernel direction. Lets raft state-machine impls
-# (zone_meta_store, replication_scanner, wal_stream_backend) and the
+# (zone_meta_store, wal_stream_backend) and the
 # `RaftDistributedCoordinator` trait impl depend on kernel-defined
 # traits (`kernel::abc::MetaStore`,
 # `kernel::hal::distributed_coordinator::DistributedCoordinator`,

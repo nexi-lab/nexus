@@ -99,17 +99,26 @@ stdlib only, zero nexus bridge imports).
 `swap_service()` supports all services. Unified path: refcount drain → unhook
 old → replace → rehook new.
 
-**AgentRegistry** (`nexus.services.agents.agent_registry`): service-tier
-agent lifecycle manager. Mounts under `nx.service("agent_registry")`.
-State (pid → AgentState + condvar wakeup) lives in the Rust `services::agent_table::AgentTable`
-SSOT (`rust/services/src/agent_table.rs`); the Python service is a thin
-shim that adds OS behavior — PID allocation, parent/child tree, signal
-semantics, transition validation, IPC provisioning — and dual-writes
-every state mutation into the Rust table so the kernel-side
-`AgentStatusResolver` (procfs view at `/{zone}/proc/{pid}/status`) and
-any blocking `kernel.agent_wait` callers stay synchronized. Profiles
-without agent workloads (REMOTE) skip construction; the kernel boots
-the same way either path.
+**AgentRegistry** (`kernel::core::agents::registry::AgentRegistry`):
+kernel SSOT for agent lifecycle. PID allocation, parent/child tree,
+signal semantics (SIGTERM / SIGSTOP / SIGCONT / SIGKILL / SIGUSR1),
+transition validation (VALID_AGENT_TRANSITIONS folded into
+`AgentState::can_transition_to`), and per-PID condvar wake-ups all
+live here. Python callers reach the registry through the
+`agent_registry` getter on the Rust kernel handle —
+`kernel.agent_registry.spawn(...)` / `signal(...)` / `get(...)`
+return [`PyAgentDescriptor`] instances exposed under
+`nexus_runtime.AgentDescriptor` with field names that mirror
+`contracts/process_types.py:AgentDescriptor`. The IPC provisioner is
+late-bound through `set_provisioner(callable)`; the registry stores
+the reference and `agent_registration.py` awaits its async
+`provision(...)` coroutine on the asyncio loop.
+
+The kernel-side `AgentStatusResolver` (procfs view at
+`/{zone}/proc/{pid}/status`) reads the same `Arc<AgentRegistry>`, so
+every spawn / signal is visible to the procfs layer without a
+dual-write step. Profiles without agent workloads (REMOTE) skip the
+getter; the kernel boots the same way either path.
 
 **Kernel DI patterns** (two mechanisms; the kernel reaches services only via
 `ServiceRegistry` lookups or factory-injected closures):
@@ -810,7 +819,7 @@ without intermediate trait dispatch.
 
 The split between `kernel/` (syscalls) and `core/` (primitives) follows
 the data type: §4 primitives — concrete data structures like
-`DCache`, `VFSRouter`, `AgentTable`, `LockManager` — live in `core/`;
+`DCache`, `VFSRouter`, `AgentRegistry`, `LockManager` — live in `core/`;
 the syscall families that operate on them live in `kernel/`.
 
 #### Control-Plane HAL DI surface
@@ -1065,8 +1074,8 @@ cases.
 
 | Service name | Source | Methods |
 |--------------|--------|---------|
-| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `services::agent_table::AgentTable` directly (no PyO3). |
-| `acp` | `rust/kernel/src/acp/` | `acp_call`, `acp_kill`, `acp_list_agents`, `acp_list_processes`, `acp_set_system_prompt`, `acp_get_system_prompt`, `acp_set_enabled_skills`, `acp_get_enabled_skills`, `acp_history` — stateless coding-agent CLI caller via ACP JSON-RPC. `call_agent` orchestrates `AcpSubprocess` (tokio Command + DT_PIPE) + `AcpConnection` + `AcpSubservice` lifecycle. AgentRegistry stays Python; reached through the `PyAgentRegistry` trait bridge wired by `nx_acp_set_agent_registry`. |
+| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `kernel::core::agents::registry::AgentRegistry` directly (no PyO3). |
+| `acp` | `rust/kernel/src/acp/` | `acp_call`, `acp_kill`, `acp_list_agents`, `acp_list_processes`, `acp_set_system_prompt`, `acp_get_system_prompt`, `acp_set_enabled_skills`, `acp_get_enabled_skills`, `acp_history` — stateless coding-agent CLI caller via ACP JSON-RPC. `call_agent` orchestrates `AcpSubprocess` (tokio Command + DT_PIPE) + `AcpConnection` + `AcpSubservice` lifecycle. The AgentRegistry trait bridge wired by `nx_acp_set_agent_registry` is satisfied by `kernel.agent_registry` (the Rust SSOT itself), so spawn / kill / list calls go straight to `kernel::core::agents::registry::AgentRegistry`. |
 
 In-process Python callers reach any Rust service through the generic
 `nexus_runtime.nx_kernel_dispatch_rust_call(kernel, service, method,

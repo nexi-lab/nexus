@@ -24,7 +24,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.agent_warmup_types import (
     STANDARD_WARMUP,
@@ -38,9 +38,6 @@ from nexus.contracts.process_types import (
     AgentState,
     InvalidTransitionError,
 )
-
-if TYPE_CHECKING:
-    from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +62,7 @@ class AgentWarmupService:
 
     def __init__(
         self,
-        agent_registry: "AgentRegistry",
+        agent_registry: Any,
         namespace_manager: Any | None = None,
         enabled_bricks: frozenset[str] | None = None,
         cache_store: Any | None = None,
@@ -137,7 +134,7 @@ class AgentWarmupService:
             )
 
         # Edge case 2: Already CONNECTED → skip (idempotent)
-        if record.state is AgentState.BUSY:
+        if record.state == AgentState.BUSY:
             logger.info("[WARMUP] Agent %s already BUSY, skipping warmup", agent_id)
             return WarmupResult(
                 success=True,
@@ -145,9 +142,12 @@ class AgentWarmupService:
                 duration_ms=_elapsed_ms(start),
             )
 
-        if record.state is AgentState.REGISTERED:
+        if record.state == AgentState.REGISTERED:
             try:
-                record = self._agent_registry._transition(record, AgentState.WARMING_UP)
+                self._agent_registry.update_state(agent_id, AgentState.WARMING_UP.value)
+                record = self._agent_registry.get(agent_id)
+                if record is None:
+                    raise AgentError(f"agent {agent_id} disappeared during warmup")
             except (InvalidTransitionError, AgentError) as exc:
                 logger.warning(
                     "[WARMUP] Failed to transition agent %s into WARMING_UP: %s",

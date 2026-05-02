@@ -20,13 +20,12 @@ contracts = { workspace = true }
 # trait). Kernel needs both.
 lib = { workspace = true, features = ["python", "transport"] }
 # Kernel depends on `contracts` and `shared/` only; the dep direction
-# is one-way `services -> kernel`. AgentTable is the kernel SSOT at
-# `crate::core::agents::table`. Raft depends on kernel for
+# is one-way `services -> kernel`. AgentRegistry is the kernel SSOT at
+# `crate::core::agents::registry`. Raft depends on kernel for
 # `kernel::abc::MetaStore`,
 # `kernel::hal::distributed_coordinator::DistributedCoordinator`, etc.
-# Raft state-machine impls (zone_meta_store, replication_scanner) live
-# in the raft crate alongside the `RaftDistributedCoordinator` trait
-# impl.
+# Raft state-machine impls (zone_meta_store) live in the raft crate
+# alongside the `RaftDistributedCoordinator` trait impl.
 # `extension-module` lives on the `nexus-cdylib` pyo3 dep only — Cargo
 # unifies pyo3 features at link time, so all transitive users see the
 # cdylib-correct linkage. rlibs must NOT enable it themselves (would

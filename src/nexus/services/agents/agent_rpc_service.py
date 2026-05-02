@@ -355,6 +355,9 @@ class AgentRPCService:
             connection_id=agent_id,
             labels={"capabilities": ",".join(capabilities or [])},
         )
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
         agent = {
             "agent_id": agent_id,
             "owner_id": user_id,
@@ -362,8 +365,8 @@ class AgentRPCService:
             "name": name,
             "state": str(desc.state),
             "generation": desc.generation,
-            "created_at": desc.created_at.isoformat(),
-            "updated_at": desc.updated_at.isoformat(),
+            "created_at": _dt.fromtimestamp(desc.created_at_ms / 1000, tz=_UTC).isoformat(),
+            "updated_at": _dt.fromtimestamp(desc.updated_at_ms / 1000, tz=_UTC).isoformat(),
         }
 
         agent_did = self._provision_agent_identity(agent_id, agent, logger)
@@ -756,7 +759,7 @@ class AgentRPCService:
         if (
             target_state.upper() == "CONNECTED"
             and current is not None
-            and current.state is AgentState.REGISTERED
+            and current.state == AgentState.REGISTERED
         ):
             if self._agent_warmup_service is None:
                 raise ValueError("AgentWarmupService not available")
@@ -812,7 +815,15 @@ class AgentRPCService:
                 except ValueError as err:
                     raise ValueError(f"Invalid state filter '{state}'") from err
 
-        records = self._agent_registry.list_processes(zone_id=zone_id, state=state_enum)
+        records = self._agent_registry.list_processes(
+            zone_id=zone_id, state=state_enum.value if state_enum else None
+        )
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+
+        def _ms_to_iso(ms: int) -> str:
+            return _dt.fromtimestamp(ms / 1000, tz=_UTC).isoformat()
+
         return [
             {
                 "agent_id": r.pid,
@@ -822,12 +833,12 @@ class AgentRPCService:
                 "state": str(r.state),
                 "generation": r.generation,
                 "last_heartbeat": (
-                    r.external_info.last_heartbeat.isoformat()
-                    if r.external_info and r.external_info.last_heartbeat
+                    _ms_to_iso(r.external_info["last_heartbeat_ms"])
+                    if r.external_info and r.external_info.get("last_heartbeat_ms")
                     else None
                 ),
-                "created_at": r.created_at.isoformat(),
-                "updated_at": r.updated_at.isoformat(),
+                "created_at": _ms_to_iso(r.created_at_ms),
+                "updated_at": _ms_to_iso(r.updated_at_ms),
             }
             for r in records
         ]

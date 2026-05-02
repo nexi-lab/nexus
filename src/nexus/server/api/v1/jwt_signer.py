@@ -46,12 +46,15 @@ class JwtSigner:
         public_key: EllipticCurvePublicKey,
         issuer: str,
     ) -> None:
-        self._private_pem = private_key.private_bytes(
+        # `private_bytes` / `public_bytes` are typed as Any in the
+        # cryptography stubs; pin to bytes at the assignment so the
+        # rest of the class stays well-typed.
+        self._private_pem: bytes = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
-        self._public_pem = public_key.public_bytes(
+        self._public_pem: bytes = public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )

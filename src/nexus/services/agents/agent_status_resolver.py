@@ -17,12 +17,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
-
-if TYPE_CHECKING:
-    from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +37,7 @@ class AgentStatusResolver:
 
     TRIE_PATTERN = "/{}/proc/{}/status"
 
-    def __init__(self, agent_registry: AgentRegistry) -> None:
+    def __init__(self, agent_registry: Any) -> None:
         self._agent_registry = agent_registry
 
     # -- Hook spec (duck-typed) (registered via coordinator.enlist) --

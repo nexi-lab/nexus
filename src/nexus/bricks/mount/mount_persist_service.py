@@ -89,7 +89,6 @@ class MountPersistService:
         zone_id: str | None = None,
         description: str | None = None,
         context: "OperationContext | None" = None,
-        replication: str | None = None,
     ) -> str:
         """Save mount configuration to database.
 
@@ -101,7 +100,6 @@ class MountPersistService:
             zone_id: Zone ID (auto-populated from context)
             description: Human-readable description
             context: Operation context
-            replication: Replication policy value (e.g., "all-voters"), or None
 
         Returns:
             Mount ID (UUID string)
@@ -128,7 +126,6 @@ class MountPersistService:
             owner_user_id=owner_user_id,
             zone_id=zone_id,
             description=description,
-            replication=replication,
         )
 
         # Also activate the mount via MountService

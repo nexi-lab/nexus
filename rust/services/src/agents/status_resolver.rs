@@ -1,8 +1,8 @@
 #![allow(dead_code)]
-//! AgentStatusResolver — procfs view over the AgentTable SSOT.
+//! AgentStatusResolver — procfs view over the AgentRegistry SSOT.
 //!
 //! Implements the kernel `PathResolver` trait for `/{zone}/proc/{pid}/status`.
-//! Reads from the [`kernel::core::agents::table::AgentTable`] SSOT; ownership is
+//! Reads from the [`kernel::core::agents::registry::AgentRegistry`] SSOT; ownership is
 //! shared via `Arc`, so the resolver remains valid for as long as any caller
 //! holds it, independent of the Kernel's lifetime or field layout.
 //!
@@ -11,20 +11,20 @@
 //! that virtual-path mechanism, exposed via
 //! `kernel::core::dispatch::PathResolver`.
 
-use kernel::core::agents::table::AgentTable;
+use kernel::core::agents::registry::AgentRegistry;
 use kernel::core::dispatch::PathResolver;
 use std::sync::Arc;
 
 pub struct AgentStatusResolver {
-    table: Arc<AgentTable>,
+    table: Arc<AgentRegistry>,
 }
 
 impl AgentStatusResolver {
-    pub fn new(table: Arc<AgentTable>) -> Self {
+    pub fn new(table: Arc<AgentRegistry>) -> Self {
         Self { table }
     }
 
-    fn table(&self) -> &AgentTable {
+    fn table(&self) -> &AgentRegistry {
         &self.table
     }
 }
@@ -70,7 +70,7 @@ impl PathResolver for AgentStatusResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kernel::core::agents::table::{AgentDescriptor, AgentKind, AgentState};
+    use kernel::core::agents::registry::{AgentDescriptor, AgentKind, AgentState};
 
     fn make_desc(pid: &str, name: &str) -> AgentDescriptor {
         AgentDescriptor {
@@ -81,16 +81,14 @@ mod tests {
             owner_id: "user1".to_string(),
             zone_id: "zone1".to_string(),
             created_at_ms: 1000,
-            exit_code: None,
-            parent_pid: None,
-            connection_id: None,
-            last_heartbeat_ms: None,
+            updated_at_ms: 1000,
+            ..Default::default()
         }
     }
 
     #[test]
     fn test_agent_status_resolver() {
-        let table = Arc::new(AgentTable::new());
+        let table = Arc::new(AgentRegistry::new());
         table.register(make_desc("abc123", "test-agent"));
         let resolver = AgentStatusResolver::new(Arc::clone(&table));
         let data = resolver.try_read("/zone1/proc/abc123/status").unwrap();

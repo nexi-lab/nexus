@@ -1,9 +1,9 @@
 from typing import Any, cast
 
 import pytest
+from nexus_runtime import AgentRegistry
 
 from nexus.contracts.process_types import AgentSignal, AgentState
-from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.agents.agent_rpc_service import AgentRPCService
 from nexus.services.agents.agent_warmup import AgentWarmupService
 from nexus.services.agents.warmup_steps import register_standard_steps
@@ -45,7 +45,7 @@ async def test_agent_transition_connected_bootstraps_registered_agent() -> None:
 
     updated = registry.get(desc.pid)
     assert updated is not None
-    assert updated.state is AgentState.READY
+    assert updated.state == AgentState.READY
     assert result["state"] == AgentState.READY
     assert result["generation"] == updated.generation
 
@@ -59,8 +59,8 @@ async def test_agent_transition_connected_resumes_suspended_agent_without_warmup
         zone_id="test",
         connection_id="conn-2",
     )
-    desc = registry._transition(desc, AgentState.WARMING_UP)
-    desc = registry._transition(desc, AgentState.READY)
+    registry.update_state(desc.pid, AgentState.WARMING_UP.value)
+    registry.update_state(desc.pid, AgentState.READY.value)
     desc = registry.signal(desc.pid, AgentSignal.SIGSTOP)
 
     rpc = AgentRPCService(
@@ -79,7 +79,7 @@ async def test_agent_transition_connected_resumes_suspended_agent_without_warmup
 
     updated = registry.get(desc.pid)
     assert updated is not None
-    assert updated.state is AgentState.READY
+    assert updated.state == AgentState.READY
     assert result["generation"] == updated.generation
 
 

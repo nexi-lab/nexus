@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -42,7 +42,7 @@ def add_dry_run_option(func: Callable[..., Any]) -> Callable[..., Any]:
     def wrapper(dry_run: bool, **kwargs: Any) -> Any:
         return func(dry_run=dry_run, **kwargs)
 
-    return wrapper
+    return cast(Callable[..., Any], wrapper)
 
 
 def dry_run_preview(

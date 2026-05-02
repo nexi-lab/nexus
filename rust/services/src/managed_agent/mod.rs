@@ -22,7 +22,7 @@
 //!     returns None — this service is reachable from Rust callers via
 //!     `service_registry.lookup_rust("managed_agent")`).
 //!   * `start_session` / `cancel` / `get_session` — Rust-native
-//!     session lifecycle that talks directly to `AgentTable` (the
+//!     session lifecycle that talks directly to `AgentRegistry` (the
 //!     Rust SSOT for agent state). Zero PyO3 boundary; managed agents
 //!     don't go through Python `AgentRegistry` because their PCB
 //!     metadata (cwd / external_info / subprocess handle) doesn't
@@ -47,7 +47,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
-use kernel::core::agents::table::{AgentDescriptor, AgentKind, AgentState, AgentTable};
+use kernel::core::agents::registry::{AgentDescriptor, AgentKind, AgentRegistry, AgentState};
 use kernel::service_registry::{RustCallError, RustService};
 
 pub(crate) mod mailbox_stamping_hook;
@@ -144,12 +144,12 @@ pub(crate) struct ManagedAgentService {
     /// `sys_setattr` / `sys_unlink` against — the path on which the
     /// workspace materialization (DT_DIR + DT_LINK chat-with-me +
     /// per-repo DT_LINKs) happens.  `Option` so the existing test
-    /// fixtures that build `ManagedAgentService::new(agent_table)`
+    /// fixtures that build `ManagedAgentService::new(agent_registry)`
     /// without a real kernel keep compiling; production callers
     /// construct via [`Self::install`] which always provides the
     /// kernel.
     kernel: Option<Arc<kernel::kernel::Kernel>>,
-    agent_table: Arc<AgentTable>,
+    agent_registry: Arc<AgentRegistry>,
     sessions: DashMap<String, Session>,
 }
 
@@ -160,10 +160,10 @@ impl ManagedAgentService {
     /// tests can exercise lifecycle bookkeeping (start_session /
     /// cancel / get_session) without a real kernel.  Workspace
     /// materialization is skipped when `kernel` is `None`.
-    pub(crate) fn new(agent_table: Arc<AgentTable>) -> Self {
+    pub(crate) fn new(agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
             kernel: None,
-            agent_table,
+            agent_registry,
             sessions: DashMap::new(),
         }
     }
@@ -173,11 +173,11 @@ impl ManagedAgentService {
     /// inside `start_session`.
     pub(crate) fn with_kernel(
         kernel: Arc<kernel::kernel::Kernel>,
-        agent_table: Arc<AgentTable>,
+        agent_registry: Arc<AgentRegistry>,
     ) -> Self {
         Self {
             kernel: Some(kernel),
-            agent_table,
+            agent_registry,
             sessions: DashMap::new(),
         }
     }
@@ -190,11 +190,20 @@ impl ManagedAgentService {
     ///      gRPC handlers + Python factory wiring can resolve it via
     ///      `service_registry.lookup_rust(NAME)`.
     ///
-    /// Called from `Kernel::new()`. The service holds an `Arc<AgentTable>`
+    /// Called from `Kernel::new()`. The service holds an `Arc<AgentRegistry>`
     /// — the same `Arc` `Kernel` keeps for `AgentStatusResolver` reads —
     /// so `start_session` mutates the same SSOT every other agent
     /// surface reads from.
     pub(crate) fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
+        Self::install_returning(kernel).map(|_| ())
+    }
+
+    /// Install variant that returns the wired service handle so tests
+    /// can assert the on_terminate observer behaves correctly without
+    /// having to fish the service back out of the kernel registry.
+    pub(crate) fn install_returning(
+        kernel: &Arc<kernel::kernel::Kernel>,
+    ) -> Result<Arc<Self>, String> {
         kernel.register_native_hook(Box::new(
             workspace_boundary_hook::WorkspaceBoundaryHook::new(),
         ));
@@ -208,19 +217,49 @@ impl ManagedAgentService {
         // against the kernel.
         let svc = Arc::new(Self::with_kernel(
             Arc::clone(kernel),
-            Arc::clone(&kernel.agent_table),
+            Arc::clone(&kernel.agent_registry),
         ));
-        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())
+
+        // Reap the workspace on out-of-band termination — SIGKILL,
+        // orphan auto-reap, any path that flips an agent to Terminated
+        // without going through `cancel_session(Session)`.  The
+        // callback walks `sessions` for a matching pid; if a session
+        // row exists, tear down the DT_DIR + DT_LINK tree and drop the
+        // row so subsequent `get_session` returns `UnknownSession`.
+        // Cheap when no session matches — DashMap iter is O(N) and the
+        // sessions map is bounded by the per-process managed-agent
+        // count.
+        let svc_for_cb = Arc::clone(&svc);
+        kernel.agent_registry.register_on_terminate(
+            Self::NAME,
+            Arc::new(move |pid: &str| {
+                let pid_owned = pid.to_string();
+                let session_id_opt = svc_for_cb
+                    .sessions
+                    .iter()
+                    .find(|e| e.value().pid == pid_owned)
+                    .map(|e| e.key().clone());
+                if let Some(session_id) = session_id_opt {
+                    if let Some((_, sess)) = svc_for_cb.sessions.remove(&session_id) {
+                        svc_for_cb.reap_workspace(&sess.workspace_path, &sess.repo_aliases);
+                    }
+                }
+            }),
+        );
+
+        let svc_for_return = Arc::clone(&svc);
+        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())?;
+        Ok(svc_for_return)
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────
 
     /// Allocate a managed-agent session. Plants a fresh AgentRegistry
-    /// record (`AgentTable::register` directly — no Python boundary)
+    /// record (`AgentRegistry::register` directly — no Python boundary)
     /// and returns the session identity tuple sudowork uses for
     /// follow-up cancel / get_session calls and chat-with-me writes.
     ///
-    /// State on success: pid is `WARMING_UP` in AgentTable; the session
+    /// State on success: pid is `WARMING_UP` in AgentRegistry; the session
     /// row is in `self.sessions`. On `register` collision (effectively
     /// impossible given uuid-allocated pids) we surface `Internal` so
     /// the caller sees a hard error.
@@ -248,6 +287,7 @@ impl ManagedAgentService {
         let workspace_path = format!("/proc/{pid}/workspace/");
         let session_id = alloc_session_id();
 
+        let now = now_ms();
         let desc = AgentDescriptor {
             pid: pid.clone(),
             name: req.agent.clone(),
@@ -255,16 +295,14 @@ impl ManagedAgentService {
             state: AgentState::Registered,
             owner_id,
             zone_id,
-            created_at_ms: now_ms(),
-            exit_code: None,
-            parent_pid: None,
-            connection_id: None,
-            last_heartbeat_ms: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+            ..Default::default()
         };
 
-        if !self.agent_table.register(desc) {
+        if !self.agent_registry.register(desc) {
             return Err(ManagedAgentError::Internal(format!(
-                "AgentTable.register collided on freshly-allocated pid {pid}"
+                "AgentRegistry.register collided on freshly-allocated pid {pid}"
             )));
         }
         // Move into WARMING_UP — the runtime crate is responsible for
@@ -273,14 +311,16 @@ impl ManagedAgentService {
         // a failure here would drop us back to REGISTERED, which the
         // runtime crate will still see as "spawn me" so it's
         // recoverable.
-        self.agent_table.update_state(&pid, AgentState::WarmingUp);
+        let _ = self
+            .agent_registry
+            .update_state(&pid, AgentState::WarmingUp);
 
         // Materialise the workspace inside the kernel — DT_DIR for the
         // workspace root, DT_LINK at chat-with-me pointing at the
         // per-pid stream, and one DT_LINK per requested repo aliased
         // under the workspace.  Pre-runtime-crate the runtime hasn't
         // been wired in yet, so a materialise failure is logged but
-        // doesn't abort the session: the AgentTable record + session
+        // doesn't abort the session: the AgentRegistry record + session
         // map have already been planted, and a follow-up materialise
         // call (post-warmup) can close the gap.
         if let Err(e) = self.materialize_workspace(&workspace_path, &pid, &req.repos) {
@@ -393,12 +433,12 @@ impl ManagedAgentService {
 
     /// Cancel an in-flight turn or terminate the entire session.
     ///
-    /// `Turn` — abort the current generation; AgentTable record stays.
+    /// `Turn` — abort the current generation; AgentRegistry record stays.
     /// The runtime crate observes the cancellation through whatever
     /// mechanism it picks (channel, atomic flag, …) — kernel doesn't
     /// know about turn boundaries.
     ///
-    /// `Session` — terminate: transition AgentTable to `Terminated`,
+    /// `Session` — terminate: transition AgentRegistry to `Terminated`,
     /// drop the session row. The runtime crate observes the state
     /// transition and shuts down the agent task.
     pub(crate) fn cancel(
@@ -420,9 +460,10 @@ impl ManagedAgentService {
                 Ok(CancelResponse { cancelled: true })
             }
             CancelMode::Session => {
-                let cancelled =
-                    self.agent_table
-                        .update_state_with_exit(&sess.pid, AgentState::Terminated, 0);
+                let cancelled = self
+                    .agent_registry
+                    .update_state_with_exit(&sess.pid, AgentState::Terminated, 0)
+                    .unwrap_or(false);
                 // Tear down the workspace before we drop the session
                 // row — DT_LINK targets live independently, so leaving
                 // them dangling would clutter `sys_listdir(/proc)`
@@ -446,7 +487,7 @@ impl ManagedAgentService {
             None => return Err(ManagedAgentError::UnknownSession(session_id.to_string())),
         };
         let state = self
-            .agent_table
+            .agent_registry
             .get(&sess.pid)
             .map(|d| d.state.as_str().to_lowercase())
             .unwrap_or_else(|| "terminated".to_string());
@@ -501,22 +542,12 @@ fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), Stri
     const DT_DIR: i32 = 1;
     kernel
         .sys_setattr(
-            path,
-            DT_DIR,
-            /* backend_name */ "",
-            /* backend */ None,
-            /* metastore */ None,
-            /* raft_backend */ None,
-            /* io_profile */ "memory",
-            /* zone_id */ "root",
-            /* is_external */ false,
-            /* capacity */ 0,
-            /* read_fd */ None,
-            /* write_fd */ None,
-            /* mime_type */ None,
-            /* modified_at_ms */ None,
-            /* link_target */ None,
-            /* source */ None,
+            path, DT_DIR, /* backend_name */ "", /* backend */ None,
+            /* metastore */ None, /* raft_backend */ None,
+            /* io_profile */ "memory", /* zone_id */ "root",
+            /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
+            /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
+            /* link_target */ None, /* source */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
@@ -524,11 +555,7 @@ fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), Stri
 
 /// Create a DT_LINK at `path` pointing at `target`.  Wraps the kernel's
 /// `sys_setattr` so callers stay readable.
-fn create_dt_link(
-    kernel: &kernel::kernel::Kernel,
-    path: &str,
-    target: &str,
-) -> Result<(), String> {
+fn create_dt_link(kernel: &kernel::kernel::Kernel, path: &str, target: &str) -> Result<(), String> {
     // DT_LINK = 6.  See `create_dt_dir` for the same constant-
     // visibility note.
     const DT_LINK: i32 = 6;
@@ -604,7 +631,7 @@ mod tests {
     use super::*;
 
     fn fresh_service() -> ManagedAgentService {
-        ManagedAgentService::new(Arc::new(AgentTable::new()))
+        ManagedAgentService::new(Arc::new(AgentRegistry::new()))
     }
 
     fn req(agent: &str) -> StartSessionRequest {
@@ -632,8 +659,8 @@ mod tests {
     }
 
     #[test]
-    fn start_session_returns_identity_tuple_and_plants_agent_table_record() {
-        let table = Arc::new(AgentTable::new());
+    fn start_session_returns_identity_tuple_and_plants_agent_registry_record() {
+        let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
 
@@ -646,7 +673,7 @@ mod tests {
 
         let desc = table
             .get(&resp.agent_id)
-            .expect("AgentTable record present");
+            .expect("AgentRegistry record present");
         assert_eq!(desc.name, "scode-standard");
         assert_eq!(desc.kind, AgentKind::Managed);
         assert_eq!(desc.state, AgentState::WarmingUp);
@@ -669,14 +696,14 @@ mod tests {
             ..Default::default()
         };
         let resp = svc.start_session(r).unwrap();
-        let desc = svc.agent_table.get(&resp.agent_id).unwrap();
+        let desc = svc.agent_registry.get(&resp.agent_id).unwrap();
         assert_eq!(desc.owner_id, "system");
         assert_eq!(desc.zone_id, "root");
     }
 
     #[test]
     fn cancel_session_terminates_pid_and_drops_session() {
-        let table = Arc::new(AgentTable::new());
+        let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let pid = resp.agent_id.clone();
@@ -696,7 +723,7 @@ mod tests {
 
     #[test]
     fn cancel_turn_keeps_pid_alive() {
-        let table = Arc::new(AgentTable::new());
+        let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let pid = resp.agent_id.clone();
@@ -718,7 +745,7 @@ mod tests {
     }
 
     #[test]
-    fn get_session_returns_state_from_agent_table() {
+    fn get_session_returns_state_from_agent_registry() {
         let svc = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let snap = svc.get_session(&resp.session_id).unwrap();
@@ -732,7 +759,7 @@ mod tests {
 
     #[test]
     fn get_session_surfaces_terminated_for_reaped_pid() {
-        let table = Arc::new(AgentTable::new());
+        let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
         // Simulate out-of-band reap (e.g. SIGKILL from operator).
@@ -860,11 +887,7 @@ mod tests {
         /// materialisation; the metastore is the kernel SSOT for
         /// FileMetadata and is what sys_setattr writes through.
         /// Returns `(entry_type, link_target)` when the path exists.
-        fn kernel_stat(
-            kernel: &Kernel,
-            path: &str,
-            _zone: &str,
-        ) -> Option<(u8, Option<String>)> {
+        fn kernel_stat(kernel: &Kernel, path: &str, _zone: &str) -> Option<(u8, Option<String>)> {
             let path = path.trim_end_matches('/');
             let entry = kernel.metastore_get(path).ok().flatten()?;
             Some((entry.entry_type, entry.link_target.clone()))
@@ -874,10 +897,8 @@ mod tests {
         /// the only setup needed is `Kernel::new` (no PyO3 boot).
         fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService) {
             let k = Arc::new(Kernel::new());
-            let svc = ManagedAgentService::with_kernel(
-                Arc::clone(&k),
-                Arc::clone(&k.agent_table),
-            );
+            let svc =
+                ManagedAgentService::with_kernel(Arc::clone(&k), Arc::clone(&k.agent_registry));
             (k, svc)
         }
 
@@ -910,8 +931,8 @@ mod tests {
 
             // 2. chat-with-me link exists and points at /proc/{pid}/chat-with-me.
             let cwm = format!("{}chat-with-me", &resp.workspace_path);
-            let (et, target) = kernel_stat(&kernel, &cwm, "root")
-                .expect("chat-with-me DT_LINK should exist");
+            let (et, target) =
+                kernel_stat(&kernel, &cwm, "root").expect("chat-with-me DT_LINK should exist");
             assert_eq!(et, DT_LINK);
             assert_eq!(
                 target.as_deref(),
@@ -960,7 +981,7 @@ mod tests {
 
             // Sanity: pre-cancel, the link exists.
             let alias_link = format!("{}myrepo", &resp.workspace_path);
-            assert!(kernel_stat(&kernel,&alias_link, "root").is_some());
+            assert!(kernel_stat(&kernel, &alias_link, "root").is_some());
 
             svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
 
@@ -972,7 +993,7 @@ mod tests {
                 &resp.workspace_path,
             ] {
                 assert!(
-                    kernel_stat(&kernel,path, "root").is_none(),
+                    kernel_stat(&kernel, path, "root").is_none(),
                     "expected {path:?} to be reaped after cancel"
                 );
             }
@@ -985,11 +1006,96 @@ mod tests {
 
             svc.cancel(&resp.session_id, CancelMode::Turn).unwrap();
 
-            // Turn-mode cancel keeps the AgentTable record + workspace
+            // Turn-mode cancel keeps the AgentRegistry record + workspace
             // alive — the runtime watches a separate signal.
             let cwm = format!("{}chat-with-me", &resp.workspace_path);
-            assert!(kernel_stat(&kernel,&cwm, "root").is_some());
-            assert!(kernel_stat(&kernel,&resp.workspace_path, "root").is_some());
+            assert!(kernel_stat(&kernel, &cwm, "root").is_some());
+            assert!(kernel_stat(&kernel, &resp.workspace_path, "root").is_some());
+        }
+
+        // ── on_terminate workspace reap (SIGKILL / orphan path) ───
+        //
+        // The `install` codepath registers an `on_terminate`
+        // observer on the kernel AgentRegistry that reaps the
+        // workspace tree without needing a `cancel_session` call.
+        // These tests use `install` end-to-end — `Kernel::new` +
+        // `ManagedAgentService::install` + `lookup_rust` — so any
+        // future drift between install wiring and the observer
+        // contract surfaces here.
+
+        use kernel::core::agents::registry::AgentSignal;
+
+        fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService> {
+            ManagedAgentService::install_returning(kernel).expect("install ManagedAgentService")
+        }
+
+        #[test]
+        fn sigkill_reaps_workspace_through_on_terminate_hook() {
+            let kernel = Arc::new(Kernel::new());
+            let svc = install_managed_agent(&kernel);
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+
+            // Pre-kill sanity: workspace + chat-with-me link visible.
+            let cwm = format!("{}chat-with-me", &resp.workspace_path);
+            assert!(kernel_stat(&kernel, &cwm, "root").is_some());
+
+            // SIGKILL goes through AgentRegistry, transitions to
+            // Terminated, fires the on_terminate observer.  No
+            // `cancel_session` call required.
+            kernel
+                .agent_registry
+                .signal(&resp.agent_id, AgentSignal::Sigkill, None)
+                .expect("SIGKILL");
+
+            assert!(
+                kernel_stat(&kernel, &resp.workspace_path, "root").is_none(),
+                "workspace dir should be reaped after SIGKILL"
+            );
+            assert!(
+                kernel_stat(&kernel, &cwm, "root").is_none(),
+                "chat-with-me link should be reaped after SIGKILL"
+            );
+            // Session row also dropped — `get_session` surfaces
+            // `UnknownSession`, not "terminated".
+            let err = svc.get_session(&resp.session_id).unwrap_err();
+            assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
+        }
+
+        #[test]
+        fn orphan_terminate_via_signal_sigterm_reaps_workspace() {
+            let kernel = Arc::new(Kernel::new());
+            let svc = install_managed_agent(&kernel);
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+
+            // start_session plants the agent without a parent_pid →
+            // SIGTERM → orphan auto-reap path → on_terminate fires.
+            kernel
+                .agent_registry
+                .signal(&resp.agent_id, AgentSignal::Sigterm, None)
+                .expect("SIGTERM");
+
+            assert!(
+                kernel_stat(&kernel, &resp.workspace_path, "root").is_none(),
+                "workspace dir should be reaped via on_terminate after SIGTERM"
+            );
+        }
+
+        #[test]
+        fn cancel_session_reap_does_not_double_fire_on_terminate() {
+            // cancel(Session) reaps the workspace AND triggers the
+            // on_terminate observer (via update_state_with_exit).  The
+            // observer's `sessions.remove` is idempotent — the second
+            // attempted reap is a no-op because the row is already
+            // gone — so this exercises that the implementation is
+            // resilient to double-fire even if cancel paths evolve.
+            let kernel = Arc::new(Kernel::new());
+            let svc = install_managed_agent(&kernel);
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+            svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
+            // Workspace reaped, get_session reports UnknownSession.
+            assert!(kernel_stat(&kernel, &resp.workspace_path, "root").is_none());
+            let err = svc.get_session(&resp.session_id).unwrap_err();
+            assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
         }
     }
 }

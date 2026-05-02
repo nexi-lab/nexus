@@ -760,59 +760,6 @@ def _restore_mounts(nx_fs: "NexusFS") -> None:
     except Exception as e:
         logger.warning("Failed to load saved mounts during initialization: %s", e)
 
-    # Start replication scanners for mounts that have a replication policy.
-    # Runs after mount activation so the kernel router is ready.
-    _start_replication_scanners(nx_fs)
-
-
-def _start_replication_scanners(nx_fs: "NexusFS") -> None:
-    """Start background replication scanners for mounts with replication policies.
-
-    Reads the replication field from each saved mount config and calls
-    `kernel.start_replication_scanner()` for zone/mount combos that opt in.
-    """
-    kernel = getattr(nx_fs, "_kernel", None)
-    if kernel is None:
-        return
-
-    mount_persist = nx_fs.service("mount_persist")
-    if mount_persist is None:
-        return
-
-    try:
-        manager = getattr(mount_persist, "_manager", None)
-        if manager is None:
-            return
-        mounts = manager.list_mounts()
-    except Exception as e:
-        logger.warning("_start_replication_scanners: could not list mounts: %s", e)
-        return
-
-    import json as _json
-
-    for mount in mounts:
-        replication = mount.get("replication")
-        if not replication:
-            continue
-        zone_id = mount.get("zone_id") or "root"
-        mount_point = mount.get("mount_point", "")
-        # Build a minimal single-policy JSON for this mount.
-        # Only "all-voters" is supported today; extend here when more targets land.
-        target: dict = {"type": "all_voters"}
-        policies_json = _json.dumps([{"path_prefix": mount_point, "target": target}])
-        try:
-            import nexus_runtime as _nk
-
-            _nk.federation_start_replication_scanner(kernel, zone_id, policies_json, 2000)
-            logger.info(
-                "Started replication scanner: zone=%s mount=%s policy=%s",
-                zone_id,
-                mount_point,
-                replication,
-            )
-        except Exception as e:
-            logger.warning("Failed to start replication scanner for %s: %s", mount_point, e)
-
 
 __all__ = [
     # Version

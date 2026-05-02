@@ -491,14 +491,21 @@ def _extract_fn_signature(text: str, fn_pos: int) -> tuple[str, list[tuple[str, 
 
 
 def _find_pyo3_sig_above(text: str, pos: int) -> dict[str, str]:
-    """Look backward from pos for #[pyo3(signature = (...))] and extract defaults."""
+    """Look backward from pos for #[pyo3(signature = (...))] and extract defaults.
+
+    When the search region contains multiple ``#[pyo3(signature=...)]``
+    attributes (e.g. two adjacent methods both annotated), the
+    *last* match wins — that's the one immediately above the current
+    `fn`.  Earlier code naively grabbed the first match and silently
+    inherited the prior method's defaults.
+    """
     # Search backward up to 500 chars
     search_start = max(0, pos - 500)
     region = text[search_start:pos]
-    m = re.search(r"#\[pyo3\(signature\s*=\s*\(([^)]*)\)\)\]", region)
-    if not m:
+    matches = list(re.finditer(r"#\[pyo3\(signature\s*=\s*\(([^)]*)\)\)\]", region))
+    if not matches:
         return {}
-    sig_text = m.group(1)
+    sig_text = matches[-1].group(1)
     defaults: dict[str, str] = {}
     for part in sig_text.split(","):
         part = part.strip()
@@ -795,10 +802,22 @@ def parse_lib_exports(
 
 
 def _format_param(p: Param) -> str:
-    """Format a parameter for a stub signature."""
+    """Format a parameter for a stub signature.
+
+    `_find_pyo3_sig_above` normalises Rust default literals to Python
+    syntax without seeing the parameter type, so `vec![]` always becomes
+    `[]`.  PyO3 converts `Vec<u8>` to Python `bytes`, and `bytes = []`
+    is a type error — fix it at emit time when both type and default
+    are in hand.  Equivalent type-blind conversions (e.g. `Vec<String>`
+    → `list[str]` with `[]` default) stay correct, so the rule is
+    purely additive.
+    """
+    default = p.default
+    if default == "[]" and p.py_type == "bytes":
+        default = 'b""'
     s = f"{p.name}: {p.py_type}"
-    if p.default is not None:
-        s += f" = {p.default}"
+    if default is not None:
+        s += f" = {default}"
     return s
 
 
@@ -988,10 +1007,6 @@ def generate_stubs(
     )
     lines.append("def federation_lookup_share(kernel: Any, remote_path: str) -> str | None: ...")
     lines.append("def federation_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ...")
-    lines.append(
-        "def federation_start_replication_scanner("
-        "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
-    )
     lines.append("")
     # ── Audit-node stream registration (services::audit::prepare_stream_only)
     #    — hand-written companion to install_audit_hook for nodes that
@@ -4456,6 +4471,17 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    // ── Agent registry (§10 B1) ─────────────────────────────────────",
             "",
+            "    /// Sub-handle exposing the kernel `AgentRegistry` SSOT to",
+            "    /// Python callers. Wraps the kernel `Arc<AgentRegistry>`",
+            "    /// — every call returns a fresh wrapper sharing the same",
+            "    /// state, so Python code can write",
+            "    /// `kernel.agent_registry.spawn(...)` without manual Arc",
+            "    /// management.",
+            "    #[getter]",
+            "    fn agent_registry(&self) -> crate::agent_registry_py::PyAgentRegistry {",
+            "        crate::agent_registry_py::from_kernel(&self.inner)",
+            "    }",
+            "",
             "    /// Register a new agent. Returns true if inserted (pid was new).",
             "    #[pyo3(signature = (pid, name, kind, owner_id, zone_id, created_at_ms, parent_pid=None, connection_id=None))]",
             "    #[allow(clippy::too_many_arguments)]",
@@ -4470,83 +4496,95 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        parent_pid: Option<&str>,",
             "        connection_id: Option<&str>,",
             "    ) -> bool {",
-            "        use crate::core::agents::table::{AgentDescriptor, AgentKind, AgentState};",
+            "        use crate::core::agents::registry::{AgentDescriptor, AgentKind};",
             "        let kind = AgentKind::from_str(kind).unwrap_or(AgentKind::Worker);",
-            "        self.inner.agent_table.register(AgentDescriptor {",
+            "        self.inner.agent_registry.register(AgentDescriptor {",
             "            pid: pid.to_string(),",
             "            name: name.to_string(),",
             "            kind,",
-            "            state: AgentState::Registered,",
             "            owner_id: owner_id.to_string(),",
             "            zone_id: zone_id.to_string(),",
             "            created_at_ms,",
-            "            exit_code: None,",
+            "            updated_at_ms: created_at_ms,",
             "            parent_pid: parent_pid.map(|s| s.to_string()),",
             "            connection_id: connection_id.map(|s| s.to_string()),",
-            "            last_heartbeat_ms: None,",
+            "            ..Default::default()",
             "        })",
             "    }",
             "",
             "    /// Unregister an agent by pid.",
             "    fn agent_unregister(&self, pid: &str) -> bool {",
-            "        self.inner.agent_table.unregister(pid).is_some()",
+            "        self.inner.agent_registry.unregister(pid).is_some()",
             "    }",
             "",
-            "    /// Get agent descriptor as dict.",
+            "    /// Get agent descriptor as dict (legacy; new callers should",
+            "    /// use `kernel.agent_registry.get(pid)`).",
             "    fn agent_get<'py>(&self, py: Python<'py>, pid: &str) -> PyResult<Option<Bound<'py, PyDict>>> {",
-            "        match self.inner.agent_table.get(pid) {",
+            "        match self.inner.agent_registry.get(pid) {",
             "            Some(desc) => {",
             "                let dict = PyDict::new(py);",
             '                dict.set_item("pid", &desc.pid)?;',
             '                dict.set_item("name", &desc.name)?;',
-            '                dict.set_item("kind", desc.kind.as_str())?;',
-            '                dict.set_item("state", desc.state.as_str())?;',
+            '                dict.set_item("kind", desc.kind.as_str().to_ascii_lowercase())?;',
+            '                dict.set_item("state", desc.state.as_str().to_ascii_lowercase())?;',
             '                dict.set_item("owner_id", &desc.owner_id)?;',
             '                dict.set_item("zone_id", &desc.zone_id)?;',
             '                dict.set_item("created_at_ms", desc.created_at_ms)?;',
+            '                dict.set_item("updated_at_ms", desc.updated_at_ms)?;',
             '                dict.set_item("exit_code", desc.exit_code)?;',
+            '                dict.set_item("generation", desc.generation)?;',
+            '                dict.set_item("cwd", &desc.cwd)?;',
+            '                dict.set_item("root", &desc.root)?;',
             '                dict.set_item("parent_pid", desc.parent_pid.as_deref())?;',
             '                dict.set_item("connection_id", desc.connection_id.as_deref())?;',
             '                dict.set_item("last_heartbeat_ms", desc.last_heartbeat_ms)?;',
+            '                dict.set_item("children", desc.children.clone())?;',
+            '                dict.set_item("labels", desc.labels.clone())?;',
             "                Ok(Some(dict))",
             "            }",
             "            None => Ok(None),",
             "        }",
             "    }",
             "",
-            "    /// Update agent state. Returns true if found.",
-            "    fn agent_update_state(&self, pid: &str, new_state: &str) -> bool {",
-            "        use crate::core::agents::table::AgentState;",
-            "        match AgentState::from_str(new_state) {",
-            "            Some(state) => self.inner.agent_table.update_state(pid, state),",
-            "            None => false,",
-            "        }",
+            "    /// Update agent state. Returns true if found, false if pid",
+            "    /// missing. Raises ValueError on invalid transitions.",
+            "    fn agent_update_state(&self, pid: &str, new_state: &str) -> PyResult<bool> {",
+            "        use crate::core::agents::registry::AgentState;",
+            "        let state = AgentState::from_str(new_state).ok_or_else(|| {",
+            '                pyo3::exceptions::PyValueError::new_err(format!("unknown agent state: {new_state}"))',
+            "            })?;",
+            "        self.inner",
+            "            .agent_registry",
+            "            .update_state(pid, state)",
+            "            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))",
             "    }",
             "",
             "    /// List all agents. Returns list of dicts.",
-            "    #[pyo3(signature = (zone_id=None, state=None, kind=None))]",
+            "    #[pyo3(signature = (zone_id=None, owner_id=None, state=None, kind=None))]",
             "    fn agent_list<'py>(",
             "        &self,",
             "        py: Python<'py>,",
             "        zone_id: Option<&str>,",
+            "        owner_id: Option<&str>,",
             "        state: Option<&str>,",
             "        kind: Option<&str>,",
             "    ) -> PyResult<Vec<Bound<'py, PyDict>>> {",
-            "        use crate::core::agents::table::{AgentKind, AgentState};",
+            "        use crate::core::agents::registry::{AgentKind, AgentState};",
             "        let state_filter = state.and_then(AgentState::from_str);",
             "        let kind_filter = kind.and_then(AgentKind::from_str);",
-            "        let agents = self.inner.agent_table.list(",
+            "        let agents = self.inner.agent_registry.list(",
             "            zone_id,",
-            "            state_filter.as_ref(),",
+            "            owner_id,",
             "            kind_filter.as_ref(),",
+            "            state_filter.as_ref(),",
             "        );",
             "        let mut result = Vec::with_capacity(agents.len());",
             "        for desc in agents {",
             "            let dict = PyDict::new(py);",
             '            dict.set_item("pid", &desc.pid)?;',
             '            dict.set_item("name", &desc.name)?;',
-            '            dict.set_item("kind", desc.kind.as_str())?;',
-            '            dict.set_item("state", desc.state.as_str())?;',
+            '            dict.set_item("kind", desc.kind.as_str().to_ascii_lowercase())?;',
+            '            dict.set_item("state", desc.state.as_str().to_ascii_lowercase())?;',
             '            dict.set_item("owner_id", &desc.owner_id)?;',
             '            dict.set_item("zone_id", &desc.zone_id)?;',
             '            dict.set_item("created_at_ms", desc.created_at_ms)?;',
@@ -4555,14 +4593,16 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        Ok(result)",
             "    }",
             "",
-            "    /// Update heartbeat timestamp for an agent.",
+            "    /// Update heartbeat timestamp for an agent (raw stamp; no",
+            "    /// kind/info validation — see ``AgentRegistry.heartbeat`` for",
+            "    /// the validating variant).",
             "    fn agent_heartbeat(&self, pid: &str, timestamp_ms: u64) -> bool {",
-            "        self.inner.agent_table.heartbeat(pid, timestamp_ms)",
+            "        self.inner.agent_registry.heartbeat_at(pid, timestamp_ms)",
             "    }",
             "",
             "    /// Get number of registered agents.",
             "    fn agent_count(&self) -> usize {",
-            "        self.inner.agent_table.count()",
+            "        self.inner.agent_registry.count()",
             "    }",
             "",
             "    /// Block (GIL-free) until agent `pid` reaches `target_state` or timeout.",
@@ -4570,14 +4610,14 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    /// Returns the state string on success. Raises `RuntimeError` on",
             '    /// timeout ("timeout") or unknown pid ("not_found").',
             "    fn agent_wait(&self, py: Python<'_>, pid: &str, target_state: &str, timeout_ms: u64) -> PyResult<String> {",
-            "        use crate::core::agents::table::AgentState;",
+            "        use crate::core::agents::registry::AgentState;",
             "        let target = AgentState::from_str(target_state).ok_or_else(|| {",
             "            pyo3::exceptions::PyValueError::new_err(",
             '                format!("unknown agent state: {target_state}"),',
             "            )",
             "        })?;",
             "        let pid = pid.to_string();",
-            "        let registry = std::sync::Arc::clone(&self.inner.agent_table);",
+            "        let registry = std::sync::Arc::clone(&self.inner.agent_registry);",
             "        py.detach(|| {",
             "            registry",
             "                .wait_for_state(&pid, &target, timeout_ms)",

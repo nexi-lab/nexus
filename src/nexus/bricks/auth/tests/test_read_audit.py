@@ -18,6 +18,7 @@ def engine():
     url = os.environ.get("NEXUS_TEST_DATABASE_URL")
     if not url:
         pytest.skip("NEXUS_TEST_DATABASE_URL not set")
+    assert url is not None
     eng = create_engine(url, future=True)
     ensure_schema(eng)
     yield eng

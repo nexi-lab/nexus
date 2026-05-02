@@ -27,7 +27,7 @@
 //! Module placement: lives at `rust/kernel/src/acp/` today because the
 //! `services` -> `kernel` dep flip (PR #3932) hasn't merged. Once it
 //! does, the whole module moves to `rust/services/src/acp/` next to
-//! `agent_table` (same migration as `managed_agent/`).
+//! `agent_registry` (same migration as `managed_agent/`).
 
 #![allow(dead_code)]
 

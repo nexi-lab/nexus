@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+from nexus_runtime import AgentRegistry
 
 from nexus.bricks.delegation.models import DelegationMode
 
@@ -22,7 +23,6 @@ from nexus.server.api.v2.routers.delegation import (
     DelegateResponse,
     _handle_delegation_error,
 )
-from nexus.services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

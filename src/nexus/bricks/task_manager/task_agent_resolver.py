@@ -63,7 +63,7 @@ class TaskAgentResolver:
         if not worker_pid:
             payload: dict[str, Any] = {"status": "no_worker", "task_id": task_id}
         else:
-            proc = self._agent_registry.get(worker_pid) if self._agent_registry else None
+            proc = self._agent_registry.get(str(worker_pid)) if self._agent_registry else None
             if proc is None:
                 payload = {"status": "exited", "task_id": task_id, "worker_pid": worker_pid}
             else:

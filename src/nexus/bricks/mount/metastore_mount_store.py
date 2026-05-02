@@ -109,7 +109,6 @@ class MetastoreMountStore:
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
-        replication: str | None = None,
     ) -> str:
         """Save a mount configuration. Raises ValueError if mount_point already exists."""
         self._validate(mount_point, backend_type, backend_config)
@@ -127,7 +126,6 @@ class MetastoreMountStore:
             "owner_user_id": owner_user_id,
             "zone_id": zone_id,
             "description": description,
-            "replication": replication,
             "created_at": now,
             "updated_at": now,
         }
@@ -139,7 +137,6 @@ class MetastoreMountStore:
         mount_point: str,
         backend_config: dict[str, Any] | None = None,
         description: str | None = None,
-        replication: str | None = None,
     ) -> bool:
         """Update an existing mount configuration. Returns False if not found."""
         path = _config_path(mount_point)
@@ -151,8 +148,6 @@ class MetastoreMountStore:
             existing["backend_config"] = backend_config
         if description is not None:
             existing["description"] = description
-        if replication is not None:
-            existing["replication"] = replication
         existing["updated_at"] = datetime.now(UTC).isoformat()
 
         self._nx.sys_write(path, json.dumps(existing).encode("utf-8"))

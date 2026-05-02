@@ -13,6 +13,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -167,20 +168,31 @@ class ComposeRunner:
         cmd = self._base_cmd() + self._profile_args(profiles) + list(args)
         logger.debug("compose attached: %s", " ".join(cmd))
 
+        # POSIX: spawn into a new process group so signals can be
+        # forwarded to the whole compose subprocess tree.  Windows has
+        # no equivalent; the Popen `preexec_fn` is None and the signal
+        # handler skips the process-group dance.
+        if sys.platform != "win32":
+            preexec_fn = os.setsid
+        else:
+            preexec_fn = None
         proc = subprocess.Popen(
             cmd,
             cwd=str(self.project_dir),
-            # Create new process group so we can forward signals
-            preexec_fn=os.setsid if os.name != "nt" else None,
+            preexec_fn=preexec_fn,
         )
 
         original_sigint = signal.getsignal(signal.SIGINT)
         original_sigterm = signal.getsignal(signal.SIGTERM)
 
         def _forward(signum: int, frame: object) -> None:  # noqa: ARG001
-            """Forward signal to the compose process group."""
+            """Forward signal to the compose process group (POSIX only)."""
             import contextlib
 
+            if sys.platform == "win32":
+                # No process group on Windows; let the child receive
+                # the signal directly via subprocess's own handling.
+                return
             with contextlib.suppress(OSError, ProcessLookupError):
                 os.killpg(os.getpgid(proc.pid), signum)
 

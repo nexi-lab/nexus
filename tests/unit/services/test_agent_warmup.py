@@ -19,10 +19,10 @@ import asyncio
 from datetime import timedelta
 
 import pytest
+from nexus_runtime import AgentRegistry
 
 from nexus.contracts.agent_warmup_types import WarmupContext, WarmupStep
 from nexus.contracts.process_types import AgentSignal, AgentState
-from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.agents.agent_warmup import AgentWarmupService
 
 # ---------------------------------------------------------------------------
@@ -57,8 +57,10 @@ def _register_agent(
         name, owner_id=owner, zone_id="test", connection_id=f"conn-{name}"
     )
     # Move REGISTERED -> WARMING_UP -> READY -> SUSPENDED so warmup will not short-circuit
-    desc = agent_registry._transition(desc, AgentState.WARMING_UP)
-    desc = agent_registry._transition(desc, AgentState.READY)
+    agent_registry.update_state(desc.pid, AgentState.WARMING_UP.value)
+    desc = agent_registry.get(desc.pid)
+    agent_registry.update_state(desc.pid, AgentState.READY.value)
+    desc = agent_registry.get(desc.pid)
     agent_registry.signal(desc.pid, AgentSignal.SIGSTOP)
     return desc.pid
 
@@ -135,7 +137,7 @@ class TestHappyPath:
 
         # Verify agent transitioned (SIGCONT: SUSPENDED -> READY, generation bumped)
         desc = agent_registry.get(pid)
-        assert desc.state is AgentState.READY
+        assert desc.state == AgentState.READY
         assert desc.generation == 2  # 1 from spawn, +1 from SIGCONT
 
     @pytest.mark.asyncio
@@ -206,7 +208,7 @@ class TestRequiredStepFailure:
         assert result.error is not None
 
         desc = agent_registry.get(pid)
-        assert desc.state is AgentState.SUSPENDED
+        assert desc.state == AgentState.SUSPENDED
 
     @pytest.mark.asyncio
     async def test_required_step_timeout(self, warmup_service, agent_registry):
@@ -222,7 +224,7 @@ class TestRequiredStepFailure:
         assert result.failed_step == "slow"
 
         desc = agent_registry.get(pid)
-        assert desc.state is AgentState.SUSPENDED
+        assert desc.state == AgentState.SUSPENDED
 
     @pytest.mark.asyncio
     async def test_required_step_returns_false(self, warmup_service, agent_registry):
@@ -238,7 +240,7 @@ class TestRequiredStepFailure:
         assert result.failed_step == "nope"
 
         desc = agent_registry.get(pid)
-        assert desc.state is AgentState.SUSPENDED
+        assert desc.state == AgentState.SUSPENDED
 
     @pytest.mark.asyncio
     async def test_unregistered_required_step(self, warmup_service, agent_registry):
@@ -326,9 +328,12 @@ class TestEdgeCases:
         desc = agent_registry.register_external(
             "agent-1", owner_id="alice", zone_id="test", connection_id="conn-1"
         )
-        desc = agent_registry._transition(desc, AgentState.WARMING_UP)
-        desc = agent_registry._transition(desc, AgentState.READY)
-        desc = agent_registry._transition(desc, AgentState.BUSY)
+        agent_registry.update_state(desc.pid, AgentState.WARMING_UP.value)
+        desc = agent_registry.get(desc.pid)
+        agent_registry.update_state(desc.pid, AgentState.READY.value)
+        desc = agent_registry.get(desc.pid)
+        agent_registry.update_state(desc.pid, AgentState.BUSY.value)
+        desc = agent_registry.get(desc.pid)
 
         result = await warmup_service.warmup(desc.pid, steps=[])
         assert result.success is True
@@ -350,7 +355,7 @@ class TestEdgeCases:
         assert result.success is True
 
         desc = agent_registry.get(pid)
-        assert desc.state is AgentState.READY
+        assert desc.state == AgentState.READY
 
     @pytest.mark.asyncio
     async def test_empty_step_list_from_registered_agent(self, warmup_service, agent_registry):
@@ -367,7 +372,7 @@ class TestEdgeCases:
 
         updated = agent_registry.get(desc.pid)
         assert updated is not None
-        assert updated.state is AgentState.READY
+        assert updated.state == AgentState.READY
         assert updated.generation == desc.generation + 1
 
     @pytest.mark.asyncio

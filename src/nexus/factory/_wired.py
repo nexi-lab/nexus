@@ -370,7 +370,12 @@ def _boot_post_kernel_services(
     agent_rpc_service: Any = None
     try:
         agent_warmup_service: Any = None
-        _agent_registry = getattr(nx, "_agent_registry", None)
+        # AgentRegistry is the kernel SSOT — fetch it via the kernel
+        # handle. None for no-agent profiles (REMOTE).
+        _kernel_for_warmup = getattr(nx, "_kernel", None)
+        _agent_registry = (
+            _kernel_for_warmup.agent_registry if _kernel_for_warmup is not None else None
+        )
         if _agent_registry is not None:
             try:
                 from nexus.services.agents.agent_warmup import AgentWarmupService
@@ -412,22 +417,15 @@ def _boot_post_kernel_services(
     # AgentStatusResolver moved to orchestrator._register_vfs_hooks() (Issue #1570, #1810)
 
     # --- AgentRegistry + AcpService + EvictionManager (Issue #1792) ---
-    # AgentRegistry is constructed by the first consumer that needs it.
-    # No-agent profiles (REMOTE) skip this entire block.
+    # AgentRegistry is the kernel SSOT — Python callers reach it through
+    # the `agent_registry` getter on the Rust kernel handle. No-agent
+    # profiles (REMOTE) skip this block (no kernel wiring).
     _agent_reg: Any = None
-    _acp_ref = nx.service("agent_registry")
-    if _acp_ref is not None:
-        _agent_reg = _acp_ref
-    if _agent_reg is None:
+    _kernel_for_reg = getattr(nx, "_kernel", None)
+    if _kernel_for_reg is not None:
         try:
-            from nexus.services.agents.agent_registry import AgentRegistry
-
-            # Pass the Rust kernel so AgentRegistry dual-writes state into
-            # the AgentTable SSOT — keeps the procfs PathResolver and any
-            # blocking agent_wait callers in sync with Python writes.
-            _agent_reg = AgentRegistry(kernel=getattr(nx, "_kernel", None))
-            nx.sys_setattr("/__sys__/services/agent_registry", service=_agent_reg)
-            logger.debug("[BOOT:WIRED] AgentRegistry constructed by wired tier")
+            _agent_reg = _kernel_for_reg.agent_registry
+            logger.debug("[BOOT:WIRED] AgentRegistry handle obtained from kernel SSOT")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] AgentRegistry unavailable: %s", exc)
 

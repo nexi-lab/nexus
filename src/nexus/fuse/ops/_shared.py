@@ -13,6 +13,7 @@ import inspect
 import logging
 import os
 import stat
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -545,42 +546,37 @@ def stat_size_fallback(ctx: FUSESharedContext, path: str) -> int:
 
 def resolve_uid_gid() -> tuple[int, int]:
     """Resolve current user's uid/gid with Windows compatibility (Issue 2A DRY)."""
-    try:
-        return (os.getuid(), os.getgid())
-    except AttributeError:
+    if sys.platform == "win32":
         return (0, 0)
+    return (os.getuid(), os.getgid())
 
 
 def resolve_owner_group_to_uid_gid(metadata: Any, uid: int, gid: int) -> tuple[int, int]:
     """Map owner/group strings from metadata to uid/gid using pwd/grp modules."""
-    if metadata is None:
+    if metadata is None or sys.platform == "win32":
         return (uid, gid)
-    try:
-        import grp
-        import pwd
+    import grp
+    import pwd
 
-        owner = getattr(metadata, "owner", None)
-        if owner:
-            try:
-                uid = pwd.getpwnam(owner).pw_uid
-            except KeyError:
-                import contextlib
+    owner = getattr(metadata, "owner", None)
+    if owner:
+        try:
+            uid = pwd.getpwnam(owner).pw_uid
+        except KeyError:
+            import contextlib
 
-                with contextlib.suppress(ValueError):
-                    uid = int(owner)
+            with contextlib.suppress(ValueError):
+                uid = int(owner)
 
-        group = getattr(metadata, "group", None)
-        if group:
-            try:
-                gid = grp.getgrnam(group).gr_gid
-            except KeyError:
-                import contextlib
+    group = getattr(metadata, "group", None)
+    if group:
+        try:
+            gid = grp.getgrnam(group).gr_gid
+        except KeyError:
+            import contextlib
 
-                with contextlib.suppress(ValueError):
-                    gid = int(group)
-
-    except (ModuleNotFoundError, AttributeError):
-        pass
+            with contextlib.suppress(ValueError):
+                gid = int(group)
 
     return (uid, gid)
 

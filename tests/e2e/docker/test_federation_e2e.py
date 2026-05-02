@@ -528,6 +528,20 @@ def federation_zones(cluster, api_key):
     for parent_zone, path, target_zone in mounts:
         _ensure_mount(parent_zone, path, target_zone)
 
+    # Final convergence gate: every zone (root + each created zone)
+    # must have both nodes' applied_index == leader's commit_index
+    # before tests start. Without this, individual tests discover stale
+    # state and race a still-churning election on their first write.
+    # ``_wait_nodes_caught_up`` already enforces leader-stability (term
+    # and leader_id agree across nodes), so a 120 s window here pays
+    # for itself by removing per-test races on loaded CI runners.
+    _wait_nodes_caught_up(
+        [grpc1, grpc2],
+        [ROOT_ZONE_ID, *expected_zones],
+        api_key,
+        timeout=120,
+    )
+
     return {
         "zones": expected_zones,
         "mounts": [path for _, path, _ in mounts],

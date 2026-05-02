@@ -16,6 +16,8 @@
 //! Sudowork's primary deployment path is the static topology env vars
 //! consumed at daemon startup; share/join are operator escape hatches.
 
+mod zm;
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -25,6 +27,8 @@ use clap::{Parser, Subcommand};
 use nexus_raft::federation::{parse_federation_env, ENV_FEDERATION_MOUNTS, ENV_FEDERATION_ZONES};
 use nexus_raft::transport::{bootstrap_tls, hostname_to_node_id};
 use nexus_raft::{TlsFiles, ZoneManager};
+
+use crate::zm::Zm;
 
 const DEFAULT_BIND: &str = "0.0.0.0:2126";
 const TOPOLOGY_TICK: Duration = Duration::from_secs(10);
@@ -186,6 +190,21 @@ fn open_zone_manager(common: &CommonArgs) -> Result<std::sync::Arc<ZoneManager>>
     .map_err(|e| anyhow::anyhow!("ZoneManager init failed: {}", e))
 }
 
+fn parse_peers(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+async fn open_zm(common: CommonArgs) -> Result<Zm> {
+    let inner = tokio::task::spawn_blocking(move || open_zone_manager(&common))
+        .await
+        .context("open_zone_manager panicked")??;
+    Ok(Zm::new(inner))
+}
+
 async fn run_daemon(common: CommonArgs) -> Result<()> {
     let hostname = resolve_hostname(common.hostname.as_deref());
     tracing::info!(
@@ -194,20 +213,14 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         data_dir = %common.data_dir.display(),
         "nexusd-cluster starting (daemon mode)",
     );
+    let peers = parse_peers(&common.peers);
 
-    let peers: Vec<String> = common
-        .peers
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect();
+    let zm = open_zm(common).await?;
 
-    let zm = open_zone_manager(&common)?;
-
-    if zm.get_zone(contracts::ROOT_ZONE_ID).is_none() {
+    if !zm.has_zone(contracts::ROOT_ZONE_ID) {
         zm.create_zone(contracts::ROOT_ZONE_ID, peers.clone())
-            .map_err(|e| anyhow::anyhow!("create root zone: {}", e))?;
+            .await
+            .context("create root zone")?;
         tracing::info!("Created root zone");
     }
 
@@ -220,20 +233,21 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             ENV_FEDERATION_ZONES,
             ENV_FEDERATION_MOUNTS,
         );
-        zm.bootstrap_static(&zones, peers, &mounts)
-            .map_err(|e| anyhow::anyhow!("bootstrap_static: {}", e))?;
+        zm.bootstrap_static(zones, peers, mounts)
+            .await
+            .context("bootstrap_static")?;
     }
 
-    let zm_for_loop = zm.clone();
+    let zm_loop = zm.clone();
     let topology_handle = tokio::spawn(async move {
         loop {
-            match zm_for_loop.apply_topology(contracts::ROOT_ZONE_ID) {
+            match zm_loop.apply_topology(contracts::ROOT_ZONE_ID).await {
                 Ok(true) => {
-                    if !zm_for_loop.pending_mounts().is_empty() {
+                    if zm_loop.pending_mounts().is_empty() {
+                        tokio::time::sleep(TOPOLOGY_TICK * 6).await;
+                    } else {
                         tokio::time::sleep(TOPOLOGY_TICK).await;
-                        continue;
                     }
-                    tokio::time::sleep(TOPOLOGY_TICK * 6).await;
                 }
                 Ok(false) => tokio::time::sleep(TOPOLOGY_TICK).await,
                 Err(err) => {
@@ -256,22 +270,18 @@ async fn run_share(
     path: &str,
     new_zone_id: &str,
 ) -> Result<()> {
-    let zm = open_zone_manager(&common)?;
-    let peers: Vec<String> = common
-        .peers
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect();
+    let peers = parse_peers(&common.peers);
+    let zm = open_zm(common).await?;
 
-    if zm.get_zone(new_zone_id).is_none() {
+    if !zm.has_zone(new_zone_id) {
         zm.create_zone(new_zone_id, peers)
-            .map_err(|e| anyhow::anyhow!("create_zone({}): {}", new_zone_id, e))?;
+            .await
+            .with_context(|| format!("create_zone({new_zone_id})"))?;
     }
     let copied = zm
         .share_subtree_core(parent_zone, path, new_zone_id)
-        .map_err(|e| anyhow::anyhow!("share_subtree: {}", e))?;
+        .await
+        .context("share_subtree")?;
 
     println!(
         "Shared '{}' from zone '{}' as new zone '{}' ({} entries copied)",
@@ -287,19 +297,20 @@ async fn run_join(
     local_path: &str,
     parent_zone: &str,
 ) -> Result<()> {
-    let zm = open_zone_manager(&common)?;
-    // Treat the supplied peer as the only known voter; raft will
-    // discover the rest via the remote's ConfState once we propose.
-    let peers = vec![peer_addr.to_string()];
+    let zm = open_zm(common).await?;
 
-    if zm.get_zone(remote_zone_id).is_none() {
+    if !zm.has_zone(remote_zone_id) {
+        // Treat the supplied peer as the only known voter; raft will
+        // discover the rest via the remote's ConfState once we propose.
         // CLI `join` defaults to full voter; learner promotion is reserved
         // for the gRPC path (PyZoneManager.join_zone exposes the flag).
-        zm.join_zone(remote_zone_id, peers, false)
-            .map_err(|e| anyhow::anyhow!("join_zone({}): {}", remote_zone_id, e))?;
+        zm.join_zone(remote_zone_id, vec![peer_addr.to_string()], false)
+            .await
+            .with_context(|| format!("join_zone({remote_zone_id})"))?;
     }
     zm.mount(parent_zone, local_path, remote_zone_id, true)
-        .map_err(|e| anyhow::anyhow!("mount: {}", e))?;
+        .await
+        .context("mount")?;
 
     println!(
         "Joined remote zone '{}' (via {}); mounted at '{}' inside zone '{}'",

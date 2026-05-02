@@ -41,28 +41,33 @@
 //! ```
 
 // AcpService — subprocess + ACP-over-stdio host for
-// `AgentKind::UNMANAGED` agents (claude / codex / …). PyO3 surface
-// (`pyo3` submodule) is gated behind the `python` feature so
-// pure-Rust builds drop it.
-#[cfg(feature = "python")]
+// `AgentKind::UNMANAGED` agents (claude / codex / …).  Currently
+// pyo3-laden internally, so the per-service gate also requires the
+// `python` feature; once the pyo3-coupling is unwound it becomes
+// `service-acp`-only.
+#[cfg(all(feature = "service-acp", feature = "python"))]
 pub mod acp;
+#[cfg(feature = "service-agents")]
 pub mod agents;
+#[cfg(feature = "service-audit")]
 pub mod audit;
 // ManagedAgentService — first Rust-flavoured service. Owns the
 // chat-with-me mailbox stamping hook, the workspace-boundary
 // teaching hook, and the `start_session_v1` / `cancel_v1` /
 // `get_session_v1` lifecycle for `AgentKind::MANAGED` agents.
+#[cfg(feature = "service-managed-agent")]
 pub mod managed_agent;
 // `tasks` lives in this crate so the runtime ships a single Python
 // wheel; `services::python::register` exposes the PyTaskEngine /
-// PyTaskRecord / PyQueueStats pyclasses.
-#[cfg(feature = "python")]
+// PyTaskRecord / PyQueueStats pyclasses.  Internal pyo3 use today, so
+// the per-service gate also requires `python`.
+#[cfg(all(feature = "service-tasks", feature = "python"))]
 pub mod tasks;
 // `permission` is gated behind the `python` feature because its only
 // caller path is `Python::attach(...)` → `PermissionChecker.check(...)`
 // (the slow path).  Pure-Rust builds (e.g. WASM, raft-witness) drop it.
 // Kernel registration of §11 PermissionHook is scaffolded here only.
-#[cfg(feature = "python")]
+#[cfg(all(feature = "service-permission", feature = "python"))]
 pub mod permission;
 
 #[cfg(feature = "python")]

@@ -1365,6 +1365,12 @@ impl ZoneApiService for ZoneApiServiceImpl {
 /// A single witness zone entry.
 struct WitnessZoneEntry {
     node: ZoneConsensus<WitnessStateMachine>,
+    /// Per-zone peer map — kept here so ``auto_join_zone`` can seed
+    /// new child zones from root's *current* peer map (which has
+    /// applied conf_change rotations) rather than the cold-start
+    /// ``self.peers`` snapshot.  Per-zone autonomy stays intact: a
+    /// child zone's later conf_change Removes only affect its own
+    /// peer_map, never another zone's.
     peers: SharedPeerMap,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     _transport_handle: JoinHandle<()>,

@@ -1382,6 +1382,20 @@ pub struct WitnessZoneRegistry {
     tls: Arc<RwLock<Option<super::TlsConfig>>>,
     /// Cluster peer addresses — used by auto_join_zone() for transport routing.
     peers: Vec<NodeAddress>,
+    /// Serializes ``auto_join_zone`` so concurrent step_messages from
+    /// multiple data nodes for the same fresh zone don't both pass the
+    /// ``zones.get()`` check, both call ``setup_witness_zone``, and
+    /// race on opening the same redb file (second open fails with
+    /// "Database already open. Cannot acquire lock.").
+    ///
+    /// Coarse-grained — serializes auto-join across ALL zones — but
+    /// setup is just a few ms of I/O and the witness handles only
+    /// raft-membership traffic, so per-zone scaling isn't worth the
+    /// complexity. Held across the entire ``zones.get`` →
+    /// ``setup_witness_zone`` → ``zones.insert`` window so concurrent
+    /// callers serialize and the second one finds the zone already
+    /// inserted.
+    auto_join_lock: parking_lot::Mutex<()>,
 }
 
 impl WitnessZoneRegistry {
@@ -1393,6 +1407,7 @@ impl WitnessZoneRegistry {
             node_id,
             tls: Arc::new(RwLock::new(tls)),
             peers: Vec::new(),
+            auto_join_lock: parking_lot::Mutex::new(()),
         }
     }
 
@@ -1443,6 +1458,23 @@ impl WitnessZoneRegistry {
     ) -> Result<ZoneConsensus<WitnessStateMachine>> {
         use crate::raft::RaftConfig;
 
+        // Fast path: zone already joined, no need to take the auto_join
+        // lock. Lock acquisition still races on the bucket but DashMap
+        // handles that, and the common case (subsequent step_messages
+        // for an already-joined zone) stays uncontended.
+        if let Some(existing) = self.zones.get(zone_id) {
+            return Ok(existing.node.clone());
+        }
+
+        // Slow path: hold the auto-join lock across the entire
+        // re-check + setup + insert sequence so two concurrent
+        // step_messages for a fresh zone can't both reach
+        // ``setup_witness_zone`` and race on the redb file lock.
+        // Without this, the second caller hits "Database already
+        // open" and the witness ends up with no entry for the zone
+        // (subsequent step_messages keep retrying auto-join, never
+        // landing in the registry, witness never votes).
+        let _guard = self.auto_join_lock.lock();
         if let Some(existing) = self.zones.get(zone_id) {
             return Ok(existing.node.clone());
         }

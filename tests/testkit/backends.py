@@ -136,10 +136,12 @@ class FailingBackend(Backend):
     def write_stream(
         self,
         chunks: Iterator[bytes],
+        content_id: str = "",
+        *,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         self._maybe_fail("write_stream")
-        return self._inner.write_stream(chunks, context)
+        return self._inner.write_stream(chunks, content_id, context=context)
 
     def mkdir(
         self,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import MagicMock
 
 
 def test_common_helpers_exported_from_testkit() -> None:
@@ -124,6 +125,23 @@ def test_make_test_nexus_export_has_stable_name() -> None:
 
     assert isinstance(make_test_nexus, Callable)
     assert make_test_nexus.__name__ == "make_test_nexus"
+
+
+def test_failing_backend_write_stream_forwards_content_id_and_context() -> None:
+    from nexus.core.object_store import WriteResult
+    from tests.testkit import TEST_CONTEXT, FailingBackend
+
+    chunks = iter([b"hello"])
+    expected = WriteResult(content_id="/target", size=5)
+    inner = MagicMock()
+    inner.name = "inner"
+    inner.write_stream.return_value = expected
+
+    backend = FailingBackend(inner)
+    result = backend.write_stream(chunks, content_id="/target", context=TEST_CONTEXT)
+
+    assert result is expected
+    inner.write_stream.assert_called_once_with(chunks, "/target", context=TEST_CONTEXT)
 
 
 def test_testkit_fixture_functions_are_importable() -> None:

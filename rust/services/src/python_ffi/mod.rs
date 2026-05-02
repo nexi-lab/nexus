@@ -1,110 +1,101 @@
-//! `python_ffi::PyFfiRouter` — single-service Rust dispatcher that
-//! routes wire-form RPC method names into individual Python service
-//! instances via PyO3.
+//! `python_ffi::ServiceBridge` — generic Rust-tier service that
+//! forwards `RustService::dispatch(method, payload)` calls into a
+//! Python service instance via PyO3.
 //!
-//! Replaces the per-service @rpc_expose / dispatch.py / parse_method_params
-//! / handle_* chain with a single Rust→Python forward layer.  Tonic
-//! Call's `resolve_rust_dispatch` falls through to ("python_ffi", method)
-//! after the kernel-syscall + native Rust services don't match;
-//! `PyFfiRouter::dispatch` then looks up the method in its HashMap of
-//! wire-name → Python service handle and forwards the call.
+//! Used to migrate Python `@rpc_expose` services onto the Rust gRPC
+//! dispatch path WITHOUT porting their underlying business logic.
+//! The Rust tonic Call handler routes by wire-form name prefix into
+//! the bridge, the bridge calls back into the Python service, and the
+//! @rpc_expose / dispatch.py / parse_method_params chain disappears.
+//! Internal pure-Rust ports of each service follow as separate
+//! commits.
 //!
-//! Wire contract preserved.  Pure-Rust ports of underlying business
-//! logic (CreditsService DB, OAuth tokens, MCP protocol, ReBAC manager,
-//! etc.) follow as separate commits and replace the bridge entry one
-//! by one.
+//! Wire contract preserved:
 //!
-//! Boot pattern (per Python service):
+//!   gRPC `Call(method="<svc_prefix>_<bare>", payload=<json>)`
+//!     ↓ tonic resolve_rust_dispatch — prefix → ("<svc>", "<full method>")
+//!     ↓ Kernel::dispatch_rust_call → ServiceRegistry::lookup_rust
+//!     ↓ ServiceBridge::dispatch
+//!     ↓ Python::with_gil — `self._py.<bare_method>(**json.loads(payload))`
+//!     ↑ result.to_dict() → serde_json::to_vec
 //!
-//! ```python
-//! nexus_runtime.nx_python_ffi_register(
-//!     kernel,
-//!     ["add_mount", "remove_mount", "list_mounts", ...],  # wire-form names
-//!     mount_service_instance,                             # Python service
-//! )
+//! Per-service install hooks (one per Python service) plant a
+//! ServiceBridge instance in the kernel's registry under a stable
+//! name and tell it which prefix to strip from wire-form names before
+//! looking up the Python attribute.
+//!
+//! ## Example
+//!
+//! ```ignore
+//! // From Python (or any cdylib caller):
+//! services::python_ffi::install(
+//!     &kernel,
+//!     /* svc_name */ "mount",
+//!     /* wire_prefix */ "",  // wire form already bare (mount_service uses
+//!                            // unprefixed names like add_mount/remove_mount;
+//!                            // prefix routing in tonic uses the dotted form
+//!                            // `mount.add_mount` for those).
+//!     /* py_service */ mount_service_pyobj,
+//! )?;
 //! ```
 
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use kernel::kernel::Kernel;
 use kernel::service_registry::{RustCallError, RustService};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 
-/// Canonical service name in `Kernel::service_registry`.
-pub const NAME: &str = "python_ffi";
-
-/// Wire-form method-name → Python service handle.  Concurrent so
-/// `register` calls during boot don't block dispatch (although in
-/// practice all registration happens during single-threaded boot).
-pub struct PyFfiRouter {
-    /// Method-name → (Python service instance, attribute name on
-    /// the instance).  Attribute name usually equals the wire name
-    /// but the indirection lets a wire-form alias resolve to a
-    /// differently-named Python method.
-    routes: DashMap<String, RouteEntry>,
-}
-
-struct RouteEntry {
+/// Generic FFI dispatcher.  Holds a Python service instance and
+/// dispatches `<wire_form>` method names onto it.
+pub struct ServiceBridge {
+    /// Service name in `Kernel::service_registry`.
+    name: String,
+    /// Prefix to strip from wire-form method names before looking up
+    /// the Python attribute.  Empty string means use the wire-form
+    /// name verbatim.  Examples:
+    ///
+    ///   * Python service = MountService.add_mount
+    ///     wire form     = "mount.add_mount" (dotted) → prefix=""
+    ///   * Python service = FederationRPCMixin.federation_client_whoami
+    ///     wire form     = "federation_client_whoami" → prefix=""
+    ///     (the federation prefix is stripped by tonic's
+    ///     resolve_rust_dispatch BEFORE the wire-form name reaches
+    ///     dispatch — the bridge sees the full method name).
+    method_prefix: String,
+    /// Python service instance.  Held by Arc<PyObject> so the bridge
+    /// outlives any individual call.
     py_service: Py<PyAny>,
-    attr_name: String,
 }
 
-impl PyFfiRouter {
-    pub fn new() -> Self {
+impl ServiceBridge {
+    pub fn new(name: impl Into<String>, method_prefix: impl Into<String>, py_service: Py<PyAny>) -> Self {
         Self {
-            routes: DashMap::new(),
+            name: name.into(),
+            method_prefix: method_prefix.into(),
+            py_service,
         }
     }
 
-    /// Install the singleton router under `NAME` in the kernel's
-    /// service registry.  Returns the freshly-installed router.
-    /// Re-install (e.g. an idempotent boot retry) is rejected by
-    /// `register_rust_service`; callers that want the existing one
-    /// should hold onto the Arc returned by the first install.
-    pub fn install(kernel: &Arc<Kernel>) -> Result<Arc<Self>, String> {
-        let router = Arc::new(Self::new());
-        kernel.register_rust_service(
-            NAME,
-            Arc::clone(&router) as Arc<dyn RustService>,
-            Vec::new(),
-        )?;
-        Ok(router)
+    /// Install this bridge as a Rust service in the kernel's registry.
+    /// After install, `Kernel::dispatch_rust_call(name, method, payload)`
+    /// hits this bridge, which forwards to Python.
+    pub fn install(self, kernel: &Arc<Kernel>) -> Result<(), String> {
+        let name = self.name.clone();
+        kernel.register_rust_service(&name, Arc::new(self) as Arc<dyn RustService>, Vec::new())
     }
 
-    /// Register a wire-form name → Python service mapping.  Boot
-    /// hooks call this once per @rpc_expose-equivalent method on the
-    /// Python service.  `attr_name` defaults to the wire form when
-    /// the Python attribute matches; pass a different name when
-    /// they diverge.
-    pub fn register(
-        &self,
-        wire_name: impl Into<String>,
-        attr_name: impl Into<String>,
-        py_service: Py<PyAny>,
-    ) {
-        let wire = wire_name.into();
-        let attr = attr_name.into();
-        self.routes.insert(
-            wire,
-            RouteEntry {
-                py_service,
-                attr_name: attr,
-            },
-        );
+    fn resolve_attr_name<'a>(&self, method: &'a str) -> &'a str {
+        if self.method_prefix.is_empty() {
+            return method;
+        }
+        method.strip_prefix(&self.method_prefix).unwrap_or(method)
     }
 }
 
-impl Default for PyFfiRouter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RustService for PyFfiRouter {
+impl RustService for ServiceBridge {
     fn name(&self) -> &str {
-        NAME
+        &self.name
     }
 
     fn start(&self) -> Result<(), String> {
@@ -115,20 +106,22 @@ impl RustService for PyFfiRouter {
         Ok(())
     }
 
+    /// Forward to the Python service via PyO3.
+    ///
+    /// Wire format: payload is a JSON object whose keys map to
+    /// keyword arguments on the Python method.  The Python method's
+    /// return value is encoded back via `json.dumps`.  Coroutine
+    /// returns are awaited synchronously by spinning a fresh asyncio
+    /// loop in the FFI call (matches what the legacy `dispatch_method`
+    /// path did, so wire callers see no behavior diff).
     fn dispatch(&self, method: &str, payload: &[u8]) -> Result<Vec<u8>, RustCallError> {
+        let attr_name = self.resolve_attr_name(method).to_string();
         let payload_vec = payload.to_vec();
         Python::attach(|py| -> Result<Vec<u8>, RustCallError> {
-            let route = self.routes.get(method).ok_or(RustCallError::NotFound)?;
-            let py_service = route.py_service.clone_ref(py);
-            let attr_name = route.attr_name.clone();
-            drop(route);
+            let svc = self.py_service.bind(py);
+            let attr = svc.getattr(attr_name.as_str()).map_err(|_| RustCallError::NotFound)?;
 
-            let svc = py_service.bind(py);
-            let attr = svc
-                .getattr(attr_name.as_str())
-                .map_err(|_| RustCallError::NotFound)?;
-
-            // Decode payload as kwargs dict.
+            // Decode payload as a kwargs dict.
             let kwargs = if payload_vec.is_empty() {
                 PyDict::new(py)
             } else {
@@ -147,14 +140,13 @@ impl RustService for PyFfiRouter {
                     .clone()
             };
 
-            // Invoke the Python attribute.  Coroutine returns get
-            // awaited via asyncio.run so the dispatch is synchronous
-            // from the caller's perspective (matches the legacy
-            // dispatch_method behaviour).
+            // Invoke method.  Async methods get awaited by
+            // running the coroutine through asyncio.run.
             let result = attr
                 .call((), Some(&kwargs))
                 .map_err(|e| RustCallError::Internal(format!("call {attr_name}: {e}")))?;
 
+            // Detect coroutine return — async methods need explicit await.
             let is_coro = py
                 .import("asyncio")
                 .ok()

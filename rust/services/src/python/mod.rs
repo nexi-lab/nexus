@@ -18,17 +18,10 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use std::sync::OnceLock;
-
 use crate::audit;
 use crate::federation::FederationService;
 use crate::managed_agent::ManagedAgentService;
-use crate::python_ffi::PyFfiRouter;
-
-/// Process-wide singleton — `PyFfiRouter` registered into the kernel
-/// at first call to `nx_python_ffi_register`.  Subsequent calls add
-/// new wire-name → Python service routes to the same router.
-static PY_FFI_ROUTER: OnceLock<std::sync::Arc<PyFfiRouter>> = OnceLock::new();
+use crate::python_ffi::ServiceBridge;
 
 /// Install an `AuditHook` on `kernel` for `zone_id`, backed by a
 /// WAL-replicated DT_STREAM at `stream_path`.
@@ -121,65 +114,39 @@ fn nx_federation_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
     FederationService::install(&py_kernel.kernel_arc()).map_err(PyRuntimeError::new_err)
 }
 
-/// Register a list of wire-form RPC method names that route to the
-/// given Python service instance via the global `python_ffi` router.
+/// Generic FFI bridge install: register a Python service instance
+/// under `svc_name` in the kernel's `ServiceRegistry` so the gRPC
+/// `Call` dispatch path resolves `<wire_form>` RPCs to it via
+/// `ServiceBridge::dispatch` (Rust → Python over PyO3).
 ///
-/// First call installs the router as a Rust service; subsequent
-/// calls just add routes.  Each `wire_names` entry resolves to an
-/// attribute of the same name on `py_service` — pass tuples to alias.
-///
-/// Used by every `@rpc_expose` Python service that hasn't been
-/// pure-ported to Rust yet:  the wire contract migrates to the Rust
-/// dispatch path immediately, while the underlying business logic
-/// (CreditsService DB, OAuth tokens, MCP protocol, etc.) stays in
-/// Python pending separate Rust ports.
+/// `method_prefix` is stripped from the wire-form method name before
+/// the Python attribute lookup — empty string means use the wire name
+/// verbatim.  Used by `mount` / `mcp` / `oauth` / `share_link` / etc.
+/// so the @rpc_expose decorator can be deleted while business logic
+/// stays Python (pending pure-Rust port as separate commits).
 ///
 /// Python signature:
 ///
 /// ```python
-/// nexus_runtime.nx_python_ffi_register(
+/// nexus_runtime.nx_install_python_service_bridge(
 ///     kernel,
-///     ["add_mount", "remove_mount", "list_mounts", ...],
-///     mount_service_instance,
+///     "mount",                 # Rust service name
+///     "",                      # method prefix to strip (or "")
+///     mount_service_instance,  # PyObject — the Python service instance
 /// )
 /// ```
-///
-/// To alias a wire-form name to a different Python attribute, pass a
-/// `(wire_name, attr_name)` tuple instead of a bare string in the
-/// `wire_names` list.
 #[pyfunction]
-#[pyo3(name = "nx_python_ffi_register")]
-fn nx_python_ffi_register(
+#[pyo3(name = "nx_install_python_service_bridge")]
+fn nx_install_python_service_bridge(
     py: Python<'_>,
     py_kernel: PyRef<'_, PyKernel>,
-    wire_names: pyo3::Bound<'_, pyo3::PyAny>,
+    svc_name: &str,
+    method_prefix: &str,
     py_service: pyo3::Bound<'_, pyo3::PyAny>,
 ) -> PyResult<()> {
-    let router = PY_FFI_ROUTER.get_or_init(|| {
-        PyFfiRouter::install(&py_kernel.kernel_arc())
-            .expect("python_ffi router install (first call) must not race")
-    });
-
-    let py_service_obj = py_service.unbind();
-    let iter = wire_names.try_iter().map_err(|e| {
-        PyRuntimeError::new_err(format!(
-            "wire_names must be iterable (list of str or (str, str) tuples): {e}"
-        ))
-    })?;
-    for item in iter {
-        let item = item?;
-        let (wire_name, attr_name): (String, String) = if let Ok(s) = item.extract::<String>() {
-            (s.clone(), s)
-        } else if let Ok((w, a)) = item.extract::<(String, String)>() {
-            (w, a)
-        } else {
-            return Err(PyRuntimeError::new_err(
-                "wire_names entry must be str or (str, str) tuple".to_string(),
-            ));
-        };
-        router.register(wire_name, attr_name, py_service_obj.clone_ref(py));
-    }
-    Ok(())
+    let _ = py;  // kept for parity with neighbour install hooks
+    let bridge = ServiceBridge::new(svc_name, method_prefix, py_service.unbind());
+    bridge.install(&py_kernel.kernel_arc()).map_err(PyRuntimeError::new_err)
 }
 
 /// Generic in-process Rust-service dispatch entry point.
@@ -232,13 +199,10 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // FederationService — boot install. Replaces the Python
     // FederationRPCService at server/rpc/services/federation_rpc.py.
     m.add_function(wrap_pyfunction!(nx_federation_install, m)?)?;
-    // Generic Rust → Python FFI router — register wire-form method
-    // names against a Python service instance, dispatched by the
-    // singleton `python_ffi` Rust service.  Used by every
-    // `@rpc_expose` Python service that hasn't been pure-ported to
-    // Rust yet so the @rpc_expose decorator can be deleted while
-    // business logic stays Python.
-    m.add_function(wrap_pyfunction!(nx_python_ffi_register, m)?)?;
+    // Generic Rust → Python FFI bridge — install hook for migrating
+    // any `@rpc_expose` Python service onto the Rust gRPC dispatch
+    // path without porting underlying business logic.
+    m.add_function(wrap_pyfunction!(nx_install_python_service_bridge, m)?)?;
     // ACP service wiring — hand-written hooks (boot install + Python
     // AgentRegistry bridge + on-terminate callbacks). Hosts
     // `AgentKind::UNMANAGED` agents (subprocess + ACP-over-stdio).

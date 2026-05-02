@@ -253,39 +253,15 @@ impl FederationService {
     }
 
     fn unmount(&self, req: UnmountRequest) -> Result<Vec<u8>, RustCallError> {
-        // Federation is the trusted in-tree module for mount lifecycle —
-        // call `Kernel::unmount_federation` directly (Tier 3 kernel module
-        // API, Linux `EXPORT_SYMBOL` analogue) instead of routing through
-        // generic `sys_unlink`.  The generic syscall has to look up the
-        // DT_MOUNT row's metadata to discover the entry type, but the
-        // DT_MOUNT row lives in the PARENT zone's metastore (where
-        // `dlc.mount` wrote it) while routing for `path == mount_point`
-        // returns the mount being unlinked — a cold-dcache lookup lands
-        // in the wrong state machine and silently misses, leaving an
-        // orphaned mount in VFSRouter.  `unmount_federation` skips that
-        // dispatch dance and goes straight to the SSOT
-        // (`DriverLifecycleCoordinator::unmount`) which deletes via the
-        // parent zone's metastore + evicts dcache + removes the route.
-        //
-        // We need the target zone to drive `dlc.unmount`'s VFSRouter
-        // remove; recover it from the routing table (longest-prefix on
-        // `path` matches the mount itself, so route.zone_id is the
-        // target).  Falls back to parent_zone for the
-        // already-unmounted / never-mounted case so the call stays a
-        // no-op (idempotent, matches POSIX `umount` semantics).
-        let target_zone = self
-            .kernel
-            .vfs_router_arc()
-            .route(&req.path, &req.parent_zone)
-            .ok()
-            .map(|r| r.zone_id)
-            .filter(|z| !z.is_empty())
-            .unwrap_or_else(|| req.parent_zone.clone());
-        self.kernel.unmount_federation(&req.path, &target_zone);
+        // Standard sys_unlink on a DT_MOUNT entry → unmount.
+        // Already-unmounted / never-mounted is a no-op (matches POSIX
+        // `umount` of a non-mounted path).
+        let ctx = self.system_ctx(&req.parent_zone);
+        let _ = self.kernel.sys_unlink(&req.path, &ctx, false);
         Ok(serde_json::to_vec(&json!({
             "parent_zone": req.parent_zone,
             "path": req.path,
-            "target_zone": target_zone,
+            "target_zone": serde_json::Value::Null,
         }))
         .map_err(|e| RustCallError::Internal(e.to_string()))?)
     }

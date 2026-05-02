@@ -141,8 +141,11 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
     ("archive", "portability"): [
         "nexus.bricks.archive.verify",
         "nexus.bricks.archive.cli_glue",
+        # Orchestrator constructs real ZoneExportOptions to drive ZoneExportService.
+        "nexus.bricks.archive.orchestrator",
         # Test helpers legitimately import the portability signer to build test fixtures.
         "nexus.bricks.archive.tests.unit.test_verify",
+        "nexus.bricks.archive.tests.unit.test_orchestrator",
     ],
 }
 

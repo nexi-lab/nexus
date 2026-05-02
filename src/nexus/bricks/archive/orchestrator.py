@@ -3,51 +3,16 @@
 Wraps the single-zone ZoneExportService to produce one archive per zone
 (or one across all zones, depending on caller). Output naming convention:
 `<zone>-<utc-iso>.nexus`.
-
-Cross-brick DI note: the orchestrator is decoupled from the portability
-brick via local Protocol + dataclass definitions.  Callers inject a
-concrete ZoneExportService at construction time; the orchestrator never
-imports directly from nexus.bricks.portability.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-# ---------------------------------------------------------------------------
-# Local option model (mirrors ZoneExportOptions fields we set)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ArchiveExportOptions:
-    """Narrow options bag passed to the injected export service.
-
-    Mirrors the subset of ``ZoneExportOptions`` consumed by the
-    orchestrator, avoiding a direct cross-brick import.
-
-    Attributes:
-        output_path: Destination path for the ``.nexus`` bundle.
-        strip_credentials: Strip credential placeholders before writing.
-        sign: Ed25519-sign the bundle manifest.
-        after_time: Only include entries modified after this timestamp.
-        before_time: Only include entries modified before this timestamp.
-    """
-
-    output_path: Path
-    strip_credentials: bool = True
-    sign: bool = True
-    after_time: datetime | None = None
-    before_time: datetime | None = None
-
-
-# ---------------------------------------------------------------------------
-# Export-service protocol (structural sub-type of ZoneExportService)
-# ---------------------------------------------------------------------------
+from nexus.bricks.portability.models import ZoneExportOptions
 
 
 class ZoneExportServiceProtocol(Protocol):
@@ -120,7 +85,7 @@ class ArchiveOrchestrator:
         out: list[Any] = []
         for zone_id in zone_ids:
             output = self.output_dir / f"{zone_id}-{ts}.nexus"
-            options = ArchiveExportOptions(
+            options = ZoneExportOptions(
                 output_path=output,
                 strip_credentials=strip,
                 sign=sign,
@@ -132,4 +97,4 @@ class ArchiveOrchestrator:
         return out
 
 
-__all__ = ["ArchiveExportOptions", "ArchiveOrchestrator", "ZoneExportServiceProtocol"]
+__all__ = ["ArchiveOrchestrator", "ZoneExportServiceProtocol"]

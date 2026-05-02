@@ -177,15 +177,18 @@ def _open_nexus_fs() -> Any:
     """Locate the running nexus filesystem instance for CLI use.
 
     Lazy-imports ``nexus.cli.utils.get_filesystem`` to avoid pulling the
-    entire runtime when the CLI is invoked with ``--help``.
+    entire runtime when the CLI is invoked with ``--help``. The upstream
+    ``get_filesystem`` is async; we drive it via ``asyncio.run`` so the
+    glue presents a synchronous interface to the Click CLI.
 
     Returns:
         The active nexus filesystem handle.
     """
+    import asyncio
     import importlib
 
     cli_utils = importlib.import_module("nexus.cli.utils")
-    return cli_utils.get_filesystem()
+    return asyncio.run(cli_utils.get_filesystem(allow_local_default=True))
 
 
 def _list_zones(nexus_fs: Any) -> list[str]:

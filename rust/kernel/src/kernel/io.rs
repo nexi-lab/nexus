@@ -805,45 +805,14 @@ impl Kernel {
             Err(_) => return miss(0),
         };
 
-        // 3. Get metadata.  Three-step lookup so unmount of a mount point
-        //    finds its own DT_MOUNT entry on dcache miss:
-        //
-        //    a) dcache hit — fast path; covers most repeat operations.
-        //    b) routed-zone metastore (`route.mount_point`) — original
-        //       behavior; finds DT_REG / DT_DIR entries inside the
-        //       routed zone.
-        //    c) parent-zone metastore — only triggered when (a) and (b)
-        //       missed AND `path` itself is a mount point
-        //       (`route.backend_path` empty).  DT_MOUNT entries live in
-        //       the *parent* zone's metastore (where `dlc.mount` wrote
-        //       them, and where `dlc.unmount` step 1 deletes them); the
-        //       routed-zone lookup at (b) lands in the wrong state
-        //       machine for the path-equals-mount-point case.  Without
-        //       this fall-through, `federation_unmount` →
-        //       `sys_unlink` silently misses on dcache eviction and the
-        //       mount stays orphaned in the routing table while the
-        //       caller sees "no error" (TestNewTeamOnboarding regression).
+        // 3. Get metadata (dcache or metastore — per-mount first, then global)
         let meta = match self.dcache.get_entry(path) {
             Some(e) => Some(e),
-            None => {
-                let primary = self
-                    .with_metastore(&route.mount_point, |ms| {
-                        ms.get(path).ok().flatten().map(|m| (&m).into())
-                    })
-                    .flatten();
-                primary.or_else(|| {
-                    if !route.backend_path.is_empty() || path == "/" {
-                        return None;
-                    }
-                    let parent = lib::python::path_utils::parent_path(path)
-                        .unwrap_or_else(|| "/".to_string());
-                    let parent_route = self.vfs_router.route(&parent, &ctx.zone_id).ok()?;
-                    self.with_metastore(&parent_route.mount_point, |ms| {
-                        ms.get(path).ok().flatten().map(|m| (&m).into())
-                    })
-                    .flatten()
+            None => self
+                .with_metastore(&route.mount_point, |ms| {
+                    ms.get(path).ok().flatten().map(|m| (&m).into())
                 })
-            }
+                .flatten(),
         };
 
         let entry = match meta {

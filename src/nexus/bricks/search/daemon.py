@@ -1624,18 +1624,24 @@ class SearchDaemon:
         from nexus.contracts.constants import ROOT_ZONE_ID
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
-        # Strip NUL bytes from any string field — Postgres TEXT (used by the
-        # txtai content store) rejects them with SQLSTATE 22021 and would
-        # otherwise leave the asyncpg session in PendingRollbackError until
-        # worker recycle (Issue #3989).
-        scrubbed: list[dict[str, Any]] = []
-        for doc in documents:
-            scrubbed.append(
-                {
-                    k: (v.replace("\x00", "") if isinstance(v, str) and "\x00" in v else v)
-                    for k, v in doc.items()
-                }
-            )
+
+        # Strip NUL bytes from EVERY string in the document tree, not just
+        # top-level fields — txtai persists the full document object and
+        # nested metadata (e.g. {"metadata": {"title": "a\x00b"}}) would
+        # otherwise leak NULs into Postgres TEXT and reproduce the
+        # PendingRollbackError this fix is closing (Issue #3989, codex r2).
+        def _scrub(value: Any) -> Any:
+            if isinstance(value, str):
+                return value.replace("\x00", "") if "\x00" in value else value
+            if isinstance(value, dict):
+                return {k: _scrub(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_scrub(v) for v in value]
+            if isinstance(value, tuple):
+                return tuple(_scrub(v) for v in value)
+            return value
+
+        scrubbed: list[dict[str, Any]] = [_scrub(doc) for doc in documents]
         count = int(await self._backend.upsert(scrubbed, zone_id=effective_zone_id))
         if count:
             self.stats.last_index_refresh = time.time()

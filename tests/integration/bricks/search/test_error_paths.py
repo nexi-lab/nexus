@@ -76,6 +76,38 @@ class TestSearchDaemonErrors:
         assert daemon.stats.last_index_refresh is not None
 
     @pytest.mark.asyncio
+    async def test_index_documents_recursively_strips_nuls(self) -> None:
+        """NULs nested inside metadata dicts/lists must also be scrubbed —
+        txtai persists the full doc object so nested NULs would still poison
+        Postgres (Issue #3989, codex r2)."""
+        from nexus.bricks.search.daemon import SearchDaemon
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        daemon = SearchDaemon()
+        daemon._initialized = True
+        daemon._backend = AsyncMock()
+        daemon._backend.upsert.return_value = 1
+
+        docs = [
+            {
+                "id": "doc-1",
+                "text": "hello",
+                "path": "/x.md",
+                "metadata": {
+                    "title": "a\x00b",
+                    "tags": ["safe", "with\x00nul", {"deep": "x\x00y"}],
+                },
+            }
+        ]
+        await daemon.index_documents(docs)
+
+        forwarded = daemon._backend.upsert.await_args.args[0]
+        assert forwarded[0]["metadata"]["title"] == "ab"
+        assert forwarded[0]["metadata"]["tags"][1] == "withnul"
+        assert forwarded[0]["metadata"]["tags"][2]["deep"] == "xy"
+        assert daemon._backend.upsert.await_args.kwargs["zone_id"] == ROOT_ZONE_ID
+
+    @pytest.mark.asyncio
     async def test_delete_documents_uses_backend_delete(self) -> None:
         """Explicit deletion should delegate to the active backend."""
         from nexus.bricks.search.daemon import SearchDaemon

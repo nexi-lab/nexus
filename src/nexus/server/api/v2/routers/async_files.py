@@ -911,25 +911,65 @@ def create_async_files_router(
                 _py_kernel = getattr(fs, "_kernel", None)
                 if _py_kernel is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")
-                raw: bytes = await asyncio.to_thread(_py_kernel.sys_read_raw, path, "root")
-                # Verify the bytes actually match the requested content hash.
-                # ``sys_read_raw`` returns the CURRENT bytes at ``path`` — there
-                # is no kernel API plumbed through here that reads by
-                # content_id. Without this check, a request for an old version
-                # after the file has changed would return the current bytes
-                # labeled with the historical hash, silently corrupting diff /
-                # rollback consumers (Issue #3989 — exposed once base64
-                # encoding made the lossy decode mask the bug).
+                # Resolve the mount that owns ``path`` so we can issue a true
+                # content-addressed read. Longest-prefix match against the
+                # active mount table — falls back to the legacy current-bytes
+                # read only when no mount matches (e.g. virtual / synthetic
+                # paths) and verifies the hash before returning.
                 from nexus.core.hash_fast import hash_content as _hash_content
 
+                _mount_point: str | None = None
+                try:
+                    _mount_entries = fs.list_mounts(context=context)
+                    _candidates = sorted(
+                        (m["mount_point"] for m in _mount_entries if m.get("mount_point")),
+                        key=len,
+                        reverse=True,
+                    )
+                    for _mp in _candidates:
+                        _mp_norm = _mp.rstrip("/") or "/"
+                        if path == _mp_norm or path.startswith(_mp_norm + "/"):
+                            _mount_point = _mp_norm
+                            break
+                except Exception:
+                    _mount_point = None
+
+                raw: bytes | None = None
+                if _mount_point is not None and hasattr(_py_kernel, "cas_read"):
+                    try:
+                        raw = await asyncio.to_thread(
+                            _py_kernel.cas_read, _mount_point, "root", version
+                        )
+                    except Exception as cas_err:
+                        # Backend doesn't have this content_id, or CAS read
+                        # failed for another reason — fall through to
+                        # current-path read + hash verify so the historical
+                        # blob can still be served when it happens to match
+                        # the live bytes.
+                        logger.debug(
+                            "cas_read(%s, root, %s) failed: %s; falling back",
+                            _mount_point,
+                            version,
+                            cas_err,
+                        )
+                        raw = None
+
+                if raw is None:
+                    raw = await asyncio.to_thread(_py_kernel.sys_read_raw, path, "root")
+
+                # Always verify hash — guards against a backend that returns
+                # the wrong blob, and against the legacy fallback returning
+                # current bytes when the historical version is gone. Returns
+                # 410 on mismatch so diff/rollback consumers fail loud
+                # instead of trusting mislabeled content (Issue #3989).
                 _actual_hash = _hash_content(raw)
                 if _actual_hash != version:
                     raise HTTPException(
                         status_code=410,
                         detail=(
                             f"Historical version {version!r} no longer retrievable at {path!r}: "
-                            f"content has changed (current hash {_actual_hash!r}). "
-                            "Hash-keyed CAS reads are not yet plumbed through this endpoint."
+                            f"current hash {_actual_hash!r} does not match. "
+                            "The content_id may have been GC'd or the backend lacks CAS support."
                         ),
                     )
                 content_v, enc_v = _encode_read_payload(raw, encoding)

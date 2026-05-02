@@ -31,28 +31,27 @@ impl ObjectStoreProvider for DefaultObjectStoreProvider {
         let backend_name = args.backend_name;
         let backend_type = args.backend_type;
 
-        // ── DeploymentProfile-driven driver gate ───────────────────
-        // Disabled drivers surface a clear error before the per-driver
-        // construction switch.  See `kernel::hal::object_store_provider`
-        // for the gate-set lifecycle.  Two categories skip the gate:
-        //   * Empty / explicit local-root backend names (`""`,
-        //     `"path_local"`, `"local_connector"`, `"cas-local"`,
-        //     `"cas"`) — kernel-default object stores available in
-        //     every profile.
-        //   * Anything constructed from `local_root` — see the
-        //     `args.local_root` branch below; with a host-FS root
-        //     present, the factory builds a CAS-local backend
-        //     regardless of the `backend_type` label, so the gate
-        //     would reject legitimate kernel-default mounts.
-        let is_local_default = backend_type.is_empty()
-            || backend_type == "path_local"
-            || backend_type == "local_connector"
-            || backend_type == "cas-local"
-            || backend_type == "cas"
-            || args.local_root.is_some();
-        if !is_local_default && !is_driver_enabled(backend_type) {
+        // ── DeploymentProfile-driven driver gate (SSOT) ────────────
+        // Every backend_type runs through `is_driver_enabled` — there
+        // is no implicit local-default bypass.  The previous skip-
+        // branch made profiles unable to disable local-host backends
+        // (path_local / cas-local / local_connector) and lost the
+        // ability to limit `nexusd-cluster` to a single driver via the
+        // gate.  Local backends now have to appear in the active
+        // profile's driver set; see `LOCAL_DEFAULT_DRIVERS` in
+        // `nexus.contracts.deployment_profile`.
+        //
+        // The historical `"cas"` alias (PyKernel sys_setattr default)
+        // is normalised to the canonical `"cas-local"` here so the gate
+        // only ever has to carry one entry per backend.
+        let dispatch_type = if backend_type == "cas" || backend_type.is_empty() {
+            "cas-local"
+        } else {
+            backend_type
+        };
+        if !is_driver_enabled(dispatch_type) {
             return Err(format!(
-                "driver {backend_type:?} not enabled in current deployment profile"
+                "driver {dispatch_type:?} not enabled in current deployment profile"
             ));
         }
 
@@ -323,5 +322,105 @@ impl ObjectStoreProvider for DefaultObjectStoreProvider {
             backend,
             pending_remote_meta_store,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression tests for the SSOT driver gate.  Every dispatch — including
+    //! local-host backends like `path_local` — must go through
+    //! `is_driver_enabled`; the previous "kernel default" skip-branch is
+    //! gone.  These tests use process-wide `set_enabled_drivers`, so they
+    //! must run in a fresh test binary (they self-restore an open gate at
+    //! the end so other tests in the same process aren't affected).
+
+    use super::*;
+    use kernel::cas_remote::RemoteChunkFetcher;
+    use kernel::hal::object_store_provider::set_enabled_drivers;
+    use kernel::hal::peer::NoopPeerBlobClient;
+    use std::sync::Arc;
+
+    struct NoopChunkFetcher;
+    impl RemoteChunkFetcher for NoopChunkFetcher {
+        fn fetch_chunk(&self, _hash: &str, _origins: &[String]) -> Option<Vec<u8>> {
+            None
+        }
+    }
+
+    fn make_args<'a>(
+        backend_type: &'a str,
+        local_root: Option<&'a str>,
+        peer: &'a Arc<dyn kernel::hal::peer::PeerBlobClient>,
+        chunk: Arc<dyn RemoteChunkFetcher>,
+        rt: &'a Arc<tokio::runtime::Runtime>,
+    ) -> ObjectStoreProviderArgs<'a> {
+        ObjectStoreProviderArgs {
+            backend_type,
+            backend_name: "test",
+            local_root,
+            fsync: false,
+            follow_symlinks: false,
+            openai_base_url: None,
+            openai_api_key: None,
+            openai_model: None,
+            openai_blob_root: None,
+            anthropic_base_url: None,
+            anthropic_api_key: None,
+            anthropic_model: None,
+            anthropic_blob_root: None,
+            s3_bucket: None,
+            s3_prefix: None,
+            aws_region: None,
+            aws_access_key: None,
+            aws_secret_key: None,
+            s3_endpoint: None,
+            gcs_bucket: None,
+            gcs_prefix: None,
+            access_token: None,
+            root_folder_id: None,
+            bot_token: None,
+            default_channel: None,
+            hn_stories_per_feed: None,
+            hn_include_comments: None,
+            cli_command: None,
+            cli_service: None,
+            cli_auth_env_json: None,
+            x_bearer_token: None,
+            server_address: None,
+            remote_auth_token: None,
+            remote_ca_pem: None,
+            remote_cert_pem: None,
+            remote_key_pem: None,
+            remote_timeout: 0.0,
+            peer_client: peer,
+            chunk_fetcher: chunk,
+            runtime: rt,
+        }
+    }
+
+    /// `path_local` mount fails when `path_local` is not in the active
+    /// profile's driver gate.  Pre-SSOT this was bypassed via the
+    /// `is_local_default` short-circuit.
+    #[test]
+    fn path_local_rejected_when_not_in_gate() {
+        // Gate the test process to a set that excludes path_local.
+        set_enabled_drivers(["remote"]);
+        let peer: Arc<dyn kernel::hal::peer::PeerBlobClient> = NoopPeerBlobClient::arc();
+        let chunk: Arc<dyn RemoteChunkFetcher> = Arc::new(NoopChunkFetcher);
+        let rt = Arc::new(tokio::runtime::Runtime::new().expect("rt"));
+        let tmp = std::env::temp_dir().join("nexus-driver-gate-regression");
+        let _ = std::fs::create_dir_all(&tmp);
+        let root = tmp.to_string_lossy().to_string();
+        let args = make_args("path_local", Some(&root), &peer, chunk, &rt);
+        let res = DefaultObjectStoreProvider.build(&args);
+        // Restore an open gate immediately so we don't poison sibling tests.
+        set_enabled_drivers(std::iter::empty::<String>());
+        match res {
+            Err(err) => assert!(
+                err.contains("path_local") && err.contains("not enabled"),
+                "unexpected error: {err}"
+            ),
+            Ok(_) => panic!("path_local must be rejected when gate omits it"),
+        }
     }
 }

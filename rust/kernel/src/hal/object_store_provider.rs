@@ -97,12 +97,10 @@ pub struct ObjectStoreProviderArgs<'a> {
 /// store goes on the mount entry, optional metastore goes on the
 /// kernel's pending slot for the next `add_mount`).
 pub struct ObjectStoreBuildResult {
-    /// Backend instance, or `None` when `args.backend_type` is one
-    /// of the kernel-side defaults (`""`, `"path_local"`,
-    /// `"local_connector"`, `"cas-local"`) that this factory leaves
-    /// to the kernel to construct directly via the
-    /// `_backend_impls`-equivalent ObjectStore impls in
-    /// `backends::storage::*`.
+    /// Backend instance, or `None` when no `args.local_root` is
+    /// provided and `args.backend_type` matched no dispatch arm —
+    /// caller treats `None` as "no backend installed for this
+    /// mount" (e.g. a `sys_setattr` setting metadata only).
     pub backend: Option<Arc<dyn ObjectStore>>,
     /// `Some` only for `backend_type = "remote"`: the
     /// `RemoteMetaStore` wrapping the same `RpcTransport` as the
@@ -143,7 +141,7 @@ pub fn get_provider() -> Option<Arc<dyn ObjectStoreProvider>> {
     OBJECT_STORE_PROVIDER.get().cloned()
 }
 
-// ── Driver gate (DeploymentProfile-driven) ─────────────────────────────────
+// ── Driver gate (DeploymentProfile-driven, SSOT) ───────────────────────────
 //
 // A `DeploymentProfile` is a Python-side declaration of which bricks /
 // services / drivers a runtime image runs with.  Bricks + services are
@@ -154,16 +152,15 @@ pub fn get_provider() -> Option<Arc<dyn ObjectStoreProvider>> {
 // Layout:
 //
 //   * Python `DeploymentProfile` resolves to a `frozenset[str]` of
-//     enabled driver names (e.g. `{"local", "remote", "nostr"}`).
+//     enabled driver names — every driver, including local-host
+//     backends (`path_local`, `cas-local`, `local_connector`).
 //   * `services::python::register` exposes
 //     `nx_set_enabled_drivers(drivers: list[str])` that calls
 //     [`set_enabled_drivers`] below.
-//   * `DefaultBackendFactory::build` calls [`is_driver_enabled`]
-//     before the per-driver construction switch.  Disabled drivers
-//     surface as `Err("driver 'X' not enabled in current
-//     deployment profile")` rather than the generic
-//     `BackendBuildResult { backend: None, ... }` "kernel default"
-//     fallthrough.
+//   * `DefaultObjectStoreProvider::build` calls [`is_driver_enabled`]
+//     on every dispatch — there is no implicit local-default bypass.
+//     A mount requesting a disabled driver fails with
+//     `Err("driver 'X' not enabled in current deployment profile")`.
 //
 // When the gate has never been set (pure-Rust embedders, tests),
 // [`is_driver_enabled`] returns `true` for every name — backward

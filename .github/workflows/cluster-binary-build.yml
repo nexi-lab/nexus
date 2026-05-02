@@ -1,0 +1,89 @@
+name: Cluster Binary Build (reusable)
+
+# Reusable workflow for building nexusd-cluster across all three platforms.
+# Single SSOT for the build matrix + per-platform size gate. Called by:
+#   - cluster-binary.yml  (per-PR + develop push)
+#   - release.yml         (tagged releases)
+#
+# Per-platform size budgets are enforced here. The cluster binary's
+# sudowork target is ~5 MiB; the Linux budget is currently slack to
+# accommodate the kernel + path_local backend pull. macOS arm64 and
+# Windows have no published targets yet — bounds are loose-but-finite
+# so a sudden 2× regression still trips the gate.
+
+on:
+  workflow_call:
+    inputs:
+      upload_retention_days:
+        description: Artifact retention in days
+        required: false
+        type: number
+        default: 14
+
+jobs:
+  build:
+    name: cluster-binary / ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: nexusd-cluster-linux-x86_64
+            binary: nexusd-cluster
+            # TODO: optimize back to 7 MiB; sudowork target is 5 MiB.
+            max_size_bytes: 8388608   # 8 MiB
+          - os: macos-14
+            artifact_name: nexusd-cluster-macos-arm64
+            binary: nexusd-cluster
+            max_size_bytes: 9437184   # 9 MiB (mach-O arm64 overhead)
+          - os: windows-latest
+            artifact_name: nexusd-cluster-windows-x86_64
+            binary: nexusd-cluster.exe
+            max_size_bytes: 10485760  # 10 MiB (PE+import-table overhead)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cluster-binary-${{ matrix.os }}
+
+      - name: Build release binary
+        run: cargo build --release -p nexus-cluster --bin nexusd-cluster
+
+      - name: Check binary size
+        shell: bash
+        env:
+          MAX_SIZE_BYTES: ${{ matrix.max_size_bytes }}
+          BINARY_PATH: target/release/${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            actual=$(stat -f '%z' "$BINARY_PATH")
+          else
+            actual=$(stat -c '%s' "$BINARY_PATH")
+          fi
+          echo "Binary size: $actual bytes (max: $MAX_SIZE_BYTES)"
+          if [ "$actual" -gt "$MAX_SIZE_BYTES" ]; then
+            echo "::error::nexusd-cluster ${{ matrix.artifact_name }} exceeds size budget ($actual > $MAX_SIZE_BYTES bytes)"
+            exit 1
+          fi
+
+      - name: Sanity-check --help
+        shell: bash
+        run: target/release/${{ matrix.binary }} --help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: target/release/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.upload_retention_days }}

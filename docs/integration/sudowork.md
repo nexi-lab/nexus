@@ -35,8 +35,11 @@ Pre-built artifacts are attached to every Nexus GitHub release:
 - `nexusd-cluster-macos-arm64`
 - `nexusd-cluster-windows-x86_64.exe`
 
-CI workflow: `.github/workflows/cluster-binary.yml`. Each PR also
-uploads platform artifacts for testing (14-day retention).
+CI workflow: `.github/workflows/cluster-binary.yml` (per-PR + develop
+push) calls the reusable `cluster-binary-build.yml`, which is also used
+by `release.yml` on tag — single SSOT for the build matrix and per-
+platform size budgets. Each PR uploads platform artifacts for testing
+(14-day retention; release artifacts get 90-day retention).
 
 To build from source:
 

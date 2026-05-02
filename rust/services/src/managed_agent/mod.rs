@@ -195,6 +195,15 @@ impl ManagedAgentService {
     /// so `start_session` mutates the same SSOT every other agent
     /// surface reads from.
     pub(crate) fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
+        Self::install_returning(kernel).map(|_| ())
+    }
+
+    /// Install variant that returns the wired service handle so tests
+    /// can assert the on_terminate observer behaves correctly without
+    /// having to fish the service back out of the kernel registry.
+    pub(crate) fn install_returning(
+        kernel: &Arc<kernel::kernel::Kernel>,
+    ) -> Result<Arc<Self>, String> {
         kernel.register_native_hook(Box::new(
             workspace_boundary_hook::WorkspaceBoundaryHook::new(),
         ));
@@ -238,7 +247,9 @@ impl ManagedAgentService {
             }),
         );
 
-        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())
+        let svc_for_return = Arc::clone(&svc);
+        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())?;
+        Ok(svc_for_return)
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────
@@ -1000,6 +1011,91 @@ mod tests {
             let cwm = format!("{}chat-with-me", &resp.workspace_path);
             assert!(kernel_stat(&kernel, &cwm, "root").is_some());
             assert!(kernel_stat(&kernel, &resp.workspace_path, "root").is_some());
+        }
+
+        // ── on_terminate workspace reap (SIGKILL / orphan path) ───
+        //
+        // The `install` codepath registers an `on_terminate`
+        // observer on the kernel AgentRegistry that reaps the
+        // workspace tree without needing a `cancel_session` call.
+        // These tests use `install` end-to-end — `Kernel::new` +
+        // `ManagedAgentService::install` + `lookup_rust` — so any
+        // future drift between install wiring and the observer
+        // contract surfaces here.
+
+        use kernel::core::agents::registry::AgentSignal;
+
+        fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService> {
+            ManagedAgentService::install_returning(kernel).expect("install ManagedAgentService")
+        }
+
+        #[test]
+        fn sigkill_reaps_workspace_through_on_terminate_hook() {
+            let kernel = Arc::new(Kernel::new());
+            let svc = install_managed_agent(&kernel);
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+
+            // Pre-kill sanity: workspace + chat-with-me link visible.
+            let cwm = format!("{}chat-with-me", &resp.workspace_path);
+            assert!(kernel_stat(&kernel, &cwm, "root").is_some());
+
+            // SIGKILL goes through AgentRegistry, transitions to
+            // Terminated, fires the on_terminate observer.  No
+            // `cancel_session` call required.
+            kernel
+                .agent_registry
+                .signal(&resp.agent_id, AgentSignal::Sigkill, None)
+                .expect("SIGKILL");
+
+            assert!(
+                kernel_stat(&kernel, &resp.workspace_path, "root").is_none(),
+                "workspace dir should be reaped after SIGKILL"
+            );
+            assert!(
+                kernel_stat(&kernel, &cwm, "root").is_none(),
+                "chat-with-me link should be reaped after SIGKILL"
+            );
+            // Session row also dropped — `get_session` surfaces
+            // `UnknownSession`, not "terminated".
+            let err = svc.get_session(&resp.session_id).unwrap_err();
+            assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
+        }
+
+        #[test]
+        fn orphan_terminate_via_signal_sigterm_reaps_workspace() {
+            let kernel = Arc::new(Kernel::new());
+            let svc = install_managed_agent(&kernel);
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+
+            // start_session plants the agent without a parent_pid →
+            // SIGTERM → orphan auto-reap path → on_terminate fires.
+            kernel
+                .agent_registry
+                .signal(&resp.agent_id, AgentSignal::Sigterm, None)
+                .expect("SIGTERM");
+
+            assert!(
+                kernel_stat(&kernel, &resp.workspace_path, "root").is_none(),
+                "workspace dir should be reaped via on_terminate after SIGTERM"
+            );
+        }
+
+        #[test]
+        fn cancel_session_reap_does_not_double_fire_on_terminate() {
+            // cancel(Session) reaps the workspace AND triggers the
+            // on_terminate observer (via update_state_with_exit).  The
+            // observer's `sessions.remove` is idempotent — the second
+            // attempted reap is a no-op because the row is already
+            // gone — so this exercises that the implementation is
+            // resilient to double-fire even if cancel paths evolve.
+            let kernel = Arc::new(Kernel::new());
+            let svc = install_managed_agent(&kernel);
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+            svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
+            // Workspace reaped, get_session reports UnknownSession.
+            assert!(kernel_stat(&kernel, &resp.workspace_path, "root").is_none());
+            let err = svc.get_session(&resp.session_id).unwrap_err();
+            assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
         }
     }
 }

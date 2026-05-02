@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import click
 
 from nexus.bricks.archive.errors import ArchiveError
 from nexus.bricks.portability.bundle import inspect_bundle
+from nexus.cli.utils import add_backend_options
 
 
 @click.group(name="archive")
@@ -56,15 +58,18 @@ def verify(file: Path, strict: bool) -> None:
 @click.option("--to", "audit_to", type=click.DateTime())
 @click.option("--no-sign", is_flag=True)
 @click.option("--no-strip", is_flag=True)
+@add_backend_options
 def create(
     zones: tuple[str, ...],
     all_zones: bool,
     output: Path,
     audit: bool,
-    audit_from,
-    audit_to,
+    audit_from: datetime | None,
+    audit_to: datetime | None,
     no_sign: bool,
     no_strip: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Build an archive of one zone, several zones, or the whole hub."""
     from nexus.bricks.archive.cli_glue import run_create  # noqa: PLC0415
@@ -82,6 +87,8 @@ def create(
             audit_to=audit_to,
             sign=not no_sign,
             strip=not no_strip,
+            remote_url=remote_url,
+            remote_api_key=remote_api_key,
         )
     except ArchiveError as e:
         click.echo(f"create failed: {e}", err=True)
@@ -95,6 +102,7 @@ def create(
 @click.option("--rebuild-embeddings", is_flag=True)
 @click.option("--force", is_flag=True)
 @click.option("--inject", "injections", multiple=True, help="KEY=VALUE")
+@add_backend_options
 def restore(
     file: Path,
     target_zone: str | None,
@@ -102,6 +110,8 @@ def restore(
     rebuild_embeddings: bool,
     force: bool,
     injections: tuple[str, ...],
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Verify -> strip-check -> re-inject placeholders -> write to fresh nexus."""
     from nexus.bricks.archive.cli_glue import run_restore  # noqa: PLC0415
@@ -121,6 +131,8 @@ def restore(
             rebuild_embeddings=rebuild_embeddings,
             force=force,
             injections=inj_dict,
+            remote_url=remote_url,
+            remote_api_key=remote_api_key,
         )
     except ArchiveError as e:
         click.echo(f"restore failed: {e}", err=True)

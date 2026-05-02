@@ -442,6 +442,10 @@ class FederationExportZoneParams:
     include_embeddings: bool = False
     include_deleted: bool = False
     path_prefix: str | None = None
+    sign: bool = False
+    strip_credentials: bool = False
+    after_time: str | None = None
+    before_time: str | None = None
 
 
 @dataclass
@@ -454,6 +458,10 @@ class FederationImportZoneParams:
     preserve_timestamps: bool = True
     import_permissions: bool = True
     path_prefix_remap: dict[str, str] | None = None
+    force: bool = False
+    rebuild_embeddings: bool = False
+    injections: dict[str, str] | None = None
+    require_no_placeholders: bool = True
 
 
 @dataclass

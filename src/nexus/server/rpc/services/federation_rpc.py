@@ -94,17 +94,29 @@ class FederationRPCService(FederationRPCMixin):
         include_embeddings: bool = False,
         include_deleted: bool = False,
         path_prefix: str | None = None,
+        sign: bool = False,
+        strip_credentials: bool = False,
+        after_time: str | None = None,
+        before_time: str | None = None,
     ) -> dict[str, Any]:
         """Export a raft-backed zone to a .nexus bundle on the server's
         filesystem.
 
         Runs server-side so the exporter reaches the real metastore +
-        backend rather than a remote proxy. CLI (``nexus zone export``)
-        and the docker E2E suite call this RPC when the caller isn't
-        the local owner of the redb file. The shared docker volume
-        makes ``output_path`` visible to the CLI container; production
-        deployments typically write to a mounted backup volume.
+        backend rather than a remote proxy. CLI (``nexus zone export``,
+        ``nexus archive create``) and the docker E2E suite call this RPC
+        when the caller isn't the local owner of the redb file. The
+        shared docker volume makes ``output_path`` visible to the CLI
+        container; production deployments typically write to a mounted
+        backup volume.
+
+        The ``sign``/``strip_credentials``/``after_time``/``before_time``
+        parameters drive the v2 archive features used by
+        ``nexus archive create`` (#3793). Signing key is loaded from the
+        server's ``~/.nexus/archive_signing_key`` (auto-generated on
+        first use, TOFU trust model).
         """
+        from datetime import datetime
         from pathlib import Path
 
         from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
@@ -120,6 +132,10 @@ class FederationRPCService(FederationRPCMixin):
             include_embeddings=include_embeddings,
             include_deleted=include_deleted,
             path_prefix=path_prefix,
+            sign=sign,
+            strip_credentials=strip_credentials,
+            after_time=datetime.fromisoformat(after_time) if after_time else None,
+            before_time=datetime.fromisoformat(before_time) if before_time else None,
         )
         manifest = service.export_zone(zone_id, options)
         return {
@@ -139,12 +155,20 @@ class FederationRPCService(FederationRPCMixin):
         preserve_timestamps: bool = True,
         import_permissions: bool = True,
         path_prefix_remap: dict[str, str] | None = None,
+        force: bool = False,
+        rebuild_embeddings: bool = False,
+        injections: dict[str, str] | None = None,
+        require_no_placeholders: bool = True,
     ) -> dict[str, Any]:
         """Import a zone bundle from the server's filesystem.
 
         Server-side counterpart of ``federation_export_zone``. See that
         method's docstring for the shared-volume / mounted-backup
         deployment model.
+
+        The ``force``/``rebuild_embeddings``/``injections``/
+        ``require_no_placeholders`` parameters drive the v2 archive
+        restore features used by ``nexus archive restore`` (#3793).
         """
         from pathlib import Path
 
@@ -174,6 +198,10 @@ class FederationRPCService(FederationRPCMixin):
             preserve_timestamps=preserve_timestamps,
             import_permissions=import_permissions,
             path_prefix_remap=path_prefix_remap or {},
+            force=force,
+            rebuild_embeddings=rebuild_embeddings,
+            injections=injections or {},
+            require_no_placeholders=require_no_placeholders,
         )
         result = service.import_zone(options)
         return {

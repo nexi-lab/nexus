@@ -3,11 +3,23 @@
 Kept thin so the CLI module stays free of nexus runtime imports until
 invocation time (lazy imports inside each function).
 
-Cross-brick note: ``run_restore`` imports from ``nexus.bricks.portability.*``
-at call time — this is CLI glue, not a brick module, but is housed in the
-archive brick.  The ``("archive", "portability")`` entry in
-``KNOWN_CROSS_BRICK_EXCEPTIONS`` covers all files in ``nexus.bricks.archive``
-(non-test).
+Routing model:
+
+* When ``remote_url`` (or the ambient ``NEXUS_URL`` env) resolves to a
+  remote server, we dispatch through ``federation_export_zone`` /
+  ``federation_import_zone`` /  ``federation_list_zones`` RPCs — the
+  same pattern ``nexus zone export|import|list`` use. This avoids the
+  CLI fighting for the redb lock the running server already holds.
+
+* When no remote server is reachable, we fall back to an in-process
+  ``ZoneExportService`` / ``ZoneImportService`` against a local-mode
+  filesystem.  This is the offline-snapshot / disaster-recovery path.
+
+Cross-brick note: this module imports from ``nexus.bricks.portability.*``
+at call time. It is CLI glue (not a brick module) but lives in the
+archive brick. The ``("archive", "portability")`` entry in
+``KNOWN_CROSS_BRICK_EXCEPTIONS`` covers all files in
+``nexus.bricks.archive`` (non-test).
 """
 
 from __future__ import annotations
@@ -30,46 +42,62 @@ def run_create(
     audit_to: datetime | None,
     sign: bool,
     strip: bool,
+    remote_url: str | None = None,
+    remote_api_key: str | None = None,
 ) -> list[Any]:
-    """Wire up orchestrator + export service; build one archive per zone.
+    """Build one ``.nexus`` archive per zone.
 
-    Opens the running nexus filesystem, instantiates ``ZoneExportService``
-    and ``ArchiveOrchestrator``, then delegates to
-    ``ArchiveOrchestrator.create_archives()``.
+    Routes through ``federation_export_zone`` RPC when a remote server is
+    reachable; otherwise falls back to in-process ``ZoneExportService``.
 
     Args:
         zone_ids: Explicit list of zone IDs to archive, or ``None`` to
-            export all zones discovered via ``nexus_fs.metadata.list_zones()``.
+            export all zones (discovered via ``federation_list_zones``
+            RPC when remote).
         output: Destination *directory* for the generated ``.nexus`` files.
-        audit: When ``True``, restrict each bundle to the audit time window
-            defined by *audit_from* / *audit_to*.
-        audit_from: Lower bound of audit window (inclusive). Only used when
-            *audit* is ``True``.
-        audit_to: Upper bound of audit window (inclusive). Only used when
-            *audit* is ``True``.
+        audit: When ``True``, restrict each bundle to the audit time
+            window defined by *audit_from* / *audit_to*.
+        audit_from: Lower bound of audit window (inclusive). Only used
+            when *audit* is ``True``.
+        audit_to: Upper bound of audit window (inclusive). Only used
+            when *audit* is ``True``.
         sign: Sign each bundle with the operator's ed25519 key.
         strip: Strip credential placeholders before writing each bundle.
+        remote_url: Override remote URL (else ``NEXUS_URL`` env).
+        remote_api_key: Override remote API key (else ``NEXUS_API_KEY``).
 
     Returns:
-        List of ``ExportManifest`` instances returned by the orchestrator
-        (one per exported zone).
+        List of per-zone result dicts (or ExportManifest when local).
     """
-    from nexus.bricks.archive.orchestrator import ArchiveOrchestrator
-    from nexus.bricks.portability.export_service import ZoneExportService
+    from nexus.cli.config import resolve_connection
 
-    nexus_fs = _open_nexus_fs()
-    export_service = ZoneExportService(nexus_fs)
-    orch = ArchiveOrchestrator(
-        export_service=export_service,
-        output_dir=output if output.is_dir() else output.parent,
-        zone_lister=lambda: _list_zones(nexus_fs),
-    )
-    return orch.create_archives(
+    resolved = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
+    output_dir = output if output.is_dir() else output.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    after = audit_from if audit else None
+    before = audit_to if audit else None
+
+    if resolved.is_remote:
+        assert resolved.url is not None  # is_remote ⇒ url present
+        return _run_create_remote(
+            resolved.url,
+            resolved.api_key,
+            zone_ids=zone_ids,
+            output_dir=output_dir,
+            sign=sign,
+            strip=strip,
+            after=after,
+            before=before,
+        )
+
+    return _run_create_local(
         zone_ids=zone_ids,
-        strip=strip,
+        output_dir=output_dir,
         sign=sign,
-        audit_from=audit_from if audit else None,
-        audit_to=audit_to if audit else None,
+        strip=strip,
+        after=after,
+        before=before,
     )
 
 
@@ -81,6 +109,8 @@ def run_restore(
     rebuild_embeddings: bool,
     force: bool,
     injections: dict[str, str],
+    remote_url: str | None = None,
+    remote_api_key: str | None = None,
 ) -> None:
     """Verify, optionally TOFU-check, then restore a ``.nexus`` bundle.
 
@@ -89,8 +119,8 @@ def run_restore(
     1. ``verify_archive(file, strict=True)`` — signature + version gate.
     2. If *require_trusted*, check signer pubkey against the TOFU trust
        store at ``~/.nexus/trusted_signers.json``.
-    3. Open the nexus filesystem and import the zone via
-       ``ZoneImportService.import_zone()``.
+    3. Dispatch ``federation_import_zone`` RPC when remote; otherwise
+       open a local-mode filesystem and call ``ZoneImportService``.
     4. Print a federation re-pair list for any federations that will need
        re-authentication after the restore.
 
@@ -105,6 +135,8 @@ def run_restore(
         force: Allow restore into a non-empty target (DESTRUCTIVE).
         injections: Mapping of placeholder name → value to inject before
             restore (replaces ``${NAME}`` tokens in credential fields).
+        remote_url: Override remote URL (else ``NEXUS_URL`` env).
+        remote_api_key: Override remote API key (else ``NEXUS_API_KEY``).
 
     Raises:
         ArchiveSignatureError: Signature verification failed.
@@ -116,9 +148,8 @@ def run_restore(
     """
     from nexus.bricks.archive.errors import ArchiveUntrustedSigner
     from nexus.bricks.archive.verify import verify_archive
-    from nexus.bricks.portability.import_service import ZoneImportService
-    from nexus.bricks.portability.models import ZoneImportOptions
     from nexus.bricks.portability.trust import TrustStore
+    from nexus.cli.config import resolve_connection
 
     verify_archive(file, strict=True)
 
@@ -132,17 +163,27 @@ def run_restore(
         if not store.is_trusted(pubkey):
             raise ArchiveUntrustedSigner(pubkey)
 
-    nexus_fs = _open_nexus_fs()
-    import_service = ZoneImportService(nexus_fs)
-    options = ZoneImportOptions(
-        bundle_path=file,
-        target_zone_id=target_zone,
-        force=force,
+    resolved = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
+    if resolved.is_remote:
+        assert resolved.url is not None  # is_remote ⇒ url present
+        _run_restore_remote(
+            resolved.url,
+            resolved.api_key,
+            file=file,
+            target_zone=target_zone,
+            rebuild_embeddings=rebuild_embeddings,
+            force=force,
+            injections=injections,
+        )
+        return
+
+    _run_restore_local(
+        file=file,
+        target_zone=target_zone,
         rebuild_embeddings=rebuild_embeddings,
+        force=force,
         injections=injections,
     )
-    import_service.import_zone(options)
-    _print_federation_repair_list(nexus_fs)
 
 
 def run_keys_rotate() -> str:
@@ -166,6 +207,135 @@ def run_keys_rotate() -> str:
 
     signer = ArchiveSigner(key_path)
     return signer.public_key_b64
+
+
+# ---------------------------------------------------------------------------
+# Remote (RPC) dispatch
+# ---------------------------------------------------------------------------
+
+
+def _run_create_remote(
+    remote_url: str,
+    remote_api_key: str | None,
+    *,
+    zone_ids: list[str] | None,
+    output_dir: Path,
+    sign: bool,
+    strip: bool,
+    after: datetime | None,
+    before: datetime | None,
+) -> list[Any]:
+    """Drive ``federation_export_zone`` once per zone via RPC."""
+    from datetime import UTC
+    from datetime import datetime as _dt
+
+    from nexus.cli.utils import rpc_call
+
+    if zone_ids is None:
+        listing = rpc_call(remote_url, remote_api_key, "federation_list_zones")
+        zone_ids = [z["zone_id"] for z in listing.get("zones", [])]
+
+    ts = _dt.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    results: list[Any] = []
+    for zid in zone_ids:
+        out_path = output_dir / f"{zid}-{ts}.nexus"
+        data = rpc_call(
+            remote_url,
+            remote_api_key,
+            "federation_export_zone",
+            zone_id=zid,
+            output_path=str(out_path),
+            sign=sign,
+            strip_credentials=strip,
+            after_time=after.isoformat() if after else None,
+            before_time=before.isoformat() if before else None,
+        )
+        results.append(data)
+    return results
+
+
+def _run_restore_remote(
+    remote_url: str,
+    remote_api_key: str | None,
+    *,
+    file: Path,
+    target_zone: str | None,
+    rebuild_embeddings: bool,
+    force: bool,
+    injections: dict[str, str],
+) -> None:
+    """Drive ``federation_import_zone`` via RPC."""
+    from nexus.cli.utils import rpc_call
+
+    rpc_call(
+        remote_url,
+        remote_api_key,
+        "federation_import_zone",
+        bundle_path=str(file.resolve()),
+        target_zone=target_zone,
+        force=force,
+        rebuild_embeddings=rebuild_embeddings,
+        injections=injections or None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Local (in-process) fallback
+# ---------------------------------------------------------------------------
+
+
+def _run_create_local(
+    *,
+    zone_ids: list[str] | None,
+    output_dir: Path,
+    sign: bool,
+    strip: bool,
+    after: datetime | None,
+    before: datetime | None,
+) -> list[Any]:
+    """Open a local NexusFS and run the orchestrator in-process."""
+    from nexus.bricks.archive.orchestrator import ArchiveOrchestrator
+    from nexus.bricks.portability.export_service import ZoneExportService
+
+    nexus_fs = _open_nexus_fs()
+    export_service = ZoneExportService(nexus_fs)
+    orch = ArchiveOrchestrator(
+        export_service=export_service,
+        output_dir=output_dir,
+        zone_lister=lambda: _list_zones(nexus_fs),
+    )
+    return orch.create_archives(
+        zone_ids=zone_ids,
+        strip=strip,
+        sign=sign,
+        audit_from=after,
+        audit_to=before,
+    )
+
+
+def _run_restore_local(
+    *,
+    file: Path,
+    target_zone: str | None,
+    rebuild_embeddings: bool,
+    force: bool,
+    injections: dict[str, str],
+) -> None:
+    """Open a local NexusFS and import the bundle in-process."""
+    from nexus.bricks.portability.import_service import ZoneImportService
+    from nexus.bricks.portability.models import ZoneImportOptions
+
+    nexus_fs = _open_nexus_fs()
+    import_service = ZoneImportService(nexus_fs)
+    options = ZoneImportOptions(
+        bundle_path=file,
+        target_zone_id=target_zone,
+        force=force,
+        rebuild_embeddings=rebuild_embeddings,
+        injections=injections,
+    )
+    import_service.import_zone(options)
+    _print_federation_repair_list(nexus_fs)
 
 
 # ---------------------------------------------------------------------------
@@ -194,19 +364,28 @@ def _open_nexus_fs() -> Any:
 def _list_zones(nexus_fs: Any) -> list[str]:
     """Return a list of zone IDs from *nexus_fs*.
 
-    Calls ``nexus_fs.metadata.list_zones()``.  Wraps in try/except
-    AttributeError in case the backend does not expose this method.
+    Tries ``nexus_fs.metadata.list_zones()`` first (proxy backends may
+    expose it).  When unavailable, falls back to the kernel ``/__sys__/
+    zones/`` procfs view served by the local Rust runtime.
 
     Args:
         nexus_fs: Active nexus filesystem handle.
 
     Returns:
-        List of zone ID strings (may be empty if the method is absent).
+        List of zone ID strings (may be empty if neither path works).
     """
     try:
         return [z.zone_id for z in nexus_fs.metadata.list_zones()]
     except AttributeError:
-        return []
+        pass
+
+    try:
+        kernel = getattr(nexus_fs, "_kernel", None) or getattr(nexus_fs, "kernel", None)
+        if kernel is not None:
+            return list(kernel.sys_readdir_backend("/__sys__/zones/", "root"))
+    except Exception:
+        pass
+    return []
 
 
 def _print_federation_repair_list(nexus_fs: Any) -> None:

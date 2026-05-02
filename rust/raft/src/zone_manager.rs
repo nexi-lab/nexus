@@ -268,6 +268,7 @@ impl ZoneManager {
             peers,
             bind_addr,
             tls,
+            None,
         )
     }
 
@@ -282,6 +283,15 @@ impl ZoneManager {
     /// by ConfChange (AddNode / RemoveNode) driven by JoinZone.  The
     /// witness binary path uses [`Self::new`] which derives the ID
     /// from hostname (witnesses don't wipe-rejoin).
+    /// `self_address` is this node's advertise address (e.g.,
+    /// `"http://10.0.0.3:2126"` or `"10.0.0.3:2126"`).  Carried in every
+    /// outbound `StepMessageRequest.sender_address` so peers learn
+    /// `(self.node_id -> self_address)` from inbound messages — the
+    /// runtime SSOT for transport routing under the opaque-ID contract.
+    /// `None` disables sender-address advertisement; use only for
+    /// tests / sync-only deployments where peers already have the
+    /// address via env seeding.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_node_id(
         hostname: &str,
         node_id: u64,
@@ -289,6 +299,7 @@ impl ZoneManager {
         peers: Vec<String>,
         bind_addr: &str,
         tls: Option<TlsFiles>,
+        self_address: Option<String>,
     ) -> Result<Arc<Self>> {
         // Initialize tracing once.
         static TRACING_INIT: std::sync::Once = std::sync::Once::new();
@@ -348,6 +359,9 @@ impl ZoneManager {
             node_id,
             tls_config.clone(),
         ));
+        if let Some(ref addr) = self_address {
+            registry.set_self_address(addr.clone());
+        }
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -1477,6 +1491,7 @@ mod tests {
             vec![],
             "127.0.0.1:0",
             None,
+            None,
         )
         .expect("ZoneManager");
         (zm, dir)
@@ -1527,14 +1542,14 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().to_str().expect("utf-8").to_string();
         {
-            let zm = ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None)
+            let zm = ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None, None)
                 .expect("zm-1");
             zm.create_zone("z1", vec![]).expect("create");
             // Drop zm — runtime + gRPC server shut down, redb files
             // remain on disk.
         }
-        let zm =
-            ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None).expect("zm-2");
+        let zm = ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None, None)
+            .expect("zm-2");
         // open_existing_zones_from_disk should have re-loaded "z1"
         // with the persisted ConfState; create_zone with identical
         // (empty) peer list must hit the idempotency branch.

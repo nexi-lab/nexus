@@ -604,8 +604,16 @@ impl RaftDistributedCoordinator {
             .collect();
         let _ = use_tls_for_endpoints; // peer_addrs already carry tls scheme
 
-        let zm = ZoneManager::with_node_id(&hostname, node_id, &zones_dir, peers, &bind_addr, tls)
-            .map_err(|e| format!("ZoneManager::with_node_id: {e}"))?;
+        let zm = ZoneManager::with_node_id(
+            &hostname,
+            node_id,
+            &zones_dir,
+            peers,
+            &bind_addr,
+            tls,
+            Some(self_addr.clone()),
+        )
+        .map_err(|e| format!("ZoneManager::with_node_id: {e}"))?;
 
         let runtime_handle = zm.runtime_handle();
         let blob_slot = zm.blob_fetcher_slot();

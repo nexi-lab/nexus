@@ -42,6 +42,7 @@ fn make_node(node_id: u64, dir: &std::path::Path) -> (std::sync::Arc<ZoneManager
         vec![],
         &bind_str,
         None,
+        Some(format!("http://{bind_str}")),
     )
     .expect("ZoneManager");
     (zm, bind_str)
@@ -106,6 +107,7 @@ async fn test_late_founder_unblocks_waiting_joiner() {
     let bind_a_clone = bind_a.clone();
     let founder_handle = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(300)).await;
+        let advertise = format!("http://{bind_a_clone}");
         let zm = ZoneManager::with_node_id(
             "test-host",
             id_a,
@@ -113,6 +115,7 @@ async fn test_late_founder_unblocks_waiting_joiner() {
             vec![],
             &bind_a_clone,
             None,
+            Some(advertise),
         )
         .expect("ZoneManager A");
         let zone = zm

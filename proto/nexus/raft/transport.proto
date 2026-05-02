@@ -264,6 +264,14 @@ message StepMessageRequest {
   bytes message = 1;
   // Zone ID for multi-zone routing. Required in multi-zone mode.
   string zone_id = 2;
+  // Sender's advertise address (e.g., "http://10.0.0.3:2126").  The
+  // receiver updates its transport peer map with
+  // `(message.from_id -> sender_address)` so the network is the SSOT
+  // for routing — restart, DHCP changes, and post-failover leaders
+  // converge naturally as messages arrive.  Optional: empty string
+  // is treated as "sender did not advertise" and the receiver falls
+  // back to whatever peer-map entry already exists.
+  string sender_address = 3;
 }
 
 // StepMessageResponse acknowledges receipt.

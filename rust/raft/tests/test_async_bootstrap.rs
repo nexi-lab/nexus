@@ -66,6 +66,7 @@ async fn make_node(node_id: u64, dir: &std::path::Path) -> (std::sync::Arc<ZoneM
         vec![],
         &bind_str,
         None,
+        Some(format!("http://{bind_str}")),
     )
     .expect("ZoneManager");
     (zm, bind_str)

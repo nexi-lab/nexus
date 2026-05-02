@@ -502,6 +502,12 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
         // delegate to the shared parse_and_step_message helper.
         if let Some(peek) = peek.as_ref() {
             check_zone_membership(&self.registry, &req.zone_id, peek.from)?;
+            // Learn the sender's advertise address from this inbound
+            // StepMessage — every received message proves the sender's
+            // reachable address, satisfying the transport peer-map's
+            // runtime SSOT under the opaque-ID contract.
+            self.registry
+                .learn_peer_address(&req.zone_id, peek.from, &req.sender_address);
         }
 
         parse_and_step_message(&node, &req.message, &req.zone_id, "").await
@@ -1239,6 +1245,8 @@ pub struct WitnessZoneRegistry {
     tls: Arc<RwLock<Option<super::TlsConfig>>>,
     /// Cluster peer addresses — used by auto_join_zone() for transport routing.
     peers: Vec<NodeAddress>,
+    /// This node's advertise address — carried in outbound StepMessage.
+    self_address: String,
     /// Serializes ``auto_join_zone`` so concurrent step_messages from
     /// multiple data nodes for the same fresh zone don't both pass the
     /// ``zones.get()`` check, both call ``setup_witness_zone``, and
@@ -1264,6 +1272,7 @@ impl WitnessZoneRegistry {
             node_id,
             tls: Arc::new(RwLock::new(tls)),
             peers: Vec::new(),
+            self_address: String::new(),
             auto_join_lock: parking_lot::Mutex::new(()),
         }
     }
@@ -1271,6 +1280,47 @@ impl WitnessZoneRegistry {
     /// Set the cluster peer addresses (called after parsing NEXUS_PEERS).
     pub fn set_peers(&mut self, peers: Vec<NodeAddress>) {
         self.peers = peers;
+    }
+
+    /// Set this node's advertise address — carried in outbound
+    /// `StepMessageRequest.sender_address` so peers learn
+    /// `(self.node_id -> address)` from inbound messages.
+    pub fn set_self_address(&mut self, address: String) {
+        self.self_address = address;
+    }
+
+    /// Get this node's advertise address (empty when unset).
+    pub fn self_address(&self) -> &str {
+        &self.self_address
+    }
+
+    /// Record a peer's advertise address learned from an inbound
+    /// `StepMessage`.  Mirrors `ZoneRaftRegistry::learn_peer_address`
+    /// so the witness peer-map converges via the network SSOT under
+    /// the opaque-ID contract.  Returns `true` if the map changed.
+    pub fn learn_peer_address(&self, zone_id: &str, peer_id: u64, endpoint: &str) -> bool {
+        if endpoint.is_empty() || peer_id == 0 {
+            return false;
+        }
+        let Some(entry) = self.zones.get(zone_id) else {
+            return false;
+        };
+        let mut peers = entry.peers.write().unwrap();
+        if let Some(existing) = peers.get(&peer_id) {
+            if existing.endpoint == endpoint {
+                return false;
+            }
+        }
+        let use_tls = endpoint.starts_with("https://");
+        let parsed = match NodeAddress::parse(endpoint, use_tls) {
+            Ok(mut p) => {
+                p.id = peer_id;
+                p
+            }
+            Err(_) => return false,
+        };
+        peers.insert(peer_id, parsed);
+        true
     }
 
     /// Create a witness Raft group for a zone (static bootstrap).
@@ -1418,7 +1468,8 @@ impl WitnessZoneRegistry {
             shared_peers.clone(),
             RaftClientPool::with_config(client_config),
         )
-        .with_zone_id(zone_id.to_string());
+        .with_zone_id(zone_id.to_string())
+        .with_self_address(self.self_address.clone());
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
@@ -1563,6 +1614,12 @@ impl ZoneTransportService for WitnessServiceImpl {
             }
         };
 
+        // Learn sender's advertise address from this inbound StepMessage.
+        if let Ok(peek) = raft::eraftpb::Message::parse_from_bytes(&req.message) {
+            self.registry
+                .learn_peer_address(&req.zone_id, peek.from, &req.sender_address);
+        }
+
         parse_and_step_message(&node, &req.message, &req.zone_id, "[Witness]").await
     }
 
@@ -1626,6 +1683,7 @@ mod tests {
         let req = Request::new(StepMessageRequest {
             zone_id: "corp-eng".to_string(),
             message: Vec::new(),
+            sender_address: String::new(),
         });
         let err = svc.step_message(req).await.unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);

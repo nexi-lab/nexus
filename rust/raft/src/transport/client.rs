@@ -235,10 +235,23 @@ impl RaftClient {
     ///
     /// This is the primary transport method used by the transport loop.
     /// The message bytes are an opaque serialized `eraftpb::Message` (protobuf v2).
-    pub async fn step_message(&mut self, message_bytes: Vec<u8>, zone_id: String) -> Result<()> {
+    ///
+    /// `sender_address` is this node's own advertise address; the
+    /// receiver records `(message.from -> sender_address)` in its
+    /// transport peer map so the network is the SSOT for routing.
+    /// Pass `""` from contexts that don't have an advertise address
+    /// (the receiver falls back to whatever peer-map entry already
+    /// exists from prior ConfChange or env seed).
+    pub async fn step_message(
+        &mut self,
+        message_bytes: Vec<u8>,
+        zone_id: String,
+        sender_address: String,
+    ) -> Result<()> {
         let request = tonic::Request::new(StepMessageRequest {
             message: message_bytes,
             zone_id,
+            sender_address,
         });
 
         let response = self.inner.step_message(request).await?;

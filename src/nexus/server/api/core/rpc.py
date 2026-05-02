@@ -26,6 +26,7 @@ from nexus.server.dependencies import require_auth
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
+    parse_method_params,
 )
 from nexus.server.rate_limiting import RATE_LIMIT_AUTHENTICATED, limiter
 
@@ -51,12 +52,10 @@ async def rpc_endpoint(
         This HTTP RPC endpoint is deprecated. Use gRPC ``Call`` RPC instead.
         Sunset date: 2026-06-25. See Issue #1133.
     """
-    import json as _json
     import time as _time
-    from types import SimpleNamespace
 
-    from nexus.server._auth_ctx_local import clear_auth, set_auth
     from nexus.server.dependencies import get_operation_context
+    from nexus.server.rpc.dispatch import dispatch_method
 
     logger.debug("Deprecated HTTP RPC called: method=%s (use gRPC Call RPC instead)", method)
     _rpc_start = _time.time()
@@ -81,15 +80,25 @@ async def rpc_endpoint(
         if not rpc_request.method:
             rpc_request.method = method
 
+        # Parse parameters — fall through to SimpleNamespace for dynamically
+        # discovered @rpc_expose methods that lack pre-generated Params classes
+        # (e.g., llm_read, llm_read_detailed, llm_read_stream).
+        try:
+            params = parse_method_params(method, rpc_request.params)
+        except ValueError:
+            _exposed = getattr(request.app.state, "exposed_methods", {})
+            if method in _exposed:
+                from types import SimpleNamespace
+
+                params = SimpleNamespace(**(rpc_request.params or {}))
+            else:
+                raise
+
         # Get operation context
         context = get_operation_context(auth_result)
 
-        # Build a SimpleNamespace view for zone scoping + ETag short-circuit;
-        # the dispatch path takes the raw dict.
-        params_dict = dict(rpc_request.params or {})
-        params_ns = SimpleNamespace(**params_dict)
-        scope_params_for_zone(params_ns, context.zone_id)
-        params_dict = vars(params_ns)
+        # Scope paths for zone isolation (prefix with /zone/{zone_id}/)
+        scope_params_for_zone(params, context.zone_id)
 
         _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 
@@ -97,14 +106,13 @@ async def rpc_endpoint(
 
         # Early 304 check for read operations
         if_none_match = request.headers.get("If-None-Match")
-        _read_path = params_dict.get("path")
-        if method == "read" and if_none_match and _read_path and state.nexus_fs:
+        if method == "read" and if_none_match and hasattr(params, "path") and state.nexus_fs:
             try:
-                cached_content_id = state.nexus_fs.get_content_id(_read_path, context=context)
+                cached_content_id = state.nexus_fs.get_content_id(params.path, context=context)
                 if cached_content_id:
                     client_etag = if_none_match.strip('"')
                     if client_etag == cached_content_id:
-                        logger.debug(f"Early 304: {_read_path} (ETag match, no content read)")
+                        logger.debug(f"Early 304: {params.path} (ETag match, no content read)")
                         return Response(
                             status_code=304,
                             headers={
@@ -113,29 +121,19 @@ async def rpc_endpoint(
                             },
                         )
             except Exception as e:
-                logger.debug(f"Early ETag check failed for {_read_path}: {e}")
+                logger.debug(f"Early ETag check failed for {params.path}: {e}")
 
-        # Dispatch through the Rust kernel `python_ffi` router
-        # (the same path the gRPC Call handler uses).  Auth context
-        # is plumbed via `_auth_ctx_local` so the Python service
-        # methods that need OperationContext receive it.
-        import nexus_runtime as _nr
-
+        # Dispatch method
         _dispatch_start = _time.time()
-        set_auth(auth_result)
-        try:
-            payload_bytes = _json.dumps(params_dict).encode("utf-8")
-            kernel = getattr(state.nexus_fs, "_kernel", None)
-            if kernel is None:
-                raise RuntimeError("HTTP RPC: kernel handle missing on nexus_fs")
-            response_bytes = _nr.nx_kernel_dispatch_rust_call(
-                kernel, "python_ffi", method, payload_bytes
-            )
-            if response_bytes is None:
-                raise ValueError(f"Method not found: {method}")
-            result = _json.loads(bytes(response_bytes).decode("utf-8"))
-        finally:
-            clear_auth()
+        result = await dispatch_method(
+            method,
+            params,
+            context,
+            nexus_fs=state.nexus_fs,
+            exposed_methods=state.exposed_methods,
+            auth_provider=state.auth_provider,
+            subscription_manager=state.subscription_manager,
+        )
         _dispatch_elapsed = (_time.time() - _dispatch_start) * 1000
 
         # Build response with cache headers + deprecation (Issue #1133)

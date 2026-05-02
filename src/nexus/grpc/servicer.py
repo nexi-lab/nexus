@@ -45,6 +45,7 @@ from nexus.server._kernel_syscall_dispatch import (
     KERNEL_SYSCALL_NAMES,
     dispatch_kernel_syscall,
 )
+from nexus.server.protocol import parse_method_params
 
 logger = logging.getLogger(__name__)
 
@@ -193,32 +194,70 @@ class VFSCallDispatcher:
         payload: bytes,
         auth_dict: dict[str, Any],
     ) -> tuple[bool, bytes]:
-        """Kernel-syscall fast path served from Python.
-
-        Wire dispatch for everything else flows through the Rust
-        `python_ffi` router — the tonic Call handler resolves it via
-        `resolve_rust_dispatch` BEFORE this Python sync bridge ever
-        runs.  This entry point now exists ONLY for kernel-syscall
-        wire RPCs (sys_setattr, sys_read, etc.) whose result-shape
-        adapters and zone-scoping logic still live in
-        `_kernel_syscall_dispatch.py`.  All other wire RPCs reach
-        Rust directly and never touch this method.
-        """
         from nexus.server.dependencies import get_operation_context
+        from nexus.server.rpc.dispatch import dispatch_method
 
         try:
             params_dict = decode_rpc_message(payload) if payload else {}
             op_context = get_operation_context(auth_dict)
 
-            if method not in KERNEL_SYSCALL_NAMES:
-                # Unknown wire form — Rust dispatch already exhausted
-                # python_ffi + native Rust services.  Return a
-                # MethodNotFound rather than fall through to the
-                # deleted Python servicer chain.
-                return True, _error_payload(
-                    RPCErrorCode.METHOD_NOT_FOUND,
-                    f"Unknown method: {method!r}",
+            # ── Thin kernel-syscall dispatch (Rust SSOT) ───────────────
+            # codegen_kernel_abi.py emits KERNEL_SYSCALL_NAMES from the
+            # PyKernel `#[pymethods]` block; methods listed there route
+            # straight to NexusFS via introspection — bypasses the
+            # ``parse_method_params`` + dispatch.py table + handle_*
+            # wrapper chain (all soon-to-be-deleted tech debt).  Auth /
+            # zone-scoping policy still applies: the gRPC layer above
+            # already authenticated, ``scope_params_for_zone`` runs on
+            # the params dict in place, and federation-token search
+            # delegation still gates the method name.
+            if method in KERNEL_SYSCALL_NAMES:
+                search_delegation = auth_dict.get("search_delegation")
+                if search_delegation is not None:
+                    target_zone = op_context.zone_id or ""
+                    try:
+                        search_delegation.validate(method, target_zone)
+                    except PermissionError as perm_err:
+                        return True, _error_payload(RPCErrorCode.PERMISSION_ERROR, str(perm_err))
+                else:
+                    # Reuse the same per-zone scoping the legacy path
+                    # applied to dataclass params, but on the raw dict
+                    # so kernel syscalls see ``/zone/<id>`` prefixes when
+                    # the caller's zone is non-default.
+                    _params_ns = SimpleNamespace(**params_dict)
+                    scope_params_for_zone(_params_ns, op_context.zone_id)
+                    params_dict = vars(_params_ns)
+
+                logger.debug(
+                    "[VFSCallDispatcher] kernel-syscall method=%s path=%s zone_id=%s",
+                    method,
+                    params_dict.get("path"),
+                    op_context.zone_id if op_context else None,
                 )
+                result = await dispatch_kernel_syscall(
+                    self._nexus_fs,
+                    method,
+                    params_dict,
+                    op_context,
+                    subscription_manager=self._subscription_manager,
+                )
+                return False, encode_rpc_message({"result": result})
+
+            # ── Legacy Python service-tier dispatch (deprecated) ──
+            try:
+                params = parse_method_params(method, params_dict)
+            except ValueError:
+                if method in self._exposed_methods:
+                    params = SimpleNamespace(**params_dict)
+                else:
+                    raise
+
+            logger.debug(
+                "[VFSCallDispatcher] method=%s path=%s zone_id=%s",
+                method,
+                getattr(params, "path", None),
+                op_context.zone_id if op_context else None,
+            )
 
             search_delegation = auth_dict.get("search_delegation")
             if search_delegation is not None:
@@ -228,21 +267,15 @@ class VFSCallDispatcher:
                 except PermissionError as perm_err:
                     return True, _error_payload(RPCErrorCode.PERMISSION_ERROR, str(perm_err))
             else:
-                _params_ns = SimpleNamespace(**params_dict)
-                scope_params_for_zone(_params_ns, op_context.zone_id)
-                params_dict = vars(_params_ns)
+                scope_params_for_zone(params, op_context.zone_id)
 
-            logger.debug(
-                "[VFSCallDispatcher] kernel-syscall method=%s path=%s zone_id=%s",
+            result = await dispatch_method(
                 method,
-                params_dict.get("path"),
-                op_context.zone_id if op_context else None,
-            )
-            result = await dispatch_kernel_syscall(
-                self._nexus_fs,
-                method,
-                params_dict,
+                params,
                 op_context,
+                nexus_fs=self._nexus_fs,
+                exposed_methods=self._exposed_methods,
+                auth_provider=self._auth_provider,
                 subscription_manager=self._subscription_manager,
             )
             return False, encode_rpc_message({"result": result})

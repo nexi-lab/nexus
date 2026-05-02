@@ -613,6 +613,43 @@ jobs:
             exit 1
           fi
 
+  # ── nexusd-cluster boot smoke test ──────────────────────────────────
+  nexusd-cluster-smoke:
+    name: nexusd-cluster Smoke Test
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build nexusd-cluster
+        run: cargo build --release -p nexus-cluster --bin nexusd-cluster
+
+      - name: Boot smoke test
+        run: |
+          DATA_DIR=$(mktemp -d)
+          RUST_LOG=info ./target/release/nexusd-cluster \
+            --no-tls --data-dir "$DATA_DIR" &
+          PID=$!
+          echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot…"
+
+          sleep 5
+
+          if ! kill -0 "$PID" 2>/dev/null; then
+            echo "::error::nexusd-cluster exited during startup (likely panicked)"
+            wait "$PID" || true
+            exit 1
+          fi
+
+          echo "nexusd-cluster is alive after 5s — smoke test passed"
+          kill "$PID" && wait "$PID" 2>/dev/null || true
+          rm -rf "$DATA_DIR"
+
   migration-test:
     name: Migration Tests (SQLite)
     needs: [detect-changes, build-rust]
@@ -791,6 +828,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes — skipping migration tests"
+
+  nexusd-cluster-smoke-skip:
+    name: nexusd-cluster Smoke Test
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping nexusd-cluster smoke test"
 
   migration-test-pg-skip:
     name: Migration Tests (PostgreSQL)

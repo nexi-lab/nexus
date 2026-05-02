@@ -206,6 +206,29 @@ class ZoneExportService:
             manifest.file_count = file_count
             manifest.total_size_bytes = total_size
 
+            # --- Credential stripping (v2+) ---
+            # When strip_credentials=True, run schema+regex stripping over the
+            # exported file records treated as a "documents" table, then update
+            # files.jsonl in-place and stash any placeholders on the manifest.
+            if options.strip_credentials and files_path.exists():
+                raw_lines = files_path.read_text(encoding="utf-8").splitlines()
+                file_rows = [json.loads(line) for line in raw_lines if line.strip()]
+                stripped_tables, placeholders = _apply_credential_stripping(
+                    {"documents": file_rows},
+                    workspace_root=None,
+                )
+                stripped_rows = stripped_tables.get("documents", file_rows)
+                files_path.write_text(
+                    "\n".join(json.dumps(r) for r in stripped_rows)
+                    + ("\n" if stripped_rows else ""),
+                    encoding="utf-8",
+                )
+                if placeholders:
+                    manifest.placeholders = list(placeholders)
+                    logger.info(
+                        "Credential stripping: %d placeholder(s) captured", len(placeholders)
+                    )
+
             # Add checksum for files.jsonl
             if files_path.exists():
                 checksums.add_file(BUNDLE_PATHS["files"], files_path.read_bytes())

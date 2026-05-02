@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -37,7 +37,14 @@ def write_activity_slice(
                 ts = datetime.fromisoformat(ts_raw)
             except ValueError:
                 continue
-            if window_from <= ts < window_to:
+            # Normalise to UTC-aware so comparisons work regardless of whether
+            # window_from/window_to are timezone-aware or naive.
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            # Normalise window bounds the same way.
+            w_from = window_from.replace(tzinfo=UTC) if window_from.tzinfo is None else window_from
+            w_to = window_to.replace(tzinfo=UTC) if window_to.tzinfo is None else window_to
+            if w_from <= ts < w_to:
                 f.write(json.dumps(event) + "\n")
                 n += 1
     return n

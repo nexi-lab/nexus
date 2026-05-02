@@ -11,6 +11,7 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
+import contextlib
 import logging
 import re
 from collections.abc import Callable
@@ -244,6 +245,44 @@ class ZoneImportService:
                     return result
 
                 manifest = reader.get_manifest()
+
+                # --- Pre-flight guards (v2+) ---
+
+                # Guard 1: target-not-empty check.
+                # Discover zones already present in the target nexus instance.
+                existing_zones: list[str] = []
+                with contextlib.suppress(AttributeError):
+                    existing_zones = [z.zone_id for z in self.nexus_fs.metadata.list_zones()]
+                _check_target_empty(existing_zones=existing_zones, force=options.force)
+
+                # Guard 2: embedding compatibility.
+                current_model = getattr(
+                    getattr(self.nexus_fs, "config", None), "embedding_model", "unknown"
+                )
+                current_dim = getattr(getattr(self.nexus_fs, "config", None), "embedding_dim", 0)
+                _check_embedding_compat(
+                    archive_model=manifest.embedding_model,
+                    archive_dim=manifest.embedding_dim,
+                    current_model=current_model,
+                    current_dim=current_dim,
+                    rebuild_embeddings=options.rebuild_embeddings,
+                )
+
+                # Guard 3: placeholder injection.
+                # If the bundle's manifest declares placeholders (strip_credentials=True
+                # was used during export), load ALL file records, apply any caller-
+                # supplied injections, then check that no placeholders remain.
+                if manifest.placeholders and options.require_no_placeholders:
+                    all_rows = [
+                        dict(rec.__dict__) if hasattr(rec, "__dict__") else vars(rec)
+                        for rec in reader.iter_file_records()
+                    ]
+                    all_rows = _apply_injections(all_rows, options.injections)
+                    remaining = _scan_for_placeholders(all_rows)
+                    if remaining:
+                        from nexus.bricks.archive.errors import ArchivePlaceholderNotInjected
+
+                        raise ArchivePlaceholderNotInjected(sorted(remaining))
 
                 # Check zone remapping
                 if options.target_zone_id:

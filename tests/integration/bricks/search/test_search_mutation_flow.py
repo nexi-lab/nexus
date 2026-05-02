@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -385,3 +386,45 @@ async def test_txtai_consumer_collapses_duplicate_document_mutations() -> None:
         ],
         zone_id=ROOT_ZONE_ID,
     )
+
+
+class _FakeFileReaderWithNuls:
+    async def read_text(self, _path: str) -> str:
+        return "alpha\x00beta\x00gamma"
+
+
+@pytest.mark.asyncio
+async def test_refresh_indexes_strips_null_bytes_before_txtai_upsert() -> None:
+    """Legacy refresh fallback used to feed raw content (with NULs) to txtai
+    and Postgres, leaving the asyncpg session in PendingRollbackError until
+    worker recycle. Verify scrub happens before BM25S, embedding pipeline,
+    naive chunks, and txtai backend (Issue #3989, codex review)."""
+
+    class _CapturingBackend:
+        def __init__(self) -> None:
+            self.upserts: list[tuple[list[dict[str, Any]], str]] = []
+
+        async def upsert(self, docs: list[dict[str, Any]], *, zone_id: str) -> None:
+            self.upserts.append((list(docs), zone_id))
+
+    captured_bm25 = _CapturingBM25SIndex()
+    backend = _CapturingBackend()
+
+    daemon = SearchDaemon()
+    daemon._file_reader = _FakeFileReaderWithNuls()
+    daemon._bm25s_index = captured_bm25
+    daemon._backend = backend
+    # path_in_scope returns True by default (no scope filter wired)
+    daemon._async_session = None
+
+    await daemon._refresh_indexes(["/zone/root/blob.bin"])
+
+    assert captured_bm25.indexed_documents, "BM25S must receive content"
+    for _pid, _path, content in captured_bm25.indexed_documents:
+        assert "\x00" not in content, f"NUL leaked to BM25S: {content!r}"
+
+    assert backend.upserts, "txtai backend must receive an upsert"
+    for docs, _zone in backend.upserts:
+        for doc in docs:
+            assert "\x00" not in doc["text"], f"NUL leaked to txtai: {doc['text']!r}"
+            assert doc["text"] == "alphabetagamma"

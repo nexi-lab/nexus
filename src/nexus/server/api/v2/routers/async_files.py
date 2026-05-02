@@ -912,6 +912,26 @@ def create_async_files_router(
                 if _py_kernel is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")
                 raw: bytes = await asyncio.to_thread(_py_kernel.sys_read_raw, path, "root")
+                # Verify the bytes actually match the requested content hash.
+                # ``sys_read_raw`` returns the CURRENT bytes at ``path`` — there
+                # is no kernel API plumbed through here that reads by
+                # content_id. Without this check, a request for an old version
+                # after the file has changed would return the current bytes
+                # labeled with the historical hash, silently corrupting diff /
+                # rollback consumers (Issue #3989 — exposed once base64
+                # encoding made the lossy decode mask the bug).
+                from nexus.core.hash_fast import hash_content as _hash_content
+
+                _actual_hash = _hash_content(raw)
+                if _actual_hash != version:
+                    raise HTTPException(
+                        status_code=410,
+                        detail=(
+                            f"Historical version {version!r} no longer retrievable at {path!r}: "
+                            f"content has changed (current hash {_actual_hash!r}). "
+                            "Hash-keyed CAS reads are not yet plumbed through this endpoint."
+                        ),
+                    )
                 content_v, enc_v = _encode_read_payload(raw, encoding)
                 resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)
                 return Response(
@@ -1040,6 +1060,11 @@ def create_async_files_router(
                     media_type="application/json",
                 )
 
+        except HTTPException:
+            # Preserve explicit HTTP status codes (e.g., 400 transaction_id
+            # required, 410 hash mismatch) — don't let the catch-all below
+            # rewrite them as 500.
+            raise
         except AuthenticationError:
             # Preserve structured re-auth signal (see /list handler above).
             raise

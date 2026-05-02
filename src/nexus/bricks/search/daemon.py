@@ -2991,6 +2991,14 @@ class SearchDaemon:
                     logger.debug("No content found for %s", path)
                     continue
 
+                # Scrub NUL bytes — PG TEXT rejects them (SQLSTATE 22021) and
+                # this legacy refresh path bypasses MutationResolver's central
+                # scrub (Issue #3989). Done once here so every downstream
+                # consumer below (BM25S, embedding pipeline, naive FTS chunks,
+                # txtai batch) sees clean content.
+                if "\x00" in content:
+                    content = content.replace("\x00", "")
+
                 # Resolve path_id from file_paths table
                 path_id = virtual_path  # fallback
                 path_id_resolved = False

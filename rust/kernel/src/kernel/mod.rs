@@ -665,6 +665,7 @@ pub struct Kernel {
     /// and consumed immediately after mount registration to install the
     /// ``RemoteMetaStore`` on the mount entry. This avoids threading the
     /// metastore through ``sys_setattr``'s return value.
+    #[allow(dead_code)]
     pub(crate) pending_remote_meta_store:
         parking_lot::Mutex<Option<Arc<dyn crate::meta_store::MetaStore>>>,
 
@@ -1380,6 +1381,7 @@ impl Kernel {
     }
 
     /// Get full entry (returns CachedEntry for wrapper to convert).
+    #[allow(dead_code)]
     pub(crate) fn dcache_get_full(&self, path: &str) -> Option<CachedEntry> {
         self.dcache.get_entry(path)
     }

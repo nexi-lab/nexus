@@ -80,6 +80,7 @@ impl Clone for ServiceEntry {
 // ── ServiceRegistry ─────────────────────────────────────────────────────
 
 /// Kernel service symbol table — DashMap<name, ServiceEntry>.
+#[allow(dead_code)] // fields used only when `python` feature is active
 pub(crate) struct ServiceRegistry {
     services: DashMap<String, ServiceEntry>,
     /// Per-service refcounts for drain-before-swap.
@@ -93,6 +94,7 @@ pub(crate) struct ServiceRegistry {
     insertion_order: Mutex<Vec<String>>,
 }
 
+#[allow(dead_code)] // methods used only when `python` feature is active
 impl ServiceRegistry {
     pub(crate) fn new() -> Self {
         Self {

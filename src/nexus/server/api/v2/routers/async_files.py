@@ -890,34 +890,21 @@ def create_async_files_router(
                     raise HTTPException(status_code=403, detail=str(e)) from e
                 if not _accessible:
                     raise NexusFileNotFoundError(path)
-                # --- Gate on CAS-capable backend via sys_stat ---
-                _py_kernel_stat = getattr(fs, "_kernel", None)
-                if _py_kernel_stat is not None:
-                    _stat_d = _py_kernel_stat.sys_stat(path, "root")
-                    _bn = (
-                        (_stat_d.get("backend_name", "") if isinstance(_stat_d, dict) else "")
-                        if _stat_d
-                        else ""
-                    )
-                    if _bn and not _bn.startswith("cas"):
-                        raise HTTPException(
-                            status_code=422,
-                            detail=(
-                                f"Historical version reads are only supported on CAS-addressed backends; "
-                                f"backend for {path!r} does not support content-addressed history"
-                            ),
-                        )
-                # Read via kernel — Rust backend handles CAS read.
                 _py_kernel = getattr(fs, "_kernel", None)
                 if _py_kernel is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")
-                # Resolve the mount that owns ``path`` so we can issue a true
-                # content-addressed read. Longest-prefix match against the
-                # active mount table — falls back to the legacy current-bytes
-                # read only when no mount matches (e.g. virtual / synthetic
-                # paths) and verifies the hash before returning.
-                from nexus.core.hash_fast import hash_content as _hash_content
 
+                # Use the validated caller zone for all kernel calls — the
+                # snapshot/transaction check above already proved the caller
+                # is authorized for this zone. Hard-coding "root" would route
+                # the read through the wrong mount table for non-root zones
+                # and turn this into a privilege-escalation TOCTOU window
+                # (Issue #3989, codex r3).
+                _caller_zone_kernel = _caller_zone or "root"
+
+                # Resolve the mount that owns ``path`` so we can issue a real
+                # content-addressed read via the Rust kernel. Longest-prefix
+                # match against the caller's visible mount table.
                 _mount_point: str | None = None
                 try:
                     _mount_entries = fs.list_mounts(context=context)
@@ -935,43 +922,68 @@ def create_async_files_router(
                     _mount_point = None
 
                 raw: bytes | None = None
+                _read_via_cas = False
                 if _mount_point is not None and hasattr(_py_kernel, "cas_read"):
                     try:
                         raw = await asyncio.to_thread(
-                            _py_kernel.cas_read, _mount_point, "root", version
-                        )
-                    except Exception as cas_err:
-                        # Backend doesn't have this content_id, or CAS read
-                        # failed for another reason — fall through to
-                        # current-path read + hash verify so the historical
-                        # blob can still be served when it happens to match
-                        # the live bytes.
-                        logger.debug(
-                            "cas_read(%s, root, %s) failed: %s; falling back",
+                            _py_kernel.cas_read,
                             _mount_point,
+                            _caller_zone_kernel,
+                            version,
+                        )
+                        _read_via_cas = True
+                    except Exception as cas_err:
+                        # Distinguish "backend lacks CAS" (capability error)
+                        # from "blob not found" (history GC'd) — both bubble
+                        # up to the live-bytes fallback below, but only the
+                        # latter is acceptable: the fallback then verifies
+                        # the live content_id matches ``version`` before
+                        # returning, so a non-CAS backend can never fake a
+                        # historical read.
+                        logger.debug(
+                            "cas_read(%s, %s, %s) failed: %s; falling back to live bytes",
+                            _mount_point,
+                            _caller_zone_kernel,
                             version,
                             cas_err,
                         )
                         raw = None
 
                 if raw is None:
-                    raw = await asyncio.to_thread(_py_kernel.sys_read_raw, path, "root")
-
-                # Always verify hash — guards against a backend that returns
-                # the wrong blob, and against the legacy fallback returning
-                # current bytes when the historical version is gone. Returns
-                # 410 on mismatch so diff/rollback consumers fail loud
-                # instead of trusting mislabeled content (Issue #3989).
-                _actual_hash = _hash_content(raw)
-                if _actual_hash != version:
-                    raise HTTPException(
-                        status_code=410,
-                        detail=(
-                            f"Historical version {version!r} no longer retrievable at {path!r}: "
-                            f"current hash {_actual_hash!r} does not match. "
-                            "The content_id may have been GC'd or the backend lacks CAS support."
-                        ),
+                    # Fallback: gate on the live ``content_id`` matching
+                    # the requested ``version`` BEFORE reading bytes. This
+                    # is the only safe way to serve a historical version
+                    # without a working CAS-by-hash path — and it works for
+                    # CDC-chunked content where ``hash_content(raw)`` would
+                    # not match (the manifest hash differs from the
+                    # reassembled-bytes hash) (Issue #3989, codex r3).
+                    _live_meta = _py_kernel.sys_stat(path, _caller_zone_kernel)
+                    _live_cid = (
+                        _live_meta.get("content_id")
+                        if isinstance(_live_meta, dict)
+                        else getattr(_live_meta, "content_id", None)
                     )
+                    if _live_cid != version:
+                        raise HTTPException(
+                            status_code=410,
+                            detail=(
+                                f"Historical version {version!r} no longer retrievable at {path!r}: "
+                                f"live content_id is {_live_cid!r}. The backend may not support "
+                                "content-addressed history, or this revision has been garbage collected."
+                            ),
+                        )
+                    raw = await asyncio.to_thread(
+                        _py_kernel.sys_read_raw, path, _caller_zone_kernel
+                    )
+
+                # When the read came from cas_read, the backend already keyed
+                # the lookup by content_id, so the bytes are by-construction
+                # the requested revision — including for CDC-chunked content
+                # where reassembled-byte hashing differs from the manifest
+                # hash. We DON'T re-hash in that case (codex r3, finding 1).
+                # The fallback path verifies via live content_id before
+                # reading, so no extra check is needed here either.
+                del _read_via_cas
                 content_v, enc_v = _encode_read_payload(raw, encoding)
                 resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)
                 return Response(

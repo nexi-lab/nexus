@@ -9,14 +9,64 @@ name = "backends"
 crate-type = ["rlib"]
 
 [features]
-default = ["connectors"]
+# Default = every driver compiled in.  Python deployments (`nexus-cdylib`)
+# carry the runtime gate (`set_enabled_drivers`) to limit what an active
+# profile can mount, so they need every backend present in the binary.
+# Slim deployments (`nexus-cluster`) opt out by setting
+# `default-features = false` and naming only the drivers they want.
+default = [
+    "driver-path-local",
+    "driver-cas-local",
+    "driver-local-connector",
+    "driver-remote",
+    "connectors",
+]
+
+# Local-host backends (kernel-shipped, no network).
+driver-path-local = []
+driver-cas-local = []
+driver-local-connector = []
+
+# Cross-node RPC proxy — federation primitive.  Always available in
+# Python deployments, opt-in for slim Rust binaries.
+driver-remote = []
+
+# Connector umbrella: every external-API / cloud-blob backend plus the
+# shared HTTP / crypto / streaming dependency stack they all need.
+connectors = [
+    "driver-openai",
+    "driver-anthropic",
+    "driver-s3",
+    "driver-gcs",
+    "driver-gdrive",
+    "driver-gmail",
+    "driver-slack",
+    "driver-x",
+    "driver-hn",
+    "driver-cli",
+    "dep:reqwest",
+    "dep:hmac",
+    "dep:sha2",
+    "dep:futures-util",
+]
+
+# Per-connector features.  Selectable individually for downstream
+# binaries that want, say, only `driver-cli` without the full HTTP stack.
+driver-openai = []
+driver-anthropic = []
+driver-s3 = []
+driver-gcs = []
+driver-gdrive = []
+driver-gmail = []
+driver-slack = []
+driver-x = []
+driver-hn = []
+driver-cli = []
+
 # `python` enables `backends::python` PyO3 wrappers. Mirrors
 # kernel/lib's gating: pure-Rust by default, kernel cdylib pulls
 # `features = ["python"]` to expose `#[pyclass]` types.
 python = ["dep:pyo3"]
-# Connector HTTP / streaming dependency stack — pulled when any of the
-# cloud / API backends are compiled in.
-connectors = ["dep:reqwest", "dep:hmac", "dep:sha2", "dep:futures-util"]
 
 [dependencies]
 contracts = { workspace = true }

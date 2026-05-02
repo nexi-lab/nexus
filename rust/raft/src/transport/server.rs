@@ -12,16 +12,18 @@ use super::proto::nexus::raft::{
     zone_api_service_server::{ZoneApiService, ZoneApiServiceServer},
     zone_transport_service_server::{ZoneTransportService, ZoneTransportServiceServer},
     ClusterConfig as ProtoClusterConfig, DeleteZoneRequest, DeleteZoneResponse,
-    GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, GetSearchCapabilitiesRequest,
-    JoinClusterRequest, JoinClusterResponse, JoinZoneRequest, JoinZoneResponse, ListMetadataResult,
-    LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse,
-    QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse, ReadBlobRequest,
-    ReadBlobResponse, ReplaceVoterByHostnameRequest, ReplaceVoterByHostnameResponse,
-    ReplicateEntriesRequest, ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest,
-    StepMessageResponse,
+    GetClusterInfoRequest, GetClusterInfoResponse, GetContentRequest, GetContentResponse,
+    GetMetadataResult, GetSearchCapabilitiesRequest, JoinClusterRequest, JoinClusterResponse,
+    JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
+    NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, PutContentRequest,
+    PutContentResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
+    ReadBlobRequest, ReadBlobResponse, ReplaceVoterByHostnameRequest,
+    ReplaceVoterByHostnameResponse, ReplicateEntriesRequest, ReplicateEntriesResponse,
+    SearchCapabilities, StepMessageRequest, StepMessageResponse,
 };
 use super::{NodeAddress, Result, SharedPeerMap, TransportError};
 use crate::blob_fetcher::BlobFetcherSlot;
+use crate::cas::LocalCAS;
 use crate::raft::{
     reconcile_peers_with_conf_state, Command, CommandResult, FullStateMachine, RaftError,
     WitnessStateMachine, ZoneConsensus, ZoneRaftRegistry,
@@ -81,6 +83,8 @@ pub struct RaftGrpcServer {
     /// backend is wired. `None` while the slot is empty —
     /// `ReadBlob` returns `NotFound` until the kernel installs one.
     blob_fetcher_slot: Option<BlobFetcherSlot>,
+    /// Local content-addressable store for PutContent/GetContent RPCs.
+    cas: Option<Arc<LocalCAS>>,
 }
 
 impl RaftGrpcServer {
@@ -91,6 +95,7 @@ impl RaftGrpcServer {
             ca_key_pem: None,
             join_token_hash: None,
             blob_fetcher_slot: None,
+            cas: None,
         }
     }
 
@@ -107,6 +112,12 @@ impl RaftGrpcServer {
     /// owning `ZoneManager` so both halves reach the same `Arc`.
     pub fn with_blob_fetcher_slot(mut self, slot: BlobFetcherSlot) -> Self {
         self.blob_fetcher_slot = Some(slot);
+        self
+    }
+
+    /// Attach a local CAS for `PutContent`/`GetContent` RPCs.
+    pub fn with_cas(mut self, cas: Arc<LocalCAS>) -> Self {
+        self.cas = Some(cas);
         self
     }
 
@@ -135,6 +146,7 @@ impl RaftGrpcServer {
             ca_key_pem: self.ca_key_pem.clone(),
             join_token_hash: self.join_token_hash.clone(),
             blob_fetcher_slot: self.blob_fetcher_slot.clone(),
+            cas: self.cas.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
@@ -183,6 +195,7 @@ impl RaftGrpcServer {
             ca_key_pem: self.ca_key_pem.clone(),
             join_token_hash: self.join_token_hash.clone(),
             blob_fetcher_slot: self.blob_fetcher_slot.clone(),
+            cas: self.cas.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
@@ -580,6 +593,8 @@ struct ZoneApiServiceImpl {
     /// Optional late-bound `BlobFetcher` for `ReadBlob`. Empty slot
     /// (or `None` here) → `read_blob` returns `NotFound`.
     blob_fetcher_slot: Option<BlobFetcherSlot>,
+    /// Local CAS for `PutContent`/`GetContent` compound RPCs.
+    cas: Option<Arc<LocalCAS>>,
 }
 
 #[tonic::async_trait]
@@ -1352,6 +1367,153 @@ impl ZoneApiService for ZoneApiServiceImpl {
             Err(e) => Ok(Response::new(ReadBlobResponse {
                 content: Vec::new(),
                 error: e,
+            })),
+        }
+    }
+
+    /// Store content in local CAS and metadata via Raft.
+    ///
+    /// Compound operation:
+    ///   1. BLAKE3 hash the content → write blob to `<data-dir>/cas/<hash>`
+    ///   2. Build `FileMetadata` with path, size, mime_type, content_id
+    ///   3. Propose `SetMetadata` through Raft consensus
+    async fn put_content(
+        &self,
+        request: Request<PutContentRequest>,
+    ) -> std::result::Result<Response<PutContentResponse>, Status> {
+        let req = request.into_inner();
+        let cas = match &self.cas {
+            Some(c) => c,
+            None => {
+                return Ok(Response::new(PutContentResponse {
+                    success: false,
+                    content_id: String::new(),
+                    error: "CAS not configured on this node".to_string(),
+                }));
+            }
+        };
+
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+
+        // 1. Write content to CAS
+        let content_id = cas.put(&req.content);
+        let content_len = req.content.len() as i64;
+
+        // 2. Build FileMetadata proto
+        let metadata = super::proto::nexus::core::FileMetadata {
+            path: req.path.clone(),
+            size: content_len,
+            mime_type: req.mime_type,
+            content_id: content_id.clone(),
+            zone_id: req.zone_id.clone(),
+            ..Default::default()
+        };
+        let value = prost::Message::encode_to_vec(&metadata);
+
+        // 3. Propose SetMetadata through Raft
+        let cmd = Command::SetMetadata {
+            key: req.path,
+            value,
+        };
+        match node.propose(cmd).await {
+            Ok(_) => Ok(Response::new(PutContentResponse {
+                success: true,
+                content_id,
+                error: String::new(),
+            })),
+            Err(e) => Ok(Response::new(PutContentResponse {
+                success: false,
+                content_id,
+                error: format!("Raft propose failed: {}", e),
+            })),
+        }
+    }
+
+    /// Retrieve content by reading metadata then CAS blob.
+    ///
+    /// Compound operation:
+    ///   1. Query metadata for path → get content_id
+    ///   2. Read blob from local CAS
+    ///   3. Return bytes
+    async fn get_content(
+        &self,
+        request: Request<GetContentRequest>,
+    ) -> std::result::Result<Response<GetContentResponse>, Status> {
+        let req = request.into_inner();
+        let cas = match &self.cas {
+            Some(c) => c,
+            None => {
+                return Ok(Response::new(GetContentResponse {
+                    success: false,
+                    content: Vec::new(),
+                    content_id: String::new(),
+                    error: "CAS not configured on this node".to_string(),
+                }));
+            }
+        };
+
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+
+        // 1. Query metadata for the path
+        let metadata_bytes = node
+            .with_state_machine(|sm| sm.get_metadata(&req.path))
+            .await;
+
+        let data = match metadata_bytes {
+            Ok(Some(data)) => data,
+            Ok(None) => {
+                return Ok(Response::new(GetContentResponse {
+                    success: false,
+                    content: Vec::new(),
+                    content_id: String::new(),
+                    error: format!("No metadata found for path '{}'", req.path),
+                }));
+            }
+            Err(e) => {
+                return Ok(Response::new(GetContentResponse {
+                    success: false,
+                    content: Vec::new(),
+                    content_id: String::new(),
+                    error: format!("Metadata query failed: {}", e),
+                }));
+            }
+        };
+
+        // 2. Decode FileMetadata to get content_id
+        let file_meta = match super::proto::nexus::core::FileMetadata::decode(data.as_slice()) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(Response::new(GetContentResponse {
+                    success: false,
+                    content: Vec::new(),
+                    content_id: String::new(),
+                    error: format!("Failed to decode metadata: {}", e),
+                }));
+            }
+        };
+
+        if file_meta.content_id.is_empty() {
+            return Ok(Response::new(GetContentResponse {
+                success: false,
+                content: Vec::new(),
+                content_id: String::new(),
+                error: "Metadata has no content_id (no content stored)".to_string(),
+            }));
+        }
+
+        // 3. Read blob from CAS
+        match cas.get(&file_meta.content_id) {
+            Some(bytes) => Ok(Response::new(GetContentResponse {
+                success: true,
+                content: bytes,
+                content_id: file_meta.content_id,
+                error: String::new(),
+            })),
+            None => Ok(Response::new(GetContentResponse {
+                success: false,
+                content: Vec::new(),
+                content_id: file_meta.content_id,
+                error: "Content blob not found in CAS".to_string(),
             })),
         }
     }

@@ -71,6 +71,11 @@ pub mod zone_handle;
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod zone_manager;
 
+/// Local-disk content-addressable store (CAS) — BLAKE3-addressed
+/// blob storage used by `PutContent`/`GetContent` RPCs.
+#[cfg(all(feature = "grpc", has_protos))]
+pub mod cas;
+
 /// BlobFetcher trait — lets the raft gRPC server serve peer-facing
 /// `ReadBlob` without depending on kernel types. The kernel crate
 /// installs the impl at bootstrap. See [`blob_fetcher`] module.

@@ -328,9 +328,11 @@ impl ZoneManager {
             })
             .map_err(|e| RaftError::Raft(format!("Failed to enumerate zones on startup: {}", e)))?;
 
+        let cas = std::sync::Arc::new(crate::cas::LocalCAS::new(std::path::Path::new(base_path)));
         let blob_fetcher_slot = crate::blob_fetcher::new_blob_fetcher_slot();
         let mut server = RaftGrpcServer::new(registry.clone(), config)
-            .with_blob_fetcher_slot(blob_fetcher_slot.clone());
+            .with_blob_fetcher_slot(blob_fetcher_slot.clone())
+            .with_cas(cas);
         // Configure JoinCluster RPC support if join token + CA key
         // are available — leader-side TLS signing for new joiners.
         if let (Some(ref t), Some(ref ca_key_path), Some(ref token_hash)) = (

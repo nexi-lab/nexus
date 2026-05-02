@@ -85,6 +85,14 @@ service ZoneApiService {
   // metadata has been replicated ahead of content.
   rpc ReadBlob(ReadBlobRequest) returns (ReadBlobResponse);
 
+  // PutContent stores file content in local CAS and metadata via Raft.
+  // Compound operation: BLAKE3 hash → write blob to disk → Propose SetMetadata.
+  rpc PutContent(PutContentRequest) returns (PutContentResponse);
+
+  // GetContent retrieves file content by reading metadata then CAS blob.
+  // Compound operation: Query metadata → read content_id → read CAS blob.
+  rpc GetContent(GetContentRequest) returns (GetContentResponse);
+
   // ReplaceVoterByHostname swaps a voter's node ID without changing its
   // hostname.  Sent by a node that just wiped its persistent state and
   // is about to rejoin the cluster with a fresh `compute_node_id` based
@@ -404,4 +412,35 @@ message ReplaceVoterByHostnameResponse {
   // The old voter ID that was removed.  None when no prior voter
   // matched the supplied hostname (treated as a plain AddNode).
   optional uint64 removed_old_id = 4;
+}
+
+// === PutContent / GetContent (compound CAS + Raft metadata) ===
+
+// PutContentRequest stores content bytes in local CAS and metadata via Raft.
+message PutContentRequest {
+  string zone_id = 1;
+  string path = 2;
+  bytes content = 3;
+  string mime_type = 4;
+}
+
+// PutContentResponse returns the BLAKE3 content hash on success.
+message PutContentResponse {
+  bool success = 1;
+  string content_id = 2;
+  string error = 3;
+}
+
+// GetContentRequest retrieves content for a path by reading metadata then CAS.
+message GetContentRequest {
+  string zone_id = 1;
+  string path = 2;
+}
+
+// GetContentResponse returns the content bytes and content hash.
+message GetContentResponse {
+  bool success = 1;
+  bytes content = 2;
+  string content_id = 3;
+  string error = 4;
 }

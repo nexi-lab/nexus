@@ -12,6 +12,8 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
+import hashlib
+import json
 import logging
 import os
 import tarfile
@@ -19,7 +21,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.portability.models import (
     BUNDLE_PATHS,
@@ -29,6 +31,12 @@ from nexus.bricks.portability.models import (
     PermissionRecord,
     ZoneExportOptions,
 )
+from nexus.bricks.portability.signer import ArchiveSigner, canonical_json_bytes
+from nexus.bricks.portability.strip import (
+    DEFAULT_REDACT_PATTERNS,
+    RegexStripper,
+    SchemaStripper,
+)
 
 if TYPE_CHECKING:
     from nexus.contracts.portability_types import PortabilityFSProtocol
@@ -37,6 +45,61 @@ logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total) -> None
 ProgressCallback = Callable[[int, int], None]
+
+
+def _sha256(data: bytes) -> str:
+    """Return hex-encoded SHA-256 digest of `data`."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def _finalize_with_signature(
+    bundle_dir: Path,
+    manifest: ExportManifest,
+    output_path: Path,
+    *,
+    signer: ArchiveSigner | None,
+) -> None:
+    """Write manifest.json (signed if signer is provided), then tar.gz the bundle.
+
+    When `signer` is not None:
+    - Embeds the signer's public key in the manifest dict.
+    - Computes the canonical-JSON bytes of the manifest.
+    - Signs ``manifest_bytes + merkle_root_b64`` with ed25519.
+    - Writes ``signatures.json`` into the bundle directory.
+    - The signature covers the canonical manifest bytes so that verifiers
+      can reconstruct the payload without a separate merkle-root field.
+
+    When `signer` is None the function is byte-identical to the legacy
+    ``_create_bundle`` path — only the manifest is written and no
+    ``signatures.json`` is emitted.
+    """
+    manifest_dict = manifest.to_dict()
+    if signer is not None:
+        manifest_dict["signer_pubkey_b64"] = signer.public_key_b64
+
+    manifest_bytes = canonical_json_bytes(manifest_dict)
+    (bundle_dir / "manifest.json").write_bytes(manifest_bytes)
+
+    if signer is not None:
+        merkle_root_b64 = (manifest_dict.get("checksums") or {}).get("merkle_root") or ""
+        payload = manifest_bytes + merkle_root_b64.encode("utf-8")
+        sig_b64, pub_b64 = signer.sign(payload)
+        sig_doc = {
+            "algorithm": "ed25519",
+            "signer_pubkey_b64": pub_b64,
+            "signature_b64": sig_b64,
+            "manifest_sha256": _sha256(manifest_bytes),
+        }
+        (bundle_dir / "signatures.json").write_text(json.dumps(sig_doc, indent=2))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(output_path, mode="w:gz") as tar:
+        for path in sorted(bundle_dir.rglob("*")):
+            if path.is_file():
+                arcname = str(path.relative_to(bundle_dir))
+                tar.add(path, arcname=arcname)
+
+    logger.info("Created bundle: %s (%d bytes)", output_path, output_path.stat().st_size)
 
 
 class ZoneExportService:
@@ -143,6 +206,29 @@ class ZoneExportService:
             manifest.file_count = file_count
             manifest.total_size_bytes = total_size
 
+            # --- Credential stripping (v2+) ---
+            # When strip_credentials=True, run schema+regex stripping over the
+            # exported file records treated as a "documents" table, then update
+            # files.jsonl in-place and stash any placeholders on the manifest.
+            if options.strip_credentials and files_path.exists():
+                raw_lines = files_path.read_text(encoding="utf-8").splitlines()
+                file_rows = [json.loads(line) for line in raw_lines if line.strip()]
+                stripped_tables, placeholders = _apply_credential_stripping(
+                    {"documents": file_rows},
+                    workspace_root=None,
+                )
+                stripped_rows = stripped_tables.get("documents", file_rows)
+                files_path.write_text(
+                    "\n".join(json.dumps(r) for r in stripped_rows)
+                    + ("\n" if stripped_rows else ""),
+                    encoding="utf-8",
+                )
+                if placeholders:
+                    manifest.placeholders = list(placeholders)
+                    logger.info(
+                        "Credential stripping: %d placeholder(s) captured", len(placeholders)
+                    )
+
             # Add checksum for files.jsonl
             if files_path.exists():
                 checksums.add_file(BUNDLE_PATHS["files"], files_path.read_bytes())
@@ -171,15 +257,20 @@ class ZoneExportService:
             # Finalize manifest
             manifest.checksums = checksums
 
-            # Write manifest
-            manifest_path = temp_path / BUNDLE_PATHS["manifest"]
-            manifest_path.write_text(manifest.to_json())
+            # Instantiate signer if signing is enabled
+            signer: ArchiveSigner | None = None
+            if options.sign:
+                key_path = (
+                    options.signing_key_path or Path.home() / ".nexus" / "archive_signing_key"
+                )
+                signer = ArchiveSigner(key_path)
 
-            # Create tar.gz bundle
-            self._create_bundle(
-                source_dir=temp_path,
+            # Write manifest (signed) and create tar.gz bundle
+            _finalize_with_signature(
+                bundle_dir=temp_path,
+                manifest=manifest,
                 output_path=options.output_path,
-                compression_level=options.compression_level,
+                signer=signer,
             )
 
             logger.info(
@@ -423,6 +514,55 @@ class ZoneExportService:
                     tar.add(item, arcname=str(arcname))
 
         logger.info("Created bundle: %s (%d bytes)", output_path, output_path.stat().st_size)
+
+
+def _apply_credential_stripping(
+    rows_by_table: dict[str, list[dict[str, Any]]],
+    *,
+    workspace_root: str | None,
+    extra_patterns: list[dict[str, str]] | None = None,
+) -> tuple[dict[str, list[dict[str, Any]]], list]:
+    """Run schema + regex strip across every row group.
+
+    Layer 1 (SchemaStripper): nulls known sensitive columns by table + field
+    name and replaces them with ``${PLACEHOLDER_NAME}`` strings.
+
+    Layer 2 (RegexStripper): scans every string value for known credential
+    patterns (API keys, PATs, etc.) as a backstop.
+
+    Args:
+        rows_by_table: Mapping of table name to list of row dicts.
+        workspace_root: Workspace root path for path-normalisation rules in
+            SchemaStripper (pass ``None`` to skip).
+        extra_patterns: Additional regex patterns to append to
+            ``DEFAULT_REDACT_PATTERNS`` (each dict has ``name`` + ``pattern``).
+
+    Returns:
+        A tuple of ``(stripped_rows_by_table, placeholders_list)`` where
+        *placeholders_list* is a flat list of :class:`PlaceholderRef` objects
+        collected across all tables.
+    """
+    schema = SchemaStripper(workspace_root=workspace_root)
+    patterns = list(DEFAULT_REDACT_PATTERNS) + list(extra_patterns or [])
+    regex = RegexStripper(patterns)
+
+    out: dict[str, list[dict[str, Any]]] = {}
+    placeholders: list = []
+
+    for table, rows in rows_by_table.items():
+        schema_result = schema.strip_table(table, rows)
+        cleaned: list[dict[str, Any]] = []
+        for i, row in enumerate(schema_result.rows):
+            new_row = dict(row)
+            for k, v in row.items():
+                if isinstance(v, str):
+                    scan = regex.scan(v, location=f"{table}:row={i}:field={k}")
+                    new_row[k] = scan.text
+            cleaned.append(new_row)
+        out[table] = cleaned
+        placeholders.extend(schema_result.placeholders)
+
+    return out, placeholders
 
 
 # Convenience function for CLI usage

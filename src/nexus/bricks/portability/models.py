@@ -47,7 +47,7 @@ from typing import Any, Self
 # Constants
 # =============================================================================
 
-BUNDLE_FORMAT_VERSION = "1.0.0"
+BUNDLE_FORMAT_VERSION = "2.0.0"
 BUNDLE_EXTENSION = ".nexus"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_COMPRESSION_LEVEL = 6
@@ -71,6 +71,35 @@ class ContentMode(StrEnum):
     INCLUDE = "include"  # Import content blobs
     REFERENCE = "reference"  # Only import references (content must exist)
     SKIP = "skip"  # Skip content entirely (metadata only)
+
+
+class ArchiveKind(StrEnum):
+    """Type of archive bundle (v2+)."""
+
+    FULL = "full"  # Complete zone snapshot
+    AUDIT = "audit"  # Audit-window event slice
+
+
+@dataclass
+class PlaceholderRef:
+    """Reference to a credential placeholder that must be re-injected on restore (v2+).
+
+    Attributes:
+        name: Placeholder name (e.g., "HUB_TOKEN_eng")
+        field: Dotted field path where the credential lives (e.g., "federations.eng.auth_token")
+    """
+
+    name: str
+    field: str
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert to dictionary for JSON serialization."""
+        return {"name": self.name, "field": self.field}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, str]) -> "PlaceholderRef":
+        """Create from dictionary."""
+        return cls(name=data["name"], field=data["field"])
 
 
 # =============================================================================
@@ -317,6 +346,11 @@ class ZoneExportOptions:
     # Security
     encryption_key: bytes | None = None
 
+    # Signing (v2+)
+    sign: bool = True
+    strip_credentials: bool = True
+    signing_key_path: Path | None = None  # default ~/.nexus/archive_signing_key
+
     def __post_init__(self) -> None:
         """Validate options after initialization."""
         if isinstance(self.output_path, str):
@@ -406,6 +440,12 @@ class ZoneImportOptions:
     # Performance
     batch_size: int = 1000
     max_concurrent_writes: int = 10
+
+    # Placeholder injection (v2+)
+    require_no_placeholders: bool = True
+    injections: dict[str, str] = field(default_factory=dict)
+    rebuild_embeddings: bool = False
+    force: bool = False
 
     def __post_init__(self) -> None:
         """Validate options after initialization."""
@@ -546,6 +586,16 @@ class ExportManifest:
     # Extensible metadata
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # v2 additions (all optional with defaults so v1 bundles still load)
+    archive_kind: ArchiveKind = ArchiveKind.FULL
+    activity_window_from: datetime | None = None
+    activity_window_to: datetime | None = None
+    embedding_model: str | None = None
+    embedding_dim: int | None = None
+    signer_pubkey_b64: str | None = None
+    placeholders: list[PlaceholderRef] = field(default_factory=list)
+    min_nexus_version: str = "0.0.0"
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization.
 
@@ -594,6 +644,19 @@ class ExportManifest:
             else None,
             # Extensible metadata
             "metadata": self.metadata,
+            # v2 fields
+            "archive_kind": self.archive_kind.value,
+            "activity_window_from": (
+                self.activity_window_from.isoformat() if self.activity_window_from else None
+            ),
+            "activity_window_to": (
+                self.activity_window_to.isoformat() if self.activity_window_to else None
+            ),
+            "embedding_model": self.embedding_model,
+            "embedding_dim": self.embedding_dim,
+            "signer_pubkey_b64": self.signer_pubkey_b64,
+            "placeholders": [p.to_dict() for p in self.placeholders],
+            "min_nexus_version": self.min_nexus_version,
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -644,6 +707,15 @@ class ExportManifest:
         checksums_data = data.get("checksums", {})
         checksums = BundleChecksums.from_dict(checksums_data)
 
+        # Parse v2 timestamps
+        activity_window_from = data.get("activity_window_from")
+        if isinstance(activity_window_from, str):
+            activity_window_from = datetime.fromisoformat(activity_window_from)
+
+        activity_window_to = data.get("activity_window_to")
+        if isinstance(activity_window_to, str):
+            activity_window_to = datetime.fromisoformat(activity_window_to)
+
         return cls(
             format_version=data.get("format_version", BUNDLE_FORMAT_VERSION),
             nexus_version=data.get("nexus_version", ""),
@@ -667,6 +739,15 @@ class ExportManifest:
             encryption_method=encryption.get("method"),
             encrypted_dek=encryption.get("encrypted_dek"),
             metadata=data.get("metadata", {}),
+            # v2 fields (all default-safe for v1 bundles)
+            archive_kind=ArchiveKind(data.get("archive_kind", ArchiveKind.FULL.value)),
+            activity_window_from=activity_window_from,
+            activity_window_to=activity_window_to,
+            embedding_model=data.get("embedding_model"),
+            embedding_dim=data.get("embedding_dim"),
+            signer_pubkey_b64=data.get("signer_pubkey_b64"),
+            placeholders=[PlaceholderRef.from_dict(p) for p in data.get("placeholders", [])],
+            min_nexus_version=data.get("min_nexus_version", "0.0.0"),
         )
 
     @classmethod

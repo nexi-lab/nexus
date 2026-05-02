@@ -11,12 +11,15 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
+import contextlib
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.archive.errors import ArchiveEmbeddingDimMismatch, ArchiveTargetNotEmpty
 from nexus.bricks.portability.bundle import BundleReader
 from nexus.bricks.portability.models import (
     ConflictMode,
@@ -33,6 +36,114 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
+
+_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z0-9_]+)\}", re.IGNORECASE)
+
+
+def _scan_for_placeholders(rows: list[dict]) -> set[str]:
+    """Return the set of ``${NAME}`` placeholder names found across all string values.
+
+    Args:
+        rows: List of row dicts to scan.
+
+    Returns:
+        Set of placeholder names (e.g. ``{"PROVIDER_KEY_anthropic"}``).
+    """
+    found: set[str] = set()
+    for row in rows:
+        for v in row.values():
+            if isinstance(v, str):
+                for m in _PLACEHOLDER_RE.finditer(v):
+                    found.add(m.group(1))
+    return found
+
+
+def _apply_injections(rows: list[dict], injections: dict[str, str]) -> list[dict]:
+    """Substitute every ``${NAME}`` placeholder for its injected value.
+
+    Placeholders whose names are not present in *injections* are left as-is
+    (so a subsequent :func:`_scan_for_placeholders` call will still find them).
+
+    Args:
+        rows: List of row dicts to process.
+        injections: Mapping of placeholder name → replacement string.
+
+    Returns:
+        New list of row dicts with substitutions applied.
+    """
+    if not injections:
+        return rows
+
+    def _sub(m: re.Match[str]) -> str:
+        return injections.get(m.group(1), m.group(0))
+
+    out: list[dict] = []
+    for row in rows:
+        new_row = dict(row)
+        for k, v in row.items():
+            if isinstance(v, str):
+                new_row[k] = _PLACEHOLDER_RE.sub(_sub, v)
+        out.append(new_row)
+    return out
+
+
+def _check_target_empty(*, existing_zones: list[str], force: bool) -> None:
+    """Raise ArchiveTargetNotEmpty if the restore target has existing zones.
+
+    Args:
+        existing_zones: Zone IDs already present in the target nexus instance.
+        force: When ``True`` the operator has acknowledged the risk; the check
+               is skipped and the restore proceeds (DESTRUCTIVE).
+
+    Raises:
+        ArchiveTargetNotEmpty: When *existing_zones* is non-empty and
+            *force* is ``False``.
+    """
+    if existing_zones and not force:
+        raise ArchiveTargetNotEmpty(existing_zones)
+
+
+def _check_embedding_compat(
+    *,
+    archive_model: str | None,
+    archive_dim: int | None,
+    current_model: str,
+    current_dim: int,
+    rebuild_embeddings: bool,
+) -> None:
+    """Raise ArchiveEmbeddingDimMismatch if archive embeddings are incompatible.
+
+    Returns None on compatibility (or if ``rebuild_embeddings`` overrides), or
+    if the archive carries no embedding metadata (v1 bundles).
+
+    Args:
+        archive_model: Embedding model name stored in the bundle manifest.
+                       ``None`` for v1 bundles that pre-date embedding metadata.
+        archive_dim: Embedding vector dimension stored in the bundle manifest.
+                     ``None`` for v1 bundles.
+        current_model: Active embedding model in the running Nexus instance.
+        current_dim: Active embedding dimension in the running Nexus instance.
+        rebuild_embeddings: When ``True`` the caller intends to re-embed all
+                            documents after restore, so a mismatch is safe and
+                            the check is skipped.
+
+    Raises:
+        ArchiveEmbeddingDimMismatch: When the archive model or dimension differs
+            from the current configuration and ``rebuild_embeddings`` is False.
+    """
+    if archive_model is None or archive_dim is None:
+        # v1 bundle — no embedding metadata to check.
+        return
+    if rebuild_embeddings:
+        return
+    if archive_model == current_model and archive_dim == current_dim:
+        return
+    raise ArchiveEmbeddingDimMismatch(
+        archive_model=archive_model,
+        archive_dim=archive_dim,
+        current_model=current_model,
+        current_dim=current_dim,
+    )
 
 
 def _create_import_context(zone_id: str | None = None) -> "OperationContext":
@@ -134,6 +245,44 @@ class ZoneImportService:
                     return result
 
                 manifest = reader.get_manifest()
+
+                # --- Pre-flight guards (v2+) ---
+
+                # Guard 1: target-not-empty check.
+                # Discover zones already present in the target nexus instance.
+                existing_zones: list[str] = []
+                with contextlib.suppress(AttributeError):
+                    existing_zones = [z.zone_id for z in self.nexus_fs.metadata.list_zones()]
+                _check_target_empty(existing_zones=existing_zones, force=options.force)
+
+                # Guard 2: embedding compatibility.
+                current_model = getattr(
+                    getattr(self.nexus_fs, "config", None), "embedding_model", "unknown"
+                )
+                current_dim = getattr(getattr(self.nexus_fs, "config", None), "embedding_dim", 0)
+                _check_embedding_compat(
+                    archive_model=manifest.embedding_model,
+                    archive_dim=manifest.embedding_dim,
+                    current_model=current_model,
+                    current_dim=current_dim,
+                    rebuild_embeddings=options.rebuild_embeddings,
+                )
+
+                # Guard 3: placeholder injection.
+                # If the bundle's manifest declares placeholders (strip_credentials=True
+                # was used during export), load ALL file records, apply any caller-
+                # supplied injections, then check that no placeholders remain.
+                if manifest.placeholders and options.require_no_placeholders:
+                    all_rows = [
+                        dict(rec.__dict__) if hasattr(rec, "__dict__") else vars(rec)
+                        for rec in reader.iter_file_records()
+                    ]
+                    all_rows = _apply_injections(all_rows, options.injections)
+                    remaining = _scan_for_placeholders(all_rows)
+                    if remaining:
+                        from nexus.bricks.archive.errors import ArchivePlaceholderNotInjected
+
+                        raise ArchivePlaceholderNotInjected(sorted(remaining))
 
                 # Check zone remapping
                 if options.target_zone_id:

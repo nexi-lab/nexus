@@ -118,6 +118,35 @@ KNOWN_CROSS_BRICK_EXCEPTIONS: dict[tuple[str, str], list[str]] = {
         "nexus.bricks.memory.coref_resolver",
         "nexus.bricks.memory.relationship_extractor",
     ],
+    # Issue #3793: portability signer raises ArchiveSignatureError which lives in
+    # archive.errors. The portability brick is the foundation layer that archive
+    # extends — signer.py is owned by the archive feature set and references its
+    # own error hierarchy. TODO(#3793): move ArchiveSignatureError to a shared
+    # contracts module when the archive brick is fully stabilised.
+    ("portability", "archive"): [
+        "nexus.bricks.portability.signer",
+        "nexus.bricks.portability.tests.test_signer",
+        # Task 9 (#3793): _check_embedding_compat raises ArchiveEmbeddingDimMismatch.
+        # Task 10 (#3793): _check_target_empty raises ArchiveTargetNotEmpty.
+        # TODO(#3793): move shared archive errors to contracts when archive brick stabilises.
+        "nexus.bricks.portability.import_service",
+        "nexus.bricks.portability.tests.test_import_embedding",
+        "nexus.bricks.portability.tests.test_import_target_guard",
+    ],
+    # Issue #3793 Task 20: archive.verify and archive.cli_glue import from portability
+    # (ArchiveSigner, canonical_json_bytes, ZoneImportService, ZoneImportOptions, TrustStore).
+    # The archive brick is the consumer layer built on top of portability — these are
+    # thin CLI-glue and verifier modules, not brick internals.
+    # TODO(#3793): eliminate when CLI glue moves to nexus.cli.archive after brick stabilises.
+    ("archive", "portability"): [
+        "nexus.bricks.archive.verify",
+        "nexus.bricks.archive.cli_glue",
+        # Orchestrator constructs real ZoneExportOptions to drive ZoneExportService.
+        "nexus.bricks.archive.orchestrator",
+        # Test helpers legitimately import the portability signer to build test fixtures.
+        "nexus.bricks.archive.tests.unit.test_verify",
+        "nexus.bricks.archive.tests.unit.test_orchestrator",
+    ],
 }
 
 # Known exceptions for bricks importing from nexus.core (non-protocol) or

@@ -215,7 +215,7 @@ site/
 \#*\#
 .\#*
 # Archived/temporary documentation
-archive/
+/archive/
 *_SUMMARY.md
 *_STATUS.md
 *_COMPLETE.md

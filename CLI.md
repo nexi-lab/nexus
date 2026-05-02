@@ -137,6 +137,66 @@ nexus upgrade              # pull latest image for channel
 nexus upgrade --channel edge
 ```
 
+## Archives
+
+### `nexus archive create`
+
+Create a signed, credential-stripped archive of one or more zones for backup, disaster recovery, or compliance audit export.
+
+```bash
+nexus archive create --zone eng --output eng-2026-05-01.nexus
+nexus archive create --zone eng --audit --from 2026-04-01 --to 2026-05-01 --output eng-april.nexus
+```
+
+### `nexus archive verify`
+
+Verify the signature and integrity of an archive without restoring.
+
+```bash
+nexus archive verify eng-2026-05-01.nexus
+nexus archive verify eng-2026-05-01.nexus --require-trusted
+```
+
+### `nexus archive restore`
+
+Restore an archive on a fresh Nexus instance, re-injecting credentials via the manifest.
+
+```bash
+nexus archive restore eng-2026-05-01.nexus --inject HUB_TOKEN_eng_hub=$HUB_TOKEN
+```
+
+### `nexus archive diff`
+
+Compare two archives to detect zone changes between snapshots.
+
+```bash
+nexus archive diff eng-2026-04-01.nexus eng-2026-05-01.nexus
+```
+
+### `nexus archive inspect`
+
+Display archive metadata, placeholders, signers, and content summary without restoring.
+
+```bash
+nexus archive inspect eng-2026-05-01.nexus
+```
+
+### `nexus archive keys rotate`
+
+Rotate the ed25519 signing keypair. Old archives remain verifiable.
+
+```bash
+nexus archive keys rotate
+```
+
+### `nexus archive keys trust`
+
+Pin a known signer pubkey in the trust store for TOFU-style verification on restore.
+
+```bash
+nexus archive keys trust <pubkey-b64> --label "alice@hub"
+```
+
 ## Architecture
 
 ### Config vs State

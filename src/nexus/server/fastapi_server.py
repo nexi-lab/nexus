@@ -149,15 +149,19 @@ def _federation_rpc_active(kernel: Any) -> bool:
     stack has zero zones, and ``federation_list_zones`` is the primary
     way to observe that state.  Gating on non-empty would make
     bootstrap chicken-and-egg.
-    """
-    if kernel is None:
-        return False
-    try:
-        import nexus_runtime as _nr
 
-        return bool(_nr.federation_is_initialized(kernel))
-    except Exception:
-        return False
+    Standalone mode (#3793): the kernel is present but federation
+    coordinator isn't initialized.  We still mount the service so that
+    data-portability RPCs (federation_list_zones,
+    federation_export_zone, federation_import_zone) reach the kernel —
+    standalone has a default ``root`` zone visible via the
+    ``/__sys__/zones/`` procfs view.  Federation-only RPCs
+    (federation_join, federation_share, federation_create_zone) will
+    surface a clear error from the underlying kernel call when invoked
+    in standalone — preferable to ``Method not found`` which obscures
+    the cause.
+    """
+    return kernel is not None
 
 
 def _filter_routes_for_sandbox(app: "FastAPI") -> None:

@@ -63,6 +63,8 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "lineage": ("lineage",),
     # Issue #3773: Path context descriptions (admin CRUD)
     "path_context": ("path-context",),
+    # Issue #3793: Signed zone archive snapshots
+    "archive": ("archive",),
 }
 
 # Modules that expose a single Click command/group to add via cli.add_command

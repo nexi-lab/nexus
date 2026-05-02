@@ -57,6 +57,7 @@ from nexus.bricks.portability.models import (
     MANIFEST_FILENAME,
     MANIFEST_SCHEMA_PATH,
     MANIFEST_SCHEMA_URL,
+    ArchiveKind,
     BundleChecksums,
     ConflictMode,
     ContentMode,
@@ -66,6 +67,7 @@ from nexus.bricks.portability.models import (
     ImportError,
     ImportResult,
     PermissionRecord,
+    PlaceholderRef,
     ZoneExportOptions,
     ZoneImportOptions,
 )
@@ -81,6 +83,7 @@ __all__ = [
     "DEFAULT_HASH_ALGORITHM",
     "BUNDLE_PATHS",
     # Enums
+    "ArchiveKind",
     "ConflictMode",
     "ContentMode",
     # Checksum models
@@ -89,6 +92,7 @@ __all__ = [
     # Export models
     "ZoneExportOptions",
     "ExportManifest",
+    "PlaceholderRef",
     # Import models
     "ZoneImportOptions",
     "ImportResult",

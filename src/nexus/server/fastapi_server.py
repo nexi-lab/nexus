@@ -488,46 +488,6 @@ def create_app(
 
             _rpc_sources.append(SnapshotsRPCService(_snap))
         app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_rpc_sources)
-
-        # Sweep every @rpc_expose-discovered method onto the Rust
-        # `python_ffi` router so the gRPC tonic Call handler can
-        # serve them via Kernel::dispatch_rust_call(\"python_ffi\",
-        # method, payload) without falling through to the (about-to-
-        # be-deleted) Python dispatch_method path.  Preserves the
-        # wire contract: payload kwargs reach the same Python method,
-        # the result encodes back as JSON.
-        try:
-            import nexus_runtime as _nr
-
-            _kernel_handle = getattr(nexus_fs, "_kernel", None)
-            if _kernel_handle is not None and hasattr(_nr, "nx_python_ffi_register"):
-                # Group by service instance so each instance is
-                # registered once with all its wire names — fewer
-                # cross-FFI calls.
-                _by_instance: dict[int, tuple[Any, list[tuple[str, str]]]] = {}
-                for _wire, _bound in app.state.exposed_methods.items():
-                    _inst = getattr(_bound, "__self__", None)
-                    if _inst is None:
-                        continue
-                    _attr = getattr(_bound, "__name__", _wire)
-                    _key = id(_inst)
-                    _by_instance.setdefault(_key, (_inst, []))[1].append((_wire, _attr))
-                for _inst, _routes in _by_instance.values():
-                    try:
-                        _nr.nx_python_ffi_register(_kernel_handle, _routes, _inst)
-                    except Exception as _exc:
-                        logger.warning(
-                            "[BOOT] python_ffi register failed for %s: %s",
-                            type(_inst).__name__,
-                            _exc,
-                        )
-                logger.debug(
-                    "[BOOT] python_ffi router populated with %d wire methods across %d instances",
-                    len(app.state.exposed_methods),
-                    len(_by_instance),
-                )
-        except Exception as _exc:
-            logger.warning("[BOOT] python_ffi sweep failed: %s", _exc)
     else:
         logger.info("create_app() started without NexusFS; service discovery disabled")
         app.state.exposed_methods = {}

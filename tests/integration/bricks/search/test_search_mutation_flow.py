@@ -213,6 +213,44 @@ async def test_refresh_indexes_indexes_bm25s_with_virtual_path() -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_bm25_mutation_consumer_indexes_virtual_path() -> None:
+    daemon = SearchDaemon()
+    daemon._bm25s_index = _CapturingBM25SIndex()
+    event = SearchMutationEvent(
+        event_id="evt-1",
+        operation_id="op-1",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/default/workspace/demo/herb/customers/cust-002.md",
+        zone_id="default",
+        timestamp=datetime.now(UTC).replace(tzinfo=None),
+        sequence_number=1,
+    )
+    daemon._resolve_mutations = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                event=event,
+                zone_id="default",
+                doc_id="default:/workspace/demo/herb/customers/cust-002.md",
+                path_id="pid-cust-002",
+                virtual_path="/workspace/demo/herb/customers/cust-002.md",
+                content="Uses Nexus for medical document management",
+                path_id_resolved=True,
+            )
+        ]
+    )
+
+    await daemon._consume_bm25_mutations([event])
+
+    assert daemon._bm25s_index.indexed_documents == [
+        (
+            "pid-cust-002",
+            "/workspace/demo/herb/customers/cust-002.md",
+            "Uses Nexus for medical document management",
+        )
+    ]
+
+
 def test_refresh_index_lookup_values_cast_rank_for_asyncpg() -> None:
     values_sql, params = SearchDaemon._build_path_lookup_values(
         ["/docs/readme.md", "/zone/root/docs/readme.md"]

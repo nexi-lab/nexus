@@ -10,7 +10,7 @@ from testkit.backends import (
     InMemoryRecordStore,
 )
 
-from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 
 
 def test_in_memory_backend_round_trips_content() -> None:
@@ -39,8 +39,29 @@ def test_in_memory_backend_tracks_directories() -> None:
 
     assert backend.is_directory("/a") is True
     assert backend.is_directory("/a/b") is True
-    assert backend.list_dir("/") == ["a"]
-    assert backend.list_dir("/a") == ["b"]
+    assert backend.list_dir("/") == ["a/"]
+    assert backend.list_dir("/a") == ["b/"]
+
+
+def test_in_memory_backend_rmdir_rejects_non_empty_directory() -> None:
+    backend = InMemoryBackend()
+    backend.mkdir("/a/b", parents=True, exist_ok=True)
+
+    with pytest.raises(BackendError):
+        backend.rmdir("/a")
+
+    assert backend.is_directory("/a") is True
+    assert backend.is_directory("/a/b") is True
+
+
+def test_in_memory_backend_rmdir_recursive_removes_children() -> None:
+    backend = InMemoryBackend()
+    backend.mkdir("/a/b", parents=True, exist_ok=True)
+
+    backend.rmdir("/a", recursive=True)
+
+    assert backend.is_directory("/a") is False
+    assert backend.is_directory("/a/b") is False
 
 
 def test_factory_stub_backend_accepts_arbitrary_kwargs() -> None:

@@ -6,7 +6,7 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.backend import Backend
-from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from tests.helpers.dict_metastore import DictMetastore
 from tests.helpers.failing_backend import FailingBackend
@@ -129,12 +129,14 @@ class InMemoryBackend(Backend):
             raise NexusFileNotFoundError(directory, "Directory not found")
         if directory == "/":
             return
+        prefix = f"{directory}/"
         if recursive:
-            prefix = f"{directory}/"
             self._dirs = {
                 item for item in self._dirs if item != directory and not item.startswith(prefix)
             }
             return
+        if any(item.startswith(prefix) for item in self._dirs):
+            raise BackendError(f"Directory not empty: {directory}", backend=self.name)
         self._dirs.remove(directory)
 
     def is_directory(
@@ -153,12 +155,12 @@ class InMemoryBackend(Backend):
         if directory not in self._dirs:
             raise NexusFileNotFoundError(directory, "Directory not found")
         prefix = "/" if directory == "/" else f"{directory}/"
-        names = {
-            candidate[len(prefix) :].split("/", 1)[0]
+        entries = {
+            f"{candidate[len(prefix) :].split('/', 1)[0]}/"
             for candidate in self._dirs
             if candidate != directory and candidate.startswith(prefix)
         }
-        return sorted(names)
+        return sorted(entries)
 
 
 class FactoryStubBackend(InMemoryBackend):

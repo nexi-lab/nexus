@@ -24,7 +24,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use contracts::lock_state::Locks;
 use dashmap::DashMap;
@@ -759,11 +759,107 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         Ok(())
     }
 
+    /// Create or join a federation zone at runtime.
+    ///
+    /// Coordinated through the root-zone leader to avoid split-brain
+    /// under the opaque-ID contract — random data-plane node IDs make
+    /// hostname-derived ConfState convergence (the old contract's
+    /// implicit serializer) impossible.
+    ///
+    ///   - **Root-zone leader**: founder.  Creates `zone_id` as a
+    ///     1-voter cluster locally.  Subsequent JoinZone calls from
+    ///     followers grow the voter set.
+    ///   - **Root-zone follower**: joiner.  Loops `JoinZone` RPC at
+    ///     the root-leader's address (and other peers as a fallback)
+    ///     until the leader has created the zone and the AddNode
+    ///     for this node commits.  Bounded by 30s so syscall
+    ///     callers see a fail rather than hang forever; operators
+    ///     re-issue.
     fn create_zone(&self, kernel: &Kernel, zone_id: &str) -> CoordinatorResult<()> {
         let zm = self.zm().ok_or("federation not active")?;
-        zm.get_or_create_zone(zone_id).map_err(|e| e.to_string())?;
-        self.install_apply_cb_for_zone(kernel, zone_id);
-        Ok(())
+        if zm.get_zone(zone_id).is_some() {
+            self.install_apply_cb_for_zone(kernel, zone_id);
+            return Ok(());
+        }
+        let runtime = self
+            .runtime
+            .get()
+            .ok_or("federation runtime not initialised")?;
+        let self_id = zm.node_id();
+        let registry = zm.registry();
+        let self_address = registry.self_address();
+
+        // Root-leader path: founder creates 1-voter cluster locally.
+        let am_root_leader = zm.get_zone("root").map(|h| h.is_leader()).unwrap_or(false);
+        if am_root_leader {
+            let self_peer = format!("{self_id}@{self_address}");
+            zm.create_zone(zone_id, vec![self_peer])
+                .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
+            self.install_apply_cb_for_zone(kernel, zone_id);
+            return Ok(());
+        }
+
+        // Follower path: JoinZone via peers.  Address book comes from
+        // root zone's peer map (populated via inbound StepMessage).
+        let peer_addrs = registry.get_peers("root").unwrap_or_default();
+        if peer_addrs.is_empty() {
+            return Err(format!(
+                "create_zone({zone_id}): not root-leader and no peers known",
+            ));
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut last_err = String::new();
+        while Instant::now() < deadline {
+            // Re-resolve root leader on each iteration — it may emerge
+            // (election) or change (failover) during retry.
+            let leader_id = zm.get_zone("root").and_then(|h| h.leader_id()).unwrap_or(0);
+            let candidates: Vec<NodeAddress> = if leader_id != 0 {
+                peer_addrs.get(&leader_id).into_iter().cloned().collect()
+            } else {
+                peer_addrs.values().cloned().collect()
+            };
+
+            // Register the zone locally with skip_bootstrap=true so
+            // the leader's snapshot can install the authoritative
+            // ConfState the moment AddNode commits.  Idempotent.
+            if zm.get_zone(zone_id).is_none() {
+                if let Some(first) = candidates.first() {
+                    let _ = zm.join_zone(zone_id, vec![first.to_raft_peer_str()], false);
+                }
+            }
+
+            for peer in &candidates {
+                if peer.id == self_id {
+                    continue;
+                }
+                let fut = crate::transport::call_join_zone_rpc(
+                    &peer.endpoint,
+                    zone_id,
+                    self_id,
+                    &self_address,
+                    /* as_learner */ false,
+                    5,
+                );
+                let attempt = if tokio::runtime::Handle::try_current().is_ok() {
+                    tokio::task::block_in_place(|| runtime.block_on(fut))
+                } else {
+                    runtime.block_on(fut)
+                };
+                match attempt {
+                    Ok(r) if r.success => {
+                        self.install_apply_cb_for_zone(kernel, zone_id);
+                        return Ok(());
+                    }
+                    Ok(r) => last_err = format!("{}: {:?}", peer.endpoint, r.error),
+                    Err(e) => last_err = format!("{}: {e}", peer.endpoint),
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        Err(format!(
+            "create_zone({zone_id}): JoinZone exhausted after 30s: {last_err}"
+        ))
     }
 
     fn remove_zone(&self, _kernel: &Kernel, zone_id: &str, force: bool) -> CoordinatorResult<()> {

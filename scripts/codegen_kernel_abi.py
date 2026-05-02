@@ -4952,8 +4952,8 @@ def collect_all() -> tuple[
 # Methods on PyKernel that map 1:1 to a NexusFS syscall and should be
 # served by the thin dispatcher.  Names match PyKernel's Python-facing
 # names — alias surface (read/write/delete/exists/list/rename/sys_mkdir
-# /sys_rmdir) is wired separately below since some don't have a
-# matching PyKernel symbol.
+# /sys_rmdir/lock_acquire) is wired separately below since some don't
+# have a matching PyKernel symbol.
 _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
     "sys_read",
     "sys_write",
@@ -4982,14 +4982,13 @@ _KERNEL_SYSCALL_ALLOWLIST: tuple[str, ...] = (
 #      prefix).  Backward-compat ``sys_mkdir`` / ``sys_rmdir`` keep
 #      working for older clients via the alias map.
 #   3. ``write`` (and the syscall-shaped ``sys_write`` alias) routes to
-#      ``NexusFS.write``: that's the Tier 2 method returning a
-#      content_id dict directly — including OCC (if_match /
-#      if_none_match) handling.
-#
-# `lock_acquire` was here as a Tier 2 dict-wrapping alias over
-# `sys_lock` — audit found ZERO production consumers, so the wire-name
-# is dropped entirely (callers compute `acquired = lock_id is not None`
-# from the raw `sys_lock` return).
+#      ``NexusFS.write``: that's the HTTP-style write returning a
+#      content_id dict — the wire shape Tier 2 RPC callers depend on
+#      through the legacy ``handle_write`` wrapper, including OCC
+#      (if_match / if_none_match) handling.
+#   4. ``lock_acquire`` is the Tier 2 dict-shaped wrapper — see the
+#      Python helper that materializes the ``{acquired, lock_id}``
+#      response from ``sys_lock``.
 _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     "delete": "sys_unlink",
     "rename": "sys_rename",
@@ -5006,9 +5005,9 @@ _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     "mkdir": "mkdir",
     "rmdir": "rmdir",
     # ``sys_write`` wire name routes to ``NexusFS.write`` (Tier 2 with
-    # content_id dict return) — preserves the OCC (if_match /
-    # if_none_match) handling.  The Tier 2 ``write`` RPC name does
-    # the same.
+    # content_id dict return) — preserves the legacy ``handle_write``
+    # wire shape, including OCC (if_match / if_none_match) handling.
+    # The Tier 2 ``write`` RPC name does the same.
     "sys_write": "write",
     "write": "write",
     # ``sys_read`` (POSIX) → ``NexusFS.sys_read`` (bytes); ``read``
@@ -5016,6 +5015,8 @@ _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     # names exist; the alias map only needs ``read`` because
     # ``sys_read`` resolves to itself.
     "read": "read",
+    # Tier 2 lock_acquire dispatches to sys_lock and shapes the result.
+    "lock_acquire": "sys_lock",
 }
 
 
@@ -5211,27 +5212,29 @@ def _apply_result_adapter(
     consumers — only test mocks asserted on them.  Dropped: callers
     receive the raw NexusFS return.
 
-    Adapter that survives (real wire-only logic, not just shape):
+    Adapters that survive (real production consumers):
 
+      * ``{{"exists": bool}}``  — ``access`` alias; ``fuse/rust_client.py``
+        reads ``result["exists"]``.
       * ``{{"files": ..., "has_more": ..., "next_cursor": ..., "total_count": ...}}``
-        — ``sys_readdir`` / ``list`` aliases.  Three things bundled:
-        normalize ``list[str] | list[dict] | PaginatedResult`` into a
-        single dict shape, run ``unscope_internal_dict`` to strip
-        ``/zone/<id>/`` prefixes from per-entry paths, and forward
-        pagination cursors.  Real wire-layer concerns; production
-        consumers in ``backends/storage/remote``, ``fuse/rust_client``,
-        ``services/lifecycle/user_provisioning``, ``core/metastore``.
+        — ``sys_readdir`` / ``list`` aliases; ``backends/storage/remote``,
+        ``fuse/rust_client``, ``services/lifecycle/user_provisioning``
+        all read these fields.
+      * ``{{"acquired": ..., "lock_id": ...}}`` — ``lock_acquire``
+        wire-name; Tier 2 callers expect the dict shape.
 
-    ``access`` previously wrapped ``bool`` into ``{{"exists": bool}}`` —
-    dropped, callers read raw bool.  ``lock_acquire`` previously
-    wrapped ``sys_lock``'s return into ``{{"acquired", "lock_id"}}`` —
-    wire-name dropped entirely (no production callers; tests adapt).
+    Path-bearing dicts (readdir entries) still get ``unscope_internal_dict``
+    so RPC callers see user-facing paths.
     """
     from nexus.server.path_utils import (
         unscope_internal_dict,
         unscope_internal_path,
     )
 
+    if method in ("access", "exists"):
+        return {{"exists": bool(raw_result)}}
+    if method == "lock_acquire":
+        return {{"acquired": raw_result is not None, "lock_id": raw_result}}
     if method in ("sys_readdir", "list"):
         # PaginatedResult (from limit kwarg) → wire dict; bare list →
         # wire dict with has_more=False / next_cursor=None.

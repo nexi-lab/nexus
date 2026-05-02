@@ -875,11 +875,18 @@ def create_async_files_router(
                     )
                 # --- Validate hash belongs to path in this transaction ---
                 _entries = await _snap_svc.list_entries(transaction_id)
-                _valid = any(
-                    e.path == path and (e.original_hash == version or e.new_hash == version)
-                    for e in _entries
-                )
-                if not _valid:
+                _matched_entry: Any = None
+                _matched_side: str | None = None  # "original" or "new"
+                for _e in _entries:
+                    if _e.path != path:
+                        continue
+                    if _e.original_hash == version:
+                        _matched_entry, _matched_side = _e, "original"
+                        break
+                    if _e.new_hash == version:
+                        _matched_entry, _matched_side = _e, "new"
+                        break
+                if _matched_entry is None:
                     raise HTTPException(
                         status_code=403,
                         detail=f"version is not recorded for this path in transaction {transaction_id!r}",
@@ -950,23 +957,56 @@ def create_async_files_router(
                         ),
                     )
 
-                # Plumb a federation origin hint into ``cas_read`` so chunked
-                # manifests whose blocks live on the writer node (replication
-                # window not yet closed, or a peer-only origin) can still
-                # scatter-gather. ``last_writer_address`` from the path's
-                # current stat is the most likely peer to hold any remote-only
-                # chunk for this file's recorded versions; it's a hint only —
-                # ``cas_read`` BLAKE3-verifies every fetched chunk before
-                # composition, so a stale/wrong address can never cause us to
-                # serve corrupt bytes (Issue #3989, codex r6).
+                # Plumb federation origin hints into ``cas_read`` so chunked
+                # manifests whose blocks live on a peer node (replication
+                # window not yet closed, or peer-only origin) can still
+                # scatter-gather. The hash we're reading was either captured
+                # *before* the in-flight transaction (``original_hash``) or
+                # produced *by* it (``new_hash``); a different node may own
+                # each side, so we collect both candidates:
+                #
+                # 1. If the entry's serialized ``original_metadata`` carries
+                #    a writer address (from the pre-write snapshot), prefer
+                #    it for ``original_hash`` reads — that's the node that
+                #    last produced the *recorded* bytes.
+                # 2. The path's current ``last_writer_address`` is appended
+                #    as a fallback. For ``new_hash`` (post-write) it is the
+                #    direct producer; for ``original_hash`` it is still a
+                #    plausible peer if replication has fanned out at all.
+                #
+                # Origin hints affect *fetch reachability* only — every
+                # fetched chunk is BLAKE3-verified before composition, so
+                # stale/wrong/duplicate addresses can never cause us to
+                # serve corrupt bytes (Issue #3989, codex r6/r7).
                 _origins: list[str] = []
+
+                def _push_origin(addr: object) -> None:
+                    if not isinstance(addr, str):
+                        return
+                    s = addr.strip()
+                    if s and s not in _origins:
+                        _origins.append(s)
+
+                if _matched_side == "original":
+                    _orig_meta_raw = getattr(_matched_entry, "original_metadata", None)
+                    if isinstance(_orig_meta_raw, str) and _orig_meta_raw:
+                        try:
+                            _orig_meta = json.loads(_orig_meta_raw)
+                        except (TypeError, ValueError):
+                            _orig_meta = None
+                    elif isinstance(_orig_meta_raw, dict):
+                        _orig_meta = _orig_meta_raw
+                    else:
+                        _orig_meta = None
+                    if isinstance(_orig_meta, dict):
+                        _push_origin(_orig_meta.get("last_writer_address"))
+                        _push_origin(_orig_meta.get("writer_address"))
+
                 try:
                     _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
-                    _writer = (_stat or {}).get("last_writer_address")
-                    if isinstance(_writer, str) and _writer.strip():
-                        _origins = [_writer.strip()]
+                    _push_origin((_stat or {}).get("last_writer_address"))
                 except Exception:
-                    _origins = []
+                    pass
 
                 try:
                     raw = await asyncio.to_thread(

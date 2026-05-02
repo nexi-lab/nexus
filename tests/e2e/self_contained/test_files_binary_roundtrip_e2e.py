@@ -338,3 +338,118 @@ def test_versioned_read_passes_writer_address_as_origin(
     assert resp.status_code == 200, resp.text
     assert captured["origins"] == ["peer-1:2126"], captured
     assert captured["content_id"] == hash_a
+
+
+def test_versioned_read_uses_recorded_origin_for_original_hash(
+    real_fs: NexusFS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the requested version is the entry's ``original_hash``, the
+    federation origin hint must prefer the writer address recorded in the
+    snapshot's ``original_metadata`` ahead of the path's *current*
+    writer. Otherwise a follower reading the original side after a
+    cross-node overwrite would only contact the new writer and miss the
+    node holding the original chunks (Issue #3989, codex r7)."""
+    import json as _json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    payload = b"y"
+
+    setup_app = FastAPI()
+    setup_app.include_router(create_async_files_router(nexus_fs=real_fs))
+    setup_app.dependency_overrides[get_auth_result] = lambda: {
+        "authenticated": True,
+        "user_id": "e2e-user",
+        "groups": [],
+        "zone_id": "root",
+        "is_admin": True,
+    }
+    setup_client = TestClient(setup_app)
+    write_resp = setup_client.post(
+        "/write",
+        json={"path": "/files/recorded_origin.bin", "content": "y"},
+    )
+    assert write_resp.status_code == 200, write_resp.text
+    original_hash = write_resp.json()["content_id"]
+
+    # Current writer differs from the recorded original writer.
+    real_stat = real_fs.sys_stat
+
+    def _stat(path: str, **kw: object) -> dict[str, object] | None:
+        result = real_stat(path, **kw)
+        if result is not None:
+            result["last_writer_address"] = "current-writer:2126"
+        return result
+
+    monkeypatch.setattr(real_fs, "sys_stat", _stat)
+    monkeypatch.setattr(
+        real_fs,
+        "list_mounts",
+        lambda context=None: [{"mount_point": "/files"}],
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_cas_read(
+        mount_point: str,
+        zone_id: str,
+        content_id: str,
+        *,
+        origins: list[str] | None = None,
+    ) -> bytes:
+        captured["origins"] = list(origins or [])
+        return payload
+
+    real_kernel = real_fs._kernel
+
+    class _KernelProxy:
+        cas_read = staticmethod(_fake_cas_read)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(real_kernel, name)
+
+    monkeypatch.setattr(real_fs, "_kernel", _KernelProxy())
+
+    # Snapshot entry whose original_metadata records the original-writer.
+    snap_svc = MagicMock()
+    snap_svc.get_transaction = AsyncMock(return_value=SimpleNamespace(zone_id="root"))
+    snap_svc.list_entries = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                path="/files/recorded_origin.bin",
+                original_hash=original_hash,
+                new_hash="0" * 64,  # post-write hash; irrelevant
+                original_metadata=_json.dumps({"last_writer_address": "original-writer:2126"}),
+            )
+        ]
+    )
+
+    app = FastAPI()
+    router = create_async_files_router(nexus_fs=real_fs)
+    app.state.transactional_snapshot_service = snap_svc
+    app.include_router(router)
+    app.dependency_overrides[get_auth_result] = lambda: {
+        "authenticated": True,
+        "user_id": "e2e-user",
+        "groups": [],
+        "zone_id": "root",
+        "is_admin": True,
+    }
+    client = TestClient(app)
+
+    resp = client.get(
+        "/read",
+        params={
+            "path": "/files/recorded_origin.bin",
+            "version": original_hash,
+            "transaction_id": "txn-stub",
+            "encoding": "base64",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    # Recorded original writer comes first; current writer is appended as a
+    # fallback. De-dup must not drop either, and the recorded one must lead.
+    assert captured["origins"] == [
+        "original-writer:2126",
+        "current-writer:2126",
+    ], captured

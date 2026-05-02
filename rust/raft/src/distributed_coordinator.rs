@@ -797,29 +797,42 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
                 .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
             self.install_apply_cb_for_zone(kernel, zone_id);
 
+            // 1-voter zone — campaign immediately so this node is the
+            // leader for the AddNode proposals below.  Without an
+            // explicit campaign, raft-rs waits a full election_tick
+            // (~100 ms) before self-voting, and any propose_conf_change
+            // in that window returns NotLeader.
+            let zone_handle = zm
+                .get_zone(zone_id)
+                .ok_or_else(|| format!("create_zone({zone_id}): just-created zone not visible"))?;
+            let consensus = zone_handle.consensus_node();
+            let campaign_fut = consensus.campaign();
+            let campaign_result = if tokio::runtime::Handle::try_current().is_ok() {
+                tokio::task::block_in_place(|| runtime.block_on(campaign_fut))
+            } else {
+                runtime.block_on(campaign_fut)
+            };
+            campaign_result.map_err(|e| format!("create_zone({zone_id}) campaign: {e}"))?;
+
             // Auto-invite witness voters present in NEXUS_PEERS.  The
             // witness's id is hostname-derived (well-known per F3) so
             // the leader can address it directly without waiting for
             // JoinZone.  Without this, witness never receives raft
             // traffic for new federation zones (its ConfState lacks
-            // them) and the cluster loses witness quorum-1 quorum
+            // them) and the cluster loses witness's quorum-1
             // protection on every dynamically-created zone.
             //
             // If the witness is unreachable at create time the AddNode
             // still commits (1-voter quorum on this leader) but the
             // resulting 2-voter ConfState raises quorum-required to
-            // 2/2 until witness comes up — the same exposure as the
-            // OLD hostname-deterministic ConfState bootstrap had, so
-            // operationally equivalent.
+            // 2/2 until witness comes up — same exposure as the OLD
+            // hostname-deterministic ConfState bootstrap, operationally
+            // equivalent.
             let root_peers = registry.get_peers("root").unwrap_or_default();
             for peer in root_peers.values() {
                 if !peer.hostname.to_ascii_lowercase().starts_with("witness") {
                     continue;
                 }
-                let Some(zone_handle) = zm.get_zone(zone_id) else {
-                    break;
-                };
-                let consensus = zone_handle.consensus_node();
                 let address_bytes = peer.endpoint.as_bytes().to_vec();
                 let fut = consensus.propose_conf_change(
                     raft::eraftpb::ConfChangeType::AddNode,

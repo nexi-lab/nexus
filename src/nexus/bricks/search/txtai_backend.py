@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import threading
 import time
 import weakref
@@ -28,6 +29,31 @@ logger = logging.getLogger(__name__)
 
 _RERANK_MAX_CHARS = 800
 _RERANK_MAX_WORDS = 128
+
+# Page-BM25 cost guards (Issue #3980). Each retained query term issues one
+# tsquery + ts_headline scan over ``documents``. Without a cap, a long
+# natural-language query can fan out into dozens of full-document scans;
+# without a per-statement timeout, a runaway scan can pin a worker thread.
+_PAGE_BM25_MAX_TERMS = 8
+_PAGE_BM25_STATEMENT_TIMEOUT_MS = 750
+# Hard upper bound on rows per term, so a caller that passes a giant batch
+# ``limit`` can't force massive sorts/result materialization in the
+# documents table before downstream trimming.
+_PAGE_BM25_PER_TERM_HARD_LIMIT = 200
+# Backoff between failed index-ensure attempts. Long enough that a transient
+# pool/auth blip doesn't burn cycles re-trying every search, short enough
+# that a fixed environment recovers quickly.
+_PAGE_BM25_INDEX_RETRY_S = 60.0
+# Postgres advisory-lock key for the index ensure path. Serializes
+# probe/drop/create across every Nexus process pointed at the same DB,
+# so multi-pod deployments don't drop each other's in-progress
+# CREATE INDEX CONCURRENTLY builds. Fixed signed-int64 constant so
+# every Nexus process picks the same key (must fit in bigint).
+_PAGE_BM25_INDEX_ADVISORY_LOCK_KEY = 3980_3925_2026_0501  # int64-safe
+# Concurrency cap for batch page-BM25 fan-out. Sized to the engine pool
+# (2 connections + 2 overflow) so we don't queue more in-flight legs than
+# the pool can serve — avoids worker-thread starvation under bulk load.
+_PAGE_BM25_BATCH_CONCURRENCY = 4
 
 # Issue #3980: floor for the candidate pool when page-aggregation is on. The
 # rare-phrase chunk that should rank a page in the top-5 can land at chunk-rank
@@ -142,6 +168,8 @@ class TxtaiBackend:
         data_path: str | None = None,
         page_aggregation: bool = True,
         chunks_per_page: int = 2,
+        page_bm25: bool = True,
+        page_bm25_rrf_k: int = 60,
     ) -> None:
         self._database_url = database_url
         self._model = model
@@ -160,6 +188,43 @@ class TxtaiBackend:
         # ``_aggregate_chunks_to_pages`` for the algorithm.
         self._page_aggregation = page_aggregation
         self._chunks_per_page = max(1, int(chunks_per_page))
+        # Page-level BM25 leg (Issue #3980 follow-up): chunk-level BM25 dilutes
+        # rare-phrase signals because tsvector tokenization splits "40 Under 40"
+        # across chunks and ts_rank's AND semantics zero docs missing any one
+        # term ("mention"). The page leg fans out per-term page lookups, RRF
+        # fuses them, and folds the result into the final ranking — same idea
+        # as gbrain's vector+grep+RRF baseline but with proper BM25.
+        self._page_bm25 = page_bm25
+        self._page_bm25_rrf_k = max(1, int(page_bm25_rrf_k))
+        # Lazy SQLAlchemy engine for page-BM25 SQL (avoids re-creating per
+        # call). Guarded by a lock so concurrent first-search races don't
+        # leak a losing Engine — the loser must observe the cached value
+        # under the lock instead of creating its own.
+        self._page_bm25_engine: Any = None
+        self._page_bm25_engine_lock = threading.Lock()
+        # Cross-loop concurrency limiter: bounds *all* in-flight page-BM25
+        # legs (single + batch, every loop, every worker thread) to the
+        # engine pool size. ``threading.BoundedSemaphore`` works across
+        # event loops where ``asyncio.Semaphore`` does not — important
+        # because the codebase supports multi-loop use and the SQL work
+        # itself runs inside ``asyncio.to_thread``.
+        self._page_bm25_thread_sem = threading.BoundedSemaphore(_PAGE_BM25_BATCH_CONCURRENCY)
+        # Backend-wide per-loop asyncio semaphore. Bounds the *number of
+        # ``asyncio.to_thread`` dispatches in flight at once* across every
+        # request on a given loop — without this, N concurrent batches
+        # can each dispatch _PAGE_BM25_BATCH_CONCURRENCY workers before
+        # any global cap kicks in, starving the shared default executor.
+        # Same per-loop weak-keyed pattern as ``_get_lock``.
+        self._page_bm25_async_sems: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, asyncio.Semaphore
+        ] = weakref.WeakKeyDictionary()
+        # Tracks whether the GIN expression index has been ensured so we
+        # don't re-issue ``CREATE INDEX IF NOT EXISTS`` on every call.
+        # Only set true on a *confirmed* create or detected pre-existing
+        # index — transient failures retry with backoff.
+        self._page_bm25_index_ready = False
+        self._page_bm25_index_lock = threading.Lock()
+        self._page_bm25_index_last_attempt = 0.0
         # Path for txtai config.json — needed for pgvector persistence.
         # txtai stores index metadata (dimensions, offset) in a local file
         # and reads it back on load() to reconnect to pgvector tables.
@@ -559,6 +624,13 @@ class TxtaiBackend:
                 await self._run_native(self._save)
                 await self._run_native(self._embeddings.close)
                 self._embeddings = None
+            # Dispose the page-BM25 SQLAlchemy engine so its connection pool
+            # returns to PostgreSQL on lifespan shutdown. Without this,
+            # repeated daemon lifespans accumulate idle backends.
+            if self._page_bm25_engine is not None:
+                with contextlib.suppress(Exception):
+                    self._page_bm25_engine.dispose()
+                self._page_bm25_engine = None
             self._started = False
         logger.info("txtai backend shut down")
 
@@ -889,6 +961,23 @@ class TxtaiBackend:
                 reverse=True,
             )
 
+        # Issue #3980: page-BM25 leg. RRF-fuse a per-term page-level BM25
+        # ranking with the chunk-aggregated ranking above. Recovers rare-phrase
+        # docs that lose at chunk granularity (e.g. "40 Under 40" → adam-lee-19)
+        # without relying on a single-pass tsquery whose AND semantics zero
+        # docs missing one query term.
+        if self._page_bm25 and search_type == "hybrid":
+            page_rrf, page_snippets = await self._search_page_bm25(
+                query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit
+            )
+            if page_rrf:
+                ranked_rows = _fuse_chunks_with_page_rrf(
+                    ranked_rows,
+                    page_rrf,
+                    k=self._page_bm25_rrf_k,
+                    page_snippets=page_snippets,
+                )
+
         results: list[BaseSearchResult] = []
         for r in ranked_rows:
             score = float(r.get("score", 0.0))
@@ -913,6 +1002,426 @@ class TxtaiBackend:
             results = results[:limit]
 
         return results
+
+    def _get_page_bm25_engine(self) -> Any:
+        """Lazily build a SQLAlchemy engine for the page-BM25 leg.
+
+        Double-checked locking: callers concurrently hitting the cold path
+        will all serialize on ``_page_bm25_engine_lock`` and observe the
+        first winner's cached engine — no losing engine is constructed and
+        leaked on a parallel race.
+        """
+        if self._page_bm25_engine is not None:
+            return self._page_bm25_engine
+        if not self._database_url:
+            return None
+        with self._page_bm25_engine_lock:
+            if self._page_bm25_engine is not None:
+                return self._page_bm25_engine
+            try:
+                from sqlalchemy import create_engine
+
+                self._page_bm25_engine = create_engine(
+                    self._database_url,
+                    pool_size=2,
+                    max_overflow=2,
+                    pool_pre_ping=True,
+                    # Fail fast if the pool is saturated — paired with the
+                    # backend-wide semaphore, this turns overload into a
+                    # quick fail-open at the leg level rather than a
+                    # blocked worker thread holding a request hostage.
+                    pool_timeout=2,
+                )
+            except Exception:
+                logger.warning("Failed to initialize page-BM25 engine", exc_info=True)
+                return None
+            return self._page_bm25_engine
+
+    def _get_page_bm25_async_sem(self) -> asyncio.Semaphore:
+        """Backend-wide per-loop semaphore that bounds in-flight legs.
+
+        Acquired *before* ``asyncio.to_thread`` is scheduled so concurrent
+        requests can't pile up worker dispatches faster than the engine
+        pool can serve them. The threading semaphore inside
+        ``_run_page_bm25_sql`` remains a cross-loop last-resort guard.
+        """
+        loop = asyncio.get_running_loop()
+        for dead in [k for k in list(self._page_bm25_async_sems) if k.is_closed()]:
+            self._page_bm25_async_sems.pop(dead, None)
+        sem = self._page_bm25_async_sems.get(loop)
+        if sem is None:
+            sem = self._page_bm25_async_sems.setdefault(
+                loop, asyncio.Semaphore(_PAGE_BM25_BATCH_CONCURRENCY)
+            )
+        return sem
+
+    # Catalog probe: confirms the GIN index exists *and* is valid + ready
+    # *and* attached to ``documents``. Name-only checks against ``pg_indexes``
+    # can be fooled by an invalid index left behind by a failed CONCURRENTLY
+    # build (``indisvalid=false``), or by a same-name index on a different
+    # table. We require ``indisvalid`` + ``indisready`` so the leg only runs
+    # when the index can actually accelerate scans.
+    _INDEX_VALID_PROBE_SQL = (
+        "SELECT 1 FROM pg_class c "
+        "JOIN pg_index i ON i.indexrelid = c.oid "
+        "JOIN pg_class t ON t.oid = i.indrelid "
+        "WHERE c.relname = 'idx_documents_text_fts' "
+        "AND t.relname = 'documents' "
+        "AND i.indisvalid AND i.indisready "
+        "LIMIT 1"
+    )
+    # Detects an invalid same-name index that would cause CREATE INDEX
+    # CONCURRENTLY IF NOT EXISTS to no-op forever. Postgres leaves an
+    # invalid index behind when CONCURRENTLY fails mid-build (e.g. dead
+    # tuple violation, network blip). We need to DROP it before retry.
+    _INDEX_INVALID_PROBE_SQL = (
+        "SELECT 1 FROM pg_class c "
+        "JOIN pg_index i ON i.indexrelid = c.oid "
+        "JOIN pg_class t ON t.oid = i.indrelid "
+        "WHERE c.relname = 'idx_documents_text_fts' "
+        "AND t.relname = 'documents' "
+        "AND NOT (i.indisvalid AND i.indisready) "
+        "LIMIT 1"
+    )
+
+    def _ensure_page_bm25_index(self, engine: Any) -> bool:
+        """Idempotently ensure a usable GIN index for the page-BM25 query plan.
+
+        Returns ``True`` once the index is confirmed valid + ready in
+        ``pg_index`` (so callers can gate the leg). Without this, the
+        leg's ``to_tsvector(data->>'text')`` queries fall back to
+        full-table scans — fine on a 240-doc corpus, fatal at scale.
+
+        Concurrency-safe and recoverable:
+
+        - A ``threading.Lock`` serializes ensure attempts so the first
+          cold call wins and others observe the result without re-issuing
+          DDL.
+        - Index creation runs on a *separate* AUTOCOMMIT connection; the
+          caller's search connection is never held while the DDL runs,
+          so concurrent legs don't deadlock on pool checkout.
+        - Catalog probe (``_INDEX_VALID_PROBE_SQL``) checks
+          ``pg_index.indisvalid`` + ``indisready`` and the parent table —
+          a stale invalid index from a failed prior build does *not*
+          mark the index ready. Transient failures back off
+          ``_PAGE_BM25_INDEX_RETRY_S`` and retry.
+        - ``CONCURRENTLY`` avoids the ACCESS EXCLUSIVE lock on
+          ``documents`` so first-search index builds don't block
+          concurrent writes on large corpora.
+        """
+        if self._page_bm25_index_ready:
+            return True
+        now = time.monotonic()
+        # Skip noisy retries — back off if a recent attempt just failed.
+        if (now - self._page_bm25_index_last_attempt) < _PAGE_BM25_INDEX_RETRY_S:
+            return False
+        # Serialize: only one thread/coroutine ensures at a time. Use
+        # try-acquire so concurrent callers move on (their leg returns
+        # False and falls back to no-op rather than full-scan).
+        if not self._page_bm25_index_lock.acquire(blocking=False):
+            return False
+        try:
+            if self._page_bm25_index_ready:
+                return True
+            self._page_bm25_index_last_attempt = now
+            from sqlalchemy import text as sa_text
+
+            # Cross-process serialization via Postgres advisory lock: in
+            # multi-pod deployments two Nexus processes can both see the
+            # same not-yet-valid index and race to drop it. Holding the
+            # advisory lock makes one waiter observe the *winner's*
+            # validated index when it re-probes. ``pg_try_advisory_lock``
+            # returns immediately so a held lock just defers the work to
+            # the next call rather than blocking the request thread.
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as adv:
+                got_lock = adv.execute(
+                    sa_text("SELECT pg_try_advisory_lock(:k)"),
+                    {"k": _PAGE_BM25_INDEX_ADVISORY_LOCK_KEY},
+                ).scalar()
+                if not got_lock:
+                    logger.debug(
+                        "Another process holds the page-BM25 index "
+                        "advisory lock; deferring ensure to next call"
+                    )
+                    return False
+                try:
+                    # Catalog check first — index may already exist from
+                    # a prior run, operator action, or a peer process
+                    # that just finished building under our advisory lock.
+                    valid = adv.execute(sa_text(self._INDEX_VALID_PROBE_SQL)).scalar()
+                    if valid:
+                        self._page_bm25_index_ready = True
+                        logger.debug("page-BM25 GIN index already valid + ready")
+                        return True
+                    # Recovery path: a *failed* prior CONCURRENTLY leaves
+                    # an invalid same-name index behind. We must
+                    # distinguish that from an in-progress build — an
+                    # active build appears in ``pg_stat_progress_create_index``
+                    # (PG12+) and dropping it would corrupt a peer's work.
+                    in_progress = False
+                    try:
+                        in_progress = bool(
+                            adv.execute(
+                                sa_text(
+                                    "SELECT 1 FROM pg_stat_progress_create_index "
+                                    "WHERE index_relid = ("
+                                    "  SELECT c.oid FROM pg_class c "
+                                    "  JOIN pg_index i ON i.indexrelid = c.oid "
+                                    "  JOIN pg_class t ON t.oid = i.indrelid "
+                                    "  WHERE c.relname = 'idx_documents_text_fts' "
+                                    "  AND t.relname = 'documents' LIMIT 1) "
+                                    "LIMIT 1"
+                                )
+                            ).scalar()
+                        )
+                    except Exception:
+                        # PG <12 or view unavailable — assume not in progress.
+                        in_progress = False
+                    if in_progress:
+                        logger.info(
+                            "Peer process is building idx_documents_text_fts; "
+                            "page-BM25 leg will skip until next retry"
+                        )
+                        return False
+                    invalid = adv.execute(sa_text(self._INDEX_INVALID_PROBE_SQL)).scalar()
+                    if invalid:
+                        logger.warning(
+                            "Found stale invalid idx_documents_text_fts "
+                            "(failed prior CREATE INDEX CONCURRENTLY, no "
+                            "active build); dropping before retry"
+                        )
+                        adv.execute(
+                            sa_text("DROP INDEX CONCURRENTLY IF EXISTS idx_documents_text_fts")
+                        )
+                    # Create on the same AUTOCOMMIT connection
+                    # (CONCURRENTLY cannot run inside a transaction).
+                    adv.execute(
+                        sa_text(
+                            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+                            "idx_documents_text_fts "
+                            "ON documents USING GIN ("
+                            "to_tsvector('english', data->>'text'))"
+                        )
+                    )
+                    created = adv.execute(sa_text(self._INDEX_VALID_PROBE_SQL)).scalar()
+                    if created:
+                        self._page_bm25_index_ready = True
+                        logger.info("page-BM25 GIN index created + valid (idx_documents_text_fts)")
+                        return True
+                    logger.warning(
+                        "page-BM25 GIN index DDL ran but index not "
+                        "valid/ready; page-BM25 leg will skip until next retry"
+                    )
+                    return False
+                finally:
+                    with contextlib.suppress(Exception):
+                        adv.execute(
+                            sa_text("SELECT pg_advisory_unlock(:k)"),
+                            {"k": _PAGE_BM25_INDEX_ADVISORY_LOCK_KEY},
+                        )
+        except Exception:
+            logger.warning(
+                "page-BM25 GIN index creation failed; page-BM25 leg will skip until next retry",
+                exc_info=True,
+            )
+            return False
+        finally:
+            self._page_bm25_index_lock.release()
+
+    def _run_page_bm25_sql(
+        self,
+        terms: list[str],
+        *,
+        zone_id: str,
+        path_filter: str | None,
+        limit: int,
+    ) -> tuple[dict[str, float], dict[str, str]]:
+        """Per-term page-level FTS lookups + RRF fusion (sync, runs in thread).
+
+        For each term: ``ts_rank_cd`` over ``documents.data->>'text'`` filtered
+        by zone+path, top-N rows. RRF-fuse the per-term path rankings, and
+        collect a ``ts_headline``-style snippet per path so callers can
+        hydrate page-only hits with usable context (otherwise the API
+        returns blank ``chunk_text`` for recovered pages and downstream
+        rerankers/LLMs see nothing).
+
+        Phrase tokens (multi-word) use ``phraseto_tsquery`` so the literal
+        sequence must match; bare words use ``websearch_to_tsquery`` so
+        stems get normalized.
+
+        Returns:
+            (rrf_scores, snippets) — both keyed by document path.
+        """
+        if not terms:
+            return {}, {}
+        # Bound the per-query DB cost: a long natural-language query that
+        # survives stopword filtering can still produce many terms, and each
+        # term issues one full-document FTS scan. Cap at the highest-IDF
+        # signal terms (quoted phrases first, kept in input order).
+        if len(terms) > _PAGE_BM25_MAX_TERMS:
+            terms = terms[:_PAGE_BM25_MAX_TERMS]
+        engine = self._get_page_bm25_engine()
+        if engine is None:
+            return {}, {}
+        from sqlalchemy import text as sa_text
+
+        # Per-term cap. Smaller than the outer fetch_limit because RRF only
+        # cares about the top of each list — most signal lives in the first
+        # 20-30 positions and ``k=60`` makes deeper positions contribute
+        # diminishingly little. Also clamped to a hard upper bound so a
+        # caller can't force unbounded sort/materialization work on the
+        # documents table by passing an oversized batch ``limit``.
+        per_term_limit = min(_PAGE_BM25_PER_TERM_HARD_LIMIT, max(20, int(limit)))
+        rankings: list[list[str]] = []
+        snippets: dict[str, str] = {}
+        # Cross-loop capacity guard: bounds the *number of worker threads
+        # actively executing the leg* across all event loops to the engine
+        # pool size. Times out fast on overload so the leg fails open
+        # rather than parking a thread on pool checkout.
+        if not self._page_bm25_thread_sem.acquire(timeout=2.0):
+            logger.debug("page-BM25 capacity guard timed out — degrading leg")
+            return {}, {}
+        # Ensure the GIN expression index exists *and is usable* before
+        # running the leg. Without a valid index, the leg's tsvector
+        # queries fall back to full-table scans — at scale that's worse
+        # than skipping the leg entirely. Runs before checking out the
+        # per-search connection so the DDL path can't deadlock against
+        # in-flight legs holding pool slots.
+        if not self._ensure_page_bm25_index(engine):
+            self._page_bm25_thread_sem.release()
+            return {}, {}
+        try:
+            with engine.connect() as conn:
+                # Per-statement timeout via Postgres SET LOCAL — applies
+                # to every query in this connection's implicit transaction.
+                # Caps a runaway full-document scan at
+                # ``_PAGE_BM25_STATEMENT_TIMEOUT_MS`` rather than blocking
+                # a worker indefinitely.
+                def _apply_timeout() -> None:
+                    with contextlib.suppress(Exception):
+                        conn.execute(
+                            sa_text(
+                                f"SET LOCAL statement_timeout = "
+                                f"'{_PAGE_BM25_STATEMENT_TIMEOUT_MS}ms'"
+                            )
+                        )
+
+                _apply_timeout()
+                for term in terms:
+                    tsquery_fn = "phraseto_tsquery" if " " in term else "websearch_to_tsquery"
+                    where_extra = ""
+                    params: dict[str, Any] = {
+                        "term": term,
+                        "zone": zone_id,
+                        "k": per_term_limit,
+                    }
+                    if path_filter:
+                        # Escape ``%``/``_``/``\`` in the user-supplied prefix
+                        # so a path like ``/data/100%_files`` matches literally
+                        # instead of acting as a wildcard pattern. The explicit
+                        # ESCAPE clause pairs with ``_escape_like_pattern``.
+                        where_extra = " AND (data->>'path') LIKE :path_pattern ESCAPE '\\'"
+                        params["path_pattern"] = f"{_escape_like_pattern(path_filter)}%"
+                    # ``ts_headline`` builds a short matching-fragment snippet
+                    # so page-only hits surface usable context downstream.
+                    sql = sa_text(
+                        f"""
+                        SELECT
+                            data->>'path' AS path,
+                            ts_headline(
+                                'english',
+                                data->>'text',
+                                {tsquery_fn}('english', :term),
+                                'MaxFragments=1, MaxWords=35, MinWords=15, '
+                                'ShortWord=2, FragmentDelimiter=" ... "'
+                            ) AS snippet
+                        FROM documents
+                        WHERE
+                            (data->>'zone_id') = :zone
+                            {where_extra}
+                            AND to_tsvector('english', data->>'text')
+                                @@ {tsquery_fn}('english', :term)
+                        ORDER BY ts_rank_cd(
+                            to_tsvector('english', data->>'text'),
+                            {tsquery_fn}('english', :term)
+                        ) DESC
+                        LIMIT :k
+                        """
+                    )
+                    try:
+                        rows = conn.execute(sql, params).all()
+                    except Exception:
+                        logger.debug("page-BM25 term query failed: %r", term, exc_info=True)
+                        # A statement_timeout (or any error) leaves the
+                        # implicit transaction aborted — subsequent
+                        # ``conn.execute`` calls would all raise
+                        # InFailedSqlTransaction and silently drop
+                        # later high-signal terms. Roll back so the
+                        # connection is usable again, then re-apply
+                        # the per-statement timeout (SET LOCAL is
+                        # transaction-scoped and got cleared by the
+                        # rollback).
+                        with contextlib.suppress(Exception):
+                            conn.rollback()
+                        _apply_timeout()
+                        continue
+                    term_paths: list[str] = []
+                    for r in rows:
+                        if not r.path:
+                            continue
+                        term_paths.append(r.path)
+                        # Keep the first snippet seen for each path — earlier
+                        # terms are more likely to be the rare-phrase signal.
+                        if r.path not in snippets and r.snippet:
+                            snippets[r.path] = r.snippet
+                    rankings.append(term_paths)
+        finally:
+            self._page_bm25_thread_sem.release()
+        return _rrf_fuse_paths(rankings, k=self._page_bm25_rrf_k), snippets
+
+    async def _search_page_bm25(
+        self,
+        query: str,
+        *,
+        zone_id: str,
+        path_filter: str | None,
+        limit: int,
+    ) -> tuple[dict[str, float], dict[str, str]]:
+        """Async wrapper: run the per-term page-BM25 + RRF fusion in a thread.
+
+        Returns ``(rrf_scores, snippets)`` keyed by document path. Empty
+        when the leg is disabled, no DB url is available, the query
+        contains no usable terms, OR the page-BM25 SQL fails (e.g.
+        Postgres unavailable, pool checkout timeout). Fail-open is the
+        contract: this is an *additive* leg, so a transient backend
+        outage must not turn an otherwise-usable txtai hybrid result
+        into a request failure.
+        """
+        if not self._page_bm25 or not self._database_url:
+            return {}, {}
+        terms = _split_query_terms(query)
+        if not terms:
+            return {}, {}
+        # Two-tier capacity cap:
+        #   1. Backend-wide per-loop ``asyncio.Semaphore`` *before*
+        #      ``asyncio.to_thread`` so concurrent requests don't pile up
+        #      worker dispatches faster than the engine pool can serve.
+        #   2. Cross-loop ``threading.BoundedSemaphore`` inside
+        #      ``_run_page_bm25_sql`` — last-resort guard for multi-loop
+        #      deployments (asyncio sems are loop-bound).
+        sem = self._get_page_bm25_async_sem()
+        try:
+            async with sem:
+                return await asyncio.to_thread(
+                    self._run_page_bm25_sql,
+                    terms,
+                    zone_id=zone_id,
+                    path_filter=path_filter,
+                    limit=limit,
+                )
+        except Exception:
+            logger.debug("page-BM25 leg failed (degrading to no-op)", exc_info=True)
+            return {}, {}
 
     async def batch_search(
         self,
@@ -977,8 +1486,37 @@ class TxtaiBackend:
         # Issue #3900: dedupe by id so hybrid BM25+dense rows don't surface
         # the same chunk twice; sort by score and slice to the per-query
         # limit so over-fetched candidates are trimmed to the caller's ask.
+        # Issue #3980: pre-compute all hybrid page-BM25 legs in bounded
+        # parallel — batch_search is a bulk endpoint, so we cap the in-flight
+        # legs to the engine pool size to prevent worker-thread starvation.
+        # Each leg is also fail-soft: if the page query throws, we return
+        # the empty fusion so the raw txtai batch results still surface.
+        page_bm25_results: list[tuple[dict[str, float], dict[str, str]]] = [
+            ({}, {}) for _ in queries
+        ]
+        if self._page_bm25:
+            # Backend-wide cap lives inside ``_search_page_bm25`` (via
+            # ``_get_page_bm25_async_sem``), so concurrent batch requests
+            # share one global limiter instead of each getting their own.
+            # gather with return_exceptions=True is a belt-and-suspenders
+            # guard for anything that escapes the per-leg fail-open.
+            async def _leg(spec: dict[str, Any]) -> tuple[dict[str, float], dict[str, str]]:
+                if str(spec.get("type", "hybrid")) != "hybrid":
+                    return ({}, {})
+                return await self._search_page_bm25(
+                    str(spec.get("q", "")),
+                    zone_id=zone_id,
+                    path_filter=spec.get("path"),
+                    limit=int(spec.get("limit", 10)),
+                )
+
+            raw_legs = await asyncio.gather(*(_leg(q) for q in queries), return_exceptions=True)
+            page_bm25_results = [leg if isinstance(leg, tuple) else ({}, {}) for leg in raw_legs]
+
         all_results: list[list[BaseSearchResult]] = []
-        for raw, q_limit in zip(raw_results, per_query_limits, strict=True):
+        for raw, q_limit, _q_spec, (page_rrf, page_snippets) in zip(
+            raw_results, per_query_limits, queries, page_bm25_results, strict=True
+        ):
             deduped_rows = _dedupe_search_rows(raw, page_aggregation=self._page_aggregation)
             # Issue #3980: page-level aggregation for batch path too.
             if self._page_aggregation:
@@ -991,6 +1529,13 @@ class TxtaiBackend:
                     deduped_rows,
                     key=lambda r: float(r.get("score", 0.0)),
                     reverse=True,
+                )
+            if page_rrf:
+                ranked_rows = _fuse_chunks_with_page_rrf(
+                    ranked_rows,
+                    page_rrf,
+                    k=self._page_bm25_rrf_k,
+                    page_snippets=page_snippets,
                 )
             results: list[BaseSearchResult] = [
                 BaseSearchResult(
@@ -1291,6 +1836,250 @@ def _aggregate_chunks_to_pages(
     for _page_score, page_chunks in ranked_pages:
         out.extend(page_chunks[:chunks_per_page])
     return out
+
+
+# Lightweight stopword set for query tokenization. Goal: drop noise tokens that
+# would otherwise dominate per-term BM25 lookups (e.g. "mention" in
+# "Who has a 40 under 40 mention?"). Kept short — Postgres' english config
+# already strips canonical FTS stopwords inside ``websearch_to_tsquery``; this
+# list catches conversational/interrogative filler that survives FTS.
+_QUERY_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "else",
+        "of",
+        "for",
+        "to",
+        "in",
+        "on",
+        "at",
+        "by",
+        "with",
+        "from",
+        "as",
+        "this",
+        "that",
+        "these",
+        "those",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "where",
+        "when",
+        "why",
+        "how",
+        "do",
+        "does",
+        "did",
+        "doing",
+        "have",
+        "has",
+        "had",
+        "having",
+        "i",
+        "me",
+        "my",
+        "we",
+        "us",
+        "our",
+        "you",
+        "your",
+        "they",
+        "them",
+        "their",
+        "it",
+        "its",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "any",
+        "all",
+        "some",
+        "tell",
+        "about",
+        "mention",
+        "mentioned",
+        "describe",
+        "described",
+        "said",
+        "say",
+        "says",
+        "told",
+        "thing",
+        "things",
+    }
+)
+
+
+def _escape_like_pattern(value: str) -> str:
+    """Escape SQL LIKE metacharacters so user-supplied prefixes match literally.
+
+    Without this, a path filter like ``/data/100%_files`` would treat ``%``
+    and ``_`` as wildcards and pull rows from sibling paths that don't
+    actually share the requested prefix. The returned string is intended to
+    be used with an explicit ``ESCAPE '\\'`` clause.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _split_query_terms(query: str) -> list[str]:
+    """Split a natural-language query into per-term retrieval units.
+
+    Quoted phrases are preserved as a single unit so the page-BM25 leg can
+    look them up with phrase semantics. Bare words in ``_QUERY_STOPWORDS``
+    are dropped (conversational filler that would otherwise dominate the
+    per-term RRF). Short tokens are *kept* when numeric or all-caps so rare
+    acronyms ("MEV", "SOC") and numerals ("40") survive — these are exactly
+    the high-IDF tokens the page leg exists to recover.
+    """
+    if not query:
+        return []
+    phrases = re.findall(r'"([^"]+)"', query)
+    rest = re.sub(r'"[^"]+"', " ", query)
+    words: list[str] = []
+    for raw in re.findall(r"[A-Za-z0-9][A-Za-z0-9\-]*", rest):
+        lower = raw.lower()
+        if lower in _QUERY_STOPWORDS:
+            continue
+        # Keep short tokens when they look like rare-phrase signal: digits,
+        # all-caps acronyms (>=2 chars), or hyphenated identifiers. Drop
+        # short generic words like "is", "to", "by" that survived the
+        # stopword set.
+        if len(raw) < 3:
+            is_numeric = raw.isdigit()
+            is_acronym = raw.isupper() and len(raw) >= 2
+            if not (is_numeric or is_acronym):
+                continue
+        words.append(raw)
+    seen: set[str] = set()
+    out: list[str] = []
+    for term in [*phrases, *words]:
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+    return out
+
+
+def _fuse_chunks_with_page_rrf(
+    chunk_rows: list[dict[str, Any]],
+    page_rrf: dict[str, float],
+    *,
+    k: int,
+    page_snippets: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Fuse a chunk-aggregated ranking with a page-level RRF map.
+
+    Treats both inputs as page rankings. The chunk ranking's page rank comes
+    from the position of its first chunk per path. Computes RRF on the chunk
+    side and sums with the supplied page-BM25 RRF score, then re-orders the
+    chunk rows to follow the fused page order while keeping each page's
+    chunks contiguous (preserving the chunks-per-page payload).
+
+    Page-only hits (paths in ``page_rrf`` but absent from ``chunk_rows``)
+    are surfaced with the matching ``ts_headline`` snippet from
+    ``page_snippets`` when available, so the API response carries usable
+    context for downstream rerankers/LLMs instead of an empty string.
+    """
+    snippets = page_snippets or {}
+    if not chunk_rows:
+        # Nothing from the dense/chunk-BM25 leg — fall back to page-BM25
+        # ranking with a synthetic chunk row per page so the caller can
+        # still surface the page (with its matching-fragment snippet).
+        return [
+            {"id": path, "path": path, "text": snippets.get(path, ""), "score": score}
+            for path, score in sorted(page_rrf.items(), key=lambda kv: kv[1], reverse=True)
+        ]
+
+    chunk_page_first_pos: dict[str, int] = {}
+    chunks_by_page: dict[str, list[dict[str, Any]]] = {}
+    page_order: list[str] = []
+    for pos, row in enumerate(chunk_rows):
+        path = row.get("path") or row.get("id") or ""
+        path = str(path)
+        if path not in chunk_page_first_pos:
+            chunk_page_first_pos[path] = pos
+            page_order.append(path)
+        chunks_by_page.setdefault(path, []).append(row)
+
+    fused_score: dict[str, float] = {}
+    for path, pos in chunk_page_first_pos.items():
+        fused_score[path] = 1.0 / (k + pos + 1)
+    for path, score in page_rrf.items():
+        fused_score[path] = fused_score.get(path, 0.0) + score
+        if path not in chunks_by_page:
+            # Page-only hit (no chunk match). Synthesize a chunk-shaped row
+            # carrying the ts_headline snippet so downstream consumers see
+            # real context rather than an empty string.
+            chunks_by_page[path] = [
+                {
+                    "id": path,
+                    "path": path,
+                    "text": snippets.get(path, ""),
+                    "score": 0.0,
+                }
+            ]
+            page_order.append(path)
+
+    page_order.sort(key=lambda p: fused_score.get(p, 0.0), reverse=True)
+
+    # Stamp the fused score onto each row so downstream consumers that re-sort
+    # by ``score`` (clients that aggregate chunks → pages on their side) honor
+    # the new ranking instead of falling back to the original chunk score.
+    # Use (fused_page_score, then per-chunk decay) so chunks within a page
+    # keep their relative order without crossing page boundaries.
+    out: list[dict[str, Any]] = []
+    n_pages = len(page_order)
+    # Per-chunk decay must be smaller than the gap between consecutive pages'
+    # fused scores — n_pages**2 in the denominator gives plenty of headroom
+    # even for hundreds of pages.
+    decay = 1.0 / (max(n_pages, 1) ** 2)
+    for path in page_order:
+        page_chunks = chunks_by_page.get(path, [])
+        for chunk_idx, row in enumerate(page_chunks):
+            row["score"] = fused_score.get(path, 0.0) - chunk_idx * decay
+            out.append(row)
+    return out
+
+
+def _rrf_fuse_paths(
+    rankings: list[list[str]],
+    *,
+    k: int,
+) -> dict[str, float]:
+    """Reciprocal Rank Fusion over per-term path rankings.
+
+    Each ranking is a list of paths in descending relevance order. The fused
+    score for a path is the sum of ``1 / (k + rank)`` over rankings that
+    contain it (rank is 1-based). Returns a ``{path: score}`` map; callers
+    sort as needed.
+    """
+    fused: dict[str, float] = {}
+    for ranking in rankings:
+        for pos, path in enumerate(ranking):
+            if not path:
+                continue
+            fused[path] = fused.get(path, 0.0) + 1.0 / (k + pos + 1)
+    return fused
 
 
 def _stamp_zone_id(documents: list[dict[str, Any]], zone_id: str) -> list[dict[str, Any]]:

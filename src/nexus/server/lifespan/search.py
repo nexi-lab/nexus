@@ -162,6 +162,19 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     "Invalid NEXUS_SEARCH_CHUNKS_PER_PAGE=%r — falling back to 2",
                     _chunks_per_page_env,
                 )
+        # Page-level BM25 leg (Issue #3980 follow-up). Default on.
+        _page_bm25_env = os.environ.get("NEXUS_SEARCH_PAGE_BM25", "true")
+        _page_bm25 = _page_bm25_env.strip().lower() not in ("false", "0", "no")
+        _page_bm25_rrf_k_env = os.environ.get("NEXUS_SEARCH_PAGE_BM25_RRF_K", "")
+        _page_bm25_rrf_k = 60
+        if _page_bm25_rrf_k_env:
+            try:
+                _page_bm25_rrf_k = max(1, int(_page_bm25_rrf_k_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid NEXUS_SEARCH_PAGE_BM25_RRF_K=%r — falling back to 60",
+                    _page_bm25_rrf_k_env,
+                )
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
@@ -180,6 +193,8 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             in ("true", "1", "yes"),
             page_aggregation=_page_aggregation,
             chunks_per_page=_chunks_per_page,
+            page_bm25=_page_bm25,
+            page_bm25_rrf_k=_page_bm25_rrf_k,
         )
 
         # Inject async_session_factory from RecordStoreABC when available

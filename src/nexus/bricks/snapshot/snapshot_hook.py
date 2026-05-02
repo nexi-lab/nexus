@@ -52,6 +52,12 @@ class SnapshotWriteHook:
                 "size": old.size,
                 "version": old.version,
                 "modified_at": old.modified_at.isoformat() if old.modified_at else None,
+                # Capture the address of the node that last wrote the
+                # *pre-mutation* content so historical reads of
+                # ``original_hash`` after a cross-node overwrite can scatter-
+                # gather chunks from the original writer rather than the
+                # current one (Issue #3989, codex r8).
+                "last_writer_address": old.last_writer_address,
             }
         self._svc.track_write(
             txn_id,
@@ -72,10 +78,14 @@ class SnapshotWriteHook:
         # backend_name/physical_path were dropped from FileMetadata; the
         # kernel resolves a file's physical location at read time via the
         # mount/route layer, so the snapshot only needs content_id + path-level
-        # facts to restore a file from CAS.
+        # facts to restore a file from CAS. ``last_writer_address`` is
+        # preserved so post-delete historical reads of the snapshot hash
+        # can still scatter-gather from the writer's node when local
+        # chunks are missing (Issue #3989, codex r8).
         metadata_snapshot: dict[str, Any] = {
             "size": meta.size,
             "version": meta.version,
             "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
+            "last_writer_address": meta.last_writer_address,
         }
         self._svc.track_delete(txn_id, ctx.path, snapshot_hash, metadata_snapshot)

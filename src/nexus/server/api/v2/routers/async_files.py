@@ -27,6 +27,7 @@ All operations pass user context for permission enforcement.
 
 import asyncio
 import base64
+import functools
 import json
 import logging
 from collections.abc import AsyncIterator, Iterator
@@ -244,6 +245,24 @@ def _metadata_timestamp(meta: Any, name: str) -> str | None:
     return str(value)
 
 
+def _encode_read_payload(
+    raw: str | bytes,
+    encoding: str | None,
+) -> tuple[str, str | None]:
+    """Encode read payload for the response based on the requested ``encoding``.
+
+    Returns ``(content_str, encoding_field)`` where ``encoding_field`` is set
+    on the response so SDKs can detect the format. ``encoding=None`` keeps
+    the legacy lossy UTF-8 string behavior for backward compat (Issue #3989).
+    """
+    if encoding == "base64":
+        raw_bytes = raw.encode("utf-8") if isinstance(raw, str) else raw
+        return base64.b64encode(raw_bytes).decode("ascii"), "base64"
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace"), None
+    return raw, None
+
+
 def _to_metadata_response(meta: Any, fallback_path: str) -> "MetadataResponse":
     is_directory = _metadata_field(
         meta,
@@ -289,6 +308,7 @@ class ReadResponse(BaseModel):
     """Response model for read operation."""
 
     content: str
+    encoding: str | None = None
     content_id: str | None = None
     version: int | None = None
     modified_at: str | None = None
@@ -792,6 +812,13 @@ def create_async_files_router(
             None,
             description="(Markdown only) Filter by block type within section: 'code' or 'table'",
         ),
+        encoding: str | None = Query(
+            None,
+            description=(
+                "Response content encoding. 'base64' returns raw bytes losslessly; "
+                "default UTF-8 string (lossy for non-text) preserved for backward compat."
+            ),
+        ),
         zone: str | None = Query(
             None,
             description="Override zone (must be in token's zone_set).",
@@ -812,6 +839,15 @@ def create_async_files_router(
         `path` in that transaction, preventing cross-path blob reads.
         """
         context = _apply_zone_override(context, zone, auth_result, required_perm="r")
+        if encoding is not None and encoding not in ("base64", "utf8", "utf-8"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported encoding {encoding!r}; supported: 'base64', 'utf8'",
+            )
+        # Normalize utf8 alias to None (legacy default) so response.encoding
+        # is only set when the caller explicitly requested base64.
+        if encoding in ("utf8", "utf-8"):
+            encoding = None
         try:
             fs = await _get_fs()
 
@@ -839,46 +875,184 @@ def create_async_files_router(
                     )
                 # --- Validate hash belongs to path in this transaction ---
                 _entries = await _snap_svc.list_entries(transaction_id)
-                _valid = any(
-                    e.path == path and (e.original_hash == version or e.new_hash == version)
-                    for e in _entries
-                )
-                if not _valid:
+                _matched_entry: Any = None
+                _matched_side: str | None = None  # "original" or "new"
+                for _e in _entries:
+                    if _e.path != path:
+                        continue
+                    if _e.original_hash == version:
+                        _matched_entry, _matched_side = _e, "original"
+                        break
+                    if _e.new_hash == version:
+                        _matched_entry, _matched_side = _e, "new"
+                        break
+                if _matched_entry is None:
                     raise HTTPException(
                         status_code=403,
                         detail=f"version is not recorded for this path in transaction {transaction_id!r}",
                     )
                 # --- Enforce standard read authorization via the VFS path ---
-                try:
-                    _accessible = fs.access(path, context=context)
-                except NexusPermissionError as e:
-                    raise HTTPException(status_code=403, detail=str(e)) from e
-                if not _accessible:
-                    raise NexusFileNotFoundError(path)
-                # --- Gate on CAS-capable backend via sys_stat ---
-                _py_kernel_stat = getattr(fs, "_kernel", None)
-                if _py_kernel_stat is not None:
-                    _stat_d = _py_kernel_stat.sys_stat(path, "root")
-                    _bn = (
-                        (_stat_d.get("backend_name", "") if isinstance(_stat_d, dict) else "")
-                        if _stat_d
-                        else ""
-                    )
-                    if _bn and not _bn.startswith("cas"):
-                        raise HTTPException(
-                            status_code=422,
-                            detail=(
-                                f"Historical version reads are only supported on CAS-addressed backends; "
-                                f"backend for {path!r} does not support content-addressed history"
-                            ),
-                        )
-                # Read via kernel — Rust backend handles CAS read.
+                # For *delete* entries the live path no longer exists, so
+                # ``fs.access`` would reject every historical read of a
+                # deleted snapshot — even though the bytes are still in
+                # CAS. Skipping ``access`` would also drop the file-level
+                # READ ACL gate (the only place that runs READ permission
+                # hooks for that path), so a caller who never had file
+                # READ permission could otherwise recover deleted content
+                # via the snapshot endpoint (Issue #3989, codex r10).
+                # Compromise: keep the carve-out only for admins, who are
+                # the intended rollback consumers. Regular callers must
+                # use a write-side snapshot or get a 404 for the
+                # missing live path.
+                _entry_op = getattr(_matched_entry, "operation", None)
+                _is_admin = bool(getattr(context, "is_admin", False))
+                _skip_access = _entry_op == "delete" and _is_admin
+                if not _skip_access:
+                    try:
+                        _accessible = fs.access(path, context=context)
+                    except NexusPermissionError as e:
+                        raise HTTPException(status_code=403, detail=str(e)) from e
+                    if not _accessible:
+                        raise NexusFileNotFoundError(path)
                 _py_kernel = getattr(fs, "_kernel", None)
                 if _py_kernel is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")
-                raw: bytes = await asyncio.to_thread(_py_kernel.sys_read_raw, path, "root")
-                text_v = raw.decode("utf-8", errors="replace")
-                resp_v = ReadResponse(content=text_v, content_id=version)
+
+                # Use the validated caller zone for all kernel calls — the
+                # snapshot/transaction check above already proved the caller
+                # is authorized for this zone. Hard-coding "root" would route
+                # the read through the wrong mount table for non-root zones
+                # and turn this into a privilege-escalation TOCTOU window
+                # (Issue #3989, codex r3).
+                _caller_zone_kernel = _caller_zone or "root"
+
+                # Resolve the mount that owns ``path`` so we can issue a real
+                # content-addressed read via the Rust kernel. Longest-prefix
+                # match against the caller's visible mount table; the root
+                # mount ("/") is always a valid candidate so files under a
+                # root-only deployment still take the cas_read path.
+                _mount_point: str | None = None
+                try:
+                    _mount_entries = fs.list_mounts(context=context)
+                    _candidates = sorted(
+                        (m["mount_point"] for m in _mount_entries if m.get("mount_point")),
+                        key=len,
+                        reverse=True,
+                    )
+                    for _mp in _candidates:
+                        _mp_norm = _mp.rstrip("/") or "/"
+                        # Root mount matches every absolute path; non-root
+                        # mounts match only if ``path`` equals the mount or
+                        # is a descendant. Without the root special-case,
+                        # production deployments that mount at ``/`` would
+                        # silently skip cas_read for every historical read
+                        # (Issue #3989, codex r4).
+                        if _mp_norm == "/" or path == _mp_norm or path.startswith(_mp_norm + "/"):
+                            _mount_point = _mp_norm
+                            break
+                except Exception:
+                    _mount_point = None
+
+                # Historical reads are CAS-only. ``cas_read`` keys the
+                # lookup by ``content_id`` at the backend, which is the
+                # only safe way to bind the returned bytes to the
+                # requested ``version`` — including for CDC-chunked
+                # content where reassembled-byte hash != manifest hash.
+                # A live-path fallback ``sys_read_raw`` was tempting for
+                # the "live cid == version" case, but is unsound under an
+                # ABA race (writer flips A→B→A between pre-stat and
+                # read; we'd serve B labeled as A). When cas_read fails
+                # we return 410 — the backend either lacks CAS or has
+                # GC'd the revision (Issue #3989, codex r5).
+                if _mount_point is None or not hasattr(_py_kernel, "cas_read"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Historical version reads require a CAS-capable mount; "
+                            f"no such mount resolved for {path!r}."
+                        ),
+                    )
+
+                # Plumb federation origin hints into ``cas_read`` so chunked
+                # manifests whose blocks live on a peer node (replication
+                # window not yet closed, or peer-only origin) can still
+                # scatter-gather. The hash we're reading was either captured
+                # *before* the in-flight transaction (``original_hash``) or
+                # produced *by* it (``new_hash``); a different node may own
+                # each side, so we collect both candidates:
+                #
+                # 1. If the entry's serialized ``original_metadata`` carries
+                #    a writer address (from the pre-write snapshot), prefer
+                #    it for ``original_hash`` reads — that's the node that
+                #    last produced the *recorded* bytes.
+                # 2. The path's current ``last_writer_address`` is appended
+                #    as a fallback. For ``new_hash`` (post-write) it is the
+                #    direct producer; for ``original_hash`` it is still a
+                #    plausible peer if replication has fanned out at all.
+                #
+                # Origin hints affect *fetch reachability* only — every
+                # fetched chunk is BLAKE3-verified before composition, so
+                # stale/wrong/duplicate addresses can never cause us to
+                # serve corrupt bytes (Issue #3989, codex r6/r7).
+                _origins: list[str] = []
+
+                def _push_origin(addr: object) -> None:
+                    if not isinstance(addr, str):
+                        return
+                    s = addr.strip()
+                    if s and s not in _origins:
+                        _origins.append(s)
+
+                if _matched_side == "original":
+                    _orig_meta_raw = getattr(_matched_entry, "original_metadata", None)
+                    if isinstance(_orig_meta_raw, str) and _orig_meta_raw:
+                        try:
+                            _orig_meta = json.loads(_orig_meta_raw)
+                        except (TypeError, ValueError):
+                            _orig_meta = None
+                    elif isinstance(_orig_meta_raw, dict):
+                        _orig_meta = _orig_meta_raw
+                    else:
+                        _orig_meta = None
+                    if isinstance(_orig_meta, dict):
+                        _push_origin(_orig_meta.get("last_writer_address"))
+                        _push_origin(_orig_meta.get("writer_address"))
+
+                try:
+                    _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
+                    _push_origin((_stat or {}).get("last_writer_address"))
+                except Exception:
+                    pass
+
+                try:
+                    raw = await asyncio.to_thread(
+                        functools.partial(
+                            _py_kernel.cas_read,
+                            _mount_point,
+                            _caller_zone_kernel,
+                            version,
+                            origins=_origins,
+                        )
+                    )
+                except Exception as cas_err:
+                    logger.debug(
+                        "cas_read(%s, %s, %s, origins=%s) failed: %s",
+                        _mount_point,
+                        _caller_zone_kernel,
+                        version,
+                        _origins,
+                        cas_err,
+                    )
+                    raise HTTPException(
+                        status_code=410,
+                        detail=(
+                            f"Historical version {version!r} no longer retrievable at {path!r}: "
+                            "the backend lacks CAS support or this revision has been garbage collected."
+                        ),
+                    ) from cas_err
+
+                content_v, enc_v = _encode_read_payload(raw, encoding)
+                resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)
                 return Response(
                     content=resp_v.model_dump_json(),
                     media_type="application/json",
@@ -922,21 +1096,25 @@ def create_async_files_router(
                 if section and path.endswith(".md"):
                     partial = _md_partial_read(fs, path, connector_content, section, block_type)
                     if partial is not None:
+                        partial_str, partial_enc = _encode_read_payload(partial, encoding)
                         return Response(
-                            content=ReadResponse(content=partial).model_dump_json(),
+                            content=ReadResponse(
+                                content=partial_str, encoding=partial_enc
+                            ).model_dump_json(),
                             media_type="application/json",
                         )
-                text = connector_content.decode("utf-8", errors="replace")
+                content_str, enc_str = _encode_read_payload(connector_content, encoding)
                 if include_metadata:
                     resp = ReadResponse(
-                        content=text,
+                        content=content_str,
+                        encoding=enc_str,
                         content_id=None,
                         version=None,
                         modified_at=None,
                         size=len(connector_content),
                     )
                 else:
-                    resp = ReadResponse(content=text)
+                    resp = ReadResponse(content=content_str, encoding=enc_str)
                 return Response(
                     content=resp.model_dump_json(),
                     media_type="application/json",
@@ -958,8 +1136,11 @@ def create_async_files_router(
 
                 partial = _md_partial_read(fs, path, raw_content, section, block_type)
                 if partial is not None:
+                    partial_str, partial_enc = _encode_read_payload(partial, encoding)
                     return Response(
-                        content=ReadResponse(content=partial).model_dump_json(),
+                        content=ReadResponse(
+                            content=partial_str, encoding=partial_enc
+                        ).model_dump_json(),
                         media_type="application/json",
                     )
                 # Section explicitly requested but not found — don't leak full doc.
@@ -970,12 +1151,12 @@ def create_async_files_router(
                 )
 
             if include_metadata and isinstance(result, dict):
-                file_content: str = result["content"]
-                if isinstance(file_content, bytes):
-                    file_content = file_content.decode("utf-8", errors="replace")
+                raw_content_md = result["content"]
+                file_content, enc_md = _encode_read_payload(raw_content_md, encoding)
 
                 response_data = ReadResponse(
                     content=file_content,
+                    encoding=enc_md,
                     content_id=result.get("content_id"),
                     version=result.get("version"),
                     modified_at=result.get("modified_at"),
@@ -989,20 +1170,20 @@ def create_async_files_router(
                 )
             else:
                 # Simple content response
-                plain: str = (
-                    result
-                    if isinstance(result, str)
-                    else (
-                        result.decode("utf-8", errors="replace")
-                        if isinstance(result, bytes)
-                        else str(result)
-                    )
-                )
+                if isinstance(result, (str, bytes)):
+                    plain, enc_plain = _encode_read_payload(result, encoding)
+                else:
+                    plain, enc_plain = _encode_read_payload(str(result), encoding)
                 return Response(
-                    content=ReadResponse(content=plain).model_dump_json(),
+                    content=ReadResponse(content=plain, encoding=enc_plain).model_dump_json(),
                     media_type="application/json",
                 )
 
+        except HTTPException:
+            # Preserve explicit HTTP status codes (e.g., 400 transaction_id
+            # required, 410 hash mismatch) — don't let the catch-all below
+            # rewrite them as 500.
+            raise
         except AuthenticationError:
             # Preserve structured re-auth signal (see /list handler above).
             raise

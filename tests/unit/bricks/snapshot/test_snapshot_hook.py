@@ -27,6 +27,7 @@ def _make_meta(**overrides: object) -> MagicMock:
     meta.size = overrides.get("size", 1024)
     meta.version = overrides.get("version", 3)
     meta.modified_at = overrides.get("modified_at", datetime(2026, 1, 1, tzinfo=UTC))
+    meta.last_writer_address = overrides.get("last_writer_address")
     return meta
 
 
@@ -69,9 +70,30 @@ class TestOnPostWrite:
                 "size": 1024,
                 "version": 3,
                 "modified_at": "2026-01-01T00:00:00+00:00",
+                "last_writer_address": None,
             },
             "new-hash",
         )
+
+    def test_captures_pre_write_writer_address(
+        self, hook: SnapshotWriteHook, mock_svc: MagicMock
+    ) -> None:
+        """Capture the original writer's address with ``original_metadata``
+        so historical reads of ``original_hash`` after a cross-node
+        overwrite can scatter-gather chunks from the original writer
+        rather than just the current one (Issue #3989, codex r8)."""
+        mock_svc.is_tracked.return_value = "txn-x"
+        old = _make_meta(last_writer_address="original-writer:2126")
+        ctx = WriteHookContext(
+            path="/file.txt",
+            content=b"data",
+            context=None,
+            old_metadata=old,
+            content_id="new-hash",
+        )
+        hook.on_post_write(ctx)
+        captured_meta = mock_svc.track_write.call_args.args[3]
+        assert captured_meta["last_writer_address"] == "original-writer:2126"
 
     def test_skips_when_no_transaction(self, hook: SnapshotWriteHook, mock_svc: MagicMock) -> None:
         mock_svc.is_tracked.return_value = None
@@ -128,8 +150,23 @@ class TestOnPostDelete:
                 "size": 1024,
                 "version": 3,
                 "modified_at": "2026-01-01T00:00:00+00:00",
+                "last_writer_address": None,
             },
         )
+
+    def test_captures_pre_delete_writer_address(
+        self, hook: SnapshotWriteHook, mock_svc: MagicMock
+    ) -> None:
+        """Pre-delete ``last_writer_address`` must be captured so a
+        post-delete historical read of the snapshot hash can scatter-gather
+        chunks from the writer's node when local chunks are missing
+        (Issue #3989, codex r8)."""
+        mock_svc.is_tracked.return_value = "txn-y"
+        meta = _make_meta(last_writer_address="writer-7:2126")
+        ctx = DeleteHookContext(path="/file.txt", context=None, metadata=meta)
+        hook.on_post_delete(ctx)
+        captured_meta = mock_svc.track_delete.call_args.args[3]
+        assert captured_meta["last_writer_address"] == "writer-7:2126"
 
     def test_skips_when_no_transaction(self, hook: SnapshotWriteHook, mock_svc: MagicMock) -> None:
         mock_svc.is_tracked.return_value = None

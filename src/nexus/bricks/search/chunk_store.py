@@ -10,6 +10,20 @@ from typing import Any
 from sqlalchemy import text
 
 
+def _strip_null_bytes(value: str | None) -> str | None:
+    """Strip NUL (0x00) bytes — Postgres TEXT/VARCHAR rejects them (SQLSTATE 22021).
+
+    Defensive last-line-of-defense before INSERT. Upstream readers normally
+    sanitize via ``_sanitize_for_index``, but the indexing pipeline has
+    several entry points (mutation resolver, RPC PipelineIndexer fallback,
+    naive-chunk fallback) and any leak would put the asyncpg session into
+    PendingRollbackError until the worker recycles (Issue #3989).
+    """
+    if value is None or "\x00" not in value:
+        return value
+    return value.replace("\x00", "")
+
+
 @dataclass(frozen=True)
 class ChunkRecord:
     """Normalized document chunk row payload."""
@@ -77,14 +91,14 @@ class ChunkStore:
             "chunk_id": str(uuid.uuid4()),
             "path_id": path_id,
             "chunk_index": index,
-            "chunk_text": chunk.chunk_text,
+            "chunk_text": _strip_null_bytes(chunk.chunk_text),
             "chunk_tokens": chunk.chunk_tokens,
             "start_offset": chunk.start_offset,
             "end_offset": chunk.end_offset,
             "line_start": chunk.line_start,
             "line_end": chunk.line_end,
             "embedding_model": chunk.embedding_model,
-            "chunk_context": chunk.chunk_context,
+            "chunk_context": _strip_null_bytes(chunk.chunk_context),
             "chunk_position": chunk.chunk_position,
             "source_document_id": chunk.source_document_id,
             "created_at": now,

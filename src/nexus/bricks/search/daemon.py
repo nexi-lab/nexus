@@ -1624,7 +1624,28 @@ class SearchDaemon:
         from nexus.contracts.constants import ROOT_ZONE_ID
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
-        count = int(await self._backend.upsert(documents, zone_id=effective_zone_id))
+
+        # Strip NUL bytes from EVERY string in the document tree, not just
+        # top-level fields — txtai persists the full document object and
+        # nested metadata (e.g. {"metadata": {"title": "a\x00b"}}) would
+        # otherwise leak NULs into Postgres TEXT and reproduce the
+        # PendingRollbackError this fix is closing (Issue #3989, codex r2).
+        def _scrub(value: Any) -> Any:
+            if isinstance(value, str):
+                return value.replace("\x00", "") if "\x00" in value else value
+            if isinstance(value, dict):
+                # Scrub keys AND values — txtai persists the full document
+                # object, so a NUL-bearing metadata key would still poison
+                # Postgres TEXT/JSON storage (codex r4, finding 3).
+                return {_scrub(k): _scrub(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_scrub(v) for v in value]
+            if isinstance(value, tuple):
+                return tuple(_scrub(v) for v in value)
+            return value
+
+        scrubbed: list[dict[str, Any]] = [_scrub(doc) for doc in documents]
+        count = int(await self._backend.upsert(scrubbed, zone_id=effective_zone_id))
         if count:
             self.stats.last_index_refresh = time.time()
         return count
@@ -2978,6 +2999,14 @@ class SearchDaemon:
                 if not content:
                     logger.debug("No content found for %s", path)
                     continue
+
+                # Scrub NUL bytes — PG TEXT rejects them (SQLSTATE 22021) and
+                # this legacy refresh path bypasses MutationResolver's central
+                # scrub (Issue #3989). Done once here so every downstream
+                # consumer below (BM25S, embedding pipeline, naive FTS chunks,
+                # txtai batch) sees clean content.
+                if "\x00" in content:
+                    content = content.replace("\x00", "")
 
                 # Resolve path_id from file_paths table
                 path_id = virtual_path  # fallback

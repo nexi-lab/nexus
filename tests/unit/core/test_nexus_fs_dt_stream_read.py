@@ -50,11 +50,12 @@ class TestSysReadDtStream:
         kernel = MagicMock()
         # entry_type=4 selects the DT_STREAM branch.
         kernel.sys_read.return_value = SimpleNamespace(
-            entry_type=4, data=None, content_id=None, post_hook_needed=False
+            entry_type=4,
+            data=b"hello",
+            content_id=None,
+            post_hook_needed=False,
+            stream_next_offset=9,
         )
-        # Hot path: stream_read_at returns (data, next_offset); next_offset
-        # is `4-byte frame header + payload length` past the request offset.
-        kernel.stream_read_at.return_value = (b"hello", 9)
 
         fs = _StubFS(kernel)
         result = fs.sys_read("/s/test", offset=0)
@@ -63,24 +64,22 @@ class TestSysReadDtStream:
         # next_offset must equal 4 (frame header) + len(payload) past the
         # request offset, so a follow-up read at next_offset advances cleanly.
         assert result["next_offset"] == 4 + len(result["data"])
-        kernel.stream_read_at.assert_called_once_with("/s/test", 0)
-        kernel.stream_read_at_blocking.assert_not_called()
 
     def test_falls_back_to_blocking_read_when_stream_empty(self):
+        """Rust kernel handles blocking read end-to-end; Python just unpacks result."""
         kernel = MagicMock()
         kernel.sys_read.return_value = SimpleNamespace(
-            entry_type=4, data=None, content_id=None, post_hook_needed=False
+            entry_type=4,
+            data=b"world",
+            content_id=None,
+            post_hook_needed=False,
+            stream_next_offset=16,
         )
-        # Hot path returns None → wrapper blocks in Rust (GIL-free).
-        kernel.stream_read_at.return_value = None
-        kernel.stream_read_at_blocking.return_value = (b"world", 16)
 
         fs = _StubFS(kernel)
         result = fs.sys_read("/s/test", offset=7)
 
         assert result == {"data": b"world", "next_offset": 16}
-        kernel.stream_read_at.assert_called_once_with("/s/test", 7)
-        kernel.stream_read_at_blocking.assert_called_once_with("/s/test", 7, 30000)
 
     def test_dt_reg_path_still_returns_bytes(self):
         # Regression: the dict shape is gated on entry_type==4 (DT_STREAM)
@@ -88,7 +87,11 @@ class TestSysReadDtStream:
         # are not silently broken.
         kernel = MagicMock()
         kernel.sys_read.return_value = SimpleNamespace(
-            entry_type=1, data=b"file-bytes", content_id=None, post_hook_needed=False
+            entry_type=1,
+            data=b"file-bytes",
+            content_id=None,
+            post_hook_needed=False,
+            stream_next_offset=None,
         )
 
         fs = _StubFS(kernel)

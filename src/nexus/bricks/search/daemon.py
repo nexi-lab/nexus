@@ -2782,7 +2782,7 @@ class SearchDaemon:
                 continue
             await self._bm25s_index.index_document(
                 mutation.path_id,
-                mutation.event.path,
+                mutation.virtual_path,
                 mutation.content,
             )
 

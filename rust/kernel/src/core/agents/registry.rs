@@ -290,6 +290,15 @@ impl AgentNotify {
 
 // ── AgentRegistry ─────────────────────────────────────────────────────────
 
+/// Termination callback fired when an agent transitions to
+/// `Terminated` or is reaped out-of-band.
+///
+/// The callback receives the pid as a string slice.  Callbacks run
+/// inline on the thread that triggered the transition so they should
+/// be cheap; callers needing async work should hand off to a task.
+/// Panics propagate to the caller — keep callbacks panic-free.
+pub type OnTerminateCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Rust SSOT for agent lifecycle state.
 /// DashMap<pid, AgentDescriptor> for lock-free concurrent access; per-pid
 /// condvar wakes blocking waiters on state transitions.
@@ -302,6 +311,13 @@ pub struct AgentRegistry {
     /// here (not on `PyAgentRegistry`) so every wrapper handed out through
     /// `kernel.agent_registry` shares the same registration.
     provisioner: RwLock<Option<Py<PyAny>>>,
+    /// Termination observers — fired on `Terminated` transitions and on
+    /// `reap`.  Keyed by `id` so callers can deregister; the order in
+    /// which they fire is the order they were registered.  Used by
+    /// `ManagedAgentService` to reap `/proc/{pid}/workspace/` when an
+    /// agent is killed out-of-band (e.g. SIGKILL or orphan auto-reap)
+    /// without going through `cancel_session`.
+    on_terminate: RwLock<Vec<(String, OnTerminateCallback)>>,
 }
 
 fn now_ms() -> u64 {
@@ -318,6 +334,7 @@ impl AgentRegistry {
             agents: DashMap::new(),
             notify: DashMap::new(),
             provisioner: RwLock::new(None),
+            on_terminate: RwLock::new(Vec::new()),
         }
     }
 
@@ -336,6 +353,44 @@ impl AgentRegistry {
     /// provisioner has been bound.
     pub fn provisioner(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.provisioner.read().as_ref().map(|p| p.clone_ref(py))
+    }
+
+    /// Register a termination callback. Idempotent on `id`: a second
+    /// call with the same `id` replaces the prior callback. Used by
+    /// `ManagedAgentService` to chain workspace cleanup onto every
+    /// agent termination, including SIGKILL and orphan auto-reap.
+    pub fn register_on_terminate(&self, id: &str, callback: OnTerminateCallback) {
+        let mut guard = self.on_terminate.write();
+        if let Some(slot) = guard.iter_mut().find(|(k, _)| k == id) {
+            slot.1 = callback;
+        } else {
+            guard.push((id.to_string(), callback));
+        }
+    }
+
+    /// Drop a termination callback by `id`. Returns true if a callback
+    /// was registered under that name.
+    pub fn unregister_on_terminate(&self, id: &str) -> bool {
+        let mut guard = self.on_terminate.write();
+        let prev = guard.len();
+        guard.retain(|(k, _)| k != id);
+        guard.len() != prev
+    }
+
+    /// Fire every registered `on_terminate` callback for `pid`.
+    /// Snapshots the callback list under a read lock and drops the lock
+    /// before calling so callbacks can re-enter the registry without
+    /// deadlocking.
+    fn fire_on_terminate(&self, pid: &str) {
+        let snapshot: Vec<OnTerminateCallback> = self
+            .on_terminate
+            .read()
+            .iter()
+            .map(|(_, cb)| Arc::clone(cb))
+            .collect();
+        for cb in snapshot {
+            cb(pid);
+        }
     }
 
     /// Allocate a unique pid (uuid4 hex prefix). Bounded retry loop.
@@ -467,6 +522,13 @@ impl AgentRegistry {
 
     /// Reap a process: remove from table + clean up parent.children.
     /// Mirrors Python `_reap`. Idempotent — returns false if not found.
+    ///
+    /// Termination observers are NOT fired here — they fire on the
+    /// `update_state` transition to `Terminated` so cleanup happens at
+    /// the moment the agent is logically dead, even if reaping is
+    /// deferred (e.g. a child waiting for its parent).  By the time
+    /// `reap` runs the agent is already in `Terminated` and observers
+    /// have already done their work.
     pub fn reap(&self, pid: &str) -> bool {
         let desc = match self.unregister(pid) {
             Some(d) => d,
@@ -509,6 +571,9 @@ impl AgentRegistry {
         entry.updated_at_ms = now_ms();
         drop(entry);
         self.wake(pid);
+        if new_state == AgentState::Terminated && from != AgentState::Terminated {
+            self.fire_on_terminate(pid);
+        }
         Ok(true)
     }
 
@@ -536,6 +601,9 @@ impl AgentRegistry {
         entry.updated_at_ms = now_ms();
         drop(entry);
         self.wake(pid);
+        if new_state == AgentState::Terminated && from != AgentState::Terminated {
+            self.fire_on_terminate(pid);
+        }
         Ok(true)
     }
 
@@ -1017,6 +1085,72 @@ mod tests {
         let removed = reg.unregister("p1");
         assert!(removed.is_some());
         assert!(reg.get("p1").is_none());
+    }
+
+    #[test]
+    fn test_on_terminate_fires_on_state_transition() {
+        use std::sync::Mutex;
+        let reg = AgentRegistry::new();
+        reg.register(make_desc("p1", "a1"));
+        let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured2 = Arc::clone(&captured);
+        reg.register_on_terminate(
+            "test",
+            Arc::new(move |pid| captured2.lock().unwrap().push(pid.to_string())),
+        );
+        // Non-terminal transition does not fire.
+        reg.update_state("p1", AgentState::WarmingUp).unwrap();
+        assert!(captured.lock().unwrap().is_empty());
+        // Terminal transition fires once.
+        reg.update_state("p1", AgentState::Terminated).unwrap();
+        assert_eq!(captured.lock().unwrap().as_slice(), &["p1".to_string()]);
+        // Idempotent re-transition does not double-fire.
+        reg.update_state("p1", AgentState::Terminated).unwrap();
+        assert_eq!(captured.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_on_terminate_register_replace_and_unregister() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let reg = AgentRegistry::new();
+        reg.register(make_desc("p1", "a1"));
+        let calls_a: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
+        let calls_b: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
+        let calls_a2 = Arc::clone(&calls_a);
+        let calls_b2 = Arc::clone(&calls_b);
+        reg.register_on_terminate(
+            "obs",
+            Arc::new(move |_| {
+                calls_a2.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+        // Replace under the same id.
+        reg.register_on_terminate(
+            "obs",
+            Arc::new(move |_| {
+                calls_b2.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+        reg.update_state("p1", AgentState::Terminated).unwrap();
+        assert_eq!(calls_a.load(Ordering::SeqCst), 0);
+        assert_eq!(calls_b.load(Ordering::SeqCst), 1);
+        // Unregister + re-fire should produce no extra calls.
+        let p2 = reg
+            .spawn(
+                "n2".to_string(),
+                "u".to_string(),
+                "z".to_string(),
+                AgentKind::Managed,
+                None,
+                None,
+                "/".to_string(),
+                None,
+                HashMap::new(),
+            )
+            .unwrap();
+        assert!(reg.unregister_on_terminate("obs"));
+        reg.update_state(&p2.pid, AgentState::Terminated).unwrap();
+        assert_eq!(calls_b.load(Ordering::SeqCst), 1);
     }
 
     #[test]

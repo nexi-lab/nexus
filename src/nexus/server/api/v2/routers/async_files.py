@@ -27,6 +27,7 @@ All operations pass user context for permission enforcement.
 
 import asyncio
 import base64
+import functools
 import json
 import logging
 from collections.abc import AsyncIterator, Iterator
@@ -948,19 +949,42 @@ def create_async_files_router(
                             f"no such mount resolved for {path!r}."
                         ),
                     )
+
+                # Plumb a federation origin hint into ``cas_read`` so chunked
+                # manifests whose blocks live on the writer node (replication
+                # window not yet closed, or a peer-only origin) can still
+                # scatter-gather. ``last_writer_address`` from the path's
+                # current stat is the most likely peer to hold any remote-only
+                # chunk for this file's recorded versions; it's a hint only —
+                # ``cas_read`` BLAKE3-verifies every fetched chunk before
+                # composition, so a stale/wrong address can never cause us to
+                # serve corrupt bytes (Issue #3989, codex r6).
+                _origins: list[str] = []
+                try:
+                    _stat = await asyncio.to_thread(fs.sys_stat, path, context=context)
+                    _writer = (_stat or {}).get("last_writer_address")
+                    if isinstance(_writer, str) and _writer.strip():
+                        _origins = [_writer.strip()]
+                except Exception:
+                    _origins = []
+
                 try:
                     raw = await asyncio.to_thread(
-                        _py_kernel.cas_read,
-                        _mount_point,
-                        _caller_zone_kernel,
-                        version,
+                        functools.partial(
+                            _py_kernel.cas_read,
+                            _mount_point,
+                            _caller_zone_kernel,
+                            version,
+                            origins=_origins,
+                        )
                     )
                 except Exception as cas_err:
                     logger.debug(
-                        "cas_read(%s, %s, %s) failed: %s",
+                        "cas_read(%s, %s, %s, origins=%s) failed: %s",
                         _mount_point,
                         _caller_zone_kernel,
                         version,
+                        _origins,
                         cas_err,
                     )
                     raise HTTPException(

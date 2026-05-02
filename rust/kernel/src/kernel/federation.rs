@@ -46,6 +46,30 @@ impl Kernel {
         Arc::clone(&self.distributed_coordinator.read())
     }
 
+    /// Tier 3 kernel-module API: unmount a federation mount point.
+    ///
+    /// Used by `services::federation::FederationService::unmount` —
+    /// federation knows it's a DT_MOUNT, so the generic `sys_unlink`
+    /// dispatch (which has to find metadata first to discover entry
+    /// type) is unnecessary and fails on cold dcache because the
+    /// DT_MOUNT entry lives in the *parent* zone's metastore, not in
+    /// the routed (target) zone that `sys_unlink` queries first.
+    ///
+    /// Goes straight to `DriverLifecycleCoordinator::unmount` which is
+    /// the SSOT for the mount-lifecycle state machine: deletes the
+    /// DT_MOUNT row from the parent zone's metastore (raft-replicated;
+    /// followers fire `unwire_mount_core` via apply-cb), evicts the
+    /// dcache prefix, removes the entry from VFSRouter, and pops the
+    /// DLC mounts map.  Returns `true` when the route was actually
+    /// removed; `false` for already-unmounted (idempotent — matches
+    /// POSIX `umount` of a non-mounted path).
+    ///
+    /// Linux analogue: `EXPORT_SYMBOL` for `kern_unmount` — only
+    /// trusted in-tree modules call it.
+    pub fn unmount_federation(&self, mount_point: &str, target_zone: &str) -> bool {
+        self.dlc.unmount(self, mount_point, target_zone)
+    }
+
     /// Federation procfs: synthesise a `StatResult` for paths under the
     /// `/__sys__/zones/` virtual namespace.  Read-only — like Linux
     /// `/proc`, callers cannot create / remove a zone by writing to

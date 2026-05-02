@@ -21,13 +21,32 @@
 
 #[cfg(all(feature = "grpc", has_protos))]
 mod grpc_cluster {
-    use nexus_raft::raft::ZoneRaftRegistry;
+    use nexus_raft::raft::{RaftStorage, ZoneRaftRegistry};
     use nexus_raft::transport::{
         ClientConfig, NodeAddress, RaftApiClient, RaftGrpcServer, ServerConfig,
     };
+    use raft::eraftpb::ConfState;
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
+
+    /// Pre-seed a multi-voter `ConfState` into a node's persisted raft
+    /// storage, simulating the post-`AddNode` state that the production
+    /// JoinZone flow leaves behind.  Under the opaque-ID contract the
+    /// boot path bootstraps 1-voter only; multi-node tests that want
+    /// to exercise leader election + replication directly must commit
+    /// the membership state up front rather than relying on peer-list
+    /// seeding.
+    fn pre_seed_conf_state(zone_dir: &std::path::Path, voters: &[u64]) {
+        let raft_dir = zone_dir.join("raft");
+        std::fs::create_dir_all(&raft_dir).expect("create raft dir");
+        let storage = RaftStorage::open(&raft_dir).expect("open raft storage");
+        let cs = ConfState {
+            voters: voters.to_vec(),
+            ..Default::default()
+        };
+        storage.set_conf_state(&cs).expect("set conf state");
+    }
 
     /// Connect a RaftApiClient with zone_id = "default".
     async fn connect_client(
@@ -144,6 +163,12 @@ mod grpc_cluster {
                 bind_address: bind_addr,
                 ..Default::default()
             };
+
+            // Pre-seed the post-AddNode ConfState [1, 2, 3] so the
+            // create_zone call below takes the "preserve persisted
+            // membership" branch instead of bootstrapping 1-voter under
+            // the opaque-ID contract.
+            pre_seed_conf_state(&temp_dirs[i].path().join("default"), &[1, 2, 3]);
 
             // Create registry and register "default" zone (handles TransportLoop internally)
             let registry = Arc::new(ZoneRaftRegistry::new(

@@ -37,15 +37,18 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 
 # All tests share one Docker cluster -- run sequentially in a single xdist worker.
 #
-# Federation E2E is a known Raft-timing flake on loaded CI runners — the
-# 2-voter + 1-witness cluster spins through hundreds of elections without
-# settling on a leader, and tests that issue writes during that churn fail
-# with ``ZoneMetaStore.put: not leader, leader hint: None``. The same
-# failure pattern is reproducible on ``develop`` itself (see alternating
-# pass/fail history on origin/develop). The actual fix lives in
-# ``rust/raft/`` and is out of scope for PRs that don't touch the
-# transport layer. Set ``RUN_FEDERATION_E2E_FLAKY=1`` to opt in (e.g. for
-# someone landing a Raft change who wants the full coverage).
+# Federation E2E was a known Raft-timing flake on loaded CI runners.  The
+# opaque-ID + JoinZone bootstrap refactor (see
+# ``docs/rfcs/adr-raft-node-id-opaque.md``) replaces the
+# hostname-deterministic ConfState convergence pattern with a leader-driven
+# AddNode flow that should remove the election-churn failure mode.
+# Re-evaluate this gate by running ``RUN_FEDERATION_E2E_FLAKY=1 pytest …``
+# 3× locally; if all pass, drop the skip and re-enable for CI.
+#
+# Note: under the opaque-ID contract data-plane node IDs are random, so
+# ``_NODE_ID_TO_GRPC`` no longer resolves for redirect hints (the map is
+# best-effort — fall-through retries the original target).  Witness IDs
+# remain hostname-deterministic so the witness entry is still useful.
 pytestmark = [
     pytest.mark.xdist_group("federation-e2e"),
     pytest.mark.skipif(
@@ -3816,19 +3819,17 @@ class TestFreshJoinToRunningCluster:
     Reusing a node ID with wiped persistent state violates raft's
     identity-equals-log invariant.
 
-    ## Fix shape (this PR)
+    ## Fix shape (opaque-ID contract)
 
-    * ``RaftStorage`` persists a node-incarnation marker — fresh storage
-      mints a new incarnation; existing storage keeps the persisted one.
-    * ``node_id = compute_node_id(hostname, incarnation)`` — wipe-and-restart
-      mints a brand-new ID.
-    * ``ensure_voter_membership`` centralizes the bootstrap-vs-rotate
-      decision: if storage was just created AND a leader is reachable,
-      ask the leader to swap our old voter ID (looked up by hostname in
-      its peer map) for the new one via ConfChange Remove+Add through
-      the ``replace_voter_by_hostname`` RPC.  Cold start (no leader
-      reachable) falls through to standard bootstrap with the
-      default-incarnation ID so all nodes converge on the same voter set.
+    * ``node_id`` is an opaque random u64 minted at first boot, persisted
+      to ``<NEXUS_DATA_DIR>/.node_id``.  Wipe-and-restart mints a brand
+      new ID.
+    * ``bootstrap_or_join_root`` dispatch: empty storage + no
+      ``NEXUS_BOOTSTRAP_NEW`` flag loops on JoinZone RPC until a peer
+      accepts.  Leader proposes ``ConfChangeV2 AddNode(new_id)`` and
+      ``Progress[new_id].matched=0`` is written from scratch — heartbeats
+      with ``m.commit=0`` cannot trip the ``commit_to`` panic on a fresh
+      follower.
 
     ## What this test does
 
@@ -3840,8 +3841,8 @@ class TestFreshJoinToRunningCluster:
          entries written while it was down.
     """
 
-    # Order-LAST: this test wipes node-1's data dir and rotates its
-    # raft node ID via ReplaceVoterByHostname.  Federation zones
+    # Order-LAST: this test wipes node-1's data dir and rejoins under
+    # a fresh random raft node ID via JoinZone -> AddNode.  Federation zones
     # (corp, corp-eng, …) created at runtime by `federation_zones`
     # are NOT auto-rejoined on the wiped node — that requires a
     # follow-up "zone discovery on rejoin" feature out of this PR's
@@ -3919,12 +3920,12 @@ class TestFreshJoinToRunningCluster:
         #    appear in logs (covers both exited-due-to-panic and the
         #    soft-fail "running but unhealthy" path).
         panic_check_logs = ""
-        # 240s window — fresh-join refuses to boot until the live cluster
-        # commits a ReplaceVoter for node-1's stale voter ID. On constrained
-        # CI runners that propagation can take well past 60 s after the
-        # ``efbbbfe87`` retry fix, especially when corp-eng's witness is
-        # still draining post-restart MsgApp catch-up before it can ack
-        # the voter rotation entry.
+        # 240s window — fresh-join blocks on JoinZone RPC until the live
+        # cluster commits AddNode(new_id) for node-1's freshly-minted
+        # random ID. On constrained CI runners that propagation can take
+        # well past 60 s, especially when corp-eng's witness is still
+        # draining post-restart MsgApp catch-up before it can ack the
+        # AddNode entry.
         fresh_join_timeout = 240
         try:
             _wait_healthy([cluster["node1"]], timeout=fresh_join_timeout)

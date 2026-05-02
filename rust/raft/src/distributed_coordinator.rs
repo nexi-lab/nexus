@@ -391,6 +391,25 @@ fn bootstrap_or_join_root(
             let mut endpoint = peer.endpoint.clone();
             let mut redirected_once = false;
             loop {
+                // Order matters: register locally with skip_bootstrap
+                // FIRST so this node's gRPC server can serve append-
+                // entries from the leader once AddNode commits.
+                // Otherwise the leader's post-AddNode propose
+                // (i_links_count) hangs waiting for our quorum ack and
+                // times out the JoinZone RPC.  Local register is
+                // idempotent — calling it on every retry costs only a
+                // hashmap lookup.
+                if zm.get_zone("root").is_none() {
+                    let zone_peers = vec![peer.to_raft_peer_str()];
+                    if let Err(e) = zm.join_zone("root", zone_peers, /* learner */ false) {
+                        tracing::warn!(
+                            endpoint = %endpoint,
+                            error = %e,
+                            "local join_zone setup failed; will retry next peer",
+                        );
+                        break;
+                    }
+                }
                 let attempt = join_runtime.block_on(crate::transport::call_join_zone_rpc(
                     &endpoint,
                     "root",
@@ -401,15 +420,6 @@ fn bootstrap_or_join_root(
                 ));
                 match attempt {
                     Ok(result) if result.success => {
-                        // Leader committed AddNode — set up local replica
-                        // with skip_bootstrap=true so the snapshot installs
-                        // the authoritative ConfState.  We seed the
-                        // address book with the leader peer; further
-                        // members are learned from the snapshot's
-                        // ConfState + ConfChange context.
-                        let zone_peers = vec![peer.to_raft_peer_str()];
-                        zm.join_zone("root", zone_peers, /* learner */ false)
-                            .map_err(|e| format!("local join_zone(root): {e}"))?;
                         tracing::info!(
                             endpoint = %endpoint,
                             node_id,

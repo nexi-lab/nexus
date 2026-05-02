@@ -935,19 +935,17 @@ impl ZoneApiService for ZoneApiServiceImpl {
             .await
         {
             Ok(conf_state) => {
-                // Increment zone's i_links_count (Raft-replicated, atomic).
-                // AdjustCounter does read-modify-write in apply() — no lost updates.
-                // This runs on the leader, so the follower's join() can skip
-                // _increment_links() and avoid a Raft leader-only-write violation.
-                if let Err(e) = node
-                    .propose(Command::AdjustCounter {
-                        key: "__i_links_count__".to_string(),
-                        delta: 1,
-                    })
-                    .await
-                {
-                    tracing::warn!(zone = req.zone_id, "Failed to increment i_links_count: {e}");
-                }
+                // Note: under the OLD dynamic-bootstrap contract,
+                // JoinZone was synonymous with "the caller is mounting
+                // this zone", so the handler bumped `i_links_count`
+                // here.  Under the opaque-ID contract JoinZone is
+                // voter-membership only — `bootstrap_or_join_root` and
+                // the root-leader-gated `coordinator.create_zone`
+                // follower path call it for raft membership without a
+                // mount reference.  The mount-reference counter is
+                // maintained at the actual mount-creation site (the
+                // DT_MOUNT entry in the parent zone's metastore), not
+                // here, so JoinZone no longer touches it.
 
                 // Build ClusterConfig from the resulting ConfState + peer map
                 let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();

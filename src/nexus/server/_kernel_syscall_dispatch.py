@@ -149,6 +149,7 @@ def _build_kwargs(
 def _apply_result_adapter(
     method: str,
     raw_result: Any,
+    params: dict[str, Any],
 ) -> Any:
     """Re-shape NexusFS results into the wire format Tier 2 callers expect.
 
@@ -158,6 +159,11 @@ def _apply_result_adapter(
     Path-bearing dicts (sys_stat metadata, sys_readdir entries) get
     their internal ``/zone/<id>/...`` prefix stripped via
     ``unscope_internal_dict`` so RPC callers see user-facing paths.
+
+    ``params`` is the wire-form input dict — required for write
+    syscalls so we can compute ``bytes_written`` from the request
+    payload (``content`` / ``buf``) when the kernel returns just
+    ``None`` or the new metadata.
     """
     from nexus.server.path_utils import (
         unscope_internal_dict,
@@ -376,7 +382,7 @@ async def dispatch_kernel_syscall(
         else:
             raw_result = func(**kwargs)
 
-    result = _apply_result_adapter(method, raw_result)
+    result = _apply_result_adapter(method, raw_result, params)
 
     await _fire_event(subscription_manager, method, params, result, context)
 

@@ -480,6 +480,7 @@ class PySysWriteResult:
     old_modified_at_ms: int | None
 
 class AgentRegistry:
+    def __init__(self) -> None: ...
     def spawn(
         self,
         name: str,

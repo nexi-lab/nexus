@@ -221,6 +221,16 @@ impl PyAgentRegistry {
 
 #[pymethods]
 impl PyAgentRegistry {
+    /// Test-only constructor: build a standalone AgentRegistry not
+    /// bound to any kernel. Production callers reach the SSOT through
+    /// `kernel.agent_registry`.
+    #[new]
+    fn py_new() -> Self {
+        Self {
+            inner: Arc::new(AgentRegistry::new()),
+        }
+    }
+
     /// Number of registered agents.
     #[getter]
     fn count(&self) -> usize {

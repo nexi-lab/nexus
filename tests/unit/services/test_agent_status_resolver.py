@@ -7,8 +7,8 @@ See: src/nexus/services/agents/agent_status_resolver.py
 import json
 
 import pytest
+from nexus_runtime import AgentRegistry
 
-from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.agents.agent_status_resolver import AgentStatusResolver
 
 ZONE = "test-zone"

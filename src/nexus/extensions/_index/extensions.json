@@ -1,0 +1,71 @@
+{
+  "generated_at": "2026-05-01T03:57:57Z",
+  "manifests": [
+    {
+      "config_schema": null,
+      "consumes": [],
+      "description": "Per-mount access policy compiler service",
+      "factory": "create",
+      "import_probes": [],
+      "kind": "brick",
+      "metadata_complete": true,
+      "module": "nexus.bricks.access_manifest.brick_factory",
+      "name": "access_manifest",
+      "produces": [],
+      "profile_gate": null,
+      "result_key": "access_manifest_service",
+      "runtime_deps": [],
+      "tier": "independent"
+    },
+    {
+      "capabilities": [
+        "readme_doc"
+      ],
+      "config_mapping": {},
+      "config_schema": null,
+      "connection_args": {
+        "cache_ttl": {
+          "config_key": null,
+          "default": 300,
+          "description": "Default cache TTL in seconds",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "integer"
+        },
+        "include_comments": {
+          "config_key": null,
+          "default": true,
+          "description": "Include nested comments in story files",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "boolean"
+        },
+        "stories_per_feed": {
+          "config_key": null,
+          "default": 10,
+          "description": "Number of stories per feed (1-30)",
+          "env_var": null,
+          "required": false,
+          "secret": false,
+          "type": "integer"
+        }
+      },
+      "description": "Read-only HackerNews public API as a virtual filesystem",
+      "factory": "PathHNBackend",
+      "import_probes": [
+        "httpx"
+      ],
+      "kind": "connector",
+      "metadata_complete": true,
+      "module": "nexus.backends.connectors.hn.connector",
+      "name": "hn_connector",
+      "profile_gate": null,
+      "runtime_deps": [],
+      "service_name": "hackernews",
+      "user_scoped": false
+    }
+  ],
+  "schema_version": 1
+}

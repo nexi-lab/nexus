@@ -403,6 +403,7 @@ Issues = "https://github.com/nexi-lab/nexus/issues"
 [project.scripts]
 nexus = "nexus.cli:main"
 nexusd = "nexus.daemon:main"
+nexus-extensions-index = "nexus.extensions.index:_cli_entry"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
@@ -416,6 +417,7 @@ where = ["src"]
 "nexus.backends.connectors.gws" = ["configs/*.yaml"]
 "nexus.backends.connectors.github" = ["*.yaml"]
 "nexus.bricks.auth.daemon.templates" = ["*.plist.j2", "*.service.j2"]
+"nexus.extensions._index" = ["extensions.json"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

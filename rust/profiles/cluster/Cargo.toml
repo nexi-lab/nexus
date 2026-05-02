@@ -17,6 +17,12 @@ path = "src/main.rs"
 raft = { workspace = true, default-features = false, features = ["grpc"] }
 # Workspace contracts (ROOT_ZONE_ID, etc.)
 contracts = { workspace = true }
+# Kernel + the slimmest possible backends slice.  Cluster binary mounts
+# host-fs via PathLocalBackend at boot; nothing else compiled in.
+# `default-features = false` drops every other driver and the connector
+# HTTP stack so the binary stays at the sudowork target size.
+kernel = { workspace = true }
+backends = { workspace = true, default-features = false, features = ["driver-path-local"] }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }

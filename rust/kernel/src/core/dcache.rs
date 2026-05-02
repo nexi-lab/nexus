@@ -14,14 +14,18 @@ use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // ── Entry type constants (mirror proto/nexus/core/metadata.proto) ───────────
-pub(crate) const DT_REG: u8 = 0;
-pub(crate) const DT_DIR: u8 = 1;
-pub(crate) const DT_MOUNT: u8 = 2;
-pub(crate) const DT_PIPE: u8 = 3;
-pub(crate) const DT_STREAM: u8 = 4;
+//
+// `pub` so external Rust callers (`nexus-cluster`, integration tests)
+// can use the named constants in `Kernel::sys_setattr` arguments
+// instead of carrying integer literals around.
+pub const DT_REG: u8 = 0;
+pub const DT_DIR: u8 = 1;
+pub const DT_MOUNT: u8 = 2;
+pub const DT_PIPE: u8 = 3;
+pub const DT_STREAM: u8 = 4;
 #[allow(dead_code)]
-pub(crate) const DT_EXTERNAL_STORAGE: u8 = 5;
-pub(crate) const DT_LINK: u8 = 6;
+pub const DT_EXTERNAL_STORAGE: u8 = 5;
+pub const DT_LINK: u8 = 6;
 
 /// Hot-path projection of FileMetadata.
 #[derive(Clone, Debug, Default)]

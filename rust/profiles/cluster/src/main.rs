@@ -17,10 +17,15 @@
 //! consumed at daemon startup; share/join are operator escape hatches.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
+use kernel::abc::object_store::ObjectStore;
+use kernel::core::dcache::DT_MOUNT;
+use kernel::kernel::Kernel;
 
 use nexus_raft::federation::{parse_federation_env, ENV_FEDERATION_MOUNTS, ENV_FEDERATION_ZONES};
 use nexus_raft::transport::{bootstrap_tls, hostname_to_node_id};
@@ -70,6 +75,21 @@ struct CommonArgs {
     /// Disable TLS — plaintext gRPC for local testing only.
     #[arg(long, env = "NEXUS_NO_TLS", default_value_t = false, global = true)]
     no_tls: bool,
+
+    /// Host filesystem directory exposed as the cluster root mount.
+    /// `nexusd-cluster` mounts this path at `/` via `PathLocalBackend`
+    /// at boot so gRPC writes through DLC land on the host fs.
+    /// Defaults to `<data_dir>/root` for self-contained operation.
+    #[arg(long, env = "NEXUS_ROOT_FS", global = true)]
+    root_path: Option<PathBuf>,
+}
+
+impl CommonArgs {
+    fn root_fs_path(&self) -> PathBuf {
+        self.root_path
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("root"))
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -210,6 +230,48 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("create root zone: {}", e))?;
         tracing::info!("Created root zone");
     }
+
+    // ── Data plane: mount host-fs at "/" via PathLocalBackend ──
+    // Cluster binary's compiled-in feature set is exactly
+    // ["driver-path-local"] (see Cargo.toml), so this mount call is the
+    // only `ObjectStore` impl available — connectors / S3 / remote are
+    // not linked.  No `set_enabled_drivers` needed: the runtime gate is
+    // a Python construct (DeploymentProfile-driven), and the cluster
+    // binary intentionally bypasses it in favour of the compile-time
+    // feature gate.
+    let kernel = Arc::new(Kernel::new());
+    let root_fs = common.root_fs_path();
+    std::fs::create_dir_all(&root_fs).with_context(|| {
+        format!("create cluster root mount dir {}", root_fs.display())
+    })?;
+    let backend: Arc<dyn ObjectStore> = Arc::new(
+        PathLocalBackend::new(&root_fs, /* fsync */ false)
+            .with_context(|| format!("PathLocalBackend init at {}", root_fs.display()))?,
+    );
+    kernel
+        .sys_setattr(
+            "/",
+            DT_MOUNT as i32,
+            "local",
+            Some(backend),
+            None, // metastore — kernel falls back to its in-memory MetaStore
+            None, // raft_backend — federation wiring is a follow-up
+            "memory",
+            contracts::ROOT_ZONE_ID,
+            false, // is_external
+            0,     // capacity
+            None,  // read_fd
+            None,  // write_fd
+            None,  // mime_type
+            None,  // modified_at_ms
+            None,  // link_target
+            None,  // source — same-zone local mount
+        )
+        .map_err(|e| anyhow::anyhow!("mount / via path_local: {:?}", e))?;
+    tracing::info!(
+        root_fs = %root_fs.display(),
+        "mounted host-fs at \"/\" via PathLocalBackend",
+    );
 
     let (zones, mounts) = parse_federation_env();
     if !zones.is_empty() || !mounts.is_empty() {

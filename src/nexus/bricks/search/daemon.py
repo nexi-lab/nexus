@@ -3014,7 +3014,7 @@ class SearchDaemon:
 
                 # Index to BM25S if available
                 if self._bm25s_index:
-                    await self._bm25s_index.index_document(path_id, path, content)
+                    await self._bm25s_index.index_document(path_id, virtual_path, content)
 
                 # Single-writer policy for document_chunks (Issue #3708):
                 # when embedding pipeline is active AND the path is in

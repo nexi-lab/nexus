@@ -1350,6 +1350,100 @@ impl WitnessZoneRegistry {
         self.setup_witness_zone(zone_id, config, peers, runtime_handle)
     }
 
+    /// Bootstrap or join a zone at boot time under the opaque-ID
+    /// contract.  Sends `JoinZone` RPC against each configured peer
+    /// until one succeeds, then locally registers the zone with
+    /// `skip_bootstrap=true` so the leader's snapshot installs the
+    /// authoritative ConfState.  Looping is indefinite — misconfig
+    /// (no reachable peer) surfaces as "witness stays up retrying"
+    /// rather than a silent exit.
+    ///
+    /// Witness joins as a **voter** (`as_learner=false`) by default,
+    /// matching TiKV's witness-as-voter pattern: votes in elections
+    /// without applying state-machine entries (`is_witness=true` in
+    /// the local RaftConfig).  Pass `as_learner=true` for log-shipping
+    /// observers that don't count toward quorum.
+    ///
+    /// Returns the joined zone's `ZoneConsensus` handle.
+    #[allow(clippy::result_large_err)]
+    pub async fn bootstrap_or_join_zone(
+        self: &Arc<Self>,
+        zone_id: &str,
+        as_learner: bool,
+        timeout_secs: u64,
+        retry_interval: std::time::Duration,
+    ) -> Result<ZoneConsensus<WitnessStateMachine>> {
+        use super::call_join_zone_rpc;
+
+        if let Some(existing) = self.zones.get(zone_id) {
+            return Ok(existing.node.clone());
+        }
+
+        let peers = self.peers.clone();
+        let self_address = self.self_address.clone();
+        loop {
+            for peer in &peers {
+                if peer.id == self.node_id {
+                    continue;
+                }
+                let mut endpoint = peer.endpoint.clone();
+                let mut redirected_once = false;
+                loop {
+                    match call_join_zone_rpc(
+                        &endpoint,
+                        zone_id,
+                        self.node_id,
+                        &self_address,
+                        as_learner,
+                        timeout_secs,
+                    )
+                    .await
+                    {
+                        Ok(result) if result.success => {
+                            tracing::info!(
+                                zone = %zone_id,
+                                endpoint = %endpoint,
+                                witness_id = self.node_id,
+                                "Witness joined zone via leader",
+                            );
+                            return self
+                                .auto_join_zone(zone_id, &tokio::runtime::Handle::current());
+                        }
+                        Ok(result) => {
+                            if let Some(addr) = result.leader_address.as_ref() {
+                                if !redirected_once && !addr.is_empty() && addr != &endpoint {
+                                    tracing::info!(
+                                        from = %endpoint,
+                                        to = %addr,
+                                        "Witness JoinZone redirect to leader",
+                                    );
+                                    endpoint = addr.clone();
+                                    redirected_once = true;
+                                    continue;
+                                }
+                            }
+                            tracing::debug!(
+                                endpoint = %endpoint,
+                                error = ?result.error,
+                                "Witness JoinZone non-success; trying next peer",
+                            );
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                endpoint = %endpoint,
+                                error = %e,
+                                "Witness JoinZone RPC error; trying next peer",
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(retry_interval).await;
+        }
+    }
+
     /// Auto-join a zone when receiving Raft messages for an unknown zone.
     ///
     /// Creates a witness Raft group with `skip_bootstrap=true` (empty ConfState).

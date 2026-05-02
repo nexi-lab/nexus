@@ -32,26 +32,24 @@ impl ObjectStoreProvider for DefaultObjectStoreProvider {
         let backend_type = args.backend_type;
 
         // ── DeploymentProfile-driven driver gate (SSOT) ────────────
-        // Every backend_type runs through `is_driver_enabled` — there
-        // is no implicit local-default bypass.  The previous skip-
-        // branch made profiles unable to disable local-host backends
-        // (path_local / cas-local / local_connector) and lost the
-        // ability to limit `nexusd-cluster` to a single driver via the
-        // gate.  Local backends now have to appear in the active
-        // profile's driver set; see `LOCAL_DEFAULT_DRIVERS` in
+        // Every non-empty backend_type runs through `is_driver_enabled`
+        // — there is no implicit local-default bypass and no string-
+        // alias bridging.  Callers MUST pass canonical driver names
+        // (`path_local`, `cas-local`, `local_connector`, `s3`, …) that
+        // appear in the active profile's driver set; see
+        // `LOCAL_DEFAULT_DRIVERS` in
         // `nexus.contracts.deployment_profile`.
         //
-        // The historical `"cas"` alias (PyKernel sys_setattr default)
-        // is normalised to the canonical `"cas-local"` here so the gate
-        // only ever has to carry one entry per backend.
-        let dispatch_type = if backend_type == "cas" || backend_type.is_empty() {
-            "cas-local"
-        } else {
-            backend_type
-        };
-        if !is_driver_enabled(dispatch_type) {
+        // Empty backend_type means "no backend requested" (the
+        // metadata-only path used by DT_DIR / DT_LINK / DT_PIPE
+        // callers).  We skip the gate and return `None` below so the
+        // kernel finishes the metadata mutation without consulting any
+        // driver.  Treating empty as a driver request would force every
+        // profile to enumerate a placeholder name in the gate set just
+        // to support metadata syscalls — pure Python-debt leak.
+        if !backend_type.is_empty() && !is_driver_enabled(backend_type) {
             return Err(format!(
-                "driver {dispatch_type:?} not enabled in current deployment profile"
+                "driver {backend_type:?} not enabled in current deployment profile"
             ));
         }
 

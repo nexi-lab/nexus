@@ -102,48 +102,6 @@ impl Default for PyFfiRouter {
     }
 }
 
-
-/// Pull the active auth dict from
-/// `nexus.server._auth_ctx_local.get_auth` and build an
-/// `OperationContext` via
-/// `nexus.server.dependencies.get_operation_context`.  Returns `None`
-/// when no auth context is set or any step fails — caller then leaves
-/// the `context=` kwarg unset and the called method falls back to its
-/// own auth path.
-fn try_build_context<'py>(py: Python<'py>) -> Option<Bound<'py, PyAny>> {
-    let auth_obj = py
-        .import("nexus.server._auth_ctx_local")
-        .ok()?
-        .getattr("get_auth")
-        .ok()?
-        .call0()
-        .ok()?;
-    if auth_obj.is_none() {
-        return None;
-    }
-    py.import("nexus.server.dependencies")
-        .ok()?
-        .getattr("get_operation_context")
-        .ok()?
-        .call1((auth_obj,))
-        .ok()
-}
-
-
-/// Best-effort `inspect.signature` check: does ``attr`` declare a
-/// parameter named ``context``?  C-extensions / builtin methods that
-/// reject `inspect.signature` return False — in those cases we just
-/// skip context injection.
-fn method_accepts_context_kwarg(py: Python<'_>, attr: &Bound<'_, PyAny>) -> bool {
-    py.import("inspect")
-        .and_then(|m| m.getattr("signature"))
-        .and_then(|f| f.call1((attr,)))
-        .and_then(|sig| sig.getattr("parameters"))
-        .and_then(|p| p.call_method1("__contains__", ("context",)))
-        .and_then(|b| b.extract::<bool>())
-        .unwrap_or(false)
-}
-
 impl RustService for PyFfiRouter {
     fn name(&self) -> &str {
         NAME
@@ -191,13 +149,43 @@ impl RustService for PyFfiRouter {
 
             // Auth context plumbing: tonic Call handler calls
             // `nexus.server._auth_ctx_local.set_auth(auth_dict)` before
-            // `Kernel::dispatch_rust_call`.  Build the OperationContext
-            // and inject as `context=` kwarg when the target method
-            // accepts it.  Best-effort: any failure leaves kwargs as-is
-            // and the called method falls back to its own auth path.
-            if let Some(ctx) = try_build_context(py) {
-                if method_accepts_context_kwarg(py, &attr) {
-                    let _ = kwargs.set_item("context", ctx);
+            // `Kernel::dispatch_rust_call`.  We pull it out here, build
+            // the OperationContext via `get_operation_context`, and
+            // inject as `context=` kwarg if the target method accepts
+            // it.  This keeps admin handlers / @rpc_expose'd methods
+            // that need OperationContext working through the new
+            // dispatch path without the legacy `servicer.py` chain.
+            if let Ok(ctx_module) = py.import("nexus.server._auth_ctx_local") {
+                if let Ok(get_auth) = ctx_module.getattr("get_auth") {
+                    if let Ok(auth_obj) = get_auth.call0() {
+                        if !auth_obj.is_none() {
+                            if let Ok(deps) = py.import("nexus.server.dependencies") {
+                                if let Ok(get_ctx) = deps.getattr("get_operation_context") {
+                                    if let Ok(ctx) = get_ctx.call1((auth_obj,)) {
+                                        // Set kwargs["context"] only if
+                                        // the method's signature accepts
+                                        // a "context" param — best-effort
+                                        // via inspect.signature.
+                                        let inspect_ok = py
+                                            .import("inspect")
+                                            .and_then(|m| m.getattr("signature"))
+                                            .and_then(|f| f.call1((&attr,)));
+                                        if let Ok(sig) = inspect_ok {
+                                            if let Ok(params) = sig.getattr("parameters") {
+                                                if params
+                                                    .call_method1("__contains__", ("context",))
+                                                    .and_then(|v| v.extract::<bool>())
+                                                    .unwrap_or(false)
+                                                {
+                                                    let _ = kwargs.set_item("context", ctx);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

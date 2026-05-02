@@ -10,7 +10,10 @@ Each initializer function:
 """
 
 import asyncio
+import ctypes
+import gc
 import logging
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
@@ -124,6 +127,45 @@ def _wire_query_observer(_app: "FastAPI", svc: LifespanServices) -> None:
         logger.info("QueryObserverComponent registration skipped: %s", exc)
 
 
+def _apply_boot_tweaks() -> None:
+    """Apply Python-level memory hygiene at lifespan startup (Issue #3997).
+
+    Must be called before the first thread is spawned and before any heavy
+    module is imported, so the new stack size and GC threshold take effect
+    for everything that follows.
+
+    - threading.stack_size(1 << 20): cap pthread stack 8 MB -> 1 MB
+      (~250 MB VmData savings over 32 threads, near-zero RSS impact).
+    - gc.set_threshold(50_000, 10): fewer GC pauses (~20% latency win).
+      Python 3.14 reduced GC to two generations; the obsolete third
+      threshold is ignored (gc.get_threshold() returns 0 for it).
+    """
+    threading.stack_size(1 << 20)
+    gc.set_threshold(50_000, 10)
+
+
+async def _idle_trimmer() -> None:
+    """Background task: every 60s, gc.collect() + malloc_trim(0) (Issue #3997).
+
+    Releases freed heap pages back to the kernel during long-running idle
+    periods. Glibc-only (no-op on musl/Alpine).
+    """
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        _probe = libc.malloc_trim  # raises AttributeError if symbol missing
+    except (OSError, AttributeError):
+        logger.info("malloc_trim unavailable, idle trimmer disabled")
+        return
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            gc.collect()
+            libc.malloc_trim(0)
+        except Exception:
+            logger.exception("idle_trimmer iteration failed")
+
+
 @asynccontextmanager
 async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     """Application lifespan manager.
@@ -145,6 +187,11 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
 
     # Collect all background tasks for clean shutdown
     bg_tasks: list[asyncio.Task] = []
+
+    # Issue #3997: apply boot-time memory hygiene before any thread spawn or
+    # heavy import. Must run before svc init since LifespanServices.from_app
+    # may touch threadpool state.
+    _apply_boot_tweaks()
 
     # Extract typed service container once
     svc = LifespanServices.from_app(app)
@@ -214,6 +261,13 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
 
     # Wire QueryObserverComponent into registry after services start (Issue #2072)
     _wire_query_observer(app, svc)
+
+    # Issue #3997: idle trimmer + freeze boot-time heap.
+    # gc.freeze() moves all currently-tracked objects to a permanent generation
+    # so they are not scanned by future GC cycles. Must run AFTER all warmup
+    # imports/services have completed.
+    bg_tasks.append(asyncio.create_task(_idle_trimmer(), name="idle_trimmer"))
+    gc.freeze()
 
     yield
 

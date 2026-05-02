@@ -226,7 +226,7 @@ pub fn wait_for_message(
     let msg_path = &msg_path;
 
     // Read the envelope.
-    let read_result = kernel.sys_read(msg_path, ctx)?;
+    let read_result = kernel.sys_read(msg_path, ctx, 5000, 0)?;
     let data = match read_result.data {
         Some(d) => d,
         None => {

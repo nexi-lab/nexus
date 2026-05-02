@@ -86,7 +86,7 @@ def service(mock_metadata_store, mock_permission_enforcer, mock_dlc, mock_gatewa
         metadata_store=mock_metadata_store,
         permission_enforcer=mock_permission_enforcer,
         dlc=mock_dlc,
-        gateway=mock_gateway,
+        nexus_fs=mock_gateway,
         enforce_permissions=True,
     )
 
@@ -96,7 +96,7 @@ def service_no_perms(mock_metadata_store, mock_gateway):
     """Create a SearchService with permissions disabled."""
     return SearchService(
         metadata_store=mock_metadata_store,
-        gateway=mock_gateway,
+        nexus_fs=mock_gateway,
         enforce_permissions=False,
     )
 
@@ -129,7 +129,7 @@ class TestSearchServiceInit:
             metadata_store=mock_metadata_store,
             permission_enforcer=mock_permission_enforcer,
             dlc=mock_dlc,
-            gateway=mock_gateway,
+            nexus_fs=mock_gateway,
             enforce_permissions=True,
         )
         assert svc.metadata is mock_metadata_store
@@ -190,7 +190,7 @@ class TestSearchServiceInit:
             metadata_store=mock_metadata_store,
             permission_enforcer=mock_permission_enforcer,
             dlc=mock_dlc,
-            gateway=mock_gateway,
+            nexus_fs=mock_gateway,
             enforce_permissions=True,
         )
 
@@ -1518,7 +1518,7 @@ class TestGrepBlockType:
 
         return SearchService(
             metadata_store=mock_metadata_store,
-            gateway=mock_gateway,
+            nexus_fs=mock_gateway,
             enforce_permissions=False,
         )
 

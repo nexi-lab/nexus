@@ -831,6 +831,7 @@ pub struct PySysReadResult {
     pub post_hook_needed: bool,
     pub content_id: Option<String>,
     pub entry_type: u8,
+    pub stream_next_offset: Option<usize>,
 }
 
 // ── PySysWriteResult ────────────────────────────────────────────
@@ -2160,12 +2161,14 @@ impl PyKernel {
 
     // ── sys_read ───────────────────────────────────────────────────────
 
-    #[pyo3(signature = (path, ctx))]
+    #[pyo3(signature = (path, ctx, timeout_ms=5000, offset=0))]
     fn sys_read<'py>(
         &self,
         py: Python<'py>,
         path: &str,
         ctx: &PyOperationContext,
+        timeout_ms: u64,
+        offset: u64,
     ) -> PyResult<PySysReadResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("read") {
@@ -2181,7 +2184,7 @@ impl PyKernel {
 
         // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_read(path, &rust_ctx));
+        let result = py.detach(|| self.inner.sys_read(path, &rust_ctx, timeout_ms, offset));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         // 3. Convert Vec<u8> -> PyBytes
@@ -2190,6 +2193,7 @@ impl PyKernel {
             post_hook_needed: result.post_hook_needed,
             content_id: result.content_id,
             entry_type: result.entry_type,
+            stream_next_offset: result.stream_next_offset,
         })
     }
 
@@ -2553,7 +2557,7 @@ impl PyKernel {
     /// have a full OperationContext handy.
     fn sys_read_raw<'py>(&self, py: Python<'py>, path: &str, zone_id: &str) -> PyResult<Py<PyAny>> {
         let ctx = OperationContext::new("system", zone_id, true, None, true);
-        let result = self.inner.sys_read(path, &ctx).map_err(|e| {
+        let result = self.inner.sys_read(path, &ctx, 5000, 0).map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("sys_read_raw: {:?}", e))
         })?;
         match result.data {
@@ -2616,6 +2620,7 @@ impl PyKernel {
                 post_hook_needed: r.post_hook_needed,
                 content_id: r.content_id,
                 entry_type: r.entry_type,
+                stream_next_offset: r.stream_next_offset,
             })
             .collect())
     }

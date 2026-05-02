@@ -169,6 +169,9 @@ pub struct SysReadResult {
     pub content_id: Option<String>,
     /// DT_REG(1), DT_PIPE(3), DT_STREAM(4).
     pub entry_type: u8,
+    /// DT_STREAM: next read offset (message index) for cursor advancement.
+    /// None for non-stream entry types.
+    pub stream_next_offset: Option<usize>,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -2497,7 +2500,7 @@ impl Kernel {
                     continue;
                 }
             }
-            let bytes = match self.sys_read(&fpath, ctx) {
+            let bytes = match self.sys_read(&fpath, ctx, 5000, 0) {
                 Ok(r) => r.data.unwrap_or_default(),
                 Err(_) => continue,
             };
@@ -3641,7 +3644,7 @@ mod tests {
             k.dcache.evict("/data/c");
 
             let ctx = OperationContext::new("test", "root", true, None, true);
-            match k.sys_read("/data/a", &ctx) {
+            match k.sys_read("/data/a", &ctx, 5000, 0) {
                 Err(KernelError::PermissionDenied(msg)) => {
                     assert!(msg.contains("chain rejected"), "unexpected msg: {msg}");
                 }

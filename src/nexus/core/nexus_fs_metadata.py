@@ -295,7 +295,6 @@ class MetadataMixin:
         ``include_lock`` kwarg accepted for backward compat but ignored.
         """
         ctx = self._resolve_cred(context)
-        normalized = self._validate_path(path, allow_root=True)
 
         # Issue #3786 / Codex Round 6 finding #1: dispatch the stat
         # permission hook before reading kernel metadata so federation
@@ -311,7 +310,7 @@ class MetadataMixin:
             with request_zone_perms_scope(_zp):
                 self._kernel.dispatch_pre_hooks(
                     "stat",
-                    _SHC(path=normalized, context=ctx, permission="READ"),
+                    _SHC(path=path, context=ctx, permission="READ"),
                 )
         except (_PDE, PermissionError):
             # Codex Round 9 finding #2: PermissionChecker.check raises
@@ -335,7 +334,7 @@ class MetadataMixin:
         # let them synthesize stat first. Mirrors the read/list pre-hook
         # so listed virtual entries are also stat-visible.
         if hasattr(self, "resolve_stat"):
-            _handled, _virt = self.resolve_stat(normalized, context=context)
+            _handled, _virt = self.resolve_stat(path, context=context)
             if _handled and _virt is not None:
                 _virt.setdefault("owner", ctx.user_id)
                 _virt.setdefault("group", ctx.user_id)
@@ -343,7 +342,7 @@ class MetadataMixin:
 
         # Rust sys_stat handles: dcache → metastore → implicit directory.
         with request_zone_perms_scope(_zp):
-            result = self._kernel.sys_stat(normalized, self._zone_id)
+            result = self._kernel.sys_stat(path, self._zone_id)
         if result is not None:
             result["owner"] = ctx.user_id
             result["group"] = ctx.user_id
@@ -625,8 +624,7 @@ class MetadataMixin:
         context: OperationContext | None = None,  # noqa: ARG002
     ) -> str | None:
         """Get content hash for HTTP If-None-Match checks."""
-        normalized = self._validate_path(path, allow_root=False)
-        stat = self._kernel.sys_stat(normalized, self._zone_id)
+        stat = self._kernel.sys_stat(path, self._zone_id)
         return stat.get("content_id") if stat else None
 
     # ── Tier 2 directory ──────────────────────────────────────────────
@@ -668,7 +666,6 @@ class MetadataMixin:
         Defaults: parents=True, exist_ok=True (mkdir -p semantics).
         DT_DIR metadata creation delegated to Rust kernel sys_setattr.
         """
-        path = self._validate_path(path)
         self._gate_sys_namespace_mutation((path,), context)
         ctx = self._resolve_cred(context)
 
@@ -770,8 +767,6 @@ class MetadataMixin:
                 _unregister_hooks_for_spec(self, spec)
             self._kernel.service_unregister(name)
             return {"path": path, "unregistered": True, "service": name}
-
-        path = self._validate_path(path)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _result = self.resolve_delete(path, context=context)
@@ -880,8 +875,6 @@ class MetadataMixin:
             >>> nx.sys_rename('/workspace/old.txt', '/workspace/new.txt')
             >>> nx.sys_rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
         """
-        old_path = self._validate_path(old_path)
-        new_path = self._validate_path(new_path)
         self._gate_sys_namespace_mutation((old_path, new_path), context)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
@@ -967,8 +960,6 @@ class MetadataMixin:
             PermissionError: If source or destination is read-only.
             ValueError: If cross-backend copy exceeds size limit.
         """
-        src_path = self._validate_path(src_path)
-        dst_path = self._validate_path(dst_path)
         self._gate_sys_namespace_mutation((src_path, dst_path), context)
         context = self._parse_context(context)
 

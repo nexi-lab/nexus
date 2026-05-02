@@ -238,7 +238,7 @@ impl AcpService {
         let path = paths::agent_config(zone_id, agent_id);
         let bytes = self
             .kernel
-            .sys_read(&path, &Self::ctx())
+            .sys_read(&path, &Self::ctx(), 5000, 0)
             .ok()
             .and_then(|r| r.data)?;
         if bytes.is_empty() {
@@ -262,7 +262,7 @@ impl AcpService {
             };
             if let Some(bytes) = self
                 .kernel
-                .sys_read(&cfg_path, &Self::ctx())
+                .sys_read(&cfg_path, &Self::ctx(), 5000, 0)
                 .ok()
                 .and_then(|r| r.data)
             {
@@ -280,7 +280,7 @@ impl AcpService {
         let path = paths::system_prompt(zone_id, agent_id);
         let bytes = self
             .kernel
-            .sys_read(&path, &Self::ctx())
+            .sys_read(&path, &Self::ctx(), 5000, 0)
             .ok()
             .and_then(|r| r.data)?;
         if bytes.is_empty() {
@@ -312,7 +312,7 @@ impl AcpService {
         let path = paths::skills(zone_id, agent_id);
         let bytes = self
             .kernel
-            .sys_read(&path, &Self::ctx())
+            .sys_read(&path, &Self::ctx(), 5000, 0)
             .ok()
             .and_then(|r| r.data)?;
         if bytes.is_empty() {
@@ -351,7 +351,7 @@ impl AcpService {
             };
             if let Some(bytes) = self
                 .kernel
-                .sys_read(&result_path, &Self::ctx())
+                .sys_read(&result_path, &Self::ctx(), 5000, 0)
                 .ok()
                 .and_then(|r| r.data)
             {
@@ -491,7 +491,7 @@ impl AcpService {
             let zone = zone_for_read.clone();
             Box::pin(async move {
                 let vfs_path = host_to_vfs(&host_path, &cwd, &format!("/{zone}"));
-                match kernel.sys_read(&vfs_path, &Self::ctx()) {
+                match kernel.sys_read(&vfs_path, &Self::ctx(), 5000, 0) {
                     Ok(r) => {
                         let bytes = r.data.unwrap_or_default();
                         Ok(String::from_utf8_lossy(&bytes).into_owned())

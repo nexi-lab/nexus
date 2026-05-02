@@ -159,7 +159,7 @@ if TYPE_CHECKING:
     from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
     from nexus.core.metastore import MetastoreABC
-    from nexus.services.gateway import NexusFSGateway
+    from nexus.core.nexus_fs import NexusFS
 
 
 def _result_to_dict(r: Any) -> dict[str, Any]:
@@ -196,8 +196,8 @@ class SearchService:
         enforce_permissions: bool = True,
         default_context: "OperationContext | None" = None,
         record_store: Any | None = None,
-        # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
-        gateway: "NexusFSGateway | None" = None,
+        # Direct NexusFS access (replaces NexusFSGateway, Issue #1287)
+        nexus_fs: "NexusFS | None" = None,
         list_parallel_workers: int = LIST_PARALLEL_WORKERS,
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
@@ -216,7 +216,7 @@ class SearchService:
             enforce_permissions: Whether to enforce permission checks
             default_context: Default operation context (embedded mode)
             record_store: RecordStoreABC for SQL engine (needed for semantic search)
-            gateway: NexusFSGateway for file ops, routing, and dependency tracking
+            nexus_fs: NexusFS instance for file ops, routing, and dependency tracking
             zoekt_client: Injected ZoektClient instance (Issue #2188).
             deployment_profile: Active deployment profile name (Issue #3778).
                 When set to ``"sandbox"``, a semantic search that goes through
@@ -242,8 +242,8 @@ class SearchService:
         self._enforce_permissions = enforce_permissions
         self._default_context = default_context
 
-        # Gateway for NexusFS operations (Issue #1287)
-        self._gw = gateway
+        # Direct NexusFS access (replaces NexusFSGateway, Issue #1287)
+        self._nexus_fs = nexus_fs
 
         # Semantic search (initialized later via ainitialize_semantic_search)
         self._query_service: QueryService | None = None
@@ -315,9 +315,7 @@ class SearchService:
         Uses ``get_mount_points()`` to derive top-level prefixes from active
         mounts.  Falls back to hardcoded defaults when no router is available.
         """
-        _rust_kernel = (
-            getattr(getattr(self._gw, "_fs", None), "_kernel", None) if self._gw else None
-        )
+        _rust_kernel = getattr(self._nexus_fs, "_kernel", None) if self._nexus_fs else None
         if _rust_kernel and hasattr(_rust_kernel, "get_mount_points"):
             try:
                 from nexus.core.path_utils import extract_zone_id
@@ -358,29 +356,29 @@ class SearchService:
 
     @property
     def _gw_session_factory(self) -> Any:
-        """Session factory via gateway (for memory paths, indexing)."""
-        if self._gw is not None:
-            return self._gw.session_factory
+        """Session factory via NexusFS (for memory paths, indexing)."""
+        if self._nexus_fs is not None:
+            return getattr(self._nexus_fs, "SessionLocal", None)
         return None
 
     @property
     def _gw_backend(self) -> Any:
-        """Storage backend via gateway (for memory path content)."""
-        if self._gw is not None:
-            return self._gw.backend
+        """Storage backend via NexusFS (for memory path content)."""
+        if self._nexus_fs is not None:
+            return getattr(self._nexus_fs, "backend", None)
         return None
 
     # =========================================================================
-    # Delegation Helpers (via NexusFSGateway, Issue #1287)
+    # Delegation Helpers (direct NexusFS access, Issue #1287)
     # =========================================================================
 
     async def _read(
         self, path: str, context: Any = None, return_metadata: bool = False
     ) -> bytes | dict[str, Any]:
-        """Read file content via gateway."""
-        if self._gw is None:
-            raise NotImplementedError("gateway not provided to SearchService")
-        result = self._gw.read_file(path, context=context, return_metadata=return_metadata)
+        """Read file content via NexusFS."""
+        if self._nexus_fs is None:
+            raise NotImplementedError("nexus_fs not provided to SearchService")
+        result = self._nexus_fs.read(path, context=context, return_metadata=return_metadata)
         if isinstance(result, str):
             return result.encode("utf-8")
         return result
@@ -392,10 +390,10 @@ class SearchService:
         return_metadata: bool = False,
         skip_errors: bool = True,
     ) -> dict[str, bytes | dict[str, Any] | None]:
-        """Bulk read files via gateway."""
-        if self._gw is None:
-            raise NotImplementedError("gateway not provided to SearchService")
-        return self._gw.read_bulk(
+        """Bulk read files via NexusFS."""
+        if self._nexus_fs is None:
+            raise NotImplementedError("nexus_fs not provided to SearchService")
+        return self._nexus_fs.read_bulk(
             paths,
             context=context,
             return_metadata=return_metadata,
@@ -404,14 +402,14 @@ class SearchService:
 
     def _get_routing_params(self, context: Any) -> tuple[str | None, str | None, bool]:
         """Extract zone_id, agent_id, is_admin from context."""
-        if self._gw:
-            return self._gw.get_routing_params(context)
+        if self._nexus_fs:
+            return self._nexus_fs._get_context_identity(context)
         return None, None, False
 
     def _has_descendant_access(self, path: str, permission: Permission, context: Any) -> bool:
         """Check if user has access to any descendant of path."""
-        if self._gw:
-            return self._gw.has_descendant_access(path, permission, context)
+        if self._nexus_fs:
+            return self._nexus_fs._descendant_checker.has_access(path, permission, context)
         return False
 
     def _get_backend_directory_entries(self, path: str) -> set[str]:  # noqa: ARG002
@@ -426,8 +424,11 @@ class SearchService:
         access_type: str = "content",
     ) -> None:
         """Record read for dependency tracking (Issue #1166)."""
-        if self._gw:
-            self._gw.record_read_if_tracking(context, resource_type, resource_id, access_type)
+        if context and getattr(context, "track_reads", False):
+            kernel = getattr(self._nexus_fs, "_kernel", None) if self._nexus_fs else None
+            zone_id = getattr(context, "zone_id", None) or "root"
+            revision = kernel.get_zone_revision(zone_id) if kernel else 0
+            context.record_read(resource_type, resource_id, revision, access_type)
 
     # =========================================================================
     # Public API: File Listing

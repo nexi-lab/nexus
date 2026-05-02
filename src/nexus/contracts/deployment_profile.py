@@ -75,15 +75,19 @@ BRICK_FEDERATION = "federation"
 # Drivers are kernel-side dynamic backends instantiated at
 # `sys_setattr(DT_MOUNT)` time.  Profile gating limits which `backend_type`
 # strings the active deployment will accept; mounts requesting a disabled
-# driver fail with a clear error instead of silently falling through to the
-# kernel-default local-root branch.
+# driver fail with a clear error.
 #
-# `local`/`path_local`/`local_connector`/`cas-local` are kernel defaults
-# available in every profile and skip the gate (see
-# `rust/kernel/src/hal/backend_factory.rs::is_driver_enabled`).
+# Every backend_type the Rust factory dispatches on must appear here
+# *and* in the active profile's driver set — there is no implicit "local
+# defaults always work" shortcut.  See
+# `rust/backends/src/python/factory.rs` for the matching dispatch.
 
-# Storage drivers (CAS / cloud / remote)
-DRIVER_LOCAL = "local"
+# Local-host storage drivers (kernel-shipped, no network)
+DRIVER_PATH_LOCAL = "path_local"
+DRIVER_CAS_LOCAL = "cas-local"
+DRIVER_LOCAL_CONNECTOR = "local_connector"
+
+# Networked storage drivers (CAS / cloud / cross-node)
 DRIVER_S3 = "s3"
 DRIVER_GCS = "gcs"
 DRIVER_GDRIVE = "gdrive"
@@ -103,9 +107,21 @@ DRIVER_NOSTR = "nostr"
 # Generic CLI proxy
 DRIVER_CLI = "cli"
 
+# Convenience grouping — local-host backends every interactive deployment
+# needs.  Profiles that want host-FS access list this set explicitly.
+LOCAL_DEFAULT_DRIVERS: frozenset[str] = frozenset(
+    {
+        DRIVER_PATH_LOCAL,
+        DRIVER_CAS_LOCAL,
+        DRIVER_LOCAL_CONNECTOR,
+    }
+)
+
 ALL_DRIVER_NAMES: frozenset[str] = frozenset(
     {
-        DRIVER_LOCAL,
+        DRIVER_PATH_LOCAL,
+        DRIVER_CAS_LOCAL,
+        DRIVER_LOCAL_CONNECTOR,
         DRIVER_S3,
         DRIVER_GCS,
         DRIVER_GDRIVE,
@@ -195,9 +211,10 @@ class DeploymentProfile(StrEnum):
         """Return the default set of enabled drivers for this profile.
 
         Drivers are kernel-side dynamic backends (`backend_type` for
-        `sys_setattr(DT_MOUNT)`).  Local CAS / path / connector backends
-        are always available and are not listed here — see
-        `rust/kernel/src/hal/backend_factory.rs::is_driver_enabled`.
+        `sys_setattr(DT_MOUNT)`).  Every driver — including local CAS /
+        path / connector backends — must appear in the profile that
+        wants to mount it; the kernel gate has no implicit local-default
+        bypass.  See `rust/kernel/src/hal/object_store_provider.rs`.
         """
         return _PROFILE_DRIVERS[self]
 
@@ -297,25 +314,28 @@ _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
 # Profile-to-driver mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 #
-# Driver gating mirrors brick gating: each profile lists the
-# `backend_type` strings its active deployment can mount.  Local CAS /
-# path / connector backends are always available (kernel default) and
-# are not listed.  See `default_drivers()` for the surface; see
-# `rust/kernel/src/hal/backend_factory.rs::is_driver_enabled` for the
-# enforcement point.
+# Driver gating mirrors brick gating: each profile lists every
+# `backend_type` string its active deployment can mount.  Local CAS /
+# path / connector backends are listed explicitly — there is no implicit
+# kernel-default bypass.  See `default_drivers()` for the surface; see
+# `rust/kernel/src/hal/object_store_provider.rs::is_driver_enabled` for
+# the enforcement point.
 
-# Cluster — Raft-replicated multi-node profile.  Federation needs the
-# cross-node `remote` backend; storage / connectors stay disabled
-# until an operator explicitly enables them per deployment.
-_CLUSTER_DRIVERS: frozenset[str] = frozenset({DRIVER_REMOTE})
+# Cluster — minimum-by-default.  The Rust `nexusd-cluster` binary opts
+# in to whatever driver set its compiled features expose (currently just
+# `path_local`); operator deployments add what they need on top via env
+# overrides.  No driver is implicitly enabled here.
+_CLUSTER_DRIVERS: frozenset[str] = frozenset()
 
-# Embedded / lite — single-machine, no remote storage.
-_EMBEDDED_DRIVERS: frozenset[str] = frozenset()
-_LITE_DRIVERS: frozenset[str] = frozenset()
+# Embedded / lite — single-machine.  Local-host backends only; no network
+# storage or connector drivers.
+_EMBEDDED_DRIVERS: frozenset[str] = LOCAL_DEFAULT_DRIVERS
+_LITE_DRIVERS: frozenset[str] = LOCAL_DEFAULT_DRIVERS
 
 # Sandbox — agent sandbox with Nostr cross-instance messaging + LLM
-# connectors so chat-with-me / model calls work end-to-end.
-_SANDBOX_DRIVERS: frozenset[str] = frozenset(
+# connectors so chat-with-me / model calls work end-to-end.  Includes
+# local-host backends so agents can read/write the host filesystem.
+_SANDBOX_CONNECTORS: frozenset[str] = frozenset(
     {
         DRIVER_OPENAI,
         DRIVER_ANTHROPIC,
@@ -323,6 +343,7 @@ _SANDBOX_DRIVERS: frozenset[str] = frozenset(
         DRIVER_CLI,
     }
 )
+_SANDBOX_DRIVERS: frozenset[str] = LOCAL_DEFAULT_DRIVERS | _SANDBOX_CONNECTORS
 
 # Full — desktop / laptop deployments. Adds cloud storage + connector
 # integrations on top of the sandbox set.

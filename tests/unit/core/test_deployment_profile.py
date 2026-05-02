@@ -29,10 +29,14 @@ from nexus.contracts.deployment_profile import (
     BRICK_SEARCH,
     BRICK_WORKFLOWS,
     DRIVER_ANTHROPIC,
+    DRIVER_CAS_LOCAL,
+    DRIVER_LOCAL_CONNECTOR,
     DRIVER_NOSTR,
     DRIVER_OPENAI,
+    DRIVER_PATH_LOCAL,
     DRIVER_REMOTE,
     DRIVER_S3,
+    LOCAL_DEFAULT_DRIVERS,
     DeploymentProfile,
     resolve_enabled_bricks,
     resolve_enabled_drivers,
@@ -65,6 +69,16 @@ class TestDeploymentProfileEnum:
             # REMOTE has zero bricks (NFS-client model)
             if profile is not DeploymentProfile.REMOTE:
                 assert len(bricks) > 0
+
+
+class TestLocalDefaultDrivers:
+    """Local-host backends are explicit per profile, not implicit."""
+
+    def test_local_default_drivers_set_contents(self) -> None:
+        assert (
+            frozenset({DRIVER_PATH_LOCAL, DRIVER_CAS_LOCAL, DRIVER_LOCAL_CONNECTOR})
+            == LOCAL_DEFAULT_DRIVERS
+        )
 
 
 class TestDefaultBrickSets:
@@ -210,23 +224,23 @@ class TestResolveEnabledBricks:
 class TestDefaultDriverSets:
     """Driver gating mirrors brick gating; verify per-profile defaults."""
 
-    def test_cluster_includes_remote_only(self) -> None:
-        # cluster runs federated; needs the cross-node `remote` driver but
-        # nothing else (a deployment that wants S3 mounts on top opts in
-        # explicitly via overrides).
+    def test_cluster_is_minimum_by_default(self) -> None:
+        # The framework no longer hard-codes a deployment preference
+        # for cluster.  The Rust `nexusd-cluster` binary opts in to
+        # `path_local` via its compiled feature set; operator
+        # deployments add others on top via env overrides.
         drivers = DeploymentProfile.CLUSTER.default_drivers()
-        assert DRIVER_REMOTE in drivers
-        assert DRIVER_NOSTR not in drivers
-        assert DRIVER_S3 not in drivers
+        assert drivers == frozenset()
 
-    def test_embedded_and_lite_have_no_drivers(self) -> None:
-        # Single-machine profiles have no remote storage/connector
-        # drivers — only the kernel-default local-root branches.
-        assert DeploymentProfile.EMBEDDED.default_drivers() == frozenset()
-        assert DeploymentProfile.LITE.default_drivers() == frozenset()
+    def test_embedded_and_lite_have_local_defaults(self) -> None:
+        # Single-machine profiles list every local-host backend
+        # explicitly — no implicit kernel-default bypass.
+        assert DeploymentProfile.EMBEDDED.default_drivers() == LOCAL_DEFAULT_DRIVERS
+        assert DeploymentProfile.LITE.default_drivers() == LOCAL_DEFAULT_DRIVERS
 
-    def test_sandbox_includes_nostr_and_llm_connectors(self) -> None:
+    def test_sandbox_includes_locals_plus_nostr_and_llm_connectors(self) -> None:
         drivers = DeploymentProfile.SANDBOX.default_drivers()
+        assert LOCAL_DEFAULT_DRIVERS.issubset(drivers)
         assert DRIVER_NOSTR in drivers
         assert DRIVER_OPENAI in drivers
         assert DRIVER_ANTHROPIC in drivers
@@ -239,6 +253,7 @@ class TestDefaultDriverSets:
         assert sandbox.issubset(full)
         assert DRIVER_S3 in full
         assert DRIVER_REMOTE in full
+        assert LOCAL_DEFAULT_DRIVERS.issubset(full)
 
     def test_remote_profile_uses_only_remote_driver(self) -> None:
         # NFS-client model: every mount goes through the remote proxy.
@@ -247,6 +262,7 @@ class TestDefaultDriverSets:
     def test_is_driver_enabled_matches_default_drivers(self) -> None:
         assert DeploymentProfile.SANDBOX.is_driver_enabled(DRIVER_NOSTR)
         assert not DeploymentProfile.LITE.is_driver_enabled(DRIVER_NOSTR)
+        assert DeploymentProfile.LITE.is_driver_enabled(DRIVER_PATH_LOCAL)
 
 
 class TestResolveEnabledDrivers:
@@ -257,13 +273,12 @@ class TestResolveEnabledDrivers:
         assert result == DeploymentProfile.SANDBOX.default_drivers()
 
     def test_override_enables_driver(self) -> None:
-        # Cluster doesn't ship Nostr by default; an operator can opt in.
+        # Cluster ships nothing by default; an operator can opt in.
         result = resolve_enabled_drivers(
             DeploymentProfile.CLUSTER,
             overrides={DRIVER_NOSTR: True},
         )
         assert DRIVER_NOSTR in result
-        assert DRIVER_REMOTE in result  # default kept
 
     def test_override_disables_driver(self) -> None:
         result = resolve_enabled_drivers(

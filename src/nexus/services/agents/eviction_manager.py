@@ -26,7 +26,6 @@ from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, PressureLevel, 
 if TYPE_CHECKING:
     from nexus.contracts.process_types import AgentDescriptor
     from nexus.lib.performance_tuning import EvictionTuning
-    from nexus.services.agents.agent_registry import AgentRegistry
     from nexus.services.agents.eviction_policy import EvictionPolicy
     from nexus.services.agents.resource_monitor import ResourceMonitor
 
@@ -68,7 +67,7 @@ class EvictionManager:
 
     def __init__(
         self,
-        agent_registry: "AgentRegistry",
+        agent_registry: Any,
         monitor: "ResourceMonitor",
         policy: "EvictionPolicy",
         tuning: "EvictionTuning",
@@ -280,7 +279,7 @@ class EvictionManager:
         record = self._agent_registry.get(agent_id)
         if record is None:
             raise ValueError(f"Agent '{agent_id}' not found")
-        if record.state is not AgentState.BUSY:
+        if record.state != AgentState.BUSY:
             raise ValueError(f"Agent '{agent_id}' is {record.state}, not BUSY")
 
         # (Checkpoint skipped — will migrate to VFS writes)

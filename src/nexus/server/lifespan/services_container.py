@@ -112,7 +112,10 @@ class LifespanServices:
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
             agent_registry=(
-                _svc("agent_registry") or getattr(nx, "_agent_registry", None)
+                # AgentRegistry is the kernel SSOT — fetch through the
+                # kernel handle when nx is wired; fall back to app.state
+                # for tests that pre-populate it directly.
+                getattr(getattr(nx, "_kernel", None), "agent_registry", None)
                 if nx
                 else getattr(app.state, "agent_registry", None)
             ),

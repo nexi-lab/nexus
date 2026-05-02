@@ -549,8 +549,8 @@ def _register_vfs_hooks(
     _enlist("readme_resolver", _readme_resolver)
 
     # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──
-    _proc_ref = nx.service("agent_registry") if hasattr(nx, "service") else None
-    _proc_table = _proc_ref if _proc_ref is not None else None
+    _kernel_for_proc = getattr(nx, "_kernel", None)
+    _proc_table = _kernel_for_proc.agent_registry if _kernel_for_proc is not None else None
     if _proc_table is not None:
         try:
             from nexus.services.agents.agent_status_resolver import AgentStatusResolver

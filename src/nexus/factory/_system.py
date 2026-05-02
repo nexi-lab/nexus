@@ -437,7 +437,8 @@ def _boot_pre_kernel_services(
     # (Federation is wired at link time in _lifecycle.py via the federation parameter.)
 
     # (IPC primitives are kernel-owned: Rust DashMap + metastore/dcache integration.
-    # AgentRegistry is lazy-constructed by the first consumer via sys_setattr.
+    # AgentRegistry is the kernel SSOT — Python callers reach it via the
+    # `agent_registry` getter on the kernel handle.
     # EvictionManager is deferred to _do_link(); AcpService is owned by the Rust
     # kernel and installed in _wired.py via nexus_runtime.nx_acp_install.)
 

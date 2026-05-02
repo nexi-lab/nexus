@@ -30,7 +30,6 @@ from nexus.contracts.grant_helpers import GrantInput, grants_to_rebac_tuples
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.services.agents.agent_registry import AgentRegistry
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -77,7 +76,7 @@ class AgentRegistrationService:
         self,
         record_store: "RecordStoreABC",
         entity_registry: "EntityRegistryProtocol | None" = None,
-        agent_registry: "AgentRegistry | None" = None,
+        agent_registry: Any | None = None,
         rebac_manager: Any = None,
         key_service: Any = None,
     ) -> None:
@@ -220,21 +219,36 @@ class AgentRegistrationService:
             raise
 
         # ── Step 5: Provision IPC (filesystem, after DB commit) ──────
-        # Provisioning is delegated to AgentRegistry.provision() which
-        # calls the injected AgentProvisioner (if configured).
+        # AgentRegistry stores the provisioner via set_provisioner; we
+        # await its `provision` coroutine directly so the asyncio loop
+        # owns the wait. Failure is non-fatal (matches the prior shim).
         ipc_provisioned = False
         ipc_inbox: str | None = None
         if ipc and self._agent_registry is not None:
-            t0 = time.monotonic()
-            ipc_provisioned = await self._agent_registry.provision(agent_id, name=name)
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            if ipc_provisioned:
-                ipc_inbox = f"/ipc/{agent_id}/inbox/"
-                logger.info(
-                    "[AgentRegistration] IPC provisioned for %s (%.1fms)",
-                    agent_id,
-                    elapsed_ms,
-                )
+            provisioner = None
+            try:
+                provisioner = self._agent_registry.get_provisioner()
+            except AttributeError:
+                provisioner = None
+            if provisioner is not None:
+                t0 = time.monotonic()
+                try:
+                    await provisioner.provision(agent_id, name=name)
+                    ipc_provisioned = True
+                except Exception as exc:
+                    logger.warning(
+                        "[AgentRegistration] IPC provisioning failed for %s: %s",
+                        agent_id,
+                        exc,
+                    )
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                if ipc_provisioned:
+                    ipc_inbox = f"/ipc/{agent_id}/inbox/"
+                    logger.info(
+                        "[AgentRegistration] IPC provisioned for %s (%.1fms)",
+                        agent_id,
+                        elapsed_ms,
+                    )
 
         # ── Step 6: Register Ed25519 public key (optional) ───────────
         public_key_registered = False

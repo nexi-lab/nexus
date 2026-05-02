@@ -251,7 +251,8 @@ async def list_agents(
     if agent_registry is not None:
         for a in agent_registry.list_processes(zone_id=zone_id):
             ext = a.external_info
-            agent_id = ext.connection_id if ext and ext.connection_id else a.pid
+            ext_conn = ext.get("connection_id") if isinstance(ext, dict) else None
+            agent_id = ext_conn if ext_conn else a.pid
             running_map[agent_id] = AgentListItem(
                 agent_id=agent_id,
                 owner_id=a.owner_id,
@@ -351,9 +352,12 @@ async def get_agent_status(
     if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
-    last_hb = (
-        desc.external_info.last_heartbeat
-        if desc.external_info and desc.external_info.last_heartbeat
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    last_hb_ms = (
+        desc.external_info.get("last_heartbeat_ms")
+        if isinstance(desc.external_info, dict)
         else None
     )
 
@@ -362,8 +366,10 @@ async def get_agent_status(
         observed_generation=desc.generation,
         conditions=[],
         resource_usage=AgentResourceUsageModel(),
-        last_heartbeat=last_hb.isoformat() if last_hb else None,
-        last_activity=desc.updated_at.isoformat(),
+        last_heartbeat=(
+            _dt.fromtimestamp(last_hb_ms / 1000, tz=_UTC).isoformat() if last_hb_ms else None
+        ),
+        last_activity=_dt.fromtimestamp(desc.updated_at_ms / 1000, tz=_UTC).isoformat(),
         inbox_depth=0,
         context_usage_pct=0.0,
     )

@@ -201,7 +201,6 @@ PathTrie = _get("PathTrie")
 
 # Classes still exported as standalone
 BloomFilter = _get("BloomFilter")
-VFSSemaphore = _get("VFSSemaphore")
 BlobPackEngine = _get("BlobPackEngine")
 
 # Path utilities

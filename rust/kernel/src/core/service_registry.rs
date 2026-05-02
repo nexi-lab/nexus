@@ -3,54 +3,62 @@
 //! Manages service instances with DashMap for lock-free concurrent access.
 //! Holds two flavours of service:
 //!
-//!   * `ServiceInstance::Python(Py<PyAny>)` — the original storage; every
-//!     pre-existing nexus service (ReBAC, Mount, Auth, AgentRegistry,
-//!     AcpService, …) is a Python class registered through the
-//!     `sys_setattr("/__sys__/services/X")` syscall. Lifecycle methods
-//!     (`start` / `stop`) are Python coroutines dispatched via
-//!     `asyncio.run`.
+//!   * `ServiceInstance::Managed(Box<dyn ServiceLifecycle>)` — language-
+//!     agnostic lifecycle wrapper. Python services are wrapped via
+//!     `PyServiceLifecycle` adapter (in `generated_kernel_abi_pyo3.rs`);
+//!     future Rust-only managed services can implement the trait directly.
 //!   * `ServiceInstance::Rust(Arc<dyn RustService>)` — services
 //!     implemented in Rust (e.g. ManagedAgentService) are registered
 //!     through the Rust-callable `Kernel::register_rust_service`
-//!     surface, mirroring the way `Kernel::add_mount` is the Rust
-//!     parallel of `sys_setattr(DT_MOUNT)`. Lifecycle methods are plain
-//!     Rust trait calls — no PyO3 boundary on start/stop.
+//!     surface. Lifecycle methods are plain Rust trait calls.
 //!
 //! Thread-safe: all methods take `&self` (interior mutability via DashMap/atomics).
 
 use dashmap::DashMap;
-use parking_lot::{Condvar, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(feature = "python")]
+use parking_lot::Condvar;
+use parking_lot::Mutex;
+#[cfg(feature = "python")]
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use pyo3::prelude::*;
-
 // ── RustService trait ───────────────────────────────────────────────────
-//
-// Trait + error type live in the `contracts` crate so out-of-kernel
-// services can implement / surface them without depending on this
-// crate. Re-exported here under the historical `service_registry`
-// path so existing intra-crate `use crate::service_registry::{...}`
-// import sites keep working. Visibility is `pub` so other workspace
-// crates (transport, services) can name the types in their own
-// `pub` signatures without each having to depend on `contracts`.
 pub use contracts::rust_service::{RustCallError, RustService};
+
+// ── ServiceLifecycle trait ──────────────────────────────────────────────
+//
+// Language-agnostic lifecycle abstraction. Python services implement
+// this via a `PyServiceLifecycle` adapter in the cdylib layer; the
+// kernel never imports pyo3 for service management.
+
+/// Language-agnostic service lifecycle. Implementors must be `Send +
+/// Sync` (held in DashMap across threads) and support `Any` downcasting
+/// so the PyO3 layer can recover the original `Py<PyAny>` for
+/// `nx.service(name)` lookups.
+pub trait ServiceLifecycle: Send + Sync + std::any::Any {
+    fn start(&self, timeout_secs: f64) -> Result<(), String>;
+    fn stop(&self, timeout_secs: f64) -> Result<(), String>;
+    fn close(&self) -> Result<(), String>;
+    /// Human-readable type name for diagnostic `snapshot()`.
+    fn type_name(&self) -> String;
+    /// Clone into a new Box (object-safe clone).
+    fn clone_box(&self) -> Box<dyn ServiceLifecycle>;
+}
 
 // ── ServiceInstance + ServiceEntry ──────────────────────────────────────
 
-/// A registered service instance — either a Python class or a Rust
-/// trait object. The two flavours share lookup / refcount / drain
-/// machinery; only the lifecycle dispatch in `start_all` / `stop_all` /
-/// `close_all` branches on the variant.
+/// A registered service instance — either a managed (language-agnostic)
+/// or a Rust trait object.
 pub(crate) enum ServiceInstance {
-    Python(Py<PyAny>),
+    Managed(Box<dyn ServiceLifecycle>),
     Rust(Arc<dyn RustService>),
 }
 
 impl ServiceInstance {
     fn clone_inst(&self) -> Self {
         match self {
-            Self::Python(obj) => Python::attach(|py| ServiceInstance::Python(obj.clone_ref(py))),
+            Self::Managed(lc) => ServiceInstance::Managed(lc.clone_box()),
             Self::Rust(svc) => ServiceInstance::Rust(Arc::clone(svc)),
         }
     }
@@ -78,10 +86,13 @@ impl Clone for ServiceEntry {
 /// Kernel service symbol table — DashMap<name, ServiceEntry>.
 pub(crate) struct ServiceRegistry {
     services: DashMap<String, ServiceEntry>,
-    /// Per-service refcounts for drain-before-swap.
+    /// Per-service refcounts for drain-before-swap (python-only: hot-swap).
+    #[cfg(feature = "python")]
     refcounts: DashMap<String, Arc<AtomicU64>>,
-    /// Condvar for drain waiters.
+    /// Condvar for drain waiters (python-only: hot-swap).
+    #[cfg(feature = "python")]
     drain_condvar: Condvar,
+    #[cfg(feature = "python")]
     drain_mutex: Mutex<()>,
     /// True after bootstrap() completes.
     bootstrapped: AtomicBool,
@@ -89,55 +100,43 @@ pub(crate) struct ServiceRegistry {
     insertion_order: Mutex<Vec<String>>,
 }
 
-/// Run a Python coroutine to completion via stdlib asyncio. No nexus imports.
-fn run_coro(py: Python<'_>, coro: &Bound<'_, PyAny>, timeout_secs: f64) -> PyResult<()> {
-    let asyncio = py.import("asyncio")?;
-    let timed = asyncio.call_method1("wait_for", (coro, timeout_secs))?;
-    asyncio.call_method1("run", (&timed,))?;
-    Ok(())
-}
-
 impl ServiceRegistry {
     pub(crate) fn new() -> Self {
         Self {
             services: DashMap::new(),
+            #[cfg(feature = "python")]
             refcounts: DashMap::new(),
+            #[cfg(feature = "python")]
             drain_condvar: Condvar::new(),
+            #[cfg(feature = "python")]
             drain_mutex: Mutex::new(()),
             bootstrapped: AtomicBool::new(false),
             insertion_order: Mutex::new(Vec::new()),
         }
     }
 
-    /// Register a service. Returns Ok(()) on success.
-    /// Fails if name exists and allow_overwrite is false.
+    /// Register a managed (language-agnostic) service.
+    ///
+    /// The caller (PyKernel wrapper) validates exports and wraps the
+    /// Python object in a `PyServiceLifecycle` before calling this.
+    #[cfg(feature = "python")]
     pub(crate) fn enlist(
         &self,
-        py: Python<'_>,
         name: &str,
-        instance: &Bound<'_, PyAny>,
+        instance: Box<dyn ServiceLifecycle>,
         exports: Vec<String>,
         allow_overwrite: bool,
-    ) -> PyResult<()> {
-        // Validate exports
-        for exp in &exports {
-            if !instance.hasattr(exp.as_str())? {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "services: {name:?} declares exports not found on instance: [{exp}]"
-                )));
-            }
+    ) -> Result<(), String> {
+        if !allow_overwrite && self.services.contains_key(name) {
+            return Err(format!("services: {name:?} already registered"));
         }
 
-        // Duplicate check
-        if !allow_overwrite && self.services.contains_key(name) {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "services: {name:?} already registered"
-            )));
-        }
+        // Auto-start post-bootstrap
+        let auto_start = self.bootstrapped.load(Ordering::Relaxed);
 
         let entry = ServiceEntry {
             name: name.to_string(),
-            instance: ServiceInstance::Python(instance.clone().unbind()),
+            instance: ServiceInstance::Managed(instance),
             exports,
         };
 
@@ -147,15 +146,12 @@ impl ServiceRegistry {
             self.insertion_order.lock().push(name.to_string());
         }
 
-        // Auto-start BackgroundService (post-bootstrap only)
-        if self.bootstrapped.load(Ordering::Relaxed) {
-            if let Ok(bg_cls) = py
-                .import("nexus.contracts.protocols.service_lifecycle")
-                .and_then(|m| m.getattr("BackgroundService"))
-            {
-                if instance.is_instance(&bg_cls)? {
-                    let coro = instance.call_method0("start")?;
-                    run_coro(py, &coro, 30.0)?;
+        if auto_start {
+            if let Some(entry) = self.services.get(name) {
+                if let ServiceInstance::Managed(lc) = &entry.instance {
+                    if let Err(e) = lc.start(30.0) {
+                        tracing::error!("[COORDINATOR] auto-start {name:?} failed: {e}");
+                    }
                 }
             }
         }
@@ -163,13 +159,7 @@ impl ServiceRegistry {
         Ok(())
     }
 
-    /// Register a Rust-flavoured service. Rust-callable parallel of
-    /// [`enlist`](Self::enlist); same exports / overwrite semantics, but
-    /// the instance is an `Arc<dyn RustService>` and lifecycle methods
-    /// dispatch via the trait directly (no asyncio.run trampoline).
-    ///
-    /// Auto-starts the service when called post-bootstrap — same
-    /// behaviour as the Python path.
+    /// Register a Rust-flavoured service.
     pub(crate) fn enlist_rust(
         &self,
         name: &str,
@@ -199,68 +189,59 @@ impl ServiceRegistry {
         Ok(())
     }
 
-    /// Kernel-internal lookup by name for Python-flavoured services.
-    /// Reached from Python through the `Kernel::service_lookup` PyO3
-    /// method (which `nx.service(name)` delegates to). Rust services
-    /// have a parallel surface — `ServiceRegistry::lookup_rust`,
-    /// reached through `Kernel::service_lookup_rust`. Both `lookup`
-    /// methods are `pub(crate)`: callers always go through `Kernel`,
-    /// not the registry directly (KERNEL-ARCHITECTURE §4 — registry
-    /// is a kernel primitive).
-    ///
-    /// Returns the Python instance for `Python`-flavoured services;
-    /// returns `None` for `Rust`-flavoured services so
-    /// `nx.service(name)` stays well-typed (Python sees only services
-    /// it can call methods on).
-    pub(crate) fn lookup(&self, py: Python<'_>, name: &str) -> Option<Py<PyAny>> {
+    /// Kernel-internal lookup for managed services, returning a ref to
+    /// the `ServiceLifecycle` trait object. The PyO3 layer downcasts
+    /// to `PyServiceLifecycle` to extract the `Py<PyAny>`.
+    #[cfg(feature = "python")]
+    pub(crate) fn lookup_managed(&self, name: &str) -> Option<Box<dyn ServiceLifecycle>> {
         self.services.get(name).and_then(|e| match &e.instance {
-            ServiceInstance::Python(obj) => Some(obj.clone_ref(py)),
+            ServiceInstance::Managed(lc) => Some(lc.clone_box()),
             ServiceInstance::Rust(_) => None,
         })
     }
 
     /// Kernel-internal lookup by name for Rust-flavoured services.
-    /// **Not the call surface for in-crate Rust callers** — they go
-    /// through [`Kernel::service_lookup_rust`], the syscall-shaped
-    /// parallel of the Python-facing [`Self::lookup`] (reached from
-    /// Python via `nx.service(name)`). Going through `Kernel` keeps
-    /// `ServiceRegistry` a kernel primitive (KERNEL-ARCHITECTURE §4)
-    /// rather than a directly-poked module.
-    ///
-    /// Returns the registered `Arc<dyn RustService>` for `Rust`-flavoured
-    /// entries; returns `None` for `Python`-flavoured entries (Python
-    /// services are reached via `Self::lookup`) and for unknown names.
     #[allow(dead_code)]
     pub(crate) fn lookup_rust(&self, name: &str) -> Option<Arc<dyn RustService>> {
         self.services.get(name).and_then(|e| match &e.instance {
             ServiceInstance::Rust(svc) => Some(Arc::clone(svc)),
-            ServiceInstance::Python(_) => None,
+            ServiceInstance::Managed(_) => None,
         })
     }
 
     /// Check if a service is registered.
+    #[cfg(feature = "python")]
     pub(crate) fn contains(&self, name: &str) -> bool {
         self.services.contains_key(name)
     }
 
     /// Number of registered services.
+    #[cfg(feature = "python")]
     pub(crate) fn count(&self) -> usize {
         self.services.len()
     }
 
     /// Service names in registration order.
+    #[cfg(feature = "python")]
     pub(crate) fn names(&self) -> Vec<String> {
         self.insertion_order.lock().clone()
     }
 
     /// Service names in reverse registration order.
+    #[cfg(feature = "python")]
     pub(crate) fn names_reversed(&self) -> Vec<String> {
         let mut names = self.insertion_order.lock().clone();
         names.reverse();
         names
     }
 
+    // NOTE: unregister / unregister_full / swap / drain / ref_acquire /
+    // ref_release are python-only — called from PyKernel wrapper in
+    // generated_kernel_abi_pyo3.rs. Ideally Python would go through
+    // syscalls instead of poking kernel internals directly.
+
     /// Unregister a service. Returns true if found.
+    #[cfg(feature = "python")]
     pub(crate) fn unregister(&self, name: &str) -> bool {
         let removed = self.services.remove(name).is_some();
         if removed {
@@ -271,41 +252,26 @@ impl ServiceRegistry {
     }
 
     /// Full unregister: unhook + remove.
-    /// The Python-side dispatch hook unregistration is handled by the caller
-    /// (PyKernel wrapper) since it needs the dispatch object.
+    #[cfg(feature = "python")]
     pub(crate) fn unregister_full(&self, name: &str) -> bool {
         self.unregister(name)
     }
 
-    /// Hot-swap a service: drain → replace (hook management done by caller).
+    /// Hot-swap a managed service: drain → replace.
+    #[cfg(feature = "python")]
     pub(crate) fn swap(
         &self,
-        _py: Python<'_>,
         name: &str,
-        new_instance: &Bound<'_, PyAny>,
+        new_instance: Box<dyn ServiceLifecycle>,
         exports: Vec<String>,
         timeout_ms: u64,
-    ) -> PyResult<()> {
-        // Check old exists
+    ) -> Result<(), String> {
         if !self.services.contains_key(name) {
-            return Err(pyo3::exceptions::PyKeyError::new_err(format!(
-                "swap_service: {name:?} not registered"
-            )));
+            return Err(format!("swap_service: {name:?} not registered"));
         }
 
-        // Validate exports
-        for exp in &exports {
-            if !new_instance.hasattr(exp.as_str())? {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "services: {name:?} replacement declares invalid exports: [{exp}]"
-                )));
-            }
-        }
-
-        // Step 1: Drain refcount
         self.drain(name, timeout_ms);
 
-        // Step 2: Get old exports to inherit if new exports empty
         let old_exports = self
             .services
             .get(name)
@@ -318,10 +284,9 @@ impl ServiceRegistry {
             exports
         };
 
-        // Step 3: Atomic replace
         let entry = ServiceEntry {
             name: name.to_string(),
-            instance: ServiceInstance::Python(new_instance.clone().unbind()),
+            instance: ServiceInstance::Managed(new_instance),
             exports: final_exports,
         };
         self.services.insert(name.to_string(), entry);
@@ -330,6 +295,7 @@ impl ServiceRegistry {
     }
 
     /// Acquire a refcount for a service (for ServiceRef proxy).
+    #[cfg(feature = "python")]
     pub(crate) fn ref_acquire(&self, name: &str) {
         self.refcounts
             .entry(name.to_string())
@@ -338,6 +304,7 @@ impl ServiceRegistry {
     }
 
     /// Release a refcount. Notifies drain waiters if count reaches 0.
+    #[cfg(feature = "python")]
     pub(crate) fn ref_release(&self, name: &str) {
         if let Some(rc) = self.refcounts.get(name) {
             let prev = rc.fetch_sub(1, Ordering::Relaxed);
@@ -348,6 +315,7 @@ impl ServiceRegistry {
     }
 
     /// Drain: wait for refcount on `name` to reach 0.
+    #[cfg(feature = "python")]
     pub(crate) fn drain(&self, name: &str, timeout_ms: u64) {
         let current = self
             .refcounts
@@ -363,125 +331,76 @@ impl ServiceRegistry {
         let _result = self.drain_condvar.wait_for(&mut guard, timeout);
     }
 
-    /// Start all BackgroundService instances.
-    pub(crate) fn start_all(&self, py: Python<'_>, timeout_secs: f64) -> PyResult<Vec<String>> {
-        let bg_cls = py
-            .import("nexus.contracts.protocols.service_lifecycle")?
-            .getattr("BackgroundService")?;
-
+    /// Start all services (managed + Rust).
+    #[cfg(feature = "python")]
+    pub(crate) fn start_all(&self, timeout_secs: f64) -> Result<Vec<String>, String> {
         let mut started = Vec::new();
         for name in self.names() {
             if let Some(entry) = self.services.get(&name) {
-                match &entry.instance {
-                    ServiceInstance::Python(py_obj) => {
-                        let instance = py_obj.bind(py);
-                        if instance.is_instance(&bg_cls)? {
-                            match instance.call_method0("start") {
-                                Ok(coro) => {
-                                    if let Err(e) = run_coro(py, &coro, timeout_secs) {
-                                        tracing::error!(
-                                            "[COORDINATOR] failed to start {name:?}: {e}"
-                                        );
-                                        continue;
-                                    }
-                                    started.push(name);
-                                }
-                                Err(e) => {
-                                    tracing::error!("[COORDINATOR] failed to start {name:?}: {e}");
-                                }
-                            }
-                        }
+                let result = match &entry.instance {
+                    ServiceInstance::Managed(lc) => lc.start(timeout_secs),
+                    ServiceInstance::Rust(svc) => svc.start(),
+                };
+                match result {
+                    Ok(()) => started.push(name),
+                    Err(e) => {
+                        tracing::error!("[COORDINATOR] failed to start {name:?}: {e}");
                     }
-                    ServiceInstance::Rust(svc) => match svc.start() {
-                        Ok(()) => started.push(name),
-                        Err(e) => {
-                            tracing::error!("[COORDINATOR] failed to start {name:?}: {e}");
-                        }
-                    },
                 }
             }
         }
         Ok(started)
     }
 
-    /// Stop all BackgroundService instances (reverse order).
-    pub(crate) fn stop_all(&self, py: Python<'_>, timeout_secs: f64) -> PyResult<Vec<String>> {
-        let bg_cls = py
-            .import("nexus.contracts.protocols.service_lifecycle")?
-            .getattr("BackgroundService")?;
-
+    /// Stop all services (reverse order).
+    #[cfg(feature = "python")]
+    pub(crate) fn stop_all(&self, timeout_secs: f64) -> Result<Vec<String>, String> {
         let mut stopped = Vec::new();
         for name in self.names_reversed() {
             if let Some(entry) = self.services.get(&name) {
-                match &entry.instance {
-                    ServiceInstance::Python(py_obj) => {
-                        let instance = py_obj.bind(py);
-                        if instance.is_instance(&bg_cls)? {
-                            match instance.call_method0("stop") {
-                                Ok(coro) => {
-                                    if let Err(e) = run_coro(py, &coro, timeout_secs) {
-                                        tracing::error!(
-                                            "[COORDINATOR] failed to stop {name:?}: {e}"
-                                        );
-                                        continue;
-                                    }
-                                    stopped.push(name);
-                                }
-                                Err(e) => {
-                                    tracing::error!("[COORDINATOR] failed to stop {name:?}: {e}");
-                                }
-                            }
-                        }
+                let result = match &entry.instance {
+                    ServiceInstance::Managed(lc) => lc.stop(timeout_secs),
+                    ServiceInstance::Rust(svc) => svc.stop(),
+                };
+                match result {
+                    Ok(()) => stopped.push(name),
+                    Err(e) => {
+                        tracing::error!("[COORDINATOR] failed to stop {name:?}: {e}");
                     }
-                    ServiceInstance::Rust(svc) => match svc.stop() {
-                        Ok(()) => stopped.push(name),
-                        Err(e) => {
-                            tracing::error!("[COORDINATOR] failed to stop {name:?}: {e}");
-                        }
-                    },
                 }
             }
         }
         Ok(stopped)
     }
 
-    /// Close all services that have a close() method (reverse order).
-    /// Rust services don't expose a close() method — `stop_all` is the
-    /// shutdown hook for them.
-    pub(crate) fn close_all(&self, py: Python<'_>) {
+    /// Close all managed services (reverse order).
+    #[cfg(feature = "python")]
+    pub(crate) fn close_all(&self) {
         for name in self.names_reversed() {
             if let Some(entry) = self.services.get(&name) {
-                if let ServiceInstance::Python(py_obj) = &entry.instance {
-                    let instance = py_obj.bind(py);
-                    if let Ok(close_fn) = instance.getattr("close") {
-                        if close_fn.is_callable() {
-                            if let Err(e) = close_fn.call0() {
-                                tracing::debug!("[COORDINATOR] close({name:?}) failed: {e}");
-                            }
-                        }
+                if let ServiceInstance::Managed(lc) = &entry.instance {
+                    if let Err(e) = lc.close() {
+                        tracing::debug!("[COORDINATOR] close({name:?}) failed: {e}");
                     }
                 }
             }
         }
     }
 
-    /// Mark bootstrap complete — future enlist() auto-starts BackgroundService.
+    /// Mark bootstrap complete — future enlist() auto-starts.
+    #[cfg(feature = "python")]
     pub(crate) fn mark_bootstrapped(&self) {
         self.bootstrapped.store(true, Ordering::Relaxed);
     }
 
     /// Snapshot: list of (name, type_name, exports) for diagnostics.
-    pub(crate) fn snapshot(&self, py: Python<'_>) -> Vec<(String, String, Vec<String>)> {
+    #[cfg(feature = "python")]
+    pub(crate) fn snapshot(&self) -> Vec<(String, String, Vec<String>)> {
         let mut result = Vec::new();
         for name in self.names() {
             if let Some(entry) = self.services.get(&name) {
                 let type_name = match &entry.instance {
-                    ServiceInstance::Python(py_obj) => py_obj
-                        .bind(py)
-                        .get_type()
-                        .name()
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|_| "?".to_string()),
+                    ServiceInstance::Managed(lc) => lc.type_name(),
                     ServiceInstance::Rust(svc) => format!("rust::{}", svc.name()),
                 };
                 result.push((name, type_name, entry.exports.clone()));
@@ -507,7 +426,6 @@ mod tests {
     #[test]
     fn test_drain_returns_immediately_when_zero() {
         let reg = ServiceRegistry::new();
-        // Should not block
         reg.drain("nonexistent", 100);
     }
 
@@ -598,8 +516,6 @@ mod tests {
             false,
         )
         .unwrap();
-        // Pre-bootstrap path defers start to start_all (which the kernel
-        // boot calls explicitly).
         assert_eq!(svc.start_count.load(Ordering::Relaxed), 0);
     }
 

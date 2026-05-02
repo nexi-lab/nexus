@@ -11,8 +11,6 @@
 //!   - acquire() returns Option<String> (holder_id or None)
 
 use parking_lot::{Condvar, Mutex};
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -80,7 +78,9 @@ fn monotonic_ns() -> u64 {
 ///
 /// All mutations are serialized through a `parking_lot::Mutex`.
 /// A `Condvar` wakes blocked threads on release.
-#[pyclass]
+///
+/// Python access goes through the PyO3 wrapper in
+/// `generated_kernel_abi_pyo3` (cfg-gated behind `python` feature).
 pub struct VFSSemaphore {
     state: Mutex<SemaphoreState>,
     notify: Condvar,
@@ -89,6 +89,12 @@ pub struct VFSSemaphore {
     acquire_count: AtomicU64,
     release_count: AtomicU64,
     timeout_count: AtomicU64,
+}
+
+impl Default for VFSSemaphore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VFSSemaphore {
@@ -157,12 +163,9 @@ impl VFSSemaphore {
         state.semaphores.insert(name.to_string(), new_entry);
         Ok(Some(holder_id))
     }
-}
 
-#[pymethods]
-impl VFSSemaphore {
-    #[new]
-    fn new() -> Self {
+    /// Create a new VFSSemaphore.
+    pub fn new() -> Self {
         Self {
             state: Mutex::new(SemaphoreState {
                 semaphores: HashMap::new(),
@@ -174,7 +177,7 @@ impl VFSSemaphore {
         }
     }
 
-    /// Acquire a semaphore slot.
+    /// Acquire a semaphore slot (pure Rust, no GIL).
     ///
     /// * `name` – semaphore name
     /// * `max_holders` – maximum concurrent holders (SSOT)
@@ -182,53 +185,60 @@ impl VFSSemaphore {
     /// * `ttl_ms` – holder auto-expires after this many ms
     ///
     /// Returns holder_id (UUID string) on success, None on timeout.
-    #[pyo3(signature = (name, max_holders, timeout_ms=0, ttl_ms=30000))]
-    fn acquire(
+    pub fn acquire(
         &self,
-        py: Python<'_>,
         name: &str,
         max_holders: u32,
         timeout_ms: u64,
         ttl_ms: u64,
-    ) -> PyResult<Option<String>> {
+    ) -> Result<Option<String>, String> {
         if max_holders < 1 {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "max_holders must be >= 1, got {max_holders}"
-            )));
+            return Err(format!("max_holders must be >= 1, got {max_holders}"));
         }
 
-        let name = name.to_string();
-
-        // Release the GIL for the (potentially blocking) acquire loop.
-        let result = py.detach(|| -> Result<Option<String>, String> {
-            // Fast path: non-blocking try under mutex.
-            {
-                let mut state = self.state.lock();
-                match Self::try_acquire_locked(&mut state, &name, max_holders, ttl_ms) {
-                    Ok(Some(holder_id)) => {
-                        self.acquire_count.fetch_add(1, Ordering::Relaxed);
-                        return Ok(Some(holder_id));
-                    }
-                    Ok(None) => {} // full, continue to blocking path
-                    Err(msg) => return Err(msg),
+        // Fast path: non-blocking try under mutex.
+        {
+            let mut state = self.state.lock();
+            match Self::try_acquire_locked(&mut state, name, max_holders, ttl_ms) {
+                Ok(Some(holder_id)) => {
+                    self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                    return Ok(Some(holder_id));
                 }
+                Ok(None) => {} // full, continue to blocking path
+                Err(msg) => return Err(msg),
+            }
+        }
+
+        // Non-blocking: return immediately
+        if timeout_ms == 0 {
+            self.timeout_count.fetch_add(1, Ordering::Relaxed);
+            return Ok(None);
+        }
+
+        // Blocking wait with Condvar.
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+
+        loop {
+            let mut state = self.state.lock();
+            match Self::try_acquire_locked(&mut state, name, max_holders, ttl_ms) {
+                Ok(Some(holder_id)) => {
+                    self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                    return Ok(Some(holder_id));
+                }
+                Ok(None) => {}
+                Err(msg) => return Err(msg),
             }
 
-            // Non-blocking: return immediately
-            if timeout_ms == 0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 self.timeout_count.fetch_add(1, Ordering::Relaxed);
                 return Ok(None);
             }
 
-            // Blocking wait with Condvar. Try-before-wait: a release may
-            // have raced in between the fast-path attempt above and us
-            // acquiring the mutex; detect that before sleeping (§ review
-            // fix #11).
-            let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-
-            loop {
-                let mut state = self.state.lock();
-                match Self::try_acquire_locked(&mut state, &name, max_holders, ttl_ms) {
+            let wait_result = self.notify.wait_for(&mut state, remaining);
+            if wait_result.timed_out() {
+                // Final try after timeout (a release may race in).
+                match Self::try_acquire_locked(&mut state, name, max_holders, ttl_ms) {
                     Ok(Some(holder_id)) => {
                         self.acquire_count.fetch_add(1, Ordering::Relaxed);
                         return Ok(Some(holder_id));
@@ -236,38 +246,14 @@ impl VFSSemaphore {
                     Ok(None) => {}
                     Err(msg) => return Err(msg),
                 }
-
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    self.timeout_count.fetch_add(1, Ordering::Relaxed);
-                    return Ok(None);
-                }
-
-                let wait_result = self.notify.wait_for(&mut state, remaining);
-                if wait_result.timed_out() {
-                    // Final try after timeout (a release may race in).
-                    match Self::try_acquire_locked(&mut state, &name, max_holders, ttl_ms) {
-                        Ok(Some(holder_id)) => {
-                            self.acquire_count.fetch_add(1, Ordering::Relaxed);
-                            return Ok(Some(holder_id));
-                        }
-                        Ok(None) => {}
-                        Err(msg) => return Err(msg),
-                    }
-                    self.timeout_count.fetch_add(1, Ordering::Relaxed);
-                    return Ok(None);
-                }
+                self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                return Ok(None);
             }
-        });
-
-        match result {
-            Ok(holder_id) => Ok(holder_id),
-            Err(msg) => Err(pyo3::exceptions::PyValueError::new_err(msg)),
         }
     }
 
     /// Release a semaphore slot by holder_id.
-    fn release(&self, name: &str, holder_id: &str) -> bool {
+    pub fn release(&self, name: &str, holder_id: &str) -> bool {
         let released = {
             let mut state = self.state.lock();
 
@@ -298,8 +284,7 @@ impl VFSSemaphore {
     }
 
     /// Extend TTL for a holder.
-    #[pyo3(signature = (name, holder_id, ttl_ms=30000))]
-    fn extend(&self, name: &str, holder_id: &str, ttl_ms: u64) -> bool {
+    pub fn extend(&self, name: &str, holder_id: &str, ttl_ms: u64) -> bool {
         let now_ns = monotonic_ns();
         let mut state = self.state.lock();
 
@@ -318,43 +303,35 @@ impl VFSSemaphore {
         }
     }
 
-    /// Return info about a semaphore, or None if it doesn't exist / is empty.
-    fn info(&self, py: Python<'_>, name: &str) -> PyResult<Option<Py<PyAny>>> {
+    /// Return info about a semaphore as a Vec of holder details, or None
+    /// if it doesn't exist / is empty.
+    ///
+    /// Returns `(max_holders, Vec<(holder_id, acquired_at_ns, expires_at_ns)>)`.
+    #[allow(clippy::type_complexity)]
+    pub fn info(&self, name: &str) -> Option<(u32, Vec<(String, u64, u64)>)> {
         let now_ns = monotonic_ns();
         let mut state = self.state.lock();
 
-        let entry = match state.semaphores.get_mut(name) {
-            Some(e) => e,
-            None => return Ok(None),
-        };
+        let entry = state.semaphores.get_mut(name)?;
 
         // Evict expired before reporting
         entry.evict_expired(now_ns);
         if entry.is_empty() {
             state.semaphores.remove(name);
-            return Ok(None);
+            return None;
         }
 
-        let dict = PyDict::new(py);
-        dict.set_item("name", name)?;
-        dict.set_item("max_holders", entry.max_holders)?;
-        dict.set_item("active_count", entry.holders.len())?;
+        let holders: Vec<(String, u64, u64)> = entry
+            .holders
+            .values()
+            .map(|h| (h.holder_id.clone(), h.acquired_at_ns, h.expires_at_ns))
+            .collect();
 
-        let holders_list = PyList::empty(py);
-        for holder in entry.holders.values() {
-            let h = PyDict::new(py);
-            h.set_item("holder_id", &holder.holder_id)?;
-            h.set_item("acquired_at_ns", holder.acquired_at_ns)?;
-            h.set_item("expires_at_ns", holder.expires_at_ns)?;
-            holders_list.append(h)?;
-        }
-        dict.set_item("holders", holders_list)?;
-
-        Ok(Some(dict.into()))
+        Some((entry.max_holders, holders))
     }
 
     /// Force-release all holders for a semaphore.
-    fn force_release(&self, name: &str) -> bool {
+    pub fn force_release(&self, name: &str) -> bool {
         let released = {
             let mut state = self.state.lock();
 
@@ -375,25 +352,25 @@ impl VFSSemaphore {
         released
     }
 
-    /// Return aggregate metrics.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    /// Return aggregate metrics as (acquire_count, release_count,
+    /// timeout_count, active_semaphores, active_holders).
+    pub fn stats(&self) -> (u64, u64, u64, usize, usize) {
         let state = self.state.lock();
         let active_semaphores = state.semaphores.len();
         let active_holders: usize = state.semaphores.values().map(|e| e.holders.len()).sum();
         drop(state);
 
-        let dict = PyDict::new(py);
-        dict.set_item("acquire_count", self.acquire_count.load(Ordering::Relaxed))?;
-        dict.set_item("release_count", self.release_count.load(Ordering::Relaxed))?;
-        dict.set_item("timeout_count", self.timeout_count.load(Ordering::Relaxed))?;
-        dict.set_item("active_semaphores", active_semaphores)?;
-        dict.set_item("active_holders", active_holders)?;
-        Ok(dict.into())
+        (
+            self.acquire_count.load(Ordering::Relaxed),
+            self.release_count.load(Ordering::Relaxed),
+            self.timeout_count.load(Ordering::Relaxed),
+            active_semaphores,
+            active_holders,
+        )
     }
 
     /// Number of active semaphores.
-    #[getter]
-    fn active_semaphores(&self) -> usize {
+    pub fn active_semaphores(&self) -> usize {
         self.state.lock().semaphores.len()
     }
 }
@@ -410,19 +387,17 @@ mod tests {
         VFSSemaphore::new()
     }
 
-    /// Helper: acquire directly through the mutex (bypasses PyO3 / GIL).
+    /// Helper: acquire directly through the pure Rust API.
     fn acquire(sem: &VFSSemaphore, name: &str, max_holders: u32, ttl_ms: u64) -> Option<String> {
-        let mut state = sem.state.lock();
-        match VFSSemaphore::try_acquire_locked(&mut state, name, max_holders, ttl_ms) {
+        match sem.acquire(name, max_holders, 0, ttl_ms) {
             Ok(opt) => opt,
             Err(msg) => panic!("acquire error: {msg}"),
         }
     }
 
-    /// Helper: acquire expecting a ValueError (SSOT mismatch).
+    /// Helper: acquire expecting an error (SSOT mismatch).
     fn acquire_err(sem: &VFSSemaphore, name: &str, max_holders: u32, ttl_ms: u64) -> String {
-        let mut state = sem.state.lock();
-        match VFSSemaphore::try_acquire_locked(&mut state, name, max_holders, ttl_ms) {
+        match sem.acquire(name, max_holders, 0, ttl_ms) {
             Err(msg) => msg,
             Ok(_) => panic!("expected error, got success"),
         }

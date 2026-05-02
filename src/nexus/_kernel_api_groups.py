@@ -41,7 +41,6 @@ MODULE_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "storage": (
         "BloomFilter",
-        "VFSSemaphore",
         "BlobPackEngine",
     ),
     "prefix": (

@@ -6,7 +6,9 @@
 
 #![allow(dead_code)]
 
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
 use pyo3::types::PyBytes;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -49,6 +51,7 @@ fn http_client() -> &'static reqwest::Client {
 ///
 /// Returns response JSON as bytes. Caller parses in Python.
 /// Compatible with: OpenAI, SudoRouter, OpenRouter, Ollama, vLLM.
+#[cfg(feature = "python")]
 #[pyfunction]
 #[pyo3(signature = (base_url, api_key, messages_json, model="gpt-4o", temperature=None, max_tokens=None))]
 pub fn openai_chat_completion<'py>(
@@ -114,6 +117,7 @@ pub fn openai_chat_completion<'py>(
 ///
 /// Returns collected content string. For true token-by-token streaming,
 /// use Python LLMStreamingService which pumps tokens into DT_STREAM.
+#[cfg(feature = "python")]
 #[pyfunction]
 #[pyo3(signature = (base_url, api_key, messages_json, model="gpt-4o", temperature=None, max_tokens=None))]
 pub fn openai_chat_completion_stream(

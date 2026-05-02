@@ -169,8 +169,11 @@ impl DriverLifecycleCoordinator {
         //    being unmounted) and lands in the wrong state machine.
         //    Walk up to the parent path first so longest-prefix routing
         //    skips this mount and finds the actual parent.
-        let parent_path =
-            lib::python::path_utils::parent_path(mount_point).unwrap_or_else(|| "/".to_string());
+        let parent_path = mount_point
+            .rfind('/')
+            .filter(|&i| i > 0)
+            .map(|i| mount_point[..i].to_string())
+            .unwrap_or_else(|| "/".to_string());
         let route = kernel.vfs_router_arc().route(&parent_path, "root");
         if let Ok(parent_route) = route {
             kernel.with_metastore(&parent_route.mount_point, |ms| {

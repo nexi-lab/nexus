@@ -42,6 +42,7 @@ pub mod llm_streaming;
 // `pub(crate) use`).
 pub(crate) use core::dcache;
 pub(crate) use core::dispatch;
+#[cfg(feature = "python")]
 pub(crate) use core::dispatch::hook_registry;
 pub(crate) use core::dlc;
 pub(crate) use core::file_watch;
@@ -49,10 +50,8 @@ pub use core::lock as lock_manager;
 pub use core::lock::locks;
 pub use core::meta_store;
 pub use core::vfs_router;
-// Kept under flat `semaphore::` so `m.add_class::<semaphore::VFSSemaphore>()`
-// in #[pymodule] keeps the single-segment shape that
-// scripts/codegen_kernel_abi.py's `add_class::<MOD::Name>` regex matches.
-pub(crate) use core::lock::semaphore;
+// VFSSemaphore pyclass deleted — Python access goes through syscalls.
+// The pure Rust API lives at `core::lock::semaphore::VFSSemaphore`.
 pub(crate) use core::pipe;
 pub(crate) use core::pipe::manager as pipe_manager;
 
@@ -93,7 +92,9 @@ pub mod kernel;
 // `scripts/codegen_kernel_abi.py`.  Other rlibs (`raft`,
 // `transport`) reference `PyKernel` here for cross-crate PyO3
 // borrows used by install-hook pyfunctions.
+#[cfg(feature = "python")]
 pub mod generated_kernel_abi_pyo3;
+#[cfg(feature = "python")]
 pub use generated_kernel_abi_pyo3 as generated_pyo3;
 
 // Python-facing AgentRegistry sub-pyclass — wraps the kernel's
@@ -101,6 +102,7 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 // callers can reach `kernel.agent_registry.X` without going through the
 // flat `agent_*` syscalls. Hand-written; codegen owns the PyKernel
 // getter that returns an instance.
+#[cfg(feature = "python")]
 pub mod agent_registry_py;
 
 // kernel↔raft Cargo edge direction: `raft → kernel`. Raft state-machine
@@ -126,4 +128,5 @@ pub mod rpc_transport;
 // the cdylib alongside `lib::python::register`,
 // `nexus_raft::pyo3_bindings::register_python_classes`, and the
 // parallel-crate registers.
+#[cfg(feature = "python")]
 pub mod python;

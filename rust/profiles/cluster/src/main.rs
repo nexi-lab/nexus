@@ -16,7 +16,9 @@
 //! Sudowork's primary deployment path is the static topology env vars
 //! consumed at daemon startup; share/join are operator escape hatches.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -186,6 +188,117 @@ fn open_zone_manager(common: &CommonArgs) -> Result<std::sync::Arc<ZoneManager>>
     .map_err(|e| anyhow::anyhow!("ZoneManager init failed: {}", e))
 }
 
+fn parse_peers(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Async-safe handle to ZoneManager
+// ---------------------------------------------------------------------------
+
+/// `ZoneManager` methods internally `block_on` their own tokio runtime.
+/// Calling them from an async context panics ("Cannot start a runtime from
+/// within a runtime"). This wrapper offloads each call to
+/// [`tokio::task::spawn_blocking`] so the async executor is never blocked.
+#[derive(Clone)]
+struct Zm(Arc<ZoneManager>);
+
+impl Zm {
+    async fn open(common: CommonArgs) -> Result<Self> {
+        let inner = tokio::task::spawn_blocking(move || open_zone_manager(&common))
+            .await
+            .context("open_zone_manager panicked")??;
+        Ok(Self(inner))
+    }
+
+    fn has_zone(&self, zone_id: &str) -> bool {
+        self.0.get_zone(zone_id).is_some()
+    }
+
+    fn pending_mounts(&self) -> BTreeMap<String, String> {
+        self.0.pending_mounts()
+    }
+
+    async fn create_zone(&self, zone_id: &str, peers: Vec<String>) -> Result<()> {
+        let zm = self.0.clone();
+        let zid = zone_id.to_string();
+        tokio::task::spawn_blocking(move || zm.create_zone(&zid, peers))
+            .await
+            .context("task panicked")?
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(())
+    }
+
+    async fn join_zone(&self, zone_id: &str, peers: Vec<String>, learner: bool) -> Result<()> {
+        let zm = self.0.clone();
+        let zid = zone_id.to_string();
+        tokio::task::spawn_blocking(move || zm.join_zone(&zid, peers, learner))
+            .await
+            .context("task panicked")?
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(())
+    }
+
+    async fn share_subtree_core(
+        &self,
+        parent_zone: &str,
+        prefix: &str,
+        new_zone_id: &str,
+    ) -> Result<usize> {
+        let zm = self.0.clone();
+        let pz = parent_zone.to_string();
+        let p = prefix.to_string();
+        let nz = new_zone_id.to_string();
+        tokio::task::spawn_blocking(move || zm.share_subtree_core(&pz, &p, &nz))
+            .await
+            .context("task panicked")?
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    async fn mount(
+        &self,
+        parent_zone: &str,
+        path: &str,
+        zone_id: &str,
+        increment_links: bool,
+    ) -> Result<()> {
+        let zm = self.0.clone();
+        let pz = parent_zone.to_string();
+        let p = path.to_string();
+        let z = zone_id.to_string();
+        tokio::task::spawn_blocking(move || zm.mount(&pz, &p, &z, increment_links))
+            .await
+            .context("task panicked")?
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    async fn bootstrap_static(
+        &self,
+        zones: Vec<String>,
+        peers: Vec<String>,
+        mounts: BTreeMap<String, String>,
+    ) -> Result<()> {
+        let zm = self.0.clone();
+        tokio::task::spawn_blocking(move || zm.bootstrap_static(&zones, peers, &mounts))
+            .await
+            .context("task panicked")?
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    async fn apply_topology(&self, zone_id: &str) -> Result<bool> {
+        let zm = self.0.clone();
+        let zid = zone_id.to_string();
+        tokio::task::spawn_blocking(move || zm.apply_topology(&zid))
+            .await
+            .context("task panicked")?
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+}
+
 async fn run_daemon(common: CommonArgs) -> Result<()> {
     let hostname = resolve_hostname(common.hostname.as_deref());
     tracing::info!(
@@ -194,26 +307,14 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         data_dir = %common.data_dir.display(),
         "nexusd-cluster starting (daemon mode)",
     );
+    let peers = parse_peers(&common.peers);
 
-    let peers: Vec<String> = common
-        .peers
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect();
+    let zm = Zm::open(common).await?;
 
-    let zm = tokio::task::spawn_blocking(move || open_zone_manager(&common))
-        .await
-        .context("open_zone_manager task panicked")??;
-
-    if zm.get_zone(contracts::ROOT_ZONE_ID).is_none() {
-        let zm_c = zm.clone();
-        let peers_c = peers.clone();
-        tokio::task::spawn_blocking(move || zm_c.create_zone(contracts::ROOT_ZONE_ID, peers_c))
+    if !zm.has_zone(contracts::ROOT_ZONE_ID) {
+        zm.create_zone(contracts::ROOT_ZONE_ID, peers.clone())
             .await
-            .context("create_zone task panicked")?
-            .map_err(|e| anyhow::anyhow!("create root zone: {}", e))?;
+            .context("create root zone")?;
         tracing::info!("Created root zone");
     }
 
@@ -226,36 +327,25 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             ENV_FEDERATION_ZONES,
             ENV_FEDERATION_MOUNTS,
         );
-        let zm_c = zm.clone();
-        tokio::task::spawn_blocking(move || zm_c.bootstrap_static(&zones, peers, &mounts))
+        zm.bootstrap_static(zones, peers, mounts)
             .await
-            .context("bootstrap_static task panicked")?
-            .map_err(|e| anyhow::anyhow!("bootstrap_static: {}", e))?;
+            .context("bootstrap_static")?;
     }
 
-    let zm_for_loop = zm.clone();
+    let zm_loop = zm.clone();
     let topology_handle = tokio::spawn(async move {
         loop {
-            let zm_inner = zm_for_loop.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                zm_inner.apply_topology(contracts::ROOT_ZONE_ID)
-            })
-            .await;
-            match result {
-                Ok(Ok(true)) => {
-                    if !zm_for_loop.pending_mounts().is_empty() {
+            match zm_loop.apply_topology(contracts::ROOT_ZONE_ID).await {
+                Ok(true) => {
+                    if zm_loop.pending_mounts().is_empty() {
+                        tokio::time::sleep(TOPOLOGY_TICK * 6).await;
+                    } else {
                         tokio::time::sleep(TOPOLOGY_TICK).await;
-                        continue;
                     }
-                    tokio::time::sleep(TOPOLOGY_TICK * 6).await;
                 }
-                Ok(Ok(false)) => tokio::time::sleep(TOPOLOGY_TICK).await,
-                Ok(Err(err)) => {
+                Ok(false) => tokio::time::sleep(TOPOLOGY_TICK).await,
+                Err(err) => {
                     tracing::warn!(%err, "apply_topology error; will retry");
-                    tokio::time::sleep(TOPOLOGY_TICK).await;
-                }
-                Err(join_err) => {
-                    tracing::warn!("apply_topology task panicked: {}", join_err);
                     tokio::time::sleep(TOPOLOGY_TICK).await;
                 }
             }
@@ -274,34 +364,18 @@ async fn run_share(
     path: &str,
     new_zone_id: &str,
 ) -> Result<()> {
-    let peers: Vec<String> = common
-        .peers
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect();
+    let peers = parse_peers(&common.peers);
+    let zm = Zm::open(common).await?;
 
-    let zm = tokio::task::spawn_blocking(move || open_zone_manager(&common))
-        .await
-        .context("open_zone_manager task panicked")??;
-
-    if zm.get_zone(new_zone_id).is_none() {
-        let zm_c = zm.clone();
-        let zone_id = new_zone_id.to_string();
-        tokio::task::spawn_blocking(move || zm_c.create_zone(&zone_id, peers))
+    if !zm.has_zone(new_zone_id) {
+        zm.create_zone(new_zone_id, peers)
             .await
-            .context("create_zone task panicked")?
-            .map_err(|e| anyhow::anyhow!("create_zone({}): {}", new_zone_id, e))?;
+            .with_context(|| format!("create_zone({new_zone_id})"))?;
     }
-    let zm_c = zm.clone();
-    let pz = parent_zone.to_string();
-    let p = path.to_string();
-    let nz = new_zone_id.to_string();
-    let copied = tokio::task::spawn_blocking(move || zm_c.share_subtree_core(&pz, &p, &nz))
+    let copied = zm
+        .share_subtree_core(parent_zone, path, new_zone_id)
         .await
-        .context("share_subtree_core task panicked")?
-        .map_err(|e| anyhow::anyhow!("share_subtree: {}", e))?;
+        .context("share_subtree")?;
 
     println!(
         "Shared '{}' from zone '{}' as new zone '{}' ({} entries copied)",
@@ -317,32 +391,20 @@ async fn run_join(
     local_path: &str,
     parent_zone: &str,
 ) -> Result<()> {
-    let zm = tokio::task::spawn_blocking(move || open_zone_manager(&common))
-        .await
-        .context("open_zone_manager task panicked")??;
+    let zm = Zm::open(common).await?;
 
-    // Treat the supplied peer as the only known voter; raft will
-    // discover the rest via the remote's ConfState once we propose.
-    let peers = vec![peer_addr.to_string()];
-
-    if zm.get_zone(remote_zone_id).is_none() {
+    if !zm.has_zone(remote_zone_id) {
+        // Treat the supplied peer as the only known voter; raft will
+        // discover the rest via the remote's ConfState once we propose.
         // CLI `join` defaults to full voter; learner promotion is reserved
         // for the gRPC path (PyZoneManager.join_zone exposes the flag).
-        let zm_c = zm.clone();
-        let rzid = remote_zone_id.to_string();
-        tokio::task::spawn_blocking(move || zm_c.join_zone(&rzid, peers, false))
+        zm.join_zone(remote_zone_id, vec![peer_addr.to_string()], false)
             .await
-            .context("join_zone task panicked")?
-            .map_err(|e| anyhow::anyhow!("join_zone({}): {}", remote_zone_id, e))?;
+            .with_context(|| format!("join_zone({remote_zone_id})"))?;
     }
-    let zm_c = zm.clone();
-    let pz = parent_zone.to_string();
-    let lp = local_path.to_string();
-    let rzid = remote_zone_id.to_string();
-    tokio::task::spawn_blocking(move || zm_c.mount(&pz, &lp, &rzid, true))
+    zm.mount(parent_zone, local_path, remote_zone_id, true)
         .await
-        .context("mount task panicked")?
-        .map_err(|e| anyhow::anyhow!("mount: {}", e))?;
+        .context("mount")?;
 
     println!(
         "Joined remote zone '{}' (via {}); mounted at '{}' inside zone '{}'",

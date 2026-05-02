@@ -22,6 +22,17 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 logger = logging.getLogger(__name__)
 
 
+def _strip_null_bytes(value: str) -> str:
+    """Scrub NUL (0x00) bytes — Postgres TEXT and most embedding HTTP libs reject them.
+
+    Central chokepoint (Issue #3989). Every downstream consumer (bm25, fts,
+    embedding pipeline, txtai, naive-chunk fallback) reads ``mutation.content``,
+    so scrubbing here covers all paths in one place — even if a future reader
+    or a content_cache writer leaks a NUL upstream.
+    """
+    return value.replace("\x00", "") if "\x00" in value else value
+
+
 @dataclass(frozen=True)
 class ResolvedMutation:
     """Resolved mutation payload shared across search consumers."""
@@ -203,7 +214,7 @@ class MutationResolver:
         for event in update_events:
             content = await self._read_content(event.path, event.virtual_path)
             if content:
-                content_map[event.event_id] = content
+                content_map[event.event_id] = _strip_null_bytes(content)
             else:
                 missing_events.append(event)
 
@@ -215,7 +226,7 @@ class MutationResolver:
             for event in missing_events:
                 content = db_content.get(self._path_key(event.zone_id, event.virtual_path))
                 if content:
-                    content_map[event.event_id] = content
+                    content_map[event.event_id] = _strip_null_bytes(content)
 
         return content_map
 

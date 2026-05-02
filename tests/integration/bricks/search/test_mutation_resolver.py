@@ -379,3 +379,36 @@ async def test_resolver_includes_soft_deleted_rows_for_delete_events() -> None:
     # expression in ORDER BY may still reference deleted_at to prefer
     # live rows when both exist, which is fine.)
     assert "WHERE fp.deleted_at IS NULL" not in session.statements[0]
+
+
+@pytest.mark.asyncio
+async def test_resolver_strips_null_bytes_from_content() -> None:
+    """NUL (0x00) bytes must be scrubbed before they reach any downstream
+    consumer (bm25, fts, embedding, txtai, naive-fallback). Postgres TEXT
+    rejects them with SQLSTATE 22021 and would otherwise leave the asyncpg
+    session in PendingRollbackError until worker recycle (Issue #3989).
+    """
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = ["alpha\x00beta\x00gamma"]
+
+    session_factory = lambda: _SessionCtx(  # noqa: E731
+        [[("root", "/blob.bin", "pid-blob")]]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-nul",
+        operation_id="op-nul",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/root/blob.bin",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+    assert resolved[0].content is not None
+    assert "\x00" not in resolved[0].content
+    assert resolved[0].content == "alphabetagamma"

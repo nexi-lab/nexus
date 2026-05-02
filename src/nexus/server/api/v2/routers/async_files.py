@@ -244,6 +244,24 @@ def _metadata_timestamp(meta: Any, name: str) -> str | None:
     return str(value)
 
 
+def _encode_read_payload(
+    raw: str | bytes,
+    encoding: str | None,
+) -> tuple[str, str | None]:
+    """Encode read payload for the response based on the requested ``encoding``.
+
+    Returns ``(content_str, encoding_field)`` where ``encoding_field`` is set
+    on the response so SDKs can detect the format. ``encoding=None`` keeps
+    the legacy lossy UTF-8 string behavior for backward compat (Issue #3989).
+    """
+    if encoding == "base64":
+        raw_bytes = raw.encode("utf-8") if isinstance(raw, str) else raw
+        return base64.b64encode(raw_bytes).decode("ascii"), "base64"
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace"), None
+    return raw, None
+
+
 def _to_metadata_response(meta: Any, fallback_path: str) -> "MetadataResponse":
     is_directory = _metadata_field(
         meta,
@@ -289,6 +307,7 @@ class ReadResponse(BaseModel):
     """Response model for read operation."""
 
     content: str
+    encoding: str | None = None
     content_id: str | None = None
     version: int | None = None
     modified_at: str | None = None
@@ -792,6 +811,13 @@ def create_async_files_router(
             None,
             description="(Markdown only) Filter by block type within section: 'code' or 'table'",
         ),
+        encoding: str | None = Query(
+            None,
+            description=(
+                "Response content encoding. 'base64' returns raw bytes losslessly; "
+                "default UTF-8 string (lossy for non-text) preserved for backward compat."
+            ),
+        ),
         zone: str | None = Query(
             None,
             description="Override zone (must be in token's zone_set).",
@@ -812,6 +838,15 @@ def create_async_files_router(
         `path` in that transaction, preventing cross-path blob reads.
         """
         context = _apply_zone_override(context, zone, auth_result, required_perm="r")
+        if encoding is not None and encoding not in ("base64", "utf8", "utf-8"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported encoding {encoding!r}; supported: 'base64', 'utf8'",
+            )
+        # Normalize utf8 alias to None (legacy default) so response.encoding
+        # is only set when the caller explicitly requested base64.
+        if encoding in ("utf8", "utf-8"):
+            encoding = None
         try:
             fs = await _get_fs()
 
@@ -877,8 +912,8 @@ def create_async_files_router(
                 if _py_kernel is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")
                 raw: bytes = await asyncio.to_thread(_py_kernel.sys_read_raw, path, "root")
-                text_v = raw.decode("utf-8", errors="replace")
-                resp_v = ReadResponse(content=text_v, content_id=version)
+                content_v, enc_v = _encode_read_payload(raw, encoding)
+                resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)
                 return Response(
                     content=resp_v.model_dump_json(),
                     media_type="application/json",
@@ -922,21 +957,25 @@ def create_async_files_router(
                 if section and path.endswith(".md"):
                     partial = _md_partial_read(fs, path, connector_content, section, block_type)
                     if partial is not None:
+                        partial_str, partial_enc = _encode_read_payload(partial, encoding)
                         return Response(
-                            content=ReadResponse(content=partial).model_dump_json(),
+                            content=ReadResponse(
+                                content=partial_str, encoding=partial_enc
+                            ).model_dump_json(),
                             media_type="application/json",
                         )
-                text = connector_content.decode("utf-8", errors="replace")
+                content_str, enc_str = _encode_read_payload(connector_content, encoding)
                 if include_metadata:
                     resp = ReadResponse(
-                        content=text,
+                        content=content_str,
+                        encoding=enc_str,
                         content_id=None,
                         version=None,
                         modified_at=None,
                         size=len(connector_content),
                     )
                 else:
-                    resp = ReadResponse(content=text)
+                    resp = ReadResponse(content=content_str, encoding=enc_str)
                 return Response(
                     content=resp.model_dump_json(),
                     media_type="application/json",
@@ -958,8 +997,11 @@ def create_async_files_router(
 
                 partial = _md_partial_read(fs, path, raw_content, section, block_type)
                 if partial is not None:
+                    partial_str, partial_enc = _encode_read_payload(partial, encoding)
                     return Response(
-                        content=ReadResponse(content=partial).model_dump_json(),
+                        content=ReadResponse(
+                            content=partial_str, encoding=partial_enc
+                        ).model_dump_json(),
                         media_type="application/json",
                     )
                 # Section explicitly requested but not found — don't leak full doc.
@@ -970,12 +1012,12 @@ def create_async_files_router(
                 )
 
             if include_metadata and isinstance(result, dict):
-                file_content: str = result["content"]
-                if isinstance(file_content, bytes):
-                    file_content = file_content.decode("utf-8", errors="replace")
+                raw_content_md = result["content"]
+                file_content, enc_md = _encode_read_payload(raw_content_md, encoding)
 
                 response_data = ReadResponse(
                     content=file_content,
+                    encoding=enc_md,
                     content_id=result.get("content_id"),
                     version=result.get("version"),
                     modified_at=result.get("modified_at"),
@@ -989,17 +1031,12 @@ def create_async_files_router(
                 )
             else:
                 # Simple content response
-                plain: str = (
-                    result
-                    if isinstance(result, str)
-                    else (
-                        result.decode("utf-8", errors="replace")
-                        if isinstance(result, bytes)
-                        else str(result)
-                    )
-                )
+                if isinstance(result, (str, bytes)):
+                    plain, enc_plain = _encode_read_payload(result, encoding)
+                else:
+                    plain, enc_plain = _encode_read_payload(str(result), encoding)
                 return Response(
-                    content=ReadResponse(content=plain).model_dump_json(),
+                    content=ReadResponse(content=plain, encoding=enc_plain).model_dump_json(),
                     media_type="application/json",
                 )
 

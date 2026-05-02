@@ -60,3 +60,36 @@ async def test_chunk_store_deletes_document_chunks() -> None:
 
     session.execute.assert_awaited_once()
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chunk_store_strips_null_bytes_before_insert() -> None:
+    """NUL bytes must be scrubbed before INSERT — Postgres TEXT rejects them
+    (SQLSTATE 22021) and an unsanitized payload would put the asyncpg session
+    in PendingRollbackError until the worker is recycled (Issue #3989)."""
+    session = AsyncMock()
+    ctx = AsyncMock()
+    ctx.__aenter__.return_value = session
+    ctx.__aexit__.return_value = False
+    session_factory = MagicMock(return_value=ctx)
+
+    store = ChunkStore(async_session_factory=session_factory, db_type="postgresql")
+    await store.replace_document_chunks(
+        "pid-1",
+        [
+            ChunkRecord(
+                chunk_text="alpha\x00beta\x00gamma",
+                chunk_tokens=3,
+                chunk_context="ctx\x00with\x00nuls",
+                line_start=1,
+                line_end=1,
+            )
+        ],
+    )
+
+    insert_call = session.execute.await_args_list[1]
+    rows = insert_call.args[1]
+    assert "\x00" not in rows[0]["chunk_text"]
+    assert rows[0]["chunk_text"] == "alphabetagamma"
+    assert "\x00" not in rows[0]["chunk_context"]
+    assert rows[0]["chunk_context"] == "ctxwithnuls"

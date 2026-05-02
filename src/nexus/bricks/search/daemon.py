@@ -1624,7 +1624,19 @@ class SearchDaemon:
         from nexus.contracts.constants import ROOT_ZONE_ID
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
-        count = int(await self._backend.upsert(documents, zone_id=effective_zone_id))
+        # Strip NUL bytes from any string field — Postgres TEXT (used by the
+        # txtai content store) rejects them with SQLSTATE 22021 and would
+        # otherwise leave the asyncpg session in PendingRollbackError until
+        # worker recycle (Issue #3989).
+        scrubbed: list[dict[str, Any]] = []
+        for doc in documents:
+            scrubbed.append(
+                {
+                    k: (v.replace("\x00", "") if isinstance(v, str) and "\x00" in v else v)
+                    for k, v in doc.items()
+                }
+            )
+        count = int(await self._backend.upsert(scrubbed, zone_id=effective_zone_id))
         if count:
             self.stats.last_index_refresh = time.time()
         return count

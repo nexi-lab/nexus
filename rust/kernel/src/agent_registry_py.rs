@@ -354,6 +354,32 @@ impl PyAgentRegistry {
     fn close_all(&self) {
         self.inner.close_all()
     }
+
+    /// Bind a Python-side provisioner. The provisioner is expected to
+    /// expose an async `provision(agent_id, *, name=None, skills=None,
+    /// metadata=None)` method; callers (`agent_registration.py`) fetch
+    /// the stored handle through `get_provisioner` and `await` the
+    /// returned coroutine themselves so the asyncio loop owns the wait.
+    ///
+    /// Idempotent — calling with a fresh callable replaces the prior
+    /// binding. Pass the result of `take_provisioner` to release the
+    /// reference at shutdown.
+    fn set_provisioner(&self, callback: Py<PyAny>) {
+        self.inner.set_provisioner(callback);
+    }
+
+    /// Return the Python provisioner bound by `set_provisioner`, or
+    /// None when the provisioner has not been wired (test boot, minimal
+    /// profiles).
+    fn get_provisioner(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.inner.provisioner(py)
+    }
+
+    /// Drop the stored provisioner. Returns the prior reference if any
+    /// so the caller can perform cleanup.
+    fn take_provisioner(&self) -> Option<Py<PyAny>> {
+        self.inner.take_provisioner()
+    }
 }
 
 // Re-export so the kernel pymodule register() can find the type without

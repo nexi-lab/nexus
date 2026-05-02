@@ -3623,6 +3623,7 @@ mod tests {
                     None,
                     None,
                     Some(target),
+                    None,
                 )
                 .unwrap();
             }
@@ -3670,6 +3671,7 @@ mod tests {
                     None,
                     None,
                     Some(target),
+                    None,
                 )
                 .unwrap();
             }

@@ -979,14 +979,46 @@ and produces a standalone deployment binary `nexusd-<name>`:
 |----------|-----------------------------|--------------------|
 | cluster  | `rust/profiles/cluster/`    | `nexusd-cluster`   |
 
-The crate composes the rlibs needed for that profile (e.g. `cluster`
-links `raft + contracts` only — no kernel, no Python interpreter), so
-each binary lands at the size floor for the features it ships.
+The crate composes the rlibs needed for that profile.  `cluster` links
+`raft + contracts + kernel + backends` (the last two with their
+slimmest feature sets — no connectors, no Python interpreter).  The
+binary mounts host-fs at `/` via `PathLocalBackend` at boot
+(`--root-path`) and exposes runtime `mount` / `unmount` subcommands
+that drive the same DLC syscalls.
 
 `rust/nexus-cdylib/` lives at workspace top level rather than under
 `profiles/` because the Python wheel is a different artifact category:
 it loads into an external Python process, where profile binaries each
 run as their own process.
+
+### 7.2 Compile-time features vs runtime driver gate
+
+Driver selection is gated at two layers — pick which layer is doing
+the work for any given deployment:
+
+| Layer | Mechanism | Decided | Cost paid by | Linux analogue |
+|-------|-----------|---------|--------------|----------------|
+| **Compile-time** | `backends`/`services` Cargo features (`driver-path-local`, `service-audit`, …) | `cargo build` | binary size on disk | `CONFIG_FOO=y` in `.config` |
+| **Runtime** | `kernel::hal::object_store_provider::set_enabled_drivers` (Python `nx_set_enabled_drivers`) | Boot, before first `sys_setattr(DT_MOUNT)` | runtime error if a profile asks for a missing driver | `/sys/module/<name>/parameters` |
+
+`nexus-cdylib` (Python wheel) compiles every driver in (`features =
+["python", "connectors", "driver-*"]`) and uses the runtime gate to
+limit what an active `DeploymentProfile` is allowed to mount.  The
+runtime gate is the SSOT — every dispatch goes through
+`is_driver_enabled`, no implicit local-default skip-branch.
+
+`nexusd-cluster` (slim Rust binary) compiles only the drivers it needs
+(`features = ["driver-path-local"]`) and skips the runtime gate
+entirely — the compile-time gate is sufficient because the dispatch
+arms for missing drivers don't exist.  Attempting to mount a
+non-compiled driver returns `driver `X` not compiled into this
+binary` straight from the factory.
+
+A driver name that appears in
+`src/nexus/contracts/deployment_profile.py::ALL_DRIVER_NAMES` is the
+canonical name in both layers — Python aliases like the historical
+`"cas"` → `"cas-local"` mapping live in
+`src/nexus/core/nexus_fs_metadata.py`, never in Rust.
 
 ---
 

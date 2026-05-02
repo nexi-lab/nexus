@@ -17,6 +17,16 @@ surfaces.
 - **Federation**: Day-1 cluster formation, dynamic share/join, mTLS
   Cert-of-First-Use trust store. All convergent — every node tries
   to apply the same topology and retries on per-zone leader changes.
+- **Host-FS data plane**: at boot the binary mounts a host filesystem
+  directory at `/` via `PathLocalBackend`, so gRPC writes through DLC
+  land as real files on disk.  The mount uses path-addressed (not
+  CAS-hashed) semantics — file content stays human-readable for the
+  agent flows that drove this.  `--root-path` / `NEXUS_ROOT_FS` picks
+  the directory; defaults to `<data_dir>/root`.
+- **Operator-driven mounts**: `nexusd-cluster mount <path> --type
+  path_local --root <dir>` adds extra mounts at runtime via the same
+  DLC syscalls; `nexusd-cluster unmount <path>` reverses it.  Both
+  subcommands run while the daemon is stopped (redb file lock).
 
 ## What you don't get
 
@@ -26,6 +36,13 @@ surfaces.
   and point it at this node's gRPC port.
 - No bricks (search, llm, pay, …). Those are Python-only and live in
   the Python runtime.
+- No connector backends (S3, GCS, Anthropic, OpenAI, Slack, Gmail,
+  …).  The cluster binary's `backends` dep enables only
+  `driver-path-local` — every other driver is gated out at compile
+  time and produces a clean `driver `X` not compiled into this
+  binary` error if requested via `mount`.  A future build can add
+  more drivers by extending the feature set in
+  `rust/profiles/cluster/Cargo.toml`.
 
 ## Getting the binary
 
@@ -97,6 +114,7 @@ get their certs signed via `JoinCluster` on the leader.
 | `NEXUS_FEDERATION_ZONES` | *(empty)* | Comma-separated non-root zone ids to create at startup (e.g. `corp,corp-eng,family`). |
 | `NEXUS_FEDERATION_MOUNTS` | *(empty)* | Static mount topology as `path=zone` pairs (e.g. `/corp=corp,/corp/eng=corp-eng`). |
 | `NEXUS_NO_TLS` | `false` | Plaintext gRPC. **Local testing only.** |
+| `NEXUS_ROOT_FS` | `<data-dir>/root` | Host directory exposed at `/` via `PathLocalBackend` at boot. |
 
 `NEXUS_FEDERATION_ZONES` and `NEXUS_FEDERATION_MOUNTS` together drive
 the Day-1 static topology: every node reads the same env, calls
@@ -107,19 +125,27 @@ intervention).
 ## CLI subcommands
 
 ```bash
-nexusd-cluster                # daemon (default)
+nexusd-cluster                          # daemon (default)
 nexusd-cluster share <path> --zone-id <new-zone>
-                              # detach a subtree into a new zone
+                                        # detach a subtree into a new zone
 nexusd-cluster join <peer> <remote-zone-id> <local-mount-path>
-                              # join a remote zone, mount locally
+                                        # join a remote zone, mount locally
+nexusd-cluster mount <path> --type path_local --root <dir>
+                                        # add a path_local mount at <path>
+nexusd-cluster unmount <path>           # drop a previously-mounted path
 ```
 
-`share` and `join` open the data directory directly via
-`ZoneManager`, so they must run while the daemon is stopped (redb
-holds an exclusive file lock). The primary deployment path for
-Sudowork is the static topology env vars consumed at daemon startup;
-share/join are operator escape hatches for incremental federation
-changes outside that flow.
+`share`, `join`, `mount`, and `unmount` open the data directory
+directly via `ZoneManager`, so they must run while the daemon is
+stopped (redb holds an exclusive file lock). The primary deployment
+path for Sudowork is the static topology env vars + `--root-path`
+consumed at daemon startup; the offline subcommands are operator
+escape hatches for changes outside that flow.
+
+Only `--type=path_local` works in this binary because the cluster
+build's compiled-in driver set is exactly `["driver-path-local"]` —
+see `docs/architecture/KERNEL-ARCHITECTURE.md` §7.2 for the
+compile-time vs runtime gating model.
 
 ## Talking to the daemon
 

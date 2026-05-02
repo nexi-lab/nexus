@@ -1543,39 +1543,9 @@ impl Kernel {
                 // shadow misclassified that state.
                 let federation_active = coordinator.is_initialized(self);
                 let source_addr = source.map(str::trim).filter(|s| !s.is_empty());
-                // Same-zone guard: typed-connector mounts (openai /
-                // anthropic / s3 / etc.) leave ``zone_id`` at the
-                // default ``"root"`` because they don't introduce a
-                // new federation zone — they swap in a connector
-                // backend under the existing parent zone.  Computing
-                // the parent zone here (before ``dlc.mount`` registers
-                // ``path``) lets the metastore-construction branch
-                // mirror the wire-mount guard below: only allocate a
-                // per-zone federation metastore when the mount actually
-                // crosses a zone boundary.  Without this, every typed
-                // connector mount on a federation-enabled daemon
-                // proposes a redundant ``create_zone("root")`` and
-                // ends up routing local connector writes through the
-                // root raft log (which on a standalone fs has no
-                // leader, hence ``not leader, leader hint: None``).
-                let pre_mount_parent_zone = {
-                    let parent_dir = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("/");
-                    let parent_dir = if parent_dir.is_empty() {
-                        "/"
-                    } else {
-                        parent_dir
-                    };
-                    self.vfs_router
-                        .route(parent_dir, contracts::ROOT_ZONE_ID)
-                        .ok()
-                        .map(|r| r.zone_id)
-                        .filter(|z| !z.is_empty())
-                        .unwrap_or_else(|| contracts::ROOT_ZONE_ID.to_string())
-                };
-                let cross_zone_mount = !zone_id.is_empty() && zone_id != pre_mount_parent_zone;
                 let metastore = match (metastore, source_addr) {
                     (Some(m), _) => Some(m),
-                    (None, Some(addr)) if federation_active && cross_zone_mount => {
+                    (None, Some(addr)) if federation_active && !zone_id.is_empty() => {
                         // Explicit source given — interpret as `mount
                         // remote-addr:/zone-id /local-path`: this node
                         // joins an existing cluster at `addr` (joiner
@@ -1587,7 +1557,7 @@ impl Kernel {
                             .map_err(KernelError::Federation)?;
                         coordinator.metastore_for_zone(self, zone_id).ok()
                     }
-                    (None, None) if federation_active && cross_zone_mount => {
+                    (None, None) if federation_active && !zone_id.is_empty() => {
                         // No source given — interpret as `mount
                         // /local-path remote-addr:/zone-id`: this node
                         // contributes a fresh 1-voter zone (creator
@@ -1617,21 +1587,33 @@ impl Kernel {
                 // "root") are local, non-replicated mounts and must
                 // keep the backend the provider just constructed.
                 //
-                // ``pre_mount_parent_zone`` was captured before
-                // ``dlc.mount`` registered ``path``: post-mount,
-                // routing ``path`` would resolve to the new mount's
-                // own ``zone_id`` (the target), giving the wrong
-                // answer.  We need the *parent* zone — the one whose
-                // raft log replicates the DT_MOUNT entry and whose
-                // apply_cb is responsible for wiring the new mount on
-                // every follower.  The pre-mount snapshot is the
-                // single source of truth for "which zone owns the
-                // namespace this mount is being attached to" and is
-                // reused by both the metastore-construction branch
-                // above and the wire_mount call below — same value,
-                // same routing call, no drift.
-                if federation_active && cross_zone_mount {
-                    let _ = coordinator.wire_mount(self, &pre_mount_parent_zone, path, zone_id);
+                // Parent zone derived via the SAME longest-prefix route
+                // ``DLC::mount`` uses to write the DT_MOUNT entry into
+                // the parent zone's metastore (rust/kernel/src/core/dlc.rs
+                // line 80).  For ``/family/work`` (target=corp), the
+                // parent path ``/family`` routes to the family zone —
+                // the entry replicates through family's raft log, so
+                // the apply_cb that observes the new mount must be the
+                // one installed on family (NOT root, which never sees
+                // the entry).  Caught by TestCrossZoneDailyWorkflow's
+                // crosslink read on the follower peer.
+                //
+                // We route the PARENT directory, not the path itself,
+                // because by this point ``dlc.mount`` has already
+                // registered ``path`` — routing it would resolve to
+                // the new mount's own ``target_zone`` (corp), giving
+                // the wrong answer for the same-zone-guard below.
+                let parent_dir = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("/");
+                let parent_dir = if parent_dir.is_empty() { "/" } else { parent_dir };
+                let parent_zone = self
+                    .vfs_router
+                    .route(parent_dir, contracts::ROOT_ZONE_ID)
+                    .ok()
+                    .map(|r| r.zone_id)
+                    .filter(|z| !z.is_empty())
+                    .unwrap_or_else(|| contracts::ROOT_ZONE_ID.to_string());
+                if federation_active && !zone_id.is_empty() && zone_id != parent_zone {
+                    let _ = coordinator.wire_mount(self, &parent_zone, path, zone_id);
                 }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),

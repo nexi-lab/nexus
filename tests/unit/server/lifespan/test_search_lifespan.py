@@ -6,14 +6,18 @@ from nexus.server.lifespan.search import _resolve_txtai_runtime_config
 
 
 class TestResolveTxtaiRuntimeConfig:
-    def test_defaults_to_local_model(self) -> None:
+    def test_defaults_to_bm25_only(self) -> None:
+        # Issue #3997: default (no env) -> (None, None) -> BM25 keyword-only
+        # path; no heavy local model loaded at boot.
         with patch.dict("os.environ", {}, clear=True):
             model, vectors = _resolve_txtai_runtime_config()
 
-        assert model == "sentence-transformers/all-MiniLM-L6-v2"
+        assert model is None
         assert vectors is None
 
-    def test_keeps_local_default_without_openai_key(self) -> None:
+    def test_keeps_bm25_only_without_openai_key(self) -> None:
+        # Issue #3997: NEXUS_TXTAI_USE_API_EMBEDDINGS=true without a key
+        # has nothing to call -> still (None, None) -> BM25 keyword-only.
         with patch.dict(
             "os.environ",
             {
@@ -23,7 +27,7 @@ class TestResolveTxtaiRuntimeConfig:
         ):
             model, vectors = _resolve_txtai_runtime_config()
 
-        assert model == "sentence-transformers/all-MiniLM-L6-v2"
+        assert model is None
         assert vectors is None
 
     def test_enables_openai_api_embeddings_when_opted_in(self) -> None:

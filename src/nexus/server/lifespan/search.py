@@ -79,7 +79,7 @@ def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str | int] | None]:
         if dim is not None:
             vectors["dimensions"] = dim
 
-    return model, vectors or None
+    return model, vectors
 
 
 def _resolve_embedding_dimensions(model: str) -> int | None:
@@ -150,6 +150,15 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
         txtai_model, txtai_vectors = _resolve_txtai_runtime_config()
+        # Issue #3997: surface mode in boot logs so operators see whether
+        # heavy local model, remote API embeddings, or BM25-only is active.
+        if txtai_model is None:
+            _mode = "bm25-only"
+        elif txtai_model.startswith("openai/"):
+            _mode = "openai-api"
+        else:
+            _mode = "local"
+        logger.info("Search backend mode: %s (model=%s)", _mode, txtai_model or "<none>")
         _path_ctx_max_zones_env = os.environ.get("NEXUS_PATH_CONTEXT_MAX_ZONES")
         _path_ctx_max_zones = 2048
         if _path_ctx_max_zones_env:

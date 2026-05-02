@@ -1,0 +1,6 @@
+node_modules/
+dist/
+# Generated protobuf / Connect-RPC stubs — produced by `npm run generate`
+# (runs `buf generate` against the repo-root buf.gen.yaml).
+src/gen/
+*.tsbuildinfo

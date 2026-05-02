@@ -8,3 +8,13 @@ plugins:
     out: docs/protocol
     opt:
       - naming=proto
+  # TypeScript message classes (Connect-ES)
+  - remote: buf.build/bufbuild/es
+    out: packages/nexus-grpc-ts/src/gen
+    opt:
+      - target=ts
+  # TypeScript service descriptors / Connect-RPC client
+  - remote: buf.build/connectrpc/es
+    out: packages/nexus-grpc-ts/src/gen
+    opt:
+      - target=ts

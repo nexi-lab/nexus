@@ -50,7 +50,9 @@ def _build_signed_bundle(
     manifest_bytes = canonical_json_bytes(manifest)
     (bundle_dir / "manifest.json").write_bytes(manifest_bytes)
 
-    payload = manifest_bytes + (manifest["checksums"]["merkle_root"] or "").encode()
+    checksums = manifest["checksums"]
+    assert isinstance(checksums, dict)
+    payload = manifest_bytes + (checksums.get("merkle_root") or "").encode()
     sig_b64, pub_b64 = signer.sign(payload)
     sig_doc = {
         "algorithm": "ed25519",

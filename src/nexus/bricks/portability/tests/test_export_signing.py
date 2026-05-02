@@ -53,9 +53,13 @@ def test_signed_bundle_signature_verifies(fake_export_outputs):
     out, signer = fake_export_outputs
     with tarfile.open(out, "r:gz") as tar:
         sig_member = tar.getmember("signatures.json")
-        sig_data = json.loads(tar.extractfile(sig_member).read())
+        sig_fh = tar.extractfile(sig_member)
+        assert sig_fh is not None
+        sig_data = json.loads(sig_fh.read())
         manifest_member = tar.getmember("manifest.json")
-        manifest_bytes = tar.extractfile(manifest_member).read()
+        manifest_fh = tar.extractfile(manifest_member)
+        assert manifest_fh is not None
+        manifest_bytes = manifest_fh.read()
     payload = canonical_json_bytes(json.loads(manifest_bytes))
     assert ArchiveSigner.verify(payload, sig_data["signature_b64"], sig_data["signer_pubkey_b64"])
 

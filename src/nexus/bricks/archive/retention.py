@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -20,7 +21,7 @@ class _HasMtime(Protocol):
 
 
 def apply_retention(
-    entries: list[_HasMtime],
+    entries: Sequence[_HasMtime],
     policy: RetentionPolicy,
     *,
     now: datetime,  # noqa: ARG001 — reserved for future relative-date logic

@@ -242,9 +242,9 @@ class TestListMountsPermissionFiltering:
             context=context_alice_admin,
         )
 
-        # Mock rebac_check on the gateway (mount_service delegates to gw.rebac_check)
-        gw = nx_with_permissions.service("mount")._gw
-        with patch.object(gw, "rebac_check", side_effect=Exception("DB error")):
+        # Mock rebac_check_sync on the rebac service (permission_utils delegates via service("rebac"))
+        rebac_svc = nx_with_permissions.service("rebac")
+        with patch.object(rebac_svc, "rebac_check_sync", side_effect=Exception("DB error")):
             # Should exclude the mount for safety
             mounts = nx_with_permissions.service("mount").list_mounts_sync(context=context_alice)
             mount_points = [m["mount_point"] for m in mounts]

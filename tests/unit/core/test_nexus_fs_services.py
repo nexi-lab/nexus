@@ -90,8 +90,8 @@ class TestNexusFSServiceComposition:
         assert fs.service("search").metadata == fs.metadata
         assert fs.service("search")._permission_enforcer == fs.service("permission_enforcer")
 
-        # ShareLinkService should have gateway
-        assert fs.service("share_link")._gw is not None
+        # ShareLinkService should have nexus_fs reference
+        assert fs.service("share_link")._nexus_fs is not None
 
     def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService is available on NexusFS."""

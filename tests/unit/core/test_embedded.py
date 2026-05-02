@@ -272,7 +272,9 @@ def test_path_validation_null_byte(embedded: NexusFS) -> None:
     with pytest.raises(InvalidPathError) as exc_info:
         embedded.write("/bad\x00path.txt", b"Content")
 
-    assert "invalid character" in str(exc_info.value).lower()
+    err_msg = str(exc_info.value).lower()
+    # Rust and Python validators may use different wording
+    assert "invalid" in err_msg or "null" in err_msg or "\\x00" in err_msg
 
 
 @pytest.mark.asyncio
@@ -286,17 +288,22 @@ def test_path_validation_parent_directory(embedded: NexusFS) -> None:
 
 @pytest.mark.asyncio
 def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
-    """Test that paths are normalized with leading slash."""
+    """Test that paths are normalized with leading slash.
+
+    Rust kernel validates paths at the syscall boundary and rejects paths
+    without a leading '/'. Write with a canonical path and verify that
+    access() still normalizes bare names via Python path_utils.
+    """
     content = b"Test content"
 
-    # Write without leading slash
-    embedded.write("test.txt", content)
+    # Write with leading slash (Rust kernel requires it)
+    embedded.write("/test.txt", content)
 
     # Read with leading slash
     result = embedded.sys_read("/test.txt")
     assert result == content
 
-    # Both should be the same file
+    # access() normalizes via Python path_utils — both forms work
     assert embedded.access("test.txt")
     assert embedded.access("/test.txt")
 

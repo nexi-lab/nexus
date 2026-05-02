@@ -201,24 +201,23 @@ class TestRemoveMount:
         assert "Mount not found" in result["errors"][0]
 
     def test_remove_mount_cleans_up_directory(self, mount_service, mock_nexus_fs):
-        """Removing a mount deletes the directory entry."""
+        """Removing a mount deletes metadata entries via delete_batch."""
         mount_service._driver_coordinator.unmount.return_value = True
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
         assert result["removed"] is True
-        mock_nexus_fs.metadata.delete.assert_called_once_with("/mnt/test")
-        assert result["directory_deleted"] is True
+        # The service calls metadata.list(prefix=...) + metadata.delete_batch(...)
+        mock_nexus_fs.metadata.delete_batch.assert_called_once()
 
     def test_remove_mount_handles_cleanup_errors(self, mount_service, mock_nexus_fs):
         """Errors during cleanup are reported but don't fail the removal."""
         mount_service._driver_coordinator.unmount.return_value = True
-        mock_nexus_fs.metadata.delete.side_effect = RuntimeError("DB error")
+        mock_nexus_fs.metadata.list.side_effect = RuntimeError("DB error")
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
         assert result["removed"] is True
-        assert result["directory_deleted"] is False
         assert len(result["errors"]) > 0
 
 
@@ -415,27 +414,19 @@ class TestGrantMountOwnerPermission:
 
     def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
         """Mount point directory entries are created via _setup_mount_point."""
-        from unittest.mock import MagicMock
-
-        # Provide a gateway mock with metadata_put + metadata_get
-        gw = MagicMock()
-        gw.metadata_get.return_value = None  # dirs don't exist yet
-        mount_service._gw = gw
+        # metadata.get returns None → dirs don't exist yet, so metadata.put is called
+        mock_nexus_fs.metadata.get.return_value = None
         mount_service._setup_mount_point("/mnt/test", operation_context)
-        # metadata_put called for /mnt and /mnt/test
-        assert gw.metadata_put.call_count == 2
+        # metadata.put called for /mnt and /mnt/test
+        assert mock_nexus_fs.metadata.put.call_count == 2
 
     def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
         """Errors creating directory do not prevent permission grant."""
-        from unittest.mock import MagicMock
-
-        gw = MagicMock()
-        gw.metadata_get.return_value = None
-        gw.metadata_put.side_effect = RuntimeError("put failed")
-        mount_service._gw = gw
+        mock_nexus_fs.metadata.get.return_value = None
+        mock_nexus_fs.metadata.put.side_effect = RuntimeError("put failed")
 
         # Should not raise — errors in directory creation are logged but not fatal
         mount_service._setup_mount_point("/mnt/test", operation_context)
 
         # Permission grant should still be attempted even when mkdir fails
-        gw.rebac_create.assert_called_once()
+        mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()

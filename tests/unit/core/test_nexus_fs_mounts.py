@@ -712,7 +712,7 @@ class TestMountContextUtilsIntegration:
                 "nexus.bricks.mount.mount_service._needs_token_manager_db",
                 return_value=True,
             ),
-            patch("nexus.lib.context_utils.get_database_url") as mock_get_db_url,
+            patch("nexus.bricks.mount.mount_service.get_database_url") as mock_get_db_url,
         ):
             mock_get_db_url.return_value = str(temp_dir / "token_manager.db")
 

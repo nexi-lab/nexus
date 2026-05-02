@@ -28,17 +28,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     ),
     "rebac": ("rebac_check", "rebac_create", "rebac_list_tuples", "rebac_expand"),
     "mount": ("add_mount", "remove_mount", "list_mounts"),
-    "gateway": (
-        "mkdir",
-        "sys_write",
-        "sys_read",
-        "sys_readdir",
-        "access",
-        "metadata_get",
-        "metadata_put",
-        "metadata_list",
-        "metadata_delete",
-    ),
     "mount_persist": (
         "save_mount",
         "load_mount",
@@ -87,7 +76,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     # Post-kernel (wired) dict fields
     "rebac_service": "rebac",
     "mount_service": "mount",
-    "gateway": "gateway",
     "mount_persist_service": "mount_persist",
     "mcp_service": "mcp",
     "oauth_service": "oauth",

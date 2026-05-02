@@ -76,14 +76,10 @@ class ContentMixin:
         ``{"data": bytes, "next_offset": int}`` so consumers can advance
         their cursor without decoding the 4-byte LE frame header.
 
-        Thin async wrapper around Rust Kernel.sys_read (pure Rust, zero GIL).
-        DT_PIPE/DT_STREAM, resolve, and hooks are [TRANSITIONAL] — migrates
-        to Rust dispatch middleware in PR 7.
+        Rust Kernel.sys_read handles ALL entry types end-to-end (DT_REG,
+        DT_PIPE, DT_STREAM) including IPC blocking waits with timeout.
         """
-        # DT_PIPE/DT_STREAM: Rust IPC registry handles all backends
-        # (memory, SHM, remote) via PipeManager/StreamManager.
 
-        path = self._validate_path(path)
         context = self._parse_context(context)
         _handled, _resolve_hint = self.resolve_read(path, context=context)
         if _handled:
@@ -100,56 +96,36 @@ class ContentMixin:
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
 
-        # ── KERNEL (Rust — pre-hooks + route + backend read) ──
-        # DT_REG: Rust returns data on success or raises NexusFileNotFoundError
-        # (federation remote fetch handled internally via try_remote_fetch).
-        # External connector mounts are now handled by Rust-registered native
-        # backends — no Python re-routing needed.
-        # DT_PIPE / DT_STREAM: entry_type signals IPC dispatch below.
+        # ── KERNEL (Rust — pre-hooks + route + backend read + IPC blocking) ──
+        # Rust sys_read handles ALL entry types end-to-end:
+        #   DT_REG: backend read + federation remote fetch
+        #   DT_PIPE: nowait pop → blocking wait (timeout_ms)
+        #   DT_STREAM: offset read → blocking wait (timeout_ms)
         #
         # Slim-package mode: ``nexus-fs`` can ship without ``nexus_runtime``,
         # in which case ``self._kernel`` is None.
         if self._kernel is None:
             raise NexusFileNotFoundError(path)
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
+        # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
+        # The caller's `offset` param doubles as the stream cursor position.
+        _timeout_ms = 5000
         # Bind real zone_perms to the request scope so the Python PermissionHook
         # (rebuilt from the Rust-stripped context) can resurrect them without
         # racing the subject-keyed cache.  Issue #3786 / Codex Round 3.
         _zp = getattr(context, "zone_perms", ()) if context else ()
         with request_zone_perms_scope(_zp):
-            result = self._kernel.sys_read(path, _rust_ctx)
+            result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
 
-        # DT_PIPE: result.data is the popped frame when available; None = empty.
-        if result.entry_type == 3:  # DT_PIPE
-            if result.data is not None:
-                data = result.data
-                if offset or count is not None:
-                    data = data[offset : offset + count] if count is not None else data[offset:]
-                return data
-            # Empty pipe — try nowait (hot path), then block in Rust (GIL-free)
-            _data = self._kernel.pipe_read_nowait(path)
-            if _data is not None:
-                if offset or count is not None:
-                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
-                return bytes(_data)
-            _data = self._kernel.pipe_read_blocking(path, 5000)
-            if offset or count is not None:
-                _data = _data[offset : offset + count] if count is not None else _data[offset:]
-            return bytes(_data)
-
-        # DT_STREAM: blocking reads with offset tracking. Returns dict so
-        # the caller can advance its cursor without manually decoding the
-        # 4-byte LE frame header.
+        # DT_STREAM: return dict with next_offset for cursor advancement.
+        # This is a Python API contract that callers depend on.
         if result.entry_type == 4:  # DT_STREAM
-            _result = self._kernel.stream_read_at(path, offset)
-            if _result is not None:
-                _data, _next = _result
-                return {"data": bytes(_data), "next_offset": _next}
-            # Slow path — block in Rust (GIL-free)
-            _data, _next = self._kernel.stream_read_at_blocking(path, offset, 30000)
-            return {"data": bytes(_data), "next_offset": _next}
+            return {
+                "data": bytes(result.data) if result.data else b"",
+                "next_offset": result.stream_next_offset or 0,
+            }
 
-        # DT_REG: Rust guarantees data is set on success.
+        # DT_PIPE / DT_REG: return bytes.
         data = result.data or b""
 
         if offset or count is not None:
@@ -228,12 +204,11 @@ class ContentMixin:
             _zp = getattr(context, "zone_perms", ()) if context else ()
             for path in paths:
                 try:
-                    vpath = self._validate_path(path)
                     with request_zone_perms_scope(_zp):
-                        result = self._kernel.sys_read(vpath, _rust_ctx)
+                        result = self._kernel.sys_read(path, _rust_ctx)
                     content = result.data or b""
                     if return_metadata:
-                        meta = self.metadata.get(vpath)
+                        meta = self.metadata.get(path)
                         results[path] = {
                             "content": content,
                             "content_id": meta.content_id if meta else None,
@@ -258,26 +233,10 @@ class ContentMixin:
                         raise
             return results
 
-        # Validate all paths
-        validated_paths = []
-        for path in paths:
-            try:
-                validated_path = self._validate_path(path)
-                validated_paths.append(validated_path)
-            except Exception as exc:
-                logger.debug("Path validation failed in read_bulk for %s: %s", path, exc)
-                if skip_errors:
-                    results[path] = None
-                    continue
-                raise
-
-        if not validated_paths:
-            return results
-
         # Batch permission check via shared helper (hook_count fast path).
         perm_start = time.time()
         try:
-            allowed_set = self._batch_permission_check(validated_paths, context)
+            allowed_set = self._batch_permission_check(paths, context)
         except Exception as e:
             logger.error("[READ-BULK] Permission check failed: %s", e)
             if not skip_errors:
@@ -286,11 +245,11 @@ class ContentMixin:
 
         perm_elapsed = time.time() - perm_start
         logger.info(
-            f"[READ-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
+            f"[READ-BULK] Permission check: {len(allowed_set)}/{len(paths)} allowed in {perm_elapsed * 1000:.1f}ms"
         )
 
         # Mark denied files
-        for path in validated_paths:
+        for path in paths:
             if path not in allowed_set:
                 results[path] = None
 
@@ -748,8 +707,6 @@ class ContentMixin:
             buf = buf.encode("utf-8")
         if count is not None:
             buf = buf[:count]
-
-        path = self._validate_path(path)
 
         # PRE-DISPATCH: virtual path resolvers (e.g. /__sys__ writers).
         _handled, _result = self.resolve_write(path, buf, context=context)

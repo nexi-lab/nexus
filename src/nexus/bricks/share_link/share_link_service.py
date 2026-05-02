@@ -45,26 +45,26 @@ class ShareLinkService:
     - Server validates token against DB on each request
 
     Architecture:
-        - Uses Gateway for NexusFS filesystem operations
+        - Uses NexusFS directly for filesystem operations
         - Uses session_factory for ShareLinkModel database access
-        - Permission checking via Gateway's rebac operations
+        - Permission checking via NexusFS service("rebac") operations
         - Clean dependency injection
     """
 
     def __init__(
         self,
-        gateway: Any,
+        nexus_fs: Any,
         record_store: "RecordStoreABC | None" = None,
         enforce_permissions: bool = True,
     ):
         """Initialize share link service.
 
         Args:
-            gateway: NexusFSGateway for filesystem and DB access
-            record_store: Optional RecordStoreABC for direct DB access (preferred over gateway)
+            nexus_fs: NexusFS instance for filesystem and DB access
+            record_store: Optional RecordStoreABC for direct DB access (preferred over nexus_fs)
             enforce_permissions: Whether to enforce permission checks
         """
-        self._gw = gateway
+        self._nexus_fs = nexus_fs
         self._record_store = record_store
         self._enforce_permissions = enforce_permissions
         logger.info("[ShareLinkService] Initialized")
@@ -193,7 +193,7 @@ class ShareLinkService:
                     raise AccessDeniedError(
                         "Permission denied: authentication required to create share links",
                     )
-                has_perm = self._gw.rebac_check(
+                has_perm = self._nexus_fs.service("rebac").rebac_check_sync(
                     subject=("user", created_by),
                     permission="write",
                     object=("file", normalized_path),
@@ -206,8 +206,12 @@ class ShareLinkService:
 
             # Determine resource type
             resource_type = "file"
-            if self._gw.access(normalized_path):
-                meta = self._gw.metadata_get(normalized_path)
+            if self._nexus_fs.access(normalized_path):
+                meta = (
+                    self._nexus_fs.metadata.get(normalized_path)
+                    if hasattr(self._nexus_fs.metadata, "get")
+                    else None
+                )
                 if meta and getattr(meta, "is_dir", False):
                     resource_type = "directory"
 
@@ -225,7 +229,7 @@ class ShareLinkService:
             session_factory = (
                 self._record_store.session_factory
                 if self._record_store
-                else self._gw.session_factory
+                else getattr(self._nexus_fs, "SessionLocal", None)
             )
             if session_factory is None:
                 raise ServiceUnavailableError("Database not configured for share links")
@@ -286,7 +290,7 @@ class ShareLinkService:
             session_factory = (
                 self._record_store.session_factory
                 if self._record_store
-                else self._gw.session_factory
+                else getattr(self._nexus_fs, "SessionLocal", None)
             )
             if session_factory is None:
                 raise ServiceUnavailableError("Database not configured")
@@ -367,7 +371,7 @@ class ShareLinkService:
             session_factory = (
                 self._record_store.session_factory
                 if self._record_store
-                else self._gw.session_factory
+                else getattr(self._nexus_fs, "SessionLocal", None)
             )
             if session_factory is None:
                 raise ServiceUnavailableError("Database not configured")
@@ -447,7 +451,7 @@ class ShareLinkService:
             session_factory = (
                 self._record_store.session_factory
                 if self._record_store
-                else self._gw.session_factory
+                else getattr(self._nexus_fs, "SessionLocal", None)
             )
             if session_factory is None:
                 raise ServiceUnavailableError("Database not configured")
@@ -529,7 +533,7 @@ class ShareLinkService:
             session_factory = (
                 self._record_store.session_factory
                 if self._record_store
-                else self._gw.session_factory
+                else getattr(self._nexus_fs, "SessionLocal", None)
             )
             if session_factory is None:
                 raise ServiceUnavailableError("Database not configured")
@@ -664,7 +668,7 @@ class ShareLinkService:
             session_factory = (
                 self._record_store.session_factory
                 if self._record_store
-                else self._gw.session_factory
+                else getattr(self._nexus_fs, "SessionLocal", None)
             )
             if session_factory is None:
                 raise ServiceUnavailableError("Database not configured")

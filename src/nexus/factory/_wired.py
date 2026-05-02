@@ -20,7 +20,6 @@ def _boot_post_kernel_services(
     """Boot Tier 2b (WIRED) — services needing NexusFS reference.
 
     Two-phase init: called AFTER NexusFS construction in ``create_nexus_fs()``.
-    ``NexusFSGateway`` breaks the circular dependency between kernel and services.
 
     Profile gating is applied via ``svc_on`` — same callback used by other tiers.
     Services that fail to construct are set to None (degraded mode).
@@ -40,16 +39,6 @@ def _boot_post_kernel_services(
 
     # All backends are Rust-native now — no Python root backend object available.
     _root_backend: Any = None
-
-    # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
-    gateway: Any = None
-    try:
-        from nexus.services.gateway import NexusFSGateway
-
-        gateway = NexusFSGateway(nx)
-        logger.debug("[BOOT:WIRED] NexusFSGateway created")
-    except Exception as exc:
-        logger.warning("[BOOT:WIRED] NexusFSGateway unavailable: %s", exc)
 
     # --- IPC brick deleted (Phase M of parallel-layers PR; PR #3912's
     #     Rust replacement covers the wakeup / discovery surface).
@@ -157,7 +146,7 @@ def _boot_post_kernel_services(
     # --- MountPersistService: Mount persistence ---
     # Created with mount_service=None initially; wired after MountService creation below.
     mount_persist_service: Any = None
-    if gateway is not None:
+    if nx is not None:
         try:
             from nexus.bricks.mount.mount_persist_service import MountPersistService
 
@@ -179,7 +168,6 @@ def _boot_post_kernel_services(
             dlc=nx._driver_coordinator,
             mount_manager=services.get("mount_manager"),
             nexus_fs=nx,
-            gateway=gateway,
             mount_persist_service=mount_persist_service,
             oauth_service=oauth_service,
         )
@@ -302,7 +290,7 @@ def _boot_post_kernel_services(
             enforce_permissions=nx._perm_config.enforce,
             default_context=nx._init_cred,
             record_store=getattr(nx, "_record_store", None),
-            gateway=gateway,
+            nexus_fs=nx,
             deployment_profile=_profile,
             sqlite_vec_backend=_sqlite_vec_backend,
             federation_dispatcher=_federation_dispatcher,
@@ -339,7 +327,7 @@ def _boot_post_kernel_services(
             from nexus.bricks.share_link.share_link_service import ShareLinkService
 
             share_link_service = ShareLinkService(
-                gateway=gateway,
+                nexus_fs=nx,
                 enforce_permissions=nx._perm_config.enforce,
             )
             logger.debug("[BOOT:WIRED] ShareLinkService created")
@@ -613,7 +601,6 @@ def _boot_post_kernel_services(
     result: dict[str, Any] = {
         "rebac_service": rebac_service,
         "mount_service": mount_service,
-        "gateway": gateway,
         "mount_persist_service": mount_persist_service,
         "mcp_service": mcp_service,
         "oauth_service": oauth_service,

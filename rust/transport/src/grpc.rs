@@ -206,7 +206,7 @@ impl NexusVfsService for VfsServiceImpl {
                 "federation token: use Call dispatch (sys_read RPC) — typed Read bypasses zone authorization",
             ))));
         }
-        match self.kernel.sys_read(&req.path, &ctx) {
+        match self.kernel.sys_read(&req.path, &ctx, 5000, 0) {
             Ok(result) => {
                 // `sys_read.data` is `Option<Vec<u8>>` because the kernel
                 // returns `None` for trie-resolved paths / IPC misses

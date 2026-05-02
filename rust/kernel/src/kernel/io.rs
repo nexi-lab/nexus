@@ -24,10 +24,12 @@ impl Kernel {
         &self,
         path: &str,
         ctx: &OperationContext,
+        timeout_ms: u64,
+        offset: u64,
     ) -> Result<SysReadResult, KernelError> {
         // Outer entry point — one DT_LINK follow allowed (max_link_hops=1).
         // The recursive call below passes 0 so a chained link rejects.
-        self.sys_read_with_link_depth(path, ctx, 1)
+        self.sys_read_with_link_depth(path, ctx, 1, timeout_ms, offset)
     }
 
     fn sys_read_with_link_depth(
@@ -35,6 +37,8 @@ impl Kernel {
         path: &str,
         ctx: &OperationContext,
         max_link_hops: u8,
+        timeout_ms: u64,
+        offset: u64,
     ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
 
@@ -98,6 +102,7 @@ impl Kernel {
                                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                                 content_id: None,
                                 entry_type: DT_REG,
+                                stream_next_offset: None,
                             });
                         }
                         return Err(not_found());
@@ -117,53 +122,114 @@ impl Kernel {
                     "DT_LINK chain rejected (ELOOP) at {path}"
                 )));
             }
-            return self.sys_read_with_link_depth(target, ctx, max_link_hops - 1);
+            return self.sys_read_with_link_depth(
+                target,
+                ctx,
+                max_link_hops - 1,
+                timeout_ms,
+                offset,
+            );
         }
 
-        // DT_PIPE — try Rust IPC registry (nowait pop)
+        // DT_PIPE — Rust IPC registry: nowait pop, then optional blocking wait.
+        // timeout_ms == 0 → O_NONBLOCK: return data or None immediately.
+        // timeout_ms > 0  → POSIX blocking: wait for data or timeout.
         if entry.entry_type == DT_PIPE {
-            if let Some(buf) = self.pipe_manager.get(path) {
-                match buf.pop() {
-                    Ok(data) => {
-                        return Ok(SysReadResult {
-                            data: Some(data),
-                            post_hook_needed: false,
-                            content_id: None,
-                            entry_type: DT_PIPE,
-                        });
-                    }
-                    Err(crate::pipe::PipeError::Empty) => {
-                        // Empty — surface DT_PIPE so Python async shell retries.
+            match self.pipe_read_nowait(path) {
+                Ok(Some(data)) => {
+                    return Ok(SysReadResult {
+                        data: Some(data),
+                        post_hook_needed: false,
+                        content_id: None,
+                        entry_type: DT_PIPE,
+                        stream_next_offset: None,
+                    });
+                }
+                Ok(None) => {
+                    if timeout_ms == 0 {
                         return Ok(SysReadResult {
                             data: None,
                             post_hook_needed: false,
                             content_id: None,
                             entry_type: DT_PIPE,
+                            stream_next_offset: None,
                         });
                     }
-                    Err(crate::pipe::PipeError::ClosedEmpty) => {
-                        return Err(KernelError::PipeClosed(path.to_string()));
+                    // Blocking: wait for data with timeout (GIL released by wrapper)
+                    match self.pipe_read_blocking(path, timeout_ms) {
+                        Ok(data) => {
+                            return Ok(SysReadResult {
+                                data: Some(data),
+                                post_hook_needed: false,
+                                content_id: None,
+                                entry_type: DT_PIPE,
+                                stream_next_offset: None,
+                            });
+                        }
+                        Err(KernelError::WouldBlock(_)) => {
+                            // Timeout — return None (no data within deadline)
+                            return Ok(SysReadResult {
+                                data: None,
+                                post_hook_needed: false,
+                                content_id: None,
+                                entry_type: DT_PIPE,
+                                stream_next_offset: None,
+                            });
+                        }
+                        Err(e) => return Err(e),
                     }
-                    Err(_) => {}
                 }
+                Err(e) => return Err(e),
             }
-            // Not in Rust registry — fall through to Python fallback.
-            return Ok(SysReadResult {
-                data: None,
-                post_hook_needed: false,
-                content_id: None,
-                entry_type: DT_PIPE,
-            });
         }
 
-        // DT_STREAM — surface to wrapper so Python stream_read_at handles offset.
+        // DT_STREAM — Rust IPC registry: offset-based read with optional blocking.
         if entry.entry_type == DT_STREAM {
-            return Ok(SysReadResult {
-                data: None,
-                post_hook_needed: false,
-                content_id: None,
-                entry_type: DT_STREAM,
-            });
+            match self.stream_read_at(path, offset as usize) {
+                Ok(Some((data, next_offset))) => {
+                    return Ok(SysReadResult {
+                        data: Some(data),
+                        post_hook_needed: false,
+                        content_id: None,
+                        entry_type: DT_STREAM,
+                        stream_next_offset: Some(next_offset),
+                    });
+                }
+                Ok(None) => {
+                    if timeout_ms == 0 {
+                        return Ok(SysReadResult {
+                            data: None,
+                            post_hook_needed: false,
+                            content_id: None,
+                            entry_type: DT_STREAM,
+                            stream_next_offset: None,
+                        });
+                    }
+                    // Blocking: wait for new data at offset
+                    match self.stream_read_at_blocking(path, offset as usize, timeout_ms) {
+                        Ok((data, next_offset)) => {
+                            return Ok(SysReadResult {
+                                data: Some(data),
+                                post_hook_needed: false,
+                                content_id: None,
+                                entry_type: DT_STREAM,
+                                stream_next_offset: Some(next_offset),
+                            });
+                        }
+                        Err(KernelError::WouldBlock(_)) => {
+                            return Ok(SysReadResult {
+                                data: None,
+                                post_hook_needed: false,
+                                content_id: None,
+                                entry_type: DT_STREAM,
+                                stream_next_offset: None,
+                            });
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         }
 
         // Content identifier: CAS backends use content_id (hash). Path-addressed
@@ -199,6 +265,7 @@ impl Kernel {
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_id: entry.content_id.clone(),
                 entry_type: DT_REG,
+                stream_next_offset: None,
             }),
             // Local backend miss + metadata exists → federation path:
             // try the origin encoded in backend_name. Otherwise it's a
@@ -302,6 +369,7 @@ impl Kernel {
             post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
             content_id: entry.content_id.clone(),
             entry_type: DT_REG,
+            stream_next_offset: None,
         })
     }
 
@@ -2117,11 +2185,12 @@ impl Kernel {
         let results: Vec<SysReadResult> = paths
             .par_iter()
             .map(|path| {
-                self.sys_read(path, ctx).unwrap_or(SysReadResult {
+                self.sys_read(path, ctx, 5000, 0).unwrap_or(SysReadResult {
                     data: None,
                     post_hook_needed: false,
                     content_id: None,
                     entry_type: 0,
+                    stream_next_offset: None,
                 })
             })
             .collect();

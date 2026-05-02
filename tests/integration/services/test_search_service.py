@@ -86,7 +86,7 @@ def service(mock_metadata_store, mock_permission_enforcer, mock_dlc, mock_gatewa
         metadata_store=mock_metadata_store,
         permission_enforcer=mock_permission_enforcer,
         dlc=mock_dlc,
-        gateway=mock_gateway,
+        nexus_fs=mock_gateway,
         enforce_permissions=True,
     )
 
@@ -96,7 +96,7 @@ def service_no_perms(mock_metadata_store, mock_gateway):
     """Create a SearchService with permissions disabled."""
     return SearchService(
         metadata_store=mock_metadata_store,
-        gateway=mock_gateway,
+        nexus_fs=mock_gateway,
         enforce_permissions=False,
     )
 
@@ -129,13 +129,13 @@ class TestSearchServiceInit:
             metadata_store=mock_metadata_store,
             permission_enforcer=mock_permission_enforcer,
             dlc=mock_dlc,
-            gateway=mock_gateway,
+            nexus_fs=mock_gateway,
             enforce_permissions=True,
         )
         assert svc.metadata is mock_metadata_store
         assert svc._permission_enforcer is mock_permission_enforcer
         assert svc._dlc is mock_dlc
-        assert svc._gw is mock_gateway
+        assert svc._nexus_fs is mock_gateway
         assert svc._enforce_permissions is True
 
     def test_init_minimal(self, mock_metadata_store):
@@ -144,7 +144,7 @@ class TestSearchServiceInit:
         assert svc.metadata is mock_metadata_store
         assert svc._permission_enforcer is None
         assert svc._dlc is None
-        assert svc._gw is None
+        assert svc._nexus_fs is None
         assert svc._enforce_permissions is True
 
     def test_init_defaults(self, mock_metadata_store):
@@ -190,7 +190,7 @@ class TestSearchServiceInit:
             metadata_store=mock_metadata_store,
             permission_enforcer=mock_permission_enforcer,
             dlc=mock_dlc,
-            gateway=mock_gateway,
+            nexus_fs=mock_gateway,
             enforce_permissions=True,
         )
 
@@ -1518,7 +1518,7 @@ class TestGrepBlockType:
 
         return SearchService(
             metadata_store=mock_metadata_store,
-            gateway=mock_gateway,
+            nexus_fs=mock_gateway,
             enforce_permissions=False,
         )
 

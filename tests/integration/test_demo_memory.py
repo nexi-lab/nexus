@@ -98,7 +98,7 @@ def test_demo_idle_rss_under_limit():
                 container,
                 "sh",
                 "-c",
-                "pid=$(pgrep -f nexusd | head -1); cat /proc/$pid/status",
+                "pid=$(grep -l nexusd /proc/[0-9]*/comm 2>/dev/null | head -1 | cut -d/ -f3); cat /proc/$pid/status",
             ]
         ).decode()
         metrics = _parse_proc_status(status)
@@ -112,7 +112,7 @@ def test_demo_idle_rss_under_limit():
                         container,
                         "sh",
                         "-c",
-                        "pid=$(pgrep -f nexusd | head -1); head -20 /proc/$pid/maps",
+                        "pid=$(grep -l nexusd /proc/[0-9]*/comm 2>/dev/null | head -1 | cut -d/ -f3); head -20 /proc/$pid/maps",
                     ]
                 ).decode()
             except Exception as e:

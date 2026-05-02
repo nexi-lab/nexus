@@ -17,10 +17,15 @@
 //! consumed at daemon startup; share/join are operator escape hatches.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
+use kernel::abc::object_store::ObjectStore;
+use kernel::core::dcache::DT_MOUNT;
+use kernel::kernel::Kernel;
 
 use nexus_raft::federation::{parse_federation_env, ENV_FEDERATION_MOUNTS, ENV_FEDERATION_ZONES};
 use nexus_raft::transport::{bootstrap_tls, hostname_to_node_id};
@@ -70,6 +75,21 @@ struct CommonArgs {
     /// Disable TLS — plaintext gRPC for local testing only.
     #[arg(long, env = "NEXUS_NO_TLS", default_value_t = false, global = true)]
     no_tls: bool,
+
+    /// Host filesystem directory exposed as the cluster root mount.
+    /// `nexusd-cluster` mounts this path at `/` via `PathLocalBackend`
+    /// at boot so gRPC writes through DLC land on the host fs.
+    /// Defaults to `<data_dir>/root` for self-contained operation.
+    #[arg(long, env = "NEXUS_ROOT_FS", global = true)]
+    root_path: Option<PathBuf>,
+}
+
+impl CommonArgs {
+    fn root_fs_path(&self) -> PathBuf {
+        self.root_path
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("root"))
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -107,6 +127,40 @@ enum Cmd {
         #[arg(long, default_value = "root")]
         parent_zone: String,
     },
+
+    /// Mount a backend at `<path>` via DLC (offline — daemon must be stopped).
+    ///
+    /// Only `--type=path_local` works in this binary because that is
+    /// the sole driver compiled in.  Other types produce a clean
+    /// "driver `X` not compiled into this binary" error from the
+    /// factory.
+    Mount {
+        /// Mount point inside the cluster's VFS (e.g. `/scratch`).
+        path: String,
+        /// Driver type — currently only `path_local` is compiled in.
+        #[arg(long = "type", default_value = "path_local")]
+        driver: String,
+        /// Host filesystem directory the mount serves (required for
+        /// `path_local`).  No default — the operator names the
+        /// directory explicitly to avoid shadowing the boot mount.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Backend name label.  Defaults to `local`.
+        #[arg(long, default_value = "local")]
+        backend_name: String,
+        /// Zone id for the new mount; defaults to root.
+        #[arg(long, default_value = "root")]
+        zone: String,
+    },
+
+    /// Unmount a previously-mounted path (offline — daemon must be stopped).
+    ///
+    /// Drops the DT_MOUNT entry and its routing/dcache state via
+    /// `Kernel::sys_unlink`, mirroring the Python `unmount()` shim.
+    Unmount {
+        /// Mount point to drop (e.g. `/scratch`).
+        path: String,
+    },
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
@@ -135,6 +189,14 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Some(Cmd::Mount {
+            path,
+            driver,
+            root,
+            backend_name,
+            zone,
+        }) => run_mount(args.common, &path, &driver, root.as_deref(), &backend_name, &zone),
+        Some(Cmd::Unmount { path }) => run_unmount(args.common, &path),
     }
 }
 
@@ -211,6 +273,48 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         tracing::info!("Created root zone");
     }
 
+    // ── Data plane: mount host-fs at "/" via PathLocalBackend ──
+    // Cluster binary's compiled-in feature set is exactly
+    // ["driver-path-local"] (see Cargo.toml), so this mount call is the
+    // only `ObjectStore` impl available — connectors / S3 / remote are
+    // not linked.  No `set_enabled_drivers` needed: the runtime gate is
+    // a Python construct (DeploymentProfile-driven), and the cluster
+    // binary intentionally bypasses it in favour of the compile-time
+    // feature gate.
+    let kernel = Arc::new(Kernel::new());
+    let root_fs = common.root_fs_path();
+    std::fs::create_dir_all(&root_fs).with_context(|| {
+        format!("create cluster root mount dir {}", root_fs.display())
+    })?;
+    let backend: Arc<dyn ObjectStore> = Arc::new(
+        PathLocalBackend::new(&root_fs, /* fsync */ false)
+            .with_context(|| format!("PathLocalBackend init at {}", root_fs.display()))?,
+    );
+    kernel
+        .sys_setattr(
+            "/",
+            DT_MOUNT as i32,
+            "local",
+            Some(backend),
+            None, // metastore — kernel falls back to its in-memory MetaStore
+            None, // raft_backend — federation wiring is a follow-up
+            "memory",
+            contracts::ROOT_ZONE_ID,
+            false, // is_external
+            0,     // capacity
+            None,  // read_fd
+            None,  // write_fd
+            None,  // mime_type
+            None,  // modified_at_ms
+            None,  // link_target
+            None,  // source — same-zone local mount
+        )
+        .map_err(|e| anyhow::anyhow!("mount / via path_local: {:?}", e))?;
+    tracing::info!(
+        root_fs = %root_fs.display(),
+        "mounted host-fs at \"/\" via PathLocalBackend",
+    );
+
     let (zones, mounts) = parse_federation_env();
     if !zones.is_empty() || !mounts.is_empty() {
         tracing::info!(
@@ -277,6 +381,95 @@ async fn run_share(
         "Shared '{}' from zone '{}' as new zone '{}' ({} entries copied)",
         path, parent_zone, new_zone_id, copied
     );
+    Ok(())
+}
+
+/// Construct an `ObjectStore` for a driver name + local-root the cluster
+/// binary's compiled-in feature set actually supports.  The match below
+/// will grow as more `driver-*` features land in `Cargo.toml`.
+fn build_local_backend(
+    driver: &str,
+    root: &std::path::Path,
+) -> Result<Arc<dyn ObjectStore>> {
+    match driver {
+        "path_local" => {
+            std::fs::create_dir_all(root)
+                .with_context(|| format!("create mount root {}", root.display()))?;
+            let b = PathLocalBackend::new(root, /* fsync */ false)
+                .with_context(|| format!("PathLocalBackend init at {}", root.display()))?;
+            Ok(Arc::new(b) as Arc<dyn ObjectStore>)
+        }
+        other => anyhow::bail!(
+            "driver `{}` not compiled into this binary (cluster binary ships only path_local)",
+            other
+        ),
+    }
+}
+
+fn run_mount(
+    common: CommonArgs,
+    mount_point: &str,
+    driver: &str,
+    local_root: Option<&std::path::Path>,
+    backend_name: &str,
+    zone: &str,
+) -> Result<()> {
+    // Open ZoneManager offline so the mount entry is written through
+    // the same redb file the daemon will reload on next start.  Same
+    // pattern as the `share` / `join` subcommands.
+    let _zm = open_zone_manager(&common)?;
+    let kernel = Arc::new(Kernel::new());
+    let root = local_root
+        .ok_or_else(|| anyhow::anyhow!("--root is required for driver `{driver}`"))?;
+    let backend = build_local_backend(driver, root)?;
+    kernel
+        .sys_setattr(
+            mount_point,
+            DT_MOUNT as i32,
+            backend_name,
+            Some(backend),
+            None,
+            None,
+            "memory",
+            zone,
+            false,
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("mount {mount_point}: {:?}", e))?;
+    println!(
+        "Mounted '{}' (zone='{}', driver='{}', root='{}')",
+        mount_point,
+        zone,
+        driver,
+        root.display()
+    );
+    Ok(())
+}
+
+fn run_unmount(common: CommonArgs, mount_point: &str) -> Result<()> {
+    let _zm = open_zone_manager(&common)?;
+    let kernel = Arc::new(Kernel::new());
+    let ctx = contracts::OperationContext::new(
+        /* user_id */ "operator",
+        /* zone_id */ "root",
+        /* is_admin */ true,
+        /* agent_id */ None,
+        /* is_system */ true,
+    );
+    let res = kernel
+        .sys_unlink(mount_point, &ctx, /* recursive */ false)
+        .map_err(|e| anyhow::anyhow!("unmount {mount_point}: {:?}", e))?;
+    if res.hit {
+        println!("Unmounted '{}' (entry_type={})", mount_point, res.entry_type);
+    } else {
+        anyhow::bail!("'{}' is not a mount point on this node", mount_point);
+    }
     Ok(())
 }
 

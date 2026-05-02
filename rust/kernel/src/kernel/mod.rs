@@ -1604,7 +1604,11 @@ impl Kernel {
                 // the new mount's own ``target_zone`` (corp), giving
                 // the wrong answer for the same-zone-guard below.
                 let parent_dir = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("/");
-                let parent_dir = if parent_dir.is_empty() { "/" } else { parent_dir };
+                let parent_dir = if parent_dir.is_empty() {
+                    "/"
+                } else {
+                    parent_dir
+                };
                 let parent_zone = self
                     .vfs_router
                     .route(parent_dir, contracts::ROOT_ZONE_ID)

@@ -118,10 +118,10 @@ def create_nexus_services(
     # --- Driver gate (DeploymentProfile-driven) ----------------------------
     # Install the profile's enabled-driver set into the kernel's BackendFactory
     # gate before any sys_setattr(DT_MOUNT) fires.  Disabled drivers fail at
-    # mount time with a clear error instead of silently falling through to the
-    # local-default branch.  Local CAS / path / connector backends are kernel
-    # defaults and skip the gate (see
-    # `rust/kernel/src/hal/backend_factory.rs::is_driver_enabled`).
+    # mount time with a clear error.  Every driver — including local
+    # path_local / cas-local / local_connector backends — must be in the
+    # profile's set; the gate has no implicit local-default bypass (see
+    # `rust/kernel/src/hal/object_store_provider.rs::is_driver_enabled`).
     try:
         import nexus_runtime as _nx_runtime
 

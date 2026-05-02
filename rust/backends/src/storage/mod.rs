@@ -13,8 +13,18 @@
 //!   format used by `cas_local` for higher
 //!   write throughput.
 
+// `blob_pack` is an append-only multi-blob format exposed to Python
+// (`#[pyclass]` in `python::mod`).  Currently consumed only via the
+// PyO3 wrapper; gated behind `python` so non-cdylib builds (cluster
+// binary) skip the redb / pyo3 dependency surface it pulls in.
+#[cfg(feature = "python")]
 pub mod blob_pack;
+
+#[cfg(feature = "driver-cas-local")]
 pub mod cas_local;
+#[cfg(feature = "driver-local-connector")]
 pub mod local_connector;
+#[cfg(feature = "driver-path-local")]
 pub mod path_local;
+#[cfg(feature = "driver-remote")]
 pub mod remote;

@@ -32,10 +32,12 @@ contracts = { path = "rust/contracts" }
 lib = { path = "rust/lib" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
-# Driver impls. The `python` feature is enabled by the `nexus-cdylib`
-# build-artifact crate so its `#[pymodule]` can expose backends'
-# `#[pyclass]` types alongside the kernel's own.
-backends = { path = "rust/backends" }
+# Driver impls. `default-features = false` so transitive workspace
+# consumers (e.g. `nexus-cluster`) can pick a slim driver set without
+# fighting Cargo's feature unification.  Crates that want the full
+# driver matrix (`nexus-cdylib`) opt back in via
+# `default-features = true` plus the `python` feature.
+backends = { path = "rust/backends", default-features = false }
 # `kernel` is rlib-only — the Python entry-point cdylib
 # `nexus_runtime.so` lives in `rust/nexus-cdylib/`. `default-features =
 # false` keeps the kernel runtime defaults (mimalloc allocator, HTTP

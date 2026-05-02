@@ -1,6 +1,6 @@
 //! Nexus-managed blob storage transports.
 
-#[cfg(feature = "connectors")]
+#[cfg(feature = "driver-gcs")]
 pub mod gcs;
-#[cfg(feature = "connectors")]
+#[cfg(feature = "driver-s3")]
 pub mod s3;

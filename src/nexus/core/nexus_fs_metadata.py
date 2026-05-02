@@ -452,7 +452,7 @@ class MetadataMixin:
 
         # ── DT_MOUNT: resolve backend params for Rust kernel ─────────
         if entry_type == DT_MOUNT:
-            backend_type = attrs.get("backend_type", "cas")
+            backend_type = attrs.get("backend_type", "cas-local")
             backend = attrs.get("backend")
             zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
             metastore = attrs.get("metastore")
@@ -582,7 +582,7 @@ class MetadataMixin:
             elif "PathLocal" in _cls_name:
                 _local_type = "path_local"
             else:
-                _local_type = "cas"  # CASLocalBackend (default)
+                _local_type = "cas-local"  # CASLocalBackend (canonical name)
 
             result = self._kernel.sys_setattr(
                 path,

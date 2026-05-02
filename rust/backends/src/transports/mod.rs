@@ -7,6 +7,15 @@
 //!     social / cli).  These connect to third-party services that
 //!     own the bytes; Nexus mounts them as read-mostly views.
 
-#[cfg(feature = "connectors")]
+#[cfg(any(
+    feature = "driver-openai",
+    feature = "driver-anthropic",
+    feature = "driver-gdrive",
+    feature = "driver-gmail",
+    feature = "driver-slack",
+    feature = "driver-x",
+    feature = "driver-hn",
+    feature = "driver-cli",
+))]
 pub mod api;
 pub mod blob;

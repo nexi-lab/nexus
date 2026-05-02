@@ -1735,9 +1735,11 @@ name = "nexus-cluster"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backends",
  "clap",
  "contracts",
  "gethostname",
+ "kernel",
  "raft 0.1.0",
  "tokio",
  "tracing",

@@ -26,7 +26,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use kernel::kernel::{Kernel, OperationContext};
+use kernel::kernel::Kernel;
 use kernel::service_registry::{RustCallError, RustService};
 
 // ── Method-name constants (versioned) ────────────────────────────────
@@ -103,10 +103,6 @@ impl FederationService {
     pub fn install(kernel: &Arc<Kernel>) -> Result<(), String> {
         let svc = Arc::new(Self::new(Arc::clone(kernel)));
         kernel.register_rust_service(NAME, svc as Arc<dyn RustService>, Vec::new())
-    }
-
-    fn system_ctx(&self, zone_id: &str) -> OperationContext {
-        OperationContext::new("federation-rpc", zone_id, true, None, true)
     }
 
     // ── Method impls ─────────────────────────────────────────────────

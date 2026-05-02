@@ -208,7 +208,14 @@ fn descriptor_to_dict<'py>(
 }
 
 /// Python-facing handle for the kernel `AgentRegistry`.
-#[pyclass(module = "nexus_runtime", name = "AgentRegistry", unsendable)]
+///
+/// Send + Sync — every `kernel.agent_registry` access yields a fresh
+/// wrapper sharing `Arc<AgentRegistry>`, and the underlying registry is
+/// thread-safe (DashMap + parking_lot). `Py<PyAny>` for the late-bound
+/// provisioner is also Send. Dropping `unsendable` lets callers post
+/// methods through `asyncio.to_thread` for blocking helpers like
+/// `wait_for_state`.
+#[pyclass(module = "nexus_runtime", name = "AgentRegistry")]
 pub struct PyAgentRegistry {
     inner: Arc<AgentRegistry>,
 }

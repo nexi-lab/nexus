@@ -491,14 +491,21 @@ def _extract_fn_signature(text: str, fn_pos: int) -> tuple[str, list[tuple[str, 
 
 
 def _find_pyo3_sig_above(text: str, pos: int) -> dict[str, str]:
-    """Look backward from pos for #[pyo3(signature = (...))] and extract defaults."""
+    """Look backward from pos for #[pyo3(signature = (...))] and extract defaults.
+
+    When the search region contains multiple ``#[pyo3(signature=...)]``
+    attributes (e.g. two adjacent methods both annotated), the
+    *last* match wins — that's the one immediately above the current
+    `fn`.  Earlier code naively grabbed the first match and silently
+    inherited the prior method's defaults.
+    """
     # Search backward up to 500 chars
     search_start = max(0, pos - 500)
     region = text[search_start:pos]
-    m = re.search(r"#\[pyo3\(signature\s*=\s*\(([^)]*)\)\)\]", region)
-    if not m:
+    matches = list(re.finditer(r"#\[pyo3\(signature\s*=\s*\(([^)]*)\)\)\]", region))
+    if not matches:
         return {}
-    sig_text = m.group(1)
+    sig_text = matches[-1].group(1)
     defaults: dict[str, str] = {}
     for part in sig_text.split(","):
         part = part.strip()
@@ -4502,15 +4509,16 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        self.inner.agent_registry.unregister(pid).is_some()",
             "    }",
             "",
-            "    /// Get agent descriptor as dict.",
+            "    /// Get agent descriptor as dict (legacy; new callers should",
+            "    /// use `kernel.agent_registry.get(pid)`).",
             "    fn agent_get<'py>(&self, py: Python<'py>, pid: &str) -> PyResult<Option<Bound<'py, PyDict>>> {",
             "        match self.inner.agent_registry.get(pid) {",
             "            Some(desc) => {",
             "                let dict = PyDict::new(py);",
             '                dict.set_item("pid", &desc.pid)?;',
             '                dict.set_item("name", &desc.name)?;',
-            '                dict.set_item("kind", desc.kind.as_str())?;',
-            '                dict.set_item("state", desc.state.as_str())?;',
+            '                dict.set_item("kind", desc.kind.as_str().to_ascii_lowercase())?;',
+            '                dict.set_item("state", desc.state.as_str().to_ascii_lowercase())?;',
             '                dict.set_item("owner_id", &desc.owner_id)?;',
             '                dict.set_item("zone_id", &desc.zone_id)?;',
             '                dict.set_item("created_at_ms", desc.created_at_ms)?;',
@@ -4567,8 +4575,8 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "            let dict = PyDict::new(py);",
             '            dict.set_item("pid", &desc.pid)?;',
             '            dict.set_item("name", &desc.name)?;',
-            '            dict.set_item("kind", desc.kind.as_str())?;',
-            '            dict.set_item("state", desc.state.as_str())?;',
+            '            dict.set_item("kind", desc.kind.as_str().to_ascii_lowercase())?;',
+            '            dict.set_item("state", desc.state.as_str().to_ascii_lowercase())?;',
             '            dict.set_item("owner_id", &desc.owner_id)?;',
             '            dict.set_item("zone_id", &desc.zone_id)?;',
             '            dict.set_item("created_at_ms", desc.created_at_ms)?;',

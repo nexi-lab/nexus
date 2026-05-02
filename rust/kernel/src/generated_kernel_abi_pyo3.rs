@@ -2664,15 +2664,16 @@ impl PyKernel {
         self.inner.agent_registry.unregister(pid).is_some()
     }
 
-    /// Get agent descriptor as dict.
+    /// Get agent descriptor as dict (legacy; new callers should
+    /// use `kernel.agent_registry.get(pid)`).
     fn agent_get<'py>(&self, py: Python<'py>, pid: &str) -> PyResult<Option<Bound<'py, PyDict>>> {
         match self.inner.agent_registry.get(pid) {
             Some(desc) => {
                 let dict = PyDict::new(py);
                 dict.set_item("pid", &desc.pid)?;
                 dict.set_item("name", &desc.name)?;
-                dict.set_item("kind", desc.kind.as_str())?;
-                dict.set_item("state", desc.state.as_str())?;
+                dict.set_item("kind", desc.kind.as_str().to_ascii_lowercase())?;
+                dict.set_item("state", desc.state.as_str().to_ascii_lowercase())?;
                 dict.set_item("owner_id", &desc.owner_id)?;
                 dict.set_item("zone_id", &desc.zone_id)?;
                 dict.set_item("created_at_ms", desc.created_at_ms)?;
@@ -2729,8 +2730,8 @@ impl PyKernel {
             let dict = PyDict::new(py);
             dict.set_item("pid", &desc.pid)?;
             dict.set_item("name", &desc.name)?;
-            dict.set_item("kind", desc.kind.as_str())?;
-            dict.set_item("state", desc.state.as_str())?;
+            dict.set_item("kind", desc.kind.as_str().to_ascii_lowercase())?;
+            dict.set_item("state", desc.state.as_str().to_ascii_lowercase())?;
             dict.set_item("owner_id", &desc.owner_id)?;
             dict.set_item("zone_id", &desc.zone_id)?;
             dict.set_item("created_at_ms", desc.created_at_ms)?;

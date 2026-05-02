@@ -13,6 +13,7 @@ Re-run: python scripts/codegen_kernel_abi.py
 from __future__ import annotations
 
 from nexus_runtime import (
+    AgentDescriptor,
     AgentRegistry,
     BloomFilter,
     PyFederationClient,
@@ -77,6 +78,7 @@ from nexus_runtime import (
 )
 
 __all__ = [
+    "AgentDescriptor",
     "AgentRegistry",
     "BloomFilter",
     "PyFederationClient",

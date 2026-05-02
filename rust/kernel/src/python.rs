@@ -39,6 +39,7 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     // the kernel's `Arc<AgentRegistry>` so Python callers reach the SSOT
     // directly instead of going through the flat `agent_*` syscalls.
     m.add_class::<agent_registry_py::PyAgentRegistry>()?;
+    m.add_class::<agent_registry_py::PyAgentDescriptor>()?;
     // ACP + ManagedAgent service install hooks plus the generic
     // `nx_kernel_dispatch_rust_call` entry point are registered by
     // `services::python::register` (services owns those impls now;

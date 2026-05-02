@@ -23,7 +23,6 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, cast
 
 from nexus.contracts.protocols.semaphore import VFSSemaphoreProtocol
 
@@ -239,62 +238,13 @@ class PythonVFSSemaphore:
 
 
 # ---------------------------------------------------------------------------
-# Rust wrapper
-# ---------------------------------------------------------------------------
-
-
-# RUST_FALLBACK: VFSSemaphore
-class RustVFSSemaphore:
-    """Thin wrapper around ``nexus_runtime.VFSSemaphore``."""
-
-    def __init__(self) -> None:
-        from nexus_runtime import VFSSemaphore
-
-        self._inner: Any = VFSSemaphore()
-
-    def acquire(
-        self,
-        name: str,
-        max_holders: int,
-        timeout_ms: int = 0,
-        ttl_ms: int = 30_000,
-    ) -> str | None:
-        return cast("str | None", self._inner.acquire(name, max_holders, timeout_ms, ttl_ms))
-
-    def release(self, name: str, holder_id: str) -> bool:
-        return cast(bool, self._inner.release(name, holder_id))
-
-    def extend(self, name: str, holder_id: str, ttl_ms: int = 30_000) -> bool:
-        return cast(bool, self._inner.extend(name, holder_id, ttl_ms))
-
-    def info(self, name: str) -> dict | None:
-        return cast("dict | None", self._inner.info(name))
-
-    def force_release(self, name: str) -> bool:
-        return cast(bool, self._inner.force_release(name))
-
-    def stats(self) -> dict:
-        return cast(dict, self._inner.stats())
-
-    @property
-    def active_semaphores(self) -> int:
-        return cast(int, self._inner.active_semaphores)
-
-
-# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
+# VFSSemaphore pyclass was deleted from the Rust kernel — Python access
+# goes through syscalls. The pure-Python implementation is the SSOT now.
+
 
 def create_vfs_semaphore() -> VFSSemaphoreProtocol:
-    """Return the best available VFS semaphore.
-
-    Prefers the Rust implementation; falls back to pure Python.
-    """
-    try:
-        sem = RustVFSSemaphore()
-        logger.debug("VFS semaphore: Rust (nexus_runtime)")
-        return sem
-    except (ImportError, Exception) as exc:
-        logger.debug("Rust VFS semaphore unavailable (%s), using Python fallback", exc)
-        return PythonVFSSemaphore()
+    """Return a VFS semaphore (pure Python implementation)."""
+    return PythonVFSSemaphore()

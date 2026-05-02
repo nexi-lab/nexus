@@ -41,6 +41,10 @@ from nexus.contracts.exceptions import NexusError
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
+from nexus.server._kernel_syscall_dispatch import (
+    KERNEL_SYSCALL_NAMES,
+    dispatch_kernel_syscall,
+)
 from nexus.server.protocol import parse_method_params
 
 logger = logging.getLogger(__name__)
@@ -195,7 +199,51 @@ class VFSCallDispatcher:
 
         try:
             params_dict = decode_rpc_message(payload) if payload else {}
+            op_context = get_operation_context(auth_dict)
 
+            # ── Thin kernel-syscall dispatch (Rust SSOT) ───────────────
+            # codegen_kernel_abi.py emits KERNEL_SYSCALL_NAMES from the
+            # PyKernel `#[pymethods]` block; methods listed there route
+            # straight to NexusFS via introspection — bypasses the
+            # ``parse_method_params`` + dispatch.py table + handle_*
+            # wrapper chain (all soon-to-be-deleted tech debt).  Auth /
+            # zone-scoping policy still applies: the gRPC layer above
+            # already authenticated, ``scope_params_for_zone`` runs on
+            # the params dict in place, and federation-token search
+            # delegation still gates the method name.
+            if method in KERNEL_SYSCALL_NAMES:
+                search_delegation = auth_dict.get("search_delegation")
+                if search_delegation is not None:
+                    target_zone = op_context.zone_id or ""
+                    try:
+                        search_delegation.validate(method, target_zone)
+                    except PermissionError as perm_err:
+                        return True, _error_payload(RPCErrorCode.PERMISSION_ERROR, str(perm_err))
+                else:
+                    # Reuse the same per-zone scoping the legacy path
+                    # applied to dataclass params, but on the raw dict
+                    # so kernel syscalls see ``/zone/<id>`` prefixes when
+                    # the caller's zone is non-default.
+                    _params_ns = SimpleNamespace(**params_dict)
+                    scope_params_for_zone(_params_ns, op_context.zone_id)
+                    params_dict = vars(_params_ns)
+
+                logger.debug(
+                    "[VFSCallDispatcher] kernel-syscall method=%s path=%s zone_id=%s",
+                    method,
+                    params_dict.get("path"),
+                    op_context.zone_id if op_context else None,
+                )
+                result = await dispatch_kernel_syscall(
+                    self._nexus_fs,
+                    method,
+                    params_dict,
+                    op_context,
+                    subscription_manager=self._subscription_manager,
+                )
+                return False, encode_rpc_message({"result": result})
+
+            # ── Legacy Python service-tier dispatch (deprecated) ──
             try:
                 params = parse_method_params(method, params_dict)
             except ValueError:
@@ -204,7 +252,6 @@ class VFSCallDispatcher:
                 else:
                     raise
 
-            op_context = get_operation_context(auth_dict)
             logger.debug(
                 "[VFSCallDispatcher] method=%s path=%s zone_id=%s",
                 method,

@@ -1504,6 +1504,15 @@ impl Kernel {
         modified_at_ms: Option<i64>,
         // -- DT_LINK params (entry_type == 6) --
         link_target: Option<&str>,
+        // -- DT_MOUNT explicit source (entry_type == 2) --
+        //
+        // When `source` is `Some(addr)` and `addr` is non-empty, the mount
+        // semantics flip from "create the target zone locally" to "join the
+        // target zone at this leader address".  Mirrors the explicit
+        // `mount remote-addr:/remote /local` direction (joiner picks up
+        // remote metadata) versus `mount /local remote-addr:/remote`
+        // (sharer publishes local metadata).
+        source: Option<&str>,
     ) -> Result<SysSetAttrResult, KernelError> {
         match entry_type {
             2 => {
@@ -1525,18 +1534,39 @@ impl Kernel {
                 // per-mount MetaStore Arc, so crosslinks of the same
                 // zone share one callback.
                 let coordinator = self.distributed_coordinator();
-                // Federation activity derives from `list_zones` — empty
-                // before `install()` populates the ZoneManager, populated
-                // after with at least the root zone.
-                let federation_active = !coordinator.list_zones(self).is_empty();
-                let metastore = match metastore {
-                    Some(m) => Some(m),
-                    None if federation_active && !zone_id.is_empty() => {
-                        // Auto-create + resolve.
+                // Federation readiness via the trait's is_initialized — true
+                // once init_from_env completes regardless of whether any
+                // zones are loaded.  This matters for dynamic-bootstrap
+                // mode (NEXUS_PEERS empty), where zones are zero at boot
+                // but the coordinator is fully ready to accept create_zone
+                // / join_cluster calls.  Using list_zones as a readiness
+                // shadow misclassified that state.
+                let federation_active = coordinator.is_initialized(self);
+                let source_addr = source.map(str::trim).filter(|s| !s.is_empty());
+                let metastore = match (metastore, source_addr) {
+                    (Some(m), _) => Some(m),
+                    (None, Some(addr)) if federation_active && !zone_id.is_empty() => {
+                        // Explicit source given — interpret as `mount
+                        // remote-addr:/zone-id /local-path`: this node
+                        // joins an existing cluster at `addr` (joiner
+                        // semantics) rather than self-bootstrapping a
+                        // 1-voter group.  Leader ConfChangeV2 AddNode
+                        // commits + snapshot install populates ConfState.
+                        coordinator
+                            .join_cluster(self, zone_id, addr, false)
+                            .map_err(KernelError::Federation)?;
+                        coordinator.metastore_for_zone(self, zone_id).ok()
+                    }
+                    (None, None) if federation_active && !zone_id.is_empty() => {
+                        // No source given — interpret as `mount
+                        // /local-path remote-addr:/zone-id`: this node
+                        // contributes a fresh 1-voter zone (creator
+                        // semantics).  Subsequent peers join via the
+                        // explicit-source path above.
                         let _ = coordinator.create_zone(self, zone_id);
                         coordinator.metastore_for_zone(self, zone_id).ok()
                     }
-                    None => None,
+                    (None, _) => None,
                 };
                 self.dlc.mount(
                     self,
@@ -1550,9 +1580,40 @@ impl Kernel {
                 )?;
                 // Federation wire-mount: register apply-cb + replicate
                 // the DT_MOUNT entry so peers see the mount via raft
-                // commit.  No-op when federation is inactive.
-                if federation_active && !zone_id.is_empty() {
-                    let _ = coordinator.wire_mount(self, "root", path, zone_id);
+                // commit.  Only fires for cross-zone federation mounts
+                // (target_zone != parent_zone) — same-zone mounts (e.g.
+                // typed connector backends like openai/anthropic where
+                // zone_id defaults to "root" and the parent is also
+                // "root") are local, non-replicated mounts and must
+                // keep the backend the provider just constructed.
+                //
+                // Parent zone derived via the SAME longest-prefix route
+                // ``DLC::mount`` uses to write the DT_MOUNT entry into
+                // the parent zone's metastore (rust/kernel/src/core/dlc.rs
+                // line 80).  For ``/family/work`` (target=corp), the
+                // parent path ``/family`` routes to the family zone —
+                // the entry replicates through family's raft log, so
+                // the apply_cb that observes the new mount must be the
+                // one installed on family (NOT root, which never sees
+                // the entry).  Caught by TestCrossZoneDailyWorkflow's
+                // crosslink read on the follower peer.
+                //
+                // We route the PARENT directory, not the path itself,
+                // because by this point ``dlc.mount`` has already
+                // registered ``path`` — routing it would resolve to
+                // the new mount's own ``target_zone`` (corp), giving
+                // the wrong answer for the same-zone-guard below.
+                let parent_dir = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("/");
+                let parent_dir = if parent_dir.is_empty() { "/" } else { parent_dir };
+                let parent_zone = self
+                    .vfs_router
+                    .route(parent_dir, contracts::ROOT_ZONE_ID)
+                    .ok()
+                    .map(|r| r.zone_id)
+                    .filter(|z| !z.is_empty())
+                    .unwrap_or_else(|| contracts::ROOT_ZONE_ID.to_string());
+                if federation_active && !zone_id.is_empty() && zone_id != parent_zone {
+                    let _ = coordinator.wire_mount(self, &parent_zone, path, zone_id);
                 }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),
@@ -2993,6 +3054,7 @@ mod tests {
             None,  // mime_type
             None,  // modified_at_ms
             None,  // link_target
+            None,  // source
         )
     }
 
@@ -3092,6 +3154,7 @@ mod tests {
                 Some("text/plain"),
                 None,
                 None,
+                None, // source
             )
             .unwrap();
         assert!(!r.created);
@@ -3155,6 +3218,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None, // source
             )
             .unwrap();
         assert!(r.created);
@@ -3195,6 +3259,7 @@ mod tests {
             None,
             None,
             None,
+            None, // source
         )
         .unwrap();
 
@@ -3558,6 +3623,7 @@ mod tests {
                     None,
                     None,
                     Some(target),
+                    None,
                 )
                 .unwrap();
             }
@@ -3605,6 +3671,7 @@ mod tests {
                     None,
                     None,
                     Some(target),
+                    None,
                 )
                 .unwrap();
             }

@@ -2,7 +2,6 @@
 
 import dataclasses
 from datetime import datetime
-from typing import cast
 
 import pytest
 
@@ -161,44 +160,23 @@ class TestEncodeDecodeRPCMessage:
 
 
 class TestParseMethodParams:
-    """Tests for parse_method_params function."""
+    """Tests for parse_method_params function.
 
-    def test_parse_read_params(self):
-        """Test parsing read method parameters."""
-        params = parse_method_params("sys_read", {"path": "/test.txt"})
-        assert params.path == "/test.txt"
-
-    def test_parse_write_params(self):
-        """Test parsing write method parameters."""
-        params = parse_method_params("sys_write", {"path": "/file.txt", "buf": b"data"})
-        assert params.path == "/file.txt"
-        assert params.buf == b"data"
-
-    def test_parse_list_params(self):
-        """Test parsing list method parameters."""
-        params = parse_method_params(
-            "sys_readdir", {"path": "/workspace", "recursive": True, "details": False}
-        )
-        assert params.path == "/workspace"
-        assert params.recursive is True
-        assert params.details is False
-
-    def test_parse_list_params_defaults(self):
-        """Test parsing list with default parameters."""
-        params = parse_method_params("sys_readdir", {})
-        assert params.path == "/"
-        assert params.recursive is True
-        assert params.details is False
+    Kernel syscalls (sys_read / sys_write / sys_readdir / sys_setattr /
+    ...) bypass ``parse_method_params`` entirely — they route through
+    the Rust thin-dispatch path emitted by ``codegen_kernel_abi.py``
+    into ``_kernel_syscall_dispatch.dispatch_kernel_syscall``.  Tests
+    that pass kernel-syscall wire names to ``parse_method_params``
+    therefore exercise an unreachable code path and are removed; only
+    the contract-level "unknown method raises" check survives because
+    it still applies to non-kernel RPCs that continue to flow through
+    ``parse_method_params``.
+    """
 
     def test_parse_unknown_method(self):
         """Test parsing unknown method raises error."""
         with pytest.raises(ValueError, match="Unknown method"):
             parse_method_params("unknown_method", {})
-
-    def test_parse_invalid_params(self):
-        """Test parsing with invalid parameters raises error."""
-        with pytest.raises(ValueError, match="Invalid parameters"):
-            parse_method_params("sys_read", {"invalid_param": "value"})
 
 
 class TestRPCErrorCode:
@@ -213,93 +191,15 @@ class TestRPCErrorCode:
 
 
 # ============================================================
-# ReBAC __post_init__ list→tuple conversion tests
-# ============================================================
-
-
-class TestRebacPostInit:
-    """Tests for __post_init__ list→tuple conversion in ReBAC Param classes."""
-
-    def test_rebac_create_converts_lists_to_tuples(self):
-        """RebacCreateParams should convert list args to tuples (JSON compat)."""
-        from nexus.server.protocol import RebacCreateParams
-
-        params = RebacCreateParams(
-            subject=["user", "alice"],  # type: ignore[arg-type]
-            relation="viewer",
-            object=["file", "/test.txt"],  # type: ignore[arg-type]
-        )
-        assert isinstance(params.subject, tuple)
-        assert isinstance(params.object, tuple)
-        assert params.subject == ("user", "alice")
-        assert params.object == ("file", "/test.txt")
-
-    def test_rebac_check_converts_lists_to_tuples(self):
-        """RebacCheckParams should convert list args to tuples."""
-        from nexus.server.protocol import RebacCheckParams
-
-        params = RebacCheckParams(
-            subject=["user", "bob"],  # type: ignore[arg-type]
-            permission="read",
-            object=["file", "/data.csv"],  # type: ignore[arg-type]
-        )
-        assert isinstance(params.subject, tuple)
-        assert isinstance(params.object, tuple)
-        assert params.subject == ("user", "bob")
-
-    def test_rebac_check_preserves_tuples(self):
-        """RebacCheckParams should leave real tuples unchanged."""
-        from nexus.server.protocol import RebacCheckParams
-
-        params = RebacCheckParams(
-            subject=("user", "carol"),
-            permission="write",
-            object=("file", "/doc.md"),
-        )
-        assert params.subject == ("user", "carol")
-        assert params.object == ("file", "/doc.md")
-
-    def test_rebac_expand_converts_object(self):
-        """RebacExpandParams converts object list→tuple."""
-        from nexus.server.protocol import RebacExpandParams
-
-        params = RebacExpandParams(
-            permission="read",
-            object=["file", "/shared"],  # type: ignore[arg-type]
-        )
-        assert isinstance(params.object, tuple)
-        assert params.object == ("file", "/shared")
-
-    def test_rebac_explain_converts_both(self):
-        """RebacExplainParams converts both subject and object."""
-        from nexus.server.protocol import RebacExplainParams
-
-        params = RebacExplainParams(
-            subject=["user", "dave"],  # type: ignore[arg-type]
-            permission="admin",
-            object=["zone", "z1"],  # type: ignore[arg-type]
-        )
-        assert isinstance(params.subject, tuple)
-        assert isinstance(params.object, tuple)
-
-    def test_rebac_list_tuples_converts_optional(self):
-        """RebacListTuplesParams converts optional tuple fields."""
-        from nexus.server.protocol import RebacListTuplesParams
-
-        params = RebacListTuplesParams(
-            subject=["user", "eve"],  # type: ignore[arg-type]
-            object=["file", "/x"],  # type: ignore[arg-type]
-        )
-        assert isinstance(params.subject, tuple)
-        assert isinstance(params.object, tuple)
-
-    def test_rebac_list_tuples_none_stays_none(self):
-        """RebacListTuplesParams leaves None fields as None."""
-        from nexus.server.protocol import RebacListTuplesParams
-
-        params = RebacListTuplesParams()
-        assert params.subject is None
-        assert params.object is None
+# ReBAC param-dataclass tests removed: ``RebacCreateParams`` /
+# ``RebacCheckParams`` / ``RebacExpandParams`` / ``RebacExplainParams``
+# / ``RebacListTuplesParams`` were Python-side wire-form dataclasses
+# emitted by the legacy codegen for the @rpc_expose ReBAC chain.  After
+# the ReBAC service migrated to Rust (PR #3955 / task #43), incoming
+# ReBAC RPCs route through the Rust dispatch path and the wire-form
+# tuples are deserialised in Rust via serde — no Python __post_init__
+# list→tuple conversion needed any more.  Keeping these tests would
+# only verify dead code paths.
 
 
 # ============================================================
@@ -317,50 +217,24 @@ class TestCodegenConsistency:
                 f"METHOD_PARAMS['{method_name}'] = {param_class.__name__} is not a dataclass"
             )
 
-    def test_method_params_count(self):
-        """METHOD_PARAMS should have a reasonable number of entries.
-
-        Threshold history:
-        * Lowered from 113 → 90 in #3701 (commit d9d429abd) under the
-          mistaken assumption that ``nexus.system_services.*`` methods
-          had been deleted; in reality those methods just *moved* and
-          the codegen MODULES_TO_SCAN entries were stale.
-        * Restored to ≥150 after Codex review of #3701 (finding #3)
-          repaired MODULES_TO_SCAN to point at the post-refactor
-          canonical locations (``nexus.services.*``,
-          ``nexus.server.rpc.services.*``, ``nexus.bricks.auth.oauth.*``).
-          This guards against silently re-introducing stale module
-          paths that would once again drop METHOD_PARAMS entries and
-          break ``RemoteServiceProxy`` positional binding for any
-          missing RPC.
-        """
-        assert len(METHOD_PARAMS) >= 150, (
-            f"Expected at least 150 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
-        )
-
     def test_method_params_names_are_strings(self):
         """All keys in METHOD_PARAMS should be non-empty strings."""
         for key in METHOD_PARAMS:
             assert isinstance(key, str) and len(key) > 0
 
-    def test_override_classes_take_precedence(self):
-        """Manual override classes should override generated ones."""
-        from nexus.server._rpc_param_overrides import ReadParams as OverrideRead
-        from nexus.server.protocol import ReadParams
-
-        assert ReadParams is OverrideRead
-        assert hasattr(ReadParams, "return_url"), "ReadParams should have RPC-only return_url"
-        assert hasattr(ReadParams, "expires_in"), "ReadParams should have RPC-only expires_in"
-
-    def test_merged_method_params_has_both_generated_and_overrides(self):
-        """METHOD_PARAMS should contain both generated and override entries."""
-        # Generated entries
-        assert "sys_write" in METHOD_PARAMS
-        assert "sys_readdir" in METHOD_PARAMS
-        assert "grep" in METHOD_PARAMS
-        # Override entries
-        assert "sys_read" in METHOD_PARAMS
-        assert "admin_create_key" in METHOD_PARAMS
+    # NOTE: ``test_method_params_count`` (≥150 floor),
+    # ``test_override_classes_take_precedence``, and
+    # ``test_merged_method_params_has_both_generated_and_overrides``
+    # all asserted contracts of the legacy @rpc_expose dispatch path
+    # which migrated to Rust thin-dispatch + the per-service Rust
+    # ports (PR #3955).  Kernel syscalls (sys_read / sys_write /
+    # sys_readdir) and migrated services (federation / mount /
+    # snapshots / workspace / share_link / oauth / search / rebac /
+    # mcp) no longer flow through ``METHOD_PARAMS`` at all, so the
+    # 150+ floor and the "sys_read in METHOD_PARAMS" assertions are
+    # facts about a code path that has been deleted.  Removing them
+    # rather than weakening their thresholds, per the project rule
+    # against silently bypassing the Rust syscall boundary.
 
     def test_parse_method_params_works_for_all(self):
         """parse_method_params should work for every METHOD_PARAMS entry (with defaults)."""
@@ -389,81 +263,43 @@ class TestCodegenConsistency:
         ``rmdir`` call into a destructive recursive subtree delete and
         ``mkdir`` into mkdir-p — a real behavioral regression for
         legacy clients that send only ``{"path": "/foo"}``.
+
+        After the @rpc_expose chain migrated to the codegen-emitted
+        Rust thin-dispatch path, the override-class layer
+        (``MkdirAliasParams`` / ``RmdirAliasParams``) was retired in
+        favour of an explicit ``_apply_pre_call_defaults`` step in
+        ``_kernel_syscall_dispatch`` that runs before the kernel
+        invocation.  This test now pins that new layer's defaults to
+        the same conservative values, so a future codegen drop can't
+        silently re-introduce mkdir-p / rm-rf for bare-path callers.
         """
-        from nexus.server._rpc_param_overrides import (
-            MkdirAliasParams,
-            RmdirAliasParams,
-        )
+        from nexus.server._kernel_syscall_dispatch import _apply_pre_call_defaults
 
-        assert METHOD_PARAMS["mkdir"] is MkdirAliasParams
-        assert METHOD_PARAMS["rmdir"] is RmdirAliasParams
-        # sys_rmdir is the legacy spelling kept for older remote clients;
-        # it must share the same conservative defaults.
-        assert METHOD_PARAMS["sys_rmdir"] is RmdirAliasParams
+        for wire_name in ("mkdir", "sys_mkdir"):
+            defaulted = _apply_pre_call_defaults(wire_name, {"path": "/foo"})
+            assert defaulted["parents"] is False, f"{wire_name}: parents default leaked"
+            assert defaulted["exist_ok"] is False, f"{wire_name}: exist_ok default leaked"
 
-        mkdir_defaults = {f.name: f.default for f in dataclasses.fields(MkdirAliasParams)}
-        assert mkdir_defaults["parents"] is False
-        assert mkdir_defaults["exist_ok"] is False
+        for wire_name in ("rmdir", "sys_rmdir"):
+            defaulted = _apply_pre_call_defaults(wire_name, {"path": "/foo"})
+            assert defaulted["recursive"] is False, f"{wire_name}: recursive default leaked"
 
-        rmdir_defaults = {f.name: f.default for f in dataclasses.fields(RmdirAliasParams)}
-        assert rmdir_defaults["recursive"] is False
+        # Caller-supplied overrides must still win over the conservative
+        # defaults — the layer is "fill the missing slot", not "force".
+        forced = _apply_pre_call_defaults("mkdir", {"path": "/foo", "parents": True})
+        assert forced["parents"] is True
 
-        # Round-trip through parse_method_params with only ``path`` set
-        # (the way legacy clients call) — defaults must hold.
-        parsed_mkdir = cast(MkdirAliasParams, parse_method_params("mkdir", {"path": "/foo"}))
-        assert parsed_mkdir.parents is False
-        assert parsed_mkdir.exist_ok is False
-
-        parsed_rmdir = cast(RmdirAliasParams, parse_method_params("rmdir", {"path": "/foo"}))
-        assert parsed_rmdir.recursive is False
-
-        parsed_sys_rmdir = cast(
-            RmdirAliasParams, parse_method_params("sys_rmdir", {"path": "/foo"})
-        )
-        assert parsed_sys_rmdir.recursive is False
-
-    def test_remote_proxy_positional_arg_resolution_for_critical_rpcs(self):
-        """Regression test for Codex review #2 finding #3.
-
-        ``RemoteServiceProxy``/``RPCProxyBase`` use METHOD_PARAMS to map
-        positional call arguments to parameter names. When an exposed
-        RPC is missing from METHOD_PARAMS, ``_get_param_names`` returns
-        ``[]`` and the positional caller's first argument is silently
-        dropped from the JSON-RPC body — the call serializes without
-        e.g. ``query`` for ``semantic_search``, ``path`` for
-        ``register_workspace``, ``agent_id`` for ``register_agent``.
-
-        Codex caught this for ``semantic_search`` (already exposed via
-        SearchService and called positionally). The root cause was a
-        stale ``MODULES_TO_SCAN`` in ``scripts/generate_rpc_params.py``
-        that pointed at deleted ``nexus.system_services.*`` paths,
-        causing the codegen to silently skip those modules. This test
-        guards the critical positional-call surface so future regen
-        drift can't reintroduce the same silent breakage.
-        """
-        from nexus.remote.rpc_proxy import RPCProxyBase
-
-        # Each tuple: (rpc_name, expected first positional param)
-        critical_positional_rpcs = [
-            ("semantic_search", "query"),
-            ("register_workspace", "path"),
-            ("register_agent", "agent_id"),
-        ]
-        for rpc_name, expected_first_param in critical_positional_rpcs:
-            assert rpc_name in METHOD_PARAMS, (
-                f"METHOD_PARAMS missing {rpc_name!r} — positional remote calls "
-                f"will silently misserialize. Check MODULES_TO_SCAN in "
-                f"scripts/generate_rpc_params.py."
-            )
-            param_names = RPCProxyBase._get_param_names(rpc_name)
-            assert param_names, (
-                f"_get_param_names({rpc_name!r}) returned [] — positional binding broken"
-            )
-            assert param_names[0] == expected_first_param, (
-                f"{rpc_name}: expected first positional={expected_first_param!r}, "
-                f"got {param_names[0]!r}. RemoteServiceProxy.{rpc_name}({expected_first_param}, ...) "
-                f"would serialize without {expected_first_param!r}."
-            )
+    # ``test_remote_proxy_positional_arg_resolution_for_critical_rpcs``
+    # used to assert ``semantic_search`` / ``register_workspace`` /
+    # ``register_agent`` lived in ``METHOD_PARAMS`` so the legacy
+    # Python ``RemoteServiceProxy.__getattr__`` positional binding
+    # worked.  All three services migrated to Rust (search →
+    # rust/shared/lib/src/search, workspace + agent → managed_agent)
+    # in PR #3955; production clients now reach them through the Rust
+    # dispatch path which uses serde for positional binding (no
+    # ``METHOD_PARAMS`` lookup involved).  Dropping the assertion is
+    # the architecturally correct call rather than weakening it to
+    # cover only the residual non-migrated names.
 
 
 # ============================================================

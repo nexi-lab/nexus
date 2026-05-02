@@ -1627,6 +1627,31 @@ impl Kernel {
         // 2. Route (check write access)
         let route = self.vfs_router.route(path, &ctx.zone_id)?;
 
+        // 2.5. mkdir on a mount point itself: the mount IS the
+        // directory, by virtue of being a mount.  Materialising a
+        // second metadata entry inside the target zone's metastore
+        // (a) duplicates what the DT_MOUNT entry already represents
+        // and (b) routes the put into the target zone's raft, which
+        // races with the zone's leader election on a freshly-created
+        // zone (voter ConfState seeded but no leader yet).  The race
+        // surfaced as ``ZoneMetaStore.put: not leader, leader hint:
+        // None`` and broke TestCrossNodeContentRead /
+        // TestCrossZoneDailyWorkflow / TestLastWriterAttribution after
+        // federation_zones migrated to combined sys_setattr DT_MOUNT.
+        //
+        // Honour parents=True first — the caller may rely on
+        // ensure_parent_directories materialising the mount-point's
+        // parent path (caught by tests/unit/core/test_mount_directory_creation).
+        if route.backend_path.is_empty() {
+            if parents {
+                self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+            }
+            return Ok(SysMkdirResult {
+                hit: true,
+                post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+            });
+        }
+
         // 3. Existence check: explicit entry OR implicit directory (children
         //    exist under this prefix). Eliminates Python's router.route() +
         //    metastore.get() + is_implicit_directory() pre-check (Crossing 3a).

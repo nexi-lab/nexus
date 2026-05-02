@@ -67,19 +67,20 @@ def test_remote_service_proxy_coverage():
     """
     exposed_methods = get_all_rpc_exposed_methods()
 
-    # Sanity check: we should have a reasonable number of exposed methods
-    assert len(exposed_methods) > 30, (
-        f"Expected at least 30 @rpc_expose methods, found {len(exposed_methods)}. "
+    # Sanity check: we should have a reasonable number of exposed methods.
+    # Floor lowered from 30 → 20 after Tier 1 / Tier 2 syscalls migrated off
+    # @rpc_expose onto the Rust kernel-syscall thin dispatch (SSOT codegen).
+    assert len(exposed_methods) > 20, (
+        f"Expected at least 20 @rpc_expose methods, found {len(exposed_methods)}. "
         "This might indicate a scanning issue."
     )
 
-    # Verify key method categories are present (only @rpc_expose methods)
-    # Note: list/glob/grep/workspace_snapshot are ABC stubs that delegate
-    # to services — they aren't @rpc_expose on NexusFS itself.
+    # Verify key non-syscall categories are still @rpc_expose.  File I/O /
+    # directory / query syscalls now route through the Rust thin dispatch,
+    # not the @rpc_expose registry — they are covered by the
+    # ``test_all_public_methods_are_exposed_or_excluded`` parity check
+    # (listed in INTERNAL_ONLY_METHODS with the routing rationale).
     expected_categories = {
-        "File I/O": ["sys_read", "sys_write", "sys_unlink"],
-        "Directory": ["mkdir", "rmdir"],
-        "Query": ["access", "sys_stat"],
         "Versioning": ["get_version", "list_versions"],
     }
 
@@ -281,6 +282,29 @@ def test_all_public_methods_are_exposed_or_excluded():
         "rebac_check_batch",  # ABC stub → rebac_service.rebac_check_batch_sync()
         "rebac_delete",  # ABC stub → rebac_service.rebac_delete_sync()
         "rebac_list_tuples",  # ABC stub → rebac_service.rebac_list_tuples_sync()
+        # Kernel syscalls — routed via Rust thin dispatch (SSOT codegen),
+        # NOT @rpc_expose.  The gRPC ``Call`` handler resolves these via
+        # ``_kernel_syscall_dispatch.py`` (generated from PyKernel pymethods)
+        # before consulting the legacy @rpc_expose registry.  Remote-callable
+        # over the same wire surface — just dispatched through the Rust SSOT
+        # path now, so the @rpc_expose decorator was dropped to avoid two
+        # competing registration sources.
+        "sys_lock",  # Tier 1 syscall → Rust thin dispatch
+        "sys_read",  # Tier 1 syscall → Rust thin dispatch
+        "sys_readdir",  # Tier 1 syscall → Rust thin dispatch
+        "sys_rename",  # Tier 1 syscall → Rust thin dispatch
+        "sys_setattr",  # Tier 1 syscall → Rust thin dispatch
+        "sys_stat",  # Tier 1 syscall → Rust thin dispatch
+        "sys_unlink",  # Tier 1 syscall → Rust thin dispatch
+        "sys_unlock",  # Tier 1 syscall → Rust thin dispatch
+        "sys_write",  # Tier 1 syscall → Rust thin dispatch
+        "sys_copy",  # Tier 1 syscall → Rust thin dispatch
+        # Tier 2 convenience wrappers — also routed via Rust thin dispatch
+        # (kernel pymethods) for read-with-metadata / write-with-OCC paths.
+        "read",  # Tier 2 → Rust thin dispatch
+        "write",  # Tier 2 → Rust thin dispatch
+        "access",  # Tier 2 → Rust thin dispatch
+        "is_directory",  # Tier 2 → Rust thin dispatch
     }
 
     # Get all public methods

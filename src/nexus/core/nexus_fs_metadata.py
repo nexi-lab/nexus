@@ -244,7 +244,7 @@ class MetadataMixin:
         except (InvalidPathError, NexusFileNotFoundError):
             return False
 
-    @rpc_expose(description="Check if path is a directory")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def is_directory(
         self,
         path: str,
@@ -281,7 +281,7 @@ class MetadataMixin:
             names.add(top)
         return sorted(names)
 
-    @rpc_expose(description="Get file metadata for FUSE operations")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_stat(
         self,
         path: str,
@@ -352,7 +352,7 @@ class MetadataMixin:
 
         return result
 
-    @rpc_expose(description="Upsert file metadata attributes")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_setattr(
         self,
         path: str,
@@ -387,8 +387,10 @@ class MetadataMixin:
         # service registration, and metadata mutation.  Without an
         # in-class gate, in-process callers (and any future RPC handler
         # that forgot to gate) could poison metadata under /zone/X for a
-        # token without WRITE there.  Defense in depth: check here even
-        # though `handle_set_metadata` already checks at the RPC edge.
+        # token without WRITE there.  This is the only enforcement layer
+        # for sys_setattr now that the kernel-syscall thin dispatcher
+        # routes wire-form `sys_setattr` straight here without a per-RPC
+        # handler.
         _entry_type = attrs.get("entry_type", 0)
         if context is not None and not getattr(context, "is_system", False):
             from nexus.contracts.exceptions import PermissionDeniedError as _PDE
@@ -496,6 +498,23 @@ class MetadataMixin:
                 )
                 return result
 
+            # Federation auto-create: no Python-side backend required.  The
+            # kernel resolves a raft-backed metastore via the federation
+            # provider when ``zone_id`` is set and the coordinator is
+            # initialised — covers ``sys_setattr DT_MOUNT path zone_id=z``
+            # creator semantics and the joiner-side ``source=addr`` form
+            # used by the dynamic-bootstrap mount-with-source path.
+            if backend is None and zone_id:
+                _backend_name = attrs.get("backend_name", "")
+                result = self._kernel.sys_setattr(
+                    path,
+                    entry_type,
+                    _backend_name,
+                    zone_id=zone_id,
+                    is_external=bool(attrs.get("is_external", False)),
+                    source=attrs.get("source"),
+                )
+                return result
             if backend is None:
                 raise ValueError(
                     "sys_setattr(entry_type=DT_MOUNT) requires 'backend' attribute "
@@ -635,7 +654,7 @@ class MetadataMixin:
             path=paths[0] if paths else "/__sys__/",
         )
 
-    @rpc_expose(description="Create directory")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def mkdir(
         self,
         path: str,
@@ -676,7 +695,7 @@ class MetadataMixin:
                 ),
             )
 
-    @rpc_expose(description="Remove directory")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def rmdir(
         self,
         path: str,
@@ -692,7 +711,7 @@ class MetadataMixin:
 
     # ── Tier 1 delete/rename/copy ─────────────────────────────────────
 
-    @rpc_expose(description="Delete file")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_unlink(
         self,
         path: str,
@@ -823,7 +842,7 @@ class MetadataMixin:
         logger.warning("sys_unlink: unexpected entry_type=%d for %s", et, path)
         return {}
 
-    @rpc_expose(description="Rename/move file")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_rename(
         self,
         old_path: str,
@@ -920,7 +939,7 @@ class MetadataMixin:
     # sys_copy — Issue #3329 (Workstream 3: native copy/move)
     # ------------------------------------------------------------------
 
-    @rpc_expose(description="Copy file with native backend support")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_copy(
         self, src_path: str, dst_path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]:
@@ -1211,7 +1230,7 @@ class MetadataMixin:
 
         return results
 
-    @rpc_expose(description="Check if file exists")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Tier 2: check if path explicitly exists and is accessible.
 
@@ -1533,7 +1552,7 @@ class MetadataMixin:
         """Return True for system-internal metastore paths (bare keys)."""
         return path.startswith(MetadataMixin._INTERNAL_PATH_PREFIXES)
 
-    @rpc_expose(description="List directory entries")
+    # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_readdir(
         self,
         path: str = "/",

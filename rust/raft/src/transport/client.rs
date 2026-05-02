@@ -7,9 +7,9 @@ use super::proto::nexus::raft::{
     zone_api_service_client::ZoneApiServiceClient,
     zone_transport_service_client::ZoneTransportServiceClient, AcquireLock, DeleteMetadata,
     DeleteZoneRequest, EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo,
-    GetMetadata, JoinClusterRequest, ListMetadata, ProposeRequest, PutMetadata, QueryRequest,
-    RaftCommand, RaftQuery, ReleaseLock, ReplaceVoterByHostnameRequest, ReplicateEntriesRequest,
-    StepMessageRequest,
+    GetMetadata, JoinClusterRequest, JoinZoneRequest, ListMetadata, ProposeRequest, PutMetadata,
+    QueryRequest, RaftCommand, RaftQuery, ReleaseLock, ReplaceVoterByHostnameRequest,
+    ReplicateEntriesRequest, StepMessageRequest,
 };
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;
@@ -740,6 +740,69 @@ pub async fn call_replace_voter_by_hostname(
         error: response.error,
         leader_address: response.leader_address,
         removed_old_id: response.removed_old_id,
+    })
+}
+
+/// Outcome of a [`call_join_zone_rpc`] invocation.
+#[derive(Debug, Clone)]
+pub struct JoinZoneResult {
+    /// Whether the leader committed the `ConfChangeV2 AddNode` for the
+    /// joiner.  `false` together with a non-empty `leader_address`
+    /// means we hit a follower; the caller should retry against
+    /// `leader_address`.
+    pub success: bool,
+    /// Server-side error string when `success=false` and the failure
+    /// is not a follower redirect.
+    pub error: Option<String>,
+    /// Leader's advertise address — set on follower redirects.
+    pub leader_address: Option<String>,
+}
+
+/// Call `ZoneApiService::JoinZone` on a single peer.
+///
+/// Used by `RaftDistributedCoordinator::join_cluster` (the joiner side
+/// of the dynamic-bootstrap mount-with-source path).  Caller passes
+/// the joiner's own `node_id` + advertise address; the leader
+/// reverse-resolves through ConfChangeV2 AddNode + snapshot install.
+///
+/// Followers return `success=false` plus the leader's address in
+/// `leader_address`; the caller follows the redirect once before
+/// surfacing the failure.
+pub async fn call_join_zone_rpc(
+    peer_addr: &str,
+    zone_id: &str,
+    node_id: u64,
+    node_address: &str,
+    as_learner: bool,
+    timeout_secs: u64,
+) -> Result<JoinZoneResult> {
+    let ep = Endpoint::from_shared(peer_addr.to_string())
+        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
+        .connect_timeout(Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(timeout_secs));
+
+    let channel = ep.connect().await.map_err(|e| {
+        TransportError::Connection(format!("JoinZone connect to {peer_addr} failed: {e}"))
+    })?;
+
+    let mut client = ZoneApiServiceClient::new(channel);
+    let request = JoinZoneRequest {
+        zone_id: zone_id.to_string(),
+        node_id,
+        node_address: node_address.to_string(),
+        as_learner,
+    };
+
+    let response = client
+        .join_zone(request)
+        .await
+        .map_err(|e| TransportError::Rpc(format!("JoinZone RPC failed: {e}")))?
+        .into_inner();
+
+    Ok(JoinZoneResult {
+        success: response.success,
+        error: response.error,
+        leader_address: response.leader_address,
     })
 }
 

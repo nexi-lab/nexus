@@ -57,6 +57,18 @@ ALL_CORE_METHODS = {
     **CORE_METADATA_METHODS,
 }
 
+# Tier 1 syscalls + ``access`` are routed via the Rust kernel-syscall thin
+# dispatch (SSOT codegen) instead of @rpc_expose.  See
+# ``tests/unit/server/test_rpc_parity.py`` for the canonical INTERNAL_ONLY
+# list.  These methods are still remote-callable; the registry source moved.
+RUST_SSOT_DISPATCH_METHODS = {
+    "sys_read",
+    "sys_write",
+    "sys_unlink",
+    "sys_rename",
+    "access",
+}
+
 # Bulk methods on NexusFS (service-layer convenience, future extraction target).
 BULK_METHODS = {
     "read_bulk": {"params": ["paths", "context", "return_metadata", "skip_errors"], "async": False},
@@ -83,15 +95,25 @@ class TestCoreAPIExists:
 
 
 class TestCoreRPCExposed:
-    """Verify all public methods have @rpc_expose decorators."""
+    """Verify @rpc_expose presence matches the dispatch routing each method
+    actually uses: Tier 1 syscalls (and ``access``) are routed via the Rust
+    kernel-syscall thin dispatch (SSOT codegen) and intentionally *do not*
+    carry ``_rpc_exposed``; the rest still go through the Python
+    @rpc_expose registry."""
 
     @pytest.mark.parametrize("method_name", list(ALL_CORE_METHODS.keys()))
-    def test_has_rpc_expose(self, method_name: str):
-        """Test that method has @rpc_expose decorator."""
+    def test_dispatch_registration(self, method_name: str):
         method = getattr(NexusFS, method_name)
-        assert hasattr(method, "_rpc_exposed"), (
-            f"NexusFS.{method_name}() missing @rpc_expose — will not be available via RPC"
-        )
+        if method_name in RUST_SSOT_DISPATCH_METHODS:
+            assert not hasattr(method, "_rpc_exposed"), (
+                f"NexusFS.{method_name}() carries @rpc_expose but is supposed to "
+                "route via the Rust kernel-syscall thin dispatch — drop the "
+                "decorator or remove from RUST_SSOT_DISPATCH_METHODS."
+            )
+        else:
+            assert hasattr(method, "_rpc_exposed"), (
+                f"NexusFS.{method_name}() missing @rpc_expose — will not be available via RPC"
+            )
 
 
 class TestCoreSignatures:

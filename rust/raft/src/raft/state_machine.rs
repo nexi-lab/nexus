@@ -314,6 +314,27 @@ pub trait StateMachine: Send + Sync {
     ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&MountApplyEvent) + Send + Sync>>>>> {
         None
     }
+
+    /// Optional advisory-lock state handle.
+    ///
+    /// Returns a clone of the same ``Arc<Mutex<LockState>>`` the apply
+    /// path mutates. ``ZoneConsensus::new`` captures this handle BEFORE
+    /// wrapping the state machine in the async RwLock so sync callers
+    /// (notably ``DistributedLocks::new`` invoked from inside the
+    /// mount-apply callback that fires on a tokio worker thread) can
+    /// obtain the SSOT advisory Arc without ``RwLock::blocking_read`` —
+    /// which panics from inside a tokio runtime.
+    ///
+    /// The Arc identity is stable for the life of the state machine:
+    /// snapshot restore mutates the inner ``LockState`` under the same
+    /// parking_lot mutex (see ``FullStateMachine::restore_snapshot``).
+    ///
+    /// Only [`FullStateMachine`] returns ``Some``; witness / test
+    /// state machines return ``None`` because they don't carry advisory
+    /// locks.
+    fn advisory_handle(&self) -> Option<Arc<Mutex<LockState>>> {
+        None
+    }
 }
 
 /// A DT_MOUNT apply event delivered to [`StateMachine::mount_apply_cb_slot`]
@@ -1793,6 +1814,10 @@ impl StateMachine for FullStateMachine {
         &self,
     ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
         Some(Arc::clone(&self.invalidate_cb))
+    }
+
+    fn advisory_handle(&self) -> Option<Arc<Mutex<LockState>>> {
+        Some(Arc::clone(&self.advisory))
     }
 
     /// Return the shared apply-side DT_MOUNT slot so downstream

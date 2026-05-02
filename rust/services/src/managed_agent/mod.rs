@@ -492,7 +492,7 @@ fn trailing_slash(p: &str) -> String {
     }
 }
 
-/// Create a DT_DIR at `path`.  Wraps the kernel's 16-arg
+/// Create a DT_DIR at `path`.  Wraps the kernel's
 /// `sys_setattr` so callers stay readable; idempotent on
 /// already-present directories.
 fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), String> {
@@ -516,13 +516,14 @@ fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), Stri
             /* mime_type */ None,
             /* modified_at_ms */ None,
             /* link_target */ None,
+            /* source */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
 }
 
 /// Create a DT_LINK at `path` pointing at `target`.  Wraps the kernel's
-/// 16-arg `sys_setattr` so callers stay readable.
+/// `sys_setattr` so callers stay readable.
 fn create_dt_link(
     kernel: &kernel::kernel::Kernel,
     path: &str,
@@ -548,6 +549,7 @@ fn create_dt_link(
             /* mime_type */ None,
             /* modified_at_ms */ None,
             /* link_target */ Some(target),
+            /* source */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_LINK at {path} -> {target}): {e:?}"))

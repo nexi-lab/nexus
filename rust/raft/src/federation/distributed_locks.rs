@@ -67,13 +67,29 @@ impl DistributedLocks {
         runtime: tokio::runtime::Handle,
         kernel_local_state: Arc<Mutex<LockState>>,
     ) -> (Self, Arc<Mutex<LockState>>) {
-        // Adopt the state machine's shared advisory Arc. Using
-        // ``runtime.block_on`` because ``install_locks`` is invoked
-        // from a sync context (kernel::sys_setattr DT_MOUNT).
-        let shared_state: Arc<Mutex<LockState>> = runtime.block_on(async {
-            node.with_state_machine(|sm: &FullStateMachine| sm.advisory_state())
-                .await
-        });
+        // Adopt the state machine's shared advisory Arc.  Two callers
+        // reach this path:
+        //
+        //   1. ``kernel::sys_setattr DT_MOUNT`` — sync gRPC handler
+        //      thread, no tokio runtime context.
+        //   2. ``mount_apply_cb`` on followers — the closure fires
+        //      inside the raft apply loop, which IS a tokio task on
+        //      the zone manager's multi-thread runtime.
+        //
+        // Calling ``runtime.block_on`` from path (2) panics with
+        // "Cannot start a runtime from within a runtime", and
+        // ``block_in_place`` only papers over the panic without fixing
+        // the worker-exhaustion deadlock that follows under
+        // concurrent DT_MOUNT load.
+        //
+        // ``advisory_state_blocking`` uses ``RwLock::blocking_read``
+        // which suspends the OS thread without reentering the runtime
+        // — works identically from both paths (sync gRPC thread or
+        // raft apply task) and never deadlocks because the read-side
+        // is read-mostly + the apply path holds the write lock only
+        // briefly per entry.
+        let shared_state: Arc<Mutex<LockState>> = node.advisory_state_blocking();
+        let _ = runtime;
 
         // Merge kernel-local holders that have no corresponding
         // raft-apply row. Raft may already have replayed entries; we

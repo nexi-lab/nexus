@@ -98,6 +98,24 @@ pub trait DistributedCoordinator: Send + Sync + 'static {
     /// federation state.
     fn list_zones(&self, kernel: &crate::kernel::Kernel) -> Vec<String>;
 
+    /// Whether `init_from_env` has completed successfully.
+    ///
+    /// This is the readiness signal for "the coordinator can accept
+    /// zone-lifecycle calls" — independent of whether any zones have
+    /// been loaded yet.  The two states differ in dynamic-bootstrap
+    /// mode, where the daemon comes up with zero zones and waits for
+    /// an explicit `create_zone("root")` or `JoinZone` RPC.
+    ///
+    /// Default impl falls back to `!list_zones().is_empty()` so
+    /// existing implementations (e.g. the `Noop` shim) keep working
+    /// without being forced to track a separate readiness flag.  The
+    /// real Raft impl overrides this to return its `bootstrap_done`
+    /// atomic — a strict superset of "has zones" that also captures
+    /// the dynamic-bootstrap awaiting state.
+    fn is_initialized(&self, kernel: &crate::kernel::Kernel) -> bool {
+        !self.list_zones(kernel).is_empty()
+    }
+
     /// Bundled cluster status for `zone_id` — leader identity, raft
     /// term, replication counts, mount link count. Single round-trip
     /// for all introspection fields.
@@ -136,6 +154,39 @@ pub trait DistributedCoordinator: Send + Sync + 'static {
         zone_id: &str,
         as_learner: bool,
     ) -> CoordinatorResult<()>;
+
+    /// Join an existing raft cluster across nodes.
+    ///
+    /// Triggered by `sys_setattr DT_MOUNT` when the caller provides a
+    /// non-empty `source` (semantically `mount remote-addr:/zone-id
+    /// /local-path`).  Implementation:
+    ///
+    /// 1. Set up a local raft replica for `zone_id` with
+    ///    `skip_bootstrap=true` and the leader at `leader_addr` in the
+    ///    initial peer map.  No ConfState is bootstrapped locally —
+    ///    the leader's snapshot is authoritative.
+    /// 2. Send the `JoinZone` RPC to `leader_addr` carrying this
+    ///    node's effective `node_id` + advertise address.  Followers
+    ///    self-redirect via `JoinZoneResponse.leader_address`.
+    /// 3. Leader proposes `ConfChangeV2 AddNode(self_id,
+    ///    self_address)`.  When committed, the leader pushes a
+    ///    snapshot with the authoritative ConfState, and this node's
+    ///    raft instance applies it — `coordinator.list_zones` now
+    ///    contains `zone_id`.
+    ///
+    /// Default impl returns `Err("not supported")` so shim impls (the
+    /// noop coordinator) keep working without forcing them to wire
+    /// the cross-node RPC plumbing.
+    #[allow(unused_variables)]
+    fn join_cluster(
+        &self,
+        kernel: &crate::kernel::Kernel,
+        zone_id: &str,
+        leader_addr: &str,
+        as_learner: bool,
+    ) -> CoordinatorResult<()> {
+        Err("join_cluster not supported by this coordinator".to_string())
+    }
 
     // ── Mount wiring ──────────────────────────────────────────────────
 

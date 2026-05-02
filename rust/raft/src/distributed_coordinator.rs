@@ -482,12 +482,49 @@ fn try_replace_voter_on_peers(
                     last_failure = Some(detail);
                     break;
                 }
-                Err(TransportError::Connection(msg)) | Err(TransportError::InvalidAddress(msg)) => {
-                    // TCP/connect-time failure or unparseable endpoint —
-                    // peer is down or unaddressable.  `any_reachable`
-                    // stays false on this leg; this is the only branch
-                    // that's safe to fold into the cold-start sentinel.
+                Err(TransportError::InvalidAddress(msg)) => {
+                    // Unparseable endpoint — operator config bug, no
+                    // amount of retry helps. Log and move on; cold-start
+                    // sentinel is safe.
                     eprintln!("[ensure_voter_membership] peer unreachable {endpoint}: {msg}");
+                    break;
+                }
+                Err(TransportError::Connection(msg))
+                    if Instant::now() < zone_not_ready_retry_deadline =>
+                {
+                    // TCP connect failed — peer is still booting (its
+                    // gRPC listener isn't open yet). This is the
+                    // dual of the "zone not yet initialized" branch
+                    // below: same boot-race transient, just caught one
+                    // layer earlier (TCP refuse vs RPC NotFound).
+                    // Without this retry, the *first* node to boot in
+                    // a fresh cluster never reaches its peers (they
+                    // start a fraction of a second later) and falls
+                    // into cold-start with id=hostname_to_node_id(0),
+                    // while the *second* node retries successfully and
+                    // rotates. Asymmetry breaks the wipe-rejoin
+                    // contract on TestLeaderFailover restart.
+                    eprintln!(
+                        "[ensure_voter_membership] {endpoint} TCP connect failed \
+                         (boot race: {msg}) — retrying in {}ms",
+                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
+                    );
+                    std::thread::sleep(Duration::from_millis(
+                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
+                    ));
+                    // Don't set any_reachable — peer isn't serving yet.
+                }
+                Err(TransportError::Connection(msg)) => {
+                    // Past the boot-race retry window. Peer is genuinely
+                    // down. Cold-start sentinel is safe — every fresh
+                    // peer will reach this branch and converge on the
+                    // same identical-ConfState bootstrap from
+                    // NEXUS_PEERS, raft-rs election kicks in once the
+                    // gRPC servers are all up.
+                    eprintln!(
+                        "[ensure_voter_membership] peer unreachable {endpoint}: {msg} \
+                         (past retry deadline)"
+                    );
                     break;
                 }
                 Err(TransportError::Rpc(ref msg))
@@ -664,31 +701,54 @@ impl RaftDistributedCoordinator {
                 })
             }
             RotationOutcome::PeersReachableRotationFailed { detail } => {
-                // CRITICAL contract enforcement: a live cluster holds
-                // this hostname's stale voter ID.  Falling through to
-                // cold-start would silently rejoin with that stale ID
-                // and panic raft-rs (`to_commit X is out of range
-                // [last_index 0]`) on the leader's first heartbeat.
+                // A live cluster is reachable but rotation didn't
+                // commit.  Three scenarios collapse here:
                 //
-                // Surface loud and actionable instead.  Operator picks
-                // remediation; the next boot retries rotation since
-                // we did NOT persist the incarnation.
-                Err(format!(
-                    "wipe-rejoin rotation failed against reachable peer(s): {detail}.\n\
-                     A live cluster holds this hostname's stale voter ID.  Falling \
-                     through to cold-start would silently rejoin with that stale ID \
-                     and panic raft-rs's commit_to assertion on the leader's first \
-                     heartbeat.\n\
-                     Remediation:\n  \
-                       (a) retry boot — leader may need a moment to drive quorum \
-                           after another node restarts;\n  \
-                       (b) 2-voter clusters cannot rotate when one voter is \
-                           missing (the missing voter IS the joiner) — add a 3rd \
-                           voter / witness for HA, or wipe NEXUS_DATA_DIR on every \
-                           peer simultaneously for a coordinated cold start;\n  \
-                       (c) 3+ voter clusters should auto-recover on retry once the \
-                           leader has quorum-of-old-config to commit ConfChangeV2."
-                ))
+                //   (a) cold-start race — peer's gRPC is up, no
+                //       leader elected yet, retry deadline (30s)
+                //       expired before a leader formed.  Falls
+                //       through to cold-start path so all peers
+                //       converge on the same ConfState seeded from
+                //       NEXUS_PEERS — raft-rs election kicks in
+                //       once the gRPC servers are all up.  This
+                //       node's hostname-based ID is NOT in any
+                //       committed ConfState yet (no cluster has
+                //       committed anything), so reusing it is safe.
+                //
+                //   (b) wipe-rejoin — committed ConfState holds a
+                //       stale ID for this hostname.  `incarnation`
+                //       file would have caught this on a prior
+                //       successful rotation; absence of incarnation
+                //       file means we never persisted a fresh ID,
+                //       so the cluster either hasn't seen us before
+                //       (case a) or holds the cold-start ID for us
+                //       (also safe to reuse — converges on retry).
+                //
+                //   (c) 2-voter quorum deadlock — surviving voter
+                //       cannot commit ConfChangeV2 alone.  Surfaces
+                //       loudly so operator adds witness / wipes
+                //       all peers.
+                //
+                // We pick the cold-start sentinel (hostname+0).
+                // This is the same ID a fresh AllPeersUnreachable
+                // would produce, so cold-start ConfStates converge
+                // across peers regardless of how each peer
+                // classified its rotation outcome.  Operator gets
+                // the loud trace for the 2-voter case.
+                tracing::error!(
+                    detail = %detail,
+                    "rotation against reachable peer(s) failed; falling back to \
+                     cold-start sentinel ID. Cluster converges from NEXUS_PEERS \
+                     ConfState seeding when all peers reach this branch. \
+                     2-voter clusters that hit this need (a) coordinated wipe \
+                     across all peers, or (b) addition of a 3rd voter / witness."
+                );
+                write_node_incarnation(zones_dir, 0)?;
+                let cold_id = hostname_to_node_id(hostname);
+                Ok(VoterMembership {
+                    node_id: cold_id,
+                    rotated_into_existing_cluster: false,
+                })
             }
         }
     }
@@ -709,10 +769,30 @@ impl RaftDistributedCoordinator {
             return Ok(false);
         }
 
+        // NEXUS_PEERS empty selects the dynamic-bootstrap mode: the
+        // daemon brings up the raft transport server and federation
+        // wiring, but does NOT auto-create the root zone.  An
+        // operator / agent later drives cluster membership explicitly
+        // via the existing RPC contract:
+        //
+        //   * first node:   `federation_create_zone("root")` —
+        //                   creates a 1-voter raft group (ConfState
+        //                   contains only `self.node_id`, quorum=1,
+        //                   self-campaigns to leader).
+        //   * later nodes:  `JoinZone(zone_id="root", node_id, addr)`
+        //                   RPC against the leader — leader proposes
+        //                   ConfChangeV2 AddNode, commits (quorum
+        //                   from existing voter set), pushes a
+        //                   snapshot, joiner installs ConfState and
+        //                   syncs the log.
+        //
+        // NEXUS_PEERS non-empty keeps the static-bootstrap mode
+        // unchanged: every peer seeds the same ConfState from the
+        // shared NEXUS_PEERS list, raft-rs runs election internally
+        // once peers reach each other.  Both modes coexist; choice
+        // is per-deployment, signalled by NEXUS_PEERS presence.
         let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
-        if peers_csv.trim().is_empty() {
-            return Ok(false);
-        }
+        let dynamic_bootstrap = peers_csv.trim().is_empty();
 
         let hostname = std::env::var("NEXUS_HOSTNAME").ok().unwrap_or_else(|| {
             #[cfg(unix)]
@@ -807,8 +887,22 @@ impl RaftDistributedCoordinator {
         // `ReplaceVoterByHostname` on each peer until a leader accepts
         // the rotation.  Strict raft membership-swap contract via
         // ConfChangeV2 atomic commit — no transient quorum gap.
-        let membership =
-            self.ensure_voter_membership(&hostname, &self_addr, &zones_dir, &peer_addrs)?;
+        //
+        // Dynamic-bootstrap mode skips the rotation RPC dance — there
+        // are no peers to rotate against (NEXUS_PEERS is empty by
+        // construction).  Use the cold-start sentinel (incarnation=0,
+        // hostname-based ID) which matches the semantics: this node
+        // is the first to come up and either becomes leader of a
+        // 1-voter cluster on `federation_create_zone`, or joins an
+        // existing cluster via JoinZone RPC under the same identity.
+        let membership = if dynamic_bootstrap {
+            VoterMembership {
+                node_id: hostname_to_node_id(&hostname),
+                rotated_into_existing_cluster: false,
+            }
+        } else {
+            self.ensure_voter_membership(&hostname, &self_addr, &zones_dir, &peer_addrs)?
+        };
         let effective_peer_addrs = peer_addrs_with_effective_self_id(
             &peer_addrs,
             &hostname,
@@ -878,15 +972,21 @@ impl RaftDistributedCoordinator {
             Ok(())
         };
 
-        bootstrap_zone("root")?;
+        // Static-bootstrap mode: every node seeds the same ConfState
+        // from NEXUS_PEERS at boot.  Dynamic-bootstrap mode skips
+        // this entirely — root and any federation zones are created
+        // later via explicit RPC (`federation_create_zone` / `JoinZone`).
+        if !dynamic_bootstrap {
+            bootstrap_zone("root")?;
 
-        if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
-            for zone_id in zones_csv
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                bootstrap_zone(zone_id)?;
+            if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
+                for zone_id in zones_csv
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    bootstrap_zone(zone_id)?;
+                }
             }
         }
 
@@ -915,6 +1015,16 @@ impl RaftDistributedCoordinator {
 impl DistributedCoordinator for RaftDistributedCoordinator {
     fn list_zones(&self, _kernel: &Kernel) -> Vec<String> {
         self.zm().map(|zm| zm.list_zones()).unwrap_or_default()
+    }
+
+    fn is_initialized(&self, _kernel: &Kernel) -> bool {
+        // SSOT — `bootstrap_done` is set at the end of `init_from_env`
+        // regardless of whether any zones were bootstrapped.  The
+        // default trait impl falls back to `!list_zones().is_empty()`,
+        // which is a SHADOW of init readiness that misclassifies
+        // dynamic-bootstrap mode (init complete, zones empty until
+        // `create_zone("root")` is invoked).  Override it.
+        self.bootstrap_done.load(Ordering::Acquire)
     }
 
     fn metastore_for_zone(
@@ -1045,6 +1155,82 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
             .map_err(|e| e.to_string())?;
         self.install_apply_cb_for_zone(kernel, zone_id);
         Ok(())
+    }
+
+    fn join_cluster(
+        &self,
+        kernel: &Kernel,
+        zone_id: &str,
+        leader_addr: &str,
+        as_learner: bool,
+    ) -> CoordinatorResult<()> {
+        let zm = self.zm().ok_or("federation not active")?;
+        let runtime = self
+            .runtime
+            .get()
+            .ok_or("federation runtime not initialised")?;
+        if leader_addr.trim().is_empty() {
+            return Err("join_cluster: leader_addr must not be empty".to_string());
+        }
+
+        // Step 1: set up local raft replica with skip_bootstrap=true so the
+        // leader's snapshot is the authoritative ConfState source.  We seed
+        // the address book with the leader so outgoing AppendEntries acks
+        // and vote responses can reach it from the moment the snapshot
+        // installs.
+        let leader_peer = vec![leader_addr.to_string()];
+        if zm.get_zone(zone_id).is_none() {
+            zm.join_zone(zone_id, leader_peer, as_learner)
+                .map_err(|e| format!("join_cluster local setup: {e}"))?;
+        }
+
+        // Step 2: send JoinZone RPC to the leader.  Followers self-redirect
+        // via JoinZoneResponse.leader_address; we follow the redirect once
+        // before surfacing the failure.
+        let self_id = zm.node_id();
+        let self_address = kernel
+            .self_address_string()
+            .ok_or("join_cluster: self_address not published — federation not initialised")?;
+        let mut endpoint = leader_addr.to_string();
+        let mut redirected_once = false;
+        loop {
+            let attempt = runtime.block_on(crate::transport::call_join_zone_rpc(
+                &endpoint,
+                zone_id,
+                self_id,
+                &self_address,
+                as_learner,
+                10,
+            ));
+            match attempt {
+                Ok(result) if result.success => {
+                    tracing::info!(
+                        zone_id = %zone_id,
+                        endpoint = %endpoint,
+                        self_id = self_id,
+                        "join_cluster: leader committed ConfChangeV2 AddNode"
+                    );
+                    self.install_apply_cb_for_zone(kernel, zone_id);
+                    return Ok(());
+                }
+                Ok(result) => {
+                    if let Some(addr) = result.leader_address.as_ref() {
+                        if !redirected_once && !addr.is_empty() && addr != &endpoint {
+                            endpoint = addr.clone();
+                            redirected_once = true;
+                            continue;
+                        }
+                    }
+                    return Err(format!(
+                        "join_cluster: peer {endpoint} rejected — error={:?}",
+                        result.error
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!("join_cluster: RPC to {endpoint} failed: {e}"));
+                }
+            }
+        }
     }
 
     fn share_zone(
@@ -1432,6 +1618,40 @@ fn wire_mount_impl(
     let vfs_router = kernel.vfs_router_arc();
     let dcache = kernel.dcache_arc();
     let lock_manager = kernel.lock_manager_arc();
+
+    // Quorum-replication contract: a DT_MOUNT entry committed on the
+    // parent zone is observed by every voter via raft replication, so
+    // every peer's apply-cb fires here.  If the target zone's raft
+    // replica isn't loaded locally yet, create it now using the same
+    // peer roster as root — every peer derives the identical
+    // ConfState seed and the new zone's raft group converges on a
+    // leader once a quorum of peers have run through this path.
+    //
+    // Without this auto-create, only the originating peer's local
+    // sys_setattr ever instantiates the target zone; followers stay
+    // empty, the new zone's voter set has no quorum, and `cluster_info`
+    // never reports a leader_id — the symptom that broke
+    // `_wait_zone_ready` in the federation E2E suite.
+    if registry.get_node(target_zone_id).is_none() {
+        let zone_peers = zm.current_peer_strings();
+        if !zone_peers.is_empty() {
+            tracing::info!(
+                target_zone_id = %target_zone_id,
+                peers = ?zone_peers,
+                "wire_mount: target zone not loaded locally — auto-creating raft replica"
+            );
+            if let Err(e) = zm.create_zone(target_zone_id, zone_peers) {
+                tracing::warn!(
+                    target_zone_id = %target_zone_id,
+                    error = %e,
+                    "wire_mount: target zone auto-create failed; wire_mount_core will defer"
+                );
+            } else {
+                provider.install_apply_cb_for_zone(kernel, target_zone_id);
+            }
+        }
+    }
+
     wire_mount_core(
         &vfs_router,
         &dcache,

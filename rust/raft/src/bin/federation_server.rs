@@ -87,7 +87,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // the JoinZone RPC once they come online.
         registry
             .create_zone(contracts::ROOT_ZONE_ID, vec![], &runtime_handle)
-            .await
             .map_err(|e| format!("create root zone: {}", e))?;
 
         let server = RaftGrpcServer::new(

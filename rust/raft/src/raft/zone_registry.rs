@@ -164,6 +164,20 @@ impl ZoneRaftRegistry {
 
     /// Create a new zone with its own Raft group.
     ///
+    /// Sync — `setup_zone` does only sync work (open redb, construct
+    /// `ZoneConsensus`, `Handle::spawn` the transport loop, register in
+    /// the DashMap). `Handle::spawn` is callable from any thread that
+    /// has a runtime handle, regardless of whether the calling thread
+    /// is itself running inside a tokio runtime, so this fn is safe
+    /// from both `#[tokio::main]` async callers (e.g. `nexusd-cluster`)
+    /// and bare-sync callers (e.g. PyO3 `#[pymethod]` constructors).
+    ///
+    /// raft contract: leader election is owned by raft-rs's `tick()`
+    /// loop. For single-voter clusters, the election timer fires once
+    /// and the sole voter self-elects. For multi-voter, the standard
+    /// randomized timeout + MsgVote dance picks one. We do not call
+    /// `campaign()` externally; the loop converges on its own.
+    ///
     /// # Arguments
     /// * `zone_id` — Unique zone identifier.
     /// * `peers` — The full cluster roster for this zone (may include
@@ -171,7 +185,7 @@ impl ZoneRaftRegistry {
     ///   passing to raft-rs per the `RaftConfig.peers` contract).
     /// * `runtime_handle` — Tokio runtime handle for spawning the transport loop.
     #[allow(clippy::result_large_err)]
-    pub async fn create_zone(
+    pub fn create_zone(
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
@@ -193,25 +207,21 @@ impl ZoneRaftRegistry {
             ..Default::default()
         };
 
-        // Single-node vs multi-node: campaign immediately only if we are
-        // the sole voter. peers may contain self, so check the filtered
-        // ID list instead of the raw NodeAddress vec.
-        let campaign = config.peers.is_empty();
-        self.setup_zone(zone_id, config, peers, campaign, runtime_handle)
-            .await
+        self.setup_zone(zone_id, config, peers, runtime_handle)
     }
 
     /// Join an existing zone as a Voter or Learner.
     ///
-    /// Unlike `create_zone`, this does NOT bootstrap ConfState and does NOT campaign.
-    /// The leader's snapshot will bring the correct voter set after ConfChange commit.
+    /// Unlike `create_zone`, this does NOT bootstrap ConfState. The
+    /// leader's snapshot will bring the correct voter set after
+    /// ConfChange commit.
     ///
     /// `learner` is informational here — the actual Voter/Learner classification is
     /// determined by the ConfChange the leader proposes (AddNode vs AddLearnerNode).
     /// Callers must send a JoinZone RPC to the leader with the same learner flag via
     /// PyFederationClient::request_join_zone.
     #[allow(clippy::result_large_err)]
-    pub async fn join_zone(
+    pub fn join_zone(
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
@@ -228,8 +238,7 @@ impl ZoneRaftRegistry {
             ..Default::default()
         };
 
-        self.setup_zone(zone_id, config, peers, false, runtime_handle)
-            .await
+        self.setup_zone(zone_id, config, peers, runtime_handle)
     }
 
     /// Open a previously-persisted zone from disk WITHOUT bootstrapping.
@@ -237,14 +246,14 @@ impl ZoneRaftRegistry {
     /// Used by `open_existing_zones_from_disk` at startup. Unlike
     /// `create_zone`, this uses `skip_bootstrap=true` so the ConfState
     /// restored from `RaftStorage::initial_state()` is the authority —
-    /// no new voters are written and no campaign is triggered.
+    /// no new voters are written.
     ///
     /// R15.e: replaces the old `step_message` auto-reopen-from-disk
     /// side-effect. Enumeration at startup runs before the gRPC server
     /// accepts traffic, so by the time a vote/append arrives the zone
     /// is already registered.
     #[allow(clippy::result_large_err)]
-    pub async fn open_persisted_zone(
+    pub fn open_persisted_zone(
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
@@ -256,8 +265,7 @@ impl ZoneRaftRegistry {
             skip_bootstrap: true,
             ..Default::default()
         };
-        self.setup_zone(zone_id, config, peers, false, runtime_handle)
-            .await
+        self.setup_zone(zone_id, config, peers, runtime_handle)
     }
 
     /// Enumerate `base_path/*/raft/` and reopen every previously-persisted zone.
@@ -272,8 +280,13 @@ impl ZoneRaftRegistry {
     /// source of truth for "which groups does this node host?".
     ///
     /// Idempotent — re-enumeration fast-paths zones already in `self.zones`.
+    ///
+    /// Sync — see [`create_zone`] for the rationale. `nexusd-cluster`
+    /// calls this from inside its `#[tokio::main]` async runtime via
+    /// `ZoneManager::new`; an `async fn` here would force a nested
+    /// `block_on` on the outer runtime's worker thread and panic.
     #[allow(clippy::result_large_err)]
-    pub async fn open_existing_zones_from_disk(
+    pub fn open_existing_zones_from_disk(
         &self,
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
@@ -327,8 +340,7 @@ impl ZoneRaftRegistry {
             if !raft_dir.exists() {
                 continue;
             }
-            self.open_persisted_zone(&zone_id, peers.clone(), runtime_handle)
-                .await?;
+            self.open_persisted_zone(&zone_id, peers.clone(), runtime_handle)?;
             count += 1;
         }
 
@@ -347,13 +359,23 @@ impl ZoneRaftRegistry {
     }
 
     /// Internal: open sled, create ZoneConsensus + driver, spawn transport loop, register zone.
+    ///
+    /// Sync — every operation here is sync-callable: redb open, raft
+    /// storage open, `FullStateMachine::new`, optional snapshot
+    /// rehydration, `ZoneConsensus::new` (no I/O), and
+    /// `runtime_handle.spawn` (submits the future without requiring
+    /// the calling thread to be a runtime worker). Leader election is
+    /// driven by raft-rs's tick loop inside the spawned transport
+    /// task — no external `campaign()` call is needed; raft-rs
+    /// converges on its own (single voter self-elects on the first
+    /// election timeout, multi-voter runs the standard randomized
+    /// MsgVote dance).
     #[allow(clippy::result_large_err)]
-    async fn setup_zone(
+    fn setup_zone(
         &self,
         zone_id: &str,
         config: RaftConfig,
         mut peers: Vec<NodeAddress>,
-        campaign: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
         // Fast path: zone already exists — no work needed.
@@ -366,7 +388,7 @@ impl ZoneRaftRegistry {
         // same RedbStore ("Database already open") and (b) a fresh setup
         // racing an in-progress remove on the same zone_id. Different
         // zone_ids proceed in parallel — no global mutex.
-        let setup_wait_started = tokio::time::Instant::now();
+        let setup_wait_started = std::time::Instant::now();
         loop {
             use dashmap::mapref::entry::Entry;
             match self.creating.entry(zone_id.to_string()) {
@@ -392,7 +414,12 @@ impl ZoneRaftRegistry {
                                 ))
                             });
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                    // sync sleep — `setup_zone` is now sync (no campaign
+                    // dependency means no `.await`). Contention is rare
+                    // (only when concurrent `setup_zone` calls collide on
+                    // the same zone_id) and capped at 3s, so a worker
+                    // thread blocking here is acceptable.
+                    std::thread::sleep(std::time::Duration::from_millis(25));
                 }
                 Entry::Vacant(v) => {
                     v.insert(ZoneOp::Creating);
@@ -547,36 +574,21 @@ impl ZoneRaftRegistry {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
 
-        if campaign {
-            // Per raft contract: for single-node, campaign() grants self-vote
-            // (quorum=1) and the node becomes leader immediately. For multi-node,
-            // campaign() sends MsgVote to peers and returns (election is async).
-            // Awaiting it here ensures the node is ready before we return.
-            //
-            // History note: this used to be a sync `setup_zone` that called
-            // `runtime_handle.block_on(handle.campaign())`. That violated
-            // tokio's contract — `Handle::block_on` panics when called from an
-            // async context, and the gRPC step_message handler's auto-join path
-            // IS async. The panic silently unwound through setup_zone, dropped
-            // the local `shutdown_tx`, and the transport loop we had just
-            // spawned shut down before the zone was registered — which
-            // manifested as the failover catch-up timeout (node-1 never
-            // actually became a voter of its own zones after restart).
-            //
-            // The proper fix is to respect tokio's sync/async boundary: keep
-            // setup_zone async, let sync callers bridge at their own boundary
-            // (PyO3 uses its runtime_handle.block_on), and let async callers
-            // just await. No `block_on` inside setup_zone.
-            handle
-                .campaign()
-                .await
-                .map_err(|e| TransportError::Connection(format!("Campaign failed: {}", e)))?;
-        }
+        // Leader election is owned by raft-rs's tick loop inside the
+        // spawned transport task. We do NOT call `campaign()` here —
+        // that was an optimisation to short-circuit the election timer
+        // for single-voter zones, but it forced setup_zone to be async
+        // (and via the `nexusd-cluster` `#[tokio::main]` async path
+        // that produced a nested-runtime `block_on` panic at startup).
+        // Letting raft-rs handle election keeps the protocol contract
+        // pure: single-voter self-elects on the first election timeout,
+        // multi-voter runs the standard randomized MsgVote dance.
+        // Callers that need leader-confirmed semantics should poll via
+        // `ZoneConsensus::is_leader` / `leader_id` after returning.
 
         tracing::info!(
-            "Zone '{}' {} (node_id={}, peers={})",
+            "Zone '{}' registered (node_id={}, peers={})",
             zone_id,
-            if campaign { "created" } else { "joined" },
             self.node_id,
             shared_peers.read().unwrap().len()
         );
@@ -799,7 +811,6 @@ mod tests {
         let reg = ZoneRaftRegistry::new(missing, 1);
         let n = reg
             .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         assert_eq!(n, 0);
         assert!(reg.list_zones().is_empty());
@@ -858,16 +869,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_open_existing_zones_from_disk_restores_confstate() {
-        // Create a single-voter zone (campaign=true), confirm it's registered,
-        // drop the registry, reopen via open_existing_zones_from_disk, assert
-        // the zone is restored without a fresh campaign (skip_bootstrap=true)
-        // — the ConfState from RaftStorage::initial_state() is authoritative.
+        // Create a single-voter zone, confirm it's registered, drop the
+        // registry, reopen via open_existing_zones_from_disk, assert the
+        // zone is restored (skip_bootstrap=true) — the ConfState from
+        // RaftStorage::initial_state() is authoritative.
         let tmp = TempDir::new().unwrap();
         let base = tmp.path().to_path_buf();
 
         let reg = ZoneRaftRegistry::new(base.clone(), 1);
         reg.create_zone("corp-eng", vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         assert_eq!(reg.list_zones(), vec!["corp-eng".to_string()]);
         // Simulate process restart: shutdown tasks, release file locks.
@@ -879,7 +889,6 @@ mod tests {
         let reg2 = ZoneRaftRegistry::new(base, 1);
         let n = reg2
             .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         assert_eq!(n, 1);
         let zones = reg2.list_zones();
@@ -898,7 +907,6 @@ mod tests {
         let base = tmp.path().to_path_buf();
         let reg = ZoneRaftRegistry::new(base.clone(), 1);
         reg.create_zone("zone-a", vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         reg.shutdown_all();
         drop(reg);
@@ -907,11 +915,9 @@ mod tests {
         let reg2 = ZoneRaftRegistry::new(base, 1);
         let first = reg2
             .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         let second = reg2
             .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         assert_eq!(first, 1);
         assert_eq!(second, 1);
@@ -933,7 +939,6 @@ mod tests {
         let base = tmp.path().to_path_buf();
         let reg = ZoneRaftRegistry::new(base.clone(), 1);
         reg.create_zone("temp-zone", vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         assert!(
             base.join("temp-zone").exists(),
@@ -960,10 +965,8 @@ mod tests {
         let base = tmp.path().to_path_buf();
         let reg = ZoneRaftRegistry::new(base.clone(), 1);
         reg.create_zone("keep", vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         reg.create_zone("gone", vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         reg.remove_zone("gone").await.unwrap();
         reg.shutdown_all();
@@ -973,7 +976,6 @@ mod tests {
         let reg2 = ZoneRaftRegistry::new(base.clone(), 1);
         let n = reg2
             .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         assert_eq!(n, 1);
         assert_eq!(reg2.list_zones(), vec!["keep".to_string()]);
@@ -992,7 +994,6 @@ mod tests {
         let base = tmp.path().to_path_buf();
         let reg = ZoneRaftRegistry::new(base.clone(), 1);
         reg.create_zone("crash-zone", vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         reg.shutdown_all();
         drop(reg);
@@ -1005,7 +1006,6 @@ mod tests {
         let reg2 = ZoneRaftRegistry::new(base.clone(), 1);
         let n = reg2
             .open_existing_zones_from_disk(vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         assert_eq!(n, 0, "tombstoned zone must not be reopened");
         assert!(
@@ -1026,7 +1026,6 @@ mod tests {
         let base = tmp.path().to_path_buf();
         let reg = ZoneRaftRegistry::new(base.clone(), 1);
         reg.create_zone("persist", vec![], &tokio::runtime::Handle::current())
-            .await
             .unwrap();
         reg.shutdown_all();
         drop(reg);

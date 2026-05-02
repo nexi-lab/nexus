@@ -61,6 +61,47 @@ pub(crate) fn decode_file_metadata(
     ProtoFileMetadata::decode(bytes)
 }
 
+/// Sync façade bridge to the inner runtime's async work.
+///
+/// `ZoneManager` exposes a sync API to its callers (PyO3 wrappers,
+/// `nexusd-cluster`, `federation_server` daemon, kernel) and owns an
+/// inner tokio `Runtime` that drives the raft `transport_loop`,
+/// driver tasks, tonic gRPC server / clients, and `spawn_blocking`
+/// redb I/O — all of which are `async fn` because tonic + tokio
+/// `select!` make raft transport an async task by construction.
+/// Bridging the sync façade to that async core requires `block_on`
+/// on the inner runtime's handle. Two callsite shapes coexist:
+///
+/// * **Sync caller** (PyO3 main thread; binary `fn main()` before
+///   it spawns its runtime): no outer tokio context. `Handle::block_on`
+///   parks the calling thread on the inner runtime — straight
+///   forward, no panic.
+/// * **Async caller** (anything reachable from `#[tokio::main]` or
+///   inside `tokio::spawn` — `nexusd-cluster::run_daemon`'s topology
+///   loop, `federation_server::main`, `distributed_coordinator` async
+///   helpers): the calling thread is registered as a worker of an
+///   *outer* runtime. `Handle::block_on` panics on a worker thread
+///   (tokio refuses to park a worker because it would deadlock when
+///   the awaited future depends on a task that needs the same worker
+///   pool). `tokio::task::block_in_place` releases the worker
+///   temporarily — work-stealing covers in its absence — so we can
+///   safely `block_on` the inner runtime within the closure.
+///
+/// `Handle::try_current()` resolves the two cases at runtime;
+/// `block_in_place` requires a `multi_thread` outer runtime, which
+/// every async caller of `ZoneManager` already uses
+/// (`#[tokio::main(flavor = "multi_thread")]`).
+fn bridge_block_on<F>(handle: &tokio::runtime::Handle, fut: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| handle.block_on(fut))
+    } else {
+        handle.block_on(fut)
+    }
+}
+
 /// Is `path` either `normalized_prefix` or a descendant at `/` boundary?
 pub(crate) fn path_matches_prefix(path: &str, normalized_prefix: &str) -> bool {
     if normalized_prefix.is_empty() {
@@ -84,7 +125,7 @@ fn propose_set_metadata(
         key: key.to_string(),
         value,
     };
-    match handle.block_on(node.propose(cmd))? {
+    match bridge_block_on(handle, node.propose(cmd))? {
         CommandResult::Success | CommandResult::Value(_) => Ok(()),
         CommandResult::Error(e) => Err(RaftError::Raft(e)),
         other => Err(RaftError::InvalidState(format!(
@@ -102,7 +143,7 @@ pub(crate) fn propose_delete_metadata(
     let cmd = Command::DeleteMetadata {
         key: key.to_string(),
     };
-    match handle.block_on(node.propose(cmd))? {
+    match bridge_block_on(handle, node.propose(cmd))? {
         CommandResult::Success | CommandResult::Value(_) => Ok(()),
         CommandResult::Error(e) => Err(RaftError::Raft(e)),
         other => Err(RaftError::InvalidState(format!(
@@ -122,7 +163,7 @@ fn propose_adjust_counter(
         key: key.to_string(),
         delta,
     };
-    match handle.block_on(node.propose(cmd))? {
+    match bridge_block_on(handle, node.propose(cmd))? {
         CommandResult::Value(bytes) => {
             let arr: [u8; 8] = bytes.try_into().map_err(|_| {
                 RaftError::InvalidState("invalid counter value encoding".to_string())
@@ -177,7 +218,13 @@ pub struct TlsFiles {
 /// Multi-zone raft registry owner (pure Rust, kernel-internal).
 pub struct ZoneManager {
     registry: Arc<ZoneRaftRegistry>,
-    runtime: tokio::runtime::Runtime,
+    /// `Option` solely to support `Drop` taking ownership and switching
+    /// to `Runtime::shutdown_background()` when the surrounding caller
+    /// is itself running inside a tokio runtime — naive drop of a
+    /// `Runtime` from an async context panics ("Cannot drop a runtime
+    /// in a context where blocking is not allowed"). Always `Some`
+    /// for the lifetime of the `ZoneManager`; only `take`n in `Drop`.
+    runtime: Option<tokio::runtime::Runtime>,
     shutdown_tx: tokio::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     node_id: u64,
     use_tls: bool,
@@ -316,16 +363,14 @@ impl ZoneManager {
                     .map_err(|e| RaftError::Config(format!("Invalid peer '{}': {}", s, e)))
             })
             .collect::<Result<Vec<_>>>()?;
-        let enum_handle = runtime.handle().clone();
-        let enum_registry = registry.clone();
-        let enum_peers = peer_addrs.clone();
-        runtime
-            .handle()
-            .block_on(async move {
-                enum_registry
-                    .open_existing_zones_from_disk(enum_peers, &enum_handle)
-                    .await
-            })
+        // Disk → in-memory zone re-hydration is sync now (no campaign,
+        // no nested runtime). Calling it directly avoids the
+        // `Handle::block_on` panic that hit `nexusd-cluster`'s
+        // `#[tokio::main]` async path — the worker thread driving
+        // `ZoneManager::new` would otherwise be parked on the inner
+        // runtime's block_on, which tokio rejects to prevent deadlock.
+        registry
+            .open_existing_zones_from_disk(peer_addrs.clone(), runtime.handle())
             .map_err(|e| RaftError::Raft(format!("Failed to enumerate zones on startup: {}", e)))?;
 
         let blob_fetcher_slot = crate::blob_fetcher::new_blob_fetcher_slot();
@@ -365,7 +410,7 @@ impl ZoneManager {
 
         Ok(Arc::new(Self {
             registry,
-            runtime,
+            runtime: Some(runtime),
             shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
             node_id,
             use_tls,
@@ -429,7 +474,16 @@ impl ZoneManager {
     /// Tokio runtime handle — used by `ZoneHandle` construction + apply
     /// helpers that need to `block_on` raft proposals.
     pub fn runtime_handle(&self) -> tokio::runtime::Handle {
-        self.runtime.handle().clone()
+        self.rt().handle().clone()
+    }
+
+    /// Internal runtime accessor. The field is `Option` solely so
+    /// `Drop` can take ownership and switch to `shutdown_background()`
+    /// when the caller's thread is itself running on a tokio runtime;
+    /// the option is `Some` for the entire lifetime up to that point,
+    /// so this `expect` is unreachable in practice.
+    fn rt(&self) -> &tokio::runtime::Runtime {
+        self.runtime.as_ref().expect("runtime present until Drop")
     }
 
     /// The internal zone registry — kernel uses this for apply-cb
@@ -454,17 +508,13 @@ impl ZoneManager {
             .collect::<Result<Vec<_>>>()?;
 
         let node = self
-            .runtime
-            .handle()
-            .block_on(
-                self.registry
-                    .create_zone(zone_id, peer_addrs, self.runtime.handle()),
-            )
+            .registry
+            .create_zone(zone_id, peer_addrs, self.rt().handle())
             .map_err(|e| RaftError::Raft(format!("Failed to create zone: {}", e)))?;
 
         Ok(ZoneHandle::new(
             node,
-            self.runtime.handle().clone(),
+            self.rt().handle().clone(),
             zone_id.to_string(),
         ))
     }
@@ -491,17 +541,13 @@ impl ZoneManager {
             .collect::<Result<Vec<_>>>()?;
 
         let node = self
-            .runtime
-            .handle()
-            .block_on(
-                self.registry
-                    .join_zone(zone_id, peer_addrs, learner, self.runtime.handle()),
-            )
+            .registry
+            .join_zone(zone_id, peer_addrs, learner, self.rt().handle())
             .map_err(|e| RaftError::Raft(format!("Failed to join zone: {}", e)))?;
 
         Ok(ZoneHandle::new(
             node,
-            self.runtime.handle().clone(),
+            self.rt().handle().clone(),
             zone_id.to_string(),
         ))
     }
@@ -510,7 +556,7 @@ impl ZoneManager {
     pub fn get_zone(&self, zone_id: &str) -> Option<Arc<ZoneHandle>> {
         self.registry
             .get_node(zone_id)
-            .map(|node| ZoneHandle::new(node, self.runtime.handle().clone(), zone_id.to_string()))
+            .map(|node| ZoneHandle::new(node, self.rt().handle().clone(), zone_id.to_string()))
     }
 
     /// Static Day-1 cluster formation: idempotently create raft groups
@@ -682,11 +728,13 @@ impl ZoneManager {
         let Some(node) = self.registry.get_node(root_zone_id) else {
             return Ok(false);
         };
-        let handle = self.runtime.handle().clone();
+        let handle = self.rt().handle().clone();
 
-        let existing = handle
-            .block_on(node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata("/")))
-            .map_err(|e| RaftError::Raft(format!("get root metadata: {}", e)))?;
+        let existing = bridge_block_on(
+            &handle,
+            node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata("/")),
+        )
+        .map_err(|e| RaftError::Raft(format!("get root metadata: {}", e)))?;
         if existing.is_some() {
             return Ok(true);
         }
@@ -719,16 +767,16 @@ impl ZoneManager {
         let parent_node = self.registry.get_node(parent_zone).ok_or_else(|| {
             RaftError::InvalidState(format!("Parent zone '{}' not found", parent_zone))
         })?;
-        let handle = self.runtime.handle().clone();
+        let handle = self.rt().handle().clone();
 
-        let existing = handle
-            .block_on(
-                parent_node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(local_path)),
-            )
-            .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?
-            .map(|bytes| decode_file_metadata(&bytes))
-            .transpose()
-            .map_err(|e| RaftError::Raft(format!("decode existing: {}", e)))?;
+        let existing = bridge_block_on(
+            &handle,
+            parent_node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(local_path)),
+        )
+        .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?
+        .map(|bytes| decode_file_metadata(&bytes))
+        .transpose()
+        .map_err(|e| RaftError::Raft(format!("decode existing: {}", e)))?;
 
         if let Some(ref meta) = existing {
             if meta.entry_type == DT_MOUNT && meta.target_zone_id == target_zone {
@@ -750,20 +798,19 @@ impl ZoneManager {
         let target_node = self.registry.get_node(target_zone).ok_or_else(|| {
             RaftError::InvalidState(format!("Target zone '{}' not found", target_zone))
         })?;
-        let handle = self.runtime.handle().clone();
+        let handle = self.rt().handle().clone();
         let key = I_LINKS_COUNT_KEY.to_string();
 
         loop {
-            let bytes = handle
-                .block_on({
-                    let key = key.clone();
-                    let node = target_node.clone();
-                    async move {
-                        node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&key))
-                            .await
-                    }
-                })
-                .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?;
+            let bytes = bridge_block_on(&handle, {
+                let key = key.clone();
+                let node = target_node.clone();
+                async move {
+                    node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&key))
+                        .await
+                }
+            })
+            .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?;
             let current = bytes
                 .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
                 .map(i64::from_be_bytes)
@@ -787,7 +834,7 @@ impl ZoneManager {
             return Ok(None);
         };
         let key = I_LINKS_COUNT_KEY.to_string();
-        let bytes = self.runtime.handle().block_on(async move {
+        let bytes = bridge_block_on(self.rt().handle(), async move {
             node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(&key))
                 .await
         })?;
@@ -818,7 +865,7 @@ impl ZoneManager {
 
         let peers = self.registry.get_peers(zone_id).unwrap_or_default();
         let self_id = self.registry.node_id();
-        self.runtime.handle().block_on(async {
+        bridge_block_on(self.rt().handle(), async {
             for (peer_id, peer) in peers {
                 if peer_id == self_id || peer.hostname.to_ascii_lowercase().starts_with("witness") {
                     continue;
@@ -835,9 +882,7 @@ impl ZoneManager {
             Ok::<(), RaftError>(())
         })?;
 
-        self.runtime
-            .handle()
-            .block_on(self.registry.remove_zone(zone_id))
+        bridge_block_on(self.rt().handle(), self.registry.remove_zone(zone_id))
             .map_err(|e| RaftError::Raft(format!("Failed to remove zone: {}", e)))
     }
 
@@ -904,7 +949,7 @@ impl ZoneManager {
     pub fn lookup_path(&self, path: &str) -> Result<Option<(String, Vec<u8>)>> {
         let registry = self.registry.clone();
         let path = path.to_string();
-        self.runtime.handle().block_on(async move {
+        bridge_block_on(self.rt().handle(), async move {
             for zone_id in registry.list_zones() {
                 let Some(node) = registry.get_node(&zone_id) else {
                     continue;
@@ -945,16 +990,16 @@ impl ZoneManager {
             RaftError::InvalidState(format!("Target zone '{}' not found", target_zone_id))
         })?;
 
-        let handle = self.runtime.handle().clone();
+        let handle = self.rt().handle().clone();
 
-        let existing = handle
-            .block_on(
-                parent_node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(mount_path)),
-            )
-            .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?
-            .map(|bytes| decode_file_metadata(&bytes))
-            .transpose()
-            .map_err(|e| RaftError::Raft(format!("decode existing: {}", e)))?;
+        let existing = bridge_block_on(
+            &handle,
+            parent_node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(mount_path)),
+        )
+        .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?
+        .map(|bytes| decode_file_metadata(&bytes))
+        .transpose()
+        .map_err(|e| RaftError::Raft(format!("decode existing: {}", e)))?;
 
         if let Some(ref meta) = existing {
             if meta.entry_type == DT_MOUNT {
@@ -998,17 +1043,17 @@ impl ZoneManager {
         let parent_node = self.registry.get_node(parent_zone_id).ok_or_else(|| {
             RaftError::InvalidState(format!("Parent zone '{}' not found", parent_zone_id))
         })?;
-        let handle = self.runtime.handle().clone();
+        let handle = self.rt().handle().clone();
         let registry = self.registry.clone();
 
-        let existing = handle
-            .block_on(
-                parent_node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(mount_path)),
-            )
-            .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?
-            .map(|bytes| decode_file_metadata(&bytes))
-            .transpose()
-            .map_err(|e| RaftError::Raft(format!("decode existing: {}", e)))?;
+        let existing = bridge_block_on(
+            &handle,
+            parent_node.with_state_machine(|sm: &FullStateMachine| sm.get_metadata(mount_path)),
+        )
+        .map_err(|e| RaftError::Raft(format!("get_metadata: {}", e)))?
+        .map(|bytes| decode_file_metadata(&bytes))
+        .transpose()
+        .map_err(|e| RaftError::Raft(format!("decode existing: {}", e)))?;
 
         let existing = match existing {
             Some(m) if m.entry_type == DT_MOUNT => m,
@@ -1067,7 +1112,7 @@ impl ZoneManager {
             )));
         }
 
-        let handle = self.runtime.handle().clone();
+        let handle = self.rt().handle().clone();
         let registry = self.registry.clone();
 
         let scan_prefix = if normalized_prefix.is_empty() {
@@ -1075,13 +1120,12 @@ impl ZoneManager {
         } else {
             normalized_prefix.clone()
         };
-        let entries = handle
-            .block_on(
-                parent_node.with_state_machine(move |sm: &FullStateMachine| {
-                    sm.list_metadata(&scan_prefix)
-                }),
-            )
-            .map_err(|e| RaftError::Raft(format!("list_metadata: {}", e)))?;
+        let entries = bridge_block_on(
+            &handle,
+            parent_node
+                .with_state_machine(move |sm: &FullStateMachine| sm.list_metadata(&scan_prefix)),
+        )
+        .map_err(|e| RaftError::Raft(format!("list_metadata: {}", e)))?;
 
         let mut copied: usize = 0;
         let mut nested_mount_targets: Vec<String> = Vec::new();
@@ -1197,7 +1241,7 @@ impl ZoneManager {
         // advertised zone. backend_name is a marker that tells readers
         // "this is a share registry row, not a user inode".
         let value = encode_file_metadata(&key, DT_REG, contracts::ROOT_ZONE_ID, zone_id);
-        let handle = self.runtime.handle().clone();
+        let handle = self.rt().handle().clone();
         propose_set_metadata(&handle, &root, &key, value)
     }
 
@@ -1215,10 +1259,12 @@ impl ZoneManager {
                 )
             })?;
         let key = Self::share_registry_key(origin_path);
-        let handle = self.runtime.handle().clone();
-        let bytes = handle
-            .block_on(root.with_state_machine(move |sm: &FullStateMachine| sm.get_metadata(&key)))
-            .map_err(|e| RaftError::Raft(format!("lookup_share: {}", e)))?;
+        let handle = self.rt().handle().clone();
+        let bytes = bridge_block_on(
+            &handle,
+            root.with_state_machine(move |sm: &FullStateMachine| sm.get_metadata(&key)),
+        )
+        .map_err(|e| RaftError::Raft(format!("lookup_share: {}", e)))?;
         let Some(bytes) = bytes else {
             return Ok(None);
         };
@@ -1235,10 +1281,9 @@ impl ZoneManager {
     /// Gracefully shut down all zones and the gRPC server.
     pub fn shutdown(&self) {
         self.registry.shutdown_all();
-        if let Some(tx) = self
-            .runtime
-            .block_on(async { self.shutdown_tx.lock().await.take() })
-        {
+        if let Some(tx) = bridge_block_on(self.rt().handle(), async {
+            self.shutdown_tx.lock().await.take()
+        }) {
             let _ = tx.send(true);
         }
         tracing::info!("ZoneManager node {} shut down", self.node_id);
@@ -1252,6 +1297,19 @@ impl Drop for ZoneManager {
         if let Ok(mut guard) = self.shutdown_tx.try_lock() {
             if let Some(tx) = guard.take() {
                 let _ = tx.send(true);
+            }
+        }
+        // Drop the inner runtime non-blockingly when we're sitting
+        // inside another tokio runtime: a naive `Runtime` drop blocks
+        // until every spawned task exits, and tokio refuses to block
+        // on a worker thread ("Cannot drop a runtime in a context
+        // where blocking is not allowed"). `shutdown_background`
+        // schedules cleanup off-thread; the alternative `drop` path
+        // (sync caller, no outer runtime) is the natural blocking
+        // shutdown.
+        if let Some(rt) = self.runtime.take() {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                rt.shutdown_background();
             }
         }
     }

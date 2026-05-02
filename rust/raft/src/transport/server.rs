@@ -489,7 +489,6 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
                 let handle = tokio::runtime::Handle::current();
                 self.registry
                     .join_zone(&req.zone_id, peers, false, &handle)
-                    .await
                     .map_err(|e| {
                         Status::internal(format!(
                             "failed to auto-join zone '{}': {}",

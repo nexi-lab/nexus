@@ -3108,9 +3108,7 @@ class TestConcurrentLockEdit:
         def _node_b_write():
             deadline = time.time() + 15
             while time.time() < deadline:
-                r = _grpc_call(
-                    grpc2, "sys_lock", {"path": lock_path, "ttl": 10}, api_key=api_key
-                )
+                r = _grpc_call(grpc2, "sys_lock", {"path": lock_path, "ttl": 10}, api_key=api_key)
                 if "error" not in r and r.get("result"):
                     lid = r["result"]
                     wr = _grpc_call(

@@ -48,15 +48,6 @@
 pub mod acp;
 pub mod agents;
 pub mod audit;
-// FederationService — Rust-tier surface for the federation control
-// plane (create/remove/join/share/mount/unmount/list/cluster_info).
-// Replaces the Python `FederationRPCService` at
-// `src/nexus/server/rpc/services/federation_rpc.py`; thin wrappers
-// over kernel HAL (`distributed_coordinator()`, `sys_setattr DT_MOUNT`,
-// `sys_unlink`, `sys_readdir_backend`).  Zone-bundle export/import
-// (the `*_zone` portability methods) live in a separate
-// `services::portability` module — they're not federation core.
-pub mod federation;
 // ManagedAgentService — first Rust-flavoured service. Owns the
 // chat-with-me mailbox stamping hook, the workspace-boundary
 // teaching hook, and the `start_session_v1` / `cancel_v1` /

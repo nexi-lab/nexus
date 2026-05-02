@@ -607,9 +607,6 @@ fn resolve_rust_dispatch(method: &str) -> Option<(&str, &str)> {
     if method.starts_with("managed_agent_") {
         return Some(("managed_agent", method));
     }
-    if method.starts_with("federation_") {
-        return Some(("federation", method));
-    }
     None
 }
 

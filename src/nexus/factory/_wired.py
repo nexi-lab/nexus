@@ -496,14 +496,6 @@ def _boot_post_kernel_services(
                 nexus_runtime.nx_acp_install(_kernel_handle, ROOT_ZONE_ID)
                 nexus_runtime.nx_acp_set_agent_registry(_kernel_handle, _agent_reg)
                 logger.debug("[BOOT:WIRED] AcpService (Rust) installed")
-                # FederationService — Rust-tier federation control plane
-                # (create / remove / join / share / mount / unmount /
-                # list / cluster_info).  Replaces the Python
-                # FederationRPCService — wire-form `federation_*` RPCs
-                # now route through ServiceRegistry → Rust dispatch.
-                if hasattr(nexus_runtime, "nx_federation_install"):
-                    nexus_runtime.nx_federation_install(_kernel_handle)
-                    logger.debug("[BOOT:WIRED] FederationService (Rust) installed")
                 _perm_lease_table = getattr(nx, "_permission_lease_table", None)
                 if _perm_lease_table is not None:
                     nexus_runtime.nx_acp_register_on_terminate(

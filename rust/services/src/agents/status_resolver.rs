@@ -81,10 +81,8 @@ mod tests {
             owner_id: "user1".to_string(),
             zone_id: "zone1".to_string(),
             created_at_ms: 1000,
-            exit_code: None,
-            parent_pid: None,
-            connection_id: None,
-            last_heartbeat_ms: None,
+            updated_at_ms: 1000,
+            ..Default::default()
         }
     }
 

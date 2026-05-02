@@ -96,6 +96,13 @@ pub mod kernel;
 pub mod generated_kernel_abi_pyo3;
 pub use generated_kernel_abi_pyo3 as generated_pyo3;
 
+// Python-facing AgentRegistry sub-pyclass — wraps the kernel's
+// `Arc<core::agents::registry::AgentRegistry>` so in-process Python
+// callers can reach `kernel.agent_registry.X` without going through the
+// flat `agent_*` syscalls. Hand-written; codegen owns the PyKernel
+// getter that returns an instance.
+pub mod agent_registry_py;
+
 // kernel↔raft Cargo edge direction: `raft → kernel`. Raft state-machine
 // impls (zone_meta_store, replication_scanner) and the
 // `RaftDistributedCoordinator` trait impl live in the raft crate.

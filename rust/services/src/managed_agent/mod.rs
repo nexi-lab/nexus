@@ -248,6 +248,7 @@ impl ManagedAgentService {
         let workspace_path = format!("/proc/{pid}/workspace/");
         let session_id = alloc_session_id();
 
+        let now = now_ms();
         let desc = AgentDescriptor {
             pid: pid.clone(),
             name: req.agent.clone(),
@@ -255,11 +256,9 @@ impl ManagedAgentService {
             state: AgentState::Registered,
             owner_id,
             zone_id,
-            created_at_ms: now_ms(),
-            exit_code: None,
-            parent_pid: None,
-            connection_id: None,
-            last_heartbeat_ms: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+            ..Default::default()
         };
 
         if !self.agent_registry.register(desc) {
@@ -273,7 +272,7 @@ impl ManagedAgentService {
         // a failure here would drop us back to REGISTERED, which the
         // runtime crate will still see as "spawn me" so it's
         // recoverable.
-        self.agent_registry.update_state(&pid, AgentState::WarmingUp);
+        let _ = self.agent_registry.update_state(&pid, AgentState::WarmingUp);
 
         // Materialise the workspace inside the kernel — DT_DIR for the
         // workspace root, DT_LINK at chat-with-me pointing at the
@@ -420,9 +419,10 @@ impl ManagedAgentService {
                 Ok(CancelResponse { cancelled: true })
             }
             CancelMode::Session => {
-                let cancelled =
-                    self.agent_registry
-                        .update_state_with_exit(&sess.pid, AgentState::Terminated, 0);
+                let cancelled = self
+                    .agent_registry
+                    .update_state_with_exit(&sess.pid, AgentState::Terminated, 0)
+                    .unwrap_or(false);
                 // Tear down the workspace before we drop the session
                 // row — DT_LINK targets live independently, so leaving
                 // them dangling would clutter `sys_listdir(/proc)`

@@ -2618,6 +2618,17 @@ impl PyKernel {
 
     // ── Agent registry (§10 B1) ─────────────────────────────────────
 
+    /// Sub-handle exposing the kernel `AgentRegistry` SSOT to
+    /// Python callers. Wraps the kernel `Arc<AgentRegistry>`
+    /// — every call returns a fresh wrapper sharing the same
+    /// state, so Python code can write
+    /// `kernel.agent_registry.spawn(...)` without manual Arc
+    /// management.
+    #[getter]
+    fn agent_registry(&self) -> crate::agent_registry_py::PyAgentRegistry {
+        crate::agent_registry_py::from_kernel(&self.inner)
+    }
+
     /// Register a new agent. Returns true if inserted (pid was new).
     #[pyo3(signature = (pid, name, kind, owner_id, zone_id, created_at_ms, parent_pid=None, connection_id=None))]
     #[allow(clippy::too_many_arguments)]
@@ -2632,20 +2643,19 @@ impl PyKernel {
         parent_pid: Option<&str>,
         connection_id: Option<&str>,
     ) -> bool {
-        use crate::core::agents::registry::{AgentDescriptor, AgentKind, AgentState};
+        use crate::core::agents::registry::{AgentDescriptor, AgentKind};
         let kind = AgentKind::from_str(kind).unwrap_or(AgentKind::Worker);
         self.inner.agent_registry.register(AgentDescriptor {
             pid: pid.to_string(),
             name: name.to_string(),
             kind,
-            state: AgentState::Registered,
             owner_id: owner_id.to_string(),
             zone_id: zone_id.to_string(),
             created_at_ms,
-            exit_code: None,
+            updated_at_ms: created_at_ms,
             parent_pid: parent_pid.map(|s| s.to_string()),
             connection_id: connection_id.map(|s| s.to_string()),
-            last_heartbeat_ms: None,
+            ..Default::default()
         })
     }
 
@@ -2666,41 +2676,54 @@ impl PyKernel {
                 dict.set_item("owner_id", &desc.owner_id)?;
                 dict.set_item("zone_id", &desc.zone_id)?;
                 dict.set_item("created_at_ms", desc.created_at_ms)?;
+                dict.set_item("updated_at_ms", desc.updated_at_ms)?;
                 dict.set_item("exit_code", desc.exit_code)?;
+                dict.set_item("generation", desc.generation)?;
+                dict.set_item("cwd", &desc.cwd)?;
+                dict.set_item("root", &desc.root)?;
                 dict.set_item("parent_pid", desc.parent_pid.as_deref())?;
                 dict.set_item("connection_id", desc.connection_id.as_deref())?;
                 dict.set_item("last_heartbeat_ms", desc.last_heartbeat_ms)?;
+                dict.set_item("children", desc.children.clone())?;
+                dict.set_item("labels", desc.labels.clone())?;
                 Ok(Some(dict))
             }
             None => Ok(None),
         }
     }
 
-    /// Update agent state. Returns true if found.
-    fn agent_update_state(&self, pid: &str, new_state: &str) -> bool {
+    /// Update agent state. Returns true if found, false if pid
+    /// missing. Raises ValueError on invalid transitions.
+    fn agent_update_state(&self, pid: &str, new_state: &str) -> PyResult<bool> {
         use crate::core::agents::registry::AgentState;
-        match AgentState::from_str(new_state) {
-            Some(state) => self.inner.agent_registry.update_state(pid, state),
-            None => false,
-        }
+        let state = AgentState::from_str(new_state).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("unknown agent state: {new_state}"))
+        })?;
+        self.inner
+            .agent_registry
+            .update_state(pid, state)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
     }
 
     /// List all agents. Returns list of dicts.
-    #[pyo3(signature = (zone_id=None, state=None, kind=None))]
+    #[pyo3(signature = (zone_id=None, owner_id=None, state=None, kind=None))]
     fn agent_list<'py>(
         &self,
         py: Python<'py>,
         zone_id: Option<&str>,
+        owner_id: Option<&str>,
         state: Option<&str>,
         kind: Option<&str>,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
         use crate::core::agents::registry::{AgentKind, AgentState};
         let state_filter = state.and_then(AgentState::from_str);
         let kind_filter = kind.and_then(AgentKind::from_str);
-        let agents =
-            self.inner
-                .agent_registry
-                .list(zone_id, state_filter.as_ref(), kind_filter.as_ref());
+        let agents = self.inner.agent_registry.list(
+            zone_id,
+            owner_id,
+            kind_filter.as_ref(),
+            state_filter.as_ref(),
+        );
         let mut result = Vec::with_capacity(agents.len());
         for desc in agents {
             let dict = PyDict::new(py);
@@ -2716,9 +2739,11 @@ impl PyKernel {
         Ok(result)
     }
 
-    /// Update heartbeat timestamp for an agent.
+    /// Update heartbeat timestamp for an agent (raw stamp; no
+    /// kind/info validation — see ``AgentRegistry.heartbeat`` for
+    /// the validating variant).
     fn agent_heartbeat(&self, pid: &str, timestamp_ms: u64) -> bool {
-        self.inner.agent_registry.heartbeat(pid, timestamp_ms)
+        self.inner.agent_registry.heartbeat_at(pid, timestamp_ms)
     }
 
     /// Get number of registered agents.

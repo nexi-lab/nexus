@@ -13,7 +13,7 @@
 //! captures exactly two `::`-separated segments, so a 3-segment
 //! `crate::shm_pipe::Foo` silently drops out of the generated stubs.
 
-use crate::{generated_kernel_abi_pyo3, semaphore};
+use crate::{agent_registry_py, generated_kernel_abi_pyo3, semaphore};
 use pyo3::prelude::*;
 
 /// Register kernel-owned `#[pyclass]` / `#[pyfunction]` exports into
@@ -35,6 +35,10 @@ pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<generated_kernel_abi_pyo3::PyKernel>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysReadResult>()?;
     m.add_class::<generated_kernel_abi_pyo3::PySysWriteResult>()?;
+    // AgentRegistry handle reachable via `kernel.agent_registry`. Wraps
+    // the kernel's `Arc<AgentRegistry>` so Python callers reach the SSOT
+    // directly instead of going through the flat `agent_*` syscalls.
+    m.add_class::<agent_registry_py::PyAgentRegistry>()?;
     // ACP + ManagedAgent service install hooks plus the generic
     // `nx_kernel_dispatch_rust_call` entry point are registered by
     // `services::python::register` (services owns those impls now;

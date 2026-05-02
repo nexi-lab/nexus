@@ -396,6 +396,20 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
             >,
         >,
     >,
+    /// Shared advisory-lock state, cached at construction so sync
+    /// callers (kernel ``DistributedLocks::new`` invoked from inside the
+    /// mount-apply callback that fires on a tokio worker thread) can
+    /// adopt the SSOT Arc without going through ``state_machine`` 's
+    /// async ``RwLock`` — ``RwLock::blocking_read`` panics from inside a
+    /// tokio runtime, which is exactly the call site that needed it.
+    ///
+    /// Capturing here is sound because the underlying ``Arc<Mutex<LockState>>``
+    /// identity stays constant for the life of the state machine; only
+    /// inner contents change (snapshot restore replaces ``*guard``, not
+    /// the Arc). State machines without advisory state (witness, tests)
+    /// leave this ``None`` and ``advisory_state_blocking`` is unreachable
+    /// for them.
+    advisory_handle: Option<Arc<parking_lot::Mutex<super::state_machine::LockState>>>,
 }
 
 impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
@@ -416,6 +430,7 @@ impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
             invalidate_cb_slot: self.invalidate_cb_slot.clone(),
             #[cfg(feature = "grpc")]
             mount_apply_cb_slot: self.mount_apply_cb_slot.clone(),
+            advisory_handle: self.advisory_handle.clone(),
         }
     }
 }
@@ -640,6 +655,12 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         // Same pattern for the DT_MOUNT apply slot.
         #[cfg(feature = "grpc")]
         let mount_apply_cb_slot = state_machine.mount_apply_cb_slot();
+        // And for the advisory-lock state Arc — captured here so
+        // ``advisory_state_blocking`` returns the SSOT Arc directly
+        // without ``RwLock::blocking_read`` (which panics from inside
+        // a tokio runtime, e.g. the mount-apply callback that
+        // constructs ``DistributedLocks::new``).
+        let advisory_handle = state_machine.advisory_handle();
         // The state machine is the SSOT for applied index — borrow its
         // atomic so sync readers can observe it without acquiring the
         // async RwLock the SM lives behind. Grabbed before the SM moves
@@ -678,6 +699,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             invalidate_cb_slot,
             #[cfg(feature = "grpc")]
             mount_apply_cb_slot,
+            advisory_handle,
         };
 
         let driver = ZoneConsensusDriver {
@@ -1896,19 +1918,24 @@ impl ZoneConsensus<super::state_machine::FullStateMachine> {
 
     /// Sync handle to the state machine's shared advisory lock state.
     ///
-    /// Avoids ``runtime.block_on(node.with_state_machine(...))`` from
-    /// install paths that may run inside the same tokio runtime that
-    /// drives ``state_machine.read().await`` — block_on inside a
-    /// runtime panics on a current_thread runtime and risks worker
-    /// exhaustion on a multi_thread one.  Uses ``blocking_read`` from
-    /// ``tokio::sync::RwLock`` which suspends the OS thread without
-    /// reentrant runtime contention; the lock is read-mostly so this
-    /// is essentially uncontended in practice.
+    /// Returns a clone of the SSOT ``Arc<Mutex<LockState>>`` cached at
+    /// ``ZoneConsensus`` construction. No async lock involved — the
+    /// previous implementation called ``state_machine.blocking_read()``
+    /// which panics when invoked from inside a tokio runtime worker
+    /// (e.g. the mount-apply callback that constructs
+    /// ``DistributedLocks::new``).
+    ///
+    /// Sound because ``FullStateMachine.advisory`` holds the same Arc
+    /// for life — snapshot restore swaps inner ``LockState`` under the
+    /// existing parking_lot mutex (see ``FullStateMachine::restore_snapshot``).
     pub fn advisory_state_blocking(
         &self,
     ) -> Arc<parking_lot::Mutex<crate::raft::state_machine::LockState>> {
-        let sm = self.state_machine.blocking_read();
-        sm.advisory_state()
+        Arc::clone(
+            self.advisory_handle
+                .as_ref()
+                .expect("FullStateMachine always returns Some(advisory_handle)"),
+        )
     }
 }
 

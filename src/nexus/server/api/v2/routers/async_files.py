@@ -892,12 +892,24 @@ def create_async_files_router(
                         detail=f"version is not recorded for this path in transaction {transaction_id!r}",
                     )
                 # --- Enforce standard read authorization via the VFS path ---
-                try:
-                    _accessible = fs.access(path, context=context)
-                except NexusPermissionError as e:
-                    raise HTTPException(status_code=403, detail=str(e)) from e
-                if not _accessible:
-                    raise NexusFileNotFoundError(path)
+                # For *delete* entries the live path no longer exists, so
+                # ``fs.access`` would reject every historical read of a
+                # deleted file's snapshot — even though the caller is
+                # authorized for the transaction's zone and the bytes are
+                # still in CAS (Issue #3989, codex r9). Authorization for
+                # delete entries has already been established by the
+                # transaction zone-ownership check + entry-hash binding
+                # above, so we skip the live-path access probe in that
+                # case. Write entries continue to require live-path
+                # access since the path is still expected to resolve.
+                _entry_op = getattr(_matched_entry, "operation", None)
+                if _entry_op != "delete":
+                    try:
+                        _accessible = fs.access(path, context=context)
+                    except NexusPermissionError as e:
+                        raise HTTPException(status_code=403, detail=str(e)) from e
+                    if not _accessible:
+                        raise NexusFileNotFoundError(path)
                 _py_kernel = getattr(fs, "_kernel", None)
                 if _py_kernel is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")

@@ -453,3 +453,114 @@ def test_versioned_read_uses_recorded_origin_for_original_hash(
         "original-writer:2126",
         "current-writer:2126",
     ], captured
+
+
+def test_versioned_read_serves_deleted_path_from_cas(
+    real_fs: NexusFS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Historical reads of a *deleted* path must succeed via CAS even
+    though the live VFS path no longer resolves. Without this carve-out,
+    diff/preview/rollback consumers cannot recover a snapshot of a file
+    that has since been deleted (Issue #3989, codex r9)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    payload = b"deleted-bytes"
+    target = "/files/gone.bin"
+
+    # Write then delete via the API so the live path no longer exists.
+    setup_app = FastAPI()
+    setup_app.include_router(create_async_files_router(nexus_fs=real_fs))
+    setup_app.dependency_overrides[get_auth_result] = lambda: {
+        "authenticated": True,
+        "user_id": "e2e-user",
+        "groups": [],
+        "zone_id": "root",
+        "is_admin": True,
+    }
+    setup_client = TestClient(setup_app)
+    write_resp = setup_client.post(
+        "/write",
+        json={
+            "path": target,
+            "content": base64.b64encode(payload).decode("ascii"),
+            "encoding": "base64",
+        },
+    )
+    assert write_resp.status_code == 200, write_resp.text
+    deleted_hash = write_resp.json()["content_id"]
+
+    # Confirm fs.access returns False after delete (i.e. the live path is
+    # gone) by directly removing the metadata via the kernel.
+    real_fs.sys_unlink(target)
+    assert real_fs.access(target) is False
+
+    monkeypatch.setattr(
+        real_fs,
+        "list_mounts",
+        lambda context=None: [{"mount_point": "/files"}],
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_cas_read(
+        mount_point: str,
+        zone_id: str,
+        content_id: str,
+        *,
+        origins: list[str] | None = None,
+    ) -> bytes:
+        captured["content_id"] = content_id
+        return payload
+
+    real_kernel = real_fs._kernel
+
+    class _KernelProxy:
+        cas_read = staticmethod(_fake_cas_read)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(real_kernel, name)
+
+    monkeypatch.setattr(real_fs, "_kernel", _KernelProxy())
+
+    # Snapshot entry recorded for the (now-deleted) path with operation=delete.
+    snap_svc = MagicMock()
+    snap_svc.get_transaction = AsyncMock(return_value=SimpleNamespace(zone_id="root"))
+    snap_svc.list_entries = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                path=target,
+                operation="delete",
+                original_hash=deleted_hash,
+                new_hash=None,
+                original_metadata=None,
+            )
+        ]
+    )
+
+    app = FastAPI()
+    router = create_async_files_router(nexus_fs=real_fs)
+    app.state.transactional_snapshot_service = snap_svc
+    app.include_router(router)
+    app.dependency_overrides[get_auth_result] = lambda: {
+        "authenticated": True,
+        "user_id": "e2e-user",
+        "groups": [],
+        "zone_id": "root",
+        "is_admin": True,
+    }
+    client = TestClient(app)
+
+    resp = client.get(
+        "/read",
+        params={
+            "path": target,
+            "version": deleted_hash,
+            "transaction_id": "txn-stub",
+            "encoding": "base64",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert captured["content_id"] == deleted_hash
+    decoded = base64.b64decode(resp.json()["content"])
+    assert decoded == payload

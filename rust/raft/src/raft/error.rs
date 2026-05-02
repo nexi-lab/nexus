@@ -55,6 +55,19 @@ pub enum RaftError {
     /// Transport error (gRPC forwarding failed).
     #[error("transport error: {0}")]
     Transport(String),
+
+    /// `create_zone` was called for a zone that already exists with a
+    /// different peer-address-book.  Idempotency holds when the
+    /// requested address book matches the existing one (same set of
+    /// `(hostname, port)` tuples); a different set is operator error
+    /// — surface it loudly rather than silently mutating ConfState.
+    #[error(
+        "zone already exists with different membership: actual={actual:?} requested={requested:?}"
+    )]
+    ZoneAlreadyExistsWithDifferentMembership {
+        actual: Vec<String>,
+        requested: Vec<String>,
+    },
 }
 
 impl From<crate::storage::StorageError> for RaftError {

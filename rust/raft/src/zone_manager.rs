@@ -503,6 +503,17 @@ impl ZoneManager {
     }
 
     /// Create a new zone (raft group) on this node.
+    ///
+    /// Idempotent — calling `create_zone` for an existing zone with
+    /// the **same** address book (same set of `(hostname, port)`
+    /// tuples) returns the existing handle.  A **different** address
+    /// book returns
+    /// [`RaftError::ZoneAlreadyExistsWithDifferentMembership`] so
+    /// operator config drift surfaces loudly instead of silently
+    /// re-bootstrapping the local replica.  The address book carries
+    /// no role in ConfState (which is mutated only by ConfChange via
+    /// JoinZone) so two callers passing equivalent peer lists are
+    /// genuinely equivalent.
     pub fn create_zone(&self, zone_id: &str, peers: Vec<String>) -> Result<Arc<ZoneHandle>> {
         let peer_addrs: Vec<NodeAddress> = peers
             .iter()
@@ -511,6 +522,40 @@ impl ZoneManager {
                     .map_err(|e| RaftError::Config(format!("Invalid peer '{}': {}", s, e)))
             })
             .collect::<Result<Vec<_>>>()?;
+
+        // Idempotency: zone already loaded.  Compare existing
+        // address-book entries by `(hostname, port)` ignoring the
+        // raft-id prefix — under the opaque-ID contract two parses of
+        // the same NEXUS_PEERS entry can carry different witness-derived
+        // ids but represent the same physical peer.
+        if self.get_zone(zone_id).is_some() {
+            let existing = self
+                .registry
+                .get_peers(zone_id)
+                .map(|map| {
+                    let mut set: std::collections::BTreeSet<(String, u16)> = map
+                        .values()
+                        .map(|addr| (addr.hostname.clone(), addr.port))
+                        .collect();
+                    set.remove(&(String::new(), 0));
+                    set
+                })
+                .unwrap_or_default();
+            let requested: std::collections::BTreeSet<(String, u16)> = peer_addrs
+                .iter()
+                .map(|a| (a.hostname.clone(), a.port))
+                .collect();
+            if existing == requested {
+                return Ok(self.get_zone(zone_id).expect("re-checked above"));
+            }
+            let to_strs = |set: &std::collections::BTreeSet<(String, u16)>| -> Vec<String> {
+                set.iter().map(|(h, p)| format!("{h}:{p}")).collect()
+            };
+            return Err(RaftError::ZoneAlreadyExistsWithDifferentMembership {
+                actual: to_strs(&existing),
+                requested: to_strs(&requested),
+            });
+        }
 
         let node = self
             .registry
@@ -1412,4 +1457,90 @@ pub fn join_cluster_and_provision_tls(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Reusable ZoneManager fixture binding to an OS-allocated port so
+    /// parallel tests don't collide.  Tests must drop the returned
+    /// TempDir last so the on-disk redb is unlinked after the manager
+    /// shuts its runtime down.
+    fn make_zm(node_id: u64) -> (Arc<ZoneManager>, TempDir) {
+        let dir = TempDir::new().expect("tempdir");
+        let zm = ZoneManager::with_node_id(
+            "test-host",
+            node_id,
+            dir.path().to_str().expect("utf-8"),
+            vec![],
+            "127.0.0.1:0",
+            None,
+        )
+        .expect("ZoneManager");
+        (zm, dir)
+    }
+
+    #[test]
+    fn test_create_zone_repeated_same_peers_is_noop() {
+        // Calling create_zone twice with the same address book must be
+        // idempotent — second call returns the existing handle, does
+        // NOT re-bootstrap or shadow the original raft group.
+        let (zm, _dir) = make_zm(1);
+        let peers = vec!["nexus-2:2126".to_string(), "nexus-3:2126".to_string()];
+        let h1 = zm.create_zone("z1", peers.clone()).expect("first create");
+        let h2 = zm
+            .create_zone("z1", peers)
+            .expect("second create idempotent");
+        assert_eq!(h1.zone_id(), h2.zone_id());
+    }
+
+    #[test]
+    fn test_create_zone_with_different_peers_errors() {
+        // Calling create_zone twice with a different address book is
+        // an operator-config error — surface it explicitly so config
+        // drift doesn't silently mutate ConfState.
+        let (zm, _dir) = make_zm(1);
+        zm.create_zone("z1", vec!["nexus-2:2126".to_string()])
+            .expect("first create");
+        let result = zm.create_zone(
+            "z1",
+            vec!["nexus-2:2126".to_string(), "nexus-3:2126".to_string()],
+        );
+        match result {
+            Err(RaftError::ZoneAlreadyExistsWithDifferentMembership { .. }) => {}
+            Err(other) => {
+                panic!("expected ZoneAlreadyExistsWithDifferentMembership, got {other:?}")
+            }
+            Ok(_) => panic!("expected ZoneAlreadyExistsWithDifferentMembership, got Ok"),
+        }
+    }
+
+    #[test]
+    fn test_create_zone_after_join_with_persisted_conf_state_is_noop() {
+        // Cross-process restart: zone "z1" was created in a prior
+        // process (1-voter under the opaque-ID contract), redb files
+        // persist on disk.  A subsequent process loading from disk
+        // must no-op `create_zone` rather than reset the ConfState —
+        // restart paths must always preserve persisted membership.
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().to_str().expect("utf-8").to_string();
+        {
+            let zm = ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None)
+                .expect("zm-1");
+            zm.create_zone("z1", vec![]).expect("create");
+            // Drop zm — runtime + gRPC server shut down, redb files
+            // remain on disk.
+        }
+        let zm =
+            ZoneManager::with_node_id("h1", 1, &path, vec![], "127.0.0.1:0", None).expect("zm-2");
+        // open_existing_zones_from_disk should have re-loaded "z1"
+        // with the persisted ConfState; create_zone with identical
+        // (empty) peer list must hit the idempotency branch.
+        assert!(zm.get_zone("z1").is_some(), "zone reloaded from disk");
+        let _ = zm
+            .create_zone("z1", vec![])
+            .expect("create idempotent on restart");
+    }
 }

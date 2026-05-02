@@ -206,3 +206,81 @@ def test_set_and_get_provisioner_round_trip() -> None:
     dropped = registry.take_provisioner()
     assert dropped is p
     assert registry.get_provisioner() is None
+
+
+# ---------------------------------------------------------------------------
+# VALID_AGENT_TRANSITIONS drift guard
+# ---------------------------------------------------------------------------
+#
+# `contracts/process_types.py:VALID_AGENT_TRANSITIONS` and the Rust
+# `AgentState::can_transition_to` table in
+# `rust/kernel/src/core/agents/registry.rs` encode the same FSM and have
+# to stay byte-identical.  This test exhaustively probes both directions
+# through the PyO3 surface so a silent edit on either side surfaces here
+# rather than as a runtime InvalidTransition deep in production.
+
+
+def test_valid_transitions_match_rust_table() -> None:
+    from nexus.contracts.process_types import VALID_AGENT_TRANSITIONS
+
+    states = list(AgentState)
+    for src in states:
+        allowed = VALID_AGENT_TRANSITIONS[src]
+        for dst in states:
+            registry = AgentRegistry()
+            desc = registry.spawn("a", OWNER, ZONE)
+
+            # Drive the agent into `src` through legal hops so we can
+            # then probe `src -> dst`.  REGISTERED is the spawn default;
+            # all others require a chain of update_state calls.
+            chain: dict[AgentState, list[AgentState]] = {
+                AgentState.REGISTERED: [],
+                AgentState.WARMING_UP: [AgentState.WARMING_UP],
+                AgentState.READY: [AgentState.WARMING_UP, AgentState.READY],
+                AgentState.BUSY: [
+                    AgentState.WARMING_UP,
+                    AgentState.READY,
+                    AgentState.BUSY,
+                ],
+                AgentState.SUSPENDED: [
+                    AgentState.WARMING_UP,
+                    AgentState.READY,
+                    AgentState.SUSPENDED,
+                ],
+                AgentState.TERMINATED: [AgentState.TERMINATED],
+            }
+            for hop in chain[src]:
+                registry.update_state(desc.pid, hop.value)
+            assert registry.get(desc.pid).state == src
+
+            # Self-transition is always tolerated by the Rust table —
+            # update_state returns Ok(true) without firing observers —
+            # so `src == dst` is excluded from the drift comparison.
+            if src == dst:
+                continue
+
+            should_succeed = dst in allowed
+            if should_succeed:
+                # No exception, post-state == dst.
+                registry.update_state(desc.pid, dst.value)
+                assert registry.get(desc.pid).state == dst
+            else:
+                with pytest.raises(ValueError):
+                    registry.update_state(desc.pid, dst.value)
+
+
+def test_terminated_is_terminal_in_both_tables() -> None:
+    from nexus.contracts.process_types import VALID_AGENT_TRANSITIONS
+
+    # Python side: TERMINATED has empty out-edges.
+    assert VALID_AGENT_TRANSITIONS[AgentState.TERMINATED] == frozenset()
+
+    # Rust side: every non-self transition out of TERMINATED rejects.
+    for dst in AgentState:
+        if dst == AgentState.TERMINATED:
+            continue
+        registry = AgentRegistry()
+        desc = registry.spawn("a", OWNER, ZONE)
+        registry.update_state(desc.pid, AgentState.TERMINATED.value)
+        with pytest.raises(ValueError):
+            registry.update_state(desc.pid, dst.value)

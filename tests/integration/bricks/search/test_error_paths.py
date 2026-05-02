@@ -108,6 +108,32 @@ class TestSearchDaemonErrors:
         assert daemon._backend.upsert.await_args.kwargs["zone_id"] == ROOT_ZONE_ID
 
     @pytest.mark.asyncio
+    async def test_index_documents_scrubs_dict_keys_too(self) -> None:
+        """Dict KEYS containing NULs must also be scrubbed — txtai persists
+        the full document object so a NUL-bearing metadata key would still
+        poison Postgres TEXT/JSON (codex r4)."""
+        from nexus.bricks.search.daemon import SearchDaemon
+
+        daemon = SearchDaemon()
+        daemon._initialized = True
+        daemon._backend = AsyncMock()
+        daemon._backend.upsert.return_value = 1
+
+        docs = [
+            {
+                "id": "doc-1",
+                "text": "hi",
+                "metadata": {"key\x00with\x00nul": "value"},
+            }
+        ]
+        await daemon.index_documents(docs)
+
+        forwarded = daemon._backend.upsert.await_args.args[0]
+        keys = list(forwarded[0]["metadata"].keys())
+        assert all("\x00" not in k for k in keys), keys
+        assert keys == ["keywithnul"]
+
+    @pytest.mark.asyncio
     async def test_delete_documents_uses_backend_delete(self) -> None:
         """Explicit deletion should delegate to the active backend."""
         from nexus.bricks.search.daemon import SearchDaemon

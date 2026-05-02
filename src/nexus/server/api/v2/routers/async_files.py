@@ -904,7 +904,9 @@ def create_async_files_router(
 
                 # Resolve the mount that owns ``path`` so we can issue a real
                 # content-addressed read via the Rust kernel. Longest-prefix
-                # match against the caller's visible mount table.
+                # match against the caller's visible mount table; the root
+                # mount ("/") is always a valid candidate so files under a
+                # root-only deployment still take the cas_read path.
                 _mount_point: str | None = None
                 try:
                     _mount_entries = fs.list_mounts(context=context)
@@ -915,14 +917,19 @@ def create_async_files_router(
                     )
                     for _mp in _candidates:
                         _mp_norm = _mp.rstrip("/") or "/"
-                        if path == _mp_norm or path.startswith(_mp_norm + "/"):
+                        # Root mount matches every absolute path; non-root
+                        # mounts match only if ``path`` equals the mount or
+                        # is a descendant. Without the root special-case,
+                        # production deployments that mount at ``/`` would
+                        # silently skip cas_read for every historical read
+                        # (Issue #3989, codex r4).
+                        if _mp_norm == "/" or path == _mp_norm or path.startswith(_mp_norm + "/"):
                             _mount_point = _mp_norm
                             break
                 except Exception:
                     _mount_point = None
 
                 raw: bytes | None = None
-                _read_via_cas = False
                 if _mount_point is not None and hasattr(_py_kernel, "cas_read"):
                     try:
                         raw = await asyncio.to_thread(
@@ -931,17 +938,14 @@ def create_async_files_router(
                             _caller_zone_kernel,
                             version,
                         )
-                        _read_via_cas = True
                     except Exception as cas_err:
-                        # Distinguish "backend lacks CAS" (capability error)
-                        # from "blob not found" (history GC'd) — both bubble
-                        # up to the live-bytes fallback below, but only the
-                        # latter is acceptable: the fallback then verifies
-                        # the live content_id matches ``version`` before
-                        # returning, so a non-CAS backend can never fake a
-                        # historical read.
+                        # cas_read failed — backend may lack CAS support, or
+                        # the content_id was GC'd. Fall through to the live
+                        # path read with stat-then-read-then-restat fence
+                        # below; that path refuses to serve mismatched
+                        # bytes regardless of why cas_read failed.
                         logger.debug(
-                            "cas_read(%s, %s, %s) failed: %s; falling back to live bytes",
+                            "cas_read(%s, %s, %s) failed: %s; falling back",
                             _mount_point,
                             _caller_zone_kernel,
                             version,
@@ -950,40 +954,55 @@ def create_async_files_router(
                         raw = None
 
                 if raw is None:
-                    # Fallback: gate on the live ``content_id`` matching
-                    # the requested ``version`` BEFORE reading bytes. This
-                    # is the only safe way to serve a historical version
-                    # without a working CAS-by-hash path — and it works for
-                    # CDC-chunked content where ``hash_content(raw)`` would
-                    # not match (the manifest hash differs from the
-                    # reassembled-bytes hash) (Issue #3989, codex r3).
-                    _live_meta = _py_kernel.sys_stat(path, _caller_zone_kernel)
-                    _live_cid = (
-                        _live_meta.get("content_id")
-                        if isinstance(_live_meta, dict)
-                        else getattr(_live_meta, "content_id", None)
-                    )
-                    if _live_cid != version:
+                    # Fallback: stat → read → restat fence. The stat-only
+                    # gate previously used here was racy — a concurrent
+                    # overwrite between sys_stat and sys_read_raw would let
+                    # us return current bytes labeled with the requested
+                    # historical hash. The restat after read closes that
+                    # window: if the live content_id didn't equal ``version``
+                    # for the entire stat→read→stat duration, refuse to
+                    # serve mislabeled bytes (Issue #3989, codex r4).
+                    def _live_content_id(meta: Any) -> str | None:
+                        if meta is None:
+                            return None
+                        if isinstance(meta, dict):
+                            return meta.get("content_id")
+                        return getattr(meta, "content_id", None)
+
+                    _pre_cid = _live_content_id(_py_kernel.sys_stat(path, _caller_zone_kernel))
+                    if _pre_cid != version:
                         raise HTTPException(
                             status_code=410,
                             detail=(
                                 f"Historical version {version!r} no longer retrievable at {path!r}: "
-                                f"live content_id is {_live_cid!r}. The backend may not support "
+                                f"live content_id is {_pre_cid!r}. The backend may not support "
                                 "content-addressed history, or this revision has been garbage collected."
                             ),
                         )
                     raw = await asyncio.to_thread(
                         _py_kernel.sys_read_raw, path, _caller_zone_kernel
                     )
+                    _post_cid = _live_content_id(_py_kernel.sys_stat(path, _caller_zone_kernel))
+                    if _post_cid != version:
+                        # Concurrent overwrite raced between stat and read.
+                        # Don't serve potentially-current bytes labeled with
+                        # the requested historical hash.
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                f"Historical version {version!r} read raced with a concurrent "
+                                f"overwrite at {path!r} (post-read content_id {_post_cid!r}). "
+                                "Retry the request."
+                            ),
+                        )
 
-                # When the read came from cas_read, the backend already keyed
-                # the lookup by content_id, so the bytes are by-construction
-                # the requested revision — including for CDC-chunked content
-                # where reassembled-byte hashing differs from the manifest
-                # hash. We DON'T re-hash in that case (codex r3, finding 1).
-                # The fallback path verifies via live content_id before
-                # reading, so no extra check is needed here either.
-                del _read_via_cas
+                # When cas_read succeeded the bytes were keyed by content_id
+                # at the backend (works for CDC-chunked content too, where
+                # reassembled-byte hash != manifest hash). When the fallback
+                # served them, the stat→read→stat fence above proved the
+                # live content_id equaled ``version`` across the entire
+                # window. Either way, the response can safely advertise
+                # ``content_id=version``.
                 content_v, enc_v = _encode_read_payload(raw, encoding)
                 resp_v = ReadResponse(content=content_v, encoding=enc_v, content_id=version)
                 return Response(

@@ -1634,7 +1634,10 @@ class SearchDaemon:
             if isinstance(value, str):
                 return value.replace("\x00", "") if "\x00" in value else value
             if isinstance(value, dict):
-                return {k: _scrub(v) for k, v in value.items()}
+                # Scrub keys AND values — txtai persists the full document
+                # object, so a NUL-bearing metadata key would still poison
+                # Postgres TEXT/JSON storage (codex r4, finding 3).
+                return {_scrub(k): _scrub(v) for k, v in value.items()}
             if isinstance(value, list):
                 return [_scrub(v) for v in value]
             if isinstance(value, tuple):

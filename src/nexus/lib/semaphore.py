@@ -241,8 +241,9 @@ class PythonVFSSemaphore:
 # Factory
 # ---------------------------------------------------------------------------
 
-# VFSSemaphore pyclass was deleted from the Rust kernel — Python access
-# goes through syscalls. The pure-Python implementation is the SSOT now.
+# VFSSemaphore #[pyclass] removed — Rust VFSSemaphore remains the kernel
+# primitive (core::lock::semaphore). Python-side uses the pure-Python
+# fallback until a syscall-based bridge is wired.
 
 
 def create_vfs_semaphore() -> VFSSemaphoreProtocol:

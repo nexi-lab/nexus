@@ -43,18 +43,10 @@ use crate::{TlsFiles, ZoneManager};
 /// Node-level random ID filename — opaque random u64 minted at first
 /// daemon boot, persisted across restarts, regenerated after a wipe.
 ///
-/// Replaces the hostname-deterministic + incarnation-marker scheme.
-/// The classic raft contract (etcd / tikv) decouples node_id from
-/// physical hostname so a wipe-rejoin is safe under
-/// `JoinZone → AddNode`: the leader's `Progress[new_id].matched=0`
-/// from the moment AddNode commits, so the first heartbeat carries
-/// `m.commit=0` and cannot trip raft-rs's `to_commit X out of range`
-/// `fatal!` in `RaftLog::commit_to`.  See
-/// `rust/raft/src/raft/storage.rs::test_handle_heartbeat_on_empty_follower_with_stale_commit_panics`
-/// for the empirical pin on that panic.
-///
 /// Format: 8 bytes BE u64.  Absent = fresh daemon — mint a new ID
 /// and persist.  Present = restart — reuse the persisted ID.
+///
+/// Architecture: `docs/architecture/federation-memo.md` § 6.3.1.
 const NODE_ID_FILE: &str = ".node_id";
 
 /// Cadence for `bootstrap_or_join_root`'s JoinZone retry loop when

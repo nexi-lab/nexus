@@ -7,14 +7,11 @@ use super::error::{Result, TransportError};
 /// SHA-256 of hostname, first 8 bytes as little-endian u64.
 /// Maps 0 to 1 (raft-rs reserves 0 as "no node").
 ///
-/// **Witness-only after the opaque-ID refactor.**  The standalone
-/// witness binary still derives its raft node ID from its hostname
-/// because witness nodes never wipe-rejoin in practice — they live
-/// at well-known addresses and operators bring them up before the
-/// data-plane cluster.  Data-plane nodes mint random IDs at first
-/// boot via `read_or_mint_node_id` (see `distributed_coordinator.rs`)
-/// to satisfy raft-rs's stale-`Progress` heartbeat invariant under
-/// wipe-rejoin.  See `docs/rfcs/adr-raft-node-id-opaque.md`.
+/// Used by the standalone witness binary, which lives at a
+/// well-known address and so binds raft node identity to hostname.
+/// Data-plane node identity is opaque random — see
+/// `read_or_mint_node_id` in `distributed_coordinator.rs` and
+/// `docs/adr/adr-raft-node-id-opaque.md`.
 #[doc = "Witness-only"]
 pub fn hostname_to_node_id(hostname: &str) -> u64 {
     use sha2::{Digest, Sha256};

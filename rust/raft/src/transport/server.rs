@@ -421,27 +421,6 @@ fn extract_hostnames(node_address: &str) -> Vec<String> {
     vec![host.to_string()]
 }
 
-/// Soft check: if the peer list is unavailable (e.g. during bootstrap), the
-/// request is allowed.  This prevents rogue nodes from injecting Raft messages
-/// for zones they don't belong to (CockroachDB/etcd pattern: zone auth at app
-/// layer, node identity at TLS layer).
-#[allow(clippy::result_large_err)]
-fn check_zone_membership(
-    registry: &ZoneRaftRegistry,
-    zone_id: &str,
-    sender_node_id: u64,
-) -> std::result::Result<(), Status> {
-    if let Some(peers) = registry.get_peers(zone_id) {
-        if !peers.is_empty() && !peers.contains_key(&sender_node_id) {
-            return Err(Status::permission_denied(format!(
-                "node {} is not a member of zone '{}'",
-                sender_node_id, zone_id,
-            )));
-        }
-    }
-    Ok(())
-}
-
 // =============================================================================
 // ZoneTransportService (internal node-to-node transport)
 // =============================================================================
@@ -481,9 +460,15 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
                     .ok_or_else(|| {
                         Status::not_found(format!("zone '{}' not found on this node", req.zone_id))
                     })?;
-                if let Some(msg) = peek.as_ref() {
-                    check_zone_membership(&self.registry, contracts::ROOT_ZONE_ID, msg.from)?;
-                }
+                // Auto-join membership is gated by the transport
+                // layer's mTLS (when enabled).  Sender address is
+                // learned from `req.sender_address` after the
+                // join — under the opaque-ID contract the
+                // peer-map is the runtime SSOT (populated by inbound
+                // StepMessage), so a static "is sender in root
+                // peer-map" check was self-defeating: it rejected
+                // legit fresh joiners whose addresses had not yet
+                // been learned.
                 let peers: Vec<NodeAddress> = root_peers.values().cloned().collect();
                 let handle = tokio::runtime::Handle::current();
                 self.registry
@@ -497,15 +482,21 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
             }
         };
 
-        // Zone authorization: verify sender is a known zone member.
-        // Parse once just to extract `from` for the membership check, then
-        // delegate to the shared parse_and_step_message helper.
+        // Learn the sender's advertise address from this inbound
+        // StepMessage — every received message proves the sender's
+        // reachable address, satisfying the transport peer-map's
+        // runtime SSOT under the opaque-ID contract.  Done BEFORE
+        // any raft step so outbound responses route correctly.
+        //
+        // No separate membership check: the peer-map *is* the
+        // membership SSOT (populated via inbound StepMessage +
+        // ConfChange apply).  The OLD env-seeded `peer_map` was
+        // strict-fail under random data-plane ids — a legit
+        // post-JoinZone follower would have its leader's first
+        // heartbeat rejected before it could install ConfState.
+        // Authentication is the transport layer's job (mTLS when
+        // enabled).
         if let Some(peek) = peek.as_ref() {
-            check_zone_membership(&self.registry, &req.zone_id, peek.from)?;
-            // Learn the sender's advertise address from this inbound
-            // StepMessage — every received message proves the sender's
-            // reachable address, satisfying the transport peer-map's
-            // runtime SSOT under the opaque-ID contract.
             self.registry
                 .learn_peer_address(&req.zone_id, peek.from, &req.sender_address);
         }
@@ -524,9 +515,12 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
         let req = request.into_inner();
         let node = get_zone_node(&self.registry, &req.zone_id)?;
 
-        // Zone authorization: verify sender is a known zone member
-        check_zone_membership(&self.registry, &req.zone_id, req.sender_node_id)?;
-
+        // EC replication membership: like step_message, the peer-map
+        // is the runtime SSOT under the opaque-ID contract; a static
+        // "sender in env-derived peer set" check rejected legit
+        // post-JoinZone replicas before they could learn each
+        // other's addresses.  Authentication is the transport
+        // layer's job (mTLS).
         let mut max_applied: u64 = 0;
 
         for entry in &req.entries {

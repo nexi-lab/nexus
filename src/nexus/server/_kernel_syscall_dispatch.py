@@ -186,10 +186,15 @@ def _apply_result_adapter(
             wire.update(raw_result)
         return wire
     if method == "sys_stat":
-        meta = raw_result
-        if isinstance(meta, dict):
-            meta = unscope_internal_dict(meta, ["path"])
-        return {"metadata": meta}
+        # `Kernel::sys_stat` returns the StatResult dict directly
+        # (or `None` for missing files).  Match the kernel ABI shape
+        # so consumers can test `result is None` for not-found.  The
+        # legacy `{"metadata": ...}` wrap was for a Tier 2 caller
+        # that has been deleted; the `unscope_internal_dict` call is
+        # still applied to strip internal `path` keys from the dict.
+        if isinstance(raw_result, dict):
+            return unscope_internal_dict(raw_result, ["path"])
+        return raw_result
     if method in ("access", "exists"):
         return {"exists": bool(raw_result)}
     if method == "is_directory":

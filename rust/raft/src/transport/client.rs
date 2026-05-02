@@ -8,8 +8,7 @@ use super::proto::nexus::raft::{
     zone_transport_service_client::ZoneTransportServiceClient, AcquireLock, DeleteMetadata,
     DeleteZoneRequest, EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo,
     GetMetadata, JoinClusterRequest, JoinZoneRequest, ListMetadata, ProposeRequest, PutMetadata,
-    QueryRequest, RaftCommand, RaftQuery, ReleaseLock, ReplaceVoterByHostnameRequest,
-    ReplicateEntriesRequest, StepMessageRequest,
+    QueryRequest, RaftCommand, RaftQuery, ReleaseLock, ReplicateEntriesRequest, StepMessageRequest,
 };
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;
@@ -661,85 +660,6 @@ pub async fn call_join_cluster(
         ca_pem: response.ca_pem,
         node_cert_pem: response.node_cert_pem,
         node_key_pem: response.node_key_pem,
-    })
-}
-
-/// Outcome of a [`call_replace_voter_by_hostname`] RPC.
-#[derive(Debug, Clone)]
-pub struct ReplaceVoterResult {
-    /// Whether both ConfChanges (or just AddNode in the no-prior-voter
-    /// fast path) committed successfully.
-    pub success: bool,
-    /// Error message when `success == false`.
-    pub error: Option<String>,
-    /// Leader address when the receiver was a follower (caller follows
-    /// the redirect once).
-    pub leader_address: Option<String>,
-    /// The old voter ID that was removed.  `None` when no prior voter
-    /// matched the supplied hostname (fast path) or when the removal
-    /// step failed.
-    pub removed_old_id: Option<u64>,
-}
-
-/// Call `ZoneApiService::ReplaceVoterByHostname` on a single peer.
-///
-/// Caller iterates peers in their NEXUS_PEERS list and stops on the
-/// first non-error response; followers self-identify via `leader_address`
-/// in the response so the caller follows the redirect once.
-pub async fn call_replace_voter_by_hostname(
-    peer_addr: &str,
-    zone_id: &str,
-    hostname: &str,
-    new_node_id: u64,
-    self_address: &str,
-    timeout_secs: u64,
-) -> Result<ReplaceVoterResult> {
-    let ep = Endpoint::from_shared(peer_addr.to_string())
-        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
-        .connect_timeout(Duration::from_secs(timeout_secs))
-        .timeout(Duration::from_secs(timeout_secs));
-
-    let channel = ep.connect().await.map_err(|e| {
-        TransportError::Connection(format!("ReplaceVoter connect to {peer_addr} failed: {e}"))
-    })?;
-
-    let mut client = ZoneApiServiceClient::new(channel);
-    let request = ReplaceVoterByHostnameRequest {
-        zone_id: zone_id.to_string(),
-        hostname: hostname.to_string(),
-        new_node_id,
-        node_address: self_address.to_string(),
-    };
-
-    let response = client
-        .replace_voter_by_hostname(request)
-        .await
-        .map_err(|e| {
-            // Witness binaries (and any future minimal-server profile) don't
-            // include the ZoneApiService — gRPC reports `Code::Unimplemented`.
-            // Semantically that's "this peer can't participate in rotation",
-            // which for the caller's classification is equivalent to "no
-            // peer present at this address" rather than "live cluster
-            // exists".  Translate to `Connection` so the rotation classifier
-            // (`try_replace_voter_on_peers` in distributed_coordinator) skips
-            // it without flipping `any_reachable=true` and locking out the
-            // cold-start fallback.
-            if e.code() == tonic::Code::Unimplemented {
-                TransportError::Connection(format!(
-                    "ReplaceVoter unimplemented at {peer_addr} \
-                     (peer is likely a witness binary): {e}"
-                ))
-            } else {
-                TransportError::Rpc(format!("ReplaceVoter RPC failed: {e}"))
-            }
-        })?
-        .into_inner();
-
-    Ok(ReplaceVoterResult {
-        success: response.success,
-        error: response.error,
-        leader_address: response.leader_address,
-        removed_old_id: response.removed_old_id,
     })
 }
 

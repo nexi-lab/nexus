@@ -275,22 +275,6 @@ pub enum RaftMsg {
         change: ConfChange,
         tx: oneshot::Sender<Result<ConfState>>,
     },
-    /// Propose a multi-change ConfChange (V2 atomic membership swap).
-    ///
-    /// Used by the wipe-rejoin rotation path where a single committed
-    /// entry must atomically `RemoveNode(old_id)` + `AddNode(new_id)`
-    /// so the cluster never observes a transient `voters - {old_id}`
-    /// state — strict raft membership-swap contract.
-    ///
-    /// `register_under_id` is the node_id used as the
-    /// `pending_conf_changes` map key.  Pick one of the IDs the V2
-    /// changes touch (typically the AddNode target); the V2 apply
-    /// loop resolves the tx when that change lands.
-    ProposeConfChangeV2 {
-        change: raft::eraftpb::ConfChangeV2,
-        register_under_id: u64,
-        tx: oneshot::Sender<Result<ConfState>>,
-    },
     /// Campaign to become leader.
     Campaign { tx: oneshot::Sender<Result<()>> },
     /// Linearizable read request (ReadIndex).
@@ -555,78 +539,54 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             .map_err(|e| RaftError::Storage(e.to_string()))?;
 
         if !config.skip_bootstrap {
-            // Build the expected voter set from config.
+            // Bootstrap contract — `create_zone` only.  Under the
+            // opaque-ID contract (see `distributed_coordinator.rs`) the
+            // bootstrap path always creates a 1-voter cluster
+            // consisting of `config.id` only.  Other voters arrive via
+            // ConfChangeV2 AddNode driven by JoinZone — never seeded
+            // from a peer list at boot.  This eliminates the
+            // hostname-deterministic ConfState convergence pattern
+            // that broke wipe-rejoin: with random IDs no two nodes can
+            // independently agree on the same ConfState without a
+            // round-trip, so we don't try.
             //
-            // Raft contract: `config.peers` MUST exclude `config.id`. raft-rs
-            // counts duplicate voter IDs as distinct members, so a caller
-            // that accidentally includes self in `peers` would persist a
-            // ConfState like `[self, self, v2, v3]` and break quorum math.
-            //
-            // Dedupe here as defense-in-depth and log loudly when a
-            // duplicate slips through — fix the caller, don't rely on this.
-            let mut voters = vec![config.id];
-            voters.extend(config.peers.iter());
-            let before_dedup = voters.len();
-            voters.sort_unstable();
-            voters.dedup();
-            if voters.len() != before_dedup {
-                tracing::warn!(
-                    "RaftConfig contract violation: caller passed duplicate voter IDs \
-                     (config.id={}, config.peers={:?}). \
-                     `config.peers` MUST exclude self. De-duplicated to {:?}; \
-                     fix the caller to prevent ConfState drift.",
-                    config.id,
-                    config.peers,
-                    voters,
-                );
-            }
+            // `config.peers` retains its meaning as the transport
+            // address book (raft messaging needs to know how to reach
+            // peers learned from snapshot's ConfState); it is NOT a
+            // ConfState seed.
+            let voters = vec![config.id];
 
             let needs_bootstrap = if initial_state.conf_state.voters.is_empty() {
                 // Fresh cluster — no ConfState in storage yet.
                 true
-            } else if config.peers.is_empty() && initial_state.conf_state.voters != vec![config.id]
-            {
-                // Persisted multi-node ConfState but caller supplied no
-                // peers. Two legitimate scenarios collapse here:
-                //
-                // (a) Single-node restart with a STALE ConfState left over
-                //     from a previous cluster (e.g. Docker container rebuilt
-                //     with persistent storage but different peer roster).
-                // (b) Dynamic-federation recovery: a node restart triggers
-                //     auto_join_zone via the Raft server's step_message
-                //     handler, which passes `get_all_peers()` — empty when
-                //     all sibling zones are ALSO still recovering.
-                //
-                // Only (a) should reset to single-node; (b) must preserve
-                // the persisted voter set so the recovered node rejoins the
-                // real cluster. We distinguish them by whether the saved
-                // voter set still contains us: if it does, this node was
-                // legitimately part of that cluster and its persisted state
-                // is authoritative. If not, the ConfState is genuinely
-                // stale (fresh node reusing an abandoned data dir).
-                if initial_state.conf_state.voters.contains(&config.id) {
-                    tracing::info!(
-                        "Restart with persisted multi-node ConfState (voters={:?}); preserving cluster membership",
-                        initial_state.conf_state.voters,
-                    );
-                    false
-                } else {
-                    tracing::warn!(
-                        "Stale ConfState detected (voters={:?}, expected={:?}) — resetting for single-node",
-                        initial_state.conf_state.voters,
-                        voters,
-                    );
-                    true
-                }
+            } else if !initial_state.conf_state.voters.contains(&config.id) {
+                // Persisted ConfState doesn't contain our (random) id.
+                // Under the opaque-ID contract this only happens if the
+                // operator wiped `.node_id` while keeping the redb
+                // files — partial wipe is operator error.  Surface it
+                // loudly rather than silently rebooting as a 1-voter
+                // cluster (which would partition any live federation).
+                return Err(RaftError::Storage(format!(
+                    "persisted ConfState voters={:?} does not contain self id={} — \
+                     partial wipe detected. Either restore .node_id or wipe \
+                     <NEXUS_DATA_DIR> entirely and JoinZone fresh.",
+                    initial_state.conf_state.voters, config.id,
+                )));
             } else {
+                // Restart with intact ConfState containing self —
+                // authoritative; resume.
+                tracing::info!(
+                    "Restart with persisted ConfState (voters={:?}); preserving membership",
+                    initial_state.conf_state.voters,
+                );
                 false
             };
 
             if needs_bootstrap {
-                // Bootstrap: create initial voter set.
-                // Joining nodes (skip_bootstrap=true) must NOT bootstrap — they
-                // start uninitialized and receive the correct ConfState via
-                // snapshot from the leader (per raft contract).
+                // Bootstrap: 1-voter ConfState consisting of self only.
+                // Joining nodes (skip_bootstrap=true) skip this branch;
+                // they receive the authoritative ConfState via snapshot
+                // from the leader (per raft contract).
                 let cs = ConfState {
                     voters: voters.clone(),
                     ..Default::default()
@@ -1242,77 +1202,6 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         }
     }
 
-    /// Atomically swap one voter for another in a single committed
-    /// entry — strict raft membership-swap contract.
-    ///
-    /// Builds a `ConfChangeV2` with two changes
-    /// (`RemoveNode(old_id)` + `AddNode(new_id)`) so the cluster goes
-    /// directly from `voters` → `voters - {old_id} + {new_id}` without
-    /// observing the transient `voters - {old_id}` quorum state that
-    /// two sequential `propose_conf_change` calls would expose.
-    ///
-    /// `auto_leave = false` (the V2 default) — this is a single-step
-    /// reconfig rather than full joint consensus, but raft-rs commits
-    /// it as one log entry either way; the atomicity comes from "all
-    /// changes in one entry, applied together".
-    ///
-    /// Used by the wipe-rejoin rotation path
-    /// (`replace_voter_by_hostname` server handler).  When `old_id ==
-    /// 0` the Remove is skipped — fall back to a plain `AddNode`
-    /// (brand-new host that was never a voter).
-    pub async fn propose_replace_voter(
-        &self,
-        old_id: u64,
-        new_id: u64,
-        new_address: Vec<u8>,
-    ) -> Result<ConfState> {
-        if !self.is_leader() {
-            return Err(RaftError::NotLeader {
-                leader_hint: self.leader_id(),
-            });
-        }
-        if new_id == 0 {
-            return Err(RaftError::Raft(
-                "propose_replace_voter: new_id must not be 0".into(),
-            ));
-        }
-
-        use raft::eraftpb::{ConfChangeSingle, ConfChangeV2};
-
-        // Address travels in the V2 envelope's `context` field; the
-        // apply path decodes it as UTF-8 and feeds it into the peer
-        // map for both removed and added entries (Remove ignores it).
-        let mut v2 = ConfChangeV2 {
-            context: new_address.clone().into(),
-            ..Default::default()
-        };
-        if old_id != 0 && old_id != new_id {
-            let mut remove = ConfChangeSingle::default();
-            remove.set_change_type(ConfChangeType::RemoveNode);
-            remove.node_id = old_id;
-            v2.changes.push(remove);
-        }
-        let mut add = ConfChangeSingle::default();
-        add.set_change_type(ConfChangeType::AddNode);
-        add.node_id = new_id;
-        v2.changes.push(add);
-
-        let (tx, rx) = oneshot::channel();
-        self.msg_tx
-            .try_send(RaftMsg::ProposeConfChangeV2 {
-                change: v2,
-                register_under_id: new_id,
-                tx,
-            })
-            .map_err(channel_try_send_err)?;
-
-        match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(RaftError::ProposalDropped),
-            Err(_) => Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS)),
-        }
-    }
-
     /// Process a message from another node (sends through channel to driver).
     ///
     /// Uses `send().await` (blocking until space is available) instead of
@@ -1406,25 +1295,6 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         Ok(()) => {
                             // Store tx — will be resolved in apply_entries when committed
                             self.pending_conf_changes.insert(target_node_id, tx);
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Err(RaftError::Raft(e.to_string())));
-                        }
-                    }
-                }
-                RaftMsg::ProposeConfChangeV2 {
-                    change,
-                    register_under_id,
-                    tx,
-                } => {
-                    tracing::debug!(
-                        register_under_id,
-                        num_changes = change.changes.len(),
-                        "raft.driver.propose_conf_change_v2",
-                    );
-                    match self.raw_node.propose_conf_change(vec![], change) {
-                        Ok(()) => {
-                            self.pending_conf_changes.insert(register_under_id, tx);
                         }
                         Err(e) => {
                             let _ = tx.send(Err(RaftError::Raft(e.to_string())));
@@ -2079,7 +1949,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_three_node_consensus() {
-        // Step 1: create all nodes (handles + drivers)
+        // Step 1: create all nodes (handles + drivers).
+        //
+        // Under the opaque-ID contract a real 3-node cluster forms by:
+        //   - one node `create_zone` (1-voter)
+        //   - the other two `JoinZone` → leader proposes AddNode
+        // For this unit test we pre-seed the committed 3-voter
+        // ConfState directly into each node's storage and set
+        // `skip_bootstrap=true`, simulating "AddNode for everyone has
+        // already committed".  The behavior under test is what
+        // happens AFTER membership stabilizes — leader election,
+        // proposal replication, ReadIndex linearizability.
         let mut handles = Vec::new();
         let mut drivers = Vec::new();
         let mut _dirs = Vec::new();
@@ -2087,13 +1967,22 @@ mod tests {
         for id in 1..=3u64 {
             let dir = TempDir::new().unwrap();
             let storage = RaftStorage::open(dir.path()).unwrap();
+            // Pre-seed the committed ConfState — the path the AddNode
+            // ConfChange would have taken in production.
+            let cs = ConfState {
+                voters: vec![1, 2, 3],
+                ..Default::default()
+            };
+            storage.set_conf_state(&cs).unwrap();
+
             let store = RedbStore::open(dir.path().join("sm")).unwrap();
             let state_machine = FullStateMachine::new(&store).unwrap();
 
-            let peers: Vec<u64> = (1..=3).filter(|&p| p != id).collect();
             let config = RaftConfig {
                 id,
-                peers,
+                // Address book — no ConfState role anymore.
+                peers: vec![],
+                skip_bootstrap: true,
                 tick_interval: Duration::from_millis(10),
                 ..Default::default()
             };
@@ -2251,12 +2140,14 @@ mod tests {
         );
     }
 
-    /// Verify multi-node ConfState includes all voters.
-    ///
-    /// Per raft-rs contract: all initial cluster members must be in
-    /// ConfState.voters before RawNode::new().
+    /// Pin the opaque-ID contract: bootstrap (`skip_bootstrap=false`)
+    /// produces a 1-voter ConfState consisting of `config.id` only,
+    /// regardless of `config.peers`.  Multi-voter ConfState only forms
+    /// via ConfChangeV2 AddNode driven by JoinZone, never via boot-
+    /// time peer-list seeding.  See
+    /// `docs/rfcs/adr-raft-node-id-opaque.md`.
     #[test]
-    fn test_multi_node_conf_state_includes_all_voters() {
+    fn test_bootstrap_produces_single_voter_conf_state() {
         let dir = TempDir::new().unwrap();
 
         {
@@ -2266,6 +2157,9 @@ mod tests {
 
             let config = RaftConfig {
                 id: 1,
+                // Peers in this slot are an *address book* under the
+                // new contract, not ConfState seeds — bootstrap must
+                // still produce voters=[1].
                 peers: vec![2, 3],
                 ..Default::default()
             };
@@ -2276,12 +2170,10 @@ mod tests {
 
         let storage = RaftStorage::open(dir.path()).unwrap();
         let state = Storage::initial_state(&storage).unwrap();
-        let mut voters = state.conf_state.voters.clone();
-        voters.sort();
         assert_eq!(
-            voters,
-            vec![1, 2, 3],
-            "Multi-node ConfState must include self and all peers"
+            state.conf_state.voters,
+            vec![1],
+            "bootstrap must produce a 1-voter ConfState (self only)",
         );
     }
 

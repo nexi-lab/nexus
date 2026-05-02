@@ -40,12 +40,6 @@ const KEY_FIRST_INDEX: &[u8] = b"first_index";
 ///     └── first_index -> u64
 /// ```
 ///
-/// Node identity (incarnation marker for the wipe-rejoin contract)
-/// is **NOT** stored here — it lives at the node level in
-/// `<NEXUS_DATA_DIR>/.node_incarnation` so a single value covers
-/// every zone this node serves, and so `open_existing_zones_from_disk`
-/// (which scans `<zones_dir>/<zone>/raft/` subtrees) is not confused
-/// by a fake "incarnation zone".
 pub struct RaftStorage {
     /// Underlying redb store.
     store: RedbStore,
@@ -571,6 +565,81 @@ mod tests {
         assert_eq!(stored.get_metadata().term, 3);
         let state = storage.initial_state().unwrap();
         assert_eq!(state.conf_state.voters, vec![1, 2, 3, 4]);
+    }
+
+    // ---------------------------------------------------------------
+    // commit_to safety on empty follower storage (pre-flight for the
+    // hostname-deterministic-id contract).
+    //
+    // Pinned contract: after a wipe-rejoin where the follower keeps its
+    // OLD hostname-derived id, the leader's first heartbeat lands with
+    // `m.commit = min(pr.matched_for_old_id, leader.committed)`.  raft-rs
+    // 0.7's `Raft::handle_heartbeat` routes this directly into
+    // `RaftLog::commit_to(m.commit)` *without* clamping to the follower's
+    // `last_index`.  When the follower is freshly wiped (last_index=0)
+    // and `m.commit > 0`, the function `fatal!`s with
+    // "to_commit X out of range [last_index 0]" — the exact panic the
+    // original `ReplaceVoterByHostname` rotation existed to avoid.
+    //
+    // This test is the empirical contract pin: if a future raft-rs bump
+    // adds clamping, we can simplify the bootstrap path; until then the
+    // wipe-rejoin path must continue to either rotate ids OR ensure the
+    // leader's progress for the rejoining node has been reset to 0
+    // before the first heartbeat reaches the wiped follower.
+    // ---------------------------------------------------------------
+    #[test]
+    fn test_handle_heartbeat_on_empty_follower_with_stale_commit_panics() {
+        use raft::eraftpb::{ConfState, Message, MessageType};
+        use raft::{Config, RawNode};
+        use slog::{o, Logger};
+
+        let (storage, _dir) = create_test_storage();
+
+        // Bootstrap a 2-voter ConfState — the wiped follower's storage
+        // would carry this from `create_zone`'s NEXUS_PEERS-derived
+        // bootstrap.
+        let cs = ConfState {
+            voters: vec![1, 2],
+            ..Default::default()
+        };
+        storage.set_conf_state(&cs).unwrap();
+
+        let cfg = Config {
+            id: 1,
+            election_tick: 10,
+            heartbeat_tick: 3,
+            max_size_per_msg: 1024,
+            max_inflight_msgs: 256,
+            ..Default::default()
+        };
+
+        let logger = Logger::root(slog::Discard, o!());
+        let mut node = RawNode::new(&cfg, storage, &logger).unwrap();
+
+        // Stale heartbeat: leader at term 5 thinks follower has matched
+        // up to index 100, sends `m.commit = 100` to a fresh follower
+        // whose `last_index = 0`.
+        let mut msg = Message::default();
+        msg.set_msg_type(MessageType::MsgHeartbeat);
+        msg.from = 2;
+        msg.to = 1;
+        msg.term = 5;
+        msg.commit = 100;
+
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = node.step(msg);
+        }));
+
+        // Pin: if this assertion ever flips (raft-rs starts clamping),
+        // delete this test AND simplify the bootstrap path — the wipe-
+        // rejoin scenario becomes safe under hostname-deterministic ids
+        // without rotation.
+        assert!(
+            outcome.is_err(),
+            "raft-rs commit_to no longer panics on stale heartbeat against empty \
+             follower; bootstrap simplification can drop the heartbeat-pre-empt \
+             workaround.  Re-evaluate the static-bootstrap contract.",
+        );
     }
 
     #[test]

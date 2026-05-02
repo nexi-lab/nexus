@@ -273,10 +273,15 @@ impl ZoneManager {
 
     /// Create a `ZoneManager` with an explicit node ID.
     ///
-    /// Used by `RaftDistributedCoordinator::ensure_voter_membership` to
-    /// bind a freshly-minted incarnation-based ID for the post-wipe
-    /// rotation path.  Most callers should use [`Self::new`], which
-    /// computes the cold-start `hostname_to_node_id` automatically.
+    /// Used by `RaftDistributedCoordinator::init_from_env` to bind the
+    /// node ID returned by `read_or_mint_node_id` (opaque random u64
+    /// persisted at `<NEXUS_DATA_DIR>/.node_id`).  `peers` is the
+    /// hostname → endpoint **address book** parsed from `NEXUS_PEERS`;
+    /// it seeds the transport peer map for raft messaging but is **not**
+    /// the source of truth for ConfState — ConfState is mutated only
+    /// by ConfChange (AddNode / RemoveNode) driven by JoinZone.  The
+    /// witness binary path uses [`Self::new`] which derives the ID
+    /// from hostname (witnesses don't wipe-rejoin).
     pub fn with_node_id(
         hostname: &str,
         node_id: u64,

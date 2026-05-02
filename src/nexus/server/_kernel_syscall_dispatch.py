@@ -197,9 +197,12 @@ def _apply_result_adapter(
     if method == "sys_unlock":
         return {"released": bool(raw_result)}
     if method == "sys_lock":
-        # NexusFS.sys_lock returns the lock_id (or None on contention).
-        # Tier 2 callers expect a dict like ``lock_acquire``.
-        return {"acquired": raw_result is not None, "lock_id": raw_result}
+        # Tier 1 contract: bare `lock_id` string when granted, `None`
+        # on contention.  Matches the kernel ABI's `Option<String>`
+        # exactly; consumers test `result is None` for contention.
+        # The legacy Tier 2 dict wrapper was removed alongside
+        # `lock_acquire` in commit 231620c3c.
+        return raw_result
     if method == "lock_acquire":
         return {"acquired": raw_result is not None, "lock_id": raw_result}
     if method in ("sys_readdir", "list"):

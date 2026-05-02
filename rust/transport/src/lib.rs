@@ -31,6 +31,11 @@
 //! [`vfs::RpcTransport`] for the canonical out-bound name.
 
 pub mod federation;
+/// VFS gRPC server (in-bound). Requires `python` feature because the
+/// `Call` RPC and OIDC auth path delegate to Python callbacks via
+/// `PyBridge`. Pure Rust consumers (nexus-cluster) use the raft gRPC
+/// server directly.
+#[cfg(feature = "python")]
 pub mod grpc;
 pub mod ipc;
 pub mod peer_blob;

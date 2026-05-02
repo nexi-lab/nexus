@@ -26,7 +26,9 @@
 pub mod index;
 
 use parking_lot::{Mutex, RwLock};
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
 use pyo3::types::PyBytes;
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use std::collections::HashMap;
@@ -400,7 +402,7 @@ fn pread_blob(path: &Path, offset: u64, size: u32) -> io::Result<Vec<u8>> {
 ///
 /// Manages append-only volume files and a redb index mapping
 /// content hashes to (volume_id, offset, size).
-#[pyclass]
+#[cfg_attr(feature = "python", pyo3::pyclass)]
 pub struct BlobPackEngine {
     /// Root directory for volume storage
     volumes_dir: PathBuf,
@@ -452,15 +454,18 @@ pub struct BlobPackEngine {
     batch_write_fds: RwLock<HashMap<u32, fs::File>>,
 }
 
-fn db_err(e: impl std::fmt::Display) -> PyErr {
+#[cfg(feature = "python")]
+fn db_err(e: impl std::fmt::Display) -> pyo3::PyErr {
     pyo3::exceptions::PyIOError::new_err(format!("Volume index error: {}", e))
 }
 
-fn io_err(e: impl std::fmt::Display) -> PyErr {
+#[cfg(feature = "python")]
+fn io_err(e: impl std::fmt::Display) -> pyo3::PyErr {
     pyo3::exceptions::PyIOError::new_err(format!("Volume I/O error: {}", e))
 }
 
-#[pymethods]
+#[cfg(feature = "python")]
+#[pyo3::pymethods]
 impl BlobPackEngine {
     /// Create or open a volume engine at the given directory.
     ///

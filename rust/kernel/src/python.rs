@@ -13,7 +13,7 @@
 //! captures exactly two `::`-separated segments, so a 3-segment
 //! `crate::shm_pipe::Foo` silently drops out of the generated stubs.
 
-use crate::{agent_registry_py, generated_kernel_abi_pyo3, semaphore};
+use crate::{agent_registry_py, generated_kernel_abi_pyo3};
 use pyo3::prelude::*;
 
 /// Register kernel-owned `#[pyclass]` / `#[pyfunction]` exports into
@@ -27,8 +27,7 @@ use pyo3::prelude::*;
 /// would let callers attach to the raw mmap/fd surface and bypass the
 /// kernel — a layering violation.
 pub fn register(m: &Bound<PyModule>) -> PyResult<()> {
-    // Cross-process semaphore counter (lock-manager–backed).
-    m.add_class::<semaphore::VFSSemaphore>()?;
+    // VFSSemaphore pyclass deleted — Python access goes through syscalls.
     // PyKernel + supporting context / result types — the syscall
     // surface generated from `kernel.rs` by codegen_kernel_abi.py.
     m.add_class::<generated_kernel_abi_pyo3::PyOperationContext>()?;

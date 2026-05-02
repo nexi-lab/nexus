@@ -11,6 +11,7 @@
 //!
 //! Pure Rust — no PyO3 dependency.
 
+#[cfg(feature = "python")]
 pub mod hook_registry;
 
 use parking_lot::RwLock;

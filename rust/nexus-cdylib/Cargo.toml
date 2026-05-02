@@ -20,11 +20,12 @@ kernel = { workspace = true, features = [
     "mimalloc",
     "connectors",
     "py-hook-adapters",
+    "python",
 ] }
 lib = { workspace = true, features = ["python"] }
-# `raft` already enters the workspace dep map with
-# `features = ["python", "grpc"]` — nothing to add.
-raft = { workspace = true }
+# After workspace removed `"python"` from raft's default workspace
+# features, cdylib must enable it explicitly for PyO3 bindings.
+raft = { workspace = true, features = ["python"] }
 # Services with the `python` feature enabled so its PyO3 entry points
 # (currently `install_audit_hook`) compose into the single
 # `nexus_runtime.so` cdylib.

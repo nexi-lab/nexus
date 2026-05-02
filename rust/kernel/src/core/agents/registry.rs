@@ -16,6 +16,7 @@
 
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock};
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -310,6 +311,7 @@ pub struct AgentRegistry {
     /// coroutine on the asyncio loop, and resets state on failure. Stored
     /// here (not on `PyAgentRegistry`) so every wrapper handed out through
     /// `kernel.agent_registry` shares the same registration.
+    #[cfg(feature = "python")]
     provisioner: RwLock<Option<Py<PyAny>>>,
     /// Termination observers — fired on `Terminated` transitions and on
     /// `reap`.  Keyed by `id` so callers can deregister; the order in
@@ -333,6 +335,7 @@ impl AgentRegistry {
         Self {
             agents: DashMap::new(),
             notify: DashMap::new(),
+            #[cfg(feature = "python")]
             provisioner: RwLock::new(None),
             on_terminate: RwLock::new(Vec::new()),
         }
@@ -340,17 +343,20 @@ impl AgentRegistry {
 
     /// Late-bind a Python-side provisioner. Stored as a fresh `Py<PyAny>`
     /// reference; pass `None` (`take_provisioner`) to drop it.
+    #[cfg(feature = "python")]
     pub fn set_provisioner(&self, callback: Py<PyAny>) {
         *self.provisioner.write() = Some(callback);
     }
 
     /// Drop the stored provisioner. Returns the prior callback, if any.
+    #[cfg(feature = "python")]
     pub fn take_provisioner(&self) -> Option<Py<PyAny>> {
         self.provisioner.write().take()
     }
 
     /// Clone the stored provisioner under the GIL. Returns `None` if no
     /// provisioner has been bound.
+    #[cfg(feature = "python")]
     pub fn provisioner(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.provisioner.read().as_ref().map(|p| p.clone_ref(py))
     }

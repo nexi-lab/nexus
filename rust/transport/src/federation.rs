@@ -22,8 +22,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+#[cfg(feature = "python")]
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
+#[cfg(feature = "python")]
 use pyo3::types::{PyBytes, PyDict};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
@@ -265,11 +268,13 @@ fn build_ca_bundle_pem(
 /// plus the TLS identity. Discover / join RPCs block on the runtime so
 /// Python callers can use plain sync ``asyncio.to_thread`` if they
 /// need to await alongside other async work.
+#[cfg(feature = "python")]
 #[pyclass]
 pub struct PyFederationClient {
     inner: Arc<FederationClient>,
 }
 
+#[cfg(feature = "python")]
 #[pymethods]
 impl PyFederationClient {
     /// Construct a new federation client.
@@ -398,6 +403,7 @@ impl PyFederationClient {
 /// responses are plain JSON (strings, numbers, bools, nested dicts /
 /// lists), so the mapping stays narrow — no ``__type__`` escape-hatch
 /// is needed.
+#[cfg(feature = "python")]
 fn json_value_to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
     use pyo3::types::{PyBool, PyFloat, PyList, PyString};
     use pyo3::IntoPyObjectExt;
@@ -439,6 +445,7 @@ fn json_value_to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bou
 // Silence unused-import warnings when features change. `PyInt` /
 // `PyBytes` are kept reachable so downstream growth (e.g. surfacing
 // raw bytes payloads from Call responses) is friction-free.
+#[cfg(feature = "python")]
 #[allow(dead_code)]
 fn _keep_imports_live(py: Python<'_>) {
     let _ = PyBytes::new(py, b"");

@@ -2632,10 +2632,33 @@ class TestDayAtTheOffice:
         # Step 1 (causal: project subdir from above): grpc1 creates
         # the stream.  sys_setattr propagates as a normal raft commit
         # to grpc2's state machine.
+        #
+        # `io_profile="wal"` selects the raft-replicated `WalStreamCore`
+        # backend (rust/kernel/src/core/stream/wal.rs).  Each push is a
+        # `Command::AppendStreamEntry` raft proposal; every voter's
+        # state machine apply lands the entry in its local
+        # stream-entries redb table, so reads on any voter are local
+        # (no RPC) and the stream survives any single-voter crash.
+        # This matches the test's documented intent — "inter-node
+        # coordination via DT_STREAM ... one node produces, the other
+        # consumes, over the static-bootstrap raft cluster".
+        #
+        # The default `io_profile` (omitted) selects `MemoryStreamBackend`
+        # which is per-process local memory — appropriate for in-process
+        # producer/consumer (LLM token pump) but cannot replicate to a
+        # peer node.  `io_profile="remote"` (RemoteStreamBackend) is the
+        # owner+RPC-proxy model, used when one node owns the buffer and
+        # peers proxy in; symmetric coordination across raft voters
+        # belongs on the replicated `wal` path.
         sa = _grpc_call(
             grpc1,
             "sys_setattr",
-            {"path": stream_path, "entry_type": DT_STREAM, "capacity": 65_536},
+            {
+                "path": stream_path,
+                "entry_type": DT_STREAM,
+                "capacity": 65_536,
+                "io_profile": "wal",
+            },
             api_key=api_key,
             timeout=15,
         )

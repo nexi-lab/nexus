@@ -104,7 +104,7 @@ pub use generated_kernel_abi_pyo3 as generated_pyo3;
 pub mod agent_registry_py;
 
 // kernel↔raft Cargo edge direction: `raft → kernel`. Raft state-machine
-// impls (zone_meta_store, replication_scanner) and the
+// impls (zone_meta_store) and the
 // `RaftDistributedCoordinator` trait impl live in the raft crate.
 // Kernel reaches them through the
 // `kernel::hal::distributed_coordinator::DistributedCoordinator`

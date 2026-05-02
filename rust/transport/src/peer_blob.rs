@@ -49,7 +49,7 @@ pub struct PeerBlobClient {
     /// (same cert material that `ZoneManager` uses for raft RPCs — one
     /// trust anchor per cluster). When absent, plaintext HTTP/2 — the
     /// docker federation test intentionally sets `NEXUS_RAFT_TLS=false`.
-    tls: parking_lot::RwLock<Option<transport_primitives::TlsConfig>>,
+    tls: parking_lot::RwLock<Option<lib::transport_primitives::TlsConfig>>,
 }
 
 #[allow(dead_code)]
@@ -73,7 +73,7 @@ impl PeerBlobClient {
     /// reconnects over TLS. Called from `Kernel::init_federation_from_env`
     /// once the leader / joiner has resolved the cluster CA + node
     /// cert.
-    pub fn install_tls_config(&self, tls: transport_primitives::TlsConfig) {
+    pub fn install_tls_config(&self, tls: lib::transport_primitives::TlsConfig) {
         *self.tls.write() = Some(tls);
         self.channels.clear();
     }
@@ -101,11 +101,11 @@ impl PeerBlobClient {
         } else {
             format!("{}://{}", scheme, address)
         };
-        let client_cfg = transport_primitives::ClientConfig {
+        let client_cfg = lib::transport_primitives::ClientConfig {
             tls,
             ..Default::default()
         };
-        let channel = transport_primitives::create_channel(&endpoint, &client_cfg)
+        let channel = lib::transport_primitives::create_channel(&endpoint, &client_cfg)
             .await
             .map_err(|e| format!("peer channel {}: {}", address, e))?;
         self.channels
@@ -215,7 +215,7 @@ impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
     fn install_tls(&self, ca_pem: &[u8], cert_pem: Option<&[u8]>, key_pem: Option<&[u8]>) {
         // mTLS requires *both* a client cert and key — if either is
         // missing the trait caller is in CA-only / server-auth mode,
-        // which the underlying `transport_primitives::TlsConfig`
+        // which the underlying `lib::transport_primitives::TlsConfig`
         // does not yet model (its `cert_pem`/`key_pem` are `Vec<u8>`,
         // not `Option<Vec<u8>>`). Drop the install in that case so the
         // peer client stays plaintext rather than constructing an
@@ -229,7 +229,7 @@ impl kernel::hal::peer::PeerBlobClient for PeerBlobClient {
         };
         PeerBlobClient::install_tls_config(
             self,
-            transport_primitives::TlsConfig {
+            lib::transport_primitives::TlsConfig {
                 ca_pem: ca_pem.to_vec(),
                 cert_pem: cert.to_vec(),
                 key_pem: key.to_vec(),

@@ -70,10 +70,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "
 
 # gRPC (general-purpose, reusable for Raft and webhooks).
 # tls feature enables rustls for mTLS (mutual TLS) transport encryption.
-# Raft consumes `transport-primitives` for shared TLS / pool / addressing
-# types, keeping `raft -> transport-primitives` cycle-free with respect
-# to the kernel-bound `transport` crate.
-transport-primitives = { workspace = true, optional = true }
+# `lib::transport_primitives` (gated by lib's `transport` feature)
+# provides shared TLS / pool / addressing / TOFU / PeerBlobClient.
+lib = { workspace = true, optional = true }
 tonic = { workspace = true, optional = true }
 prost = { workspace = true, optional = true }
 
@@ -113,10 +112,9 @@ async = ["tokio"]
 
 # Enable Python bindings (PyO3 FFI) — production path. Raft is an rlib;
 # mimalloc lives in the final cdylib (nexus_runtime).
-# `transport-primitives/python` brings PyTofuTrustStore + PyTrustedZone
-# pyclasses (TOFU trust store lives in the shared transport-primitives
-# crate).
-python = ["pyo3", "transport-primitives/python"]
+# `lib/python` brings PyTofuTrustStore + PyTrustedZone pyclasses
+# alongside the algorithm pyclasses.
+python = ["pyo3", "lib/python", "lib/transport"]
 
 # Enable Raft consensus (tikv/raft-rs) — EXPERIMENTAL, default OFF.
 # Not used in production. Preserved for future multi-node support.
@@ -126,7 +124,7 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
 # Requires `consensus` feature. Not used in production.
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
-grpc = ["tonic", "prost", "transport-primitives", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2", "rcgen", "pem", "base64", "gethostname", "rand"]
+grpc = ["tonic", "prost", "lib/transport", "lib", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2", "rcgen", "pem", "base64", "gethostname", "rand"]
 
 # Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]

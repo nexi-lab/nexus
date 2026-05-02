@@ -1,6 +1,6 @@
 //! Peer addressing — hostname parsing and node ID derivation.
 
-use crate::error::{Result, TransportError};
+use super::error::{Result, TransportError};
 
 /// Derive a deterministic node ID from a hostname.
 ///

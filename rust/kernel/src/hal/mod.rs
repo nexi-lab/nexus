@@ -20,10 +20,11 @@
 //!   Constructs `Arc<dyn ObjectStore>` for backend types
 //!   (anthropic / openai / s3 / gcs / …) without the kernel naming
 //!   `backends::*`. Concrete impl in `backends::python::factory`.
-//! * [`peer`] — re-export of `transport_primitives::PeerBlobClient`.
-//!   The trait declaration lives in the `shared/transport-primitives`
-//!   crate so raft (server-side fetcher) and rpc (client-side fetcher)
-//!   reach it without depending on each other.
+//! * [`peer`] — re-export of `lib::transport_primitives::PeerBlobClient`.
+//!   The trait declaration lives in the tier-neutral `lib` crate's
+//!   `transport_primitives` module so raft (server-side fetcher) and
+//!   transport (client-side fetcher) reach it without depending on
+//!   each other.
 //!
 //! ObjectStore extension hooks like [`crate::llm_streaming::LlmStreamingBackend`]
 //! live at the kernel crate root, not under `hal/` — they extend a
@@ -51,11 +52,11 @@
 pub mod distributed_coordinator;
 pub mod object_store_provider;
 
-// `PeerBlobClient` lives in `shared/transport-primitives` — the
-// transport-layer abstraction shared between the raft server-side
-// fetcher and the rpc client-side fetcher. Re-exported here so
-// `kernel::hal::peer::PeerBlobClient` callers keep their canonical
-// import path.
+// `PeerBlobClient` lives in `lib::transport_primitives` — the
+// tier-neutral transport-layer abstraction shared between the raft
+// server-side fetcher and the transport-tier client-side fetcher.
+// Re-exported here so `kernel::hal::peer::PeerBlobClient` callers
+// keep their canonical import path.
 pub mod peer {
-    pub use transport_primitives::{NoopPeerBlobClient, PeerBlobClient, PeerBlobResult};
+    pub use lib::transport_primitives::{NoopPeerBlobClient, PeerBlobClient, PeerBlobResult};
 }

@@ -1492,7 +1492,6 @@ dependencies = [
  "tonic",
  "tonic-build",
  "tracing",
- "transport-primitives",
  "uuid",
 ]
 
@@ -1513,6 +1512,7 @@ name = "lib"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "base64",
  "blake3",
  "bloomfilter",
  "crc32fast",
@@ -1524,18 +1524,26 @@ dependencies = [
  "memchr",
  "memmap2",
  "parking_lot",
+ "pem",
  "proptest",
  "pyo3",
  "rayon",
+ "rcgen",
  "regex",
  "regex-syntax",
  "roaring",
  "serde",
  "serde_json",
+ "sha2",
  "simdutf8",
  "simsimd",
  "string-interner",
  "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tonic",
+ "tracing",
 ]
 
 [[package]]
@@ -1718,7 +1726,6 @@ dependencies = [
  "lib",
  "pyo3",
  "raft 0.1.0",
- "rpc",
  "services",
  "transport",
 ]
@@ -2321,6 +2328,7 @@ dependencies = [
  "dashmap",
  "gethostname",
  "kernel",
+ "lib",
  "mimalloc",
  "parking_lot",
  "pem",
@@ -2345,7 +2353,6 @@ dependencies = [
  "tonic-build",
  "tracing",
  "tracing-subscriber",
- "transport-primitives",
 ]
 
 [[package]]
@@ -2587,32 +2594,6 @@ checksum = "19e8d2cfa184d94d0726d650a9f4a1be7f9b76ac9fdb954219878dc00c1c1e7b"
 dependencies = [
  "bytemuck",
  "byteorder",
-]
-
-[[package]]
-name = "rpc"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "contracts",
- "dashmap",
- "futures",
- "kernel",
- "parking_lot",
- "prost",
- "pyo3",
- "raft 0.1.0",
- "rcgen",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tonic",
- "tracing",
- "transport-primitives",
- "uuid",
 ]
 
 [[package]]
@@ -3372,9 +3353,11 @@ dependencies = [
  "dashmap",
  "futures",
  "kernel",
+ "lib",
  "parking_lot",
  "prost",
  "pyo3",
+ "raft 0.1.0",
  "rcgen",
  "serde",
  "serde_json",
@@ -3384,29 +3367,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tracing",
- "transport-primitives",
  "uuid",
-]
-
-[[package]]
-name = "transport-primitives"
-version = "0.1.0"
-dependencies = [
- "base64",
- "dashmap",
- "parking_lot",
- "pem",
- "pyo3",
- "rcgen",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tonic",
- "tracing",
 ]
 
 [[package]]

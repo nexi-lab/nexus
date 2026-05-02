@@ -112,6 +112,24 @@ class TestResolveTxtaiRuntimeConfig:
         assert vectors is not None
         assert vectors["dimensions"] == 2000
 
+    def test_dimensions_clamped_to_3_small_native_max(self) -> None:
+        """The pgvector cap is not the only limit: 3-small is 1536d native."""
+        with patch.dict(
+            "os.environ",
+            {
+                "NEXUS_TXTAI_USE_API_EMBEDDINGS": "true",
+                "NEXUS_TXTAI_MODEL": "openai/text-embedding-3-small",
+                "OPENAI_API_KEY": "sk-test",
+                "NEXUS_TXTAI_DIMENSIONS": "2000",
+            },
+            clear=True,
+        ):
+            model, vectors = _resolve_txtai_runtime_config()
+
+        assert model == "openai/text-embedding-3-small"
+        assert vectors is not None
+        assert vectors["dimensions"] == 1536
+
     def test_invalid_dimensions_falls_back_to_model_default(self) -> None:
         """A non-int NEXUS_TXTAI_DIMENSIONS is logged and ignored — model
         default still applies."""

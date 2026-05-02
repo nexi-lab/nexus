@@ -29,6 +29,10 @@ def _env_truthy(name: str) -> bool:
 # without Matryoshka truncation the daemon crashes on first index with
 # "column cannot have more than 2000 dimensions for hnsw index".
 _PGVECTOR_HNSW_DIM_CAP = 2000
+_OPENAI_EMBEDDING_NATIVE_DIMENSIONS = {
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+}
 
 
 def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str | int] | None]:
@@ -73,6 +77,8 @@ def _resolve_embedding_dimensions(model: str) -> int | None:
     text-embedding-3 family and no override set). Clamps user-supplied values
     to the pgvector hnsw cap so a typo can't take the daemon down.
     """
+    native_cap = _native_embedding_dimensions(model)
+    effective_cap = min(_PGVECTOR_HNSW_DIM_CAP, native_cap or _PGVECTOR_HNSW_DIM_CAP)
     raw = os.environ.get("NEXUS_TXTAI_DIMENSIONS", "").strip()
     if raw:
         try:
@@ -82,14 +88,20 @@ def _resolve_embedding_dimensions(model: str) -> int | None:
         else:
             if requested <= 0:
                 logger.warning("NEXUS_TXTAI_DIMENSIONS=%d must be positive — ignoring", requested)
-            elif requested > _PGVECTOR_HNSW_DIM_CAP:
+            elif requested > effective_cap:
+                cap_reason = (
+                    f"{model} native dimension cap"
+                    if native_cap and native_cap < _PGVECTOR_HNSW_DIM_CAP
+                    else "pgvector hnsw cap"
+                )
                 logger.warning(
-                    "NEXUS_TXTAI_DIMENSIONS=%d exceeds pgvector hnsw cap of %d — "
+                    "NEXUS_TXTAI_DIMENSIONS=%d exceeds %s of %d — "
                     "clamping. Use halfvec or ivfflat for higher dims.",
                     requested,
-                    _PGVECTOR_HNSW_DIM_CAP,
+                    cap_reason,
+                    effective_cap,
                 )
-                return _PGVECTOR_HNSW_DIM_CAP
+                return effective_cap
             else:
                 return requested
 
@@ -98,6 +110,13 @@ def _resolve_embedding_dimensions(model: str) -> int | None:
     # and matches the trained Matryoshka level.
     if "text-embedding-3-large" in model:
         return 1536
+    return None
+
+
+def _native_embedding_dimensions(model: str) -> int | None:
+    for model_fragment, dimensions in _OPENAI_EMBEDDING_NATIVE_DIMENSIONS.items():
+        if model_fragment in model:
+            return dimensions
     return None
 
 

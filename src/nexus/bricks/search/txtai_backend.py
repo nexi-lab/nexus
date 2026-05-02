@@ -869,27 +869,22 @@ class TxtaiBackend:
             raw: list[dict[str, Any]] = await self._run_native(self._embeddings.search, sql)
 
         # Issue #3900: in hybrid mode, txtai concatenates BM25 and dense
-        # rankings without dedup, so the same id can appear twice. Collapse
-        # by id, keeping the highest score. The over-fetch above ensures we
-        # still have enough unique rows to fill the caller's limit.
-        deduped: dict[str, dict[str, Any]] = {}
-        for r in raw:
-            key = str(r.get("id", "")) or f"{r.get('path', '')}:{r.get('text', '')}"
-            existing = deduped.get(key)
-            if existing is None or float(r.get("score", 0.0)) > float(existing.get("score", 0.0)):
-                deduped[key] = r
+        # rankings without dedup, so the same row can appear twice. When page
+        # aggregation is enabled, keep distinct same-id chunks so aggregation
+        # can still emit ``chunks_per_page`` rows from the winning page.
+        deduped_rows = _dedupe_search_rows(raw, page_aggregation=self._page_aggregation)
 
         # Issue #3980: max-pool chunks to page granularity, re-rank pages, emit
         # at most ``chunks_per_page`` chunks per surviving page. Runs *before*
         # BaseSearchResult conversion so we can keep the cheap dict shape.
         if self._page_aggregation:
             ranked_rows = _aggregate_chunks_to_pages(
-                list(deduped.values()),
+                deduped_rows,
                 chunks_per_page=self._chunks_per_page,
             )
         else:
             ranked_rows = sorted(
-                deduped.values(),
+                deduped_rows,
                 key=lambda r: float(r.get("score", 0.0)),
                 reverse=True,
             )
@@ -984,25 +979,16 @@ class TxtaiBackend:
         # limit so over-fetched candidates are trimmed to the caller's ask.
         all_results: list[list[BaseSearchResult]] = []
         for raw, q_limit in zip(raw_results, per_query_limits, strict=True):
-            deduped: dict[str, dict[str, Any]] = {}
-            for r in raw:
-                if not isinstance(r, dict):
-                    continue
-                key = str(r.get("id", "")) or f"{r.get('path', '')}:{r.get('text', '')}"
-                existing = deduped.get(key)
-                if existing is None or float(r.get("score", 0.0)) > float(
-                    existing.get("score", 0.0)
-                ):
-                    deduped[key] = r
+            deduped_rows = _dedupe_search_rows(raw, page_aggregation=self._page_aggregation)
             # Issue #3980: page-level aggregation for batch path too.
             if self._page_aggregation:
                 ranked_rows = _aggregate_chunks_to_pages(
-                    list(deduped.values()),
+                    deduped_rows,
                     chunks_per_page=self._chunks_per_page,
                 )
             else:
                 ranked_rows = sorted(
-                    deduped.values(),
+                    deduped_rows,
                     key=lambda r: float(r.get("score", 0.0)),
                     reverse=True,
                 )
@@ -1205,6 +1191,45 @@ def _build_search_sql(
     where = " AND ".join(clauses)
     safe_limit = max(1, min(int(limit), 1000))
     return f"SELECT id, text, score, path, zone_id FROM txtai WHERE {where} LIMIT {safe_limit}"
+
+
+def _dedupe_search_rows(
+    rows: list[dict[str, Any]],
+    *,
+    page_aggregation: bool,
+) -> list[dict[str, Any]]:
+    """Collapse duplicate scorer rows while preserving distinct page chunks."""
+    deduped: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        key = _dedupe_key(r, page_aggregation=page_aggregation)
+        existing = deduped.get(key)
+        if existing is None or float(r.get("score", 0.0)) > float(existing.get("score", 0.0)):
+            deduped[key] = r
+    return list(deduped.values())
+
+
+def _dedupe_key(row: dict[str, Any], *, page_aggregation: bool) -> str:
+    def clean(value: Any) -> str:
+        return "" if value is None else str(value)
+
+    if page_aggregation:
+        # Same txtai document ids can represent multiple page chunks. Include
+        # text/path so hybrid duplicate rows collapse without dropping distinct
+        # same-page chunks before page aggregation runs.
+        parts = (
+            clean(row.get("id")),
+            clean(row.get("path")),
+            clean(row.get("text")),
+        )
+        if any(parts):
+            return "\x00".join(parts)
+
+    id_key = clean(row.get("id"))
+    if id_key:
+        return id_key
+    return f"{clean(row.get('path'))}:{clean(row.get('text'))}"
 
 
 def _aggregate_chunks_to_pages(

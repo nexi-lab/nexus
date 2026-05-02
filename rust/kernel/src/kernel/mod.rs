@@ -590,10 +590,10 @@ pub struct Kernel {
     // FileWatchRegistry — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatchRegistry>,
     // Agent table — Rust SSOT for agent lifecycle state. Source lives in
-    // the services rlib (rust/services/src/agent_table.rs); the kernel
+    // the services rlib (rust/services/src/agent_registry.rs); the kernel
     // owns an Arc handle so AgentStatusResolver and other kernel-internal
     // consumers can share read access without depending on field layout.
-    pub agent_table: Arc<crate::core::agents::table::AgentTable>,
+    pub agent_registry: Arc<crate::core::agents::registry::AgentRegistry>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `VFSRouter::entries` as
@@ -744,7 +744,7 @@ impl Kernel {
             observers: Mutex::new(KernelObserverRegistry::new()),
             zone_revisions: DashMap::new(),
             file_watches: Arc::new(FileWatchRegistry::new()),
-            agent_table: Arc::new(crate::core::agents::table::AgentTable::new()),
+            agent_registry: Arc::new(crate::core::agents::registry::AgentRegistry::new()),
             service_registry: Arc::new(crate::service_registry::ServiceRegistry::new()),
             pipe_manager: crate::pipe_manager::PipeManager::new(),
             stream_manager: Arc::new(crate::stream_manager::StreamManager::new()),

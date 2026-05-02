@@ -3,7 +3,7 @@
 //! `Session` is the row carried by `ManagedAgentService` for every
 //! active managed-agent invocation: it carries the surface sudowork
 //! addresses (session_id, agent name, workspace_path) and the
-//! AgentRegistry pid so cancel / get_session can reach AgentTable
+//! AgentRegistry pid so cancel / get_session can reach AgentRegistry
 //! without sudowork having to track pids.
 //!
 //! sudowork sees `session_id`; nexus tracks both. The map lives on the

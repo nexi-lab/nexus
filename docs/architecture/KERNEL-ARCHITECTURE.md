@@ -101,15 +101,16 @@ old → replace → rehook new.
 
 **AgentRegistry** (`nexus.services.agents.agent_registry`): service-tier
 agent lifecycle manager. Mounts under `nx.service("agent_registry")`.
-State (pid → AgentState + condvar wakeup) lives in the Rust `services::agent_table::AgentTable`
-SSOT (`rust/services/src/agent_table.rs`); the Python service is a thin
-shim that adds OS behavior — PID allocation, parent/child tree, signal
-semantics, transition validation, IPC provisioning — and dual-writes
-every state mutation into the Rust table so the kernel-side
-`AgentStatusResolver` (procfs view at `/{zone}/proc/{pid}/status`) and
-any blocking `kernel.agent_wait` callers stay synchronized. Profiles
-without agent workloads (REMOTE) skip construction; the kernel boots
-the same way either path.
+State (pid → AgentState + condvar wakeup) lives in the Rust
+`kernel::core::agents::registry::AgentRegistry` SSOT
+(`rust/kernel/src/core/agents/registry.rs`); the Python service is a
+thin shim that adds OS behavior — PID allocation, parent/child tree,
+signal semantics, transition validation, IPC provisioning — and
+dual-writes every state mutation into the Rust registry so the
+kernel-side `AgentStatusResolver` (procfs view at
+`/{zone}/proc/{pid}/status`) and any blocking `kernel.agent_wait`
+callers stay synchronized. Profiles without agent workloads (REMOTE)
+skip construction; the kernel boots the same way either path.
 
 **Kernel DI patterns** (two mechanisms; the kernel reaches services only via
 `ServiceRegistry` lookups or factory-injected closures):
@@ -810,7 +811,7 @@ without intermediate trait dispatch.
 
 The split between `kernel/` (syscalls) and `core/` (primitives) follows
 the data type: §4 primitives — concrete data structures like
-`DCache`, `VFSRouter`, `AgentTable`, `LockManager` — live in `core/`;
+`DCache`, `VFSRouter`, `AgentRegistry`, `LockManager` — live in `core/`;
 the syscall families that operate on them live in `kernel/`.
 
 #### Control-Plane HAL DI surface
@@ -1065,7 +1066,7 @@ cases.
 
 | Service name | Source | Methods |
 |--------------|--------|---------|
-| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `services::agent_table::AgentTable` directly (no PyO3). |
+| `managed_agent` | `rust/kernel/src/managed_agent/` | `start_session_v1`, `cancel_v1`, `get_session_v1` — owns the chat-with-me + workspace-boundary hooks plus the session lifecycle for `AgentKind::Managed`. State writes go to `kernel::core::agents::registry::AgentRegistry` directly (no PyO3). |
 | `acp` | `rust/kernel/src/acp/` | `acp_call`, `acp_kill`, `acp_list_agents`, `acp_list_processes`, `acp_set_system_prompt`, `acp_get_system_prompt`, `acp_set_enabled_skills`, `acp_get_enabled_skills`, `acp_history` — stateless coding-agent CLI caller via ACP JSON-RPC. `call_agent` orchestrates `AcpSubprocess` (tokio Command + DT_PIPE) + `AcpConnection` + `AcpSubservice` lifecycle. AgentRegistry stays Python; reached through the `PyAgentRegistry` trait bridge wired by `nx_acp_set_agent_registry`. |
 
 In-process Python callers reach any Rust service through the generic

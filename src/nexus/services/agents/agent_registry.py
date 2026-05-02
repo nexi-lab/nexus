@@ -1,6 +1,6 @@
 """AgentRegistry — service-tier agent lifecycle manager.
 
-Thin shim over the Rust ``services::agent_table::AgentTable`` SSOT. State
+Thin shim over the Rust ``kernel::core::agents::registry::AgentRegistry`` SSOT. State
 (pid → AgentState + condvar wakeup) lives in Rust; this class adds the
 Python-side OS behavior layer:
 
@@ -22,7 +22,7 @@ that goes through this class, so it stays consistent with the Rust
 state SSOT it dual-writes.
 
   services/agents/agent_registry.py = kernel/fork.c + exit.c + signal.c
-  rust/services/src/agent_table.rs   = task_struct array
+  rust/kernel/src/core/agents/registry.rs   = task_struct array
   rust/kernel/src/agent_status_resolver.rs = fs/proc/
 
 Concurrency model:
@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentRegistry:
-    """Service-tier agent lifecycle manager backed by the Rust AgentTable SSOT."""
+    """Service-tier agent lifecycle manager backed by the Rust AgentRegistry SSOT."""
 
     def __init__(self, kernel: Any | None = None) -> None:
         self._processes: dict[str, AgentDescriptor] = {}
@@ -112,7 +112,7 @@ class AgentRegistry:
     # ------------------------------------------------------------------
 
     def _kernel_register(self, desc: AgentDescriptor) -> None:
-        """Mirror a Python descriptor into the Rust AgentTable.
+        """Mirror a Python descriptor into the Rust AgentRegistry.
 
         Rust accepts both upper- and lowercase enum strings; we forward the
         StrEnum value as-is (lowercase).
@@ -132,7 +132,7 @@ class AgentRegistry:
                 desc.external_info.connection_id if desc.external_info else None,
             )
         except Exception as exc:  # SSOT lag is recoverable; never block Python writes
-            logger.warning("agent_table dual-write (register) failed for %s: %s", desc.pid, exc)
+            logger.warning("agent_registry dual-write (register) failed for %s: %s", desc.pid, exc)
 
     def _kernel_update_state(self, pid: str, state: AgentState) -> None:
         if self._kernel is None:
@@ -140,7 +140,7 @@ class AgentRegistry:
         try:
             self._kernel.agent_update_state(pid, state.value)
         except Exception as exc:
-            logger.warning("agent_table dual-write (update_state) failed for %s: %s", pid, exc)
+            logger.warning("agent_registry dual-write (update_state) failed for %s: %s", pid, exc)
 
     def _kernel_unregister(self, pid: str) -> None:
         if self._kernel is None:
@@ -148,7 +148,7 @@ class AgentRegistry:
         try:
             self._kernel.agent_unregister(pid)
         except Exception as exc:
-            logger.warning("agent_table dual-write (unregister) failed for %s: %s", pid, exc)
+            logger.warning("agent_registry dual-write (unregister) failed for %s: %s", pid, exc)
 
     def _kernel_heartbeat(self, pid: str, when: datetime) -> None:
         if self._kernel is None:
@@ -156,7 +156,7 @@ class AgentRegistry:
         try:
             self._kernel.agent_heartbeat(pid, int(when.timestamp() * 1000))
         except Exception as exc:
-            logger.warning("agent_table dual-write (heartbeat) failed for %s: %s", pid, exc)
+            logger.warning("agent_registry dual-write (heartbeat) failed for %s: %s", pid, exc)
 
     # ------------------------------------------------------------------
     # PID allocation
@@ -304,7 +304,7 @@ class AgentRegistry:
                 return desc
             case AgentSignal.SIGUSR1:
                 # Label-only update: no state change, no Rust write needed
-                # (AgentTable does not store labels — Python-side PCB only).
+                # (AgentRegistry does not store labels — Python-side PCB only).
                 # Wake fallback asyncio waiters so callers observing label
                 # changes via the kernel-less wait() path see the update.
                 if payload:

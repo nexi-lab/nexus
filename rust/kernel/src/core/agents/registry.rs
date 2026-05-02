@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-//! AgentTable — Rust SSOT for agent lifecycle state.
+//! AgentRegistry — Rust SSOT for agent lifecycle state.
 //!
 //! Linux task_struct array analogue. State (state field + condvar wakeup)
 //! lives here; richer PCB metadata (cwd/labels/children/generation) is
@@ -131,17 +131,17 @@ impl AgentNotify {
     }
 }
 
-// ── AgentTable ─────────────────────────────────────────────────────────
+// ── AgentRegistry ─────────────────────────────────────────────────────────
 
 /// Rust SSOT for agent lifecycle state.
 /// DashMap<pid, AgentDescriptor> for lock-free concurrent access; per-pid
 /// condvar wakes blocking waiters on state transitions.
-pub struct AgentTable {
+pub struct AgentRegistry {
     agents: DashMap<String, AgentDescriptor>,
     notify: DashMap<String, Arc<AgentNotify>>,
 }
 
-impl AgentTable {
+impl AgentRegistry {
     pub fn new() -> Self {
         Self {
             agents: DashMap::new(),
@@ -309,7 +309,7 @@ impl AgentTable {
     }
 }
 
-impl Default for AgentTable {
+impl Default for AgentRegistry {
     fn default() -> Self {
         Self::new()
     }
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_register_and_get() {
-        let reg = AgentTable::new();
+        let reg = AgentRegistry::new();
         assert!(reg.register(make_desc("p1", "agent1")));
         let desc = reg.get("p1").unwrap();
         assert_eq!(desc.name, "agent1");
@@ -418,14 +418,14 @@ mod tests {
 
     #[test]
     fn test_duplicate_register() {
-        let reg = AgentTable::new();
+        let reg = AgentRegistry::new();
         assert!(reg.register(make_desc("p1", "agent1")));
         assert!(!reg.register(make_desc("p1", "agent2")));
     }
 
     #[test]
     fn test_update_state() {
-        let reg = AgentTable::new();
+        let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "agent1"));
         assert!(reg.update_state("p1", AgentState::WarmingUp));
         assert_eq!(reg.get("p1").unwrap().state, AgentState::WarmingUp);
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_unregister() {
-        let reg = AgentTable::new();
+        let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "agent1"));
         let removed = reg.unregister("p1");
         assert!(removed.is_some());
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_list_with_filters() {
-        let reg = AgentTable::new();
+        let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "a1"));
         reg.register(make_desc("p2", "a2"));
         reg.update_state("p2", AgentState::Ready);
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_wait_for_state_fast_path() {
-        let reg = AgentTable::new();
+        let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "a1"));
         reg.update_state("p1", AgentState::Ready);
         let result = reg.wait_for_state("p1", &AgentState::Ready, 100);
@@ -485,7 +485,7 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let reg = Arc::new(AgentTable::new());
+        let reg = Arc::new(AgentRegistry::new());
         reg.register(make_desc("p1", "a1"));
 
         let reg2 = Arc::clone(&reg);
@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn test_wait_for_state_timeout() {
-        let reg = AgentTable::new();
+        let reg = AgentRegistry::new();
         reg.register(make_desc("p1", "a1"));
         // Never transition — should timeout
         let result = reg.wait_for_state("p1", &AgentState::Ready, 50);

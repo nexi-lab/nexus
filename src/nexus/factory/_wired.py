@@ -423,7 +423,7 @@ def _boot_post_kernel_services(
             from nexus.services.agents.agent_registry import AgentRegistry
 
             # Pass the Rust kernel so AgentRegistry dual-writes state into
-            # the AgentTable SSOT — keeps the procfs PathResolver and any
+            # the AgentRegistry SSOT — keeps the procfs PathResolver and any
             # blocking agent_wait callers in sync with Python writes.
             _agent_reg = AgentRegistry(kernel=getattr(nx, "_kernel", None))
             nx.sys_setattr("/__sys__/services/agent_registry", service=_agent_reg)

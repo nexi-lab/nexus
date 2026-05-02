@@ -20,8 +20,8 @@ contracts = { workspace = true }
 # trait). Kernel needs both.
 lib = { workspace = true, features = ["python", "transport"] }
 # Kernel depends on `contracts` and `shared/` only; the dep direction
-# is one-way `services -> kernel`. AgentTable is the kernel SSOT at
-# `crate::core::agents::table`. Raft depends on kernel for
+# is one-way `services -> kernel`. AgentRegistry is the kernel SSOT at
+# `crate::core::agents::registry`. Raft depends on kernel for
 # `kernel::abc::MetaStore`,
 # `kernel::hal::distributed_coordinator::DistributedCoordinator`, etc.
 # Raft state-machine impls (zone_meta_store, replication_scanner) live

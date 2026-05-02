@@ -2632,9 +2632,9 @@ impl PyKernel {
         parent_pid: Option<&str>,
         connection_id: Option<&str>,
     ) -> bool {
-        use crate::core::agents::table::{AgentDescriptor, AgentKind, AgentState};
+        use crate::core::agents::registry::{AgentDescriptor, AgentKind, AgentState};
         let kind = AgentKind::from_str(kind).unwrap_or(AgentKind::Worker);
-        self.inner.agent_table.register(AgentDescriptor {
+        self.inner.agent_registry.register(AgentDescriptor {
             pid: pid.to_string(),
             name: name.to_string(),
             kind,
@@ -2651,12 +2651,12 @@ impl PyKernel {
 
     /// Unregister an agent by pid.
     fn agent_unregister(&self, pid: &str) -> bool {
-        self.inner.agent_table.unregister(pid).is_some()
+        self.inner.agent_registry.unregister(pid).is_some()
     }
 
     /// Get agent descriptor as dict.
     fn agent_get<'py>(&self, py: Python<'py>, pid: &str) -> PyResult<Option<Bound<'py, PyDict>>> {
-        match self.inner.agent_table.get(pid) {
+        match self.inner.agent_registry.get(pid) {
             Some(desc) => {
                 let dict = PyDict::new(py);
                 dict.set_item("pid", &desc.pid)?;
@@ -2678,9 +2678,9 @@ impl PyKernel {
 
     /// Update agent state. Returns true if found.
     fn agent_update_state(&self, pid: &str, new_state: &str) -> bool {
-        use crate::core::agents::table::AgentState;
+        use crate::core::agents::registry::AgentState;
         match AgentState::from_str(new_state) {
-            Some(state) => self.inner.agent_table.update_state(pid, state),
+            Some(state) => self.inner.agent_registry.update_state(pid, state),
             None => false,
         }
     }
@@ -2694,12 +2694,12 @@ impl PyKernel {
         state: Option<&str>,
         kind: Option<&str>,
     ) -> PyResult<Vec<Bound<'py, PyDict>>> {
-        use crate::core::agents::table::{AgentKind, AgentState};
+        use crate::core::agents::registry::{AgentKind, AgentState};
         let state_filter = state.and_then(AgentState::from_str);
         let kind_filter = kind.and_then(AgentKind::from_str);
         let agents =
             self.inner
-                .agent_table
+                .agent_registry
                 .list(zone_id, state_filter.as_ref(), kind_filter.as_ref());
         let mut result = Vec::with_capacity(agents.len());
         for desc in agents {
@@ -2718,12 +2718,12 @@ impl PyKernel {
 
     /// Update heartbeat timestamp for an agent.
     fn agent_heartbeat(&self, pid: &str, timestamp_ms: u64) -> bool {
-        self.inner.agent_table.heartbeat(pid, timestamp_ms)
+        self.inner.agent_registry.heartbeat(pid, timestamp_ms)
     }
 
     /// Get number of registered agents.
     fn agent_count(&self) -> usize {
-        self.inner.agent_table.count()
+        self.inner.agent_registry.count()
     }
 
     /// Block (GIL-free) until agent `pid` reaches `target_state` or timeout.
@@ -2737,12 +2737,12 @@ impl PyKernel {
         target_state: &str,
         timeout_ms: u64,
     ) -> PyResult<String> {
-        use crate::core::agents::table::AgentState;
+        use crate::core::agents::registry::AgentState;
         let target = AgentState::from_str(target_state).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("unknown agent state: {target_state}"))
         })?;
         let pid = pid.to_string();
-        let registry = std::sync::Arc::clone(&self.inner.agent_table);
+        let registry = std::sync::Arc::clone(&self.inner.agent_registry);
         py.detach(|| {
             registry
                 .wait_for_state(&pid, &target, timeout_ms)

@@ -134,9 +134,10 @@ class DaemonConfig:
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
 
     # txtai backend config (Issue #2663). ``None`` -> BM25 keyword-only
-    # fast-path (Issue #3997 T2 resolver returns None when no key + no
-    # explicit local model); the daemon skips embeddings load entirely.
-    # The actual fast-path branching is wired in #3997 T3.
+    # fast-path (Issue #3997: resolver returns ``None`` when there is no
+    # API key and no explicit local model). ``TxtaiBackend._startup_impl``
+    # detects ``model=None`` and skips ``Embeddings(path=...)`` entirely,
+    # saving ~900 MB RSS at boot for default deploys.
     txtai_model: str | None = "sentence-transformers/all-MiniLM-L6-v2"
     txtai_vectors: dict[str, Any] | None = None
     txtai_reranker: str | None = None  # e.g. "cross-encoder/ms-marco-MiniLM-L-2-v2"
@@ -659,14 +660,9 @@ class SearchDaemon:
                 with contextlib.suppress(Exception):
                     _emb_cache = self._cache_brick.embedding_cache
 
-            # Issue #3997 T2 widened ``txtai_model`` to ``str | None``. The
-            # BM25 fast-path that consumes ``None`` lands in T3 — until then,
-            # coalesce to the historical default so this branch keeps loading
-            # the local embedding model exactly like before.
-            _model = self.config.txtai_model or "sentence-transformers/all-MiniLM-L6-v2"
             self._backend = TxtaiBackend(
                 database_url=self.config.database_url,
-                model=_model,
+                model=self.config.txtai_model,
                 vectors=self.config.txtai_vectors,
                 hybrid=True,
                 graph=self.config.txtai_graph,
@@ -3336,6 +3332,10 @@ class SearchDaemon:
             },
             # Issue #2663: txtai backend
             "backend": "txtai" if self._backend is not None else "legacy",
+            # Issue #3997: ``None`` (serialised as JSON ``null``) means the
+            # backend is in BM25 keyword-only mode — no embedding model was
+            # configured, so the heavy ``Embeddings(path=...)`` load was
+            # skipped to save RSS at boot.
             "txtai_model": self.config.txtai_model,
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,

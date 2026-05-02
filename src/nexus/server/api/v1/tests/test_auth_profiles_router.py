@@ -6,7 +6,6 @@ import base64
 import logging
 import uuid
 from datetime import timedelta
-from typing import cast
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -27,13 +26,10 @@ from nexus.server.api.v1.routers.auth_profiles import make_auth_profiles_router
 @pytest.fixture
 def signing_pem() -> bytes:
     k = ec.generate_private_key(ec.SECP256R1())
-    return cast(
-        bytes,
-        k.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        ),
+    return k.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
     )
 
 

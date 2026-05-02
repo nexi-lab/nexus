@@ -25,6 +25,46 @@ from nexus.server.dependencies import get_operation_context
 logger = logging.getLogger(__name__)
 
 
+# `agent_registry.get(...)` returns a `nexus_runtime.AgentDescriptor`
+# pyclass in production (epoch-ms ints, dict-shaped external_info), but
+# unit tests fixture the older Python `AgentDescriptor` dataclass
+# (datetimes, dataclass-shaped external_info).  These helpers duck-type
+# both shapes so the endpoint stays single-source-of-truth at the
+# router and the test fixtures don't need to construct a pyclass.
+
+
+def _descriptor_updated_at_iso(desc: Any) -> str:
+    from datetime import UTC, datetime
+
+    ms = getattr(desc, "updated_at_ms", None)
+    if ms is not None:
+        return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
+    updated_at = desc.updated_at
+    return updated_at.isoformat() if updated_at else ""
+
+
+def _descriptor_last_heartbeat_iso(desc: Any) -> str | None:
+    from datetime import UTC, datetime
+
+    ext = desc.external_info
+    if ext is None:
+        return None
+    if isinstance(ext, dict):
+        ms = ext.get("last_heartbeat_ms")
+        return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat() if ms else None
+    last_hb = getattr(ext, "last_heartbeat", None)
+    return last_hb.isoformat() if last_hb else None
+
+
+def _descriptor_connection_id(desc: Any) -> str | None:
+    ext = desc.external_info
+    if ext is None:
+        return None
+    if isinstance(ext, dict):
+        return ext.get("connection_id")
+    return getattr(ext, "connection_id", None)
+
+
 def _authorize_agent_access(auth_result: dict, agent_id: str, action: str = "access") -> None:
     """Verify caller is authorized to act on this agent."""
     ctx = get_operation_context(auth_result)
@@ -250,8 +290,7 @@ async def list_agents(
     running_map: dict[str, Any] = {}
     if agent_registry is not None:
         for a in agent_registry.list_processes(zone_id=zone_id):
-            ext = a.external_info
-            ext_conn = ext.get("connection_id") if isinstance(ext, dict) else None
+            ext_conn = _descriptor_connection_id(a)
             agent_id = ext_conn if ext_conn else a.pid
             running_map[agent_id] = AgentListItem(
                 agent_id=agent_id,
@@ -352,24 +391,13 @@ async def get_agent_status(
     if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
-    from datetime import UTC as _UTC
-    from datetime import datetime as _dt
-
-    last_hb_ms = (
-        desc.external_info.get("last_heartbeat_ms")
-        if isinstance(desc.external_info, dict)
-        else None
-    )
-
     return AgentStatusResponse(
         phase=str(desc.state),
         observed_generation=desc.generation,
         conditions=[],
         resource_usage=AgentResourceUsageModel(),
-        last_heartbeat=(
-            _dt.fromtimestamp(last_hb_ms / 1000, tz=_UTC).isoformat() if last_hb_ms else None
-        ),
-        last_activity=_dt.fromtimestamp(desc.updated_at_ms / 1000, tz=_UTC).isoformat(),
+        last_heartbeat=_descriptor_last_heartbeat_iso(desc),
+        last_activity=_descriptor_updated_at_iso(desc),
         inbox_depth=0,
         context_usage_pct=0.0,
     )

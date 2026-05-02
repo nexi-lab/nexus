@@ -20,7 +20,7 @@ Issue #1134: REMOTE profile migrated to Rust kernel.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.object_store import ObjectStoreABC, WriteResult
 from nexus.remote.base_client import BaseRemoteNexusFS
@@ -117,8 +117,7 @@ class RemoteBackend(ObjectStoreABC):
 
     def read_content(self, content_id: str, context: OperationContext | None = None) -> bytes:
         path = self._to_server_path(context)
-        # `RPCTransport.read_file` is dynamic (returns Any); pin to bytes.
-        return cast(bytes, self._transport.read_file(path, content_id=content_id))
+        return self._transport.read_file(path, content_id=content_id)
 
     def delete_content(self, content_id: str, context: OperationContext | None = None) -> None:
         """No-op: server-side deletion is handled by RemoteMetastore.delete().

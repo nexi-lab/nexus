@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-from typing import cast
 
 import jwt as pyjwt
 import pytest
@@ -19,13 +18,10 @@ from nexus.server.api.v1.routers.jwks import make_jwks_router
 @pytest.fixture
 def signing_pem() -> bytes:
     k = ec.generate_private_key(ec.SECP256R1())
-    return cast(
-        bytes,
-        k.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        ),
+    return k.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
     )
 
 

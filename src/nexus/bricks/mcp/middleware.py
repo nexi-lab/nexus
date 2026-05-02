@@ -28,7 +28,7 @@ References:
 import logging
 import threading
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
@@ -98,9 +98,7 @@ class ToolNamespaceMiddleware(Middleware):
         call_next: "CallNext[mt.ListToolsRequest, Sequence[Tool]]",
     ) -> Sequence[Tool]:
         """Filter tools/list response to only include visible tools."""
-        # MCP middleware's call_next is Any-typed at runtime; pin to
-        # the parameterised Sequence the type alias already declares.
-        all_tools = cast(Sequence[Tool], await call_next(context))
+        all_tools = await call_next(context)
 
         if not self._enabled:
             return all_tools

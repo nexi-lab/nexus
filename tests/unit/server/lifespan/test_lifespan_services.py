@@ -121,10 +121,13 @@ class TestFromAppExtraction:
 class TestFromAppSystemServices:
     """Test extraction from ServiceRegistry (previously _system_services)."""
 
-    def test_extracts_agent_registry_from_service_registry(self) -> None:
-        """AgentRegistry should be resolved from nx.service() in live boot paths."""
+    def test_extracts_agent_registry_from_kernel_handle(self) -> None:
+        """AgentRegistry resolves from `nx._kernel.agent_registry` (the
+        Rust SSOT handle); the Python shim was deleted in the
+        feat/agent-registry-python-fold PR."""
         agent_registry = object()
-        nx = _make_nexus_fs(_service_map={"agent_registry": agent_registry})
+        kernel_stub = SimpleNamespace(agent_registry=agent_registry)
+        nx = _make_nexus_fs(_kernel=kernel_stub)
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 

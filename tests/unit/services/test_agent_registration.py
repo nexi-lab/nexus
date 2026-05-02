@@ -40,6 +40,9 @@ def mock_entity_registry():
 @pytest.fixture()
 def mock_agent_registry():
     pt = MagicMock()
+    # Default: no provisioner bound — production code skips IPC
+    # provisioning when get_provisioner() returns None.
+    pt.get_provisioner.return_value = None
     return pt
 
 
@@ -53,8 +56,13 @@ def mock_rebac_manager():
 
 @pytest.fixture()
 def mock_agent_registry_with_provisioner(mock_agent_registry):
-    """AgentRegistry with a mock provisioner wired in via set_provisioner()."""
-    mock_agent_registry.provision = AsyncMock(return_value=True)
+    """AgentRegistry with a provisioner exposed via get_provisioner()."""
+    provisioner = MagicMock()
+    provisioner.provision = AsyncMock(return_value=True)
+    mock_agent_registry.get_provisioner.return_value = provisioner
+    # Tests assert against `mock_agent_registry_with_provisioner.provision`,
+    # so re-expose the inner mock at the fixture's top level.
+    mock_agent_registry.provision = provisioner.provision
     return mock_agent_registry
 
 

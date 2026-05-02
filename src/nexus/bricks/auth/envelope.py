@@ -19,7 +19,7 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Protocol, cast, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -126,8 +126,7 @@ class AESGCMEnvelope:
         if len(dek) != self.DEK_LEN:
             raise ValueError(f"DEK must be {self.DEK_LEN} bytes, got {len(dek)}")
         try:
-            # AESGCM.decrypt is typed as Any in cryptography stubs.
-            return cast(bytes, AESGCM(dek).decrypt(nonce, ciphertext, aad))
+            return AESGCM(dek).decrypt(nonce, ciphertext, aad)
         except InvalidTag as exc:
             raise CiphertextCorrupted(
                 "AES-GCM tag verification failed",

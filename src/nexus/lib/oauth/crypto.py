@@ -15,7 +15,7 @@ Key resolution order (first match wins):
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -136,8 +136,7 @@ class OAuthCrypto:
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("OAuthCrypto: No key found in store, generating new one")
-            # Fernet.generate_key is Any-typed in cryptography stubs.
-            new_key = cast(bytes, Fernet.generate_key()).decode("utf-8")
+            new_key = Fernet.generate_key().decode("utf-8")
 
             self._settings_store.set_setting(
                 OAUTH_ENCRYPTION_KEY_NAME,

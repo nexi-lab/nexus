@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import jwt as pyjwt
 from cryptography.hazmat.primitives import serialization
@@ -107,9 +107,7 @@ class JwtSigner:
             "iat": int(now.timestamp()),
             "exp": int((now + ttl).timestamp()),
         }
-        # PyJWT's `encode` is declared as Any-returning; the runtime
-        # contract is the encoded JWT string.
-        return cast(str, pyjwt.encode(payload, self._private_pem, algorithm=_ALGORITHM))
+        return pyjwt.encode(payload, self._private_pem, algorithm=_ALGORITHM)
 
     def verify(self, token: str) -> DaemonClaims:
         try:

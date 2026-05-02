@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
-from typing import cast
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -20,13 +19,10 @@ from nexus.server.api.v1.jwt_signer import (
 @pytest.fixture
 def signing_key_pem() -> bytes:
     key = ec.generate_private_key(ec.SECP256R1())
-    return cast(
-        bytes,
-        key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        ),
+    return key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
     )
 
 

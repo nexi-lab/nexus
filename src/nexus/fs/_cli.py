@@ -41,7 +41,7 @@ import contextlib
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import click
 
@@ -203,9 +203,7 @@ class _MountGroup(click.Group):
         # so the group help text is still reachable.
         if args and args[0] not in ("-h", "--help") and not any(a in known for a in args):
             args = ["add"] + list(args)
-        # click's stubs declare parse_args as returning Any; pin it to
-        # list[str] at the override boundary.
-        return cast(list[str], super().parse_args(ctx, args))
+        return super().parse_args(ctx, args)
 
 
 @main.group("mount", cls=_MountGroup, invoke_without_command=True)

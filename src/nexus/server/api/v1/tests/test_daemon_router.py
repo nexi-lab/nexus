@@ -6,7 +6,6 @@ import base64
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -31,13 +30,10 @@ SECRET = b"enroll-secret-32bytes-abcdef01234"
 @pytest.fixture
 def signing_pem() -> bytes:
     k = ec.generate_private_key(ec.SECP256R1())
-    return cast(
-        bytes,
-        k.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        ),
+    return k.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
     )
 
 

@@ -72,28 +72,36 @@ def run_create(
     from nexus.cli.config import resolve_connection
 
     resolved = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
-    output_dir = output if output.is_dir() else output.parent
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     after = audit_from if audit else None
     before = audit_to if audit else None
 
     if resolved.is_remote:
+        # Server-side write — ``output`` lives on the server's
+        # filesystem and is treated as a *directory*. Per-zone files
+        # land at ``output/<zone>-<utc-iso>.nexus``. We can't probe
+        # ``is_dir()`` here because the host may not see the
+        # container's mount layout, and we deliberately do NOT mkdir
+        # on the host — the path must be reachable in the server
+        # container (e.g. via a shared volume or the data-dir bind
+        # mount).
         assert resolved.url is not None  # is_remote ⇒ url present
         return _run_create_remote(
             resolved.url,
             resolved.api_key,
             zone_ids=zone_ids,
-            output_dir=output_dir,
+            output_dir=output,
             sign=sign,
             strip=strip,
             after=after,
             before=before,
         )
 
+    local_output_dir = output if output.is_dir() else output.parent
+    local_output_dir.mkdir(parents=True, exist_ok=True)
     return _run_create_local(
         zone_ids=zone_ids,
-        output_dir=output_dir,
+        output_dir=local_output_dir,
         sign=sign,
         strip=strip,
         after=after,
@@ -151,17 +159,30 @@ def run_restore(
     from nexus.bricks.portability.trust import TrustStore
     from nexus.cli.config import resolve_connection
 
-    verify_archive(file, strict=True)
+    # Local verify only when the file is reachable on this host. In
+    # remote mode the bundle may live on the server (e.g. inside the
+    # container at ``/app/data/archives/foo.nexus`` — the same path
+    # that ``archive create`` writes to). When it isn't visible
+    # locally we let the server perform verification during import.
+    host_visible = file.exists()
+    if host_visible:
+        verify_archive(file, strict=True)
 
-    if require_trusted:
-        with tarfile.open(file, "r:gz") as tar:
-            sig_member = tar.extractfile("signatures.json")
-            assert sig_member is not None
-            sig_doc = json.loads(sig_member.read())
-        store = TrustStore(Path.home() / ".nexus" / "trusted_signers.json")
-        pubkey = sig_doc["signer_pubkey_b64"]
-        if not store.is_trusted(pubkey):
-            raise ArchiveUntrustedSigner(pubkey)
+        if require_trusted:
+            with tarfile.open(file, "r:gz") as tar:
+                sig_member = tar.extractfile("signatures.json")
+                assert sig_member is not None
+                sig_doc = json.loads(sig_member.read())
+            store = TrustStore(Path.home() / ".nexus" / "trusted_signers.json")
+            pubkey = sig_doc["signer_pubkey_b64"]
+            if not store.is_trusted(pubkey):
+                raise ArchiveUntrustedSigner(pubkey)
+    elif require_trusted:
+        raise ArchiveUntrustedSigner(
+            "--require-trusted needs the bundle to be readable on the CLI host "
+            "(make the archive path visible via a shared volume, or omit the flag "
+            "to defer trust enforcement to the server)."
+        )
 
     resolved = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
     if resolved.is_remote:
@@ -264,14 +285,22 @@ def _run_restore_remote(
     force: bool,
     injections: dict[str, str],
 ) -> None:
-    """Drive ``federation_import_zone`` via RPC."""
+    """Drive ``federation_import_zone`` via RPC.
+
+    Sends ``file`` verbatim — the path must be reachable on the
+    *server*, not necessarily on the CLI host. ``file.resolve()``
+    would mangle a server-only path (e.g. ``/app/data/foo.nexus``)
+    into a host-rooted absolute, so we only resolve when the bundle
+    actually exists on this host.
+    """
     from nexus.cli.utils import rpc_call
 
+    bundle_path = str(file.resolve()) if file.exists() else str(file)
     rpc_call(
         remote_url,
         remote_api_key,
         "federation_import_zone",
-        bundle_path=str(file.resolve()),
+        bundle_path=bundle_path,
         target_zone=target_zone,
         force=force,
         rebuild_embeddings=rebuild_embeddings,

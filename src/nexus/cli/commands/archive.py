@@ -96,7 +96,7 @@ def create(
 
 
 @archive.command("restore")
-@click.argument("file", type=click.Path(exists=True, path_type=Path))
+@click.argument("file", type=click.Path(path_type=Path))
 @click.option("--target-zone")
 @click.option("--require-trusted", is_flag=True)
 @click.option("--rebuild-embeddings", is_flag=True)

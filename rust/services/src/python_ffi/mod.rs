@@ -147,48 +147,6 @@ impl RustService for PyFfiRouter {
                     .clone()
             };
 
-            // Auth context plumbing: tonic Call handler calls
-            // `nexus.server._auth_ctx_local.set_auth(auth_dict)` before
-            // `Kernel::dispatch_rust_call`.  We pull it out here, build
-            // the OperationContext via `get_operation_context`, and
-            // inject as `context=` kwarg if the target method accepts
-            // it.  This keeps admin handlers / @rpc_expose'd methods
-            // that need OperationContext working through the new
-            // dispatch path without the legacy `servicer.py` chain.
-            if let Ok(ctx_module) = py.import("nexus.server._auth_ctx_local") {
-                if let Ok(get_auth) = ctx_module.getattr("get_auth") {
-                    if let Ok(auth_obj) = get_auth.call0() {
-                        if !auth_obj.is_none() {
-                            if let Ok(deps) = py.import("nexus.server.dependencies") {
-                                if let Ok(get_ctx) = deps.getattr("get_operation_context") {
-                                    if let Ok(ctx) = get_ctx.call1((auth_obj,)) {
-                                        // Set kwargs["context"] only if
-                                        // the method's signature accepts
-                                        // a "context" param — best-effort
-                                        // via inspect.signature.
-                                        let inspect_ok = py
-                                            .import("inspect")
-                                            .and_then(|m| m.getattr("signature"))
-                                            .and_then(|f| f.call1((&attr,)));
-                                        if let Ok(sig) = inspect_ok {
-                                            if let Ok(params) = sig.getattr("parameters") {
-                                                if params
-                                                    .call_method1("__contains__", ("context",))
-                                                    .and_then(|v| v.extract::<bool>())
-                                                    .unwrap_or(false)
-                                                {
-                                                    let _ = kwargs.set_item("context", ctx);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             // Invoke the Python attribute.  Coroutine returns get
             // awaited via asyncio.run so the dispatch is synchronous
             // from the caller's perspective (matches the legacy

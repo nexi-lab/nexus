@@ -72,6 +72,16 @@ def test_assert_metadata_contains_checks_subset() -> None:
     )
 
 
+def test_assert_metadata_contains_rejects_missing_none_value_from_mapping() -> None:
+    with pytest.raises(AssertionError, match="missing"):
+        assert_metadata_contains({"path": "/docs/a.txt"}, {"nullable": None})
+
+
+def test_assert_metadata_contains_rejects_missing_none_value_from_object() -> None:
+    with pytest.raises(AssertionError, match="missing"):
+        assert_metadata_contains(SimpleNamespace(path="/docs/a.txt"), {"nullable": None})
+
+
 def test_assert_permission_decision_supports_bool_and_objects() -> None:
     assert_permission_decision(True, allowed=True)
     assert_permission_decision(SimpleNamespace(allowed=False), allowed=False)

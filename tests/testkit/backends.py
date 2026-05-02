@@ -53,9 +53,15 @@ class InMemoryBackend(Backend):
         offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
-        if offset:
-            existing = self.read_content(content_id, context=context)
-            content = existing[:offset] + content
+        if offset < 0:
+            raise BackendError("Offset must be non-negative", backend=self.name)
+        if offset > 0:
+            if not content_id:
+                raise BackendError("Offset writes require content_id", backend=self.name)
+            existing = self._content.get(content_id, b"")
+            if offset > len(existing):
+                existing = existing + b"\x00" * (offset - len(existing))
+            content = existing[:offset] + content + existing[offset + len(content) :]
         key = content_id or hashlib.sha256(content).hexdigest()
         self._content[key] = bytes(content)
         return WriteResult(content_id=key, version=key, size=len(content))
@@ -104,7 +110,7 @@ class InMemoryBackend(Backend):
         if directory in self._dirs:
             if exist_ok:
                 return
-            return
+            raise BackendError(f"Directory already exists: {directory}", backend=self.name)
 
         if parents:
             current = ""

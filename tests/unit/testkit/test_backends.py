@@ -25,6 +25,26 @@ def test_in_memory_backend_round_trips_content() -> None:
     assert backend.get_content_size(result.content_id) == 5
 
 
+def test_in_memory_backend_offset_write_preserves_existing_tail() -> None:
+    backend = InMemoryBackend()
+    backend.write_content(b"abcdef", content_id="file")
+
+    result = backend.write_content(b"XY", content_id="file", offset=2)
+
+    assert result.content_id == "file"
+    assert result.size == 6
+    assert backend.read_content("file") == b"abXYef"
+
+
+def test_in_memory_backend_offset_write_zero_fills_gap() -> None:
+    backend = InMemoryBackend()
+    backend.write_content(b"ab", content_id="file")
+
+    backend.write_content(b"z", content_id="file", offset=4)
+
+    assert backend.read_content("file") == b"ab\x00\x00z"
+
+
 def test_in_memory_backend_raises_for_missing_content() -> None:
     backend = InMemoryBackend()
 
@@ -41,6 +61,14 @@ def test_in_memory_backend_tracks_directories() -> None:
     assert backend.is_directory("/a/b") is True
     assert backend.list_dir("/") == ["a/"]
     assert backend.list_dir("/a") == ["b/"]
+
+
+def test_in_memory_backend_mkdir_rejects_existing_directory_without_exist_ok() -> None:
+    backend = InMemoryBackend()
+    backend.mkdir("/a")
+
+    with pytest.raises(BackendError, match="already exists"):
+        backend.mkdir("/a")
 
 
 def test_in_memory_backend_rmdir_rejects_non_empty_directory() -> None:

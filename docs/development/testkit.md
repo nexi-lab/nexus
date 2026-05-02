@@ -46,6 +46,29 @@ Existing helpers such as `DictMetastore`, `InMemoryNexusFS`,
 `InMemoryRecordStore`, and `FailingBackend` are re-exported from
 `testkit.backends` for new tests.
 
+## Fake Bricks
+
+```python
+import pytest
+
+from testkit.bricks import FakeSearchBrick, probe_service_lifecycle
+
+
+@pytest.mark.asyncio
+async def test_search_brick_lifecycle() -> None:
+    brick = FakeSearchBrick(results=[{"path": "/docs/a.txt"}])
+
+    probe = await probe_service_lifecycle(brick)
+
+    assert probe.started_after_start is True
+    assert probe.healthy_after_start is True
+    assert probe.started_after_stop is False
+```
+
+Use `FakeLifecycleBrick` when a test only needs start/stop/health behavior. Use
+`FakeSearchBrick` when a test needs a lightweight object satisfying
+`SearchBrickProtocol` without starting search indexes or external services.
+
 ## Auth Contexts
 
 ```python

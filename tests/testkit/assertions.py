@@ -14,11 +14,19 @@ __all__ = [
     "assert_permission_decision",
 ]
 
+_MISSING = object()
+
 
 def _value(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, Mapping):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+
+def _metadata_value(obj: Any, key: str) -> Any:
+    if isinstance(obj, Mapping):
+        return obj.get(key, _MISSING)
+    return getattr(obj, key, _MISSING)
 
 
 def assert_missing_dependency_error(
@@ -69,9 +77,9 @@ def assert_metadata_contains(metadata: Any, expected: Mapping[str, Any]) -> None
     """Assert that metadata contains an expected subset."""
 
     for key, value in expected.items():
-        assert _value(metadata, key) == value, (
-            f"expected metadata {key!r} to be {value!r}, got {_value(metadata, key)!r}"
-        )
+        actual = _metadata_value(metadata, key)
+        assert actual is not _MISSING, f"expected metadata to contain missing key {key!r}"
+        assert actual == value, f"expected metadata {key!r} to be {value!r}, got {actual!r}"
 
 
 def assert_permission_decision(decision: Any, *, allowed: bool) -> None:

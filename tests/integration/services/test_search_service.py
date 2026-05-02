@@ -135,7 +135,7 @@ class TestSearchServiceInit:
         assert svc.metadata is mock_metadata_store
         assert svc._permission_enforcer is mock_permission_enforcer
         assert svc._dlc is mock_dlc
-        assert svc._gw is mock_gateway
+        assert svc._nexus_fs is mock_gateway
         assert svc._enforce_permissions is True
 
     def test_init_minimal(self, mock_metadata_store):
@@ -144,7 +144,7 @@ class TestSearchServiceInit:
         assert svc.metadata is mock_metadata_store
         assert svc._permission_enforcer is None
         assert svc._dlc is None
-        assert svc._gw is None
+        assert svc._nexus_fs is None
         assert svc._enforce_permissions is True
 
     def test_init_defaults(self, mock_metadata_store):

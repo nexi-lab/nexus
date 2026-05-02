@@ -43,7 +43,7 @@ def _make_svc(
     if gw_session_factory is not None:
         gw = MagicMock()
         gw.session_factory = gw_session_factory
-        svc._gw = gw
+        svc._nexus_fs = gw
     return svc
 
 

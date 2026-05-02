@@ -48,7 +48,7 @@ class TestStrategySelection:
         from nexus.bricks.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
-        service._gw = None
+        service._nexus_fs = None
         service._permission_enforcer = None
 
         zone_id = "test_zone"
@@ -80,7 +80,7 @@ class TestStrategySelection:
         from nexus.bricks.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
-        service._gw = None
+        service._nexus_fs = None
         service._permission_enforcer = None
 
         strategy = service._select_grep_strategy(
@@ -95,7 +95,7 @@ class TestStrategySelection:
         from nexus.bricks.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
-        service._gw = None
+        service._nexus_fs = None
         service._permission_enforcer = None
 
         strategy = service._select_grep_strategy(
@@ -110,7 +110,7 @@ class TestStrategySelection:
         from nexus.bricks.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
-        service._gw = None
+        service._nexus_fs = None
         service._permission_enforcer = None
 
         strategy = service._select_grep_strategy(
@@ -130,7 +130,7 @@ class TestTrigramFallback:
         from nexus.bricks.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
-        service._gw = None
+        service._nexus_fs = None
         service._permission_enforcer = None
 
         result = await service._try_grep_with_trigram(
@@ -147,7 +147,7 @@ class TestTrigramFallback:
         from nexus.bricks.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
-        service._gw = None
+        service._nexus_fs = None
         service._permission_enforcer = None
 
         async def _mock_read(path, context=None):
@@ -177,7 +177,7 @@ class TestIndexManagement:
         from nexus.bricks.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
-        service._gw = None
+        service._nexus_fs = None
         service._permission_enforcer = None
 
         status = service.get_trigram_index_status("nonexistent_zone_xyz")
@@ -188,7 +188,7 @@ class TestIndexManagement:
         from nexus.bricks.search.search_service import SearchService
 
         service = SearchService.__new__(SearchService)
-        service._gw = None
+        service._nexus_fs = None
         service._permission_enforcer = None
 
         service.invalidate_trigram_index("nonexistent_zone_xyz")

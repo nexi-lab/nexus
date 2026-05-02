@@ -646,9 +646,17 @@ jobs:
             exit 1
           fi
 
-          echo "nexusd-cluster is alive after 5s — smoke test passed"
-          kill "$PID" && wait "$PID" 2>/dev/null || true
+          echo "nexusd-cluster is alive after 5s — sending SIGTERM…"
+          kill "$PID"
+          wait "$PID"
+          EXIT_CODE=$?
           rm -rf "$DATA_DIR"
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo "::error::nexusd-cluster exited with code $EXIT_CODE on shutdown (likely panicked)"
+            exit 1
+          fi
+          echo "nexusd-cluster shut down cleanly — smoke test passed"
 
   migration-test:
     name: Migration Tests (SQLite)

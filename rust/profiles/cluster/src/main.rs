@@ -351,6 +351,17 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     wait_for_shutdown().await;
     topology_handle.abort();
     tracing::info!("nexusd-cluster shutting down");
+
+    // Drop Kernel (which owns a nested tokio Runtime) on a blocking
+    // thread — dropping it inside the current async context panics with
+    // "Cannot drop a runtime in a context where blocking is not allowed".
+    tokio::task::spawn_blocking(move || {
+        drop(kernel);
+        drop(zm);
+    })
+    .await
+    .ok();
+
     Ok(())
 }
 

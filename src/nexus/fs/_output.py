@@ -18,7 +18,7 @@ import sys
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -84,7 +84,10 @@ def add_output_options(func: Callable[..., Any]) -> Callable[..., Any]:
         )
         return func(output_opts=output_opts, **kwargs)
 
-    return wrapper
+    # `@click.option(...)` decorators on wrapper return Callable[..., Any];
+    # narrow back to a concrete Callable at the boundary so the public
+    # decorator's signature stays useful for callers.
+    return cast(Callable[..., Any], wrapper)
 
 
 def _filter_fields(data: Any, fields: str) -> Any:

@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jwt as pyjwt
 from cryptography.hazmat.primitives import serialization
@@ -46,12 +46,15 @@ class JwtSigner:
         public_key: EllipticCurvePublicKey,
         issuer: str,
     ) -> None:
-        self._private_pem = private_key.private_bytes(
+        # `private_bytes` / `public_bytes` are typed as Any in the
+        # cryptography stubs; pin to bytes at the assignment so the
+        # rest of the class stays well-typed.
+        self._private_pem: bytes = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
-        self._public_pem = public_key.public_bytes(
+        self._public_pem: bytes = public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
@@ -104,7 +107,9 @@ class JwtSigner:
             "iat": int(now.timestamp()),
             "exp": int((now + ttl).timestamp()),
         }
-        return pyjwt.encode(payload, self._private_pem, algorithm=_ALGORITHM)
+        # PyJWT's `encode` is declared as Any-returning; the runtime
+        # contract is the encoded JWT string.
+        return cast(str, pyjwt.encode(payload, self._private_pem, algorithm=_ALGORITHM))
 
     def verify(self, token: str) -> DaemonClaims:
         try:

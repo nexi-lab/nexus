@@ -19,6 +19,7 @@ invariants satisfied simultaneously:
 from __future__ import annotations
 
 import importlib
+from typing import cast
 
 import click
 
@@ -46,7 +47,10 @@ class _LazyAuthGroup(click.Group):
 
     def list_commands(self, ctx: click.Context) -> list[str]:
         self._load_from_bricks()
-        return super().list_commands(ctx)
+        # click's stubs declare list_commands as returning Any; the
+        # actual contract is list[str] so anchor the type at our
+        # boundary rather than letting Any leak.
+        return cast(list[str], super().list_commands(ctx))
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         self._load_from_bricks()

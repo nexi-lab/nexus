@@ -91,6 +91,20 @@ def render_plist(
     )
 
 
+def _require_darwin_uid() -> int:
+    """Return the current uid; raise on non-macOS platforms.
+
+    Centralises the platform guard so mypy on Windows narrows around a
+    single ``sys.platform`` check rather than every call site, and the
+    runtime invariant (``_install_darwin`` / ``_uninstall_darwin`` are
+    only reachable when sys.platform == "darwin") is enforced in one
+    place.
+    """
+    if sys.platform != "darwin":
+        raise RuntimeError("darwin installer reached on non-macOS platform")
+    return os.getuid()
+
+
 def _install_darwin(*, executable: str, config_path: Path, profile: str) -> Path:
     stdout_log, stderr_log = _darwin_log_paths(profile)
     stdout_log.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +122,7 @@ def _install_darwin(*, executable: str, config_path: Path, profile: str) -> Path
         ),
         encoding="utf-8",
     )
-    uid = os.getuid()
+    uid = _require_darwin_uid()
     domain = f"gui/{uid}"
     service = f"{domain}/{label}"
     subprocess.run(["launchctl", "bootstrap", domain, str(plist_path)], check=True)
@@ -117,7 +131,7 @@ def _install_darwin(*, executable: str, config_path: Path, profile: str) -> Path
 
 
 def _uninstall_darwin(profile: str) -> None:
-    uid = os.getuid()
+    uid = _require_darwin_uid()
     label = plist_label_for(profile)
     service = f"gui/{uid}/{label}"
     # bootout: non-zero is fine if the service isn't loaded.

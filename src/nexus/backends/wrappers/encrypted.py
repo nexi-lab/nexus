@@ -151,7 +151,8 @@ class EncryptedStorage(DelegatingBackend):
         Raises on encryption failure (hard error — DelegatingBackend catches
         and returns error response).
         """
-        ct = self._cipher.encrypt(self._ZERO_NONCE, content, None)
+        # AESGCMSIV.encrypt is Any-typed in cryptography stubs.
+        ct: bytes = self._cipher.encrypt(self._ZERO_NONCE, content, None)
         self._metrics.increment("encrypt_ops")
         return _ENCRYPTED_HEADER + ct
 

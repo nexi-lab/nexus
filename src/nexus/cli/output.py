@@ -33,7 +33,7 @@ import sys
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -116,7 +116,7 @@ def add_output_options(func: Callable[..., Any]) -> Callable[..., Any]:
         )
         return func(output_opts=output_opts, **kwargs)
 
-    return wrapper
+    return cast(Callable[..., Any], wrapper)
 
 
 def _filter_fields(data: Any, fields: str) -> Any:

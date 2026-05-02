@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +69,8 @@ class KeyringJwtCache:
     def load(self) -> str | None:
         import keyring
 
-        return keyring.get_password(self._service, self._username)
+        # `keyring.get_password` is Any-typed in keyring's stubs.
+        return cast("str | None", keyring.get_password(self._service, self._username))
 
     def store(self, token: str) -> None:
         import keyring

@@ -2,6 +2,7 @@
 
 import errno
 import logging
+import sys
 
 from fuse import FuseOSError
 
@@ -65,22 +66,26 @@ class AttrHandler:
 
         attrs: dict[str, str] = {}
 
+        import contextlib
+
+        # `pwd` / `grp` are POSIX-only; on Windows fall back to the
+        # numeric uid/gid string so the rest of the attr write proceeds.
         if uid != -1:
-            try:
+            owner = str(uid)
+            if sys.platform != "win32":
                 import pwd
 
-                owner = pwd.getpwuid(uid).pw_name
-            except (KeyError, ModuleNotFoundError):
-                owner = str(uid)
+                with contextlib.suppress(KeyError):
+                    owner = pwd.getpwuid(uid).pw_name
             attrs["owner"] = owner
 
         if gid != -1:
-            try:
+            group = str(gid)
+            if sys.platform != "win32":
                 import grp
 
-                group = grp.getgrgid(gid).gr_name
-            except (KeyError, ModuleNotFoundError):
-                group = str(gid)
+                with contextlib.suppress(KeyError):
+                    group = grp.getgrgid(gid).gr_name
             attrs["group"] = group
 
         if attrs:

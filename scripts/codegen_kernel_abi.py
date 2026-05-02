@@ -802,10 +802,22 @@ def parse_lib_exports(
 
 
 def _format_param(p: Param) -> str:
-    """Format a parameter for a stub signature."""
+    """Format a parameter for a stub signature.
+
+    `_find_pyo3_sig_above` normalises Rust default literals to Python
+    syntax without seeing the parameter type, so `vec![]` always becomes
+    `[]`.  PyO3 converts `Vec<u8>` to Python `bytes`, and `bytes = []`
+    is a type error — fix it at emit time when both type and default
+    are in hand.  Equivalent type-blind conversions (e.g. `Vec<String>`
+    → `list[str]` with `[]` default) stay correct, so the rule is
+    purely additive.
+    """
+    default = p.default
+    if default == "[]" and p.py_type == "bytes":
+        default = 'b""'
     s = f"{p.name}: {p.py_type}"
-    if p.default is not None:
-        s += f" = {p.default}"
+    if default is not None:
+        s += f" = {default}"
     return s
 
 
@@ -995,10 +1007,6 @@ def generate_stubs(
     )
     lines.append("def federation_lookup_share(kernel: Any, remote_path: str) -> str | None: ...")
     lines.append("def federation_cluster_info(kernel: Any, zone_id: str) -> dict[str, Any]: ...")
-    lines.append(
-        "def federation_start_replication_scanner("
-        "kernel: Any, zone_id: str, policies_json: str, interval_ms: int) -> None: ..."
-    )
     lines.append("")
     # ── Audit-node stream registration (services::audit::prepare_stream_only)
     #    — hand-written companion to install_audit_hook for nodes that

@@ -14,7 +14,7 @@ import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.table import Table
@@ -124,7 +124,9 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
             "in {data_dir}/tls/, or configure TLS in state.json."
         )
     transport = RPCTransport(server_address=grpc_address, auth_token=api_key, tls_config=tls_config)
-    return transport.call_rpc
+    # `RPCTransport.call_rpc` is dynamic-dispatch (Any) on the
+    # transport stub; surface the AdminRPC alias at the boundary.
+    return cast(AdminRPC, transport.call_rpc)
 
 
 @click.group()

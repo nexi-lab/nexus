@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from typing import cast
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -76,7 +77,10 @@ class InMemoryEncryptionProvider(EncryptionProvider):
         kek = self._versions[kek_version]
         nonce, ct = wrapped[: self._nonce_len], wrapped[self._nonce_len :]
         try:
-            return AESGCM(kek).decrypt(nonce, ct, self._context_aad(tenant_id, kek_version, aad))
+            return cast(
+                bytes,
+                AESGCM(kek).decrypt(nonce, ct, self._context_aad(tenant_id, kek_version, aad)),
+            )
         except InvalidTag as exc:
             raise WrappedDEKInvalid.from_row(
                 tenant_id=tenant_id,

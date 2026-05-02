@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
+from typing import cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -67,4 +68,6 @@ def load_or_create_keypair(path: Path) -> bytes:
 
 def sign_body(priv: Ed25519PrivateKey, body: bytes) -> bytes:
     """Ed25519 signature over canonical bytes."""
-    return priv.sign(body)
+    # cryptography stubs declare `sign` as returning Any; the runtime
+    # contract is bytes.
+    return cast(bytes, priv.sign(body))

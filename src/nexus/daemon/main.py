@@ -51,10 +51,12 @@ def _is_nexusd_process(pid: int) -> bool:
     cmdline check prevents false positives after PID reuse — common in Docker
     containers with small PID namespaces after a segfault/crash restart.
     """
-    # Fast path: process doesn't exist at all
+    # Fast path: process doesn't exist at all. On Windows, os.kill(pid, 0)
+    # raises plain OSError (e.g. WinError 87 "invalid parameter") rather
+    # than ProcessLookupError when the PID is dead, so catch OSError too.
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
+    except (ProcessLookupError, PermissionError, OSError):
         return False
 
     # On Linux, verify the process is actually nexusd

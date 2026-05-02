@@ -564,3 +564,80 @@ def test_versioned_read_serves_deleted_path_from_cas(
     assert captured["content_id"] == deleted_hash
     decoded = base64.b64decode(resp.json()["content"])
     assert decoded == payload
+
+
+def test_versioned_read_deleted_path_denied_for_non_admin(
+    real_fs: NexusFS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-admin caller must NOT be able to recover deleted-file
+    snapshots via the historical read endpoint. Without the live VFS
+    path, file-level READ permission hooks no longer run; the only
+    safe carve-out is admin-only — otherwise a caller who can enumerate
+    transactions could read deleted content they never had READ
+    permission for (Issue #3989, codex r10)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    target = "/files/secret_gone.bin"
+    setup_app = FastAPI()
+    setup_app.include_router(create_async_files_router(nexus_fs=real_fs))
+    setup_app.dependency_overrides[get_auth_result] = lambda: {
+        "authenticated": True,
+        "user_id": "e2e-user",
+        "groups": [],
+        "zone_id": "root",
+        "is_admin": True,
+    }
+    setup_client = TestClient(setup_app)
+    write_resp = setup_client.post(
+        "/write",
+        json={"path": target, "content": "secret"},
+    )
+    assert write_resp.status_code == 200, write_resp.text
+    deleted_hash = write_resp.json()["content_id"]
+    real_fs.sys_unlink(target)
+
+    monkeypatch.setattr(
+        real_fs,
+        "list_mounts",
+        lambda context=None: [{"mount_point": "/files"}],
+    )
+    snap_svc = MagicMock()
+    snap_svc.get_transaction = AsyncMock(return_value=SimpleNamespace(zone_id="root"))
+    snap_svc.list_entries = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                path=target,
+                operation="delete",
+                original_hash=deleted_hash,
+                new_hash=None,
+                original_metadata=None,
+            )
+        ]
+    )
+
+    app = FastAPI()
+    router = create_async_files_router(nexus_fs=real_fs)
+    app.state.transactional_snapshot_service = snap_svc
+    app.include_router(router)
+    # Non-admin caller in the same zone.
+    app.dependency_overrides[get_auth_result] = lambda: {
+        "authenticated": True,
+        "user_id": "regular-user",
+        "groups": [],
+        "zone_id": "root",
+        "is_admin": False,
+    }
+    client = TestClient(app)
+
+    resp = client.get(
+        "/read",
+        params={
+            "path": target,
+            "version": deleted_hash,
+            "transaction_id": "txn-stub",
+        },
+    )
+    # Live path no longer exists → access() returns False → 404. Critically
+    # the request must NOT succeed via the delete carve-out.
+    assert resp.status_code == 404, resp.text

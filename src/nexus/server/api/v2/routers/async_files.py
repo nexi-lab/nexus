@@ -894,16 +894,20 @@ def create_async_files_router(
                 # --- Enforce standard read authorization via the VFS path ---
                 # For *delete* entries the live path no longer exists, so
                 # ``fs.access`` would reject every historical read of a
-                # deleted file's snapshot — even though the caller is
-                # authorized for the transaction's zone and the bytes are
-                # still in CAS (Issue #3989, codex r9). Authorization for
-                # delete entries has already been established by the
-                # transaction zone-ownership check + entry-hash binding
-                # above, so we skip the live-path access probe in that
-                # case. Write entries continue to require live-path
-                # access since the path is still expected to resolve.
+                # deleted snapshot — even though the bytes are still in
+                # CAS. Skipping ``access`` would also drop the file-level
+                # READ ACL gate (the only place that runs READ permission
+                # hooks for that path), so a caller who never had file
+                # READ permission could otherwise recover deleted content
+                # via the snapshot endpoint (Issue #3989, codex r10).
+                # Compromise: keep the carve-out only for admins, who are
+                # the intended rollback consumers. Regular callers must
+                # use a write-side snapshot or get a 404 for the
+                # missing live path.
                 _entry_op = getattr(_matched_entry, "operation", None)
-                if _entry_op != "delete":
+                _is_admin = bool(getattr(context, "is_admin", False))
+                _skip_access = _entry_op == "delete" and _is_admin
+                if not _skip_access:
                     try:
                         _accessible = fs.access(path, context=context)
                     except NexusPermissionError as e:

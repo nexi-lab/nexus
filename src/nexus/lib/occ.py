@@ -25,10 +25,36 @@ but a standard composition of kernel syscalls.
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+
+
+# #4005 round-5: per-(zone, path) lock pool so two worker threads cannot
+# both observe the same pre-state and both commit. The lock pool is
+# unbounded in the worst case, but each lock is tiny and only paths
+# under active OCC contention live here. Cleanup on idle is intentional
+# punted: a once-per-N writes prune is brittle and the steady-state
+# memory cost is negligible compared to the correctness win. Cross-
+# process atomicity still requires a backend constraint (Issue #1323).
+_OCC_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_OCC_LOCKS_GUARD = threading.Lock()
+
+
+def _occ_lock_for(path: str, zone_id: str) -> threading.Lock:
+    """Return the threading.Lock for ``(zone_id, path)`` (creating on demand)."""
+    key = (zone_id, path)
+    lock = _OCC_LOCKS.get(key)
+    if lock is not None:
+        return lock
+    with _OCC_LOCKS_GUARD:
+        lock = _OCC_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _OCC_LOCKS[key] = lock
+        return lock
 
 
 def occ_write_sync(
@@ -62,15 +88,21 @@ def occ_write_sync(
         FileExistsError: if_none_match=True and file exists.
         ConflictError: if_match provided and etag doesn't match.
     """
-    # #4005 round-3 review: keep stat + write inside the same call frame
-    # (no await between them) so two same-process callers can't both
-    # observe the pre-state and both commit. Async callers must offload
-    # the entire ``occ_write_sync`` via ``asyncio.to_thread`` (see
-    # _kernel_syscall_dispatch._occ_write_dispatch). True cross-process
-    # atomicity still requires a backend lock — out of scope here.
-    if if_match is not None or if_none_match:
-        from nexus.contracts.exceptions import ConflictError
+    # #4005 round-5: serialize the stat+write across worker threads
+    # via a per-(zone, path) lock. Without this, two callers offloaded
+    # via ``asyncio.to_thread`` could both observe the same pre-state
+    # in different threads and both commit (lost updates / double-create
+    # under if_match / if_none_match). Same-process serialization only;
+    # cross-process atomicity still requires backend constraints.
+    if if_match is None and not if_none_match:
+        # Plain write — no compare phase, no lock needed.
+        plain: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
+        return plain
 
+    from nexus.contracts.exceptions import ConflictError
+
+    zone_id = getattr(context, "zone_id", None) or "_root"
+    with _occ_lock_for(path, str(zone_id)):
         meta = fs.sys_stat(path, context=context)
 
         if if_none_match and meta is not None:
@@ -95,8 +127,8 @@ def occ_write_sync(
                     current_content_id=current_content_id or "(no content_id)",
                 )
 
-    result: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
-    return result
+        result: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
+        return result
 
 
 # #4005 round-3: ``occ_write`` was the original async name. Keep it as a

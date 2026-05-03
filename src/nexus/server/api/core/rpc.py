@@ -129,30 +129,14 @@ async def rpc_endpoint(
             raw_params = vars(_params_ns)
             state = request.app.state
 
-            # Early 304 for read-shaped syscalls (mirrors the legacy path
-            # below). Avoid running the (potentially large) read at all when
-            # the client's ETag still matches.
+            # #4005 round-5: NO early 304 in the kernel branch.
+            # ``state.nexus_fs.get_content_id`` ignores OperationContext
+            # (see nexus_fs_metadata.py: ``noqa: ARG002`` on the context
+            # argument), so a preflight 304 would bypass the read
+            # permission hooks that ``sys_read`` / ``read`` enforce. The
+            # late 304 below (after dispatch) is safe — the read had to
+            # succeed first, and matching ETags then suppress the body.
             if_none_match = request.headers.get("If-None-Match")
-            if (
-                method in ("read", "sys_read")
-                and if_none_match
-                and "path" in raw_params
-                and state.nexus_fs
-            ):
-                try:
-                    cached_content_id = state.nexus_fs.get_content_id(
-                        raw_params["path"], context=context
-                    )
-                    if cached_content_id and if_none_match.strip('"') == cached_content_id:
-                        return Response(
-                            status_code=304,
-                            headers={
-                                "ETag": f'"{cached_content_id}"',
-                                "Cache-Control": "private, max-age=60",
-                            },
-                        )
-                except Exception as e:
-                    logger.debug("Early ETag check failed for %s: %s", raw_params.get("path"), e)
 
             _dispatch_coro = dispatch_kernel_syscall(
                 state.nexus_fs,
@@ -345,7 +329,13 @@ async def rpc_endpoint(
 # their cache-friendly arms; lock primitives are no-cache.
 _KERNEL_CACHE_CATEGORY: dict[str, str] = {
     "sys_read": "read",
-    "sys_stat": "read",
+    # #4005 round-5: ``sys_stat`` returns metadata + content_id, but
+    # ``sys_setattr`` can mutate metadata (mtime, mode) WITHOUT changing
+    # content_id. Synthesizing an ETag from content_id alone would let
+    # a revalidating client get 304 and keep stale stat metadata across
+    # touch / chmod-like ops. Use ``get_metadata``'s arm (Cache-Control
+    # only, no ETag) until we have a metadata-versioned validator.
+    "sys_stat": "get_metadata",
     "sys_readdir": "list",
     "sys_write": "write",
     "sys_unlink": "delete",
@@ -366,18 +356,9 @@ def _kernel_cache_headers(method: str, result: Any) -> dict[str, str]:
     ``get_cache_headers`` understands so mutating syscalls get
     ``no-store``, reads get an ETag from ``content_id`` / bytes,
     and ``sys_readdir`` aligns with ``list``.
-
-    For ``sys_stat``: the dispatcher's adapter wraps metadata in
-    ``{"metadata": ...}``; lift ``content_id`` to the top level so
-    the existing ``read`` arm can mint an ETag.
     """
     canonical = _KERNEL_CACHE_CATEGORY.get(method, method)
-    cache_result: Any = result
-    if method == "sys_stat" and isinstance(result, dict):
-        meta = result.get("metadata")
-        if isinstance(meta, dict) and "content_id" in meta:
-            cache_result = {"content_id": meta["content_id"]}
-    return get_cache_headers(canonical, cache_result)
+    return get_cache_headers(canonical, result)
 
 
 def get_cache_headers(method: str, result: Any) -> dict[str, str]:

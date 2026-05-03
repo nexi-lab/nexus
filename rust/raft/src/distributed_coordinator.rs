@@ -115,11 +115,9 @@ impl RaftDistributedCoordinator {
             return;
         };
         let vfs_router = kernel.vfs_router_arc();
-        let dcache_helpers = DCacheHelpers::from_kernel(kernel);
         let lock_manager = kernel.lock_manager_arc();
         install_mount_apply_cb_impl(
             &vfs_router,
-            &dcache_helpers,
             &lock_manager,
             &zm.registry(),
             runtime,
@@ -145,7 +143,6 @@ impl RaftDistributedCoordinator {
         };
         let registry = zm.registry();
         let vfs_router = kernel.vfs_router_arc();
-        let dcache_helpers = DCacheHelpers::from_kernel(kernel);
         let lock_manager = kernel.lock_manager_arc();
 
         let mut pending: Vec<(String, String, String)> = Vec::new();
@@ -180,7 +177,6 @@ impl RaftDistributedCoordinator {
             pending.retain(|(parent_zone_id, mount_path, target_zone_id)| {
                 let r = wire_mount_core(
                     &vfs_router,
-                    &dcache_helpers,
                     &lock_manager,
                     &registry,
                     runtime,
@@ -859,10 +855,8 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         mount_path: &str,
     ) -> CoordinatorResult<()> {
         let vfs_router = kernel.vfs_router_arc();
-        let dcache_helpers = DCacheHelpers::from_kernel(kernel);
         unwire_mount_core(
             &vfs_router,
-            &dcache_helpers,
             &self.cross_zone_mounts,
             parent_zone,
             mount_path,
@@ -1275,40 +1269,6 @@ fn reconstruct_global_path(
 // `Arc<DCache>`.
 
 /// Kernel-built dcache mutation helpers, threaded into the federation
-/// helpers (`wire_mount_core`, `unwire_mount_core`,
-/// `install_mount_apply_cb_impl`) so the long-lived apply-cb closures
-/// can mutate the dcache without holding `Arc<DCache>` directly.
-///
-/// Federation builds one of these per kernel install via
-/// [`DCacheHelpers::from_kernel`]; the inner closures already capture
-/// `Arc<DCache>` kernel-side.
-#[allow(clippy::type_complexity)]
-#[derive(Clone)]
-pub(crate) struct DCacheHelpers {
-    /// Seed a DT_MOUNT entry: `(global_path, target_zone_id) -> ()`.
-    pub seed: Arc<dyn Fn(&str, &str) + Send + Sync>,
-    /// Evict a DT_MOUNT entry + every cached child under its prefix.
-    pub evict_mount: Arc<dyn Fn(&str) + Send + Sync>,
-    /// Install the apply-side dcache invalidator on a zone's consensus
-    /// slot: `(coherence_key, &slot) -> ()`.  `slot` is the consensus's
-    /// `invalidate_cb_slot()` return — a Vec the closure pushes onto.
-    pub install_apply_invalidator: Arc<
-        dyn Fn(usize, &parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>) + Send + Sync,
-    >,
-}
-
-impl DCacheHelpers {
-    /// Build the helper bundle from the kernel's narrow callback
-    /// builders.  Cheap (3× `Arc::clone`).
-    pub(crate) fn from_kernel(kernel: &Kernel) -> Self {
-        Self {
-            seed: kernel.dcache_seed_dt_mount_fn(),
-            evict_mount: kernel.dcache_evict_dt_mount_fn(),
-            install_apply_invalidator: kernel.dcache_install_apply_invalidator_fn(),
-        }
-    }
-}
-
 /// `&Kernel`-free core of `wire_mount` — same body, but every kernel
 /// dependency comes through pre-cloned `Arc`s.  Lets the apply-cb
 /// closure (which has no `&Kernel` access) drive the same logic on
@@ -1316,7 +1276,6 @@ impl DCacheHelpers {
 #[allow(clippy::too_many_arguments)]
 fn wire_mount_core(
     vfs_router: &Arc<kernel::core::vfs_router::VFSRouter>,
-    dcache_helpers: &DCacheHelpers,
     lock_manager: &Arc<kernel::core::lock::LockManager>,
     registry: &Arc<crate::raft::ZoneRaftRegistry>,
     runtime: &tokio::runtime::Handle,
@@ -1403,14 +1362,14 @@ fn wire_mount_core(
         }
     }
 
-    // 6. DCache seed.
-    (dcache_helpers.seed)(&global_path, contracts::ROOT_ZONE_ID);
-
-    // 7. Install apply-side dcache coherence on the target consensus.
-    if let Some(slot) = target_consensus.invalidate_cb_slot() {
-        let coherence_key = target_consensus.coherence_id();
-        (dcache_helpers.install_apply_invalidator)(coherence_key, &slot);
-    }
+    // 6. DT_MOUNT mount-point synthesis: ``sys_stat`` /``sys_unlink``
+    // synthesise a DT_MOUNT result directly from the routing structure
+    // (kernel/io.rs); no kernel-side cache row needs seeding here.
+    //
+    // 7. Apply-side cache coherence: each ZoneMetaStore self-registers
+    // an invalidator on its consensus during ``ZoneMetaStore::new``
+    // (raft/zone_meta_store.rs), so installing one here would just
+    // duplicate the registration.
 
     // 8. Update reverse index.
     let mut bucket = cross_zone_mounts
@@ -1428,11 +1387,14 @@ fn wire_mount_core(
 }
 
 /// Reverse the bookkeeping done by `wire_mount_core` for a DT_MOUNT
-/// delete event: drop the VFSRouter slot, evict the DCache seed, and
-/// remove the reverse-index entry.
+/// delete event: drop the VFSRouter slot and remove the reverse-index
+/// entry. Cache eviction for the unwired mount happens automatically:
+/// ``vfs_router.remove`` drops the per-mount ``Arc<dyn MetaStore>``
+/// (its internal ``DashMap`` cache goes with it), and the unwired
+/// mount no longer routes so subsequent ``sys_stat`` synthesises the
+/// absence of a DT_MOUNT directly from the empty routing entry.
 fn unwire_mount_core(
     vfs_router: &Arc<kernel::core::vfs_router::VFSRouter>,
-    dcache_helpers: &DCacheHelpers,
     cross_zone_mounts: &DashMap<String, Vec<CrossZoneMountTuple>>,
     parent_zone_id: &str,
     mount_path: &str,
@@ -1459,11 +1421,6 @@ fn unwire_mount_core(
     }
     if let Some(global) = unwired_global {
         vfs_router.remove(&global, contracts::ROOT_ZONE_ID);
-        // Evict the mount entry + every cached child under its prefix —
-        // without this, reads under the unwired mount route to
-        // longest-prefix parent and hit the stale dcache row from
-        // before unmount.
-        (dcache_helpers.evict_mount)(&global);
     }
 }
 
@@ -1475,7 +1432,6 @@ fn unwire_mount_core(
 #[allow(clippy::too_many_arguments)]
 fn install_mount_apply_cb_impl(
     vfs_router: &Arc<kernel::core::vfs_router::VFSRouter>,
-    dcache_helpers: &DCacheHelpers,
     lock_manager: &Arc<kernel::core::lock::LockManager>,
     registry: &Arc<crate::raft::ZoneRaftRegistry>,
     runtime: &tokio::runtime::Handle,
@@ -1488,7 +1444,6 @@ fn install_mount_apply_cb_impl(
         return;
     };
     let vfs_router = Arc::clone(vfs_router);
-    let dcache_helpers = dcache_helpers.clone();
     let lock_manager = Arc::clone(lock_manager);
     let registry = Arc::clone(registry);
     let runtime = runtime.clone();
@@ -1504,7 +1459,6 @@ fn install_mount_apply_cb_impl(
             } => {
                 let _ = wire_mount_core(
                     &vfs_router,
-                    &dcache_helpers,
                     &lock_manager,
                     &registry,
                     &runtime,
@@ -1515,13 +1469,7 @@ fn install_mount_apply_cb_impl(
                 );
             }
             MountApplyEvent::Delete { key } => {
-                unwire_mount_core(
-                    &vfs_router,
-                    &dcache_helpers,
-                    &cross_zone_mounts,
-                    &parent_zone_owned,
-                    key,
-                );
+                unwire_mount_core(&vfs_router, &cross_zone_mounts, &parent_zone_owned, key);
             }
         });
     *slot.write() = Some(cb);
@@ -1547,7 +1495,6 @@ fn wire_mount_impl(
         .ok_or("federation runtime not initialised")?;
     let registry = zm.registry();
     let vfs_router = kernel.vfs_router_arc();
-    let dcache_helpers = DCacheHelpers::from_kernel(kernel);
     let lock_manager = kernel.lock_manager_arc();
 
     // Quorum-replication contract: a DT_MOUNT entry committed on the
@@ -1585,7 +1532,6 @@ fn wire_mount_impl(
 
     wire_mount_core(
         &vfs_router,
-        &dcache_helpers,
         &lock_manager,
         &registry,
         runtime,

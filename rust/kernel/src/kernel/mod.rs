@@ -2231,50 +2231,15 @@ impl Kernel {
         Arc::clone(&self.vfs_router)
     }
 
-    /// Seed the DCache with a DT_MOUNT entry at `global_path`.  Used by
-    /// federation `wire_mount` to populate the cross-zone mount-point
-    /// row on every voter so subsequent reads at that path route
-    /// correctly without first hitting the metastore.
-    ///
-    /// Replaces direct `dcache.put(...)` calls from the federation crate
-    /// — keeps DCache mutation kernel-internal.
-    pub fn seed_dt_mount_dcache(&self, global_path: &str, target_zone_id: &str) {
-        self.dcache.put(
-            global_path,
-            CachedEntry {
-                size: 0,
-                content_id: None,
-                version: 1,
-                entry_type: 2, // DT_MOUNT
-                zone_id: Some(target_zone_id.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-                last_writer_address: None,
-                link_target: None,
-            },
-        );
-    }
-
-    /// Evict a DT_MOUNT entry from DCache plus every cached child under
-    /// its prefix.  Used by federation `unwire_mount` so reads under the
-    /// unwired mount don't hit stale dcache rows after the routing
-    /// table is rebuilt.
-    pub fn evict_dt_mount_dcache(&self, global_path: &str) {
-        self.dcache.evict(global_path);
-        let prefix = if global_path.ends_with('/') {
-            global_path.to_string()
-        } else {
-            format!("{}/", global_path)
-        };
-        self.dcache.evict_prefix(&prefix);
-    }
-
     /// Hand out a closure that looks up the cached local content_id for
     /// a path (or `None` on dcache miss / empty content_id).  Federation
     /// `KernelBlobFetcher` captures this in an `Arc<dyn Fn>` so it can
     /// translate VFS paths into backend-specific content handles
     /// without holding `Arc<DCache>` directly.
+    ///
+    /// Replaced in commit L by ``content_id_lookup_fn`` — the
+    /// syscall-shaped helper that goes through ``route() +
+    /// metastore.get()`` instead of the kernel-global dcache.
     #[allow(clippy::type_complexity)]
     pub fn dcache_local_content_id_lookup_fn(
         &self,
@@ -2285,118 +2250,6 @@ impl Kernel {
                 .get_entry(path)
                 .and_then(|e| e.content_id)
                 .filter(|s| !s.is_empty())
-        })
-    }
-
-    /// Hand out a closure that calls [`Self::seed_dt_mount_dcache`] —
-    /// federation `install_mount_apply_cb` captures this in a long-lived
-    /// `Arc<dyn Fn>` so apply-cb can mutate the dcache without holding
-    /// `Arc<DCache>` directly.
-    #[allow(clippy::type_complexity)]
-    pub fn dcache_seed_dt_mount_fn(&self) -> Arc<dyn Fn(&str, &str) + Send + Sync> {
-        let dcache = Arc::clone(&self.dcache);
-        Arc::new(move |global_path: &str, target_zone_id: &str| {
-            dcache.put(
-                global_path,
-                CachedEntry {
-                    size: 0,
-                    content_id: None,
-                    version: 1,
-                    entry_type: 2, // DT_MOUNT
-                    zone_id: Some(target_zone_id.to_string()),
-                    mime_type: None,
-                    created_at_ms: None,
-                    modified_at_ms: None,
-                    last_writer_address: None,
-                    link_target: None,
-                },
-            );
-        })
-    }
-
-    /// Hand out a closure that calls [`Self::evict_dt_mount_dcache`] —
-    /// same shape as [`Self::dcache_seed_dt_mount_fn`] for the unmount
-    /// side.
-    #[allow(clippy::type_complexity)]
-    pub fn dcache_evict_dt_mount_fn(&self) -> Arc<dyn Fn(&str) + Send + Sync> {
-        let dcache = Arc::clone(&self.dcache);
-        Arc::new(move |global_path: &str| {
-            dcache.evict(global_path);
-            let prefix = if global_path.ends_with('/') {
-                global_path.to_string()
-            } else {
-                format!("{}/", global_path)
-            };
-            dcache.evict_prefix(&prefix);
-        })
-    }
-
-    /// Build the apply-side dcache invalidation callback for a zone's
-    /// state machine and store it in `slot`.  When raft applies a
-    /// committed metadata mutation on `coherence_key`'s zone, the
-    /// callback walks every mount of that zone (via VFSRouter) and
-    /// evicts the corresponding global path from DCache.
-    ///
-    /// Replaces the federation-crate `install_dcache_coherence_impl`
-    /// which used to hold `Arc<DCache>` directly.  Now federation
-    /// passes the callback slot in; the kernel owns dcache + vfs_router
-    /// references.  `slot` is `None`-on-witness — no-op.
-    #[allow(clippy::type_complexity)]
-    pub fn install_zone_apply_invalidator(
-        &self,
-        coherence_key: usize,
-        slot: Option<&parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>,
-    ) {
-        let Some(slot) = slot else {
-            return;
-        };
-        let dcache = Arc::clone(&self.dcache);
-        let vfs_router = Arc::clone(&self.vfs_router);
-        let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
-            let trimmed = zone_relative_key.trim_start_matches('/');
-            for mp in vfs_router.mount_points_for_coherence_key(coherence_key) {
-                let global = if trimmed.is_empty() {
-                    mp.clone()
-                } else if mp.ends_with('/') {
-                    format!("{}{}", mp, trimmed)
-                } else {
-                    format!("{}/{}", mp, trimmed)
-                };
-                dcache.evict(&global);
-            }
-        });
-        slot.write().push(cb);
-    }
-
-    /// Hand out a closure that calls
-    /// [`Self::install_zone_apply_invalidator`] — federation
-    /// `wire_mount_core` captures this in a long-lived `Arc<dyn Fn>` so
-    /// the apply-cb path can install per-zone invalidators without
-    /// holding `Arc<DCache>` or `Arc<VFSRouter>` directly.
-    #[allow(clippy::type_complexity)]
-    pub fn dcache_install_apply_invalidator_fn(
-        &self,
-    ) -> Arc<dyn Fn(usize, &parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>) + Send + Sync>
-    {
-        let dcache = Arc::clone(&self.dcache);
-        let vfs_router = Arc::clone(&self.vfs_router);
-        Arc::new(move |coherence_key, slot| {
-            let dcache = Arc::clone(&dcache);
-            let vfs_router = Arc::clone(&vfs_router);
-            let cb: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |zone_relative_key: &str| {
-                let trimmed = zone_relative_key.trim_start_matches('/');
-                for mp in vfs_router.mount_points_for_coherence_key(coherence_key) {
-                    let global = if trimmed.is_empty() {
-                        mp.clone()
-                    } else if mp.ends_with('/') {
-                        format!("{}{}", mp, trimmed)
-                    } else {
-                        format!("{}/{}", mp, trimmed)
-                    };
-                    dcache.evict(&global);
-                }
-            });
-            slot.write().push(cb);
         })
     }
 

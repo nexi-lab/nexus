@@ -940,6 +940,25 @@ impl Kernel {
         self.metastore.read().as_ref().map(|ms| f(ms.as_ref()))
     }
 
+    /// Same as [`Self::with_metastore`], but consumes the per-mount
+    /// metastore Arc already populated on [`crate::vfs_router::RouteResult`]
+    /// — saves the second `get_canonical` lookup `with_metastore`
+    /// otherwise performs on top of `route()`. Hot-path callers
+    /// (sys_read, sys_stat, sys_unlink) prefer this entry.
+    pub(crate) fn with_metastore_route<F, R>(
+        &self,
+        route: &crate::vfs_router::RouteResult,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&dyn crate::meta_store::MetaStore) -> R,
+    {
+        if let Some(ms) = route.metastore.as_ref() {
+            return Some(f(ms.as_ref()));
+        }
+        self.metastore.read().as_ref().map(|ms| f(ms.as_ref()))
+    }
+
     // ── MetaStore routing ────────────────────────────────────────────
     //
     // The metastore abstraction owns key translation. Callers

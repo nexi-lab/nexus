@@ -77,40 +77,37 @@ impl Kernel {
         // External mounts now fall through to the normal backend read path
         // — Rust-registered ObjectStore handles all connectors natively.
 
-        // 3. DCache lookup — on miss, fallback to metastore (cold path)
-        let entry = match self.dcache.get_entry(path) {
-            Some(e) => e,
+        // 3. MetaStore lookup. The metastore impl serves cache hits from
+        // its own internal `DashMap` projection (see
+        // `LocalMetaStore.cache` / `RemoteMetaStore.cache` /
+        // `ZoneMetaStore.cache`), so this is the same hot-path cost as
+        // the legacy `dcache.get_entry` lookup — relocated inside
+        // `MetaStore::get` instead of a kernel-global side cache.
+        let entry: CachedEntry = match self
+            .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+            .flatten()
+        {
+            Some(meta) => (&meta).into(),
             None => {
-                // MetaStore fallback (per-mount first, then global) — full path
-                match self.with_metastore(&route.mount_point, |ms| ms.get(path)) {
-                    Some(Ok(Some(meta))) => {
-                        // Populate dcache from metastore result
-                        self.dcache.put(path, (&meta).into());
-                        // Re-fetch from dcache (now populated)
-                        self.dcache.get_entry(path).unwrap()
-                    }
-                    Some(Ok(None)) | Some(Err(_)) | None => {
-                        // MetaStore miss → try backend directly (all backend types
-                        // uniformly).  CAS backends return Err for path-based reads
-                        // (hash-addressed).  Path-local/external backends serve the
-                        // file if it exists on disk / via API.  No ABC leak: kernel
-                        // treats every backend the same through ObjectStore trait.
-                        if let Some(data) = self.vfs_router.read_content(
-                            &route.mount_point,
-                            &route.backend_path, // PAS uses as path; CAS rejects (not a hash)
-                            ctx,
-                        ) {
-                            return Ok(SysReadResult {
-                                data: Some(data),
-                                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                                content_id: None,
-                                entry_type: DT_REG,
-                                stream_next_offset: None,
-                            });
-                        }
-                        return Err(not_found());
-                    }
+                // MetaStore miss → try backend directly (all backend types
+                // uniformly).  CAS backends return Err for path-based reads
+                // (hash-addressed).  Path-local/external backends serve the
+                // file if it exists on disk / via API.  No ABC leak: kernel
+                // treats every backend the same through ObjectStore trait.
+                if let Some(data) = self.vfs_router.read_content(
+                    &route.mount_point,
+                    &route.backend_path, // PAS uses as path; CAS rejects (not a hash)
+                    ctx,
+                ) {
+                    return Ok(SysReadResult {
+                        data: Some(data),
+                        post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                        content_id: None,
+                        entry_type: DT_REG,
+                        stream_next_offset: None,
+                    });
                 }
+                return Err(not_found());
             }
         };
 
@@ -468,12 +465,11 @@ impl Kernel {
         //    entries normally only land in dcache via the IPC registry
         //    setattr path) but is harmless on the rare cross-call cold
         //    path.
-        let entry = self.dcache.get_entry(path).or_else(|| {
-            self.with_metastore(&route.mount_point, |ms| {
+        let entry = self
+            .with_metastore_route(&route, |ms| {
                 ms.get(path).ok().flatten().map(|m| (&m).into())
             })
-            .flatten()
-        });
+            .flatten();
 
         // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
         // Recursive call with `max_link_hops=0` rejects chained links via
@@ -574,12 +570,11 @@ impl Kernel {
             // PathLocalBackend ignores content_id when offset>0 (uses the
             // on-disk file instead), so this value is only consulted by
             // CasLocalBackend.
-            let old_entry = self.dcache.get_entry(path).or_else(|| {
-                self.with_metastore(&route.mount_point, |ms| {
+            let old_entry: Option<CachedEntry> = self
+                .with_metastore_route(&route, |ms| {
                     ms.get(path).ok().flatten().map(|m| (&m).into())
                 })
-                .flatten()
-            });
+                .flatten();
             match old_entry {
                 Some(e) => e.content_id.unwrap_or_default(),
                 None => {
@@ -618,12 +613,11 @@ impl Kernel {
                 // DCache → metastore fallback ensures accuracy even on cold
                 // dcache (matches the authority that Python metadata.get()
                 // had before this crossing elimination).
-                let old_entry = self.dcache.get_entry(path).or_else(|| {
-                    self.with_metastore(&route.mount_point, |ms| {
+                let old_entry: Option<CachedEntry> = self
+                    .with_metastore_route(&route, |ms| {
                         ms.get(path).ok().flatten().map(|m| (&m).into())
                     })
-                    .flatten()
-                });
+                    .flatten();
                 let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                 let old_content_id = old_entry.as_ref().and_then(|e| e.content_id.clone());
                 let new_version = old_version + 1;

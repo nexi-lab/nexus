@@ -78,7 +78,10 @@ pub(crate) struct WorkspaceRepo {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct StartSessionRequest {
-    pub agent: String,
+    /// Static agent profile id (e.g. `scode-standard`) — names the
+    /// directory under `/agents/{agent_id}/`.  Same `agent_id`
+    /// terminology the ACP service uses.
+    pub agent_id: String,
     #[serde(default)]
     pub repos: Vec<WorkspaceRepo>,
     #[serde(default)]
@@ -91,16 +94,17 @@ pub(crate) struct StartSessionRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct StartSessionResponse {
+    /// AgentRegistry pid for the spawned managed agent.  cancel /
+    /// get_session take this back.
     pub session_id: String,
-    pub agent_id: String,
     pub workspace_path: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct GetSessionResponse {
     pub session_id: String,
+    /// Static agent profile id (mirrors `StartSessionRequest.agent_id`).
     pub agent_id: String,
-    pub agent: String,
     pub workspace_path: String,
     pub model: String,
     pub state: String,
@@ -267,9 +271,9 @@ impl ManagedAgentService {
         &self,
         req: StartSessionRequest,
     ) -> Result<StartSessionResponse, ManagedAgentError> {
-        if req.agent.is_empty() {
+        if req.agent_id.is_empty() {
             return Err(ManagedAgentError::InvalidArgument(
-                "'agent' is required".into(),
+                "'agent_id' is required".into(),
             ));
         }
         let owner_id = if req.owner_id.is_empty() {
@@ -304,7 +308,7 @@ impl ManagedAgentService {
         let now = now_ms();
         let desc = AgentDescriptor {
             pid: pid.clone(),
-            name: req.agent.clone(),
+            name: req.agent_id.clone(),
             kind: AgentKind::Managed,
             state: AgentState::Registered,
             owner_id,
@@ -345,8 +349,7 @@ impl ManagedAgentService {
         }
 
         Ok(StartSessionResponse {
-            session_id: pid.clone(),
-            agent_id: pid,
+            session_id: pid,
             workspace_path,
         })
     }
@@ -414,8 +417,7 @@ impl ManagedAgentService {
         let model = desc.labels.get(MODEL_LABEL).cloned().unwrap_or_default();
         Ok(GetSessionResponse {
             session_id: desc.pid.clone(),
-            agent_id: desc.pid.clone(),
-            agent: desc.name.clone(),
+            agent_id: desc.name.clone(),
             workspace_path,
             model,
             state: desc.state.as_str().to_lowercase(),
@@ -487,9 +489,9 @@ mod tests {
         ManagedAgentService::new(Arc::new(AgentRegistry::new()))
     }
 
-    fn req(agent: &str) -> StartSessionRequest {
+    fn req(agent_id: &str) -> StartSessionRequest {
         StartSessionRequest {
-            agent: agent.to_string(),
+            agent_id: agent_id.to_string(),
             repos: Vec::new(),
             model: "claude-sonnet-4-6".to_string(),
             owner_id: "ethan".to_string(),
@@ -518,15 +520,14 @@ mod tests {
         let resp = svc.start_session(req("scode-standard")).unwrap();
 
         // session_id IS the pid — no second identifier.
-        assert_eq!(resp.session_id, resp.agent_id);
-        assert!(resp.agent_id.starts_with("pid-"));
+        assert!(resp.session_id.starts_with("pid-"));
         assert_eq!(
             resp.workspace_path,
-            format!("/proc/{}/workspace/", resp.agent_id)
+            format!("/proc/{}/workspace/", resp.session_id)
         );
 
         let desc = table
-            .get(&resp.agent_id)
+            .get(&resp.session_id)
             .expect("AgentRegistry record present");
         assert_eq!(desc.name, "scode-standard");
         assert_eq!(desc.kind, AgentKind::Managed);
@@ -552,11 +553,11 @@ mod tests {
     fn start_session_defaults_owner_and_zone() {
         let svc = fresh_service();
         let r = StartSessionRequest {
-            agent: "scode-standard".to_string(),
+            agent_id: "scode-standard".to_string(),
             ..Default::default()
         };
         let resp = svc.start_session(r).unwrap();
-        let desc = svc.agent_registry.get(&resp.agent_id).unwrap();
+        let desc = svc.agent_registry.get(&resp.session_id).unwrap();
         assert_eq!(desc.owner_id, "system");
         assert_eq!(desc.zone_id, "root");
     }
@@ -566,10 +567,9 @@ mod tests {
         let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
-        let pid = resp.agent_id.clone();
-        let session_id = resp.session_id.clone();
+        let pid = resp.session_id.clone();
 
-        let r = svc.cancel(&session_id, CancelMode::Session).unwrap();
+        let r = svc.cancel(&pid, CancelMode::Session).unwrap();
         assert!(r.cancelled);
 
         // Managed agents are orphans (start_session passes parent_pid=
@@ -578,7 +578,7 @@ mod tests {
         assert!(table.get(&pid).is_none());
 
         // Second cancel surfaces UnknownSession (descriptor reaped).
-        let err = svc.cancel(&session_id, CancelMode::Session).unwrap_err();
+        let err = svc.cancel(&pid, CancelMode::Session).unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
 
@@ -587,15 +587,15 @@ mod tests {
         let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
-        let pid = resp.agent_id.clone();
+        let pid = resp.session_id.clone();
 
-        let r = svc.cancel(&resp.session_id, CancelMode::Turn).unwrap();
+        let r = svc.cancel(&pid, CancelMode::Turn).unwrap();
         assert!(r.cancelled);
         // pid still WARMING_UP — turn cancel doesn't terminate.
         let desc = table.get(&pid).unwrap();
         assert_eq!(desc.state, AgentState::WarmingUp);
         // Descriptor still present — get_session still works.
-        let _ = svc.get_session(&resp.session_id).unwrap();
+        let _ = svc.get_session(&pid).unwrap();
     }
 
     #[test]
@@ -611,8 +611,8 @@ mod tests {
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let snap = svc.get_session(&resp.session_id).unwrap();
         assert_eq!(snap.session_id, resp.session_id);
-        assert_eq!(snap.agent_id, resp.agent_id);
-        assert_eq!(snap.agent, "scode-standard");
+        // agent_id in the response is the static profile name.
+        assert_eq!(snap.agent_id, "scode-standard");
         assert_eq!(snap.workspace_path, resp.workspace_path);
         assert_eq!(snap.model, "claude-sonnet-4-6");
         assert_eq!(snap.state, "warming_up");
@@ -628,7 +628,7 @@ mod tests {
         let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
-        table.unregister(&resp.agent_id);
+        table.unregister(&resp.session_id);
         let err = svc.get_session(&resp.session_id).unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
@@ -650,7 +650,7 @@ mod tests {
         fn start_session_v1_round_trip() {
             let svc = fresh_service();
             let payload = json!({
-                "agent": "scode-standard",
+                "agent_id": "scode-standard",
                 "model": "claude-sonnet-4-6",
                 "owner_id": "ethan",
                 "zone_id": "root",
@@ -661,24 +661,22 @@ mod tests {
                 .dispatch("start_session_v1", payload.as_bytes())
                 .unwrap();
             let resp: StartSessionResponse = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(resp.session_id, resp.agent_id);
-            assert!(resp.agent_id.starts_with("pid-"));
+            assert!(resp.session_id.starts_with("pid-"));
             assert_eq!(
                 resp.workspace_path,
-                format!("/proc/{}/workspace/", resp.agent_id)
+                format!("/proc/{}/workspace/", resp.session_id)
             );
         }
 
         #[test]
         fn start_session_v1_defaults_optional_fields() {
             let svc = fresh_service();
-            let payload = json!({"agent": "scode-standard"}).to_string();
+            let payload = json!({"agent_id": "scode-standard"}).to_string();
             let bytes = svc
                 .dispatch("start_session_v1", payload.as_bytes())
                 .unwrap();
             let resp: StartSessionResponse = serde_json::from_slice(&bytes).unwrap();
-            assert!(resp.agent_id.starts_with("pid-"));
-            assert_eq!(resp.session_id, resp.agent_id);
+            assert!(resp.session_id.starts_with("pid-"));
         }
 
         #[test]
@@ -813,7 +811,7 @@ mod tests {
             let resp = svc.start_session(req("scode-standard")).unwrap();
             let target = resolve_target(&kernel, &resp.workspace_path, "chat-with-me")
                 .expect("chat-with-me must resolve through ProcWorkspaceResolver");
-            assert_eq!(target, format!("/proc/{}/chat-with-me", resp.agent_id));
+            assert_eq!(target, format!("/proc/{}/chat-with-me", resp.session_id));
         }
 
         #[test]
@@ -833,7 +831,7 @@ mod tests {
             let resp = svc.start_session(r).unwrap();
             let desc = kernel
                 .agent_registry()
-                .get(&resp.agent_id)
+                .get(&resp.session_id)
                 .expect("descriptor must carry repos");
             assert_eq!(desc.repos.len(), 2);
 
@@ -873,7 +871,7 @@ mod tests {
             // cancel surface UnknownSession.
             let err = svc.get_session(&resp.session_id).unwrap_err();
             assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
-            assert!(kernel.agent_registry().get(&resp.agent_id).is_none());
+            assert!(kernel.agent_registry().get(&resp.session_id).is_none());
             // Dirent still in metastore — no observer ran.
             assert!(dir_exists(&kernel, &resp.workspace_path));
         }
@@ -898,7 +896,7 @@ mod tests {
 
             kernel
                 .agent_registry()
-                .signal(&resp.agent_id, AgentSignal::Sigkill, None)
+                .signal(&resp.session_id, AgentSignal::Sigkill, None)
                 .expect("SIGKILL");
 
             assert!(
@@ -916,7 +914,7 @@ mod tests {
             let resp = svc.start_session(req("scode-standard")).unwrap();
             kernel
                 .agent_registry()
-                .signal(&resp.agent_id, AgentSignal::Sigterm, None)
+                .signal(&resp.session_id, AgentSignal::Sigterm, None)
                 .expect("SIGTERM");
             assert!(!dir_exists(&kernel, &resp.workspace_path));
         }
@@ -932,7 +930,7 @@ mod tests {
             let resp = svc.start_session(req("scode-standard")).unwrap();
             svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
             assert!(!dir_exists(&kernel, &resp.workspace_path));
-            assert!(kernel.agent_registry().get(&resp.agent_id).is_none());
+            assert!(kernel.agent_registry().get(&resp.session_id).is_none());
             let err = svc.get_session(&resp.session_id).unwrap_err();
             assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
         }

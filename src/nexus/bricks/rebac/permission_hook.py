@@ -115,7 +115,7 @@ class PermissionCheckHook:
     # Rust PermissionProvider entry point
     # ------------------------------------------------------------------
 
-    def check(self, path: str, permission: "Permission") -> None:
+    def check(self, path: str, permission: "Permission", context: Any = None) -> None:
         """Single entry point for the Rust PermissionProvider adapter.
 
         Delegates to the internal ``PermissionChecker.check()`` which
@@ -126,7 +126,7 @@ class PermissionCheckHook:
             return
         if path.startswith(SYSTEM_PATH_PREFIX):
             return
-        self._checker.check(path, permission)
+        self._checker.check(path, permission, context=context)
 
     @staticmethod
     def _is_system_path(path: str) -> bool:

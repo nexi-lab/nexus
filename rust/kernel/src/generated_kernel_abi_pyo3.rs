@@ -788,7 +788,11 @@ impl PermissionProvider for PyPermissionProviderAdapter {
                 Ok(p) => p,
                 Err(_) => return PermissionDecision::Unknown,
             };
-            match checker.call_method1("check", (path, py_perm)) {
+            let py_ctx = match rust_ctx_to_python(py, _ctx, "") {
+                Ok(c) => c,
+                Err(_) => return PermissionDecision::Unknown,
+            };
+            match checker.call_method1("check", (path, py_perm, py_ctx)) {
                 Ok(_) => PermissionDecision::Allow,
                 Err(_) => PermissionDecision::Deny(format!(
                     "permission denied: {} on '{}'",

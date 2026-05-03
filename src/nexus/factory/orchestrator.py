@@ -381,48 +381,44 @@ def _register_vfs_hooks(
         _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
 
     # ── Permission gate — Rust kernel §13 ──────────────────────────
-    if permission_checker is not None:
+    if permission_checker is not None and nx._perm_config.enforce:
         _kernel = nx._kernel
         if _kernel is not None:
             _kernel.set_permission_provider(permission_checker)
             _kernel.set_permission_admin_bypass(nx._perm_config.allow_admin_bypass)
 
-            # Wire lease invalidation: CacheCoordinator → Rust kernel lease cache
-            # (Issue #3398 decisions 3A/7A).
-            if nx._perm_config.enforce:
-                _rebac_mgr = _ss.get("rebac_manager")
-                if _rebac_mgr is not None and hasattr(_rebac_mgr, "_cache_coordinator"):
+            _rebac_mgr = _ss.get("rebac_manager")
+            if _rebac_mgr is not None and hasattr(_rebac_mgr, "_cache_coordinator"):
 
-                    def _lease_invalidation_callback(
-                        _zone_id: str,
-                        _subject: tuple[str, str],
-                        _relation: str,
-                        object: tuple[str, str],  # noqa: A002
-                    ) -> None:
-                        obj_type, obj_id = object
-                        if obj_type == "file":
+                def _lease_invalidation_callback(
+                    _zone_id: str,
+                    _subject: tuple[str, str],
+                    _relation: str,
+                    object: tuple[str, str],  # noqa: A002
+                ) -> None:
+                    obj_type, obj_id = object
+                    if obj_type == "file":
+                        _kernel.permission_lease_invalidate_path(obj_id)
+                    else:
+                        _kernel.permission_lease_invalidate_all()
+
+                _rebac_mgr._cache_coordinator.register_lease_invalidator(
+                    "perm-write-lease", _lease_invalidation_callback
+                )
+
+                _coord = _rebac_mgr._cache_coordinator
+                if getattr(_coord, "_pubsub", None) is not None:
+                    _zone_id = getattr(nx, "_zone_id", "root")
+
+                    def _on_cross_zone_lease_hint(payload: dict) -> None:
+                        obj_type = payload.get("object_type", "")
+                        obj_id = payload.get("object_id", "")
+                        if obj_type == "file" and obj_id:
                             _kernel.permission_lease_invalidate_path(obj_id)
                         else:
                             _kernel.permission_lease_invalidate_all()
 
-                    _rebac_mgr._cache_coordinator.register_lease_invalidator(
-                        "perm-write-lease", _lease_invalidation_callback
-                    )
-
-                    # Cross-zone lease invalidation via Pub/Sub (Issue #3398 decision 4A).
-                    _coord = _rebac_mgr._cache_coordinator
-                    if getattr(_coord, "_pubsub", None) is not None:
-                        _zone_id = getattr(nx, "_zone_id", "root")
-
-                        def _on_cross_zone_lease_hint(payload: dict) -> None:
-                            obj_type = payload.get("object_type", "")
-                            obj_id = payload.get("object_id", "")
-                            if obj_type == "file" and obj_id:
-                                _kernel.permission_lease_invalidate_path(obj_id)
-                            else:
-                                _kernel.permission_lease_invalidate_all()
-
-                        _coord._pubsub.subscribe(_zone_id, "lease", _on_cross_zone_lease_hint)
+                    _coord._pubsub.subscribe(_zone_id, "lease", _on_cross_zone_lease_hint)
 
     # ── Audit write interceptor (Issue #900, #1772) ──
     # Both sync and debounced observers now implement on_write/on_delete/etc.

@@ -63,7 +63,6 @@ KERNEL_REQUIRED_METHODS: frozenset[str] = frozenset(
         "agent_heartbeat",
         "agent_list",
         "agent_register",
-        "agent_registry",
         "agent_unregister",
         "agent_update_state",
         "agent_wait",

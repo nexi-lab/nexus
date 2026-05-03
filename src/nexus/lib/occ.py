@@ -26,35 +26,58 @@ but a standard composition of kernel syscalls.
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from nexus.contracts.types import OperationContext
 
 
-# #4005 round-5: per-(zone, path) lock pool so two worker threads cannot
-# both observe the same pre-state and both commit. The lock pool is
-# unbounded in the worst case, but each lock is tiny and only paths
-# under active OCC contention live here. Cleanup on idle is intentional
-# punted: a once-per-N writes prune is brittle and the steady-state
-# memory cost is negligible compared to the correctness win. Cross-
-# process atomicity still requires a backend constraint (Issue #1323).
-_OCC_LOCKS: dict[tuple[str, str], threading.Lock] = {}
-_OCC_LOCKS_GUARD = threading.Lock()
+# #4005 round-6: per-path refcounted lock pool. Round-5 used (zone_id,
+# path) keys, but the path is *already* zone-scoped by the time it
+# reaches occ_write_sync (scope_params_for_zone runs at the RPC layer,
+# prepending ``/zone/<id>/`` for non-root callers). Adding caller
+# zone_id to the key let a tenant-scoped caller and a root caller
+# acquire different locks for the same canonical object, defeating the
+# serialization. Key by the (already-canonicalized) path alone.
+#
+# Refcount cleanup: every entry is removed from the pool when no caller
+# holds it. This bounds the pool to (concurrent OCC ops in flight) and
+# closes the auth-DoS path where unauthorized callers spamming unique
+# paths could grow the dict forever.
+class _OccLockEntry:
+    __slots__ = ("lock", "refs")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.refs = 0
 
 
-def _occ_lock_for(path: str, zone_id: str) -> threading.Lock:
-    """Return the threading.Lock for ``(zone_id, path)`` (creating on demand)."""
-    key = (zone_id, path)
-    lock = _OCC_LOCKS.get(key)
-    if lock is not None:
-        return lock
-    with _OCC_LOCKS_GUARD:
-        lock = _OCC_LOCKS.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _OCC_LOCKS[key] = lock
-        return lock
+_OCC_ENTRIES: dict[str, _OccLockEntry] = {}
+_OCC_GUARD = threading.Lock()
+
+
+@contextmanager
+def _occ_path_lock(path: str) -> Iterator[None]:
+    """Acquire the per-path OCC lock; release + GC the entry on exit."""
+    with _OCC_GUARD:
+        entry = _OCC_ENTRIES.get(path)
+        if entry is None:
+            entry = _OccLockEntry()
+            _OCC_ENTRIES[path] = entry
+        entry.refs += 1
+    try:
+        with entry.lock:
+            yield
+    finally:
+        with _OCC_GUARD:
+            entry.refs -= 1
+            if entry.refs == 0:
+                # Last holder leaves — drop the entry so the pool stays
+                # bounded by live contention.
+                _OCC_ENTRIES.pop(path, None)
 
 
 def occ_write_sync(
@@ -101,8 +124,7 @@ def occ_write_sync(
 
     from nexus.contracts.exceptions import ConflictError
 
-    zone_id = getattr(context, "zone_id", None) or "_root"
-    with _occ_lock_for(path, str(zone_id)):
+    with _occ_path_lock(path):
         meta = fs.sys_stat(path, context=context)
 
         if if_none_match and meta is not None:

@@ -331,13 +331,33 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     let bootstrap_new = std::env::var("NEXUS_BOOTSTRAP_NEW")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true"))
         .unwrap_or(false);
-    bootstrap_or_join_root(
-        zm.as_ref(),
-        node_id,
-        &self_address,
-        &peer_addrs,
-        bootstrap_new,
-    )
+
+    // `bootstrap_or_join_root` is a sync helper that, in branch 3
+    // (wait-and-join), spins a nested `tokio::runtime` to drive the
+    // JoinZone retry loop's RPCs.  Python `nexusd::init_from_env`
+    // calls it from a sync PyO3 entry point — no outer runtime — so
+    // the nested-runtime build is allowed.  `nexusd-cluster::main` is
+    // `#[tokio::main]`, so calling the sync helper from this `async`
+    // function would build the nested runtime *inside* the outer
+    // worker pool and trip tokio's "Cannot start a runtime from
+    // within a runtime" panic.  Move the call to `spawn_blocking`:
+    // the blocking thread is outside the worker pool, so nested
+    // runtime creation is allowed (and the worker pool is not held
+    // while branch 3 retries indefinitely).
+    let zm_for_bootstrap = zm.clone();
+    let self_addr_for_bootstrap = self_address.clone();
+    let peer_addrs_for_bootstrap = peer_addrs.clone();
+    tokio::task::spawn_blocking(move || {
+        bootstrap_or_join_root(
+            zm_for_bootstrap.as_ref(),
+            node_id,
+            &self_addr_for_bootstrap,
+            &peer_addrs_for_bootstrap,
+            bootstrap_new,
+        )
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("bootstrap join task panicked: {}", e))?
     .map_err(|e| anyhow::anyhow!("bootstrap_or_join_root: {}", e))?;
 
     // `bootstrap_static` — invoked below when federation env vars are

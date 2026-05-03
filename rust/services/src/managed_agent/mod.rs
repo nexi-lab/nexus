@@ -921,16 +921,68 @@ mod tests {
             assert!(!entry_exists(&kernel, &cwm));
         }
 
-        /// Cross-link smoke: the canonical chat-with-me DT_STREAM and
-        /// the workspace-shortcut DT_LINK both resolve through
-        /// metastore_get with the link's `link_target` pointing at the
-        /// canonical path. End-to-end `sys_write` through the link →
-        /// `sys_read` on the canonical stream is deferred until a
-        /// follow-up wires a default `/proc` mount so VFSRouter's
-        /// `route()` succeeds for proc-relative paths in
-        /// `Kernel::new()` test fixtures (today the route() lookup
-        /// errors before the DT_LINK transparent-follow branch in
-        /// `sys_read_with_link_depth` runs).
+        /// Register `/proc` as a route entry on the kernel's
+        /// VFSRouter. The mount carries no per-mount backend or
+        /// metastore — `Kernel::with_metastore` falls back to the
+        /// global metastore on miss, which is where sys_setattr's
+        /// DT_DIR / DT_STREAM / DT_LINK writes land for these paths.
+        /// Without this, `sys_read` / `sys_write` against any
+        /// `/proc/*` path errors at `vfs_router.route()` before ever
+        /// consulting the metastore.
+        fn mount_proc(kernel: &Kernel) {
+            kernel
+                .vfs_router_arc()
+                .add_mount("/proc", "root", None, false);
+        }
+
+        /// End-to-end cross-link: write through the workspace shortcut
+        /// DT_LINK lands in the canonical chat-with-me DT_STREAM;
+        /// reading the canonical path returns the bytes. Validates
+        /// VFSRouter follows DT_LINK transparently for sys_write +
+        /// sys_read — the load-bearing assumption behind dropping
+        /// ProcWorkspaceResolver in favour of plain metastore DT_LINK
+        /// rows.
+        #[test]
+        fn workspace_shortcut_write_lands_in_canonical_chat_with_me_stream() {
+            use kernel::kernel::OperationContext;
+
+            let kernel = Arc::new(Kernel::new());
+            mount_proc(&kernel);
+            let svc = install_managed_agent(&kernel);
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+
+            let shortcut = format!("{}chat-with-me", &resp.workspace_path);
+            let canonical = format!("/proc/{}/chat-with-me", resp.session_id);
+            let payload = br#"{"to":"scode-standard","body":"ping"}"#;
+
+            let ctx = OperationContext {
+                user_id: "ethan".into(),
+                zone_id: "root".into(),
+                is_admin: false,
+                agent_id: Some("scode-standard".into()),
+                is_system: false,
+                groups: vec![],
+                admin_capabilities: vec![],
+                subject_type: "user".into(),
+                subject_id: None,
+                request_id: "req-cross-link".into(),
+                context_zone_id: None,
+            };
+
+            kernel
+                .sys_write(&shortcut, &ctx, payload, 0)
+                .expect("sys_write through workspace shortcut DT_LINK");
+
+            let read = kernel
+                .sys_read(&canonical, &ctx, /* timeout_ms */ 0, 0)
+                .expect("sys_read on canonical chat-with-me");
+            let bytes = read.data.expect("stream data present after write");
+            assert_eq!(bytes.as_slice(), payload);
+        }
+
+        /// Companion structural assertion — keeps the metastore-level
+        /// invariant explicit even if the e2e write/read above is ever
+        /// skipped on a CI matrix that can't satisfy the route().
         #[test]
         fn workspace_shortcut_link_targets_canonical_chat_with_me_stream() {
             let (kernel, svc) = svc_with_kernel();

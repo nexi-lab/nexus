@@ -69,6 +69,14 @@ pub mod tasks;
 // Kernel registration of §11 PermissionHook is scaffolded here only.
 #[cfg(all(feature = "service-permission", feature = "python"))]
 pub mod permission;
+// Matrix Client-Server v3 adapter — exposes nexus chat-with-me
+// DT_STREAMs as Matrix rooms so stock chat clients (Element /
+// FluffyChat / Cinny) participate in nexus conversations through the
+// existing kernel surface. End-state spec lives in
+// `sudowork-2/docs/tech/nexus-integration-architecture.md` §4.2; D1
+// here lands skeleton + auth (`login` / `logout` / `whoami`).
+#[cfg(feature = "service-matrix-adapter")]
+pub mod matrix_adapter;
 
 #[cfg(feature = "python")]
 pub mod python;

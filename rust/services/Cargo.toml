@@ -21,6 +21,11 @@ service-managed-agent = []
 service-acp = []
 service-tasks = []
 service-permission = []
+# Matrix Client-Server v3 adapter — exposes nexus chat-with-me
+# DT_STREAMs as Matrix rooms so stock chat clients (Element /
+# FluffyChat / Cinny) can join conversations without a bespoke
+# nexus client. End-state spec: sudowork-2/docs/tech/nexus-integration-architecture.md §4.2.
+service-matrix-adapter = ["dep:axum", "dep:base32", "dep:tower"]
 
 # Optional PyO3 surface — `services::python::register(m)` aggregates
 # every PyO3 entry point (`install_audit_hook`, …) into one fn the
@@ -36,6 +41,9 @@ python = [
     "service-acp",
     "service-tasks",
     "service-permission",
+    # service-matrix-adapter intentionally NOT in `python` — it has no
+    # PyO3 surface; nexus-cdylib opts in separately when shipping the
+    # adapter alongside the Python wheel.
 ]
 
 [dependencies]
@@ -80,6 +88,22 @@ futures = "0.3"
 # pyo3 feature unioned by cargo when nexus-cdylib enables `extension-module`
 # on its own pyo3 dep — services does not need to set extension-module here.
 pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
+# Matrix C-S adapter HTTP surface. Lazily pulled in by the
+# `service-matrix-adapter` feature so non-adapter builds (cluster
+# binary, raft-witness, slim WASM) do not pay the axum compile time.
+axum = { version = "0.7", default-features = false, features = ["json", "http1", "tokio", "matched-path"], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+# base32 alphabet for Matrix room-id encoding (`!{base32(stream_path)}:nexus.local`).
+base32 = { version = "0.5", optional = true }
+# `async_trait` lets the `AuthBackend` trait expose async methods —
+# axum handlers are async, and the production AuthService backend will
+# do an async lookup. Used by every adapter feature gate, so we pull
+# it unconditionally rather than wrapping each impl in a
+# cfg(feature) hop.
+async-trait = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
+# Test the adapter's HTTP surface end-to-end against an in-memory
+# axum router via `tower::Service::call`.
+tower = { version = "0.5", features = ["util"] }

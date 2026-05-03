@@ -71,3 +71,78 @@ class TestDeleteBatchMissing:
 class TestDeleteBatchEmpty:
     def test_empty_input_returns_empty_dict(self, nx):
         assert nx.delete_batch([]) == {}
+
+
+class TestDeleteBatchImplicitDirectory:
+    """Codex review: implicit directories (paths with children but no
+    explicit inode) must be deletable through delete_batch when recursive."""
+
+    def test_implicit_dir_recursive_delete(self, nx):
+        nx.write_batch(
+            [
+                ("/parent/child1.txt", b"a"),
+                ("/parent/child2.txt", b"b"),
+            ]
+        )
+        assert nx.exists_batch(["/parent"]) == {"/parent": True}
+
+        result = nx.delete_batch(["/parent"], recursive=True)
+
+        assert result == {"/parent": {"success": True}}
+        assert nx.exists_batch(["/parent/child1.txt", "/parent/child2.txt"]) == {
+            "/parent/child1.txt": False,
+            "/parent/child2.txt": False,
+        }
+
+    def test_implicit_dir_non_recursive_reports_not_empty(self, nx):
+        nx.write_batch([("/parent/child.txt", b"a")])
+
+        result = nx.delete_batch(["/parent"])
+
+        assert result["/parent"]["success"] is False
+        assert "not empty" in result["/parent"]["error"].lower()
+        assert nx.exists_batch(["/parent/child.txt"]) == {"/parent/child.txt": True}
+
+
+class _NonHitResult:
+    hit = False
+    entry_type = 99  # not 0 (not-found) and not 5 (external storage)
+    post_hook_needed = False
+
+
+class _NonHitKernelWrapper:
+    """Wraps the real kernel but forces sys_unlink to return a non-hit
+    with a nonzero entry_type — simulates write-lock timeout / internal
+    abort that Codex flagged as a silent-success path."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def sys_unlink(self, *_args, **_kwargs):
+        return _NonHitResult()
+
+
+class TestSysUnlinkNonHit:
+    """Codex review: sys_unlink must surface non-hit kernel results so
+    delete_batch records a real failure instead of phantom success."""
+
+    def test_unknown_entry_type_raises(self, nx, monkeypatch):
+        from nexus.contracts.exceptions import BackendError
+
+        nx.write_batch([("/lock-timeout.txt", b"x")])
+        monkeypatch.setattr(nx, "_kernel", _NonHitKernelWrapper(nx._kernel))
+
+        with pytest.raises(BackendError, match="entry_type=99"):
+            nx.sys_unlink("/lock-timeout.txt")
+
+    def test_delete_batch_reports_failure_on_non_hit(self, nx, monkeypatch):
+        nx.write_batch([("/lock-timeout.txt", b"x")])
+        monkeypatch.setattr(nx, "_kernel", _NonHitKernelWrapper(nx._kernel))
+
+        result = nx.delete_batch(["/lock-timeout.txt"])
+
+        assert result["/lock-timeout.txt"]["success"] is False
+        assert "entry_type=99" in result["/lock-timeout.txt"]["error"]

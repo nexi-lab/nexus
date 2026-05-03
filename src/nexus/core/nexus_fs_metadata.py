@@ -833,9 +833,16 @@ class MetadataMixin:
                 logger.info("sys_unlink: unmounted external connector %s", path)
             return {}
 
-        # Unknown entry type — should not happen
-        logger.warning("sys_unlink: unexpected entry_type=%d for %s", et, path)
-        return {}
+        # Unknown entry type — kernel reported a non-hit with a nonzero
+        # entry_type (e.g. write-lock timeout, internal abort).  Treating
+        # this as success would silently leave files on disk while
+        # callers proceed under a false-clean signal (Codex review,
+        # Issue #4002 round 2).  Surface it so batch APIs can record a
+        # real per-item failure instead of phantom success.
+        raise BackendError(
+            f"sys_unlink: kernel returned non-hit with entry_type={et}",
+            path=path,
+        )
 
     # @rpc_expose removed — kernel syscall, served by the thin dispatcher.
     def sys_rename(
@@ -1416,7 +1423,28 @@ class MetadataMixin:
                 self.sys_unlink(normalized, recursive=recursive, context=context)
                 results[path] = {"success": True}
             except NexusFileNotFoundError:
-                results[path] = {"success": False, "error": "File not found"}
+                # Rust kernel doesn't see implicit directories (paths with
+                # children but no explicit inode). Fall back to the same
+                # is_implicit_directory check stat/list use, so a directory
+                # that exists_batch reports True for is also deletable
+                # (Codex review, Issue #4002 round 2).
+                if self.metadata.is_implicit_directory(normalized):
+                    if not recursive:
+                        results[path] = {
+                            "success": False,
+                            "error": "Directory not empty",
+                        }
+                        continue
+                    try:
+                        for child in list(
+                            self.metadata.list_iter(prefix=normalized, recursive=True)
+                        ):
+                            self.sys_unlink(child.path, context=context)
+                        results[path] = {"success": True}
+                    except Exception as e:
+                        results[path] = {"success": False, "error": str(e)}
+                else:
+                    results[path] = {"success": False, "error": "File not found"}
             except Exception as e:
                 results[path] = {"success": False, "error": str(e)}
         return results

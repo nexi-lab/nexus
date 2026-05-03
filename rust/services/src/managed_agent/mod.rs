@@ -47,7 +47,9 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
-use kernel::core::agents::registry::{AgentDescriptor, AgentKind, AgentRegistry, AgentState};
+use kernel::core::agents::registry::{
+    AgentDescriptor, AgentKind, AgentRegistry, AgentState, RepoMount,
+};
 use kernel::service_registry::{RustCallError, RustService};
 
 pub(crate) mod mailbox_stamping_hook;
@@ -56,6 +58,8 @@ pub(crate) mod proc_entry;
 pub mod proc_workspace_resolver;
 pub(crate) mod session;
 pub(crate) mod workspace_boundary_hook;
+
+use proc_entry::{register_proc_entry, unregister_proc_entry};
 
 use session::{alloc_pid, alloc_session_id, now_ms, Session};
 
@@ -142,14 +146,15 @@ impl std::error::Error for ManagedAgentError {}
 // ── Service ─────────────────────────────────────────────────────────────
 
 pub(crate) struct ManagedAgentService {
-    /// Shared kernel handle for `start_session` / `cancel` to call
-    /// `sys_setattr` / `sys_unlink` against — the path on which the
-    /// workspace materialization (DT_DIR + DT_LINK chat-with-me +
-    /// per-repo DT_LINKs) happens.  `Option` so the existing test
-    /// fixtures that build `ManagedAgentService::new(agent_registry)`
-    /// without a real kernel keep compiling; production callers
-    /// construct via [`Self::install`] which always provides the
-    /// kernel.
+    /// Shared kernel handle for `start_session` to stamp the per-pid
+    /// procfs dirent (`/proc/{pid}/workspace/` DT_DIR) and for the
+    /// on_terminate observer to tear it down.  Workspace link content
+    /// is derived from `AgentDescriptor.repos` on demand by
+    /// [`proc_workspace_resolver::ProcWorkspaceResolver`] — never
+    /// persisted in the metastore.  `Option` so the existing test
+    /// fixtures that build `ManagedAgentService::new` without a real
+    /// kernel keep compiling; production callers construct via
+    /// [`Self::install`] which always provides the kernel.
     kernel: Option<Arc<kernel::kernel::Kernel>>,
     agent_registry: Arc<AgentRegistry>,
     sessions: DashMap<String, Session>,
@@ -160,8 +165,8 @@ impl ManagedAgentService {
 
     /// Test-only constructor — leaves the kernel handle empty so unit
     /// tests can exercise lifecycle bookkeeping (start_session /
-    /// cancel / get_session) without a real kernel.  Workspace
-    /// materialization is skipped when `kernel` is `None`.
+    /// cancel / get_session) without a real kernel.  The procfs
+    /// dirent stamp is skipped when `kernel` is `None`.
     pub(crate) fn new(agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
             kernel: None,
@@ -171,8 +176,8 @@ impl ManagedAgentService {
     }
 
     /// Production constructor used by [`Self::install`] — passes the
-    /// kernel handle through so workspace paths can be materialised
-    /// inside `start_session`.
+    /// kernel handle through so the per-pid procfs dirent can be
+    /// stamped inside `start_session`.
     pub(crate) fn with_kernel(
         kernel: Arc<kernel::kernel::Kernel>,
         agent_registry: Arc<AgentRegistry>,
@@ -213,28 +218,29 @@ impl ManagedAgentService {
 
         // Holding `Arc<Kernel>` inside the service does create a
         // Kernel ↔ Service Arc cycle, but services live for process
-        // lifetime — same convention AcpService follows.  The
-        // workspace materialisation in `start_session` requires the
-        // owned Arc so it can issue `sys_setattr`/`sys_unlink`
-        // against the kernel.
+        // lifetime — same convention AcpService follows.  The procfs
+        // dirent stamp in `start_session` and the on_terminate
+        // teardown both need the owned Arc.
         let svc = Arc::new(Self::with_kernel(
             Arc::clone(kernel),
             Arc::clone(kernel.agent_registry()),
         ));
 
-        // Reap the workspace on out-of-band termination — SIGKILL,
-        // orphan auto-reap, any path that flips an agent to Terminated
-        // without going through `cancel_session(Session)`.  The
-        // callback walks `sessions` for a matching pid; if a session
-        // row exists, tear down the DT_DIR + DT_LINK tree and drop the
-        // row so subsequent `get_session` returns `UnknownSession`.
-        // Cheap when no session matches — DashMap iter is O(N) and the
-        // sessions map is bounded by the per-process managed-agent
-        // count.
+        // Tear down the per-pid procfs dirent on out-of-band
+        // termination — SIGKILL, orphan auto-reap, any path that flips
+        // an agent to Terminated without going through
+        // `cancel_session(Session)`.  Workspace link content is owned
+        // by `ProcWorkspaceResolver` (derived from the descriptor)
+        // and goes away with the descriptor itself; only the dirent
+        // stamped at start_session needs explicit removal.  The
+        // callback also drops the session row so subsequent
+        // `get_session` returns `UnknownSession`.
         let svc_for_cb = Arc::clone(&svc);
+        let kernel_for_cb = Arc::clone(kernel);
         kernel.agent_registry().register_on_terminate(
             Self::NAME,
             Arc::new(move |pid: &str| {
+                unregister_proc_entry(&kernel_for_cb, pid);
                 let pid_owned = pid.to_string();
                 let session_id_opt = svc_for_cb
                     .sessions
@@ -242,9 +248,7 @@ impl ManagedAgentService {
                     .find(|e| e.value().pid == pid_owned)
                     .map(|e| e.key().clone());
                 if let Some(session_id) = session_id_opt {
-                    if let Some((_, sess)) = svc_for_cb.sessions.remove(&session_id) {
-                        svc_for_cb.reap_workspace(&sess.workspace_path, &sess.repo_aliases);
-                    }
+                    svc_for_cb.sessions.remove(&session_id);
                 }
             }),
         );
@@ -289,6 +293,16 @@ impl ManagedAgentService {
         let workspace_path = format!("/proc/{pid}/workspace/");
         let session_id = alloc_session_id();
 
+        let repos: Vec<RepoMount> = req
+            .repos
+            .iter()
+            .filter(|r| !r.alias.is_empty() && !r.host_path.is_empty())
+            .map(|r| RepoMount {
+                alias: r.alias.clone(),
+                mount_path: r.host_path.clone(),
+            })
+            .collect();
+
         let now = now_ms();
         let desc = AgentDescriptor {
             pid: pid.clone(),
@@ -299,6 +313,7 @@ impl ManagedAgentService {
             zone_id,
             created_at_ms: now,
             updated_at_ms: now,
+            repos,
             ..Default::default()
         };
 
@@ -317,16 +332,17 @@ impl ManagedAgentService {
             .agent_registry
             .update_state(&pid, AgentState::WarmingUp);
 
-        // Materialise the workspace inside the kernel — DT_DIR for the
-        // workspace root, DT_LINK at chat-with-me pointing at the
-        // per-pid stream, and one DT_LINK per requested repo aliased
-        // under the workspace.  Pre-runtime-crate the runtime hasn't
-        // been wired in yet, so a materialise failure is logged but
-        // doesn't abort the session: the AgentRegistry record + session
-        // map have already been planted, and a follow-up materialise
-        // call (post-warmup) can close the gap.
-        if let Err(e) = self.materialize_workspace(&workspace_path, &pid, &req.repos) {
-            tracing::warn!(pid=%pid, error=%e, "workspace materialization failed");
+        // Stamp only the dirent + stat for /proc/{pid}/workspace/.
+        // Workspace link content (chat-with-me, per-repo aliases) is
+        // composed on demand by ProcWorkspaceResolver from the
+        // descriptor's repos; never persisted in the metastore.  A
+        // failed dirent stamp is logged but doesn't abort the session
+        // — the AgentRegistry record is already planted and a future
+        // re-stamp closes the gap.
+        if let Some(kernel) = self.kernel.as_ref() {
+            if let Err(e) = register_proc_entry(kernel, &pid) {
+                tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
+            }
         }
 
         let sess = Session {
@@ -334,8 +350,6 @@ impl ManagedAgentService {
             pid: pid.clone(),
             agent: req.agent,
             model: req.model,
-            workspace_path: workspace_path.clone(),
-            repo_aliases: req.repos.iter().map(|r| r.alias.clone()).collect(),
         };
         self.sessions.insert(session_id.clone(), sess);
 
@@ -344,93 +358,6 @@ impl ManagedAgentService {
             agent_id: pid,
             workspace_path,
         })
-    }
-
-    // ── Workspace materialisation ─────────────────────────────────────
-
-    /// Build `/proc/{pid}/workspace/`, the chat-with-me DT_LINK, and a
-    /// DT_LINK per requested repo alias.  No-ops when the service was
-    /// built without a kernel handle (test fixtures).
-    fn materialize_workspace(
-        &self,
-        workspace_path: &str,
-        pid: &str,
-        repos: &[WorkspaceRepo],
-    ) -> Result<(), String> {
-        let Some(kernel) = self.kernel.as_ref() else {
-            return Ok(());
-        };
-
-        // /proc and /proc/{pid} need to exist before /proc/{pid}/
-        // workspace/ — sys_setattr(DT_DIR) is idempotent for
-        // already-present dirs, so this is safe across restarts.
-        let pid_root = format!("/proc/{pid}");
-        let proc_root = "/proc";
-        for dir in [proc_root, &pid_root, workspace_path.trim_end_matches('/')] {
-            create_dt_dir(kernel, dir)
-                .map_err(|e| format!("sys_setattr(DT_DIR at {dir:?}): {e}"))?;
-        }
-
-        // chat-with-me DT_LINK — workspace shortcut to
-        // /proc/{pid}/chat-with-me so an agent writing relative to
-        // its workspace cwd reaches its own mailbox without a
-        // procfs path.
-        let cwm_link = format!("{}chat-with-me", trailing_slash(workspace_path));
-        let cwm_target = format!("/proc/{pid}/chat-with-me");
-        create_dt_link(kernel, &cwm_link, &cwm_target)?;
-
-        // Per-repo DT_LINKs — every repo aliased under the workspace
-        // becomes a one-hop link to the host VFS path sudowork passed
-        // in.  `WorkspaceRepo.host_path` is treated as a VFS path
-        // (callers that need OS-level visibility mount the host FS
-        // first; that's an out-of-scope concern of this service).
-        for repo in repos {
-            if repo.alias.is_empty() || repo.host_path.is_empty() {
-                continue;
-            }
-            let link = format!("{}{}", trailing_slash(workspace_path), repo.alias);
-            create_dt_link(kernel, &link, &repo.host_path)?;
-        }
-        Ok(())
-    }
-
-    /// Reverse of [`Self::materialize_workspace`] — remove every
-    /// DT_LINK and the workspace directory.  Best-effort: missing
-    /// entries (e.g. a partial materialise that failed) are ignored.
-    fn reap_workspace(&self, workspace_path: &str, repo_aliases: &[String]) {
-        let Some(kernel) = self.kernel.as_ref() else {
-            return;
-        };
-        let ctx = kernel::kernel::OperationContext::new(
-            "managed_agent_service",
-            "root",
-            /* is_admin */ true,
-            None,
-            /* is_system */ true,
-        );
-
-        // Reap entries directly through the metastore.  We could go
-        // through `sys_unlink` for the full validate→route→hooks
-        // path, but the workspace tree lives entirely in the kernel's
-        // default in-memory metastore (sys_setattr created the
-        // entries with `io_profile="memory"`), and a metastore
-        // round-trip is the one path guaranteed to clear them
-        // regardless of which mounts the running deployment has
-        // configured.  `let _ = ...` keeps the reap best-effort —
-        // missing entries from a partial materialisation are not an
-        // error.  ctx is intentionally unused here; the metastore
-        // surface is identity-free.
-        let _ = ctx;
-        for alias in repo_aliases {
-            if alias.is_empty() {
-                continue;
-            }
-            let link = format!("{}{}", trailing_slash(workspace_path), alias);
-            let _ = kernel.metastore_delete(link.trim_end_matches('/'));
-        }
-        let cwm_link = format!("{}chat-with-me", trailing_slash(workspace_path));
-        let _ = kernel.metastore_delete(cwm_link.trim_end_matches('/'));
-        let _ = kernel.metastore_delete(workspace_path.trim_end_matches('/'));
     }
 
     /// Cancel an in-flight turn or terminate the entire session.
@@ -462,15 +389,17 @@ impl ManagedAgentService {
                 Ok(CancelResponse { cancelled: true })
             }
             CancelMode::Session => {
+                // The state transition fires the on_terminate
+                // observer registered at install-time, which both
+                // tears down the procfs dirent and removes the
+                // session row.  Belt-and-braces session removal
+                // below is a no-op when the observer ran first and
+                // covers the kernel-less test fixtures where no
+                // observer is registered.
                 let cancelled = self
                     .agent_registry
                     .update_state_with_exit(&sess.pid, AgentState::Terminated, 0)
                     .unwrap_or(false);
-                // Tear down the workspace before we drop the session
-                // row — DT_LINK targets live independently, so leaving
-                // them dangling would clutter `sys_listdir(/proc)`
-                // until the kernel restarts.
-                self.reap_workspace(&sess.workspace_path, &sess.repo_aliases);
                 self.sessions.remove(session_id);
                 Ok(CancelResponse { cancelled })
             }
@@ -493,11 +422,12 @@ impl ManagedAgentService {
             .get(&sess.pid)
             .map(|d| d.state.as_str().to_lowercase())
             .unwrap_or_else(|| "terminated".to_string());
+        let workspace_path = format!("/proc/{}/workspace/", sess.pid);
         Ok(GetSessionResponse {
             session_id: sess.session_id,
             agent_id: sess.pid,
             agent: sess.agent,
-            workspace_path: sess.workspace_path,
+            workspace_path,
             model: sess.model,
             state,
         })
@@ -514,76 +444,6 @@ impl From<ManagedAgentError> for RustCallError {
             ManagedAgentError::Internal(m) => Self::Internal(m),
         }
     }
-}
-
-// ── Free helpers (file-private) ────────────────────────────────────────
-//
-// Workspace materialisation calls `sys_setattr` with `zone_id="root"`
-// + `io_profile="memory"` — the kernel default for non-mounted paths.
-// No OperationContext is needed: `sys_setattr` resolves zone routing
-// internally from the `zone_id` argument, and per-write authorization
-// for agent paths is enforced by the `WorkspaceBoundaryHook`
-// registered alongside this service.
-
-/// Append `/` to a workspace prefix if not already present so we can
-/// safely concatenate segment names below.
-fn trailing_slash(p: &str) -> String {
-    if p.ends_with('/') {
-        p.to_string()
-    } else {
-        format!("{p}/")
-    }
-}
-
-/// Create a DT_DIR at `path`.  Wraps the kernel's
-/// `sys_setattr` so callers stay readable; idempotent on
-/// already-present directories.
-fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), String> {
-    // DT_DIR = 1.  Kernel keeps the constant `pub(crate)` inside
-    // `kernel::core::dcache`; encode the contract value here.
-    const DT_DIR: i32 = 1;
-    kernel
-        .sys_setattr(
-            path, DT_DIR, /* backend_name */ "", /* backend */ None,
-            /* metastore */ None, /* raft_backend */ None,
-            /* io_profile */ "memory", /* zone_id */ "root",
-            /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
-            /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
-            /* link_target */ None, /* source */ None,
-            /* remote_metastore */ None,
-        )
-        .map(|_| ())
-        .map_err(|e| format!("{e:?}"))
-}
-
-/// Create a DT_LINK at `path` pointing at `target`.  Wraps the kernel's
-/// `sys_setattr` so callers stay readable.
-fn create_dt_link(kernel: &kernel::kernel::Kernel, path: &str, target: &str) -> Result<(), String> {
-    // DT_LINK = 6.  See `create_dt_dir` for the same constant-
-    // visibility note.
-    const DT_LINK: i32 = 6;
-    kernel
-        .sys_setattr(
-            path,
-            DT_LINK,
-            /* backend_name */ "",
-            /* backend */ None,
-            /* metastore */ None,
-            /* raft_backend */ None,
-            /* io_profile */ "memory",
-            /* zone_id */ "root",
-            /* is_external */ false,
-            /* capacity */ 0,
-            /* read_fd */ None,
-            /* write_fd */ None,
-            /* mime_type */ None,
-            /* modified_at_ms */ None,
-            /* link_target */ Some(target),
-            /* source */ None,
-            /* remote_metastore */ None,
-        )
-        .map(|_| ())
-        .map_err(|e| format!("sys_setattr(DT_LINK at {path} -> {target}): {e:?}"))
 }
 
 impl RustService for ManagedAgentService {
@@ -875,26 +735,46 @@ mod tests {
         }
     }
 
-    /// Materialisation tests — exercise the real `sys_setattr` /
-    /// `sys_unlink` paths through a freshly-constructed `Kernel`.
-    /// Pure-Rust setup, no PyO3.
-    mod materialize {
+    /// Procfs lifecycle tests — exercise start_session through a
+    /// real `Kernel` and assert the dirent + descriptor combination
+    /// matches what `ProcWorkspaceResolver` needs to render the
+    /// workspace links on demand.  Pure-Rust setup, no PyO3.
+    mod procfs {
         use super::*;
+        use kernel::core::agents::registry::AgentSignal;
+        use kernel::core::dispatch::PathResolver;
         use kernel::kernel::Kernel;
+        use proc_workspace_resolver::ProcWorkspaceResolver;
 
-        /// DT entry-type constants the kernel keeps `pub(crate)`.
+        /// DT_DIR — the only entry type stamped by register_proc_entry.
         const DT_DIR: u8 = 1;
-        const DT_LINK: u8 = 6;
 
-        /// Helper that queries the metastore directly — sys_stat
-        /// requires routing setup that isn't relevant to verifying
-        /// materialisation; the metastore is the kernel SSOT for
-        /// FileMetadata and is what sys_setattr writes through.
-        /// Returns `(entry_type, link_target)` when the path exists.
-        fn kernel_stat(kernel: &Kernel, path: &str, _zone: &str) -> Option<(u8, Option<String>)> {
+        /// True when `path` is present in the metastore as DT_DIR.
+        fn dir_exists(kernel: &Kernel, path: &str) -> bool {
             let path = path.trim_end_matches('/');
-            let entry = kernel.metastore_get(path).ok().flatten()?;
-            Some((entry.entry_type, entry.link_target.clone()))
+            kernel
+                .metastore_get(path)
+                .ok()
+                .flatten()
+                .is_some_and(|e| e.entry_type == DT_DIR)
+        }
+
+        /// True when `path` has any metastore entry — used to assert
+        /// the procfs view does NOT materialise link rows.
+        fn entry_exists(kernel: &Kernel, path: &str) -> bool {
+            let path = path.trim_end_matches('/');
+            kernel.metastore_get(path).ok().flatten().is_some()
+        }
+
+        /// Resolver target as a UTF-8 string for the given workspace path.
+        fn resolve_target(kernel: &Kernel, workspace_path: &str, leaf: &str) -> Option<String> {
+            let resolver = ProcWorkspaceResolver::new(Arc::clone(kernel.agent_registry()));
+            // Resolver expects /{zone}/proc/{pid}/workspace/{leaf}; the
+            // workspace_path returned by start_session is /proc/{pid}/
+            // workspace/, so prefix the synthetic zone segment used by
+            // PathResolver dispatch.
+            let path = format!("/root{workspace_path}{leaf}");
+            resolver.try_read(&path).map(|b| String::from_utf8(b).unwrap())
         }
 
         /// Build a `ManagedAgentService` with a real Kernel inside —
@@ -906,47 +786,36 @@ mod tests {
             (k, svc)
         }
 
-        #[test]
-        fn materialize_workspace_directly_succeeds() {
-            // Smoke test the helper in isolation so a future
-            // regression points the finger at materialize, not
-            // start_session.
-            let (kernel, svc) = svc_with_kernel();
-            svc.materialize_workspace("/proc/pid-test/workspace/", "pid-test", &[])
-                .expect("materialize should succeed on fresh kernel");
-            // The dir must be visible to subsequent reads via metastore.
-            let entry = kernel
-                .metastore_get("/proc/pid-test/workspace")
-                .expect("metastore lookup")
-                .expect("workspace dir entry");
-            assert_eq!(entry.entry_type, DT_DIR);
+        fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService> {
+            ManagedAgentService::install_returning(kernel).expect("install ManagedAgentService")
         }
 
         #[test]
-        fn start_session_creates_workspace_dir_and_chat_with_me_link() {
+        fn start_session_stamps_workspace_dirent_and_no_link_rows() {
             let (kernel, svc) = svc_with_kernel();
             let resp = svc.start_session(req("scode-standard")).unwrap();
-            let pid = &resp.agent_id;
 
-            // 1. Workspace dir exists as DT_DIR.
-            let (et, _) = kernel_stat(&kernel, &resp.workspace_path, "root")
-                .expect("workspace dir should exist");
-            assert_eq!(et, DT_DIR);
-
-            // 2. chat-with-me link exists and points at /proc/{pid}/chat-with-me.
+            // The workspace dirent exists (so readdir on /proc/{pid}/
+            // sees `workspace`), but no link rows are materialised.
+            assert!(dir_exists(&kernel, &resp.workspace_path));
             let cwm = format!("{}chat-with-me", &resp.workspace_path);
-            let (et, target) =
-                kernel_stat(&kernel, &cwm, "root").expect("chat-with-me DT_LINK should exist");
-            assert_eq!(et, DT_LINK);
-            assert_eq!(
-                target.as_deref(),
-                Some(format!("/proc/{pid}/chat-with-me").as_str()),
-                "chat-with-me link target",
+            assert!(
+                !entry_exists(&kernel, &cwm),
+                "chat-with-me must not be materialised in metastore"
             );
         }
 
         #[test]
-        fn start_session_creates_per_repo_dt_links() {
+        fn resolver_renders_chat_with_me_after_start_session() {
+            let (kernel, svc) = svc_with_kernel();
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+            let target = resolve_target(&kernel, &resp.workspace_path, "chat-with-me")
+                .expect("chat-with-me must resolve through ProcWorkspaceResolver");
+            assert_eq!(target, format!("/proc/{}/chat-with-me", resp.agent_id));
+        }
+
+        #[test]
+        fn resolver_renders_repo_aliases_from_descriptor() {
             let (kernel, svc) = svc_with_kernel();
             let mut r = req("scode-standard");
             r.repos = vec![
@@ -960,21 +829,36 @@ mod tests {
                 },
             ];
             let resp = svc.start_session(r).unwrap();
+            let desc = kernel
+                .agent_registry()
+                .get(&resp.agent_id)
+                .expect("descriptor must carry repos");
+            assert_eq!(desc.repos.len(), 2);
 
-            for (alias, expected_target) in [
-                ("myrepo", "/host/repos/myrepo"),
-                ("another", "/host/repos/another"),
-            ] {
-                let link_path = format!("{}{}", &resp.workspace_path, alias);
-                let (et, target) = kernel_stat(&kernel, &link_path, "root")
-                    .unwrap_or_else(|| panic!("repo DT_LINK {link_path:?} missing"));
-                assert_eq!(et, DT_LINK, "DT_LINK for repo {alias}");
-                assert_eq!(target.as_deref(), Some(expected_target));
+            for (alias, expected) in
+                [("myrepo", "/host/repos/myrepo"), ("another", "/host/repos/another")]
+            {
+                let target = resolve_target(&kernel, &resp.workspace_path, alias)
+                    .unwrap_or_else(|| panic!("alias {alias:?} should resolve"));
+                assert_eq!(target, expected, "alias {alias} target");
+                let alias_path = format!("{}{}", &resp.workspace_path, alias);
+                assert!(
+                    !entry_exists(&kernel, &alias_path),
+                    "alias path must not be materialised"
+                );
             }
         }
 
         #[test]
-        fn cancel_session_reaps_workspace_and_links() {
+        fn cancel_session_drops_dirent_and_descriptor_on_kernelless_path() {
+            // svc_with_kernel() does NOT call install_returning, so the
+            // on_terminate observer is not registered.  This test
+            // exercises the bookkeeping path: cancel transitions the
+            // descriptor to Terminated and drops the session row, but
+            // the dirent stays put because no observer fires to remove
+            // it.  The companion test
+            // `cancel_session_with_observer_drops_dirent_idempotently`
+            // covers the install-path semantics.
             let (kernel, svc) = svc_with_kernel();
             let mut r = req("scode-standard");
             r.repos = vec![WorkspaceRepo {
@@ -982,122 +866,68 @@ mod tests {
                 alias: "myrepo".into(),
             }];
             let resp = svc.start_session(r).unwrap();
-
-            // Sanity: pre-cancel, the link exists.
-            let alias_link = format!("{}myrepo", &resp.workspace_path);
-            assert!(kernel_stat(&kernel, &alias_link, "root").is_some());
-
+            assert!(dir_exists(&kernel, &resp.workspace_path));
             svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
-
-            // Post-cancel: the per-repo link, the chat-with-me link,
-            // and the workspace directory itself are all gone.
-            for path in [
-                &alias_link,
-                &format!("{}chat-with-me", &resp.workspace_path),
-                &resp.workspace_path,
-            ] {
-                assert!(
-                    kernel_stat(&kernel, path, "root").is_none(),
-                    "expected {path:?} to be reaped after cancel"
-                );
-            }
+            let err = svc.get_session(&resp.session_id).unwrap_err();
+            assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
+            let desc = kernel.agent_registry().get(&resp.agent_id).unwrap();
+            assert_eq!(desc.state, AgentState::Terminated);
+            assert_eq!(desc.exit_code, Some(0));
         }
 
         #[test]
-        fn cancel_turn_does_not_reap_workspace() {
+        fn cancel_turn_keeps_dirent_and_descriptor_alive() {
             let (kernel, svc) = svc_with_kernel();
             let resp = svc.start_session(req("scode-standard")).unwrap();
-
             svc.cancel(&resp.session_id, CancelMode::Turn).unwrap();
-
-            // Turn-mode cancel keeps the AgentRegistry record + workspace
-            // alive — the runtime watches a separate signal.
-            let cwm = format!("{}chat-with-me", &resp.workspace_path);
-            assert!(kernel_stat(&kernel, &cwm, "root").is_some());
-            assert!(kernel_stat(&kernel, &resp.workspace_path, "root").is_some());
-        }
-
-        // ── on_terminate workspace reap (SIGKILL / orphan path) ───
-        //
-        // The `install` codepath registers an `on_terminate`
-        // observer on the kernel AgentRegistry that reaps the
-        // workspace tree without needing a `cancel_session` call.
-        // These tests use `install` end-to-end — `Kernel::new` +
-        // `ManagedAgentService::install` + `lookup_rust` — so any
-        // future drift between install wiring and the observer
-        // contract surfaces here.
-
-        use kernel::core::agents::registry::AgentSignal;
-
-        fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService> {
-            ManagedAgentService::install_returning(kernel).expect("install ManagedAgentService")
+            assert!(dir_exists(&kernel, &resp.workspace_path));
+            // Resolver still resolves chat-with-me — turn cancel does
+            // not touch descriptor state.
+            assert!(resolve_target(&kernel, &resp.workspace_path, "chat-with-me").is_some());
         }
 
         #[test]
-        fn sigkill_reaps_workspace_through_on_terminate_hook() {
+        fn sigkill_drops_dirent_through_on_terminate_observer() {
             let kernel = Arc::new(Kernel::new());
             let svc = install_managed_agent(&kernel);
             let resp = svc.start_session(req("scode-standard")).unwrap();
+            assert!(dir_exists(&kernel, &resp.workspace_path));
 
-            // Pre-kill sanity: workspace + chat-with-me link visible.
-            let cwm = format!("{}chat-with-me", &resp.workspace_path);
-            assert!(kernel_stat(&kernel, &cwm, "root").is_some());
-
-            // SIGKILL goes through AgentRegistry, transitions to
-            // Terminated, fires the on_terminate observer.  No
-            // `cancel_session` call required.
             kernel
                 .agent_registry()
                 .signal(&resp.agent_id, AgentSignal::Sigkill, None)
                 .expect("SIGKILL");
 
             assert!(
-                kernel_stat(&kernel, &resp.workspace_path, "root").is_none(),
-                "workspace dir should be reaped after SIGKILL"
+                !dir_exists(&kernel, &resp.workspace_path),
+                "workspace dirent should be dropped after SIGKILL"
             );
-            assert!(
-                kernel_stat(&kernel, &cwm, "root").is_none(),
-                "chat-with-me link should be reaped after SIGKILL"
-            );
-            // Session row also dropped — `get_session` surfaces
-            // `UnknownSession`, not "terminated".
             let err = svc.get_session(&resp.session_id).unwrap_err();
             assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
         }
 
         #[test]
-        fn orphan_terminate_via_signal_sigterm_reaps_workspace() {
+        fn orphan_sigterm_drops_dirent_through_on_terminate_observer() {
             let kernel = Arc::new(Kernel::new());
             let svc = install_managed_agent(&kernel);
             let resp = svc.start_session(req("scode-standard")).unwrap();
-
-            // start_session plants the agent without a parent_pid →
-            // SIGTERM → orphan auto-reap path → on_terminate fires.
             kernel
                 .agent_registry()
                 .signal(&resp.agent_id, AgentSignal::Sigterm, None)
                 .expect("SIGTERM");
-
-            assert!(
-                kernel_stat(&kernel, &resp.workspace_path, "root").is_none(),
-                "workspace dir should be reaped via on_terminate after SIGTERM"
-            );
+            assert!(!dir_exists(&kernel, &resp.workspace_path));
         }
 
         #[test]
-        fn cancel_session_reap_does_not_double_fire_on_terminate() {
-            // cancel(Session) reaps the workspace AND triggers the
-            // on_terminate observer (via update_state_with_exit).  The
-            // observer's `sessions.remove` is idempotent — the second
-            // attempted reap is a no-op because the row is already
-            // gone — so this exercises that the implementation is
-            // resilient to double-fire even if cancel paths evolve.
+        fn cancel_session_with_observer_drops_dirent_idempotently() {
+            // With an installed observer, cancel(Session) ends with
+            // both the dirent dropped (observer) and the session row
+            // gone (cancel's belt-and-braces remove).
             let kernel = Arc::new(Kernel::new());
             let svc = install_managed_agent(&kernel);
             let resp = svc.start_session(req("scode-standard")).unwrap();
             svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
-            // Workspace reaped, get_session reports UnknownSession.
-            assert!(kernel_stat(&kernel, &resp.workspace_path, "root").is_none());
+            assert!(!dir_exists(&kernel, &resp.workspace_path));
             let err = svc.get_session(&resp.session_id).unwrap_err();
             assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
         }

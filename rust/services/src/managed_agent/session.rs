@@ -1,10 +1,12 @@
 //! Session bookkeeping for managed-agent gRPC handlers.
 //!
 //! `Session` is the row carried by `ManagedAgentService` for every
-//! active managed-agent invocation: it carries the surface sudowork
-//! addresses (session_id, agent name, workspace_path) and the
-//! AgentRegistry pid so cancel / get_session can reach AgentRegistry
-//! without sudowork having to track pids.
+//! active managed-agent invocation: session_id, agent name, model,
+//! and the AgentRegistry pid so cancel / get_session can reach
+//! AgentRegistry without sudowork having to track pids.  Workspace
+//! topology (path + repo mounts) is derived at read time — the path
+//! from `pid`, the mounts from `AgentDescriptor.repos` — never
+//! mirrored here.
 //!
 //! sudowork sees `session_id`; nexus tracks both. The map lives on the
 //! service struct (`DashMap<session_id, Session>`); this module only
@@ -18,11 +20,6 @@ pub(crate) struct Session {
     pub pid: String,
     pub agent: String,
     pub model: String,
-    pub workspace_path: String,
-    /// Repo aliases materialised inside the workspace at start_session
-    /// time.  Tracked here so cancel can reap the per-alias DT_LINKs
-    /// without re-reading sudowork's original request.
-    pub repo_aliases: Vec<String>,
 }
 
 pub(crate) fn alloc_pid() -> String {

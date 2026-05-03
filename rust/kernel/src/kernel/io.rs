@@ -776,54 +776,48 @@ impl Kernel {
             });
         }
 
-        // 4. DCache lookup. On miss, fall back to the per-mount metastore
-        //    so federation zones see inodes that haven't been cached yet
-        //    (F2 C5 — matches sys_read's cold path). Full path.
-        //    On double miss, check implicit directory (path has children
-        //    in metastore but no explicit entry — e.g. /docs/ when
+        // 4. MetaStore lookup. The metastore impl serves cache hits from
+        //    its own internal cache (LocalMetaStore.cache /
+        //    RemoteMetaStore.cache / ZoneMetaStore.cache), so this is the
+        //    same hot-path cost as the legacy `dcache.get_entry` lookup
+        //    — relocated inside MetaStore::get instead of a kernel-global
+        //    side cache.
+        //    On miss, check implicit directory (path has children in
+        //    metastore but no explicit entry — e.g. /docs/ when
         //    /docs/readme.md exists). Returns synthetic DT_DIR.
-        let entry = match self.dcache.get_entry(path) {
-            Some(e) => e,
+        let entry: CachedEntry = match self
+            .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+            .flatten()
+        {
+            Some(meta) => (&meta).into(),
             None => {
-                match self
-                    .with_metastore(&route.mount_point, |ms| ms.get(path).ok().flatten())
-                    .flatten()
-                {
-                    Some(meta) => {
-                        let cached: CachedEntry = (&meta).into();
-                        self.dcache.put(path, cached.clone());
-                        cached
-                    }
-                    None => {
-                        // Implicit directory: children exist under this prefix
-                        // but no explicit entry. Eliminates Python fallback to
-                        // _check_is_directory() (Crossing 3a).
-                        let is_implicit = self
-                            .with_metastore(&route.mount_point, |ms| {
-                                ms.is_implicit_directory(path).unwrap_or(false)
-                            })
-                            .unwrap_or(false);
-                        if is_implicit {
-                            return Some(StatResult {
-                                path: path.to_string(),
-                                size: 4096,
-                                content_id: None,
-                                mime_type: "inode/directory".to_string(),
-                                is_directory: true,
-                                entry_type: DT_DIR,
-                                mode: 0o755,
-                                version: 0,
-                                zone_id: Some(route.zone_id.clone()),
-                                created_at_ms: None,
-                                modified_at_ms: None,
-                                last_writer_address: None,
-                                lock: None,
-                                link_target: None,
-                            });
-                        }
-                        return None;
-                    }
+                // Implicit directory: children exist under this prefix
+                // but no explicit entry. Eliminates Python fallback to
+                // _check_is_directory() (Crossing 3a).
+                let is_implicit = self
+                    .with_metastore_route(&route, |ms| {
+                        ms.is_implicit_directory(path).unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if is_implicit {
+                    return Some(StatResult {
+                        path: path.to_string(),
+                        size: 4096,
+                        content_id: None,
+                        mime_type: "inode/directory".to_string(),
+                        is_directory: true,
+                        entry_type: DT_DIR,
+                        mode: 0o755,
+                        version: 0,
+                        zone_id: Some(route.zone_id.clone()),
+                        created_at_ms: None,
+                        modified_at_ms: None,
+                        last_writer_address: None,
+                        lock: None,
+                        link_target: None,
+                    });
                 }
+                return None;
             }
         };
 
@@ -940,15 +934,13 @@ impl Kernel {
                 link_target: None,
             }
         } else {
-            // 3. Get metadata (dcache or metastore — per-mount first, then global)
-            let meta = match self.dcache.get_entry(path) {
-                Some(e) => Some(e),
-                None => self
-                    .with_metastore(&route.mount_point, |ms| {
-                        ms.get(path).ok().flatten().map(|m| (&m).into())
-                    })
-                    .flatten(),
-            };
+            // 3. Get metadata via the routed metastore (per-mount first,
+            //    global fallback — internal cache fast path).
+            let meta: Option<CachedEntry> = self
+                .with_metastore_route(&route, |ms| {
+                    ms.get(path).ok().flatten().map(|m| (&m).into())
+                })
+                .flatten();
 
             match meta {
                 Some(e) => e,
@@ -1170,21 +1162,19 @@ impl Kernel {
 
         // 4. Existence check: get old metadata — use full VFS paths (R20.3 contract).
         // backend_path is used only for backend I/O and PAS content_id calculation.
+        // The metastore impl serves cache hits from its own internal cache,
+        // so no separate dcache fallback is needed.
         let old_meta = self
-            .with_metastore(&old_route.mount_point, |ms| ms.get(old_path).ok().flatten())
+            .with_metastore_route(&old_route, |ms| ms.get(old_path).ok().flatten())
             .flatten();
 
-        // Also check dcache
-        let old_entry = self.dcache.get_entry(old_path);
-
-        let (is_directory, entry_type) = match (&old_meta, &old_entry) {
-            (Some(m), _) => (m.entry_type == DT_DIR, m.entry_type),
-            (None, Some(e)) => (e.entry_type == DT_DIR, e.entry_type),
-            (None, None) => {
+        let (is_directory, entry_type) = match &old_meta {
+            Some(m) => (m.entry_type == DT_DIR, m.entry_type),
+            None => {
                 // Check for implicit directory: no explicit entry, but has children
                 let child_prefix = format!("{}/", old_path.trim_end_matches('/'));
                 let has_children = self
-                    .with_metastore(&old_route.mount_point, |ms| {
+                    .with_metastore_route(&old_route, |ms| {
                         ms.list(&child_prefix)
                             .map(|v| !v.is_empty())
                             .unwrap_or(false)
@@ -1380,22 +1370,17 @@ impl Kernel {
         }));
 
         // Extract old metadata fields for Python post-hook dispatch.
-        // Prefer metastore (old_meta) over dcache (old_entry) for accuracy.
+        // Metastore is the SSOT — its internal cache covers what the
+        // legacy dcache used to mirror.
         let (rename_old_etag, rename_old_size, rename_old_version, rename_old_modified_at_ms) =
-            match (&old_meta, &old_entry) {
-                (Some(m), _) => (
+            match &old_meta {
+                Some(m) => (
                     m.content_id.clone(),
                     Some(m.size),
                     Some(m.version),
                     m.modified_at_ms,
                 ),
-                (None, Some(e)) => (
-                    e.content_id.clone(),
-                    Some(e.size),
-                    Some(e.version),
-                    e.modified_at_ms,
-                ),
-                (None, None) => (None, None, None, None),
+                None => (None, None, None, None),
             };
 
         Ok(SysRenameResult {
@@ -1470,20 +1455,16 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 3. Get source metadata (dcache or metastore) — full VFS paths (R20.3 contract)
-        let src_meta = match self.dcache.get_entry(src_path) {
+        // 3. Get source metadata via the routed metastore (internal
+        //    cache fast path) — full VFS paths (R20.3 contract).
+        let src_meta: CachedEntry = match self
+            .with_metastore_route(&src_route, |ms| {
+                ms.get(src_path).ok().flatten().map(|m| (&m).into())
+            })
+            .flatten()
+        {
             Some(e) => e,
-            None => {
-                match self
-                    .with_metastore(&src_route.mount_point, |ms| {
-                        ms.get(src_path).ok().flatten().map(|m| (&m).into())
-                    })
-                    .flatten()
-                {
-                    Some(e) => e,
-                    None => return Err(KernelError::FileNotFound(src_path.to_string())),
-                }
-            }
+            None => return Err(KernelError::FileNotFound(src_path.to_string())),
         };
 
         // 3a. DT_LINK transparent follow on src — copy targets the

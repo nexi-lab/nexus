@@ -8,6 +8,8 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Router;
 
+use std::collections::{HashMap, HashSet};
+
 use crate::matrix_adapter::auth::{AuthBackendRef, AuthError, AuthSession};
 use crate::matrix_adapter::error::AdapterError;
 use crate::matrix_adapter::middleware::require_access_token;
@@ -15,7 +17,17 @@ use crate::matrix_adapter::rooms::{
     create_room, joined_members, room_join, room_leave, room_messages, room_send, room_state,
     room_state_event,
 };
+use crate::matrix_adapter::sync::sync;
 use crate::matrix_adapter::types::{EmptyResponse, LoginRequest, LoginResponse, WhoAmIResponse};
+
+/// Per-user joined-room set: Matrix user_id → set of stream paths the
+/// user has currently joined. Maintained in-memory by the room
+/// join/leave/createRoom handlers and consumed by /sync to know which
+/// streams to pump on each call.  Cleared on adapter restart — the
+/// real ReBAC-backed membership story lands when ReBAC integration
+/// catches up to the adapter; until then this stays the SSOT for
+/// "what does this user see in /sync".
+pub type JoinedRooms = Arc<parking_lot::RwLock<HashMap<String, HashSet<String>>>>;
 
 /// Shared adapter state — composed once at boot and cloned into each
 /// handler. Cheap to clone (`Arc` and `String`).
@@ -30,6 +42,26 @@ pub struct AdapterState {
     /// Optional so the auth-only configuration (D1 surface tests)
     /// keeps building without a kernel dep.
     pub kernel: Option<Arc<kernel::kernel::Kernel>>,
+    /// Per-user joined-room set; see [`JoinedRooms`].
+    pub joined_rooms: JoinedRooms,
+}
+
+impl AdapterState {
+    /// Convenience constructor with an empty joined-rooms set.
+    /// Production builds compose state by hand because they wire
+    /// extra config; tests use this constructor.
+    pub fn new(
+        auth: AuthBackendRef,
+        server_name: Arc<str>,
+        kernel: Option<Arc<kernel::kernel::Kernel>>,
+    ) -> Self {
+        Self {
+            auth,
+            server_name,
+            kernel,
+            joined_rooms: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+        }
+    }
 }
 
 /// Build the adapter's Matrix C-S router. Composes the public auth
@@ -67,6 +99,7 @@ pub fn build_router(state: AdapterState) -> Router {
         )
         .route("/_matrix/client/v3/rooms/:room_id/join", post(room_join))
         .route("/_matrix/client/v3/rooms/:room_id/leave", post(room_leave))
+        .route("/_matrix/client/v3/sync", get(sync))
         .route_layer(from_fn_with_state(state.clone(), require_access_token));
 
     public.merge(protected).with_state(state)
@@ -164,11 +197,7 @@ mod tests {
         for (user, pw) in seed_users {
             backend.add_user(user, pw);
         }
-        let state = AdapterState {
-            auth: backend,
-            server_name: Arc::from(SERVER_NAME),
-            kernel: None,
-        };
+        let state = AdapterState::new(backend, Arc::from(SERVER_NAME), None);
         build_router(state)
     }
 

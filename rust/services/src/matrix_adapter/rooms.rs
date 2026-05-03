@@ -39,7 +39,7 @@ use crate::matrix_adapter::router::AdapterState;
 /// every kernel syscall the adapter issues carries the authenticated
 /// identity. `agent_id = user_id` so MailboxStampingHook stamps the
 /// Matrix user as the envelope `from` on `/send`.
-fn ctx_from_session(session: &AuthSession) -> kernel::kernel::OperationContext {
+pub(super) fn ctx_from_session(session: &AuthSession) -> kernel::kernel::OperationContext {
     kernel::kernel::OperationContext {
         user_id: session.user_id.clone(),
         zone_id: "root".into(),
@@ -239,6 +239,14 @@ pub async fn room_send(
     let kernel = require_kernel(&state)?;
     let ctx = ctx_from_session(&session);
 
+    // Sender's /send implies they are joined for /sync purposes.
+    state
+        .joined_rooms
+        .write()
+        .entry(session.user_id.clone())
+        .or_default()
+        .insert(stream_path.clone());
+
     let envelope = pdu_send_to_chat_envelope(&content, now_ms())?;
     let envelope_len = envelope.len();
     // kernel.sys_write is synchronous (VFS lock + dispatch + raft);
@@ -297,31 +305,48 @@ pub async fn create_room(
         .await
         .map_err(|e| AdapterError::Internal(format!("spawn_blocking join: {e}")))??;
 
+    // The creating user is joined to the new room — drives /sync.
+    state
+        .joined_rooms
+        .write()
+        .entry(_session.user_id.clone())
+        .or_default()
+        .insert(stream_path.clone());
+
     let room_id = encode_room_id(&stream_path, &state.server_name);
     Ok(Json(json!({"room_id": room_id})))
 }
 
-/// `POST /_matrix/client/v3/rooms/{rid}/join` — D2 stub. The
-/// authenticated user is treated as joined for the duration of the
-/// session; D3 wires ReBAC mutations.
+/// `POST /_matrix/client/v3/rooms/{rid}/join` — adds the room's
+/// stream path to the user's joined-rooms set so `/sync` pumps it.
+/// ReBAC-backed authorisation is a follow-up; today the join is
+/// admitted unconditionally for any caller with a valid token.
 pub async fn room_join(
     State(state): State<AdapterState>,
-    Extension(_session): Extension<AuthSession>,
+    Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
 ) -> Result<Json<Value>, AdapterError> {
-    // Validate the room id parses; we don't persist anything yet.
-    let _ = decode_room_id(&room_id, &state.server_name)?;
+    let stream_path = decode_room_id(&room_id, &state.server_name)?;
+    state
+        .joined_rooms
+        .write()
+        .entry(session.user_id.clone())
+        .or_default()
+        .insert(stream_path);
     Ok(Json(json!({"room_id": room_id})))
 }
 
-/// `POST /_matrix/client/v3/rooms/{rid}/leave` — D2 stub. ReBAC
-/// revocation is a D3 follow-up.
+/// `POST /_matrix/client/v3/rooms/{rid}/leave` — removes the room
+/// from the user's joined-rooms set.
 pub async fn room_leave(
     State(state): State<AdapterState>,
-    Extension(_session): Extension<AuthSession>,
+    Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
 ) -> Result<Json<Value>, AdapterError> {
-    let _ = decode_room_id(&room_id, &state.server_name)?;
+    let stream_path = decode_room_id(&room_id, &state.server_name)?;
+    if let Some(set) = state.joined_rooms.write().get_mut(&session.user_id) {
+        set.remove(&stream_path);
+    }
     Ok(Json(json!({})))
 }
 
@@ -435,11 +460,7 @@ mod tests {
         for (user, pw) in seed_users {
             backend.add_user(user, pw);
         }
-        let state = AdapterState {
-            auth: backend,
-            server_name: Arc::from(SERVER),
-            kernel: Some(Arc::clone(&kernel)),
-        };
+        let state = AdapterState::new(backend, Arc::from(SERVER), Some(Arc::clone(&kernel)));
         (kernel, build_router(state))
     }
 

@@ -1,4 +1,4 @@
-"""DriverLifecycleCoordinator — Python-side mount-event broadcaster.
+"""DriverLifecycleCoordinator — Python-side unmount-event broadcaster.
 
 Linux analogue: ``udev`` listening to kernel uevents.  This coordinator
 does NOT own a routing table, a metastore, or a dcache — those live in
@@ -14,12 +14,10 @@ the Rust kernel:
 
 The Rust ``DriverLifecycleCoordinator`` (``rust/kernel/src/core/dlc.rs``)
 threads mount mutations into those kernel-owned tables.  This Python
-class only:
-    1. Generates canonical backend keys for AuthProfile lookup (via
-       ``backend_key()``) — federated nodes append ``@self_address``.
-    2. Fires the Python ``KernelDispatch`` ``unmount`` event so brick
-       hooks (e.g. ``CasLocalBackend._on_unmount``) get notified — the
-       Rust kernel does not yet have a parallel hook-firing primitive.
+class only fires the Python ``KernelDispatch`` ``unmount`` event after a
+Rust unmount completes so brick hooks (e.g. ``CasLocalBackend._on_unmount``)
+get notified — the Rust kernel does not yet have a parallel hook-firing
+primitive.
 
 Once the Rust kernel grows an unmount-hook firing primitive, this whole
 class becomes deletable.  Until then it stays as the smallest possible
@@ -35,27 +33,21 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import extract_zone_id, normalize_path
-
-if TYPE_CHECKING:
-    from nexus.core.object_store import ObjectStoreABC
-    from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
 
 class DriverLifecycleCoordinator:
-    """Python-side mount-event broadcaster.
+    """Python-side unmount-event broadcaster.
 
     Wraps the Rust kernel's ``DriverLifecycleCoordinator`` (``dlc.rs``)
     only to fire the Python ``KernelDispatch`` ``unmount`` event after a
     Rust unmount completes — the Rust kernel does not yet have a
-    parallel hook-firing primitive.  ``backend_key()`` generates the
-    canonical backend key (with optional federated ``@self_address``
-    suffix) for AuthProfile resolution.
+    parallel hook-firing primitive.
 
     Routing table, metastore, dcache, and mount existence checks all
     live Rust-side; this class delegates every read/mutation through
@@ -65,8 +57,6 @@ class DriverLifecycleCoordinator:
     __slots__ = (
         "_dispatch",
         "_kernel",
-        "_self_address",
-        "_transport_pool",
     )
 
     def __init__(
@@ -74,29 +64,9 @@ class DriverLifecycleCoordinator:
         dispatch: Any,
         *,
         kernel: Any,
-        self_address: str | None = None,
-        transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
         self._dispatch = dispatch
         self._kernel = kernel
-        self._self_address: str | None = self_address
-        self._transport_pool: RPCTransportPool | None = transport_pool
-
-    # ------------------------------------------------------------------
-    # Backend key helpers
-    # ------------------------------------------------------------------
-
-    def backend_key(self, backend: "ObjectStoreABC", mount_point: str = "") -> str:
-        """Canonical key for a backend.
-
-        Format: ``name`` for single-mount, ``name:mount_point`` when a
-        mount_point is given and differs from ``/``.  Federated nodes append
-        ``@self_address``.
-        """
-        base = backend.name
-        if mount_point and mount_point != "/":
-            base = f"{backend.name}:{mount_point}"
-        return f"{base}@{self._self_address}" if self._self_address else base
 
     # ------------------------------------------------------------------
     # Mount / unmount

@@ -286,8 +286,6 @@ class NexusFS(  # type: ignore[misc]
         self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
             self,
             kernel=self._kernel,
-            self_address=_ipc_self_addr,
-            transport_pool=self._transport_pool,
         )
 
         # Deferred kernel wiring: bind mount table + VFS lock after all attributes exist.

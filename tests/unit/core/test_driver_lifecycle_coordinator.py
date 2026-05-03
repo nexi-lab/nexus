@@ -1,11 +1,9 @@
 """Unit tests for DriverLifecycleCoordinator.
 
-Tests the thin Python bookkeeping layer: unmount lifecycle dispatch,
-kernel-delegated queries (resolve_path, mount_points), and backend_key
-formatting.
-
-The Rust kernel is the single source of truth for routing and mount
-existence.  Python DLC dispatches events and delegates queries.
+Tests the thin Python unmount-event-broadcaster: unmount lifecycle
+dispatch + kernel-delegated mount_points query.  The Rust kernel is the
+single source of truth for routing and mount existence; Python DLC just
+fires the ``unmount`` KernelDispatch event after a Rust unmount completes.
 
 Issue #1811, #1320, #3584.
 """
@@ -34,17 +32,12 @@ class _MockDispatch:
 def _make_coordinator(
     *,
     has_mount: bool = True,
-    self_address: str | None = None,
 ) -> tuple[MagicMock, _MockDispatch, DriverLifecycleCoordinator]:
     """Create a coordinator with a mock kernel and _MockDispatch."""
     kernel = MagicMock()
     kernel.has_mount.return_value = has_mount
     dispatch = _MockDispatch()
-    coord = DriverLifecycleCoordinator(
-        dispatch,
-        kernel=kernel,
-        self_address=self_address,
-    )
+    coord = DriverLifecycleCoordinator(dispatch, kernel=kernel)
     return kernel, dispatch, coord
 
 
@@ -135,50 +128,3 @@ class TestMountPoints:
         result = coord.mount_points()
 
         assert result == sorted(result)
-
-
-# ---------------------------------------------------------------------------
-# backend_key()
-# ---------------------------------------------------------------------------
-
-
-class TestBackendKey:
-    def test_backend_key_name_only(self) -> None:
-        """backend_key with no mount_point returns just the name."""
-        _, _, coord = _make_coordinator()
-        backend = MagicMock()
-        backend.name = "cas-local"
-
-        assert coord.backend_key(backend) == "cas-local"
-
-    def test_backend_key_with_mount_point(self) -> None:
-        """backend_key with mount_point returns name:mount."""
-        _, _, coord = _make_coordinator()
-        backend = MagicMock()
-        backend.name = "cas-local"
-
-        assert coord.backend_key(backend, "/workspace") == "cas-local:/workspace"
-
-    def test_backend_key_root_mount_omitted(self) -> None:
-        """backend_key with mount_point='/' returns just the name."""
-        _, _, coord = _make_coordinator()
-        backend = MagicMock()
-        backend.name = "cas-local"
-
-        assert coord.backend_key(backend, "/") == "cas-local"
-
-    def test_backend_key_with_self_address(self) -> None:
-        """backend_key appends @address for federated nodes."""
-        _, _, coord = _make_coordinator(self_address="node-1:9090")
-        backend = MagicMock()
-        backend.name = "cas-local"
-
-        assert coord.backend_key(backend) == "cas-local@node-1:9090"
-
-    def test_backend_key_with_mount_and_address(self) -> None:
-        """backend_key with both mount_point and self_address."""
-        _, _, coord = _make_coordinator(self_address="node-1:9090")
-        backend = MagicMock()
-        backend.name = "cas-local"
-
-        assert coord.backend_key(backend, "/workspace") == "cas-local:/workspace@node-1:9090"

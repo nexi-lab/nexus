@@ -54,6 +54,10 @@ async def rpc_endpoint(
     """
     import time as _time
 
+    from nexus.server._kernel_syscall_dispatch import (
+        KERNEL_SYSCALL_NAMES,
+        dispatch_kernel_syscall,
+    )
     from nexus.server.dependencies import get_operation_context
     from nexus.server.rpc.dispatch import dispatch_method
 
@@ -79,6 +83,44 @@ async def rpc_endpoint(
         # Set method from URL if not in body
         if not rpc_request.method:
             rpc_request.method = method
+
+        # #4005 review: kernel syscalls (sys_readdir, sys_stat, etc.) have no
+        # generated Params dataclass — they go through the inspect.signature
+        # dispatcher in ``_kernel_syscall_dispatch``. Mirror what the gRPC
+        # ``Call`` servicer does: short-circuit BEFORE ``parse_method_params``
+        # so HTTP RPC clients (legacy CLI/proxy) don't get rejected with
+        # "Unknown method: sys_readdir".
+        if method in KERNEL_SYSCALL_NAMES:
+            from types import SimpleNamespace
+
+            context = get_operation_context(auth_result)
+            raw_params = dict(rpc_request.params or {})
+            # ``scope_params_for_zone`` mutates via setattr — mirror the gRPC
+            # servicer pattern (``servicer.py`` ~line 227): wrap in
+            # SimpleNamespace, scope, then unwrap back to dict for
+            # ``dispatch_kernel_syscall`` (which decodes via inspect.signature).
+            _params_ns = SimpleNamespace(**raw_params)
+            scope_params_for_zone(_params_ns, context.zone_id)
+            raw_params = vars(_params_ns)
+            state = request.app.state
+            result = await dispatch_kernel_syscall(
+                state.nexus_fs,
+                method,
+                raw_params,
+                context,
+                subscription_manager=state.subscription_manager,
+            )
+            headers = get_cache_headers(method, result)
+            headers["Deprecation"] = "true"
+            headers["Sunset"] = "Wed, 25 Jun 2026 00:00:00 GMT"
+            headers["X-Migration-Guide"] = "Use gRPC Call RPC (Issue #1133)"
+            success_response = {
+                "jsonrpc": "2.0",
+                "id": rpc_request.id,
+                "result": result,
+            }
+            encoded = encode_rpc_message(success_response)
+            return Response(content=encoded, media_type="application/json", headers=headers)
 
         # Parse parameters — fall through to SimpleNamespace for dynamically
         # discovered @rpc_expose methods that lack pre-generated Params classes

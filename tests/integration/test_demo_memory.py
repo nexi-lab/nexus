@@ -61,7 +61,28 @@ def test_demo_idle_rss_under_limit():
 
     try:
         subprocess.check_call(
-            ["docker", "compose", "-p", project, "-f", str(DEMO_COMPOSE), "up", "-d"],
+            [
+                "docker",
+                "compose",
+                "-p",
+                project,
+                "-f",
+                str(DEMO_COMPOSE),
+                # #4005 review: nexus-stack.yml gates services behind compose
+                # profiles (core/cache/search/...). Without --profile flags
+                # ``up -d`` only starts services with no profile attribute,
+                # which excludes ``nexus`` itself — readiness poll then hangs
+                # until READINESS_TIMEOUT and the test reports a misleading
+                # "did not become ready" error instead of testing memory.
+                "--profile",
+                "core",
+                "--profile",
+                "cache",
+                "--profile",
+                "search",
+                "up",
+                "-d",
+            ],
             env=env,
             cwd=str(REPO_ROOT),
         )
@@ -137,6 +158,14 @@ def test_demo_idle_rss_under_limit():
                 project,
                 "-f",
                 str(DEMO_COMPOSE),
+                # Match the profile set used at ``up`` so ``down -v`` can see
+                # and tear down every container/volume the test created.
+                "--profile",
+                "core",
+                "--profile",
+                "cache",
+                "--profile",
+                "search",
                 "down",
                 "-v",
             ],

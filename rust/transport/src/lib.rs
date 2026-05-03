@@ -53,7 +53,7 @@ pub mod vfs {
 // Re-export low-level primitive types under the transport crate's
 // namespace so existing call sites keep working.
 pub use lib::transport_primitives::{
-    compute_node_id, create_channel, hostname_to_node_id, ClientConfig, ConnectionPool,
-    NodeAddress, PeerAddress, ServerConfig, TlsConfig, TransportError,
+    create_channel, hostname_to_node_id, ClientConfig, ConnectionPool, NodeAddress, PeerAddress,
+    ServerConfig, TlsConfig, TransportError,
 };
 pub type Result<T> = lib::transport_primitives::Result<T>;

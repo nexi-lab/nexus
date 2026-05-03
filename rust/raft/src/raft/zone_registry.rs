@@ -122,6 +122,12 @@ pub struct ZoneRaftRegistry {
     /// Shared TLS config — can be updated at runtime for plaintext→mTLS upgrade.
     /// All zones' client pools read from this on new connections.
     tls: Arc<RwLock<Option<TlsConfig>>>,
+    /// This node's advertise address — carried in outbound StepMessage
+    /// `sender_address` so peers learn `(self.node_id -> address)` on
+    /// inbound contact.  Set once at boot via [`Self::set_self_address`];
+    /// transport tasks read it when they spawn.  Empty disables
+    /// advertisement.
+    self_address: Arc<RwLock<String>>,
     /// Per-zone concurrent-op guard: tracks zone_ids currently undergoing
     /// setup or removal. Prevents two threads from concurrently opening
     /// the same RedbStore ("Database already open") and from racing a
@@ -142,6 +148,7 @@ impl ZoneRaftRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(None)),
+            self_address: Arc::new(RwLock::new(String::new())),
             creating: DashMap::new(),
         }
     }
@@ -153,8 +160,21 @@ impl ZoneRaftRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(tls)),
+            self_address: Arc::new(RwLock::new(String::new())),
             creating: DashMap::new(),
         }
+    }
+
+    /// Set this node's advertise address — see [`Self::self_address`].
+    /// Idempotent; may be called multiple times if the operator
+    /// updates the advertise address at runtime.
+    pub fn set_self_address(&self, address: String) {
+        *self.self_address.write().unwrap() = address;
+    }
+
+    /// Get this node's advertise address (empty when unset).
+    pub fn self_address(&self) -> String {
+        self.self_address.read().unwrap().clone()
     }
 
     /// Get a snapshot of the current TLS config.
@@ -569,7 +589,8 @@ impl ZoneRaftRegistry {
             shared_peers.clone(),
             RaftClientPool::with_config(client_config),
         )
-        .with_zone_id(zone_id.to_string());
+        .with_zone_id(zone_id.to_string())
+        .with_self_address(self.self_address());
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
@@ -654,6 +675,42 @@ impl ZoneRaftRegistry {
         } else {
             false
         }
+    }
+
+    /// Record a peer's advertise address learned from an inbound
+    /// `StepMessage`.  The transport peer-map's runtime SSOT under
+    /// the opaque-ID contract: every received raft message proves
+    /// the sender's reachable address, so we update on every
+    /// arrival rather than persist + hope.  Returns `true` if the
+    /// map changed (insert or address update), `false` otherwise.
+    ///
+    /// Empty `endpoint` is treated as "no advertise — keep existing
+    /// entry".  The caller is responsible for verifying `peer_id`
+    /// is a legitimate cluster member (zone authorization upstream
+    /// gates that).
+    pub fn learn_peer_address(&self, zone_id: &str, peer_id: u64, endpoint: &str) -> bool {
+        if endpoint.is_empty() || peer_id == 0 {
+            return false;
+        }
+        let Some(entry) = self.zones.get(zone_id) else {
+            return false;
+        };
+        let mut peers = entry.peers.write().unwrap();
+        if let Some(existing) = peers.get(&peer_id) {
+            if existing.endpoint == endpoint {
+                return false;
+            }
+        }
+        let use_tls = endpoint.starts_with("https://");
+        let parsed = match NodeAddress::parse(endpoint, use_tls) {
+            Ok(mut p) => {
+                p.id = peer_id;
+                p
+            }
+            Err(_) => return false,
+        };
+        peers.insert(peer_id, parsed);
+        true
     }
 
     /// Get the node_id for a zone (same across all zones on this node).

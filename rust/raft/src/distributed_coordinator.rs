@@ -36,37 +36,29 @@ use kernel::hal::distributed_coordinator::{
 };
 use kernel::kernel::Kernel;
 
-use crate::transport::{
-    call_replace_voter_by_hostname, compute_node_id, hostname_to_node_id, NodeAddress,
-    TransportError,
-};
+use crate::transport::NodeAddress;
 use crate::zone_meta_store::ZoneMetaStore;
 use crate::{TlsFiles, ZoneManager};
 
-/// Node-level incarnation marker filename.
+/// Node-level random ID filename — opaque random u64 minted at first
+/// daemon boot, persisted across restarts, regenerated after a wipe.
 ///
-/// Lives at `{NEXUS_DATA_DIR}/.node_incarnation` — one file per
-/// daemon, not per zone.  Identity is a node-level concept (one
-/// `ZoneManager` owns one `node_id` for every zone it serves), so
-/// the SSOT is also node-level.  Format: a single big-endian u64 in
-/// 8 bytes.  Absent file = fresh daemon (first boot or post-wipe);
-/// present file = recovery (existing identity).
+/// Format: 8 bytes BE u64.  Absent = fresh daemon — mint a new ID
+/// and persist.  Present = restart — reuse the persisted ID.
 ///
-/// Stored alongside `<zone>/raft/raft.redb` so a `rm -rf
-/// $NEXUS_DATA_DIR` resets identity AND raft state together — the
-/// only state-pair that matters for the wipe-rejoin contract.  Using
-/// a flat file (not redb) avoids the `open_existing_zones_from_disk`
-/// confusion: that scanner enumerates `<zones_dir>/<zone>/raft/`
-/// dirs, so creating a fake "incarnation zone" with raft.redb would
-/// trigger spurious zone bootstrap with skip_bootstrap=true and a
-/// missing ConfState, blocking leader election forever.
-const NODE_INCARNATION_FILE: &str = ".node_incarnation";
-const ROTATION_NO_LEADER_RETRY_SECS: u64 = 30;
-const ROTATION_NO_LEADER_RETRY_INTERVAL_MS: u64 = 250;
-// Zone not yet initialized on peer (transient boot-time state):
-// retry up to this window before falling back.
-const ROTATION_ZONE_NOT_READY_RETRY_SECS: u64 = 60;
-const ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS: u64 = 500;
+/// Architecture: `docs/architecture/federation-memo.md` § 6.3.1.
+const NODE_ID_FILE: &str = ".node_id";
+
+/// Cadence for `bootstrap_or_join_root`'s JoinZone retry loop when
+/// every peer in NEXUS_PEERS is unreachable.  Indefinite by design —
+/// the daemon waits for the operator to bring up the first peer with
+/// `NEXUS_BOOTSTRAP_NEW=1`; any deadline here would just make the
+/// failure mode "silently exit on misconfig" instead of "stay up and
+/// retry".
+const JOIN_ZONE_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Per-attempt timeout for the JoinZone RPC during bootstrap.
+const JOIN_ZONE_RPC_TIMEOUT_SECS: u64 = 5;
 
 /// Triple keyed by target zone: `(parent_zone_id, mount_path, global_path)`.
 type CrossZoneMountTuple = (String, String, String);
@@ -230,527 +222,252 @@ impl Default for RaftDistributedCoordinator {
     }
 }
 
-fn peer_addrs_with_effective_self_id(
-    peer_addrs: &[NodeAddress],
-    hostname: &str,
-    self_address: &str,
-    node_id: u64,
-    use_tls: bool,
-) -> Result<Vec<NodeAddress>, String> {
-    let mut out = peer_addrs.to_vec();
-    let advertised_self = NodeAddress::parse(self_address, use_tls)
-        .map_err(|e| format!("NEXUS_ADVERTISE_ADDR parse '{self_address}': {e}"))?;
-    let mut replacement = advertised_self;
-    replacement.id = node_id;
-
-    if let Some(peer) = out.iter_mut().find(|peer| peer.hostname == hostname) {
-        *peer = replacement;
-    } else {
-        out.push(replacement);
-    }
-
-    Ok(out)
-}
-
-/// Outcome of [`RaftDistributedCoordinator::ensure_voter_membership`].
+/// Read the persisted node ID, or mint a fresh random one and persist it.
 ///
-/// Drives both the ID `ZoneManager::with_node_id` is constructed with
-/// and whether `init_from_env` chooses `create_zone` (cold start) or
-/// `join_zone` (joining an already-running cluster after a wipe).
-#[derive(Debug, Clone, Copy)]
-struct VoterMembership {
-    /// Effective node ID for this process — `compute_node_id(hostname,
-    /// incarnation)` where the incarnation comes from the persisted
-    /// marker (recovery), a successful wipe-rejoin rotation
-    /// (`new_incarnation`), or the cold-start sentinel `0`
-    /// (hostname-only ID).
-    node_id: u64,
-    /// Whether the node minted a fresh non-zero incarnation AND
-    /// successfully rotated its voter ID with an existing leader.  If
-    /// true, callers must use `join_zone(skip_bootstrap=true)` so the
-    /// leader's snapshot installs the authoritative ConfState; calling
-    /// `create_zone` here would re-bootstrap a stale ConfState that
-    /// conflicts with the cluster's committed voter set.
-    rotated_into_existing_cluster: bool,
-}
-
-/// Generate a fresh non-zero incarnation marker.
+/// SSOT for raft node identity under the opaque-ID contract.  See
+/// [`NODE_ID_FILE`] for the rationale and on-disk format.
 ///
-/// SystemTime nanos as u64.  Two restart-without-data scenarios within
-/// a single nanosecond are not physically possible on any current
-/// hardware, so this provides a strictly-monotonic-with-very-high-
-/// probability stream of incarnation values without requiring `rand`
-/// as a dependency.  Maps the unlikely 0 to 1 — `compute_node_id`
-/// treats 0 as the cold-start sentinel.
-fn generate_fresh_incarnation() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(1);
-    if nanos == 0 {
-        1
-    } else {
-        nanos
-    }
-}
-
-/// Read the persisted node-level incarnation.  Returns `None` when
-/// the file doesn't exist (fresh daemon).
-fn read_node_incarnation(zones_dir: &str) -> Result<Option<u64>, String> {
-    let path = Path::new(zones_dir).join(NODE_INCARNATION_FILE);
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {
-                format!("node incarnation file '{}' is not 8 bytes", path.display())
-            })?;
-            Ok(Some(u64::from_be_bytes(arr)))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("read node incarnation '{}': {e}", path.display(),)),
-    }
-}
-
-/// Persist the node-level incarnation.  Creates the parent directory
-/// if absent.  Atomic via write-rename — prevents a torn 8-byte file
-/// from a crash between `write_all` and `sync`.
-fn write_node_incarnation(zones_dir: &str, incarnation: u64) -> Result<(), String> {
+/// First-ever boot (and post-`rm -rf $NEXUS_DATA_DIR` rejoin) lands
+/// in the mint branch: `rand::random::<u64>()` produces a fresh ID,
+/// retried once if it happens to be 0 (raft-rs reserves 0 as
+/// "no node").  The mint is atomic — `write` to `<file>.tmp` then
+/// `rename` to `<file>` — so a crash between sample and persist
+/// either leaves the old ID intact or no file at all (next boot
+/// re-mints).  Two daemons sharing a data dir would race here, but
+/// that configuration is operator error: a single
+/// `<NEXUS_DATA_DIR>` is bound to a single daemon.
+pub(crate) fn read_or_mint_node_id(zones_dir: &str) -> Result<u64, String> {
     use std::io::Write;
+
     let dir = Path::new(zones_dir);
-    std::fs::create_dir_all(dir).map_err(|e| {
-        format!(
-            "create zones dir for node incarnation '{}': {e}",
-            dir.display(),
-        )
-    })?;
-    let final_path = dir.join(NODE_INCARNATION_FILE);
-    let tmp_path = dir.join(format!("{NODE_INCARNATION_FILE}.tmp"));
-    {
-        let mut tmp = std::fs::File::create(&tmp_path)
-            .map_err(|e| format!("create tmp incarnation file '{}': {e}", tmp_path.display(),))?;
-        tmp.write_all(&incarnation.to_be_bytes())
-            .map_err(|e| format!("write tmp incarnation file '{}': {e}", tmp_path.display(),))?;
-        tmp.sync_all()
-            .map_err(|e| format!("sync tmp incarnation file '{}': {e}", tmp_path.display(),))?;
+    let final_path = dir.join(NODE_ID_FILE);
+
+    match std::fs::read(&final_path) {
+        Ok(bytes) => {
+            let arr: [u8; 8] = bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| format!("node id file '{}' is not 8 bytes", final_path.display()))?;
+            let id = u64::from_be_bytes(arr);
+            if id == 0 {
+                return Err(format!(
+                    "node id file '{}' contains 0 (reserved by raft-rs); \
+                     wipe `<NEXUS_DATA_DIR>` and retry",
+                    final_path.display(),
+                ));
+            }
+            tracing::info!(node_id = id, "node_id loaded from disk");
+            Ok(id)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("create zones dir for node id '{}': {e}", dir.display(),))?;
+            // raft-rs reserves 0 as "no node" — retry once on the
+            // astronomically rare 1/2^64 collision.
+            let mut id = rand::random::<u64>();
+            if id == 0 {
+                id = rand::random::<u64>();
+                if id == 0 {
+                    return Err("rand::random() returned 0 twice".to_string());
+                }
+            }
+            let tmp_path = dir.join(format!("{NODE_ID_FILE}.tmp"));
+            {
+                let mut tmp = std::fs::File::create(&tmp_path).map_err(|e| {
+                    format!("create tmp node id file '{}': {e}", tmp_path.display())
+                })?;
+                tmp.write_all(&id.to_be_bytes())
+                    .map_err(|e| format!("write tmp node id file '{}': {e}", tmp_path.display()))?;
+                tmp.sync_all()
+                    .map_err(|e| format!("sync tmp node id file '{}': {e}", tmp_path.display()))?;
+            }
+            std::fs::rename(&tmp_path, &final_path).map_err(|e| {
+                format!(
+                    "rename '{}' -> '{}': {e}",
+                    tmp_path.display(),
+                    final_path.display(),
+                )
+            })?;
+            tracing::info!(node_id = id, "node_id minted and persisted");
+            Ok(id)
+        }
+        Err(e) => Err(format!("read node id '{}': {e}", final_path.display())),
     }
-    std::fs::rename(&tmp_path, &final_path).map_err(|e| {
-        format!(
-            "rename '{}' -> '{}': {e}",
-            tmp_path.display(),
-            final_path.display(),
-        )
-    })?;
-    Ok(())
 }
 
-/// Outcome of attempting wipe-rejoin rotation against the configured peers.
+/// Bring root zone online — dispatch table for the three bootstrap
+/// branches under the opaque-ID contract.
 ///
-/// Distinguishes "no live cluster exists" (safe cold-start) from "cluster
-/// exists but rotation didn't commit" (cold-starting here would silently
-/// rejoin with the joiner's stale hostname-based ID and panic raft-rs's
-/// `to_commit` assertion on the leader's first heartbeat — fail loudly
-/// instead).  This three-way classification is the contract the caller
-/// (`ensure_voter_membership`) relies on to never silently violate the
-/// wipe-rejoin invariant.
-#[derive(Debug)]
-enum RotationOutcome {
-    /// Leader committed the ConfChangeV2 atomically swapping
-    /// `RemoveNode(old_id) + AddNode(new_id)`.  Caller persists the
-    /// new incarnation and starts raft with `skip_bootstrap=true` so
-    /// the leader's snapshot installs the authoritative ConfState.
-    Committed,
-    /// Every peer failed at the TCP/connect layer (or the peers list
-    /// was empty / all self).  No live cluster to rejoin — caller
-    /// falls through to the cold-start sentinel (incarnation=0,
-    /// hostname-based ID) so every fresh peer converges on identical
-    /// ConfState bootstraps without coordination.
-    AllPeersUnreachable,
-    /// At least one peer was TCP-reachable but rotation didn't commit
-    /// (RPC handler timeout, "not leader" with no usable redirect, or
-    /// — most relevantly — quorum deadlock when the joiner IS the
-    /// missing voter on a 2-voter cluster).  A live cluster already
-    /// holds this hostname's stale voter ID; cold-starting with that
-    /// ID is a contract violation and panics raft-rs.
-    PeersReachableRotationFailed { detail: String },
-}
-
-fn is_not_leader_without_hint(error: Option<&str>, leader_address: Option<&str>) -> bool {
-    error == Some("not leader") && leader_address.unwrap_or("").is_empty()
-}
-
-/// Try `ReplaceVoterByHostname` against each peer in turn.  Returns
-/// the first `Committed` if any peer's leader accepts the rotation,
-/// otherwise classifies the failure mode.  Followers supply the
-/// leader's address in `leader_address`; the caller follows that
-/// redirect once before moving to the next peer.
+///   1. **Restart** — `zm.get_zone("root").is_some()` means
+///      `open_existing_zones_from_disk` already loaded the local
+///      replica from `<zones_dir>/root/raft/raft.redb`.  Persisted
+///      ConfState is authoritative; we just resume from it.
 ///
-/// **Failure-mode classification is load-bearing.**  The caller relies
-/// on the distinction between `AllPeersUnreachable` (safe cold-start)
-/// and `PeersReachableRotationFailed` (must surface to operator) to
-/// honour the wipe-rejoin contract.  Treating "RPC timeout from a
-/// reachable peer" as "no peer reachable" silently rejoins an existing
-/// cluster with a stale ID and panics raft-rs (`to_commit X is out of
-/// range [last_index 0]`).
+///   2. **Fresh create** — `bootstrap_new=true` (operator set
+///      `NEXUS_BOOTSTRAP_NEW=1`).  Create a 1-voter cluster
+///      consisting of `self.node_id` only.  Other nodes will land in
+///      branch 3 and JoinZone here.  Without the operator flag this
+///      path is forbidden — accidentally creating a second 1-voter
+///      cluster on a joiner would partition the federation.
 ///
-/// Takes the owning `Runtime` (not a `Handle`) so we can call
-/// `Runtime::block_on` directly — `Handle::block_on` against a
-/// current_thread runtime from the runtime's own thread deadlocks
-/// (the runtime worker is the caller, so the future never gets
-/// driven).
-fn try_replace_voter_on_peers(
-    runtime: &tokio::runtime::Runtime,
-    peers: &[NodeAddress],
-    self_hostname: &str,
-    new_node_id: u64,
+///   3. **Wait-and-join** — empty storage, no flag.  Loop forever
+///      calling JoinZone RPC against each peer in the address book.
+///      The leader's response commits a `ConfChangeV2(AddNode(self))`;
+///      we then locally `join_zone(skip_bootstrap=true)` so the
+///      leader's snapshot installs the authoritative ConfState.
+///      No deadline by design — misconfig surfaces as "daemon stays
+///      up retrying" rather than a silent exit.
+fn bootstrap_or_join_root(
+    zm: &ZoneManager,
+    node_id: u64,
     self_address: &str,
-) -> RotationOutcome {
-    let mut any_reachable = false;
-    let mut last_failure: Option<String> = None;
-    let no_leader_retry_deadline =
-        Instant::now() + Duration::from_secs(ROTATION_NO_LEADER_RETRY_SECS);
-    // Separate deadline for zone-not-yet-initialized retries. During cluster
-    // boot both nodes start concurrently; node-2 can reach node-1's gRPC port
-    // before node-1 has registered the root zone. Retry instead of treating
-    // the peer as "reachable but refusing" which would block cold-start.
-    let zone_not_ready_retry_deadline =
-        Instant::now() + Duration::from_secs(ROTATION_ZONE_NOT_READY_RETRY_SECS);
-
-    for peer in peers {
-        if peer.hostname == self_hostname {
-            // Skip self — even if NEXUS_PEERS includes us, RPC to self
-            // before our gRPC server is up would just fail.
-            continue;
-        }
-
-        let mut endpoint = peer.endpoint.clone();
-        let mut redirected_once = false;
-        loop {
-            eprintln!(
-                "[ensure_voter_membership] dialing ReplaceVoterByHostname \
-                 endpoint={endpoint} hostname={self_hostname} new_node_id={new_node_id}",
-            );
-            let attempt = runtime.block_on(call_replace_voter_by_hostname(
-                &endpoint,
-                "root",
-                self_hostname,
-                new_node_id,
-                self_address,
-                5,
-            ));
-            match attempt {
-                Ok(result) if result.success => {
-                    eprintln!(
-                        "[ensure_voter_membership] ReplaceVoterByHostname committed \
-                         endpoint={endpoint} new_node_id={new_node_id} \
-                         removed_old_id={:?}",
-                        result.removed_old_id,
-                    );
-                    return RotationOutcome::Committed;
-                }
-                Ok(result) => {
-                    // TCP succeeded, server responded with success=false.
-                    // Either a follower redirect (try the leader once)
-                    // or a genuine refusal (cluster reachable, rotation
-                    // didn't commit).
-                    any_reachable = true;
-                    if let Some(addr) = result.leader_address.as_ref() {
-                        if !redirected_once && !addr.is_empty() && addr != &endpoint {
-                            eprintln!(
-                                "[ensure_voter_membership] redirected from {endpoint} to {addr}",
-                            );
-                            endpoint = addr.clone();
-                            redirected_once = true;
-                            continue;
-                        }
-                    }
-                    let detail = format!("{endpoint} responded with error={:?}", result.error);
-                    if is_not_leader_without_hint(
-                        result.error.as_deref(),
-                        result.leader_address.as_deref(),
-                    ) && Instant::now() < no_leader_retry_deadline
-                    {
-                        eprintln!(
-                            "[ensure_voter_membership] {detail}; \
-                             waiting for leader election before retry"
-                        );
-                        std::thread::sleep(Duration::from_millis(
-                            ROTATION_NO_LEADER_RETRY_INTERVAL_MS,
-                        ));
-                        continue;
-                    }
-                    eprintln!("[ensure_voter_membership] {detail}");
-                    last_failure = Some(detail);
-                    break;
-                }
-                Err(TransportError::InvalidAddress(msg)) => {
-                    // Unparseable endpoint — operator config bug, no
-                    // amount of retry helps. Log and move on; cold-start
-                    // sentinel is safe.
-                    eprintln!("[ensure_voter_membership] peer unreachable {endpoint}: {msg}");
-                    break;
-                }
-                Err(TransportError::Connection(msg))
-                    if Instant::now() < zone_not_ready_retry_deadline =>
-                {
-                    // TCP connect failed — peer is still booting (its
-                    // gRPC listener isn't open yet). This is the
-                    // dual of the "zone not yet initialized" branch
-                    // below: same boot-race transient, just caught one
-                    // layer earlier (TCP refuse vs RPC NotFound).
-                    // Without this retry, the *first* node to boot in
-                    // a fresh cluster never reaches its peers (they
-                    // start a fraction of a second later) and falls
-                    // into cold-start with id=hostname_to_node_id(0),
-                    // while the *second* node retries successfully and
-                    // rotates. Asymmetry breaks the wipe-rejoin
-                    // contract on TestLeaderFailover restart.
-                    eprintln!(
-                        "[ensure_voter_membership] {endpoint} TCP connect failed \
-                         (boot race: {msg}) — retrying in {}ms",
-                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
-                    );
-                    std::thread::sleep(Duration::from_millis(
-                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
-                    ));
-                    // Don't set any_reachable — peer isn't serving yet.
-                }
-                Err(TransportError::Connection(msg)) => {
-                    // Past the boot-race retry window. Peer is genuinely
-                    // down. Cold-start sentinel is safe — every fresh
-                    // peer will reach this branch and converge on the
-                    // same identical-ConfState bootstrap from
-                    // NEXUS_PEERS, raft-rs election kicks in once the
-                    // gRPC servers are all up.
-                    eprintln!(
-                        "[ensure_voter_membership] peer unreachable {endpoint}: {msg} \
-                         (past retry deadline)"
-                    );
-                    break;
-                }
-                Err(TransportError::Rpc(ref msg))
-                    if msg.contains("NotFound")
-                        && msg.contains("not found on this node")
-                        && Instant::now() < zone_not_ready_retry_deadline =>
-                {
-                    // The peer's gRPC port is up but its zone registry hasn't
-                    // been populated yet — transient boot-time race. Retry
-                    // rather than marking the peer as "reachable-but-refusing"
-                    // which would permanently block cold-start on this node.
-                    eprintln!(
-                        "[ensure_voter_membership] {endpoint}: zone not yet initialized \
-                         (boot race) — retrying in {}ms",
-                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
-                    );
-                    std::thread::sleep(Duration::from_millis(
-                        ROTATION_ZONE_NOT_READY_RETRY_INTERVAL_MS,
-                    ));
-                    // Don't set any_reachable — peer isn't serving yet.
-                }
-                Err(e) => {
-                    // TCP succeeded, post-connect RPC failed (handler
-                    // timeout, transport-level deserialization error,
-                    // etc.).  Cluster exists, rotation didn't commit —
-                    // surface to operator instead of silently
-                    // cold-starting with a stale ID.
-                    any_reachable = true;
-                    let detail = format!("{endpoint} RPC error: {e}");
-                    eprintln!("[ensure_voter_membership] {detail}");
-                    last_failure = Some(detail);
-                    break;
-                }
-            }
-        }
-    }
-
-    if any_reachable {
-        RotationOutcome::PeersReachableRotationFailed {
-            detail: last_failure.unwrap_or_else(|| {
-                // Defensive — `any_reachable=true` always sets last_failure.
-                "(no failure detail captured)".to_string()
-            }),
-        }
-    } else {
-        RotationOutcome::AllPeersUnreachable
-    }
-}
-
-impl RaftDistributedCoordinator {
-    /// Decide this process's effective node ID and whether to bootstrap
-    /// a fresh raft zone or join an already-running one.
-    ///
-    /// Centralizes the "cold-start vs wipe-rejoin" decision so the rest
-    /// of `init_from_env` doesn't have to scatter `was_just_created`
-    /// detection or `NEXUS_JOINER_HINT` overrides across every zone
-    /// branch.  Run **before** `ZoneManager::with_node_id` so the
-    /// computed `node_id` is what raft commits into ConfState.
-    ///
-    /// Logic:
-    /// 1. If `<zones_dir>/.node_incarnation` exists this is a recovery
-    ///    boot — read the persisted incarnation (defaulting to 0 =
-    ///    legacy / cold-start sentinel) and return
-    ///    `compute_node_id(hostname, incarnation)` with
-    ///    `rotated_into_existing_cluster = false` — plain restart with
-    ///    intact storage.
-    /// 2. Otherwise the node is fresh (first-ever boot or post-wipe).
-    ///    Mint a fresh non-zero incarnation, compute the new ID, and
-    ///    try `ReplaceVoterByHostname` on every peer.  Three outcomes
-    ///    drive distinct branches — see [`RotationOutcome`]:
-    ///    * **Committed** — leader atomically swapped
-    ///      `RemoveNode(old_id) + AddNode(new_id)` via ConfChangeV2.
-    ///      Persist the new incarnation, return with
-    ///      `rotated_into_existing_cluster = true` so callers use
-    ///      `join_zone(skip_bootstrap=true)`.
-    ///    * **AllPeersUnreachable** — no peer responded at TCP level.
-    ///      Genuine simultaneous cluster bringup; fall through to the
-    ///      cold-start sentinel (incarnation=0, hostname-based ID) so
-    ///      every fresh peer converges on identical ConfState
-    ///      bootstraps without coordination.
-    ///    * **PeersReachableRotationFailed** — at least one peer was
-    ///      reachable but rotation didn't commit (handler timeout,
-    ///      "not leader" with no usable redirect, or 2-voter quorum
-    ///      deadlock where the joiner *is* the missing voter).  A
-    ///      live cluster holds this hostname's stale voter ID;
-    ///      cold-starting here would panic raft-rs's commit_to
-    ///      assertion.  Return Err with operator-actionable
-    ///      remediation; do **not** persist incarnation, so the next
-    ///      boot retries rotation.
-    fn ensure_voter_membership(
-        &self,
-        hostname: &str,
-        self_address: &str,
-        zones_dir: &str,
-        peers: &[NodeAddress],
-    ) -> Result<VoterMembership, String> {
-        // Recovery path — node-level incarnation file exists from a
-        // prior boot (or pre-fix daemon, which we treat as
-        // incarnation=0 → cold-start ID).
-        if let Some(incarnation) = read_node_incarnation(zones_dir)? {
-            let node_id = compute_node_id(hostname, incarnation);
-            // Tracing subscriber is not initialised until ZoneManager
-            // construction (a few milliseconds later), so this fn
-            // logs to stderr directly.  Boot-time trace, low volume.
-            eprintln!(
-                "[ensure_voter_membership] recovery: hostname={hostname} \
-                 incarnation={incarnation} node_id={node_id}",
-            );
-            return Ok(VoterMembership {
-                node_id,
-                rotated_into_existing_cluster: false,
-            });
-        }
-
-        // Fresh path — try wipe-rejoin rotation, fall back to cold start.
-        let new_incarnation = generate_fresh_incarnation();
-        let new_id = compute_node_id(hostname, new_incarnation);
-        eprintln!(
-            "[ensure_voter_membership] fresh: hostname={hostname} \
-             trying rotation new_incarnation={new_incarnation} new_id={new_id} \
-             peers={}",
-            peers.len(),
+    peer_addrs: &[NodeAddress],
+    bootstrap_new: bool,
+) -> Result<(), String> {
+    // Branch 1: zone already loaded from disk.
+    if zm.get_zone("root").is_some() {
+        tracing::info!(
+            node_id,
+            "root zone loaded from persisted storage; resuming from ConfState",
         );
+        return Ok(());
+    }
 
-        // Spin up a small temporary tokio runtime for the rotation
-        // RPCs.  ZoneManager owns the long-lived runtime but we need
-        // gRPC dialing *before* the manager is constructed (so that
-        // its raft node ID is correct from the first heartbeat).
-        //
-        // Use a multi-thread runtime with a single worker so `block_on`
-        // on the calling thread doesn't have to drive the event loop
-        // simultaneously — that combination on a current_thread
-        // runtime deadlocks because the worker thread IS the caller.
-        let rotation_runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .thread_name("ensure-voter-membership")
-            .build()
-            .map_err(|e| format!("rotation runtime: {e}"))?;
-        let outcome =
-            try_replace_voter_on_peers(&rotation_runtime, peers, hostname, new_id, self_address);
-        drop(rotation_runtime);
+    // Branch 2: operator authorized fresh 1-voter create.
+    if bootstrap_new {
+        tracing::warn!(
+            node_id,
+            self_address = %self_address,
+            "NEXUS_BOOTSTRAP_NEW honored; creating 1-voter root zone. \
+             Other nodes must JoinZone."
+        );
+        let self_peer = format!("{node_id}@{self_address}");
+        zm.create_zone("root", vec![self_peer])
+            .map_err(|e| format!("create_zone(root): {e}"))?;
+        return Ok(());
+    }
 
-        // Three-way classification — see RotationOutcome for the
-        // contract.  Persisting incarnation is the SSOT commit point:
-        // we only do it for outcomes where the chosen ID is safe.
-        // PeersReachableRotationFailed deliberately skips the persist
-        // so the next boot retries rotation from the "fresh" path.
-        match outcome {
-            RotationOutcome::Committed => {
-                write_node_incarnation(zones_dir, new_incarnation)?;
-                eprintln!(
-                    "[ensure_voter_membership] rotated into existing cluster: \
-                     hostname={hostname} incarnation={new_incarnation} node_id={new_id}",
-                );
-                Ok(VoterMembership {
-                    node_id: new_id,
-                    rotated_into_existing_cluster: true,
-                })
+    // Branch 3: empty storage, no flag — wait for an existing cluster.
+    //
+    // Empty peer_addrs (no NEXUS_PEERS) + flag unset = "no cluster
+    // intent yet" — daemon comes up federation-active but zoneless.
+    // An operator can later set NEXUS_BOOTSTRAP_NEW=1 + restart, or
+    // call `coordinator.create_zone("root")` via RPC under the
+    // dynamic-bootstrap mode.  Without this early return, branch 3
+    // loops forever with no targets — a hang for any test or
+    // single-node deployment that constructs a kernel without
+    // declaring federation intent.
+    if peer_addrs.is_empty() {
+        tracing::info!(
+            node_id,
+            "empty storage, no NEXUS_PEERS, no NEXUS_BOOTSTRAP_NEW — \
+             federation up but rootless; operator drives create_zone later",
+        );
+        return Ok(());
+    }
+    tracing::info!(
+        node_id,
+        peer_count = peer_addrs.len(),
+        "empty storage and NEXUS_BOOTSTRAP_NEW unset — \
+         retrying JoinZone against NEXUS_PEERS indefinitely",
+    );
+
+    // Spin a small temporary multi-thread runtime for the JoinZone
+    // RPCs.  ZoneManager owns the long-lived runtime, but `block_on`
+    // on its handle from this thread (the kernel boot thread) is
+    // unsafe if the boot thread is itself a worker of an outer
+    // runtime.  A fresh multi-thread runtime with one worker
+    // sidesteps the issue cleanly — we drop it once we've joined.
+    let join_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .thread_name("nexus-bootstrap-join")
+        .build()
+        .map_err(|e| format!("bootstrap join runtime: {e}"))?;
+
+    loop {
+        for peer in peer_addrs {
+            // Skip self by endpoint-string compare.  `self_address` is
+            // "host:port"; `peer.endpoint` is "<scheme>://host:port".
+            let peer_hostport = peer
+                .endpoint
+                .trim_start_matches("https://")
+                .trim_start_matches("http://");
+            if peer_hostport == self_address {
+                continue;
             }
-            RotationOutcome::AllPeersUnreachable => {
-                // Cold-start sentinel — every peer derives the same ID
-                // for this hostname so `create_zone` ConfState
-                // bootstraps converge without coordination.
-                write_node_incarnation(zones_dir, 0)?;
-                let cold_id = hostname_to_node_id(hostname);
-                eprintln!(
-                    "[ensure_voter_membership] cold start (no peer TCP-reachable): \
-                     hostname={hostname} node_id={cold_id}",
-                );
-                Ok(VoterMembership {
-                    node_id: cold_id,
-                    rotated_into_existing_cluster: false,
-                })
-            }
-            RotationOutcome::PeersReachableRotationFailed { detail } => {
-                // A live cluster is reachable but rotation didn't
-                // commit.  Three scenarios collapse here:
-                //
-                //   (a) cold-start race — peer's gRPC is up, no
-                //       leader elected yet, retry deadline (30s)
-                //       expired before a leader formed.  Falls
-                //       through to cold-start path so all peers
-                //       converge on the same ConfState seeded from
-                //       NEXUS_PEERS — raft-rs election kicks in
-                //       once the gRPC servers are all up.  This
-                //       node's hostname-based ID is NOT in any
-                //       committed ConfState yet (no cluster has
-                //       committed anything), so reusing it is safe.
-                //
-                //   (b) wipe-rejoin — committed ConfState holds a
-                //       stale ID for this hostname.  `incarnation`
-                //       file would have caught this on a prior
-                //       successful rotation; absence of incarnation
-                //       file means we never persisted a fresh ID,
-                //       so the cluster either hasn't seen us before
-                //       (case a) or holds the cold-start ID for us
-                //       (also safe to reuse — converges on retry).
-                //
-                //   (c) 2-voter quorum deadlock — surviving voter
-                //       cannot commit ConfChangeV2 alone.  Surfaces
-                //       loudly so operator adds witness / wipes
-                //       all peers.
-                //
-                // We pick the cold-start sentinel (hostname+0).
-                // This is the same ID a fresh AllPeersUnreachable
-                // would produce, so cold-start ConfStates converge
-                // across peers regardless of how each peer
-                // classified its rotation outcome.  Operator gets
-                // the loud trace for the 2-voter case.
-                tracing::error!(
-                    detail = %detail,
-                    "rotation against reachable peer(s) failed; falling back to \
-                     cold-start sentinel ID. Cluster converges from NEXUS_PEERS \
-                     ConfState seeding when all peers reach this branch. \
-                     2-voter clusters that hit this need (a) coordinated wipe \
-                     across all peers, or (b) addition of a 3rd voter / witness."
-                );
-                write_node_incarnation(zones_dir, 0)?;
-                let cold_id = hostname_to_node_id(hostname);
-                Ok(VoterMembership {
-                    node_id: cold_id,
-                    rotated_into_existing_cluster: false,
-                })
+
+            let mut endpoint = peer.endpoint.clone();
+            let mut redirected_once = false;
+            loop {
+                // Order matters: register locally with skip_bootstrap
+                // FIRST so this node's gRPC server can serve append-
+                // entries from the leader once AddNode commits.
+                // Otherwise the leader's post-AddNode propose
+                // (i_links_count) hangs waiting for our quorum ack and
+                // times out the JoinZone RPC.  Local register is
+                // idempotent — calling it on every retry costs only a
+                // hashmap lookup.
+                if zm.get_zone("root").is_none() {
+                    let zone_peers = vec![peer.to_raft_peer_str()];
+                    if let Err(e) = zm.join_zone("root", zone_peers, /* learner */ false) {
+                        tracing::warn!(
+                            endpoint = %endpoint,
+                            error = %e,
+                            "local join_zone setup failed; will retry next peer",
+                        );
+                        break;
+                    }
+                }
+                let attempt = join_runtime.block_on(crate::transport::call_join_zone_rpc(
+                    &endpoint,
+                    "root",
+                    node_id,
+                    self_address,
+                    /* as_learner */ false,
+                    JOIN_ZONE_RPC_TIMEOUT_SECS,
+                ));
+                match attempt {
+                    Ok(result) if result.success => {
+                        tracing::info!(
+                            endpoint = %endpoint,
+                            node_id,
+                            "joined root zone via leader",
+                        );
+                        return Ok(());
+                    }
+                    Ok(result) => {
+                        if let Some(addr) = result.leader_address.as_ref() {
+                            if !redirected_once && !addr.is_empty() && addr != &endpoint {
+                                tracing::info!(
+                                    from = %endpoint,
+                                    to = %addr,
+                                    "JoinZone redirect to leader",
+                                );
+                                endpoint = addr.clone();
+                                redirected_once = true;
+                                continue;
+                            }
+                        }
+                        tracing::debug!(
+                            endpoint = %endpoint,
+                            error = ?result.error,
+                            "JoinZone non-success; trying next peer",
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            endpoint = %endpoint,
+                            error = %e,
+                            "JoinZone RPC error; trying next peer",
+                        );
+                        break;
+                    }
+                }
             }
         }
+        std::thread::sleep(JOIN_ZONE_RETRY_INTERVAL);
     }
 }
 
@@ -769,30 +486,36 @@ impl RaftDistributedCoordinator {
             return Ok(false);
         }
 
-        // NEXUS_PEERS empty selects the dynamic-bootstrap mode: the
-        // daemon brings up the raft transport server and federation
-        // wiring, but does NOT auto-create the root zone.  An
-        // operator / agent later drives cluster membership explicitly
-        // via the existing RPC contract:
+        // Bootstrap contract — single classic-aligned path:
         //
-        //   * first node:   `federation_create_zone("root")` —
-        //                   creates a 1-voter raft group (ConfState
-        //                   contains only `self.node_id`, quorum=1,
-        //                   self-campaigns to leader).
-        //   * later nodes:  `JoinZone(zone_id="root", node_id, addr)`
-        //                   RPC against the leader — leader proposes
-        //                   ConfChangeV2 AddNode, commits (quorum
-        //                   from existing voter set), pushes a
-        //                   snapshot, joiner installs ConfState and
-        //                   syncs the log.
+        //   1. `node_id` is an opaque random u64 minted at first daemon
+        //      boot, persisted to `<NEXUS_DATA_DIR>/.node_id`.  Wipe-
+        //      rejoin mints a fresh ID; raft-rs's `Progress[new_id]`
+        //      starts at `matched=0`, so the first heartbeat carries
+        //      `m.commit=0` and cannot trip `RaftLog::commit_to`'s
+        //      stale-`Progress` panic.
+        //   2. NEXUS_PEERS is a hostname → endpoint address book only.
+        //      It seeds the transport peer map for raft messaging; it
+        //      is **not** the source of truth for ConfState.  ConfState
+        //      is mutated by ConfChange (AddNode / RemoveNode), driven
+        //      by JoinZone RPC.
+        //   3. Empty storage + `NEXUS_BOOTSTRAP_NEW=1` →
+        //      `create_zone("root")` 1-voter cluster.  Empty storage +
+        //      flag unset → block on JoinZone forever.  Non-empty
+        //      storage → resume from persisted ConfState.
         //
-        // NEXUS_PEERS non-empty keeps the static-bootstrap mode
-        // unchanged: every peer seeds the same ConfState from the
-        // shared NEXUS_PEERS list, raft-rs runs election internally
-        // once peers reach each other.  Both modes coexist; choice
-        // is per-deployment, signalled by NEXUS_PEERS presence.
+        // See `bootstrap_or_join_root` for the dispatch table.
         let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
-        let dynamic_bootstrap = peers_csv.trim().is_empty();
+        let bootstrap_new = std::env::var("NEXUS_BOOTSTRAP_NEW")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if std::env::var("NEXUS_JOINER_HINT").is_ok() {
+            tracing::warn!(
+                "NEXUS_JOINER_HINT is no longer honored — bootstrap mode is \
+                 auto-detected from on-disk state + NEXUS_BOOTSTRAP_NEW.  \
+                 Drop the env var; this warning is non-fatal."
+            );
+        }
 
         let hostname = std::env::var("NEXUS_HOSTNAME").ok().unwrap_or_else(|| {
             #[cfg(unix)]
@@ -844,9 +567,9 @@ impl RaftDistributedCoordinator {
         let use_tls_for_endpoints = !tls_disabled;
 
         // Parse NEXUS_PEERS once into structured NodeAddress entries —
-        // both `ensure_voter_membership` (for ReplaceVoter RPC dialing
-        // by hostname) and `ZoneManager` (for raft peer formatting) read
-        // from the same parse result, no double-parse drift risk.
+        // address book only.  ZoneManager seeds its transport peer map
+        // from this; ConfState is independent (mutated only by
+        // ConfChange via JoinZone).
         let peer_addrs: Vec<NodeAddress> = peers_csv
             .split(',')
             .map(str::trim)
@@ -880,48 +603,32 @@ impl RaftDistributedCoordinator {
         std::fs::create_dir_all(&zones_dir)
             .map_err(|e| format!("create zones dir '{zones_dir}': {e}"))?;
 
-        // Decide this node's effective ID and whether to bootstrap a
-        // fresh raft zone or join an already-running cluster.  Reads /
-        // writes the persisted incarnation marker in root zone's
-        // `raft.redb`; on the wipe-rejoin path also calls
-        // `ReplaceVoterByHostname` on each peer until a leader accepts
-        // the rotation.  Strict raft membership-swap contract via
-        // ConfChangeV2 atomic commit — no transient quorum gap.
-        //
-        // Dynamic-bootstrap mode skips the rotation RPC dance — there
-        // are no peers to rotate against (NEXUS_PEERS is empty by
-        // construction).  Use the cold-start sentinel (incarnation=0,
-        // hostname-based ID) which matches the semantics: this node
-        // is the first to come up and either becomes leader of a
-        // 1-voter cluster on `federation_create_zone`, or joins an
-        // existing cluster via JoinZone RPC under the same identity.
-        let membership = if dynamic_bootstrap {
-            VoterMembership {
-                node_id: hostname_to_node_id(&hostname),
-                rotated_into_existing_cluster: false,
-            }
-        } else {
-            self.ensure_voter_membership(&hostname, &self_addr, &zones_dir, &peer_addrs)?
-        };
-        let effective_peer_addrs = peer_addrs_with_effective_self_id(
-            &peer_addrs,
-            &hostname,
-            &self_addr,
-            membership.node_id,
-            use_tls_for_endpoints,
-        )?;
-        let peers: Vec<String> = effective_peer_addrs
+        // SSOT for raft node identity.  First boot mints a random u64
+        // and persists `<zones_dir>/.node_id`; restart loads the
+        // persisted value.  Decoupling node_id from hostname satisfies
+        // raft-rs's stale-`Progress` heartbeat invariant under wipe-
+        // rejoin — a wiped follower's fresh random ID has
+        // `Progress[new_id].matched=0` from the moment AddNode commits,
+        // so heartbeats with `m.commit=0` cannot trip `commit_to`'s
+        // panic.  Witness binaries still derive ID from hostname (see
+        // `lib::transport_primitives::hostname_to_node_id`) — they
+        // never wipe-rejoin in practice and live at well-known
+        // addresses, so the contract doesn't apply there.
+        let node_id = read_or_mint_node_id(&zones_dir)?;
+        let peers: Vec<String> = peer_addrs
             .iter()
             .map(NodeAddress::to_raft_peer_str)
             .collect();
+        let _ = use_tls_for_endpoints; // peer_addrs already carry tls scheme
 
         let zm = ZoneManager::with_node_id(
             &hostname,
-            membership.node_id,
+            node_id,
             &zones_dir,
-            peers.clone(),
+            peers,
             &bind_addr,
             tls,
+            Some(self_addr.clone()),
         )
         .map_err(|e| format!("ZoneManager::with_node_id: {e}"))?;
 
@@ -935,57 +642,30 @@ impl RaftDistributedCoordinator {
         // `install_transport_wiring` can drain it.
         kernel.stash_blob_fetcher_slot(Box::new(blob_slot));
 
-        // Choose create_zone vs join_zone based on the membership
-        // decision above.  `rotated_into_existing_cluster=true` means
-        // a leader already accepted our ConfChangeV2; the leader's
-        // snapshot installs the authoritative ConfState, so we must
-        // skip ConfState bootstrap (`join_zone(skip_bootstrap=true)`)
-        // — calling `create_zone` here would re-bootstrap a stale
-        // ConfState that conflicts with the cluster's committed voter
-        // set.  Cold-start path uses `create_zone` so all peers
-        // converge on identical ConfStates without coordination.
-        //
-        // NEXUS_JOINER_HINT is honoured for back-compat (operators
-        // still using it) but the auto-detect supersedes it: if the
-        // hint says "joiner" but we cold-started, we cold-start.
-        let auto_join = membership.rotated_into_existing_cluster;
-        let joiner_hint = std::env::var("NEXUS_JOINER_HINT")
-            .map(|v| v == "1")
-            .unwrap_or(false);
+        // Bring root zone online — restart-from-disk, fresh-create, or
+        // wait-and-join, depending on storage state and the operator
+        // flag.  Blocks indefinitely under the join branch (no deadline)
+        // so misconfig surfaces as "daemon stays up retrying" rather
+        // than "daemon exits after timeout".  See `bootstrap_or_join_root`.
+        bootstrap_or_join_root(zm.as_ref(), node_id, &self_addr, &peer_addrs, bootstrap_new)?;
 
-        let bootstrap_zone = |zone_id: &str| -> Result<(), String> {
-            if zm.get_zone(zone_id).is_some() {
-                return Ok(());
-            }
-            let zone_peers = if zone_id == "root" {
-                peers.clone()
-            } else {
-                zm.current_peer_strings()
-            };
-            if auto_join || joiner_hint {
-                zm.join_zone(zone_id, zone_peers, false)
-                    .map_err(|e| format!("join_zone({zone_id}): {e}"))?;
-            } else {
-                zm.create_zone(zone_id, zone_peers)
-                    .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
-            }
-            Ok(())
-        };
-
-        // Static-bootstrap mode: every node seeds the same ConfState
-        // from NEXUS_PEERS at boot.  Dynamic-bootstrap mode skips
-        // this entirely — root and any federation zones are created
-        // later via explicit RPC (`federation_create_zone` / `JoinZone`).
-        if !dynamic_bootstrap {
-            bootstrap_zone("root")?;
-
+        // Federation zones listed in `NEXUS_FEDERATION_ZONES` are
+        // brought up only when this node bootstrapped root (1-voter
+        // owner).  Joiners receive these zones via the standard
+        // mount-with-source / share flows once they've joined root —
+        // bootstrapping them locally on a joiner would create a
+        // duplicate raft group with disjoint state.
+        if bootstrap_new {
             if let Ok(zones_csv) = std::env::var("NEXUS_FEDERATION_ZONES") {
                 for zone_id in zones_csv
                     .split(',')
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    bootstrap_zone(zone_id)?;
+                    if zm.get_zone(zone_id).is_none() {
+                        zm.create_zone(zone_id, zm.current_peer_strings())
+                            .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
+                    }
                 }
             }
         }
@@ -1096,11 +776,172 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
         Ok(())
     }
 
+    /// Create or join a federation zone at runtime.
+    ///
+    /// Coordinated through the root-zone leader to avoid split-brain
+    /// under the opaque-ID contract — random data-plane node IDs make
+    /// hostname-derived ConfState convergence (the old contract's
+    /// implicit serializer) impossible.
+    ///
+    ///   - **Root-zone leader**: founder.  Creates `zone_id` as a
+    ///     1-voter cluster locally.  Subsequent JoinZone calls from
+    ///     followers grow the voter set.
+    ///   - **Root-zone follower**: joiner.  Loops `JoinZone` RPC at
+    ///     the root-leader's address (and other peers as a fallback)
+    ///     until the leader has created the zone and the AddNode
+    ///     for this node commits.  Bounded by 30s so syscall
+    ///     callers see a fail rather than hang forever; operators
+    ///     re-issue.
     fn create_zone(&self, kernel: &Kernel, zone_id: &str) -> CoordinatorResult<()> {
         let zm = self.zm().ok_or("federation not active")?;
-        zm.get_or_create_zone(zone_id).map_err(|e| e.to_string())?;
-        self.install_apply_cb_for_zone(kernel, zone_id);
-        Ok(())
+        if zm.get_zone(zone_id).is_some() {
+            self.install_apply_cb_for_zone(kernel, zone_id);
+            return Ok(());
+        }
+        let runtime = self
+            .runtime
+            .get()
+            .ok_or("federation runtime not initialised")?;
+        let self_id = zm.node_id();
+        let registry = zm.registry();
+        let self_address = registry.self_address();
+
+        // Root-leader path: founder creates 1-voter cluster locally.
+        let am_root_leader = zm.get_zone("root").map(|h| h.is_leader()).unwrap_or(false);
+        if am_root_leader {
+            let self_peer = format!("{self_id}@{self_address}");
+            zm.create_zone(zone_id, vec![self_peer])
+                .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
+            self.install_apply_cb_for_zone(kernel, zone_id);
+
+            // 1-voter zone — campaign immediately so this node is the
+            // leader for the AddNode proposals below.  Without an
+            // explicit campaign, raft-rs waits a full election_tick
+            // (~100 ms) before self-voting, and any propose_conf_change
+            // in that window returns NotLeader.
+            let zone_handle = zm
+                .get_zone(zone_id)
+                .ok_or_else(|| format!("create_zone({zone_id}): just-created zone not visible"))?;
+            let consensus = zone_handle.consensus_node();
+            let campaign_fut = consensus.campaign();
+            let campaign_result = if tokio::runtime::Handle::try_current().is_ok() {
+                tokio::task::block_in_place(|| runtime.block_on(campaign_fut))
+            } else {
+                runtime.block_on(campaign_fut)
+            };
+            campaign_result.map_err(|e| format!("create_zone({zone_id}) campaign: {e}"))?;
+
+            // Auto-invite witness voters present in NEXUS_PEERS.  The
+            // witness's id is hostname-derived (well-known per F3) so
+            // the leader can address it directly without waiting for
+            // JoinZone.  Without this, witness never receives raft
+            // traffic for new federation zones (its ConfState lacks
+            // them) and the cluster loses witness's quorum-1
+            // protection on every dynamically-created zone.
+            //
+            // If the witness is unreachable at create time the AddNode
+            // still commits (1-voter quorum on this leader) but the
+            // resulting 2-voter ConfState raises quorum-required to
+            // 2/2 until witness comes up — same exposure as the OLD
+            // hostname-deterministic ConfState bootstrap, operationally
+            // equivalent.
+            let root_peers = registry.get_peers("root").unwrap_or_default();
+            for peer in root_peers.values() {
+                if !peer.hostname.to_ascii_lowercase().starts_with("witness") {
+                    continue;
+                }
+                let address_bytes = peer.endpoint.as_bytes().to_vec();
+                let fut = consensus.propose_conf_change(
+                    raft::eraftpb::ConfChangeType::AddNode,
+                    peer.id,
+                    address_bytes,
+                );
+                let result = if tokio::runtime::Handle::try_current().is_ok() {
+                    tokio::task::block_in_place(|| runtime.block_on(fut))
+                } else {
+                    runtime.block_on(fut)
+                };
+                if let Err(e) = result {
+                    tracing::warn!(
+                        zone = %zone_id,
+                        witness_id = peer.id,
+                        endpoint = %peer.endpoint,
+                        error = %e,
+                        "auto-invite witness AddNode failed; cluster proceeds 1-voter",
+                    );
+                } else {
+                    tracing::info!(
+                        zone = %zone_id,
+                        witness_id = peer.id,
+                        endpoint = %peer.endpoint,
+                        "Witness auto-invited as voter on federation zone create",
+                    );
+                }
+            }
+            return Ok(());
+        }
+
+        // Follower path: JoinZone via peers.  Address book comes from
+        // root zone's peer map (populated via inbound StepMessage).
+        let peer_addrs = registry.get_peers("root").unwrap_or_default();
+        if peer_addrs.is_empty() {
+            return Err(format!(
+                "create_zone({zone_id}): not root-leader and no peers known",
+            ));
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut last_err = String::new();
+        while Instant::now() < deadline {
+            // Re-resolve root leader on each iteration — it may emerge
+            // (election) or change (failover) during retry.
+            let leader_id = zm.get_zone("root").and_then(|h| h.leader_id()).unwrap_or(0);
+            let candidates: Vec<NodeAddress> = if leader_id != 0 {
+                peer_addrs.get(&leader_id).into_iter().cloned().collect()
+            } else {
+                peer_addrs.values().cloned().collect()
+            };
+
+            // Register the zone locally with skip_bootstrap=true so
+            // the leader's snapshot can install the authoritative
+            // ConfState the moment AddNode commits.  Idempotent.
+            if zm.get_zone(zone_id).is_none() {
+                if let Some(first) = candidates.first() {
+                    let _ = zm.join_zone(zone_id, vec![first.to_raft_peer_str()], false);
+                }
+            }
+
+            for peer in &candidates {
+                if peer.id == self_id {
+                    continue;
+                }
+                let fut = crate::transport::call_join_zone_rpc(
+                    &peer.endpoint,
+                    zone_id,
+                    self_id,
+                    &self_address,
+                    /* as_learner */ false,
+                    5,
+                );
+                let attempt = if tokio::runtime::Handle::try_current().is_ok() {
+                    tokio::task::block_in_place(|| runtime.block_on(fut))
+                } else {
+                    runtime.block_on(fut)
+                };
+                match attempt {
+                    Ok(r) if r.success => {
+                        self.install_apply_cb_for_zone(kernel, zone_id);
+                        return Ok(());
+                    }
+                    Ok(r) => last_err = format!("{}: {:?}", peer.endpoint, r.error),
+                    Err(e) => last_err = format!("{}: {e}", peer.endpoint),
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        Err(format!(
+            "create_zone({zone_id}): JoinZone exhausted after 30s: {last_err}"
+        ))
     }
 
     fn remove_zone(&self, _kernel: &Kernel, zone_id: &str, force: bool) -> CoordinatorResult<()> {
@@ -1691,118 +1532,35 @@ pub fn install(kernel: &Kernel) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
-    /// Build a tokio Runtime suitable for `try_replace_voter_on_peers`.
-    /// Mirrors the construction in `ensure_voter_membership` so tests
-    /// exercise the same runtime configuration as production.
-    fn rotation_runtime() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .thread_name("test-rotation")
-            .build()
-            .expect("rotation runtime")
+    #[test]
+    fn read_or_mint_node_id_mints_then_loads() {
+        // Round-trip: first call mints + persists, second call returns
+        // the same value from disk.  Pin the file format (8 bytes BE).
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().to_str().expect("utf-8");
+        let id1 = read_or_mint_node_id(path).expect("first mint");
+        assert_ne!(id1, 0, "minted id must be non-zero");
+        let id2 = read_or_mint_node_id(path).expect("second load");
+        assert_eq!(id1, id2, "load must return persisted id");
+
+        // Sanity: file is exactly 8 bytes BE u64.
+        let bytes = std::fs::read(dir.path().join(NODE_ID_FILE)).expect("read");
+        assert_eq!(bytes.len(), 8, ".node_id must be 8 bytes");
+        let parsed = u64::from_be_bytes(bytes.try_into().expect("array"));
+        assert_eq!(parsed, id1);
     }
 
     #[test]
-    fn empty_peers_classifies_as_all_unreachable() {
-        // No peers configured at all → loop body never enters, no peer
-        // is reachable, fall through to cold-start sentinel safely.
-        let rt = rotation_runtime();
-        let outcome = try_replace_voter_on_peers(&rt, &[], "host-a", 1, "host-a:2126");
-        assert!(matches!(outcome, RotationOutcome::AllPeersUnreachable));
-    }
-
-    #[test]
-    fn all_self_peers_classifies_as_all_unreachable() {
-        // NEXUS_PEERS lists only ourselves (single-node bringup) →
-        // every peer skipped via the self-hostname guard, no peer
-        // reachable.
-        let rt = rotation_runtime();
-        let peers = vec![NodeAddress::parse("host-a:2126", false).expect("parse")];
-        let outcome = try_replace_voter_on_peers(&rt, &peers, "host-a", 1, "host-a:2126");
-        assert!(matches!(outcome, RotationOutcome::AllPeersUnreachable));
-    }
-
-    #[test]
-    fn closed_port_classifies_as_all_unreachable() {
-        // 127.0.0.1:1 is reserved (TCPMUX, never bound on dev boxes) →
-        // tonic returns TransportError::Connection at TCP-connect
-        // time, which must NOT count toward `any_reachable`.  This is
-        // the "Scenario A — genuine network unreachability" case from
-        // the bug analysis: cold-start sentinel is the safe fallback.
-        let rt = rotation_runtime();
-        let peers = vec![NodeAddress::parse("127.0.0.1:1", false).expect("parse")];
-        let outcome = try_replace_voter_on_peers(&rt, &peers, "host-a", 1, "host-a:2126");
-        assert!(
-            matches!(outcome, RotationOutcome::AllPeersUnreachable),
-            "expected AllPeersUnreachable on closed port, got {outcome:?}",
-        );
-    }
-
-    #[test]
-    fn rotation_outcome_variants_are_distinct() {
-        // Compile-time guard: keep the three-way split intact.  If a
-        // future refactor collapses two variants the caller's match
-        // arms will silently lose the contract enforcement, so this
-        // test pins the variants to a known shape.
-        let unreachable = RotationOutcome::AllPeersUnreachable;
-        let failed = RotationOutcome::PeersReachableRotationFailed {
-            detail: "test".to_string(),
-        };
-        let committed = RotationOutcome::Committed;
-        assert!(matches!(unreachable, RotationOutcome::AllPeersUnreachable));
-        assert!(matches!(
-            failed,
-            RotationOutcome::PeersReachableRotationFailed { .. }
-        ));
-        assert!(matches!(committed, RotationOutcome::Committed));
-    }
-
-    #[test]
-    fn not_leader_without_hint_is_retryable() {
-        assert!(is_not_leader_without_hint(Some("not leader"), None));
-        assert!(is_not_leader_without_hint(Some("not leader"), Some("")));
-        assert!(!is_not_leader_without_hint(
-            Some("not leader"),
-            Some("http://leader:2126")
-        ));
-        assert!(!is_not_leader_without_hint(Some("permission denied"), None));
-    }
-
-    #[test]
-    fn effective_peer_addrs_replace_self_with_membership_id() {
-        let peers = vec![
-            NodeAddress::parse("nexus-1:2126", false).expect("parse nexus-1"),
-            NodeAddress::parse("nexus-2:2126", false).expect("parse nexus-2"),
-        ];
-
-        let effective =
-            peer_addrs_with_effective_self_id(&peers, "nexus-2", "nexus-2:2126", 42, false)
-                .expect("effective peers");
-
-        let self_peer = effective
-            .iter()
-            .find(|peer| peer.hostname == "nexus-2")
-            .expect("self peer");
-        assert_eq!(self_peer.id, 42);
-        assert_eq!(self_peer.to_raft_peer_str(), "42@nexus-2:2126");
-        assert!(!effective
-            .iter()
-            .any(|peer| peer.id == hostname_to_node_id("nexus-2")));
-    }
-
-    #[test]
-    fn effective_peer_addrs_add_missing_self() {
-        let peers = vec![NodeAddress::parse("nexus-1:2126", false).expect("parse nexus-1")];
-
-        let effective =
-            peer_addrs_with_effective_self_id(&peers, "nexus-2", "nexus-2:2126", 42, false)
-                .expect("effective peers");
-
-        assert_eq!(effective.len(), 2);
-        assert!(effective
-            .iter()
-            .any(|peer| peer.hostname == "nexus-2" && peer.id == 42));
+    fn read_or_mint_node_id_rejects_zero_on_disk() {
+        // Pre-write 0 — operator panic-recover scenario, surface
+        // loudly rather than silently re-minting (which would change
+        // the cluster's view of this node's identity).
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join(NODE_ID_FILE);
+        std::fs::write(&path, [0u8; 8]).expect("write zero");
+        let result = read_or_mint_node_id(dir.path().to_str().expect("utf-8"));
+        assert!(result.is_err(), "must reject zero id on disk");
     }
 }

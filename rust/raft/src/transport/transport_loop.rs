@@ -111,6 +111,13 @@ pub struct TransportLoop<S: StateMachine + 'static> {
     zone_id: String,
     /// This node's ID (for EC replication sender identification).
     node_id: u64,
+    /// This node's advertise address.  Carried in every outbound
+    /// `StepMessageRequest.sender_address` so receivers learn
+    /// `(self.node_id -> self_address)` on first contact — the
+    /// transport peer-map's runtime SSOT under the opaque-ID
+    /// contract.  Empty string means "no advertise address known"
+    /// and disables learning on the receiver.
+    self_address: String,
     /// Per-peer EC replication tracking (peer_id → state).
     ec_peer_state: HashMap<u64, PeerReplicationState>,
 }
@@ -134,6 +141,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             tick_interval,
             zone_id: String::new(),
             node_id,
+            self_address: String::new(),
             ec_peer_state: HashMap::new(),
         }
     }
@@ -141,6 +149,12 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
     /// Set the zone ID for multi-zone message routing.
     pub fn with_zone_id(mut self, zone_id: String) -> Self {
         self.zone_id = zone_id;
+        self
+    }
+
+    /// Set this node's advertise address — see [`Self::self_address`].
+    pub fn with_self_address(mut self, self_address: String) -> Self {
+        self.self_address = self_address;
         self
     }
 
@@ -239,11 +253,12 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
 
             let client_pool = self.client_pool.clone();
             let zone_id = self.zone_id.clone();
+            let self_address = self.self_address.clone();
 
             tokio::spawn(async move {
                 let result = tokio::time::timeout(
                     RAFT_SEND_TIMEOUT,
-                    send_raft_message(&client_pool, target_id, &addr, msg, zone_id),
+                    send_raft_message(&client_pool, target_id, &addr, msg, zone_id, self_address),
                 )
                 .await;
 
@@ -490,6 +505,7 @@ async fn send_raft_message(
     addr: &NodeAddress,
     msg: raft::eraftpb::Message,
     zone_id: String,
+    self_address: String,
 ) -> std::result::Result<(), String> {
     let bytes = msg
         .write_to_bytes()
@@ -501,7 +517,7 @@ async fn send_raft_message(
         .map_err(|e| format!("connect to node {} ({}): {}", target_id, addr.endpoint, e))?;
 
     client
-        .step_message(bytes, zone_id)
+        .step_message(bytes, zone_id, self_address)
         .await
         .map_err(|e| format!("send to node {} ({}): {}", target_id, addr.endpoint, e))
 }

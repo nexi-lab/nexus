@@ -159,45 +159,32 @@ Standard OS DNS + bootstrap + Raft membership exchange covers all scenarios.
 
 | Layer | Mechanism | When |
 |-------|-----------|------|
-| Bootstrap | `NEXUS_PEERS` env var (static) **or** `federation_create_zone` + `JoinZone` RPC (dynamic) | First cluster formation |
+| Bootstrap | `NEXUS_BOOTSTRAP_NEW=1` (founder) or JoinZone RPC against `NEXUS_PEERS` (joiner) | First cluster formation |
 | First contact | OS DNS (hostname → IP) | `join_zone(peers=["2@bob:2126"])` |
-| After join | `JoinZoneResponse.ClusterConfig` | Returns all voter NodeInfo |
+| After join | Leader snapshot installs authoritative `ConfState` | After AddNode commits |
 | Ongoing | Raft `ConfChange` | Automatic membership propagation |
 
 Path resolution across zones is **all local** (~5us per hop) because mounting = Voter = full local replica. No network hops on the read path.
 
-#### 6.3.1 Bootstrap Modes
+#### 6.3.1 Bootstrap
 
-Two coexisting cluster-formation contracts, selected per-deployment:
+Etcd / TiKV-style opaque IDs + leader-driven `AddNode`.
 
-**Static bootstrap** — `NEXUS_PEERS` non-empty.
+- **Identity** — `node_id` is an opaque random `u64` minted at first daemon boot, persisted as 8 bytes BE u64 to `<NEXUS_DATA_DIR>/.node_id`.  Decoupling identity from hostname lets a wiped follower rejoin under a fresh ID; the leader's `Progress[new_id]` is created with `matched=0` by `AddNode`, so the first heartbeat carries `m.commit=0` — within `RaftLog::commit_to`'s safe range on a fresh follower (`last_index=0`).  Pinned by [`test_handle_heartbeat_on_empty_follower_with_stale_commit_panics`](../../rust/raft/src/raft/storage.rs).
+- **Address book** — `NEXUS_PEERS` is a hostname → endpoint mapping that seeds the transport peer map.  `ConfState` lives in raft storage and is mutated only by `ConfChange` (AddNode / RemoveNode) driven by JoinZone.
+- **Bootstrap dispatch** ([`bootstrap_or_join_root`](../../rust/raft/src/distributed_coordinator.rs)):
 
-Every node parses the shared `NEXUS_PEERS` list and seeds the same `ConfState` at boot via `bootstrap_zone("root", NEXUS_PEERS)`. Raft-rs runs election internally once peers reach each other over the network. Standard pattern for declarative deployments (k8s StatefulSet, docker-compose) where the topology is fixed and known at config time. The Federation E2E suite (`docker-compose.dynamic-federation-test.yml` despite its name) uses this mode with a 3-voter `nexus-1, nexus-2, witness` cluster.
+  | State                                         | Action                                                       |
+  |-----------------------------------------------|--------------------------------------------------------------|
+  | Storage holds a `root` zone                   | Resume from persisted ConfState                              |
+  | Empty storage + `NEXUS_BOOTSTRAP_NEW=1`       | `create_zone("root")` — 1-voter cluster                      |
+  | Empty storage                                  | Loop on JoinZone RPC against `NEXUS_PEERS`, indefinite       |
 
-Static-mode requirements:
-- `NEXUS_PEERS` must list **every** voter (data nodes + any witness). 2-voter `NEXUS_PEERS=a,b` deployments cannot tolerate a single-node down — the survivor has 1/2 votes, no quorum, no leader. Add a witness for HA.
-- Cold-start node IDs are derived as `hostname_to_node_id(hostname)`. All nodes must agree on hostname-form to converge on identical `ConfState`.
-- `NEXUS_HOSTNAME` of each node must equal **its own** entry in `NEXUS_PEERS` (not someone else's) — otherwise raft sees an extra phantom voter (3 IDs in `ConfState` for what should be 2 actual peers).
+- **Wipe-rejoin** — wiping `<NEXUS_DATA_DIR>` mints a fresh `node_id` on the next boot; the daemon JoinZones, the leader commits `AddNode(new_id)`.
 
-**Dynamic bootstrap** — `NEXUS_PEERS` empty.
+##### Witness
 
-The daemon brings up the raft transport server but does NOT auto-create the root zone. The cluster is formed by explicit operator/agent syscall drive, matching the etcd / TiKV operator model. The **explicit mount-direction** model (NFS / sshfs convention) selects creator vs joiner semantics through the `source` parameter on `sys_setattr DT_MOUNT`:
-
-```
-mount /local-path remote-zone-id            # source=None: caller contributes a fresh zone (creator)
-mount remote-addr:/zone-id /local-path      # source=addr: caller picks up remote metadata (joiner)
-```
-
-1. **First node** (creator): invoke `sys_setattr(path="/some-mount", entry_type=DT_MOUNT, zone_id="root", source=None)`. Kernel calls `coordinator.create_zone("root")` → 1-voter ConfState (`peers=vec![]`), quorum=1, `campaign=true` → self-elects leader on first tick.
-2. **Subsequent nodes** (joiners): invoke `sys_setattr(path="/some-mount", entry_type=DT_MOUNT, zone_id="root", source="http://leader-addr:2126")`. Kernel calls `coordinator.join_cluster("root", leader_addr, as_learner=false)` → sets up local raft replica with `skip_bootstrap=true` → sends `JoinZone` RPC to the leader (followers redirect via `JoinZoneResponse.leader_address`) → leader proposes `ConfChangeV2 AddNode(joiner_id, joiner_addr)`, commits via existing voter quorum, then pushes a snapshot to populate the joiner's `ConfState` and log.
-3. **Subsequent witness**: same as node 2 with `as_learner=true` so the leader proposes `AddLearnerNode` instead of `AddNode`.
-
-Dynamic-mode use cases:
-- Ad-hoc / agent-driven cluster bring-up where topology emerges over time (multi-tenant SaaS, federated personal devices joining an org cluster, etc.).
-- Heterogeneous environments where setting identical `NEXUS_PEERS` across all nodes is impractical (cross-OS, behind different NAT boundaries).
-- Cluster expansion: an existing static-bootstrapped cluster can absorb a new dynamic-mode joiner without re-deploying every existing node.
-
-Both modes share the same trait surface (`DistributedCoordinator`); choice is signalled by the presence/absence of `NEXUS_PEERS` at boot. There is no separate "mode" env var — the absence of static seed *is* the dynamic signal, keeping the operator config minimal (no shadow SSOT between mode flag and peers list).
+The standalone witness binary derives `node_id = hostname_to_node_id(hostname)` (SHA-256 of hostname).  Witnesses live at well-known addresses, so binding identity to hostname is sufficient for them.
 
 #### 6.3.2 Federation Control-Plane API Surface
 

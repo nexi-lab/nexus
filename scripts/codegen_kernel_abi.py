@@ -5392,10 +5392,15 @@ def _apply_result_adapter(
             wire.update(raw_result)
         return wire
     if method == "sys_stat":
-        meta = raw_result
-        if isinstance(meta, dict):
-            meta = unscope_internal_dict(meta, ["path"])
-        return {{"metadata": meta}}
+        # `Kernel::sys_stat` returns the StatResult dict directly
+        # (or `None` for missing files).  Match the kernel ABI shape
+        # so consumers can test `result is None` for not-found.  The
+        # legacy `{{"metadata": ...}}` wrap was for a Tier 2 caller
+        # that has been deleted; the `unscope_internal_dict` call is
+        # still applied to strip internal `path` keys from the dict.
+        if isinstance(raw_result, dict):
+            return unscope_internal_dict(raw_result, ["path"])
+        return raw_result
     if method in ("access", "exists"):
         return {{"exists": bool(raw_result)}}
     if method == "is_directory":
@@ -5403,9 +5408,12 @@ def _apply_result_adapter(
     if method == "sys_unlock":
         return {{"released": bool(raw_result)}}
     if method == "sys_lock":
-        # NexusFS.sys_lock returns the lock_id (or None on contention).
-        # Tier 2 callers expect a dict like ``lock_acquire``.
-        return {{"acquired": raw_result is not None, "lock_id": raw_result}}
+        # Tier 1 contract: bare `lock_id` string when granted, `None`
+        # on contention.  Matches the kernel ABI's `Option<String>`
+        # exactly; consumers test `result is None` for contention.
+        # The legacy Tier 2 dict wrapper was removed alongside
+        # `lock_acquire` in commit 231620c3c.
+        return raw_result
     if method == "lock_acquire":
         return {{"acquired": raw_result is not None, "lock_id": raw_result}}
     if method in ("sys_readdir", "list"):

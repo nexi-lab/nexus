@@ -1178,11 +1178,11 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
     if kernel_cls is None:
         raise ValueError("PyKernel class not found in parsed Rust sources")
 
-    # All public instance/static methods (skip __init__ and private _methods)
+    # All public instance/static methods + getters (skip __init__ and private _methods).
+    # Getters are part of the public ABI — a stale binary missing them would
+    # AttributeError at first access (Issue #4017: kernel.agent_registry).
     kernel_methods = sorted(
-        f.name
-        for f in kernel_cls.methods
-        if f.kind not in ("new", "getter") and not f.name.startswith("__")
+        f.name for f in kernel_cls.methods if f.kind != "new" and not f.name.startswith("__")
     )
 
     lines = [

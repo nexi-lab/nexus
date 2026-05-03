@@ -27,19 +27,23 @@ def test_default_returns_bm25():
 
 
 def test_openai_key_only(monkeypatch):
-    """OPENAI_API_KEY alone -> openai/text-embedding-3-small with key."""
+    """OPENAI_API_KEY alone -> openai/text-embedding-3-large with Matryoshka 1536d."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     model, vectors = _resolve_txtai_runtime_config()
-    assert model == "openai/text-embedding-3-small"
-    assert vectors == {"api_key": "sk-test"}
+    assert model == "openai/text-embedding-3-large"
+    assert vectors == {"api_key": "sk-test", "dimensions": 1536}
 
 
 def test_openai_key_with_base_url(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.example/v1")
     model, vectors = _resolve_txtai_runtime_config()
-    assert model == "openai/text-embedding-3-small"
-    assert vectors == {"api_key": "sk-test", "api_base": "https://proxy.example/v1"}
+    assert model == "openai/text-embedding-3-large"
+    assert vectors == {
+        "api_key": "sk-test",
+        "api_base": "https://proxy.example/v1",
+        "dimensions": 1536,
+    }
 
 
 def test_explicit_local_model_wins_over_key(monkeypatch):
@@ -60,21 +64,21 @@ def test_explicit_local_model_no_key(monkeypatch):
 
 
 def test_explicit_openai_model_uses_key(monkeypatch):
-    """Explicit openai/* model + key -> use API."""
+    """Explicit openai/* model + key -> use API. 3-large gets Matryoshka 1536d."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("NEXUS_TXTAI_MODEL", "openai/text-embedding-3-large")
     model, vectors = _resolve_txtai_runtime_config()
     assert model == "openai/text-embedding-3-large"
-    assert vectors == {"api_key": "sk-test"}
+    assert vectors == {"api_key": "sk-test", "dimensions": 1536}
 
 
 def test_use_api_flag_with_key(monkeypatch):
-    """NEXUS_TXTAI_USE_API_EMBEDDINGS=true + key -> default openai model."""
+    """NEXUS_TXTAI_USE_API_EMBEDDINGS=true + key -> default openai 3-large model."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("NEXUS_TXTAI_USE_API_EMBEDDINGS", "true")
     model, vectors = _resolve_txtai_runtime_config()
-    assert model == "openai/text-embedding-3-small"
-    assert vectors == {"api_key": "sk-test"}
+    assert model == "openai/text-embedding-3-large"
+    assert vectors == {"api_key": "sk-test", "dimensions": 1536}
 
 
 def test_use_api_flag_no_key(monkeypatch):

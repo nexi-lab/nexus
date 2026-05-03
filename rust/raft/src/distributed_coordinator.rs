@@ -236,7 +236,14 @@ impl Default for RaftDistributedCoordinator {
 /// re-mints).  Two daemons sharing a data dir would race here, but
 /// that configuration is operator error: a single
 /// `<NEXUS_DATA_DIR>` is bound to a single daemon.
-pub(crate) fn read_or_mint_node_id(zones_dir: &str) -> Result<u64, String> {
+/// Mint or load the node-identity file at `<zones_dir>/.node_id`.
+///
+/// Public so non-`init_from_env` boot paths (cluster-profile binary
+/// `nexusd-cluster::run_daemon`) share the same SSOT for raft node
+/// identity.  See `bootstrap_or_join_root` for why opaque random IDs
+/// are required under raft-rs 0.7's stale-`Progress` heartbeat
+/// invariant.
+pub fn read_or_mint_node_id(zones_dir: &str) -> Result<u64, String> {
     use std::io::Write;
 
     let dir = Path::new(zones_dir);
@@ -317,7 +324,7 @@ pub(crate) fn read_or_mint_node_id(zones_dir: &str) -> Result<u64, String> {
 ///      leader's snapshot installs the authoritative ConfState.
 ///      No deadline by design — misconfig surfaces as "daemon stays
 ///      up retrying" rather than a silent exit.
-fn bootstrap_or_join_root(
+pub fn bootstrap_or_join_root(
     zm: &ZoneManager,
     node_id: u64,
     self_address: &str,

@@ -592,11 +592,12 @@ pub struct Kernel {
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // FileWatchRegistry — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatchRegistry>,
-    // Agent table — Rust SSOT for agent lifecycle state. Source lives in
-    // the services rlib (rust/services/src/agent_registry.rs); the kernel
-    // owns an Arc handle so AgentStatusResolver and other kernel-internal
-    // consumers can share read access without depending on field layout.
-    pub agent_registry: Arc<crate::core::agents::registry::AgentRegistry>,
+    // Agent registry — kernel SSOT for agent lifecycle state.  Visibility
+    // is `pub(crate)`; peer crates reach it through
+    // [`Self::agent_registry`] (parallel to `vfs_router_arc()` /
+    // `dcache_arc()`) so any future kernel-side invariant — audit,
+    // distributed replication, scheduling — has a single chokepoint.
+    pub(crate) agent_registry: Arc<crate::core::agents::registry::AgentRegistry>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `VFSRouter::entries` as
@@ -2218,6 +2219,14 @@ impl Kernel {
     /// dcache without holding the lock across `.await`.
     pub fn dcache_arc(&self) -> Arc<DCache> {
         Arc::clone(&self.dcache)
+    }
+
+    /// Borrow the kernel's `AgentRegistry` (the per-PID SSOT).  Used by
+    /// service-tier callers (`services::managed_agent`, ACP install
+    /// hooks, AgentStatusResolver) that need to register / observe /
+    /// query agent state without going through a syscall.
+    pub fn agent_registry(&self) -> &Arc<crate::core::agents::registry::AgentRegistry> {
+        &self.agent_registry
     }
 
     /// Clone the LockManager `Arc` — used by federation install hooks

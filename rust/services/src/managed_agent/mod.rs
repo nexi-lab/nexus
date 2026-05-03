@@ -217,7 +217,7 @@ impl ManagedAgentService {
         // against the kernel.
         let svc = Arc::new(Self::with_kernel(
             Arc::clone(kernel),
-            Arc::clone(&kernel.agent_registry),
+            Arc::clone(kernel.agent_registry()),
         ));
 
         // Reap the workspace on out-of-band termination — SIGKILL,
@@ -230,7 +230,7 @@ impl ManagedAgentService {
         // sessions map is bounded by the per-process managed-agent
         // count.
         let svc_for_cb = Arc::clone(&svc);
-        kernel.agent_registry.register_on_terminate(
+        kernel.agent_registry().register_on_terminate(
             Self::NAME,
             Arc::new(move |pid: &str| {
                 let pid_owned = pid.to_string();

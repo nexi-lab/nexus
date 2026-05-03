@@ -768,21 +768,24 @@ class TupleWriter:
         subject_relation: str | None,
         relation: str,
         object_entity: Entity,
-        zone_id: str | None,  # noqa: ARG002 — kept for caller-API stability
+        zone_id: str | None,
     ) -> str | None:
         """Check if a tuple already exists (idempotency). Returns tuple_id or None.
 
-        Mirrors ``idx_rebac_tuple_unique`` exactly — that index is zone-agnostic
-        and uses ``COALESCE(subject_relation, '')``, so the lookup must be
-        zone-agnostic too. Filtering by zone_id here let the auto-grant tuple
-        from a post-mkdir hook (zone="root") slip past the check, after which
-        the explicit ``rebac create`` (zone=None) hit a unique-constraint
-        violation in PostgreSQL.
+        Zone-aware idempotency that still catches the auto-grant
+        duplicate scenario fixed in #3997: a post-mkdir hook writes the
+        tuple with ``zone_id="root"`` while the explicit ``rebac create``
+        omits the zone (``zone_id=None``); both shapes resolve to the
+        same row under ``idx_rebac_tuple_unique`` (zone-agnostic), so
+        treating ``None`` and ``"root"`` as equivalent here lets the
+        explicit call no-op instead of crashing on the unique-constraint
+        violation. Distinct named zones (``zone-a`` vs ``zone-b``) keep
+        their own idempotency contracts.
         """
         cursor.execute(
             self._fix_sql(
                 """
-                SELECT tuple_id FROM rebac_tuples
+                SELECT tuple_id, zone_id FROM rebac_tuples
                 WHERE subject_type = ? AND subject_id = ?
                 AND COALESCE(subject_relation, '') = COALESCE(?, '')
                 AND relation = ?
@@ -798,9 +801,27 @@ class TupleWriter:
                 object_entity.entity_id,
             ),
         )
-        existing = cursor.fetchone()
-        if existing:
-            return cast(str, existing[0] if isinstance(existing, tuple) else existing["tuple_id"])
+        rows = cursor.fetchall()
+
+        def _zone_of(row: Any) -> str | None:
+            if isinstance(row, tuple):
+                return row[1]
+            return row.get("zone_id") if hasattr(row, "get") else row["zone_id"]
+
+        def _tid_of(row: Any) -> str:
+            if isinstance(row, tuple):
+                return cast(str, row[0])
+            return cast(str, row["tuple_id"])
+
+        # Treat ``None`` and ``"root"`` as the same zone (auto-grant vs
+        # explicit-create alias) — anything else must match exactly.
+        def _norm(z: str | None) -> str:
+            return "root" if z is None else z
+
+        target = _norm(zone_id)
+        for row in rows:
+            if _norm(_zone_of(row)) == target:
+                return _tid_of(row)
         return None
 
 

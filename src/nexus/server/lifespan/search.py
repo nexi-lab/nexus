@@ -70,10 +70,7 @@ def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str | int] | None]:
     # and beats local MiniLM (384d) on retrieval quality across MTEB.
     # Operators can force local with ``NEXUS_TXTAI_USE_API_EMBEDDINGS=false``.
     use_api = _env_tristate("NEXUS_TXTAI_USE_API_EMBEDDINGS")
-    if use_api is None:
-        use_api_embeddings = bool(openai_api_key)
-    else:
-        use_api_embeddings = use_api
+    use_api_embeddings = bool(openai_api_key) if use_api is None else use_api
 
     model = configured_model or (
         "openai/text-embedding-3-large"

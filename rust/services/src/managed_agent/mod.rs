@@ -900,7 +900,7 @@ mod tests {
         fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService) {
             let k = Arc::new(Kernel::new());
             let svc =
-                ManagedAgentService::with_kernel(Arc::clone(&k), Arc::clone(&k.agent_registry));
+                ManagedAgentService::with_kernel(Arc::clone(&k), Arc::clone(k.agent_registry()));
             (k, svc)
         }
 
@@ -1045,7 +1045,7 @@ mod tests {
             // Terminated, fires the on_terminate observer.  No
             // `cancel_session` call required.
             kernel
-                .agent_registry
+                .agent_registry()
                 .signal(&resp.agent_id, AgentSignal::Sigkill, None)
                 .expect("SIGKILL");
 
@@ -1072,7 +1072,7 @@ mod tests {
             // start_session plants the agent without a parent_pid →
             // SIGTERM → orphan auto-reap path → on_terminate fires.
             kernel
-                .agent_registry
+                .agent_registry()
                 .signal(&resp.agent_id, AgentSignal::Sigterm, None)
                 .expect("SIGTERM");
 

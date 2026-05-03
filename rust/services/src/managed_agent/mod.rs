@@ -747,6 +747,7 @@ mod tests {
         use kernel::kernel::Kernel;
 
         const DT_DIR: u8 = 1;
+        const DT_STREAM: u8 = 4;
         const DT_LINK: u8 = 6;
 
         /// True when `path` is present in the metastore as DT_DIR.
@@ -918,6 +919,42 @@ mod tests {
             assert!(!dir_exists(&kernel, &resp.workspace_path));
             let cwm = format!("{}chat-with-me", &resp.workspace_path);
             assert!(!entry_exists(&kernel, &cwm));
+        }
+
+        /// Cross-link smoke: the canonical chat-with-me DT_STREAM and
+        /// the workspace-shortcut DT_LINK both resolve through
+        /// metastore_get with the link's `link_target` pointing at the
+        /// canonical path. End-to-end `sys_write` through the link →
+        /// `sys_read` on the canonical stream is deferred until a
+        /// follow-up wires a default `/proc` mount so VFSRouter's
+        /// `route()` succeeds for proc-relative paths in
+        /// `Kernel::new()` test fixtures (today the route() lookup
+        /// errors before the DT_LINK transparent-follow branch in
+        /// `sys_read_with_link_depth` runs).
+        #[test]
+        fn workspace_shortcut_link_targets_canonical_chat_with_me_stream() {
+            let (kernel, svc) = svc_with_kernel();
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+            let shortcut = format!("{}chat-with-me", &resp.workspace_path);
+            let canonical = format!("/proc/{}/chat-with-me", resp.session_id);
+
+            // Workspace shortcut is a DT_LINK whose target is the
+            // canonical path.
+            let shortcut_meta = kernel
+                .metastore_get(&shortcut)
+                .ok()
+                .flatten()
+                .expect("workspace shortcut entry present");
+            assert_eq!(shortcut_meta.entry_type, DT_LINK);
+            assert_eq!(shortcut_meta.link_target.as_deref(), Some(canonical.as_str()));
+
+            // Canonical path holds the DT_STREAM the link points at.
+            let canonical_meta = kernel
+                .metastore_get(&canonical)
+                .ok()
+                .flatten()
+                .expect("canonical chat-with-me entry present");
+            assert_eq!(canonical_meta.entry_type, DT_STREAM);
         }
 
         #[test]

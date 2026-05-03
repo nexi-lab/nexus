@@ -1633,8 +1633,8 @@ impl Kernel {
             Some(now_ms),
             Some(now_ms),
         );
-        // 9. Atomic commit — metastore (raft) first, dcache on success.
-        let cache_entry: CachedEntry = (&meta).into();
+        // 9. Atomic commit — metastore is the SSOT; its internal cache
+        // is updated write-through by `put`.
         let put_result = self
             .with_metastore(&dst_route.mount_point, move |ms| ms.put(dst_path, meta))
             .ok_or_else(|| {
@@ -1670,7 +1670,6 @@ impl Kernel {
                 _ => KernelError::IOError(format!("sys_copy: metastore.put: {e:?}")),
             });
         }
-        self.dcache.put(dst_path, cache_entry);
 
         // 10. Release VFS locks
         release_locks(&self.lock_manager, lock1, lock2);

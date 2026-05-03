@@ -848,8 +848,7 @@ impl Kernel {
         }
     }
 
-    /// Atomic metadata commit — propose to metastore first, update
-    /// dcache only on success.
+    /// Atomic metadata commit — propose to metastore.
     ///
     /// Replaces the legacy "best-effort metastore put + eager dcache
     /// update" pattern that scattered across 10+ sys_* paths. That
@@ -860,31 +859,15 @@ impl Kernel {
     /// (TestPartialReplicationFailure::test_partition_then_heal CI
     /// regression — see PR #3890 for the full diagnostic).
     ///
-    /// Architecture:
-    ///   - MetaStore is the SSOT. dcache is a downstream cache.
-    ///   - For federation mounts (`ZoneMetaStore`), `put` blocks
-    ///     until raft commits the entry on quorum. If the propose
-    ///     times out (e.g., quorum unreachable), this returns Err
-    ///     and the dcache stays consistent with the state machine
-    ///     (i.e., file does NOT appear in subsequent reads).
-    ///   - For standalone mounts (`LocalMetaStore`), `put` is a
-    ///     synchronous redb write — same atomicity story, smaller
-    ///     latency budget.
-    ///
-    /// Perf:
-    ///   - Federation: caller waits one raft RTT per write. Same as
-    ///     the implicit cost of "successful raft commit"; the old
-    ///     pattern only made it look free by lying.
-    ///   - Standalone: redb fsync, microseconds.
-    ///   - All other state mutations (dcache update, observer
-    ///     dispatch) wait for commit. No double-bookkeeping.
+    /// MetaStore is the SSOT. Each impl owns an internal cache that
+    /// the `put` write-through populates — there is no longer a
+    /// separate kernel-global cache to keep in sync.
     pub(crate) fn commit_metadata(
         &self,
         path: &str,
         mount_point: &str,
         meta: crate::meta_store::FileMetadata,
     ) -> Result<(), KernelError> {
-        let cache_entry: CachedEntry = (&meta).into();
         let put_result = self
             .with_metastore(mount_point, move |ms| ms.put(path, meta))
             .ok_or_else(|| {
@@ -895,14 +878,13 @@ impl Kernel {
         put_result.map_err(|e| {
             KernelError::IOError(format!("commit_metadata({path}): metastore.put: {e:?}"))
         })?;
-        self.dcache.put(path, cache_entry);
         Ok(())
     }
 
-    /// Atomic metadata delete — same pattern as `commit_metadata`
-    /// but for the unlink path. Removes from metastore first; on
-    /// success evicts dcache. Failure leaves dcache untouched so a
-    /// retry sees the still-present entry instead of a phantom miss.
+    /// Atomic metadata delete — same pattern as `commit_metadata` but
+    /// for the unlink path. The metastore impl invalidates its own
+    /// internal cache before the store delete, so concurrent readers
+    /// never observe a stale hit after the store delete.
     pub(crate) fn commit_delete(&self, path: &str, mount_point: &str) -> Result<bool, KernelError> {
         let del_result = self
             .with_metastore(mount_point, move |ms| ms.delete(path))
@@ -914,7 +896,6 @@ impl Kernel {
         let removed = del_result.map_err(|e| {
             KernelError::IOError(format!("commit_delete({path}): metastore.delete: {e:?}"))
         })?;
-        self.dcache.evict(path);
         Ok(removed)
     }
 

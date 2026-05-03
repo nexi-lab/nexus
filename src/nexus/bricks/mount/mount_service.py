@@ -691,18 +691,10 @@ class MountService:
         """
         mounts = []
 
-        from nexus.core.protocols.vfs_router import MountInfo
+        mount_points = sorted(self._dlc.mount_points() if self._dlc else [])
+        logger.info(f"[LIST_MOUNTS] Total mounts in DLC: {len(mount_points)}")
 
-        mount_points = self._dlc.mount_points() if self._dlc else []
-        router_mounts = sorted(
-            [MountInfo(mount_point=mp, backend=None) for mp in mount_points],
-            key=lambda m: m.mount_point,
-        )
-        logger.info(f"[LIST_MOUNTS] Total mounts in DLC: {len(router_mounts)}")
-
-        for mount_info in router_mounts:
-            mount_point = mount_info.mount_point
-
+        for mount_point in mount_points:
             # Check permission -- exclude on infrastructure failure (fail-safe)
             try:
                 has_permission = self._check_mount_permission(mount_point, context)
@@ -711,11 +703,7 @@ class MountService:
                 continue
 
             if has_permission:
-                mounts.append(
-                    {
-                        "mount_point": mount_info.mount_point,
-                    }
-                )
+                mounts.append({"mount_point": mount_point})
 
         return mounts
 

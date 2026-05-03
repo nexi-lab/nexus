@@ -341,7 +341,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("share_link", "nexus/contracts/protocols/share_link.py"),
     ("snapshot", "nexus/contracts/protocols/snapshot.py"),
     ("version", "nexus/contracts/protocols/version.py"),
-    ("vfs_router", "nexus/core/protocols/vfs_router.py"),
     ("watch", "nexus/contracts/protocols/watch.py"),
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("caching", "nexus/core/protocols/caching.py"),

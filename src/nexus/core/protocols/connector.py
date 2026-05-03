@@ -14,7 +14,7 @@ Defines the Storage Brick boundary as composable protocols:
 Design decisions:
     - Protocol for brick interfaces, ABC for internal implementations (§11.3)
     - Protocols in ``core/protocols/``, implementations stay in ``backends/`` (§11.4)
-    - Modeled after ``VFSRouterProtocol`` pattern (§5.1)
+    - Modeled after the kernel-protocol pattern (§5.1)
     - Layered protocols: consumers import only the capability they need (§5.6)
 
 References:

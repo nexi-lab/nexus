@@ -40,7 +40,7 @@ class TestCheckFile:
 
     def test_clean_file_no_violations(self, brick_file):
         path = brick_file("""\
-            from nexus.core.protocols.vfs_router import VFSRouterProtocol
+            from nexus.core.protocols.vfs_core import VFSCoreProtocol
             from nexus.contracts.protocols.search import SearchProtocol
             from nexus.storage.record_store import RecordStoreABC
             import os
@@ -81,8 +81,8 @@ class TestCheckFile:
 
     def test_allows_nexus_core_protocols(self, brick_file):
         path = brick_file("""\
-            from nexus.core.protocols import VFSRouterProtocol
-            from nexus.core.protocols.vfs_router import VFSRouterProtocol
+            from nexus.core.protocols import VFSCoreProtocol
+            from nexus.core.protocols.vfs_core import VFSCoreProtocol
         """)
         assert check_file(path) == []
 
@@ -132,7 +132,7 @@ class TestCheckFile:
     def test_multiple_violations(self, brick_file):
         path = brick_file("""\
             from nexus.core.nexus_fs_dispatch import DispatchMixin
-            from nexus.core.protocols.vfs_router import VFSRouterProtocol
+            from nexus.core.protocols.vfs_core import VFSCoreProtocol
             from nexus.services.search.search_service import SearchService
             import os
         """)

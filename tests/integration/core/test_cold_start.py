@@ -40,7 +40,7 @@ class TestColdStartImports:
         from nexus.contracts.protocols.rebac import ReBACBrickProtocol
         from nexus.contracts.protocols.workspace_manager import WorkspaceManagerProtocol
         from nexus.contracts.wirable_fs import WirableFS
-        from nexus.core.protocols import VFSCoreProtocol, VFSRouterProtocol
+        from nexus.core.protocols import VFSCoreProtocol
 
         # runtime_checkable means isinstance() works
         for proto in (
@@ -50,7 +50,6 @@ class TestColdStartImports:
             WorkspaceManagerProtocol,
             WirableFS,
             Describable,
-            VFSRouterProtocol,
             VFSCoreProtocol,
         ):
             assert (

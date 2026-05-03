@@ -25,14 +25,13 @@ but a standard composition of kernel syscalls.
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 
-async def occ_write(
+def occ_write_sync(
     fs: Any,
     path: str,
     buf: bytes | str,
@@ -63,13 +62,16 @@ async def occ_write(
         FileExistsError: if_none_match=True and file exists.
         ConflictError: if_match provided and etag doesn't match.
     """
+    # #4005 round-3 review: keep stat + write inside the same call frame
+    # (no await between them) so two same-process callers can't both
+    # observe the pre-state and both commit. Async callers must offload
+    # the entire ``occ_write_sync`` via ``asyncio.to_thread`` (see
+    # _kernel_syscall_dispatch._occ_write_dispatch). True cross-process
+    # atomicity still requires a backend lock — out of scope here.
     if if_match is not None or if_none_match:
         from nexus.contracts.exceptions import ConflictError
 
-        # #4005 round-2: NexusFS.sys_stat / .write are sync — offload to a
-        # thread so the async OCC path doesn't park the asyncio loop on
-        # slow connectors / large writes (DoS class).
-        meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
+        meta = fs.sys_stat(path, context=context)
 
         if if_none_match and meta is not None:
             raise FileExistsError(f"File already exists: {path}")
@@ -93,7 +95,34 @@ async def occ_write(
                     current_content_id=current_content_id or "(no content_id)",
                 )
 
-    result: dict[str, Any] = await asyncio.to_thread(
-        fs.write, path, buf, context=context, offset=offset
-    )
+    result: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
     return result
+
+
+# #4005 round-3: ``occ_write`` was the original async name. Keep it as a
+# thin async-friendly shim that offloads the whole sync compare-and-write
+# inside one ``to_thread`` so the check + write run atomically (no await
+# between them) AND the asyncio loop never blocks on the sync call.
+async def occ_write(
+    fs: Any,
+    path: str,
+    buf: bytes | str,
+    *,
+    context: OperationContext | None = None,
+    if_match: str | None = None,
+    if_none_match: bool = False,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Async wrapper around :func:`occ_write_sync` (offloaded to a thread)."""
+    import asyncio
+
+    return await asyncio.to_thread(
+        occ_write_sync,
+        fs,
+        path,
+        buf,
+        context=context,
+        if_match=if_match,
+        if_none_match=if_none_match,
+        offset=offset,
+    )

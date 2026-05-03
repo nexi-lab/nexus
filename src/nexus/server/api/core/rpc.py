@@ -63,14 +63,29 @@ async def rpc_endpoint(
     from nexus.server.rpc.dispatch import dispatch_method
 
     # #4005 round-3: route the full kernel-syscall set through the thin
-    # dispatcher. Round-2 narrowing was unsafe in two ways: (1) legacy
-    # aliases (read/write/list/delete/mkdir/rmdir/rename/access/exists/
-    # lock_acquire) have NO METHOD_PARAMS entry on develop, so they would
-    # die in parse_method_params before ever reaching dispatch_method
-    # (silent compatibility break for HTTP RPC clients), and (2) the
-    # round-2 to_thread offload inside dispatch_kernel_syscall now makes
-    # the safer path equivalent to dispatch_method's to_thread_with_timeout
-    # (minus the timeout — enforced below via ``asyncio.wait_for``).
+    # dispatcher. Round-2 narrowing silently broke read/write/list/...
+    # (no METHOD_PARAMS entry on develop). Round-2 to_thread offload
+    # already prevents loop-park, so the broader path is safe.
+    #
+    # #4005 round-4: only idempotent reads get an asyncio.wait_for
+    # timeout. Cancelling a wait_for does NOT cancel the worker thread
+    # asyncio.to_thread spawned, so a mutating syscall could time out
+    # at the HTTP layer while the underlying write/delete/rename still
+    # commits — the caller would then retry and double-mutate. For the
+    # mutating set we accept the same "no per-request timeout" stance
+    # the gRPC ``Call`` servicer already takes; per-backend deadlines
+    # remain the right place to bound long-running mutations.
+    _HTTP_TIMEOUT_SAFE_SYSCALLS: frozenset[str] = frozenset(
+        {
+            "access",
+            "exists",
+            "list",
+            "read",
+            "sys_read",
+            "sys_readdir",
+            "sys_stat",
+        }
+    )
 
     logger.debug("Deprecated HTTP RPC called: method=%s (use gRPC Call RPC instead)", method)
     _rpc_start = _time.time()
@@ -113,21 +128,65 @@ async def rpc_endpoint(
             scope_params_for_zone(_params_ns, context.zone_id)
             raw_params = vars(_params_ns)
             state = request.app.state
-            _timeout = getattr(state, "operation_timeout", 30.0)
-            result = await asyncio.wait_for(
-                dispatch_kernel_syscall(
-                    state.nexus_fs,
-                    method,
-                    raw_params,
-                    context,
-                    subscription_manager=state.subscription_manager,
-                ),
-                timeout=_timeout,
+
+            # Early 304 for read-shaped syscalls (mirrors the legacy path
+            # below). Avoid running the (potentially large) read at all when
+            # the client's ETag still matches.
+            if_none_match = request.headers.get("If-None-Match")
+            if (
+                method in ("read", "sys_read")
+                and if_none_match
+                and "path" in raw_params
+                and state.nexus_fs
+            ):
+                try:
+                    cached_content_id = state.nexus_fs.get_content_id(
+                        raw_params["path"], context=context
+                    )
+                    if cached_content_id and if_none_match.strip('"') == cached_content_id:
+                        return Response(
+                            status_code=304,
+                            headers={
+                                "ETag": f'"{cached_content_id}"',
+                                "Cache-Control": "private, max-age=60",
+                            },
+                        )
+                except Exception as e:
+                    logger.debug("Early ETag check failed for %s: %s", raw_params.get("path"), e)
+
+            _dispatch_coro = dispatch_kernel_syscall(
+                state.nexus_fs,
+                method,
+                raw_params,
+                context,
+                subscription_manager=state.subscription_manager,
             )
-            headers = get_cache_headers(method, result)
+            if method in _HTTP_TIMEOUT_SAFE_SYSCALLS:
+                _timeout = getattr(state, "operation_timeout", 30.0)
+                result = await asyncio.wait_for(_dispatch_coro, timeout=_timeout)
+            else:
+                # Mutating syscalls: no wait_for — see comment above.
+                result = await _dispatch_coro
+
+            headers = _kernel_cache_headers(method, result)
             headers["Deprecation"] = "true"
             headers["Sunset"] = "Wed, 25 Jun 2026 00:00:00 GMT"
             headers["X-Migration-Guide"] = "Use gRPC Call RPC (Issue #1133)"
+
+            # Late 304 (after dispatch) so a fresh ETag still suppresses body.
+            if (
+                if_none_match
+                and "ETag" in headers
+                and if_none_match.strip('"') == headers["ETag"].strip('"')
+            ):
+                return Response(
+                    status_code=304,
+                    headers={
+                        "ETag": headers["ETag"],
+                        "Cache-Control": headers.get("Cache-Control", ""),
+                    },
+                )
+
             success_response = {
                 "jsonrpc": "2.0",
                 "id": rpc_request.id,
@@ -278,6 +337,47 @@ async def rpc_endpoint(
     except Exception:
         logger.exception(f"Error executing method {method}")
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
+
+
+# #4005 round-4: kernel syscall wire-name → legacy cache category so the
+# new HTTP short-circuit reuses ``get_cache_headers`` semantics correctly.
+# Mutating sys_* must land in the ``no-store`` arm; reads/stat/list keep
+# their cache-friendly arms; lock primitives are no-cache.
+_KERNEL_CACHE_CATEGORY: dict[str, str] = {
+    "sys_read": "read",
+    "sys_stat": "read",
+    "sys_readdir": "list",
+    "sys_write": "write",
+    "sys_unlink": "delete",
+    "sys_rename": "rename",
+    "sys_copy": "copy",
+    "sys_mkdir": "mkdir",
+    "sys_rmdir": "rmdir",
+    "sys_setattr": "write",
+    "sys_lock": "lock_acquire",
+    "sys_unlock": "lock_acquire",
+}
+
+
+def _kernel_cache_headers(method: str, result: Any) -> dict[str, str]:
+    """Cache headers for the kernel-syscall HTTP short-circuit.
+
+    Re-keys sys_* wire names onto the legacy categories that
+    ``get_cache_headers`` understands so mutating syscalls get
+    ``no-store``, reads get an ETag from ``content_id`` / bytes,
+    and ``sys_readdir`` aligns with ``list``.
+
+    For ``sys_stat``: the dispatcher's adapter wraps metadata in
+    ``{"metadata": ...}``; lift ``content_id`` to the top level so
+    the existing ``read`` arm can mint an ETag.
+    """
+    canonical = _KERNEL_CACHE_CATEGORY.get(method, method)
+    cache_result: Any = result
+    if method == "sys_stat" and isinstance(result, dict):
+        meta = result.get("metadata")
+        if isinstance(meta, dict) and "content_id" in meta:
+            cache_result = {"content_id": meta["content_id"]}
+    return get_cache_headers(canonical, cache_result)
 
 
 def get_cache_headers(method: str, result: Any) -> dict[str, str]:

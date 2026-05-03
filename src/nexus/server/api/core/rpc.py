@@ -3,6 +3,7 @@
 Extracted from fastapi_server.py (#1602).
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -54,35 +55,22 @@ async def rpc_endpoint(
     """
     import time as _time
 
-    from nexus.server._kernel_syscall_dispatch import dispatch_kernel_syscall
+    from nexus.server._kernel_syscall_dispatch import (
+        KERNEL_SYSCALL_NAMES,
+        dispatch_kernel_syscall,
+    )
     from nexus.server.dependencies import get_operation_context
     from nexus.server.rpc.dispatch import dispatch_method
 
-    # #4005 round-2 review: short-circuit ONLY the canonical sys_* methods
-    # that lack a generated Params dataclass. Legacy aliases (read/write/
-    # list/delete/mkdir/rmdir/rename/access/exists/lock_acquire) keep flowing
-    # through the existing dispatch_method path which wraps sync NexusFS
-    # methods with ``to_thread_with_timeout`` (Issue #932). Routing them
-    # through the kernel-syscall dispatcher would call sync methods inline
-    # on the FastAPI loop and reintroduce the DoS class we removed sys_watch
-    # for. The gRPC ``Call`` servicer accepts the same risk by design;
-    # HTTP RPC keeps its safer path.
-    _HTTP_KERNEL_SHORTCIRCUIT: frozenset[str] = frozenset(
-        {
-            "sys_copy",
-            "sys_lock",
-            "sys_mkdir",
-            "sys_read",
-            "sys_readdir",
-            "sys_rename",
-            "sys_rmdir",
-            "sys_setattr",
-            "sys_stat",
-            "sys_unlink",
-            "sys_unlock",
-            "sys_write",
-        }
-    )
+    # #4005 round-3: route the full kernel-syscall set through the thin
+    # dispatcher. Round-2 narrowing was unsafe in two ways: (1) legacy
+    # aliases (read/write/list/delete/mkdir/rmdir/rename/access/exists/
+    # lock_acquire) have NO METHOD_PARAMS entry on develop, so they would
+    # die in parse_method_params before ever reaching dispatch_method
+    # (silent compatibility break for HTTP RPC clients), and (2) the
+    # round-2 to_thread offload inside dispatch_kernel_syscall now makes
+    # the safer path equivalent to dispatch_method's to_thread_with_timeout
+    # (minus the timeout — enforced below via ``asyncio.wait_for``).
 
     logger.debug("Deprecated HTTP RPC called: method=%s (use gRPC Call RPC instead)", method)
     _rpc_start = _time.time()
@@ -107,14 +95,12 @@ async def rpc_endpoint(
         if not rpc_request.method:
             rpc_request.method = method
 
-        # #4005 review: canonical sys_* kernel syscalls have no generated
-        # Params dataclass — short-circuit BEFORE ``parse_method_params`` so
-        # HTTP RPC clients (legacy CLI/proxy) don't get rejected with
-        # "Unknown method: sys_readdir". The set is intentionally narrower
-        # than the gRPC ``KERNEL_SYSCALL_NAMES`` (see _HTTP_KERNEL_SHORTCIRCUIT
-        # comment above) — legacy aliases keep their to_thread_with_timeout
-        # wrapping via ``dispatch_method``.
-        if method in _HTTP_KERNEL_SHORTCIRCUIT:
+        # #4005 round-3: route ALL kernel syscall wire names (sys_* +
+        # legacy aliases) through dispatch_kernel_syscall before
+        # parse_method_params. Wraps with asyncio.wait_for so a slow
+        # backend can't tie up an HTTP request indefinitely (parity
+        # with dispatch_method's to_thread_with_timeout).
+        if method in KERNEL_SYSCALL_NAMES:
             from types import SimpleNamespace
 
             context = get_operation_context(auth_result)
@@ -127,12 +113,16 @@ async def rpc_endpoint(
             scope_params_for_zone(_params_ns, context.zone_id)
             raw_params = vars(_params_ns)
             state = request.app.state
-            result = await dispatch_kernel_syscall(
-                state.nexus_fs,
-                method,
-                raw_params,
-                context,
-                subscription_manager=state.subscription_manager,
+            _timeout = getattr(state, "operation_timeout", 30.0)
+            result = await asyncio.wait_for(
+                dispatch_kernel_syscall(
+                    state.nexus_fs,
+                    method,
+                    raw_params,
+                    context,
+                    subscription_manager=state.subscription_manager,
+                ),
+                timeout=_timeout,
             )
             headers = get_cache_headers(method, result)
             headers["Deprecation"] = "true"
@@ -244,6 +234,15 @@ async def rpc_endpoint(
 
         return Response(content=encoded, media_type="application/json", headers=headers)
 
+    except TimeoutError:
+        # #4005 round-3: HTTP kernel-syscall short-circuit timeout —
+        # surface as INTERNAL_ERROR matching the legacy
+        # ``to_thread_with_timeout`` behavior in dispatch_method.
+        return _error_response(
+            None,
+            RPCErrorCode.INTERNAL_ERROR,
+            f"Operation timed out (method={method})",
+        )
     except ZoneScopingError as e:
         return _error_response(None, RPCErrorCode.PERMISSION_ERROR, str(e))
     except ValueError as e:

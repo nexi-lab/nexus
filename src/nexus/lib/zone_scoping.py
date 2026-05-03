@@ -17,7 +17,11 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 logger = logging.getLogger(__name__)
 
 # Path attributes on RPC param dataclasses that must be zone-scoped.
-ZONE_PATH_ATTRS = ("path", "old_path", "new_path")
+# #4005 round-2 review: ``src_path`` / ``dst_path`` cover ``sys_copy`` (and
+# any future copy-shaped syscall) — without them a non-root caller's
+# sys_copy would reach NexusFS with unprefixed paths and bypass the
+# zone-prefix isolation guard for a mutation operation.
+ZONE_PATH_ATTRS = ("path", "old_path", "new_path", "src_path", "dst_path")
 # Bulk/list path attributes that also need zone-scoping.
 ZONE_PATH_LIST_ATTRS = ("paths", "patterns")
 

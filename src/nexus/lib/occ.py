@@ -25,6 +25,7 @@ but a standard composition of kernel syscalls.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -65,7 +66,10 @@ async def occ_write(
     if if_match is not None or if_none_match:
         from nexus.contracts.exceptions import ConflictError
 
-        meta = fs.sys_stat(path, context=context)
+        # #4005 round-2: NexusFS.sys_stat / .write are sync — offload to a
+        # thread so the async OCC path doesn't park the asyncio loop on
+        # slow connectors / large writes (DoS class).
+        meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
 
         if if_none_match and meta is not None:
             raise FileExistsError(f"File already exists: {path}")
@@ -89,5 +93,7 @@ async def occ_write(
                     current_content_id=current_content_id or "(no content_id)",
                 )
 
-    result: dict[str, Any] = fs.write(path, buf, context=context, offset=offset)
+    result: dict[str, Any] = await asyncio.to_thread(
+        fs.write, path, buf, context=context, offset=offset
+    )
     return result

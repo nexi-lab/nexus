@@ -51,7 +51,10 @@ class _OccLockEntry:
     __slots__ = ("lock", "refs")
 
     def __init__(self) -> None:
-        self.lock = threading.Lock()
+        # #4005 round-9: RLock lets the same thread that acquired the
+        # OCC lock for a check+write call into NexusFS.write (which
+        # itself acquires the same per-path lock) without deadlocking.
+        self.lock = threading.RLock()
         self.refs = 0
 
 

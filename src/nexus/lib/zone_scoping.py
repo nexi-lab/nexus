@@ -48,21 +48,32 @@ def scope_single_path(path: str, prefix: str, caller_zone_id: str) -> str:
         ZoneScopingError: If the path has a zone prefix that doesn't match
             the caller's zone.
     """
-    if path.startswith("/zone/"):
+    # #4005 round-9: collapse duplicate slashes BEFORE the prefix decision
+    # so callers cannot bypass the embedded-zone check by slipping an
+    # empty zone segment (``/zone//other/secret.txt`` would otherwise
+    # parse with ``embedded_zone=""`` and skip the mismatch check, then
+    # downstream canonicalization turns it into ``/zone/other/...``).
+    canonical = path
+    while "//" in canonical:
+        canonical = canonical.replace("//", "/")
+
+    if canonical.startswith("/zone/"):
         # Validate embedded zone matches caller's zone
-        embedded_zone = path[6:].split("/", 1)[0]
-        if embedded_zone and embedded_zone != caller_zone_id:
+        embedded_zone = canonical[6:].split("/", 1)[0]
+        if not embedded_zone:
+            raise ZoneScopingError(f"Path '{path}' has empty zone segment after /zone/ — refusing")
+        if embedded_zone != caller_zone_id:
             raise ZoneScopingError(
                 f"Path zone '{embedded_zone}' does not match caller zone '{caller_zone_id}'"
             )
-        return path
+        return canonical
 
-    if path.startswith("/tenant:"):
-        return path
+    if canonical.startswith("/tenant:"):
+        return canonical
 
-    if path.startswith("/"):
-        return f"{prefix}{path}"
-    return f"{prefix}/{path}"
+    if canonical.startswith("/"):
+        return f"{prefix}{canonical}"
+    return f"{prefix}/{canonical}"
 
 
 def scope_params_for_zone(params: Any, zone_id: str) -> None:

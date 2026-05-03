@@ -708,6 +708,31 @@ class ContentMixin:
         if count is not None:
             buf = buf[:count]
 
+        # #4005 round-9: serialize same-path writes under the OCC per-path
+        # RLock so an edit(if_match=...) read-modify-write is atomic against
+        # plain writes too. Without this, a plain ``write`` committed
+        # between an edit's content_id check and its final write would
+        # silently lose the edit's intended state. RLock means OCC callers
+        # that already hold the lock pass through without deadlocking.
+        # NOTE: develop (#12f) dropped the explicit self._validate_path here
+        # — Rust kernel re-canonicalizes via path_utils.validate_path before
+        # sys_write. _occ_path_lock canonicalizes its own key internally
+        # (lib.occ._canonical_lock_key) so surface aliases hash identically.
+        from nexus.lib.occ import _occ_path_lock
+
+        with _occ_path_lock(path):
+            return self._write_locked(path, buf, offset=offset, context=context, ttl=ttl)
+
+    def _write_locked(
+        self,
+        path: str,
+        buf: bytes,
+        *,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        ttl: float | None = None,
+    ) -> dict[str, Any]:
+        """Inner write body — caller holds ``_occ_path_lock(path)``."""
         # PRE-DISPATCH: virtual path resolvers (e.g. /__sys__ writers).
         _handled, _result = self.resolve_write(path, buf, context=context)
         if _handled:

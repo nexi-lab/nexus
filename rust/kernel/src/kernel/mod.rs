@@ -664,14 +664,6 @@ pub struct Kernel {
     // without an explicit cast.
     #[allow(dead_code)]
     pub(crate) chunk_fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher>,
-    /// Pending remote metastore — set by ``sys_setattr(backend_type="remote")``
-    /// and consumed immediately after mount registration to install the
-    /// ``RemoteMetaStore`` on the mount entry. This avoids threading the
-    /// metastore through ``sys_setattr``'s return value.
-    #[cfg(feature = "python")]
-    pub(crate) pending_remote_meta_store:
-        parking_lot::Mutex<Option<Arc<dyn crate::meta_store::MetaStore>>>,
-
     /// Blob-fetcher slot stashed by federation init for the cdylib's
     /// transport-tier install hook to drain. Typed as
     /// `Box<dyn Any + Send + Sync>` so kernel does not name the
@@ -760,8 +752,6 @@ impl Kernel {
                 crate::hal::distributed_coordinator::NoopDistributedCoordinator::arc(),
             ),
             chunk_fetcher,
-            #[cfg(feature = "python")]
-            pending_remote_meta_store: parking_lot::Mutex::new(None),
             pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
         };
         // Distributed-coordinator bootstrap is driven by
@@ -1384,12 +1374,6 @@ impl Kernel {
         self.dcache.get_hot(path)
     }
 
-    /// Get full entry (returns CachedEntry for wrapper to convert).
-    #[cfg(feature = "python")]
-    pub(crate) fn dcache_get_full(&self, path: &str) -> Option<CachedEntry> {
-        self.dcache.get_entry(path)
-    }
-
     /// Evict a single path.
     pub fn dcache_evict(&self, path: &str) -> bool {
         self.dcache.evict(path)
@@ -1519,6 +1503,12 @@ impl Kernel {
         // remote metadata) versus `mount /local remote-addr:/remote`
         // (sharer publishes local metadata).
         source: Option<&str>,
+        // -- DT_MOUNT remote metastore (entry_type == 2) --
+        //
+        // Optional remote metastore produced by ObjectStoreProvider::build()
+        // for remote backends. Installed on the VFS route entry after mount
+        // registration so remote reads resolve through the correct metastore.
+        remote_metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
     ) -> Result<SysSetAttrResult, KernelError> {
         match entry_type {
             2 => {
@@ -1624,6 +1614,12 @@ impl Kernel {
                     .unwrap_or_else(|| contracts::ROOT_ZONE_ID.to_string());
                 if federation_active && !zone_id.is_empty() && zone_id != parent_zone {
                     let _ = coordinator.wire_mount(self, &parent_zone, path, zone_id);
+                }
+                // Install remote metastore on the VFS route entry if the
+                // backend provider produced one (remote backends only).
+                if let Some(rms) = remote_metastore {
+                    let canonical_key = format!("/{zone_id}{path}");
+                    self.vfs_router.install_metastore(&canonical_key, rms);
                 }
                 Ok(SysSetAttrResult {
                     path: path.to_string(),
@@ -3065,6 +3061,7 @@ mod tests {
             None,  // modified_at_ms
             None,  // link_target
             None,  // source
+            None,  // remote_metastore
         )
     }
 
@@ -3165,6 +3162,7 @@ mod tests {
                 None,
                 None,
                 None, // source
+                None, // remote_metastore
             )
             .unwrap();
         assert!(!r.created);
@@ -3229,6 +3227,7 @@ mod tests {
                 None,
                 None,
                 None, // source
+                None, // remote_metastore
             )
             .unwrap();
         assert!(r.created);
@@ -3270,6 +3269,7 @@ mod tests {
             None,
             None,
             None, // source
+            None, // remote_metastore
         )
         .unwrap();
 
@@ -3634,6 +3634,7 @@ mod tests {
                     None,
                     Some(target),
                     None,
+                    None, // remote_metastore
                 )
                 .unwrap();
             }
@@ -3682,6 +3683,7 @@ mod tests {
                     None,
                     Some(target),
                     None,
+                    None, // remote_metastore
                 )
                 .unwrap();
             }

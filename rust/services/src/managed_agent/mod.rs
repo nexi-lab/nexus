@@ -548,6 +548,7 @@ fn create_dt_dir(kernel: &kernel::kernel::Kernel, path: &str) -> Result<(), Stri
             /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
             /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
             /* link_target */ None, /* source */ None,
+            /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("{e:?}"))
@@ -577,6 +578,7 @@ fn create_dt_link(kernel: &kernel::kernel::Kernel, path: &str, target: &str) -> 
             /* modified_at_ms */ None,
             /* link_target */ Some(target),
             /* source */ None,
+            /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_LINK at {path} -> {target}): {e:?}"))

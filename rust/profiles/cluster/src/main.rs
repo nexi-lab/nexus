@@ -308,6 +308,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
             None,  // modified_at_ms
             None,  // link_target
             None,  // source — same-zone local mount
+            None,  // remote_metastore
         )
         .map_err(|e| anyhow::anyhow!("mount / via path_local: {:?}", e))?;
     tracing::info!(
@@ -451,6 +452,7 @@ fn run_mount(
             None,
             None,
             None,
+            None, // remote_metastore
         )
         .map_err(|e| anyhow::anyhow!("mount {mount_point}: {:?}", e))?;
     println!(

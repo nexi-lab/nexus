@@ -26,6 +26,7 @@ from nexus.server.rpc.handlers.admin import (
     handle_admin_list_keys,
     handle_admin_revoke_key,
     handle_admin_update_key,
+    handle_admin_write_permission,
     require_admin,
     require_database_auth,
 )
@@ -120,6 +121,36 @@ class TestRequireAdmin:
 
         with pytest.raises(NexusPermissionError):
             require_admin(None)
+
+
+class TestHandleAdminWritePermission:
+    def test_uses_service_registry_rebac_manager(self, admin_context):
+        """Should use the canonical ServiceRegistry lookup for ReBAC writes."""
+        rebac = MagicMock()
+        nx = MagicMock()
+        nx.service.side_effect = lambda name: rebac if name == "rebac_manager" else None
+        nx._rebac_manager = None
+        nx.rebac_manager = None
+        params = FakeParams(
+            tuples=[
+                {
+                    "subject": ("user", "alice"),
+                    "relation": "direct_viewer",
+                    "object": ("file", "/workspace/demo"),
+                    "zone_id": "root",
+                }
+            ]
+        )
+
+        result = handle_admin_write_permission(nx, params, admin_context)
+
+        assert result == {"created": 1}
+        rebac.rebac_write.assert_called_once_with(
+            subject=("user", "alice"),
+            relation="direct_viewer",
+            object=("file", "/workspace/demo"),
+            zone_id="root",
+        )
 
 
 # ── require_database_auth Tests ──────────────────────────

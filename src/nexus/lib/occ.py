@@ -124,7 +124,20 @@ def occ_write_sync(
 
     from nexus.contracts.exceptions import ConflictError
 
-    with _occ_path_lock(path):
+    # #4005 round-7: canonicalize the path before keying the lock so
+    # ``foo``, ``/foo``, ``/foo/``, ``//foo`` all resolve to the same
+    # OCC entry. Without this two ``if_match`` writes targeting the same
+    # storage object via different surface forms would acquire different
+    # locks and both commit. Falls back to the raw path if validation
+    # fails — sys_stat below will surface the same error.
+    try:
+        from nexus.core.path_utils import validate_path
+
+        canonical_path = validate_path(path)
+    except Exception:
+        canonical_path = path
+
+    with _occ_path_lock(canonical_path):
         meta = fs.sys_stat(path, context=context)
 
         if if_none_match and meta is not None:

@@ -103,3 +103,39 @@ def scope_params_for_zone(params: Any, zone_id: str) -> None:
             attr,
             [scope_single_path(p, prefix, zone_id) for p in value if isinstance(p, str)],
         )
+
+    # #4005 round-7: nested batch payloads — write_batch.files (list of
+    # ``(path, content)`` tuples) and rename_batch.renames (list of
+    # ``(old_path, new_path)`` tuples). Without scoping these, a tenant
+    # caller could embed ``/zone/<other>/...`` paths inside a batch
+    # element and bypass the mismatched-zone rejection in
+    # ``scope_single_path``.
+    files = getattr(params, "files", None)
+    if isinstance(files, (list, tuple)):
+        scoped_files = [
+            (scope_single_path(item[0], prefix, zone_id), *item[1:])
+            if (isinstance(item, (list, tuple)) and len(item) >= 1 and isinstance(item[0], str))
+            else item
+            for item in files
+        ]
+        params.files = type(files)(scoped_files)
+
+    renames = getattr(params, "renames", None)
+    if isinstance(renames, (list, tuple)):
+        scoped_renames = []
+        for item in renames:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                old_p = (
+                    scope_single_path(item[0], prefix, zone_id)
+                    if isinstance(item[0], str)
+                    else item[0]
+                )
+                new_p = (
+                    scope_single_path(item[1], prefix, zone_id)
+                    if isinstance(item[1], str)
+                    else item[1]
+                )
+                scoped_renames.append((old_p, new_p, *item[2:]))
+            else:
+                scoped_renames.append(item)
+        params.renames = type(renames)(scoped_renames)

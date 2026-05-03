@@ -38,10 +38,14 @@ class TestResolveTxtaiRuntimeConfig:
         ):
             model, vectors = _resolve_txtai_runtime_config()
 
-        assert model == "openai/text-embedding-3-small"
+        # Default model is 3-large (3072d native, Matryoshka-truncated to 1536
+        # so pgvector hnsw stays under its 2000d cap) — picked for recall
+        # rather than the cheaper 3-small.
+        assert model == "openai/text-embedding-3-large"
         assert vectors == {
             "api_key": "sk-test",
             "api_base": "https://api.openai.example/v1",
+            "dimensions": 1536,
         }
 
     def test_respects_explicit_txtai_model_for_api_mode(self) -> None:
@@ -61,13 +65,16 @@ class TestResolveTxtaiRuntimeConfig:
         assert model == "openai/text-embedding-3-large"
         assert vectors == {"api_key": "sk-test", "dimensions": 1536}
 
-    def test_3_small_does_not_get_default_dimensions(self) -> None:
+    def test_3_small_skips_default_dimensions_when_opted_in_explicitly(self) -> None:
         """text-embedding-3-small is 1536d native — fits hnsw, no truncation
-        needed. We only auto-truncate the model that crashes without it."""
+        needed. We only auto-truncate the model that crashes without it
+        (3-large). When operators explicitly select 3-small, no dimensions
+        kwarg should be set."""
         with patch.dict(
             "os.environ",
             {
                 "NEXUS_TXTAI_USE_API_EMBEDDINGS": "true",
+                "NEXUS_TXTAI_MODEL": "openai/text-embedding-3-small",
                 "OPENAI_API_KEY": "sk-test",
             },
             clear=True,

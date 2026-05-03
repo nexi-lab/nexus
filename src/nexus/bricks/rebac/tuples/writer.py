@@ -805,8 +805,9 @@ class TupleWriter:
 
         def _zone_of(row: Any) -> str | None:
             if isinstance(row, tuple):
-                return row[1]
-            return row.get("zone_id") if hasattr(row, "get") else row["zone_id"]
+                return cast("str | None", row[1])
+            value = row.get("zone_id") if hasattr(row, "get") else row["zone_id"]
+            return cast("str | None", value)
 
         def _tid_of(row: Any) -> str:
             if isinstance(row, tuple):

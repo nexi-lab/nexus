@@ -171,7 +171,7 @@ Path resolution across zones is **all local** (~5us per hop) because mounting = 
 Etcd / TiKV-style opaque IDs + leader-driven `AddNode`.
 
 - **Identity** — `node_id` is an opaque random `u64` minted at first daemon boot, persisted as 8 bytes BE u64 to `<NEXUS_DATA_DIR>/.node_id`.  Decoupling identity from hostname lets a wiped follower rejoin under a fresh ID; the leader's `Progress[new_id]` is created with `matched=0` by `AddNode`, so the first heartbeat carries `m.commit=0` — within `RaftLog::commit_to`'s safe range on a fresh follower (`last_index=0`).  Pinned by [`test_handle_heartbeat_on_empty_follower_with_stale_commit_panics`](../../rust/raft/src/raft/storage.rs).
-- **Address book** — `NEXUS_PEERS` is a hostname → endpoint mapping that seeds the transport peer map.  `ConfState` lives in raft storage and is mutated only by `ConfChange` (AddNode / RemoveNode) driven by JoinZone.
+- **Address book** — `NEXUS_PEERS` is a hostname → endpoint mapping for OTHER nodes only that seeds the transport peer map.  Self joins the cluster through `create_zone(self)` (founder) or `AddNode(self)` on the leader (joiner) — never through the address book.  Boot fails loud (`peer list contains self ...`) when `NEXUS_PEERS` includes the local node so the joiner-loop self-RPC stall surfaces at parse time, not after `Zone 'root' registered`.  `ConfState` lives in raft storage and is mutated only by `ConfChange` (AddNode / RemoveNode) driven by JoinZone.
 - **Bootstrap dispatch** ([`bootstrap_or_join_root`](../../rust/raft/src/distributed_coordinator.rs)):
 
   | State                                         | Action                                                       |

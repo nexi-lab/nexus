@@ -22,19 +22,31 @@ contract pin this script provides.
 
 Run:
 
-    # On the founder side (Win):
+    # On the founder side (Win, IP 100.64.0.26):
     PYTHONPATH=. python scripts/cluster_smoke_xmachine.py \\
         --side win --bootstrap-new \\
-        --peers 100.64.0.26:2126,100.64.0.21:2126
+        --hostname 100.64.0.26 \\
+        --peers 100.64.0.21:2126
 
-    # On the joiner side (Mac):
+    # On the joiner side (Mac, IP 100.64.0.21):
     PYTHONPATH=. python scripts/cluster_smoke_xmachine.py \\
         --side mac \\
-        --peers 100.64.0.26:2126,100.64.0.21:2126
+        --hostname 100.64.0.21 \\
+        --peers 100.64.0.26:2126
 
-Exactly one side must pass ``--bootstrap-new`` — the contract
-forbids two founders, and zero founders means neither side ever
-creates the cluster (deadlock).
+Two contract guarantees the boot path enforces and the operator
+must respect:
+
+  1. **One founder.** Exactly one side passes ``--bootstrap-new``;
+     two founders create disjoint clusters, zero founders means
+     neither side ever creates the cluster (joiner-loop deadlock).
+  2. **--peers lists OTHER nodes only.**  Self enters the cluster
+     via ``--bootstrap-new`` (founder) or AddNode-on-leader
+     (joiner) — not the address book.  The Rust side fails loud
+     (``peer list contains self ...``) if self leaks into
+     ``--peers``.  Pair ``--hostname <self_ip>`` with
+     ``--peers <other_ip>:port,...`` so the self-detection match
+     is unambiguous.
 """
 
 from __future__ import annotations

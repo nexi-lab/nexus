@@ -302,6 +302,44 @@ pub fn read_or_mint_node_id(zones_dir: &str) -> Result<u64, String> {
     }
 }
 
+/// Validate that the parsed peer address book excludes `self_address`.
+///
+/// Contract under PR #3996+: `NEXUS_PEERS` (or `--peers` for
+/// `nexusd-cluster`) lists OTHER nodes only.  Self goes in the
+/// ConfState via `create_zone(self)` on the founder or `AddNode(self)`
+/// on a joiner — not via the address book.  Listing self inside the
+/// address book was a vestige of the pre-#3996 contract where
+/// `peer_addrs` doubled as the ConfState voter list, and today it is
+/// a footgun: if `self_address` does not exactly string-match the
+/// self entry (e.g. operator passed an IP for the peer entry but the
+/// hostname-derived `self_address` falls back to the OS hostname),
+/// the JoinZone retry loop tries to RPC self, registers the zone
+/// locally with `skip_bootstrap=true`, and stalls because there is no
+/// real leader to grant `AddNode`.
+///
+/// Fail-loud here so the misconfiguration surfaces at boot rather
+/// than as a silent stall after `Zone 'root' registered (peers=1)`.
+pub fn validate_peers_excludes_self(
+    peer_addrs: &[NodeAddress],
+    self_address: &str,
+) -> Result<(), String> {
+    for peer in peer_addrs {
+        let peer_hostport = peer
+            .endpoint
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
+        if peer_hostport == self_address {
+            return Err(format!(
+                "peer list contains self ('{self_address}'); under the PR #3996 \
+                 opaque-ID contract NEXUS_PEERS / --peers must list OTHER nodes \
+                 only.  Self joins the cluster via NEXUS_BOOTSTRAP_NEW=1 \
+                 (founder) or AddNode-on-leader (joiner), not the address book.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Bring root zone online — dispatch table for the three bootstrap
 /// branches under the opaque-ID contract.
 ///
@@ -394,16 +432,13 @@ pub fn bootstrap_or_join_root(
 
     loop {
         for peer in peer_addrs {
-            // Skip self by endpoint-string compare.  `self_address` is
-            // "host:port"; `peer.endpoint` is "<scheme>://host:port".
-            let peer_hostport = peer
-                .endpoint
-                .trim_start_matches("https://")
-                .trim_start_matches("http://");
-            if peer_hostport == self_address {
-                continue;
-            }
-
+            // No self-skip here.  Contract: `peer_addrs` lists OTHER
+            // nodes only.  Operator-input that includes self is
+            // rejected at parse time by the boot path that owns the
+            // address book (see `validate_peers_excludes_self` in
+            // `init_from_env` and `nexusd-cluster::open_zone_manager`)
+            // so by the time we reach the JoinZone retry loop,
+            // every entry is a remote peer worth contacting.
             let mut endpoint = peer.endpoint.clone();
             let mut redirected_once = false;
             loop {
@@ -586,6 +621,12 @@ impl RaftDistributedCoordinator {
                     .map_err(|e| format!("NEXUS_PEERS parse '{entry}': {e}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Reject "self listed in NEXUS_PEERS" early — the only way
+        // self enters the cluster post-#3996 is through `create_zone`
+        // (founder) or AddNode-on-leader (joiner).  See
+        // `validate_peers_excludes_self` for the full rationale.
+        validate_peers_excludes_self(&peer_addrs, &self_addr)?;
 
         let tls = if tls_disabled {
             None
@@ -1569,5 +1610,50 @@ mod tests {
         std::fs::write(&path, [0u8; 8]).expect("write zero");
         let result = read_or_mint_node_id(dir.path().to_str().expect("utf-8"));
         assert!(result.is_err(), "must reject zero id on disk");
+    }
+
+    fn parse_peer(s: &str) -> NodeAddress {
+        NodeAddress::parse(s, /* use_tls */ false).expect("parse peer")
+    }
+
+    #[test]
+    fn validate_peers_excludes_self_accepts_other_peers_only() {
+        // Address book lists OTHER nodes — happy path under the
+        // PR #3996 contract.
+        let peers = vec![parse_peer("100.64.0.21:2126")];
+        validate_peers_excludes_self(&peers, "100.64.0.26:2126")
+            .expect("other-peers-only must be accepted");
+    }
+
+    #[test]
+    fn validate_peers_excludes_self_rejects_self_in_list() {
+        // Operator pasted self into NEXUS_PEERS — fail-loud at parse
+        // time rather than letting the JoinZone retry loop stall on
+        // a self-RPC that never gets a leader.
+        let peers = vec![
+            parse_peer("100.64.0.26:2126"),
+            parse_peer("100.64.0.21:2126"),
+        ];
+        let err = validate_peers_excludes_self(&peers, "100.64.0.26:2126")
+            .expect_err("self-in-peers must be rejected");
+        assert!(
+            err.contains("contains self"),
+            "error must name the contract violation, got: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_peers_excludes_self_handles_explicit_id_prefix() {
+        // `id@host:port` form: same self-detection logic must apply.
+        let peers = vec![parse_peer("9999@100.64.0.26:2126")];
+        let err = validate_peers_excludes_self(&peers, "100.64.0.26:2126")
+            .expect_err("self-in-peers must be rejected even with explicit id prefix");
+        assert!(err.contains("contains self"));
+    }
+
+    #[test]
+    fn validate_peers_excludes_self_empty_list_is_ok() {
+        // Founder mode with no other peers yet.
+        validate_peers_excludes_self(&[], "100.64.0.26:2126").expect("empty list ok");
     }
 }

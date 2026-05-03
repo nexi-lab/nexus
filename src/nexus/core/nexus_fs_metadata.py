@@ -28,7 +28,6 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.lib.zone_perms_cache import request_zone_perms_scope
 
 if TYPE_CHECKING:
     pass
@@ -296,22 +295,16 @@ class MetadataMixin:
         """
         ctx = self._resolve_cred(context)
 
-        # Issue #3786 / Codex Round 6 finding #1: dispatch the stat
-        # permission hook before reading kernel metadata so federation
-        # tokens cannot probe paths outside their zone allow-list.
-        # Wrap the kernel call in request_zone_perms_scope so the rebuilt
-        # PermissionHook context resurrects zone_perms without racing the
-        # subject-keyed cache.
+        # Dispatch the stat permission hook before reading kernel metadata
+        # so federation tokens cannot probe paths outside their zone allow-list.
         from nexus.contracts.exceptions import PermissionDeniedError as _PDE
         from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
-        _zp = getattr(ctx, "zone_perms", ()) if ctx else ()
         try:
-            with request_zone_perms_scope(_zp):
-                self._kernel.dispatch_pre_hooks(
-                    "stat",
-                    _SHC(path=path, context=ctx, permission="READ"),
-                )
+            self._kernel.dispatch_pre_hooks(
+                "stat",
+                _SHC(path=path, context=ctx, permission="READ"),
+            )
         except (_PDE, PermissionError):
             # Codex Round 9 finding #2: PermissionChecker.check raises
             # the builtin PermissionError on normal denials.  Re-raise both
@@ -341,8 +334,7 @@ class MetadataMixin:
                 return _virt
 
         # Rust sys_stat handles: dcache → metastore → implicit directory.
-        with request_zone_perms_scope(_zp):
-            result = self._kernel.sys_stat(path, self._zone_id)
+        result = self._kernel.sys_stat(path, self._zone_id)
         if result is not None:
             result["owner"] = ctx.user_id
             result["group"] = ctx.user_id
@@ -413,9 +405,7 @@ class MetadataMixin:
                 if enforcer is not None:
                     from nexus.contracts.types import Permission as _P
 
-                    _zp = getattr(context, "zone_perms", ())
-                    with request_zone_perms_scope(_zp):
-                        _allowed = enforcer.check(path, _P.WRITE, context)
+                    _allowed = enforcer.check(path, _P.WRITE, context)
                     if not _allowed:
                         raise _PDE(
                             f"sys_setattr denied: WRITE not granted for {path!r}",
@@ -673,12 +663,7 @@ class MetadataMixin:
         # exist_ok/parents semantics, backend.mkdir, ensure_parent_directories,
         # DT_DIR metadata creation, and dcache update.
         _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
-        # Bind real zone_perms to the request scope so the Python PermissionHook
-        # (rebuilt from the Rust-stripped context) can resurrect them without
-        # racing the subject-keyed cache.  Issue #3786 / Codex Round 4.
-        _zp = getattr(ctx, "zone_perms", ()) if ctx else ()
-        with request_zone_perms_scope(_zp):
-            _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
+        _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
         if _mkdir_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import MkdirHookContext
 
@@ -788,12 +773,7 @@ class MetadataMixin:
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        # Bind real zone_perms to the request scope so the Python PermissionHook
-        # (rebuilt from the Rust-stripped context) can resurrect them without
-        # racing the subject-keyed cache.  Issue #3786 / Codex Round 4.
-        _zp = getattr(context, "zone_perms", ()) if context else ()
-        with request_zone_perms_scope(_zp):
-            _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
+        _unlink_result = self._kernel.sys_unlink(path, _rust_ctx, recursive)
 
         if _unlink_result.hit:
             # Rust handled the full operation (§12e: DT_DIR inlined via sys_rmdir).
@@ -990,12 +970,7 @@ class MetadataMixin:
 
         # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        # Bind real zone_perms to the request scope so the Python PermissionHook
-        # (rebuilt from the Rust-stripped context) can resurrect them without
-        # racing the subject-keyed cache.  Issue #3786 / Codex Round 4.
-        _zp = getattr(context, "zone_perms", ()) if context else ()
-        with request_zone_perms_scope(_zp):
-            _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
+        _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
         # Rust handles all entry types (files, dirs, mounts, external storage).
         # Dispatch POST hooks with reconstructed metadata for audit trail.
@@ -1075,12 +1050,7 @@ class MetadataMixin:
         # PRE-INTERCEPT hooks dispatched by Rust kernel via sys_copy.
         # Rust validates source existence + rejects directories internally.
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        # Bind real zone_perms to the request scope so the Python PermissionHook
-        # (rebuilt from the Rust-stripped context) can resurrect them without
-        # racing the subject-keyed cache.  Issue #3786 / Codex Round 4.
-        _zp = getattr(context, "zone_perms", ()) if context else ()
-        with request_zone_perms_scope(_zp):
-            _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
+        _copy_result = self._kernel.sys_copy(src_path, dst_path, _rust_ctx)
 
         # POST-INTERCEPT hooks (zero consumers use metadata field)
         if _copy_result.post_hook_needed:

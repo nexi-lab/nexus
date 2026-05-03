@@ -530,11 +530,8 @@ class NexusFS(  # type: ignore[misc]
 
         from nexus.contracts.exceptions import PermissionDeniedError
         from nexus.contracts.types import Permission
-        from nexus.lib.zone_perms_cache import request_zone_perms_scope
 
-        _zp = getattr(context, "zone_perms", ())
-        with request_zone_perms_scope(_zp):
-            allowed = enforcer.check(path, Permission.WRITE, context)
+        allowed = enforcer.check(path, Permission.WRITE, context)
         if not allowed:
             raise PermissionDeniedError(
                 f"lock denied: WRITE not granted for {path!r}",

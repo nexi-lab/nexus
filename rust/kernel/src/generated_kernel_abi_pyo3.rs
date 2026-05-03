@@ -466,6 +466,15 @@ fn rust_ctx_to_python<'py>(
     if !ctx.request_id.is_empty() {
         let _ = kwargs.set_item("request_id", &ctx.request_id);
     }
+    // zone_perms: Vec<(String, String)> → Python tuple of (zone_id, perm_chars) pairs
+    if !ctx.zone_perms.is_empty() {
+        let zp = PyList::new(
+            py,
+            ctx.zone_perms.iter().map(|(z, p)| (z.as_str(), p.as_str())),
+        )
+        .map_err(|e| format!("zone_perms: {e}"))?;
+        let _ = kwargs.set_item("zone_perms", zp);
+    }
     cls.call((), Some(&kwargs))
         .map_err(|e| format!("OperationContext(): {e}"))
 }
@@ -767,12 +776,13 @@ pub struct PyOperationContext {
     pub subject_id: Option<String>,
     pub request_id: String,
     pub context_zone_id: Option<String>,
+    pub zone_perms: Vec<(String, String)>,
 }
 
 #[pymethods]
 impl PyOperationContext {
     #[new]
-    #[pyo3(signature = (user_id="anonymous", zone_id="root", is_admin=false, agent_id=None, is_system=false, groups=Vec::new(), admin_capabilities=Vec::new(), subject_type="user", subject_id=None, request_id="", context_zone_id=None))]
+    #[pyo3(signature = (user_id="anonymous", zone_id="root", is_admin=false, agent_id=None, is_system=false, groups=vec![], admin_capabilities=vec![], subject_type="user", subject_id=None, request_id="", context_zone_id=None, zone_perms=vec![]))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         user_id: &str,
@@ -786,6 +796,7 @@ impl PyOperationContext {
         subject_id: Option<&str>,
         request_id: &str,
         context_zone_id: Option<&str>,
+        zone_perms: Vec<(String, String)>,
     ) -> Self {
         Self {
             user_id: user_id.to_string(),
@@ -799,6 +810,7 @@ impl PyOperationContext {
             subject_id: subject_id.map(|s| s.to_string()),
             request_id: request_id.to_string(),
             context_zone_id: context_zone_id.map(|s| s.to_string()),
+            zone_perms,
         }
     }
 }
@@ -818,6 +830,7 @@ impl PyOperationContext {
             subject_id: self.subject_id.clone(),
             request_id: self.request_id.clone(),
             context_zone_id: self.context_zone_id.clone(),
+            zone_perms: self.zone_perms.clone(),
         }
     }
 }

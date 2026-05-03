@@ -132,8 +132,9 @@ getter; the kernel boots the same way either path.
 (`None`), factory overrides at link-time. Kernel modules import only from
 `contracts/`, `lib/`, and other kernel-tier packages.
 
-Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks
-(PermissionCheckHook). No hook registered = no check = zero overhead.
+Permission enforcement is a kernel primitive. The permission gate runs
+before NativeInterceptHook dispatch on every `sys_*` call with `OperationContext`.
+Pluggable `PermissionProvider` trait; no provider registered = zero overhead (~1ns AtomicBool).
 
 **Zone identity:** `self._zone_id = ROOT_ZONE_ID` — kernel namespace partition
 (analogous to Linux `sb->s_dev`). VFSRouter (Rust kernel primitive) canonicalizes
@@ -306,8 +307,22 @@ These contracts define ordering, error semantics, and performance guarantees.
 | 3 | **INTERCEPT POST** | After HAL I/O | `InterceptHook.on_post_*` (Rust trait) | Serial, fire-and-forget via Rust `dispatch_post_hooks()`. | Failures are logged and swallowed — never affect the caller or the operation result. |
 | 4 | **OBSERVE** | After lock release | `VFSObserver.on_mutation` (Python protocol) | Inline observers: synchronous on caller thread. Deferred observers: submitted to kernel observer ThreadPoolExecutor (4 threads, `observe` prefix). Event mask bitmask filtering at registration time. | Failures are caught and logged — never abort the syscall. Observers needing causal ordering belong in INTERCEPT POST, not OBSERVE. |
 
-**Ordering guarantee:** RESOLVE > INTERCEPT PRE > HAL I/O > INTERCEPT POST > OBSERVE.
+**Ordering guarantee:** RESOLVE > Permission Gate > INTERCEPT PRE > HAL I/O > INTERCEPT POST > OBSERVE.
 OBSERVE always fires after VFS lock release (like Linux inotify after `i_rwsem`).
+
+**Permission Gate** (Linux analogue: `security_inode_permission()`):
+Kernel-level permission check called before INTERCEPT PRE on every `sys_*`
+with `OperationContext`. Decision cascade (short-circuits on first decisive
+step): `/__sys__/` path bypass → `is_system` bypass → no-provider fast-path
+(~1ns `AtomicBool`) → lease cache hit (~100-200ns `DashMap` per depth level) →
+admin bypass → `zone_perms` federation grant → `PermissionProvider.check()`.
+Pluggable `PermissionProvider` trait registered once at boot; implementations
+live in the services tier. `PermissionLeaseCache`: inheritance-aware `(path,
+agent_id) → TTL` DashMap cache; parent directory lease covers child files.
+`Permission` enum: `Read`, `Write`, `Traverse`.
+Source of truth: `rust/kernel/src/kernel/dispatch.rs` (gate),
+`rust/kernel/src/core/permission_cache.rs` (lease cache),
+`rust/kernel/src/core/dispatch/mod.rs` (trait + enums).
 
 **Zero-overhead invariant:** Empty callback list = no-op dispatch = zero overhead
 when no services are registered.
@@ -324,8 +339,9 @@ when no services are registered.
 ### 2.5 Mediation Principle
 
 Users access HAL only through syscalls. For mutating syscalls the pipeline is:
-PRE-DISPATCH → route → INTERCEPT pre → lock → HAL I/O → unlock → INTERCEPT
-post → OBSERVE. See `syscall-design.md` for the full per-syscall flow.
+PRE-DISPATCH → route → permission gate → INTERCEPT pre → lock → HAL I/O
+→ unlock → INTERCEPT post → OBSERVE. See `syscall-design.md` for the full
+per-syscall flow.
 
 **Exception:** Tier 2 hash-addressed operations (see §2.3 HDFS half) access
 ObjectStoreABC directly by etag, bypassing path resolution and metadata lookup.
@@ -537,6 +553,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). BackgroundService + duck-typed hook_spec() |
 | **DriverLifecycleCoordinator** | `rust/kernel/src/dlc.rs` + `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + dcache + lock manager upgrade + **federation dcache-coherence callback** (installs a per-mount invalidator on the zone's state machine so committed metadata mutations evict stale dcache entries on every voter). Python DLC: backend refs (`_PyMountInfo`) + event dispatch |
+| **PermissionGate** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/permission_cache.rs` | LSM `security_inode_permission` | Kernel permission gate called before NativeInterceptHook dispatch on every `sys_*`. Decision cascade with lease cache (~100-200ns). Details in §2.4.1 |
 
 ### 4.1 Unified LockManager — I/O Lock + Advisory Lock
 

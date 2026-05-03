@@ -8,8 +8,8 @@ use std::sync::atomic::Ordering;
 
 use crate::dcache::{CachedEntry, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{
-    DeleteHookCtx, FileEventType, HookContext, HookIdentity, ReadHookCtx, RenameHookCtx,
-    WriteHookCtx,
+    DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
+    RenameHookCtx, WriteHookCtx,
 };
 use crate::lock_manager::{LockManager, LockMode};
 
@@ -51,7 +51,10 @@ impl Kernel {
             return Err(not_found());
         }
 
-        // 1c. Native INTERCEPT PRE hooks (§11 native hooks) — permission check etc.
+        // 1c. Permission gate (§13) — BEFORE native hooks.
+        self.check_permission(path, Permission::Read, ctx)?;
+
+        // 1d. Native INTERCEPT PRE hooks (§11 native hooks) — audit etc.
         let hook_id = HookIdentity {
             user_id: ctx.user_id.clone(),
             zone_id: ctx.zone_id.clone(),
@@ -424,12 +427,10 @@ impl Kernel {
             return miss();
         }
 
-        // 1c. Native INTERCEPT PRE hooks (§11 native hooks).
-        // Clone gate: hooks that mutate write content declare a
-        // `mutating_path_suffix` so the dispatcher only clones the
-        // content slice into `WriteHookCtx` when one matches. Steady-
-        // state writes (no mutating hooks registered, or the path
-        // doesn't end in a registered suffix) pay zero clones.
+        // 1c. Permission gate (§13) — BEFORE native hooks.
+        self.check_permission(path, Permission::Write, ctx)?;
+
+        // 1d. Native INTERCEPT PRE hooks (§11 native hooks).
         let needs_content_for_hook = self.has_mutating_hook_match(path);
         let hook_content = if needs_content_for_hook {
             content.to_vec()
@@ -451,10 +452,6 @@ impl Kernel {
                 new_version: 0,
                 size_bytes: None,
             }))?;
-        // EXECUTE phase uses replacement bytes when a mutating hook
-        // returned `HookOutcome::Replace(...)`, otherwise the original
-        // content slice. Hooks that returned `Pass` leave `replacement`
-        // as None.
         let effective_content: &[u8] = replacement.as_deref().unwrap_or(content);
 
         // 2. Route (check write access)
@@ -873,7 +870,10 @@ impl Kernel {
             return miss(0);
         }
 
-        // 1c. Native INTERCEPT PRE hooks (§11 native hooks)
+        // 1c. Permission gate (§13) — BEFORE native hooks.
+        self.check_permission(path, Permission::Write, ctx)?;
+
+        // 1d. Native INTERCEPT PRE hooks (§11 native hooks)
         self.dispatch_native_pre(&HookContext::Delete(DeleteHookCtx {
             path: path.to_string(),
             identity: HookIdentity {
@@ -1058,7 +1058,11 @@ impl Kernel {
         validate_path_fast(old_path)?;
         validate_path_fast(new_path)?;
 
-        // 1c. Native INTERCEPT PRE hooks (§11 native hooks)
+        // 1c. Permission gate (§13) — Write on both paths.
+        self.check_permission(old_path, Permission::Write, ctx)?;
+        self.check_permission(new_path, Permission::Write, ctx)?;
+
+        // 1d. Native INTERCEPT PRE hooks (§11 native hooks)
         self.dispatch_native_pre(&HookContext::Rename(RenameHookCtx {
             old_path: old_path.to_string(),
             new_path: new_path.to_string(),
@@ -1401,6 +1405,10 @@ impl Kernel {
         validate_path_fast(src_path)?;
         validate_path_fast(dst_path)?;
 
+        // 1c. Permission gate (§13) — Read on src, Write on dst.
+        self.check_permission(src_path, Permission::Read, ctx)?;
+        self.check_permission(dst_path, Permission::Write, ctx)?;
+
         // 2. Route both (read access for src, write access for dst)
         let src_route = match self.vfs_router.route(src_path, &ctx.zone_id) {
             Ok(r) => r,
@@ -1709,6 +1717,9 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
+        // 1c. Permission gate (§13) — Write permission for mkdir.
+        self.check_permission(path, Permission::Write, ctx)?;
+
         // 2. Route (check write access)
         let route = self.vfs_router.route(path, &ctx.zone_id)?;
 
@@ -1882,6 +1893,9 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
+
+        // 1c. Permission gate (§13) — Write permission for rmdir.
+        self.check_permission(path, Permission::Write, ctx)?;
 
         // 2. Route (check write access)
         let route = self.vfs_router.route(path, &ctx.zone_id)?;

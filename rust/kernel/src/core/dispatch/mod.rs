@@ -282,6 +282,64 @@ pub trait MutationObserver: Send + Sync {
     fn on_mutation(&self, event: &FileEvent);
 }
 
+// ── Permission provider (§13) ────────────────────────────────────────
+//
+// Trait for pluggable permission checking. The kernel's permission gate
+// calls this for lease-miss / admin-bypass-miss scenarios. The default
+// when no provider is registered is "allow all" (zero perf hit: not
+// even an atomic check when `has_permission_provider` is false).
+//
+// Implementations live in the services tier (e.g.
+// `services::rebac::RebacPermissionHook`), NOT in kernel.
+
+use contracts::OperationContext;
+
+/// Permission type — Read, Write, or Traverse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Permission {
+    Read,
+    Write,
+    Traverse,
+}
+
+impl Permission {
+    /// String representation matching Python `Permission.READ.value`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Read => "READ",
+            Self::Write => "WRITE",
+            Self::Traverse => "TRAVERSE",
+        }
+    }
+}
+
+/// Result of a permission check.
+#[derive(Debug)]
+pub enum PermissionDecision {
+    /// Permission granted.
+    Allow,
+    /// Permission denied with reason.
+    Deny(String),
+    /// Provider has no opinion — default to allow.
+    Unknown,
+}
+
+/// Pluggable permission provider — registered at boot, checked on
+/// every syscall (after lease cache miss + admin bypass miss).
+///
+/// Implementations must be `Send + Sync` (the kernel is shared across
+/// threads). The provider MAY acquire the GIL internally (e.g. to call
+/// a Python ReBAC checker) — that's the provider's responsibility,
+/// not the kernel's.
+pub trait PermissionProvider: Send + Sync {
+    fn check(
+        &self,
+        path: &str,
+        permission: Permission,
+        ctx: &OperationContext,
+    ) -> PermissionDecision;
+}
+
 // ── INTERCEPT hook context structs (§11) ─────────────────────────────
 //
 // Pure Rust equivalents of Python vfs_hooks dataclasses.

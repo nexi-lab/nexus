@@ -28,7 +28,6 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.lib.zone_perms_cache import request_zone_perms_scope
 
 if TYPE_CHECKING:
     pass
@@ -110,12 +109,7 @@ class ContentMixin:
         # DT_STREAM uses 30s timeout (long-poll); DT_PIPE uses 5s.
         # The caller's `offset` param doubles as the stream cursor position.
         _timeout_ms = 5000
-        # Bind real zone_perms to the request scope so the Python PermissionHook
-        # (rebuilt from the Rust-stripped context) can resurrect them without
-        # racing the subject-keyed cache.  Issue #3786 / Codex Round 3.
-        _zp = getattr(context, "zone_perms", ()) if context else ()
-        with request_zone_perms_scope(_zp):
-            result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
+        result = self._kernel.sys_read(path, _rust_ctx, _timeout_ms, offset)
 
         # DT_STREAM: return dict with next_offset for cursor advancement.
         # This is a Python API contract that callers depend on.
@@ -201,11 +195,9 @@ class ContentMixin:
         if len(paths) <= 4:
             zone_id, agent_id, is_admin = self._get_context_identity(context)
             _rust_ctx = self._build_rust_ctx(context, is_admin)
-            _zp = getattr(context, "zone_perms", ()) if context else ()
             for path in paths:
                 try:
-                    with request_zone_perms_scope(_zp):
-                        result = self._kernel.sys_read(path, _rust_ctx)
+                    result = self._kernel.sys_read(path, _rust_ctx)
                     content = result.data or b""
                     if return_metadata:
                         meta = self.metadata.get(path)
@@ -258,7 +250,6 @@ class ContentMixin:
         read_start = time.time()
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
-        _zp = getattr(context, "zone_perms", ()) if context else ()
 
         # Batch metadata lookup (needed for return_metadata=True)
         batch_meta: dict[str, FileMetadata | None] | None = None
@@ -274,8 +265,7 @@ class ContentMixin:
             try:
                 bulk_content: bytes | None = None
                 try:
-                    with request_zone_perms_scope(_zp):
-                        result = self._kernel.sys_read(path, _rust_ctx)
+                    result = self._kernel.sys_read(path, _rust_ctx)
                     bulk_content = result.data or b""
                 except NexusFileNotFoundError:
                     bulk_content = None
@@ -559,16 +549,7 @@ class ContentMixin:
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
-        # Bind real zone_perms to the request scope so the Python PermissionHook
-        # (rebuilt from the Rust-stripped context) can resurrect them without
-        # racing the subject-keyed cache.  Issue #3786 / Codex Round 3.
-        _zp = (
-            getattr(context, "zone_perms", ())
-            if context is not None and not isinstance(context, dict)
-            else ()
-        )
-        with request_zone_perms_scope(_zp):
-            result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         # POST-INTERCEPT hooks (Rust handles backend write + metadata + OBSERVE)
         if result.hit and result.post_hook_needed:
@@ -804,12 +785,7 @@ class ContentMixin:
 
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
 
-        # Bind real zone_perms to the request scope so the Python PermissionHook
-        # (rebuilt from the Rust-stripped context) can resurrect them without
-        # racing the subject-keyed cache.  Issue #3786 / Codex Round 3.
-        _zp_w = getattr(context, "zone_perms", ()) if context else ()
-        with request_zone_perms_scope(_zp_w):
-            result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
+        result = self._kernel.sys_write(path, _rust_ctx, buf, offset)
 
         # Reconstruct old_metadata from Rust result (atomic snapshot taken
         # during write — no TOCTOU gap, no extra PyO3 round-trip).

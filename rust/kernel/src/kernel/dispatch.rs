@@ -4,9 +4,14 @@
 //! Every method stays a member of [`Kernel`] via this submodule's
 //! `impl Kernel { ... }` block.
 
-use crate::dispatch::{HookContext, NativeInterceptHook};
+use crate::dispatch::{
+    HookContext, NativeInterceptHook, Permission, PermissionDecision, PermissionProvider,
+};
 
-use super::{Kernel, KernelError, RwLockExt};
+use super::{Kernel, KernelError, OperationContext, RwLockExt};
+
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 impl Kernel {
     // ── Native INTERCEPT hook dispatch ─────────────────
@@ -67,6 +72,82 @@ impl Kernel {
         self.native_hooks
             .read_unconditional()
             .has_mutating_match(path)
+    }
+
+    // ── §13 Permission gate ─────────────────────────────────────────
+
+    /// Kernel permission gate — called BEFORE `dispatch_native_pre`.
+    #[inline]
+    pub fn check_permission(
+        &self,
+        path: &str,
+        permission: Permission,
+        ctx: &OperationContext,
+    ) -> Result<(), KernelError> {
+        if path.starts_with("/__sys__/") {
+            return Ok(());
+        }
+        if ctx.is_system {
+            return Ok(());
+        }
+        if !self.has_permission_provider.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        let agent_id = ctx.agent_id.as_deref().unwrap_or(&ctx.user_id);
+
+        if self.permission_lease_cache.check(path, agent_id) {
+            return Ok(());
+        }
+
+        if !ctx.zone_perms.is_empty() {
+            let perm_char = match permission {
+                Permission::Read => "r",
+                Permission::Write => "w",
+                Permission::Traverse => "r",
+            };
+            let has_zone_grant = ctx
+                .zone_perms
+                .iter()
+                .any(|(_zone_id, perm_chars)| perm_chars.contains(perm_char));
+            if has_zone_grant {
+                self.permission_lease_cache.stamp(path, agent_id);
+                return Ok(());
+            }
+            return Err(KernelError::PermissionDenied(format!(
+                "zone permission denied: no {perm_char} grant for '{path}'"
+            )));
+        }
+
+        // Full permission check runs in NativeInterceptHook dispatch
+        Ok(())
+    }
+
+    /// Register a permission provider (set once at boot).
+    pub fn set_permission_provider(&self, provider: Arc<dyn PermissionProvider>) {
+        *self.permission_provider.write() = Some(provider);
+        self.has_permission_provider.store(true, Ordering::Relaxed);
+    }
+
+    /// Configure admin bypass (default: true).
+    pub fn set_permission_admin_bypass(&self, enabled: bool) {
+        self.permission_admin_bypass
+            .store(enabled, Ordering::Relaxed);
+    }
+
+    /// Invalidate permission lease for a specific path.
+    pub fn permission_lease_invalidate_path(&self, path: &str) {
+        self.permission_lease_cache.invalidate_path(path);
+    }
+
+    /// Invalidate permission leases for a specific agent.
+    pub fn permission_lease_invalidate_agent(&self, agent_id: &str) {
+        self.permission_lease_cache.invalidate_agent(agent_id);
+    }
+
+    /// Invalidate all permission leases.
+    pub fn permission_lease_invalidate_all(&self) {
+        self.permission_lease_cache.invalidate_all();
     }
 
     /// Dispatch POST-INTERCEPT hooks from NativeHookRegistry (fire-and-forget).

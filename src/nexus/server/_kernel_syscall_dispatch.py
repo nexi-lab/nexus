@@ -81,6 +81,7 @@ _ALIASES: dict[str, str] = {
     "rename": "sys_rename",
     "rmdir": "rmdir",
     "sys_mkdir": "mkdir",
+    "sys_readdir": "sys_readdir",
     "sys_rmdir": "rmdir",
     "sys_write": "write",
     "write": "write",
@@ -316,7 +317,10 @@ async def _occ_write_dispatch(
             if_none_match=if_none_match,
             offset=offset,
         )
-    return nexus_fs.write(params["path"], content, context=context, offset=offset)
+    # #4005 round-2: NexusFS.write is sync — offload like dispatch_kernel_syscall.
+    return await asyncio.to_thread(
+        nexus_fs.write, params["path"], content, context=context, offset=offset
+    )
 
 
 def _apply_pre_call_defaults(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -398,7 +402,11 @@ async def dispatch_kernel_syscall(
         if asyncio.iscoroutinefunction(func):
             raw_result = await func(**kwargs)
         else:
-            raw_result = func(**kwargs)
+            # #4005 round-2: NexusFS sys_* methods are sync and may do
+            # blocking I/O (DB hits, large reads). Calling them inline
+            # would park the asyncio loop — same DoS class that justified
+            # excluding sys_watch. Offload to the default thread pool.
+            raw_result = await asyncio.to_thread(func, **kwargs)
 
     result = _apply_result_adapter(method, raw_result, params)
 

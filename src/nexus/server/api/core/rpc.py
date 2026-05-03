@@ -3,6 +3,7 @@
 Extracted from fastapi_server.py (#1602).
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -54,8 +55,37 @@ async def rpc_endpoint(
     """
     import time as _time
 
+    from nexus.server._kernel_syscall_dispatch import (
+        KERNEL_SYSCALL_NAMES,
+        dispatch_kernel_syscall,
+    )
     from nexus.server.dependencies import get_operation_context
     from nexus.server.rpc.dispatch import dispatch_method
+
+    # #4005 round-3: route the full kernel-syscall set through the thin
+    # dispatcher. Round-2 narrowing silently broke read/write/list/...
+    # (no METHOD_PARAMS entry on develop). Round-2 to_thread offload
+    # already prevents loop-park, so the broader path is safe.
+    #
+    # #4005 round-4: only idempotent reads get an asyncio.wait_for
+    # timeout. Cancelling a wait_for does NOT cancel the worker thread
+    # asyncio.to_thread spawned, so a mutating syscall could time out
+    # at the HTTP layer while the underlying write/delete/rename still
+    # commits — the caller would then retry and double-mutate. For the
+    # mutating set we accept the same "no per-request timeout" stance
+    # the gRPC ``Call`` servicer already takes; per-backend deadlines
+    # remain the right place to bound long-running mutations.
+    _HTTP_TIMEOUT_SAFE_SYSCALLS: frozenset[str] = frozenset(
+        {
+            "access",
+            "exists",
+            "list",
+            "read",
+            "sys_read",
+            "sys_readdir",
+            "sys_stat",
+        }
+    )
 
     logger.debug("Deprecated HTTP RPC called: method=%s (use gRPC Call RPC instead)", method)
     _rpc_start = _time.time()
@@ -79,6 +109,75 @@ async def rpc_endpoint(
         # Set method from URL if not in body
         if not rpc_request.method:
             rpc_request.method = method
+
+        # #4005 round-3: route ALL kernel syscall wire names (sys_* +
+        # legacy aliases) through dispatch_kernel_syscall before
+        # parse_method_params. Wraps with asyncio.wait_for so a slow
+        # backend can't tie up an HTTP request indefinitely (parity
+        # with dispatch_method's to_thread_with_timeout).
+        if method in KERNEL_SYSCALL_NAMES:
+            from types import SimpleNamespace
+
+            context = get_operation_context(auth_result)
+            raw_params = dict(rpc_request.params or {})
+            # ``scope_params_for_zone`` mutates via setattr — mirror the gRPC
+            # servicer pattern (``servicer.py`` ~line 227): wrap in
+            # SimpleNamespace, scope, then unwrap back to dict for
+            # ``dispatch_kernel_syscall`` (which decodes via inspect.signature).
+            _params_ns = SimpleNamespace(**raw_params)
+            scope_params_for_zone(_params_ns, context.zone_id)
+            raw_params = vars(_params_ns)
+            state = request.app.state
+
+            # #4005 round-5: NO early 304 in the kernel branch.
+            # ``state.nexus_fs.get_content_id`` ignores OperationContext
+            # (see nexus_fs_metadata.py: ``noqa: ARG002`` on the context
+            # argument), so a preflight 304 would bypass the read
+            # permission hooks that ``sys_read`` / ``read`` enforce. The
+            # late 304 below (after dispatch) is safe — the read had to
+            # succeed first, and matching ETags then suppress the body.
+            if_none_match = request.headers.get("If-None-Match")
+
+            _dispatch_coro = dispatch_kernel_syscall(
+                state.nexus_fs,
+                method,
+                raw_params,
+                context,
+                subscription_manager=state.subscription_manager,
+            )
+            if method in _HTTP_TIMEOUT_SAFE_SYSCALLS:
+                _timeout = getattr(state, "operation_timeout", 30.0)
+                result = await asyncio.wait_for(_dispatch_coro, timeout=_timeout)
+            else:
+                # Mutating syscalls: no wait_for — see comment above.
+                result = await _dispatch_coro
+
+            headers = _kernel_cache_headers(method, result)
+            headers["Deprecation"] = "true"
+            headers["Sunset"] = "Wed, 25 Jun 2026 00:00:00 GMT"
+            headers["X-Migration-Guide"] = "Use gRPC Call RPC (Issue #1133)"
+
+            # Late 304 (after dispatch) so a fresh ETag still suppresses body.
+            if (
+                if_none_match
+                and "ETag" in headers
+                and if_none_match.strip('"') == headers["ETag"].strip('"')
+            ):
+                return Response(
+                    status_code=304,
+                    headers={
+                        "ETag": headers["ETag"],
+                        "Cache-Control": headers.get("Cache-Control", ""),
+                    },
+                )
+
+            success_response = {
+                "jsonrpc": "2.0",
+                "id": rpc_request.id,
+                "result": result,
+            }
+            encoded = encode_rpc_message(success_response)
+            return Response(content=encoded, media_type="application/json", headers=headers)
 
         # Parse parameters — fall through to SimpleNamespace for dynamically
         # discovered @rpc_expose methods that lack pre-generated Params classes
@@ -178,6 +277,15 @@ async def rpc_endpoint(
 
         return Response(content=encoded, media_type="application/json", headers=headers)
 
+    except TimeoutError:
+        # #4005 round-3: HTTP kernel-syscall short-circuit timeout —
+        # surface as INTERNAL_ERROR matching the legacy
+        # ``to_thread_with_timeout`` behavior in dispatch_method.
+        return _error_response(
+            None,
+            RPCErrorCode.INTERNAL_ERROR,
+            f"Operation timed out (method={method})",
+        )
     except ZoneScopingError as e:
         return _error_response(None, RPCErrorCode.PERMISSION_ERROR, str(e))
     except ValueError as e:
@@ -213,6 +321,44 @@ async def rpc_endpoint(
     except Exception:
         logger.exception(f"Error executing method {method}")
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
+
+
+# #4005 round-4: kernel syscall wire-name → legacy cache category so the
+# new HTTP short-circuit reuses ``get_cache_headers`` semantics correctly.
+# Mutating sys_* must land in the ``no-store`` arm; reads/stat/list keep
+# their cache-friendly arms; lock primitives are no-cache.
+_KERNEL_CACHE_CATEGORY: dict[str, str] = {
+    "sys_read": "read",
+    # #4005 round-5: ``sys_stat`` returns metadata + content_id, but
+    # ``sys_setattr`` can mutate metadata (mtime, mode) WITHOUT changing
+    # content_id. Synthesizing an ETag from content_id alone would let
+    # a revalidating client get 304 and keep stale stat metadata across
+    # touch / chmod-like ops. Use ``get_metadata``'s arm (Cache-Control
+    # only, no ETag) until we have a metadata-versioned validator.
+    "sys_stat": "get_metadata",
+    "sys_readdir": "list",
+    "sys_write": "write",
+    "sys_unlink": "delete",
+    "sys_rename": "rename",
+    "sys_copy": "copy",
+    "sys_mkdir": "mkdir",
+    "sys_rmdir": "rmdir",
+    "sys_setattr": "write",
+    "sys_lock": "lock_acquire",
+    "sys_unlock": "lock_acquire",
+}
+
+
+def _kernel_cache_headers(method: str, result: Any) -> dict[str, str]:
+    """Cache headers for the kernel-syscall HTTP short-circuit.
+
+    Re-keys sys_* wire names onto the legacy categories that
+    ``get_cache_headers`` understands so mutating syscalls get
+    ``no-store``, reads get an ETag from ``content_id`` / bytes,
+    and ``sys_readdir`` aligns with ``list``.
+    """
+    canonical = _KERNEL_CACHE_CATEGORY.get(method, method)
+    return get_cache_headers(canonical, result)
 
 
 def get_cache_headers(method: str, result: Any) -> dict[str, str]:

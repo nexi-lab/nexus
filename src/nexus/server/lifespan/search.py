@@ -20,8 +20,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_TRUTHY = ("true", "1", "yes")
+_FALSY = ("false", "0", "no")
+
+
 def _env_truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("true", "1", "yes")
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+def _env_tristate(name: str) -> bool | None:
+    """Return True/False if the env var is set to a recognized value, else None."""
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in _TRUTHY:
+        return True
+    if raw in _FALSY:
+        return False
+    return None
 
 
 # pgvector hnsw indexes cap at 2000 dims for full-precision `vector` columns
@@ -35,51 +49,39 @@ _OPENAI_EMBEDDING_NATIVE_DIMENSIONS = {
 }
 
 
-def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str | int] | None]:
+def _resolve_txtai_runtime_config() -> tuple[str | None, dict[str, str | int] | None]:
     """Resolve txtai embedding model and optional vectors config from env.
 
-    Supports an explicit API-backed mode for Docker/demo stacks so users can
-    avoid local embedding model startup when they already have OpenAI creds.
-
-    For OpenAI text-embedding-3 models (Matryoshka-trained), passes a
-    ``dimensions`` parameter to the API for quality-preserving truncation. The
-    default of 1536 for text-embedding-3-large keeps the daemon under the
-    pgvector hnsw 2000-dim cap; operators can override with
-    NEXUS_TXTAI_DIMENSIONS.
+    Three-way auto:
+    - explicit local model (sentence-transformers/...) wins; opt-in to ~900 MB
+    - OPENAI_API_KEY present AND NEXUS_TXTAI_USE_API_EMBEDDINGS not opted-out:
+      API embeddings (~0 RAM) — defaults to text-embedding-3-large with
+      Matryoshka truncation to 1536d (pgvector hnsw cap)
+    - neither: returns (None, None) -> txtai BM25 keyword-only fast-path
     """
     configured_model = os.environ.get("NEXUS_TXTAI_MODEL", "").strip()
     openai_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     openai_base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
-    # Auto-prefer OpenAI when a key is available — local sentence-transformers
-    # is the fallback for keyless dev setups, not the default. ``text-embedding-3-large``
-    # matches the prevailing production storage dim (1536 truncated via Matryoshka)
-    # and beats local MiniLM (384d) on retrieval quality across MTEB.
-    # Operators can force local with ``NEXUS_TXTAI_USE_API_EMBEDDINGS=false``.
-    api_env = os.environ.get("NEXUS_TXTAI_USE_API_EMBEDDINGS", "").strip().lower()
-    if api_env in ("true", "1", "yes"):
-        use_api_embeddings = True
-    elif api_env in ("false", "0", "no"):
-        use_api_embeddings = False
-    else:
-        use_api_embeddings = bool(openai_api_key)
+    use_api = _env_tristate("NEXUS_TXTAI_USE_API_EMBEDDINGS")
 
-    model = configured_model or (
-        "openai/text-embedding-3-large"
-        if use_api_embeddings and openai_api_key
-        else "sentence-transformers/all-MiniLM-L6-v2"
-    )
-    vectors: dict[str, str | int] | None = None
+    # Explicit local model wins (heavy opt-in)
+    if configured_model and not configured_model.startswith("openai/"):
+        return configured_model, None
 
-    if use_api_embeddings and model.startswith("openai/") and openai_api_key:
-        vectors = {"api_key": openai_api_key}
-        if openai_base_url:
-            vectors["api_base"] = openai_base_url
+    # Hard opt-out or no key -> BM25 keyword-only fast path (no model load)
+    if use_api is False or not openai_api_key:
+        return None, None
 
-        dim = _resolve_embedding_dimensions(model)
-        if dim is not None:
-            vectors["dimensions"] = dim
+    model = configured_model or "openai/text-embedding-3-large"
+    vectors: dict[str, str | int] = {"api_key": openai_api_key}
+    if openai_base_url:
+        vectors["api_base"] = openai_base_url
 
-    return model, vectors or None
+    dim = _resolve_embedding_dimensions(model)
+    if dim is not None:
+        vectors["dimensions"] = dim
+
+    return model, vectors
 
 
 def _resolve_embedding_dimensions(model: str) -> int | None:
@@ -150,6 +152,15 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
         txtai_model, txtai_vectors = _resolve_txtai_runtime_config()
+        # Issue #3997: surface mode in boot logs so operators see whether
+        # heavy local model, remote API embeddings, or BM25-only is active.
+        if txtai_model is None:
+            _mode = "bm25-only"
+        elif txtai_model.startswith("openai/"):
+            _mode = "openai-api"
+        else:
+            _mode = "local"
+        logger.info("Search backend mode: %s (model=%s)", _mode, txtai_model or "<none>")
         _path_ctx_max_zones_env = os.environ.get("NEXUS_PATH_CONTEXT_MAX_ZONES")
         _path_ctx_max_zones = 2048
         if _path_ctx_max_zones_env:

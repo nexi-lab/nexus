@@ -85,8 +85,12 @@ services:
       # Database
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
-      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
-      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
+      # #3997: right-sized for single-tenant demo (was 20/30). The values
+      # mirror ProfileTuning.storage.db_pool_size/db_max_overflow on the
+      # FULL profile; ``NEXUS_DB_*`` env vars are still the runtime SSOT
+      # consumed by ``SQLAlchemyRecordStore._build_pool_kwargs``.
+      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-5}
+      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-5}
       # Auth
       NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}

@@ -54,6 +54,27 @@ export MKL_ENABLE_INSTRUCTIONS="${MKL_ENABLE_INSTRUCTIONS:-SSE4_2}"
 export ATEN_CPU_CAPABILITY="${ATEN_CPU_CAPABILITY:-default}"
 
 # ---------------------------------------------------------------------------
+# jemalloc safety net (Issue #3997)
+# Dockerfile prepends /usr/lib/libjemalloc.so.2 to LD_PRELOAD via a symlink
+# (per-arch). If the file is missing at runtime (custom base image, broken
+# layer, mount issue), strip it from LD_PRELOAD so the dynamic linker
+# doesn't abort every command in the container. Glibc + MALLOC_ARENA_MAX=2
+# fallback still saves 400-800 MB RSS.
+# ---------------------------------------------------------------------------
+_jemalloc_path="/usr/lib/libjemalloc.so.2"
+if [ -n "${LD_PRELOAD:-}" ] && [ ! -e "$_jemalloc_path" ]; then
+    case ":${LD_PRELOAD}:" in
+        *":${_jemalloc_path}:"*)
+            echo "WARN: ${_jemalloc_path} missing; stripping from LD_PRELOAD (glibc fallback)" >&2
+            export LD_PRELOAD="${LD_PRELOAD//${_jemalloc_path}:/}"
+            export LD_PRELOAD="${LD_PRELOAD//:${_jemalloc_path}/}"
+            export LD_PRELOAD="${LD_PRELOAD//${_jemalloc_path}/}"
+            ;;
+    esac
+fi
+unset _jemalloc_path
+
+# ---------------------------------------------------------------------------
 # LD_PRELOAD fallback (CPU-only)
 # Preloading the system libgomp helps libraries other than faiss that link
 # against the system copy.  On CUDA, LD_PRELOAD conflicts with NVIDIA's

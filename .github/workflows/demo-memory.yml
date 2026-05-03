@@ -1,0 +1,76 @@
+name: Demo Memory Regression
+
+# Issue #3997: idle nexusd RSS regression test for the demo profile.
+# Builds the image, boots nexus-stack compose, polls /healthz/ready,
+# parses /proc/$pid/status from inside the container, asserts the
+# acceptance thresholds (VmRSS<450MB, Threads<20, VmData<4GB).
+#
+# Not blocking PR CI by default — runs on develop push, nightly cron,
+# and manual dispatch. Promote to required-status once stable.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'Dockerfile'
+      - 'dockerfiles/**'
+      - 'nexus-stack.yml'
+      - 'src/nexus/lib/performance_tuning.py'
+      - 'src/nexus/server/lifespan/**'
+      - 'src/nexus/bricks/search/txtai_backend.py'
+      - 'src/nexus/bricks/search/daemon.py'
+      - 'tests/integration/test_demo_memory.py'
+      - '.github/workflows/demo-memory.yml'
+  schedule:
+    - cron: "0 7 * * *"  # 07:00 UTC nightly
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  demo-memory:
+    name: nexusd demo idle RSS <= 450 MB
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Sync project (test extras)
+        run: uv sync --frozen --extra test
+
+      - name: Build nexus image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: nexus-server:latest
+          build-args: |
+            NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run demo memory regression
+        run: uv run pytest -m demo_memory tests/integration/test_demo_memory.py -v -s
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          for c in $(docker ps -a --format '{{.Names}}' | grep '^nexus-demo-mem-'); do
+            echo "=== $c ==="
+            docker logs --tail 200 "$c" || true
+          done
+          docker ps -a | grep '^nexus-demo-mem-' || true

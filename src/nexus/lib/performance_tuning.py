@@ -572,7 +572,7 @@ _SANDBOX_TUNING = ProfileTuning(
 _FULL_TUNING = ProfileTuning(
     concurrency=ConcurrencyTuning(
         default_workers=4,
-        thread_pool_size=200,
+        thread_pool_size=40,  # Issue #3997: was 200; anyio upstream default for single-tenant
         max_async_concurrency=10,
         task_runner_workers=4,
     ),
@@ -585,8 +585,8 @@ _FULL_TUNING = ProfileTuning(
         write_buffer_flush_ms=100,
         write_buffer_max_size=100,
         changelog_chunk_size=500,
-        db_pool_size=20,
-        db_max_overflow=30,
+        db_pool_size=5,  # Issue #3997: was 20; Cloud SQL sample sizing for single-tenant
+        db_max_overflow=5,  # Issue #3997: was 30; single-tenant burst headroom
     ),
     search=SearchTuning(
         grep_parallel_workers=4,
@@ -615,13 +615,13 @@ _FULL_TUNING = ProfileTuning(
     connector=ConnectorTuning(
         blob_operation_timeout=60.0,
         large_upload_timeout=300.0,
-        connector_max_workers=20,
+        connector_max_workers=6,  # Issue #3997: was 20; blob ops are I/O-bound
     ),
     pool=PoolTuning(
         asyncpg_min_size=2,
         asyncpg_max_size=5,
-        httpx_max_connections=100,
-        remote_pool_maxsize=20,
+        httpx_max_connections=20,  # Issue #3997: was 100; HTTP/2 collapses anyway
+        remote_pool_maxsize=10,  # Issue #3997: was 20; single-tenant sizing
     ),
     eviction=EvictionTuning(
         memory_high_watermark_pct=85,

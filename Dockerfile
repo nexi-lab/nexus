@@ -177,6 +177,7 @@ RUN set -eux; \
         netcat-openbsd \
         ca-certificates \
         libgomp1 \
+        libjemalloc2 \
         gosu \
     && rm -rf /var/lib/apt/lists/*
 
@@ -190,17 +191,39 @@ RUN set -eux; \
 RUN set -eux; \
     if [ "${TARGETARCH}" = "arm64" ]; then \
         ln -sf /usr/lib/aarch64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
+        ln -sf /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 /usr/lib/libjemalloc.so.2; \
     elif [ "${TARGETARCH}" = "amd64" ]; then \
         ln -sf /usr/lib/x86_64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
+        ln -sf /usr/lib/x86_64-linux-gnu/libjemalloc.so.2 /usr/lib/libjemalloc.so.2; \
     fi; \
     # torch is only installed when extras include 'all' — skip symlink on SANDBOX (#3778).
     if [ -f /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so ]; then \
         ln -sf /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so /usr/lib/libc10.so; \
     fi
-# LD_PRELOAD: libgomp only (always safe). When torch is installed, the entrypoint
-# extends LD_PRELOAD to include libc10.so (see docker-entrypoint.sh).
-ENV LD_PRELOAD="/usr/lib/libgomp.so.1"
+# LD_PRELOAD: jemalloc first (intercepts allocator calls before any other lib),
+# then libgomp. When torch is installed, the entrypoint extends LD_PRELOAD to
+# include libc10.so (see docker-entrypoint.sh). The entrypoint also strips
+# jemalloc from LD_PRELOAD if the .so is missing at runtime (defensive — see T6).
+ENV LD_PRELOAD="/usr/lib/libjemalloc.so.2:/usr/lib/libgomp.so.1"
 ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
+
+# Issue #3997: cap glibc arenas (default 8*cpu_count -> 200-400 MB RSS bloat
+# on threaded Python) and lower trim threshold so free() returns pages to
+# the kernel.
+ENV MALLOC_ARENA_MAX=2 \
+    MALLOC_TRIM_THRESHOLD_=131072
+
+# Issue #3997: cap BLAS worker threads. numpy/torch/sentence-transformers spawn
+# cpu_count BLAS threads at first import; each = 8 MB pthread stack + glibc arena.
+# Caps must be set BEFORE Python imports numpy/torch -> Dockerfile ENV (entrypoint
+# is too late for some import paths). Users opting into local embeddings should
+# override at `docker run -e OMP_NUM_THREADS=N` for throughput.
+# OMP_NUM_THREADS and MKL_ENABLE_INSTRUCTIONS are set in docker-entrypoint.sh
+# (already at value 1) for compatibility with the faiss/torch SIMD-portability
+# defaults, so they are not duplicated here.
+ENV OPENBLAS_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    VECLIB_MAXIMUM_THREADS=1
 
 # ---------- CLI connectors: gws + gh (Issue #3148) ----------
 # gws: Google Workspace CLI for Gmail/Calendar/Drive/Sheets/Docs/Chat connectors
@@ -325,8 +348,11 @@ ENV PYTHONUNBUFFERED=1 \
     NEXUS_PORT=2026 \
     NEXUS_PROFILE=full \
     NEXUS_DATA_DIR=/app/data \
-    NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2 \
     NEXUS_TXTAI_SPARSE=false
+# Issue #3997: NEXUS_TXTAI_RERANKER is no longer set by default — the
+# cross-encoder/ms-marco model loaded ~300 MB unconditionally. Operators
+# wanting reranking opt in:
+#   -e NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2
 
 EXPOSE 2026 2126
 

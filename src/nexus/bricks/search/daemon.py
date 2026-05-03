@@ -133,8 +133,12 @@ class DaemonConfig:
     entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
 
-    # txtai backend config (Issue #2663)
-    txtai_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # txtai backend config (Issue #2663). ``None`` -> BM25 keyword-only
+    # fast-path (Issue #3997: resolver returns ``None`` when there is no
+    # API key and no explicit local model). ``TxtaiBackend._startup_impl``
+    # detects ``model=None`` and skips ``Embeddings(path=...)`` entirely,
+    # saving ~900 MB RSS at boot for default deploys.
+    txtai_model: str | None = "sentence-transformers/all-MiniLM-L6-v2"
     txtai_vectors: dict[str, Any] | None = None
     txtai_reranker: str | None = None  # e.g. "cross-encoder/ms-marco-MiniLM-L-2-v2"
     txtai_sparse: bool = False  # Enable SPLADE learned sparse retrieval
@@ -3328,6 +3332,10 @@ class SearchDaemon:
             },
             # Issue #2663: txtai backend
             "backend": "txtai" if self._backend is not None else "legacy",
+            # Issue #3997: ``None`` (serialised as JSON ``null``) means the
+            # backend is in BM25 keyword-only mode — no embedding model was
+            # configured, so the heavy ``Embeddings(path=...)`` load was
+            # skipped to save RSS at boot.
             "txtai_model": self.config.txtai_model,
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,

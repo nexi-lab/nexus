@@ -708,6 +708,31 @@ class ContentMixin:
         if count is not None:
             buf = buf[:count]
 
+        # #4005 round-9: serialize same-path writes under the OCC per-path
+        # RLock so an edit(if_match=...) read-modify-write is atomic against
+        # plain writes too. Without this, a plain ``write`` committed
+        # between an edit's content_id check and its final write would
+        # silently lose the edit's intended state. RLock means OCC callers
+        # that already hold the lock pass through without deadlocking.
+        # NOTE: develop (#12f) dropped the explicit self._validate_path here
+        # — Rust kernel re-canonicalizes via path_utils.validate_path before
+        # sys_write. _occ_path_lock canonicalizes its own key internally
+        # (lib.occ._canonical_lock_key) so surface aliases hash identically.
+        from nexus.lib.occ import _occ_path_lock
+
+        with _occ_path_lock(path):
+            return self._write_locked(path, buf, offset=offset, context=context, ttl=ttl)
+
+    def _write_locked(
+        self,
+        path: str,
+        buf: bytes,
+        *,
+        offset: int = 0,
+        context: OperationContext | None = None,
+        ttl: float | None = None,
+    ) -> dict[str, Any]:
+        """Inner write body — caller holds ``_occ_path_lock(path)``."""
         # PRE-DISPATCH: virtual path resolvers (e.g. /__sys__ writers).
         _handled, _result = self.resolve_write(path, buf, context=context)
         if _handled:
@@ -986,53 +1011,56 @@ class ContentMixin:
 
         path = self._validate_path(path)
 
-        # Try to read existing content if file exists
-        # For non-existent files, we'll create them (existing_content stays empty)
-        existing_content = b""
-        try:
-            result = self.read(path, context=context, return_metadata=True)
-            # Tier 2 read(return_metadata=True) always returns dict
-            assert isinstance(result, dict), "Expected dict when return_metadata=True"
+        # #4005 round-10: append is read-modify-write — always serialize
+        # the whole sequence under the per-path OCC lock so a concurrent
+        # plain write or write_batch can't commit between our read and
+        # the final write. Inner write() reuses the same RLock so this is
+        # reentrant. Plain (no if_match, no force) appends still benefit:
+        # without the lock, two concurrent appends could both read the
+        # same pre-state and produce content that drops one append.
+        from nexus.lib.occ import _occ_path_lock
 
-            existing_content = result["content"]
+        with _occ_path_lock(path):
+            # Try to read existing content if file exists
+            # For non-existent files, we'll create them (existing_content stays empty)
+            existing_content = b""
+            try:
+                result = self.read(path, context=context, return_metadata=True)
+                # Tier 2 read(return_metadata=True) always returns dict
+                assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
-            # If if_match is provided, verify it matches current content_id
-            # (the write call will also check, but we check here to fail fast)
-            if if_match is not None and not force:
-                current_content_id = result.get("content_id")
-                if current_content_id != if_match:
-                    from nexus.contracts.exceptions import ConflictError
+                existing_content = result["content"]
 
-                    raise ConflictError(
-                        path=path,
-                        expected_content_id=if_match,
-                        current_content_id=current_content_id or "(no content_id)",
-                    )
-        except Exception as e:
-            # If file doesn't exist, treat as empty (will create new file)
-            from nexus.contracts.exceptions import NexusFileNotFoundError
+                # If if_match is provided, verify it matches current content_id.
+                if if_match is not None and not force:
+                    current_content_id = result.get("content_id")
+                    if current_content_id != if_match:
+                        from nexus.contracts.exceptions import ConflictError
 
-            if not isinstance(e, NexusFileNotFoundError):
-                # Re-raise unexpected errors (including PermissionError)
-                raise
-            # For FileNotFoundError, continue with empty content
-            # write() will check if user has permission to create the file
+                        raise ConflictError(
+                            path=path,
+                            expected_content_id=if_match,
+                            current_content_id=current_content_id or "(no content_id)",
+                        )
+            except Exception as e:
+                # If file doesn't exist, treat as empty (will create new file)
+                from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        # Combine existing content with new content
-        final_content = existing_content + content
+                if not isinstance(e, NexusFileNotFoundError):
+                    # Re-raise unexpected errors (including PermissionError)
+                    raise
+                # For FileNotFoundError, continue with empty content
+                # write() will check if user has permission to create the file
 
-        # Use the existing write method to handle all the complexity:
-        # - Permission checking
-        # - Version management
-        # - Audit logging
-        # - Workflow triggers
-        # - Parent tuple creation
-        # OCC check already done above (line 2985-2996), so just write.
-        return self.write(
-            path,
-            final_content,
-            context=context,
-        )
+            # Combine existing content with new content
+            final_content = existing_content + content
+
+            # Use the existing write method (acquires the same RLock — reentrant).
+            return self.write(
+                path,
+                final_content,
+                context=context,
+            )
 
     @rpc_expose(description="Apply surgical search/replace edits to a file")
     def edit(
@@ -1115,10 +1143,50 @@ class ContentMixin:
             ...     {"old_str": "def foo():", "new_str": "def bar():", "hint_line": 42}
             ... ], fuzzy_threshold=0.8)
         """
-        from nexus.utils.edit_engine import EditEngine
-        from nexus.utils.edit_engine import EditOperation as EditOp
 
         path = self._validate_path(path)
+
+        # #4005 round-8: serialize the if_match read-modify-write under the
+        # same per-path OCC lock occ_write_sync uses. Without this, a
+        # concurrent write could commit between our content_id check and
+        # the final write below, lost-updating the caller's intent.
+        # Plain edits (no if_match) skip the lock — same fast path as
+        # occ_write_sync.
+        if if_match is None:
+            return self._edit_locked(
+                path,
+                edits,
+                context=context,
+                if_match=if_match,
+                preview=preview,
+                fuzzy_threshold=fuzzy_threshold,
+            )
+
+        from nexus.lib.occ import _occ_path_lock
+
+        with _occ_path_lock(path):
+            return self._edit_locked(
+                path,
+                edits,
+                context=context,
+                if_match=if_match,
+                preview=preview,
+                fuzzy_threshold=fuzzy_threshold,
+            )
+
+    def _edit_locked(
+        self,
+        path: str,
+        edits: list,
+        *,
+        context: object | None = None,
+        if_match: str | None = None,
+        preview: bool = False,
+        fuzzy_threshold: float = 1.0,
+    ) -> dict:
+        """Inner edit body — caller holds ``_occ_path_lock(path)`` when if_match."""
+        from nexus.utils.edit_engine import EditEngine
+        from nexus.utils.edit_engine import EditOperation as EditOp
 
         # Read current content with metadata (via Tier 2 convenience)
         result = self.read(path, context=context, return_metadata=True)
@@ -1296,6 +1364,35 @@ class ContentMixin:
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         paths = [p for p, _ in validated_files]
 
+        # #4005 round-10: write_batch is a public mutation entrypoint and
+        # must participate in the same per-path OCC lock contract that
+        # write/edit use, otherwise a concurrent edit(if_match=...) on one
+        # of these paths can be silently overwritten between its
+        # content_id check and its final write. Acquire each unique path
+        # lock in deterministic sorted order to avoid lock-ordering
+        # deadlocks across concurrent batch writers, then run the batch
+        # body under all of them via ExitStack.
+        from contextlib import ExitStack
+
+        from nexus.lib.occ import _occ_path_lock
+
+        with ExitStack() as _stack:
+            for _p in sorted(set(paths)):
+                _stack.enter_context(_occ_path_lock(_p))
+            return self._write_batch_locked(
+                validated_files, paths, context, zone_id, agent_id, is_admin
+            )
+
+    def _write_batch_locked(
+        self,
+        validated_files: list[tuple[str, bytes]],
+        paths: list[str],
+        context: OperationContext | None,
+        zone_id: str | None,
+        agent_id: str | None,
+        is_admin: bool,
+    ) -> list[dict[str, Any]]:
+        """Inner write_batch body — caller holds _occ_path_lock for every path."""
         # Get existing metadata for pre-hooks and is_new detection
         existing_metadata = self.metadata.get_batch(paths)
 

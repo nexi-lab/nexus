@@ -158,7 +158,9 @@ class TxtaiBackend:
         self,
         *,
         database_url: str | None = None,
-        model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        # Issue #3997: ``None`` activates the BM25 keyword-only fast-path in
+        # ``_startup_impl`` — no embedding model is loaded.
+        model: str | None = "sentence-transformers/all-MiniLM-L6-v2",
         vectors: dict[str, Any] | None = None,
         hybrid: bool = True,
         graph: bool = True,
@@ -420,7 +422,11 @@ class TxtaiBackend:
     async def _startup_impl(self) -> None:
         """Initialize txtai Embeddings with pgvector backend (with fallback).
 
-        Fallback chain:
+        Fast-path (Issue #3997): when ``model is None`` (no embedding model
+        configured), start in keyword-only BM25 mode immediately and skip
+        the dense-vector setup entirely (saves ~900 MB RSS at boot).
+
+        Fallback chain (when ``model`` is set):
         1. Full hybrid (BM25 + dense embeddings) with pgvector storage
         2. Full hybrid with in-memory storage (pgvector unavailable)
         3. Keyword-only BM25 (embedding model fails to load)
@@ -431,6 +437,37 @@ class TxtaiBackend:
         except ModuleNotFoundError:
             logger.warning("txtai package not installed; starting in degraded search mode")
             self._embeddings = None
+            self._started = True
+            return
+
+        # Issue #3997: BM25 keyword-only fast-path. When no embedding model is
+        # configured (resolver returned ``(None, None)`` because no API key
+        # and no explicit local model — the typical default-deploy case), skip
+        # the heavy ``Embeddings(path=...)`` load entirely and start txtai
+        # with a keyword-only config directly. Saves ~900 MB RSS at boot.
+        # Skips GPU detection, pgvector probe, hybrid build, and load probe
+        # because none of them apply when there is no dense vector model.
+        if self._model is None:
+            bm25_content_store: bool | str = self._database_url or True
+            bm25_only_config: dict[str, Any] = {
+                "keyword": True,
+                "content": bm25_content_store,
+                "objects": True,
+            }
+            try:
+                self._embeddings = Embeddings(bm25_only_config)
+                self._hybrid = False
+                self._configure_litellm()
+                logger.info(
+                    "txtai backend started in BM25-only mode "
+                    "(no embedding model configured; Issue #3997)"
+                )
+            except Exception:
+                logger.error(
+                    "BM25-only init failed; entering degraded mode (no results).",
+                    exc_info=True,
+                )
+                self._embeddings = None
             self._started = True
             return
 

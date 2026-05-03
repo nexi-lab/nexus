@@ -360,13 +360,17 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     /// None in embedded/single-node mode.
     #[cfg(all(feature = "grpc", has_protos))]
     forward_ctx: Option<ForwardContext>,
-    /// Apply-side dcache invalidation slot — cached at construction so
-    /// sync callers (kernel ``DLC::mount``) can install / replace the
-    /// callback without holding the state-machine's async RwLock. The
-    /// slot itself is ``Arc<parking_lot::RwLock<Option<Arc<Fn>>>>``;
-    /// only ``Option<Arc<Fn>>`` swaps serialize through the inner lock.
+    /// Apply-side cache-invalidation slot — cached at construction so
+    /// sync callers (kernel ``DLC``, ``ZoneMetaStore::new``) can
+    /// register callbacks without holding the state-machine's async
+    /// RwLock. The slot itself is
+    /// ``Arc<parking_lot::RwLock<Vec<Arc<Fn>>>>``; only Vec mutations
+    /// serialize through the inner lock. Multiple registrations
+    /// accumulate (one per ``ZoneMetaStore`` surface that wants its
+    /// internal cache invalidated on apply — direct mount + every
+    /// crosslink).
     #[allow(clippy::type_complexity)]
-    invalidate_cb_slot: Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>>,
+    invalidate_cb_slot: Option<Arc<parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>>,
     /// Apply-side DT_MOUNT slot — cached at construction so sync
     /// callers (kernel federation-mount install) can swap the callback
     /// without holding the state-machine's async RwLock. Same shape as
@@ -821,17 +825,31 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         }
     }
 
-    /// Clone the state-machine's apply-side invalidation slot so the
-    /// kernel (which owns the DCache) can install a callback that fires
-    /// on every committed metadata mutation. Returns ``None`` for
-    /// state machines that don't expose a slot (e.g. witness) — kernel
-    /// callers should treat ``None`` as "cache coherence is caller's
-    /// responsibility" and skip the install.
+    /// Clone the state-machine's apply-side invalidation slot so a
+    /// downstream consumer can ``push`` a callback that fires on every
+    /// committed metadata mutation. Returns ``None`` for state machines
+    /// that don't expose a slot (e.g. witness) — callers should treat
+    /// ``None`` as "cache coherence is caller's responsibility" and
+    /// skip the install.
+    ///
+    /// Most callers should prefer [`Self::register_invalidate_cb`],
+    /// which encapsulates the ``push`` + ``None``-on-witness handling.
     #[allow(clippy::type_complexity)]
     pub fn invalidate_cb_slot(
         &self,
-    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
+    ) -> Option<Arc<parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>> {
         self.invalidate_cb_slot.clone()
+    }
+
+    /// Register an apply-side cache-invalidation callback on this
+    /// consensus. Multiple callbacks accumulate — every committed
+    /// metadata mutation fires every registered callback in
+    /// registration order. ``None`` slot (witness state machine) is a
+    /// silent no-op.
+    pub fn register_invalidate_cb(&self, cb: Arc<dyn Fn(&str) + Send + Sync>) {
+        if let Some(slot) = self.invalidate_cb_slot.as_ref() {
+            slot.write().push(cb);
+        }
     }
 
     /// Clone the state-machine's apply-side DT_MOUNT slot so the kernel

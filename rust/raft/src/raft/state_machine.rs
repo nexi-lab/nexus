@@ -279,18 +279,24 @@ pub trait StateMachine: Send + Sync {
 
     /// Optional apply-side cache-invalidation slot.
     ///
-    /// State machines that back a kernel DCache (notably
-    /// ``FullStateMachine``) return their shared ``Arc<RwLock<...>>``
-    /// so a downstream consumer (``ZoneConsensus`` and, transitively,
-    /// the kernel) can ``write().replace()`` a callback that fires on
-    /// every committed metadata mutation. State machines that have no
-    /// such coherence concern (witness, direct-drive test harnesses)
-    /// return ``None`` via the default impl, and apply stays a pure
-    /// no-op on that front.
+    /// State machines that back per-mount metastore caches (notably
+    /// ``FullStateMachine``) return their shared
+    /// ``Arc<RwLock<Vec<Arc<Fn>>>>`` so multiple downstream consumers
+    /// (one per ``ZoneMetaStore`` surface — direct mount + every
+    /// crosslink) can each ``push`` a callback that fires on every
+    /// committed metadata mutation. State machines that have no such
+    /// coherence concern (witness, direct-drive test harnesses) return
+    /// ``None`` via the default impl, and apply stays a pure no-op on
+    /// that front.
+    ///
+    /// Multiple registrations: every crosslink mount gets its own
+    /// ``ZoneMetaStore`` (with its own internal cache), and each one
+    /// self-registers an invalidator on this slot so apply-side
+    /// invalidation fans out to every surface bound to the zone.
     #[allow(clippy::type_complexity)]
     fn invalidate_cb_slot(
         &self,
-    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
+    ) -> Option<Arc<parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>> {
         None
     }
 
@@ -660,7 +666,7 @@ pub struct FullStateMachine {
     /// unset. Callback panics are surfaced via ``catch_unwind`` so
     /// apply can't be poisoned per raft's "apply must not fail" rule.
     #[allow(clippy::type_complexity)]
-    invalidate_cb: Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>,
+    invalidate_cb: Arc<parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>,
 }
 
 impl FullStateMachine {
@@ -700,7 +706,7 @@ impl FullStateMachine {
             last_applied: Arc::new(AtomicU64::new(last_applied)),
             #[cfg(feature = "grpc")]
             mount_apply_cb: Arc::new(parking_lot::RwLock::new(None)),
-            invalidate_cb: Arc::new(parking_lot::RwLock::new(None)),
+            invalidate_cb: Arc::new(parking_lot::RwLock::new(Vec::new())),
         })
     }
 
@@ -855,14 +861,14 @@ impl FullStateMachine {
     /// installer (bad closure capture, dropped dcache) cannot poison
     /// apply — raft requires apply to be infallible on the happy path.
     fn emit_invalidate_event(&self, command: &Command) {
-        // Snapshot the cb under the read lock, release before invoking
-        // — the callback must never acquire this lock back (would
-        // deadlock a future installer) and must not take long enough
-        // to stall the apply loop.
-        let cb_opt = self.invalidate_cb.read().clone();
-        let Some(cb) = cb_opt else {
+        // Snapshot the cb vec under the read lock, release before
+        // invoking — the callbacks must never acquire this lock back
+        // (would deadlock a future installer) and must not take long
+        // enough to stall the apply loop.
+        let cbs = self.invalidate_cb.read().clone();
+        if cbs.is_empty() {
             return;
-        };
+        }
         let key = match command {
             Command::SetMetadata { key, .. }
             | Command::CasSetMetadata { key, .. }
@@ -870,14 +876,16 @@ impl FullStateMachine {
             _ => return,
         };
         let key_owned = key.to_string();
-        if let Err(payload) =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cb(&key_owned)))
-        {
-            tracing::error!(
-                key = %key_owned,
-                payload = ?payload,
-                "invalidate-event: callback panicked; continuing apply — dcache may be stale for this key"
-            );
+        for cb in cbs {
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cb(&key_owned)))
+            {
+                tracing::error!(
+                    key = %key_owned,
+                    payload = ?payload,
+                    "invalidate-event: callback panicked; continuing apply — metastore cache may be stale for this key"
+                );
+            }
         }
     }
 
@@ -1808,11 +1816,11 @@ impl StateMachine for FullStateMachine {
     }
 
     /// Return the shared apply-side invalidation slot so downstream
-    /// holders (``ZoneConsensus``, kernel ``DLC``) can install a
-    /// callback that fires on every committed metadata mutation.
+    /// holders (``ZoneConsensus``, kernel ``DLC``) can register
+    /// callbacks that fire on every committed metadata mutation.
     fn invalidate_cb_slot(
         &self,
-    ) -> Option<Arc<parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>> {
+    ) -> Option<Arc<parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>> {
         Some(Arc::clone(&self.invalidate_cb))
     }
 
@@ -2074,7 +2082,7 @@ mod tests {
             .invalidate_cb_slot()
             .expect("FullStateMachine exposes a slot");
         let calls_cb = StdArc::clone(&calls);
-        *slot.write() = Some(Arc::new(move |key: &str| {
+        slot.write().push(Arc::new(move |key: &str| {
             calls_cb.lock().unwrap().push(key.to_string());
         }));
         let mut sm = sm;
@@ -2116,10 +2124,12 @@ mod tests {
         // Panicking callback does not poison the state machine.
         let panic_count = StdArc::new(AtomicUsize::new(0));
         let panic_count_cb = StdArc::clone(&panic_count);
-        *slot.write() = Some(Arc::new(move |_key: &str| {
+        // Replace the existing accumulator-cb with the panicking cb so
+        // we exercise the panic-survives path in isolation.
+        *slot.write() = vec![Arc::new(move |_key: &str| {
             panic_count_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             panic!("intentional callback panic");
-        }));
+        })];
         let res = sm.apply(
             5,
             &Command::SetMetadata {
@@ -2136,7 +2146,7 @@ mod tests {
         assert_eq!(sm.last_applied_index(), 5);
 
         // Slot cleared → no more invocations on subsequent applies.
-        *slot.write() = None;
+        slot.write().clear();
         sm.apply(
             6,
             &Command::SetMetadata {

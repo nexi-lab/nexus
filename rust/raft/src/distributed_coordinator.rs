@@ -1291,9 +1291,9 @@ pub(crate) struct DCacheHelpers {
     pub evict_mount: Arc<dyn Fn(&str) + Send + Sync>,
     /// Install the apply-side dcache invalidator on a zone's consensus
     /// slot: `(coherence_key, &slot) -> ()`.  `slot` is the consensus's
-    /// `invalidate_cb_slot()` return.
+    /// `invalidate_cb_slot()` return — a Vec the closure pushes onto.
     pub install_apply_invalidator: Arc<
-        dyn Fn(usize, &parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>) + Send + Sync,
+        dyn Fn(usize, &parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>) + Send + Sync,
     >,
 }
 

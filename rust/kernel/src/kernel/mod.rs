@@ -2345,7 +2345,7 @@ impl Kernel {
     pub fn install_zone_apply_invalidator(
         &self,
         coherence_key: usize,
-        slot: Option<&parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>>,
+        slot: Option<&parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>,
     ) {
         let Some(slot) = slot else {
             return;
@@ -2365,7 +2365,7 @@ impl Kernel {
                 dcache.evict(&global);
             }
         });
-        *slot.write() = Some(cb);
+        slot.write().push(cb);
     }
 
     /// Hand out a closure that calls
@@ -2376,9 +2376,8 @@ impl Kernel {
     #[allow(clippy::type_complexity)]
     pub fn dcache_install_apply_invalidator_fn(
         &self,
-    ) -> Arc<
-        dyn Fn(usize, &parking_lot::RwLock<Option<Arc<dyn Fn(&str) + Send + Sync>>>) + Send + Sync,
-    > {
+    ) -> Arc<dyn Fn(usize, &parking_lot::RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>) + Send + Sync>
+    {
         let dcache = Arc::clone(&self.dcache);
         let vfs_router = Arc::clone(&self.vfs_router);
         Arc::new(move |coherence_key, slot| {
@@ -2397,7 +2396,7 @@ impl Kernel {
                     dcache.evict(&global);
                 }
             });
-            *slot.write() = Some(cb);
+            slot.write().push(cb);
         })
     }
 

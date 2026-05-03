@@ -1976,18 +1976,23 @@ impl Kernel {
 
     // ── Tier 2 convenience methods ────────────────────────────────────
 
-    /// Fast access check: validate + route + dcache existence (~100ns).
+    /// Fast access check: validate + route + metastore existence.
     ///
-    /// Returns true if file exists in dcache and path is routable.
-    /// Does NOT check metastore (dcache authoritative for hot-path).
+    /// Returns true if a metadata entry exists for `path` and the
+    /// path is routable. ``MetaStore::exists`` is a cache-fast check
+    /// when the row is in the impl's internal cache, authoritative
+    /// on a cache miss — no false negatives like the legacy
+    /// dcache-only check produced.
     pub fn access(&self, path: &str, zone_id: &str) -> bool {
         if validate_path_fast(path).is_err() {
             return false;
         }
-        if self.vfs_router.route(path, zone_id).is_err() {
-            return false;
-        }
-        self.dcache.contains(path)
+        let route = match self.vfs_router.route(path, zone_id) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        self.with_metastore_route(&route, |ms| ms.exists(path).unwrap_or(false))
+            .unwrap_or(false)
     }
 
     // ── Internal batch functions (not Tier 1 syscalls) ────────────────

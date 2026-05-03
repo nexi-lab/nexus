@@ -57,7 +57,14 @@ os.environ.setdefault("NEXUS_ENABLE_WRITE_BUFFER", "false")
 # ---------------------------------------------------------------------------
 os.environ.setdefault("NEXUS_ALLOW_EPHEMERAL_OAUTH_KEY", "1")
 
-from tests.testkit import make_test_nexus as make_test_nexus  # noqa: E402,F401
+
+def __getattr__(name: str):
+    if name == "make_test_nexus":
+        from tests.testkit import make_test_nexus
+
+        return make_test_nexus
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # ---------------------------------------------------------------------------
 # Hypothesis profiles (Issue #1303)

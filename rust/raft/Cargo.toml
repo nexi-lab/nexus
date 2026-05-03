@@ -126,5 +126,10 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
 grpc = ["tonic", "prost", "lib/transport", "lib", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2", "rcgen", "pem", "base64", "gethostname", "rand"]
 
-# Enable everything (including experimental features)
-full = ["grpc", "consensus", "python"]
+# Enable everything that builds standalone (without external Python).
+# `python` is intentionally NOT in `full` — it requires the kernel
+# crate's `python` feature to be enabled (for `PyKernel`), which is
+# done only by `nexus-cdylib`.  Workspace-level `python` was removed
+# from raft's default features in PR #3995 to keep `nexus-cluster`
+# Python-free; `full` matches that decision.
+full = ["grpc", "consensus"]

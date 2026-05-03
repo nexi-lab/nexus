@@ -773,6 +773,16 @@ class MetadataMixin:
         if _handled:
             return _result
 
+        # Capture pre-delete metadata so post-delete hooks (snapshot
+        # rollback, audit, etc.) receive the original FileMetadata.
+        # Without this, SnapshotWriteHook.on_post_delete returns early
+        # on ctx.metadata=None and never records original_hash for
+        # transactional rollback (Codex review, Issue #4002 round 4).
+        try:
+            _pre_delete_meta = self.metadata.get(path)
+        except Exception:  # noqa: BLE001 — best-effort capture
+            _pre_delete_meta = None
+
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         _rust_ctx = self._build_rust_ctx(context, is_admin)
@@ -799,6 +809,7 @@ class MetadataMixin:
                             zone_id=zone_id,
                             agent_id=agent_id,
                             recursive=recursive,
+                            metadata=_pre_delete_meta,
                         ),
                     )
                 else:
@@ -811,6 +822,7 @@ class MetadataMixin:
                             context=context,
                             zone_id=zone_id,
                             agent_id=agent_id,
+                            metadata=_pre_delete_meta,
                         ),
                     )
             return {}
@@ -818,18 +830,77 @@ class MetadataMixin:
         # ── Rust miss: only DT_EXTERNAL_STORAGE (5) or not-found ─────
         et = _unlink_result.entry_type
         if et == 0:
+            # Stranded-mount recovery (Codex review, Issue #4002 round 5):
+            # if a previous teardown deleted metadata but failed to
+            # remove the kernel mount route, the kernel now reports
+            # not-found while the route is still live.  Attempt cleanup
+            # before raising so this API stays self-healing instead of
+            # leaving an invisible orphan.
+            try:
+                stranded = self._kernel.has_mount(path, zone_id)
+            except Exception:  # noqa: BLE001 — best-effort verify
+                stranded = False
+            if stranded:
+                # Pass the caller's zone_id so non-root tenant mounts
+                # are torn down in the correct zone instead of
+                # no-op'ing against ROOT_ZONE_ID (Codex review,
+                # Issue #4002 round 7).
+                self._driver_coordinator.unmount(path, zone_id or ROOT_ZONE_ID)
+                try:
+                    still_present = self._kernel.has_mount(path, zone_id)
+                except Exception:  # noqa: BLE001 — best-effort verify
+                    still_present = False
+                if still_present:
+                    raise BackendError(
+                        f"sys_unlink: stranded mount route remains for {path!r}",
+                        path=path,
+                    )
+                logger.info(
+                    "sys_unlink: cleaned up stranded mount route for %s",
+                    path,
+                )
+                return {}
             raise NexusFileNotFoundError(path)
 
         # DT_EXTERNAL_STORAGE (5): unmount via DLC (Python service-tier,
-        # connector teardown / token revocation).
+        # connector teardown / token revocation).  Retry-safety
+        # (Codex review, Issue #4002 round 3): commit the metadata
+        # delete FIRST so a partial failure between teardown and
+        # metadata cleanup cannot leave a stuck entry.  After
+        # metadata.delete succeeds, the kernel no longer reports et=5
+        # for this path, so a retry simply short-circuits.  Connector
+        # teardown becomes best-effort; a False return is logged but
+        # does not raise, since we cannot distinguish "real teardown
+        # failure" from "already unmounted by an earlier attempt".
         if et == 5:
             ctx = self._resolve_cred(context)
             from nexus.contracts.vfs_hooks import RmdirHookContext
 
             self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
-            removed = self._driver_coordinator.unmount(path)
-            if removed:
-                self.metadata.delete(path)
+            self.metadata.delete(path)
+            # Zone-aware teardown so tenant-scoped external mounts are
+            # torn down in their own zone, not ROOT_ZONE_ID (Codex
+            # review, Issue #4002 round 7).
+            removed = self._driver_coordinator.unmount(path, zone_id or ROOT_ZONE_ID)
+            # Verify the kernel mount route is actually gone so a real
+            # teardown failure surfaces even when unmount() reports
+            # already-cleared (Codex review, Issue #4002 round 4).
+            try:
+                mount_remains = self._kernel.has_mount(path, zone_id)
+            except Exception:  # noqa: BLE001 — best-effort verify
+                mount_remains = False
+            if mount_remains:
+                raise BackendError(
+                    f"sys_unlink: mount route remains after teardown for {path!r}",
+                    path=path,
+                )
+            if not removed:
+                logger.warning(
+                    "sys_unlink: connector teardown returned False for %s "
+                    "(metadata + route already cleared; retry-safe)",
+                    path,
+                )
+            else:
                 logger.info("sys_unlink: unmounted external connector %s", path)
             return {}
 
@@ -1427,20 +1498,76 @@ class MetadataMixin:
                 # children but no explicit inode). Fall back to the same
                 # is_implicit_directory check stat/list use, so a directory
                 # that exists_batch reports True for is also deletable
-                # (Codex review, Issue #4002 round 2).
-                if self.metadata.is_implicit_directory(normalized):
+                # (Codex review, Issue #4002 round 2). Wrap the probe +
+                # enumeration in a per-path try so a degraded metastore
+                # doesn't abort the whole batch (round 3 finding).
+                try:
+                    is_implicit = self.metadata.is_implicit_directory(normalized)
+                except Exception as e:
+                    results[path] = {"success": False, "error": str(e)}
+                    continue
+                if is_implicit:
                     if not recursive:
                         results[path] = {
                             "success": False,
                             "error": "Directory not empty",
                         }
                         continue
+                    # Slash-bounded prefix prevents sibling-path leakage
+                    # (e.g. /parent must not match /parent2/x). Defensive
+                    # post-filter guards against backends that ignore the
+                    # boundary or return the directory entry itself.
+                    boundary = normalized.rstrip("/") + "/"
                     try:
-                        for child in list(
-                            self.metadata.list_iter(prefix=normalized, recursive=True)
-                        ):
-                            self.sys_unlink(child.path, context=context)
-                        results[path] = {"success": True}
+                        # Sort deepest-first so any explicit child
+                        # directory's descendants are gone by the time
+                        # we unlink the directory itself.  Pass
+                        # recursive=True so explicit dirs we couldn't
+                        # pre-drain still tear down, and tolerate
+                        # already-deleted entries (Codex review,
+                        # Issue #4002 round 3).
+                        children = sorted(
+                            (
+                                child
+                                for child in self.metadata.list_iter(
+                                    prefix=boundary, recursive=True
+                                )
+                                if child.path.startswith(boundary)
+                            ),
+                            key=lambda c: c.path.count("/"),
+                            reverse=True,
+                        )
+                        for child in children:
+                            try:
+                                self.sys_unlink(child.path, recursive=True, context=context)
+                            except NexusFileNotFoundError:
+                                continue
+                        # Strict recheck (Codex review, Issue #4002
+                        # round 6): probe explicit inode AND implicit
+                        # directory directly via metadata. If either
+                        # probe RAISES we cannot prove absence, so we
+                        # must surface failure instead of letting
+                        # access() collapse infrastructure errors into
+                        # a "looks empty" verdict.  Success requires
+                        # both probes to confirm absence.
+                        try:
+                            explicit_after = self.metadata.get(normalized)
+                            implicit_after = self.metadata.is_implicit_directory(normalized)
+                        except Exception as e:
+                            results[path] = {
+                                "success": False,
+                                "error": f"Could not verify recursive delete: {e}",
+                            }
+                            continue
+                        if explicit_after is not None or implicit_after:
+                            results[path] = {
+                                "success": False,
+                                "error": (
+                                    "Path recreated during recursive delete (concurrent write)"
+                                ),
+                            }
+                        else:
+                            results[path] = {"success": True}
                     except Exception as e:
                         results[path] = {"success": False, "error": str(e)}
                 else:

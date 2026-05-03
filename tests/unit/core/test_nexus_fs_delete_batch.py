@@ -146,3 +146,539 @@ class TestSysUnlinkNonHit:
 
         assert result["/lock-timeout.txt"]["success"] is False
         assert "entry_type=99" in result["/lock-timeout.txt"]["error"]
+
+
+class TestDeleteBatchSiblingPrefixSafety:
+    """Codex round-2 finding: implicit-dir recursive delete must not leak
+    into sibling paths that share a string prefix."""
+
+    def test_implicit_dir_recursive_does_not_touch_siblings(self, nx):
+        nx.write_batch(
+            [
+                ("/parent/inside.txt", b"a"),
+                ("/parent2/sibling.txt", b"b"),
+                ("/parent-old/legacy.txt", b"c"),
+            ]
+        )
+
+        result = nx.delete_batch(["/parent"], recursive=True)
+
+        assert result == {"/parent": {"success": True}}
+        # Only /parent/* should be gone; siblings sharing the string prefix survive.
+        assert nx.exists_batch(
+            ["/parent/inside.txt", "/parent2/sibling.txt", "/parent-old/legacy.txt"]
+        ) == {
+            "/parent/inside.txt": False,
+            "/parent2/sibling.txt": True,
+            "/parent-old/legacy.txt": True,
+        }
+
+
+class _FailingUnmountCoordinator:
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def unmount(self, _path, _zone_id=None):
+        return False
+
+
+class TestDeleteBatchExternalRetrySafety:
+    """Codex round-3 finding: external-storage cleanup must be retry-safe.
+    metadata.delete is committed before the connector teardown so a
+    partial failure cannot leave a stuck mount entry."""
+
+    def test_metadata_deleted_before_unmount(self, nx, monkeypatch):
+        class _ExternalResult:
+            hit = False
+            entry_type = 5
+            post_hook_needed = False
+
+        class _ExternalKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                return _ExternalResult()
+
+            def dispatch_pre_hooks(self, *_a, **_kw):
+                return None
+
+        order: list[str] = []
+        original_delete = nx.metadata.delete
+
+        def tracking_delete(p):
+            order.append("metadata.delete")
+            return original_delete(p)
+
+        class _TrackingCoordinator:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def unmount(self, _p, _z=None):
+                order.append("unmount")
+                return True
+
+        monkeypatch.setattr(nx, "_kernel", _ExternalKernel(nx._kernel))
+        monkeypatch.setattr(nx.metadata, "delete", tracking_delete)
+        monkeypatch.setattr(nx, "_driver_coordinator", _TrackingCoordinator(nx._driver_coordinator))
+
+        nx.sys_unlink("/external-mount")
+
+        assert order == ["metadata.delete", "unmount"]
+
+    def test_unmount_false_after_metadata_delete_succeeds(self, nx, monkeypatch):
+        """If teardown returns False after the metadata commit, the call
+        still succeeds (idempotent retry path) — kernel won't see et=5
+        on a subsequent call."""
+
+        class _ExternalResult:
+            hit = False
+            entry_type = 5
+            post_hook_needed = False
+
+        class _ExternalKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                return _ExternalResult()
+
+            def dispatch_pre_hooks(self, *_a, **_kw):
+                return None
+
+        monkeypatch.setattr(nx, "_kernel", _ExternalKernel(nx._kernel))
+        monkeypatch.setattr(
+            nx, "_driver_coordinator", _FailingUnmountCoordinator(nx._driver_coordinator)
+        )
+
+        # Should NOT raise — metadata is committed, teardown is best-effort.
+        result = nx.sys_unlink("/external-mount")
+        assert result == {}
+
+
+class TestDeleteBatchImplicitNestedExplicit:
+    """Codex round-3 finding: implicit recursive delete must drain
+    explicit child directories leaf-first so it doesn't fail with
+    Directory not empty halfway through."""
+
+    def test_implicit_parent_with_explicit_nested_dir(self, nx):
+        # /implicit-parent has no explicit inode, but contains an
+        # explicit child dir (/implicit-parent/sub) with files.
+        nx.write_batch(
+            [
+                ("/implicit-parent/sub/leaf1.txt", b"a"),
+                ("/implicit-parent/sub/leaf2.txt", b"b"),
+                ("/implicit-parent/top.txt", b"c"),
+            ]
+        )
+
+        result = nx.delete_batch(["/implicit-parent"], recursive=True)
+
+        assert result == {"/implicit-parent": {"success": True}}
+        assert nx.exists_batch(
+            [
+                "/implicit-parent/sub/leaf1.txt",
+                "/implicit-parent/sub/leaf2.txt",
+                "/implicit-parent/top.txt",
+            ]
+        ) == {
+            "/implicit-parent/sub/leaf1.txt": False,
+            "/implicit-parent/sub/leaf2.txt": False,
+            "/implicit-parent/top.txt": False,
+        }
+
+
+class TestDeleteHookMetadataPropagation:
+    """Codex round-4 finding: post-delete hook must receive pre-delete
+    FileMetadata so SnapshotWriteHook (and other rollback hooks) can
+    record original state instead of returning early on metadata=None."""
+
+    def test_delete_hook_receives_pre_delete_metadata(self, nx, monkeypatch):
+        nx.write_batch([("/tracked.txt", b"original-bytes")])
+        captured: list = []
+
+        class _CapturingKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def dispatch_post_hooks(self, name, ctx):
+                captured.append((name, ctx))
+                return self._real.dispatch_post_hooks(name, ctx)
+
+        monkeypatch.setattr(nx, "_kernel", _CapturingKernel(nx._kernel))
+
+        nx.delete_batch(["/tracked.txt"])
+
+        delete_calls = [c for c in captured if c[0] == "delete"]
+        assert delete_calls, "post-delete hook was not dispatched"
+        ctx = delete_calls[0][1]
+        assert ctx.metadata is not None, "DeleteHookContext.metadata must be populated"
+        assert ctx.metadata.path == "/tracked.txt"
+        assert ctx.metadata.size == len(b"original-bytes")
+
+
+class TestExternalRouteRemainsFailure:
+    """Codex round-4 finding: if mount route remains after teardown the
+    sys_unlink must surface the failure even when metadata is committed,
+    so callers can detect a real teardown failure instead of phantom
+    success."""
+
+    def test_route_remains_raises_backend_error(self, nx, monkeypatch):
+        from nexus.contracts.exceptions import BackendError
+
+        class _ExternalResult:
+            hit = False
+            entry_type = 5
+            post_hook_needed = False
+
+        class _LingeringMountKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                return _ExternalResult()
+
+            def dispatch_pre_hooks(self, *_a, **_kw):
+                return None
+
+            def has_mount(self, *_a, **_kw):
+                return True  # route still active after "teardown"
+
+        monkeypatch.setattr(nx, "_kernel", _LingeringMountKernel(nx._kernel))
+        monkeypatch.setattr(
+            nx, "_driver_coordinator", _FailingUnmountCoordinator(nx._driver_coordinator)
+        )
+
+        with pytest.raises(BackendError, match="mount route remains"):
+            nx.sys_unlink("/lingering-mount")
+
+
+class TestImplicitRecursiveRaceRecheck:
+    """Codex round-4 finding: implicit recursive delete must re-check
+    is_implicit_directory after draining children. A concurrent writer
+    that adds a descendant between list_iter and finalize must surface
+    as a per-item failure, not phantom success."""
+
+    def test_concurrent_descendant_addition_is_reported(self, nx, monkeypatch):
+        nx.write_batch([("/parent/leaf.txt", b"a")])
+
+        original_unlink = nx.sys_unlink
+        race_triggered = {"done": False}
+
+        def racing_unlink(p, **kw):
+            result = original_unlink(p, **kw)
+            # After we've unlinked the only original child, simulate a
+            # concurrent writer adding a new descendant.
+            if not race_triggered["done"] and p == "/parent/leaf.txt":
+                race_triggered["done"] = True
+                nx.write_batch([("/parent/sneaked-in.txt", b"b")])
+            return result
+
+        monkeypatch.setattr(nx, "sys_unlink", racing_unlink)
+
+        result = nx.delete_batch(["/parent"], recursive=True)
+
+        assert result["/parent"]["success"] is False
+        assert "concurrent" in result["/parent"]["error"].lower()
+
+    def test_concurrent_explicit_inode_recreation_is_reported(self, nx, monkeypatch):
+        """Round-5 broadened race: a writer can also create an explicit
+        inode at the target itself between drain and the finalize
+        re-check. is_implicit_directory alone wouldn't catch that;
+        metadata.get does. Simulate the race by stubbing metadata.get
+        to return a fake explicit entry AFTER the drain runs, so we
+        exercise the re-check logic without needing real-time
+        concurrency."""
+        nx.write_batch([("/parent/leaf.txt", b"a")])
+
+        original_get = nx.metadata.get
+        children_drained = {"done": False}
+
+        class _FakeMeta:
+            path = "/parent"
+            mime_type = "application/octet-stream"
+
+        def post_drain_get(p):
+            if children_drained["done"] and p == "/parent":
+                return _FakeMeta()
+            return original_get(p)
+
+        original_unlink = nx.sys_unlink
+
+        def tracking_unlink(p, **kw):
+            result = original_unlink(p, **kw)
+            if p == "/parent/leaf.txt":
+                children_drained["done"] = True
+            return result
+
+        monkeypatch.setattr(nx.metadata, "get", post_drain_get)
+        monkeypatch.setattr(nx, "sys_unlink", tracking_unlink)
+
+        result = nx.delete_batch(["/parent"], recursive=True)
+
+        assert result["/parent"]["success"] is False
+        assert "concurrent" in result["/parent"]["error"].lower()
+
+
+class TestImplicitRecursiveStrictRecheck:
+    """Codex round-6 finding: post-drain recheck must distinguish
+    'verified absent' from 'cannot verify'. A degraded metastore that
+    raises during the probe must NOT be reported as success."""
+
+    def test_recheck_metastore_failure_reported_as_failure(self, nx, monkeypatch):
+        nx.write_batch([("/parent/leaf.txt", b"a")])
+
+        original_get = nx.metadata.get
+        children_drained = {"done": False}
+
+        def flaky_get(p):
+            if children_drained["done"] and p == "/parent":
+                raise RuntimeError("metastore degraded")
+            return original_get(p)
+
+        original_unlink = nx.sys_unlink
+
+        def tracking_unlink(p, **kw):
+            result = original_unlink(p, **kw)
+            if p == "/parent/leaf.txt":
+                children_drained["done"] = True
+            return result
+
+        monkeypatch.setattr(nx.metadata, "get", flaky_get)
+        monkeypatch.setattr(nx, "sys_unlink", tracking_unlink)
+
+        result = nx.delete_batch(["/parent"], recursive=True)
+
+        assert result["/parent"]["success"] is False
+        assert "could not verify" in result["/parent"]["error"].lower()
+        assert "metastore degraded" in result["/parent"]["error"]
+
+
+class TestStrandedMountRecovery:
+    """Codex round-5 finding: et=0 (kernel reports not-found) plus a
+    live mount route is the signature of an earlier partial teardown.
+    sys_unlink should clean up the stranded route instead of raising
+    NexusFileNotFoundError and leaving an invisible orphan."""
+
+    def test_stranded_mount_is_cleaned_up(self, nx, monkeypatch):
+        unmount_calls: list[str] = []
+
+        class _StrandedMountKernel:
+            def __init__(self, real):
+                self._real = real
+                self._has_mount_calls = 0
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                class R:
+                    hit = False
+                    entry_type = 0  # kernel sees no entry
+                    post_hook_needed = False
+
+                return R()
+
+            def has_mount(self, *_a, **_kw):
+                # First call (probe) returns True → recovery triggers.
+                # After unmount() runs, route is gone → False.
+                self._has_mount_calls += 1
+                return self._has_mount_calls == 1
+
+        class _RecoveringCoordinator:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def unmount(self, p, _z=None):
+                unmount_calls.append(p)
+                return True
+
+        monkeypatch.setattr(nx, "_kernel", _StrandedMountKernel(nx._kernel))
+        monkeypatch.setattr(
+            nx, "_driver_coordinator", _RecoveringCoordinator(nx._driver_coordinator)
+        )
+
+        result = nx.sys_unlink("/stranded-mount")
+
+        assert result == {}
+        assert unmount_calls == ["/stranded-mount"]
+
+    def test_zone_id_propagated_to_unmount_external_storage(self, nx, monkeypatch):
+        """Codex round-7 finding: external-storage teardown must pass
+        the caller's zone_id so non-root tenant mounts are torn down
+        in their own zone instead of no-op'ing against ROOT_ZONE_ID."""
+        captured: list = []
+
+        class _ExternalResult:
+            hit = False
+            entry_type = 5
+            post_hook_needed = False
+
+        class _ZoneCheckingKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                return _ExternalResult()
+
+            def dispatch_pre_hooks(self, *_a, **_kw):
+                return None
+
+            def has_mount(self, _p, _z):
+                return False  # cleanly torn down
+
+        class _ZoneRecordingCoordinator:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def unmount(self, p, z=None):
+                captured.append((p, z))
+                return True
+
+        monkeypatch.setattr(nx, "_kernel", _ZoneCheckingKernel(nx._kernel))
+        monkeypatch.setattr(
+            nx, "_driver_coordinator", _ZoneRecordingCoordinator(nx._driver_coordinator)
+        )
+
+        nx.sys_unlink("/tenant-mount")
+
+        assert len(captured) == 1
+        assert captured[0][0] == "/tenant-mount"
+        # Should pass *some* zone_id (resolved from context); never call
+        # without zone or the DLC default ROOT swallows tenant mounts.
+        assert captured[0][1] is not None
+
+    def test_zone_id_propagated_to_unmount_stranded_recovery(self, nx, monkeypatch):
+        """Stranded-mount recovery path also propagates zone_id."""
+        captured: list = []
+
+        class _StrandedKernel:
+            def __init__(self, real):
+                self._real = real
+                self._has_mount_calls = 0
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                class R:
+                    hit = False
+                    entry_type = 0
+                    post_hook_needed = False
+
+                return R()
+
+            def has_mount(self, *_a, **_kw):
+                self._has_mount_calls += 1
+                return self._has_mount_calls == 1
+
+        class _ZoneRecordingCoordinator:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def unmount(self, p, z=None):
+                captured.append((p, z))
+                return True
+
+        monkeypatch.setattr(nx, "_kernel", _StrandedKernel(nx._kernel))
+        monkeypatch.setattr(
+            nx, "_driver_coordinator", _ZoneRecordingCoordinator(nx._driver_coordinator)
+        )
+
+        nx.sys_unlink("/stranded-tenant-mount")
+
+        assert len(captured) == 1
+        assert captured[0][1] is not None  # zone_id was passed
+
+    def test_stranded_mount_recovery_failure_raises(self, nx, monkeypatch):
+        from nexus.contracts.exceptions import BackendError
+
+        class _PersistentlyStrandedKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                class R:
+                    hit = False
+                    entry_type = 0
+                    post_hook_needed = False
+
+                return R()
+
+            def has_mount(self, *_a, **_kw):
+                return True  # route never goes away
+
+        class _NoOpUnmount:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def unmount(self, _p, _z=None):
+                return True  # claims success but route remains
+
+        monkeypatch.setattr(nx, "_kernel", _PersistentlyStrandedKernel(nx._kernel))
+        monkeypatch.setattr(nx, "_driver_coordinator", _NoOpUnmount(nx._driver_coordinator))
+
+        with pytest.raises(BackendError, match="stranded mount route remains"):
+            nx.sys_unlink("/persistently-stranded")
+
+
+class TestDeleteBatchImplicitDirProbeFailure:
+    """Codex round-2 finding: a degraded is_implicit_directory probe must
+    record per-path failure, not abort the rest of the batch."""
+
+    def test_implicit_dir_probe_failure_isolated(self, nx, monkeypatch):
+        nx.write_batch([("/keeper.txt", b"x")])
+
+        original_probe = nx.metadata.is_implicit_directory
+
+        def flaky_probe(p):
+            if p == "/ghost":
+                raise RuntimeError("metastore degraded")
+            return original_probe(p)
+
+        monkeypatch.setattr(nx.metadata, "is_implicit_directory", flaky_probe)
+
+        # /ghost doesn't exist → sys_unlink raises NexusFileNotFoundError →
+        # the probe runs and raises. Must record per-item failure and
+        # still process /keeper.txt.
+        result = nx.delete_batch(["/ghost", "/keeper.txt"])
+
+        assert result["/ghost"]["success"] is False
+        assert "metastore degraded" in result["/ghost"]["error"]
+        assert result["/keeper.txt"] == {"success": True}

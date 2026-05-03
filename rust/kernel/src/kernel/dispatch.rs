@@ -119,6 +119,11 @@ impl Kernel {
         }
 
         // Full permission check runs in NativeInterceptHook dispatch
+        // Full permission check (admin bypass, zone boundary,
+        // new-vs-existing file, ReBAC) runs in the NativeInterceptHook
+        // chain (dispatch_native_pre) — the Python PermissionCheckHook
+        // already has the caller's context and metadata access without
+        // additional GIL crossing or OperationContext reconstruction.
         Ok(())
     }
 

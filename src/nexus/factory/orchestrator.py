@@ -380,23 +380,26 @@ def _register_vfs_hooks(
 
         _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
 
-    # ── Permission — register PermissionCheckHook as Rust PermissionProvider ──
-    if permission_checker is not None and nx._perm_config.enforce:
+    # ── Permission — PermissionCheckHook as NativeInterceptHook ──
+    if permission_checker is not None:
+        from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
         from nexus.bricks.rebac.permission_hook import PermissionCheckHook
+
+        _lease_table = PermissionLeaseTable() if nx._perm_config.enforce else None
 
         _perm_hook = PermissionCheckHook(
             checker=permission_checker,
             metadata_store=nx.metadata,
             default_context=nx._init_cred,
-            enforce_permissions=True,
+            enforce_permissions=nx._perm_config.enforce,
             permission_enforcer=_ss.get("permission_enforcer"),
             descendant_checker=nx.service("descendant_checker"),
-            lease_table=None,
+            lease_table=_lease_table,
         )
-        _kernel = nx._kernel
-        if _kernel is not None:
-            _kernel.set_permission_provider(_perm_hook)
+        _enlist("permission", _perm_hook)
 
+        if _lease_table is not None:
+            _lt_ref = _lease_table
             _rebac_mgr = _ss.get("rebac_manager")
             if _rebac_mgr is not None and hasattr(_rebac_mgr, "_cache_coordinator"):
 
@@ -408,9 +411,9 @@ def _register_vfs_hooks(
                 ) -> None:
                     obj_type, obj_id = object
                     if obj_type == "file":
-                        _kernel.permission_lease_invalidate_path(obj_id)
+                        _lt_ref.invalidate_path(obj_id)
                     else:
-                        _kernel.permission_lease_invalidate_all()
+                        _lt_ref.invalidate_all()
 
                 _rebac_mgr._cache_coordinator.register_lease_invalidator(
                     "perm-write-lease", _lease_invalidation_callback
@@ -424,9 +427,9 @@ def _register_vfs_hooks(
                         obj_type = payload.get("object_type", "")
                         obj_id = payload.get("object_id", "")
                         if obj_type == "file" and obj_id:
-                            _kernel.permission_lease_invalidate_path(obj_id)
+                            _lt_ref.invalidate_path(obj_id)
                         else:
-                            _kernel.permission_lease_invalidate_all()
+                            _lt_ref.invalidate_all()
 
                     _coord._pubsub.subscribe(_zone_id, "lease", _on_cross_zone_lease_hint)
 

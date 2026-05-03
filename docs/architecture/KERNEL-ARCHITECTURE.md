@@ -219,9 +219,10 @@ Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` patte
 
 - **Mutating syscalls** (write, unlink, rename, rmdir): full pipeline — VFSRouter →
   VFSLock → KernelDispatch (3-phase) → Metastore → FileEvent
-- **DT_PIPE / DT_STREAM I/O**: Rust dcache detects entry_type early in sys_read/sys_write
-  and dispatches to PipeManager/StreamManager inline — no VFS lock, no metastore update,
-  no observer dispatch (matching Linux `write(2)` on a pipe not triggering inotify)
+- **DT_PIPE / DT_STREAM I/O**: the routed metastore detects entry_type early in
+  sys_read/sys_write and dispatches to PipeManager/StreamManager inline — no
+  VFS lock, no metastore update, no observer dispatch (matching Linux `write(2)`
+  on a pipe not triggering inotify)
 - **DT_LINK**: route() follows the link target one hop with self-loop rejection (§4.5);
   hooks fire on the resolved target path so audit and access checks behave identically
   to a direct write
@@ -331,7 +332,7 @@ when no services are registered.
 
 | Path | Crossings | Notes |
 |------|-----------|-------|
-| Pillar calls (Metastore, ObjectStore, DCache) | 0 | Pure Rust trait dispatch |
+| Pillar calls (Metastore, ObjectStore, CacheStore) | 0 | Pure Rust trait dispatch |
 | Hook dispatch (read/write/unlink/rename/copy/mkdir/rmdir) | 2+N | Context build + per-hook call, GIL held pre-detach |
 | Service lifecycle (enlist auto-start, start_all, stop_all) | 4/service | isinstance + call_method0 + asyncio.wait_for + asyncio.run (stdlib only). Not on syscall hot path |
 | Zero-crossing syscalls | 0 | sys_lock, sys_unlock, sys_watch, sys_stat (chrono), sys_setattr, sys_readdir, sys_write IPC (DT_PIPE/DT_STREAM) |
@@ -552,7 +553,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **PipeManager + StreamManager** | `rust/kernel/src/pipe_manager.rs` + `rust/kernel/src/stream_manager.rs` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend / SharedMemoryPipeBackend). DT_STREAM: non-destructive offset reads. Details in §4.2 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). BackgroundService + duck-typed hook_spec() |
-| **DriverLifecycleCoordinator** | `rust/kernel/src/dlc.rs` + `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + dcache + lock manager upgrade + **federation dcache-coherence callback** (installs a per-mount invalidator on the zone's state machine so committed metadata mutations evict stale dcache entries on every voter). Python DLC: backend refs (`_PyMountInfo`) + event dispatch |
+| **DriverLifecycleCoordinator** | `rust/kernel/src/dlc.rs` + `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Rust DLC: routing table + metastore + lock manager upgrade. Apply-side cache coherence is metastore-internal (each `ZoneMetaStore` self-registers an invalidator on its consensus during construction; no kernel-level dcache to keep in sync). Python DLC: backend refs (`_PyMountInfo`) + event dispatch |
 | **PermissionGate** | `rust/kernel/src/kernel/dispatch.rs` + `rust/kernel/src/core/permission_cache.rs` | LSM `security_inode_permission` | Kernel permission gate called before NativeInterceptHook dispatch on every `sys_*`. Decision cascade with lease cache (~100-200ns). Details in §2.4.1 |
 
 ### 4.1 Unified LockManager — I/O Lock + Advisory Lock
@@ -820,7 +821,7 @@ syscall implementations across per-family submodules:
 
 | File                | Owns                                                                           |
 |---------------------|--------------------------------------------------------------------------------|
-| `kernel/mod.rs`     | `Kernel` struct, constructor, wiring, MetaStore + DCache + Router proxies.    |
+| `kernel/mod.rs`     | `Kernel` struct, constructor, wiring, MetaStore + Router proxies, syscall-shaped helpers (`lookup_content_id`, `with_metastore_route`, `commit_metadata`, `commit_delete`). |
 | `kernel/io.rs`      | `sys_read` / `sys_write` / `sys_stat` / `sys_unlink` / `sys_rename` / `sys_copy` / `sys_mkdir` / `sys_rmdir`. |
 | `kernel/ipc.rs`     | Pipe + stream registries (`create_pipe`, `pipe_write_nowait`, `stream_read_at`, …). |
 | `kernel/locks.rs`   | Advisory-lock syscalls (`sys_lock`, `sys_unlock`, `metastore_list_locks`, `install_federation_locks`). |
@@ -836,8 +837,8 @@ without intermediate trait dispatch.
 
 The split between `kernel/` (syscalls) and `core/` (primitives) follows
 the data type: §4 primitives — concrete data structures like
-`DCache`, `VFSRouter`, `AgentRegistry`, `LockManager` — live in `core/`;
-the syscall families that operate on them live in `kernel/`.
+`VFSRouter`, `AgentRegistry`, `LockManager` — live in `core/`; the
+syscall families that operate on them live in `kernel/`.
 
 #### Control-Plane HAL DI surface
 

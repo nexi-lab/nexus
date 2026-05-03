@@ -13,7 +13,6 @@ _CORE_MODULES = [
     "nexus.core.nexus_fs",
     "nexus.bricks.rebac.async_bridge",
     "nexus.core.protocols",
-    "nexus.core.protocols.vfs_router",
     "nexus.core.protocols.vfs_core",
     # Moved to services/protocols/ per #2359:
     "nexus.contracts.protocols.rebac",

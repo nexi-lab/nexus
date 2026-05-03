@@ -749,6 +749,39 @@ impl Kernel {
         // 3. Route
         let route = self.vfs_router.route(path, zone_id).ok()?;
 
+        // 3.5. Mount-point synthesis (federation cross-zone mount).
+        // When ``backend_path`` is empty the routed path IS the mount
+        // point itself. For federation mounts (where the parent zone's
+        // canonical-key prefix differs from the routed ``zone_id`` — i.e.
+        // ``target_zone_id`` was set on the entry), there is no "/" entry
+        // in the target zone's metastore (the DT_MOUNT row lives in the
+        // *parent* zone's metastore, written by ``dlc.mount``). The
+        // VFSRouter is the SSOT for "this path is a mount point", so
+        // synthesise the DT_MOUNT result directly from routing structure
+        // — same pattern ``sys_mkdir`` uses ("the mount IS the
+        // directory"). Avoids a metastore round-trip and removes the
+        // need for federation to seed a dcache row at the mount root.
+        let (parent_zone, _user_mp) =
+            crate::vfs_router::extract_zone_from_canonical(&route.mount_point);
+        if route.backend_path.is_empty() && parent_zone != route.zone_id {
+            return Some(StatResult {
+                path: path.to_string(),
+                size: 4096,
+                content_id: None,
+                mime_type: "inode/directory".to_string(),
+                is_directory: true,
+                entry_type: DT_MOUNT,
+                mode: 0o755,
+                version: 1,
+                zone_id: Some(route.zone_id.clone()),
+                created_at_ms: None,
+                modified_at_ms: None,
+                last_writer_address: None,
+                lock: None,
+                link_target: None,
+            });
+        }
+
         // 4. DCache lookup. On miss, fall back to the per-mount metastore
         //    so federation zones see inodes that haven't been cached yet
         //    (F2 C5 — matches sys_read's cold path). Full path.
@@ -890,19 +923,43 @@ impl Kernel {
             Err(_) => return miss(0),
         };
 
-        // 3. Get metadata (dcache or metastore — per-mount first, then global)
-        let meta = match self.dcache.get_entry(path) {
-            Some(e) => Some(e),
-            None => self
-                .with_metastore(&route.mount_point, |ms| {
-                    ms.get(path).ok().flatten().map(|m| (&m).into())
-                })
-                .flatten(),
-        };
+        // 2.5. Mount-point synthesis: ``sys_unlink`` on a federation mount
+        // root runs the full unmount lifecycle (``dlc.unmount``). The
+        // DT_MOUNT inode lives in the *parent* zone's metastore, which
+        // routing skips — synthesize a DT_MOUNT entry directly from
+        // routing structure when the path IS the federation mount point
+        // (parent canonical zone differs from the routed target zone).
+        // Mirrors the ``sys_stat`` synthesis above.
+        let (parent_zone, _user_mp) =
+            crate::vfs_router::extract_zone_from_canonical(&route.mount_point);
+        let entry = if route.backend_path.is_empty() && parent_zone != route.zone_id {
+            CachedEntry {
+                size: 0,
+                content_id: None,
+                version: 1,
+                entry_type: DT_MOUNT,
+                zone_id: Some(route.zone_id.clone()),
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+                last_writer_address: None,
+                link_target: None,
+            }
+        } else {
+            // 3. Get metadata (dcache or metastore — per-mount first, then global)
+            let meta = match self.dcache.get_entry(path) {
+                Some(e) => Some(e),
+                None => self
+                    .with_metastore(&route.mount_point, |ms| {
+                        ms.get(path).ok().flatten().map(|m| (&m).into())
+                    })
+                    .flatten(),
+            };
 
-        let entry = match meta {
-            Some(e) => e,
-            None => return miss(0),
+            match meta {
+                Some(e) => e,
+                None => return miss(0),
+            }
         };
 
         // 4. Entry-type dispatch

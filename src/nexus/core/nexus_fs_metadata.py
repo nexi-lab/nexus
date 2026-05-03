@@ -1399,44 +1399,26 @@ class MetadataMixin:
             ...     else:
             ...         print(f"Failed {path}: {result['error']}")
         """
-        # Validate all paths first
-        validated: list[str] = []
+        # Delegate each delete to sys_unlink so the lookup uses the same
+        # source of truth as access()/exists_batch (Rust dcache → metastore →
+        # implicit-dir detection) instead of a raw metastore.get_batch that
+        # can lag behind. Result keys preserve the caller's literal path so
+        # response shape matches write_batch / exists_batch / read_bulk; the
+        # normalized form is only used for the syscall itself.
         results: dict[str, dict] = {}
         for path in paths:
             try:
-                validated.append(self._validate_path(path))
+                normalized = self._validate_path(path)
             except Exception as e:
                 results[path] = {"success": False, "error": str(e)}
-
-        if not validated:
-            return results
-
-        # Batch metadata lookup (single query instead of N)
-        batch_meta = self.metadata.get_batch(validated)
-
-        for path in validated:
+                continue
             try:
-                meta = batch_meta.get(path)
-
-                # Check for implicit directory (exists because it has files beneath it)
-                is_implicit_dir = meta is None and self.metadata.is_implicit_directory(path)
-
-                if meta is None and not is_implicit_dir:
-                    results[path] = {"success": False, "error": "File not found"}
-                    continue
-
-                # Check if this is a directory (explicit or implicit)
-                is_dir = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
-
-                if is_dir:
-                    self.sys_unlink(path, recursive=recursive, context=context)
-                else:
-                    self.sys_unlink(path, context=context)
-
+                self.sys_unlink(normalized, recursive=recursive, context=context)
                 results[path] = {"success": True}
+            except NexusFileNotFoundError:
+                results[path] = {"success": False, "error": "File not found"}
             except Exception as e:
                 results[path] = {"success": False, "error": str(e)}
-
         return results
 
     def _rmdir_internal(

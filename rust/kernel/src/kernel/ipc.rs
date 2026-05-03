@@ -3,7 +3,7 @@
 //! Every method stays a member of [`Kernel`] via this submodule's
 //! `impl Kernel { ... }` block.
 
-use crate::dcache::{DT_PIPE, DT_STREAM};
+use crate::meta_store::{DT_PIPE, DT_STREAM};
 
 use super::{pipe_mgr_err, stream_mgr_err, Kernel, KernelError};
 

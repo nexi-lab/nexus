@@ -6,12 +6,12 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::dcache::{CachedEntry, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{
     DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
     RenameHookCtx, WriteHookCtx,
 };
 use crate::lock_manager::{LockManager, LockMode};
+use crate::meta_store::{FileMetadata, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 
 use super::{
     validate_path_fast, Kernel, KernelError, OperationContext, StatResult, SysCopyResult,
@@ -83,11 +83,11 @@ impl Kernel {
         // `ZoneMetaStore.cache`), so this is the same hot-path cost as
         // the legacy `dcache.get_entry` lookup — relocated inside
         // `MetaStore::get` instead of a kernel-global side cache.
-        let entry: CachedEntry = match self
+        let entry: FileMetadata = match self
             .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten()
         {
-            Some(meta) => (&meta).into(),
+            Some(meta) => meta,
             None => {
                 // MetaStore miss → try backend directly (all backend types
                 // uniformly).  CAS backends return Err for path-based reads
@@ -290,7 +290,7 @@ impl Kernel {
     fn try_remote_fetch(
         &self,
         path: &str,
-        entry: &CachedEntry,
+        entry: &FileMetadata,
         mount_point: &str,
         ctx: &OperationContext,
     ) -> Result<SysReadResult, KernelError> {
@@ -466,9 +466,7 @@ impl Kernel {
         //    setattr path) but is harmless on the rare cross-call cold
         //    path.
         let entry = self
-            .with_metastore_route(&route, |ms| {
-                ms.get(path).ok().flatten().map(|m| (&m).into())
-            })
+            .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten();
 
         // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
@@ -570,10 +568,8 @@ impl Kernel {
             // PathLocalBackend ignores content_id when offset>0 (uses the
             // on-disk file instead), so this value is only consulted by
             // CasLocalBackend.
-            let old_entry: Option<CachedEntry> = self
-                .with_metastore_route(&route, |ms| {
-                    ms.get(path).ok().flatten().map(|m| (&m).into())
-                })
+            let old_entry: Option<FileMetadata> = self
+                .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
                 .flatten();
             match old_entry {
                 Some(e) => e.content_id.unwrap_or_default(),
@@ -613,10 +609,8 @@ impl Kernel {
                 // DCache → metastore fallback ensures accuracy even on cold
                 // dcache (matches the authority that Python metadata.get()
                 // had before this crossing elimination).
-                let old_entry: Option<CachedEntry> = self
-                    .with_metastore_route(&route, |ms| {
-                        ms.get(path).ok().flatten().map(|m| (&m).into())
-                    })
+                let old_entry: Option<FileMetadata> = self
+                    .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
                     .flatten();
                 let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                 let old_content_id = old_entry.as_ref().and_then(|e| e.content_id.clone());
@@ -785,11 +779,11 @@ impl Kernel {
         //    On miss, check implicit directory (path has children in
         //    metastore but no explicit entry — e.g. /docs/ when
         //    /docs/readme.md exists). Returns synthetic DT_DIR.
-        let entry: CachedEntry = match self
+        let entry: FileMetadata = match self
             .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
             .flatten()
         {
-            Some(meta) => (&meta).into(),
+            Some(meta) => meta,
             None => {
                 // Implicit directory: children exist under this prefix
                 // but no explicit entry. Eliminates Python fallback to
@@ -921,7 +915,8 @@ impl Kernel {
         let (parent_zone, _user_mp) =
             crate::vfs_router::extract_zone_from_canonical(&route.mount_point);
         let entry = if route.backend_path.is_empty() && parent_zone != route.zone_id {
-            CachedEntry {
+            FileMetadata {
+                path: path.to_string(),
                 size: 0,
                 content_id: None,
                 version: 1,
@@ -931,15 +926,14 @@ impl Kernel {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                target_zone_id: Some(route.zone_id.clone()),
                 link_target: None,
             }
         } else {
             // 3. Get metadata via the routed metastore (per-mount first,
             //    global fallback — internal cache fast path).
-            let meta: Option<CachedEntry> = self
-                .with_metastore_route(&route, |ms| {
-                    ms.get(path).ok().flatten().map(|m| (&m).into())
-                })
+            let meta: Option<FileMetadata> = self
+                .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
                 .flatten();
 
             match meta {
@@ -1437,10 +1431,8 @@ impl Kernel {
 
         // 3. Get source metadata via the routed metastore (internal
         //    cache fast path) — full VFS paths (R20.3 contract).
-        let src_meta: CachedEntry = match self
-            .with_metastore_route(&src_route, |ms| {
-                ms.get(src_path).ok().flatten().map(|m| (&m).into())
-            })
+        let src_meta: FileMetadata = match self
+            .with_metastore_route(&src_route, |ms| ms.get(src_path).ok().flatten())
             .flatten()
         {
             Some(e) => e,
@@ -1669,7 +1661,7 @@ impl Kernel {
         &self,
         src_route: &crate::vfs_router::RustRouteResult,
         dst_route: &crate::vfs_router::RustRouteResult,
-        src_meta: &CachedEntry,
+        src_meta: &FileMetadata,
         ctx: &OperationContext,
     ) -> Result<(String, u64), KernelError> {
         let content_id = match src_meta.content_id.as_deref().filter(|s| !s.is_empty()) {
@@ -2097,10 +2089,8 @@ impl Kernel {
 
             match write_result {
                 Some(wr) => {
-                    let batch_old_entry: Option<CachedEntry> = self
-                        .with_metastore_route(route, |ms| {
-                            ms.get(path).ok().flatten().map(|m| (&m).into())
-                        })
+                    let batch_old_entry: Option<FileMetadata> = self
+                        .with_metastore_route(route, |ms| ms.get(path).ok().flatten())
                         .flatten();
                     let old_version = batch_old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                     let new_version = old_version + 1;

@@ -63,7 +63,7 @@ impl Kernel {
                 content_id: None,
                 mime_type: "inode/directory".to_string(),
                 is_directory: true,
-                entry_type: crate::dcache::DT_DIR,
+                entry_type: crate::meta_store::DT_DIR,
                 mode: 0o555, // r-x — read-only namespace
                 version: 0,
                 zone_id: Some("root".to_string()),
@@ -88,7 +88,7 @@ impl Kernel {
             content_id: None,
             mime_type: "application/x-nexus-zone".to_string(),
             is_directory: false,
-            entry_type: crate::dcache::DT_REG,
+            entry_type: crate::meta_store::DT_REG,
             mode: 0o444,
             version: 0,
             zone_id: Some(zone_id.to_string()),

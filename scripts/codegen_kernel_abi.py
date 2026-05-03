@@ -78,7 +78,6 @@ FLAT_TO_NESTED_ALIASES: dict[str, str] = {
     "wal_stream": "core/stream/wal.rs",
     "vfs_router": "core/vfs_router.rs",
     "dlc": "core/dlc.rs",
-    "dcache": "core/dcache.rs",
     "service_registry": "core/service_registry.rs",
     "file_watch": "core/file_watch.rs",
     # Phase G: kernel.rs split — moved to kernel/mod.rs as the entry

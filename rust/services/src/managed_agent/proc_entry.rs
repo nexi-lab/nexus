@@ -144,9 +144,8 @@ fn create_dt_dir(kernel: &Kernel, path: &str) -> Result<(), String> {
             /* metastore */ None, /* raft_backend */ None,
             /* io_profile */ "memory", /* zone_id */ "root",
             /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
-            /* write_fd */ None, /* mime_type */ None,
-            /* modified_at_ms */ None, /* link_target */ None,
-            /* source */ None, /* remote_metastore */ None,
+            /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
+            /* link_target */ None, /* source */ None, /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_DIR at {path:?}): {e:?}"))

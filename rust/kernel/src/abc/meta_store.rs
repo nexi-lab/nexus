@@ -18,6 +18,25 @@
 //! (sunset path); the cross-language asymmetry is anchored at exactly
 //! one PyO3 boundary in `raft/src/pyo3_bindings.rs`.
 
+// ── Dirent-type constants ────────────────────────────────────────────
+//
+// Values for [`FileMetadata::entry_type`] — mirrors the entry_type
+// field in `proto/nexus/core/metadata.proto`. Pure constants, no
+// logic; live next to `FileMetadata` because every `entry_type` value
+// is one of these. `pub` so external Rust callers (`nexus-cluster`,
+// integration tests, federation crate) can spell the named constants
+// in `Kernel::sys_setattr` arguments instead of carrying integer
+// literals around.
+
+pub const DT_REG: u8 = 0;
+pub const DT_DIR: u8 = 1;
+pub const DT_MOUNT: u8 = 2;
+pub const DT_PIPE: u8 = 3;
+pub const DT_STREAM: u8 = 4;
+#[allow(dead_code)]
+pub const DT_EXTERNAL_STORAGE: u8 = 5;
+pub const DT_LINK: u8 = 6;
+
 /// Metadata record for a single file/directory.
 ///
 /// Mirrors the Python `FileMetadata` fields needed by the Rust kernel.

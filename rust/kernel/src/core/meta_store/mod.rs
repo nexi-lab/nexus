@@ -23,7 +23,8 @@ pub mod remote;
 // alias, not a parallel declaration.
 pub use crate::abc::meta_store::{
     pas_update_content_id, FileMetadata, MetaStore, MetaStoreError, PaginatedList, PathEtag,
-    PathValueStr, PutIfVersionResult,
+    PathValueStr, PutIfVersionResult, DT_DIR, DT_EXTERNAL_STORAGE, DT_LINK, DT_MOUNT, DT_PIPE,
+    DT_REG, DT_STREAM,
 };
 
 // PyMetaStoreAdapter + conversion helpers (extract_metadata, to_python_metadata)

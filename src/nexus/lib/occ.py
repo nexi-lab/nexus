@@ -62,9 +62,33 @@ _OCC_ENTRIES: dict[str, _OccLockEntry] = {}
 _OCC_GUARD = threading.Lock()
 
 
+def _canonical_lock_key(path: str) -> str:
+    """Inline canonicalization for OCC lock keys.
+
+    Collapses duplicate slashes, ensures a leading ``/``, and strips a
+    trailing ``/``. Mirrors enough of ``nexus.core.path_utils.validate_path``
+    that the surface forms ``foo``, ``/foo``, ``/foo/``, ``//foo`` all
+    hash to the same entry, without importing from ``nexus.core`` (the
+    five-tier architecture forbids ``lib`` -> ``core``).
+    """
+    if not path:
+        return "/"
+    canonical = path.strip()
+    if not canonical:
+        return "/"
+    while "//" in canonical:
+        canonical = canonical.replace("//", "/")
+    if not canonical.startswith("/"):
+        canonical = "/" + canonical
+    if len(canonical) > 1 and canonical.endswith("/"):
+        canonical = canonical.rstrip("/") or "/"
+    return canonical
+
+
 @contextmanager
 def _occ_path_lock(path: str) -> Iterator[None]:
     """Acquire the per-path OCC lock; release + GC the entry on exit."""
+    path = _canonical_lock_key(path)
     with _OCC_GUARD:
         entry = _OCC_ENTRIES.get(path)
         if entry is None:
@@ -127,20 +151,9 @@ def occ_write_sync(
 
     from nexus.contracts.exceptions import ConflictError
 
-    # #4005 round-7: canonicalize the path before keying the lock so
-    # ``foo``, ``/foo``, ``/foo/``, ``//foo`` all resolve to the same
-    # OCC entry. Without this two ``if_match`` writes targeting the same
-    # storage object via different surface forms would acquire different
-    # locks and both commit. Falls back to the raw path if validation
-    # fails — sys_stat below will surface the same error.
-    try:
-        from nexus.core.path_utils import validate_path
-
-        canonical_path = validate_path(path)
-    except Exception:
-        canonical_path = path
-
-    with _occ_path_lock(canonical_path):
+    # _occ_path_lock canonicalizes internally via _canonical_lock_key so
+    # surface aliases (foo, /foo, /foo/, //foo) all hash to one entry.
+    with _occ_path_lock(path):
         meta = fs.sys_stat(path, context=context)
 
         if if_none_match and meta is not None:

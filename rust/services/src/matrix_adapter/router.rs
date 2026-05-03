@@ -11,9 +11,11 @@ use axum::Router;
 use crate::matrix_adapter::auth::{AuthBackendRef, AuthError, AuthSession};
 use crate::matrix_adapter::error::AdapterError;
 use crate::matrix_adapter::middleware::require_access_token;
-use crate::matrix_adapter::types::{
-    EmptyResponse, LoginRequest, LoginResponse, WhoAmIResponse,
+use crate::matrix_adapter::rooms::{
+    create_room, joined_members, room_join, room_leave, room_messages, room_send, room_state,
+    room_state_event,
 };
+use crate::matrix_adapter::types::{EmptyResponse, LoginRequest, LoginResponse, WhoAmIResponse};
 
 /// Shared adapter state — composed once at boot and cloned into each
 /// handler. Cheap to clone (`Arc` and `String`).
@@ -21,9 +23,13 @@ use crate::matrix_adapter::types::{
 pub struct AdapterState {
     pub auth: AuthBackendRef,
     /// Matrix server-name suffix for the homeserver. Used in
-    /// `LoginResponse.home_server` and downstream room-id encoding
-    /// (D2). Configured at adapter boot.
+    /// `LoginResponse.home_server` and the room-id ↔ stream-path
+    /// codec. Configured at adapter boot.
     pub server_name: Arc<str>,
+    /// Kernel handle the room read/write endpoints route through.
+    /// Optional so the auth-only configuration (D1 surface tests)
+    /// keeps building without a kernel dep.
+    pub kernel: Option<Arc<kernel::kernel::Kernel>>,
 }
 
 /// Build the adapter's Matrix C-S router. Composes the public auth
@@ -35,10 +41,32 @@ pub fn build_router(state: AdapterState) -> Router {
     let public = Router::new().route("/_matrix/client/v3/login", post(login));
 
     // Token-protected. `whoami` is the canonical "is my token still
-    // valid?" probe; `logout` invalidates the token in the backend.
+    // valid?" probe; `logout` invalidates the token in the backend;
+    // the rooms surface routes every chat-with-me read/write through
+    // the kernel.
     let protected = Router::new()
         .route("/_matrix/client/v3/account/whoami", get(whoami))
         .route("/_matrix/client/v3/logout", post(logout))
+        .route("/_matrix/client/v3/createRoom", post(create_room))
+        .route("/_matrix/client/v3/rooms/:room_id/state", get(room_state))
+        .route(
+            "/_matrix/client/v3/rooms/:room_id/state/:event_type/:state_key",
+            get(room_state_event),
+        )
+        .route(
+            "/_matrix/client/v3/rooms/:room_id/messages",
+            get(room_messages),
+        )
+        .route(
+            "/_matrix/client/v3/rooms/:room_id/joined_members",
+            get(joined_members),
+        )
+        .route(
+            "/_matrix/client/v3/rooms/:room_id/send/:event_type/:txn_id",
+            axum::routing::put(room_send),
+        )
+        .route("/_matrix/client/v3/rooms/:room_id/join", post(room_join))
+        .route("/_matrix/client/v3/rooms/:room_id/leave", post(room_leave))
         .route_layer(from_fn_with_state(state.clone(), require_access_token));
 
     public.merge(protected).with_state(state)
@@ -139,6 +167,7 @@ mod tests {
         let state = AdapterState {
             auth: backend,
             server_name: Arc::from(SERVER_NAME),
+            kernel: None,
         };
         build_router(state)
     }

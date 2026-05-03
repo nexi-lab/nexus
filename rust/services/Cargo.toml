@@ -91,7 +91,7 @@ pyo3 = { version = "0.27.2", features = ["hashbrown"], optional = true }
 # Matrix C-S adapter HTTP surface. Lazily pulled in by the
 # `service-matrix-adapter` feature so non-adapter builds (cluster
 # binary, raft-witness, slim WASM) do not pay the axum compile time.
-axum = { version = "0.7", default-features = false, features = ["json", "http1", "tokio", "matched-path"], optional = true }
+axum = { version = "0.7", default-features = false, features = ["json", "http1", "tokio", "matched-path", "query"], optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 # base32 alphabet for Matrix room-id encoding (`!{base32(stream_path)}:nexus.local`).
 base32 = { version = "0.5", optional = true }

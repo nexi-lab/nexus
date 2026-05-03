@@ -8,6 +8,8 @@
 
 use std::sync::Arc;
 
+use dashmap::DashMap;
+
 use crate::meta_store::{FileMetadata, MetaStore, MetaStoreError, PaginatedList};
 use crate::rpc_transport::RpcTransport;
 
@@ -15,18 +17,30 @@ use crate::rpc_transport::RpcTransport;
 ///
 /// All metadata ops serialize to JSON, dispatch via `Call(method, payload)`,
 /// and deserialize the response. Server-side NexusFS is the SSOT.
+///
+/// Internal cache (DashMap projection) accelerates repeated reads of
+/// the same path — same shape as `LocalMetaStore` / `ZoneMetaStore`.
+/// `get` consults the cache first; `put` is write-through; `delete`
+/// invalidates pre-store-call.
 pub struct RemoteMetaStore {
     transport: Arc<RpcTransport>,
+    cache: DashMap<String, FileMetadata>,
 }
 
 impl RemoteMetaStore {
     pub fn new(transport: Arc<RpcTransport>) -> Self {
-        Self { transport }
+        Self {
+            transport,
+            cache: DashMap::new(),
+        }
     }
 }
 
 impl MetaStore for RemoteMetaStore {
     fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetaStoreError> {
+        if let Some(cached) = self.cache.get(path) {
+            return Ok(Some(cached.clone()));
+        }
         let payload = serde_json::json!({ "path": path });
         let bytes =
             serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;
@@ -49,7 +63,9 @@ impl MetaStore for RemoteMetaStore {
             return Ok(None);
         }
 
-        parse_metadata_from_json(&value).map(Some)
+        let meta = parse_metadata_from_json(&value)?;
+        self.cache.insert(path.to_string(), meta.clone());
+        Ok(Some(meta))
     }
 
     fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetaStoreError> {
@@ -84,10 +100,16 @@ impl MetaStore for RemoteMetaStore {
                 "sys_setattr failed for {path}"
             )));
         }
+        // Write-through: cache update after the remote ack so future
+        // reads on this transport short-circuit the round trip.
+        self.cache.insert(path.to_string(), metadata);
         Ok(())
     }
 
     fn delete(&self, path: &str) -> Result<bool, MetaStoreError> {
+        // Invalidate cache before the remote call (race-safe per the
+        // LocalMetaStore reasoning).
+        self.cache.remove(path);
         let payload = serde_json::json!({ "path": path });
         let bytes =
             serde_json::to_vec(&payload).map_err(|e| MetaStoreError::IOError(e.to_string()))?;

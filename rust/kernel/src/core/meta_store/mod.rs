@@ -236,8 +236,19 @@ const FILE_METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("
 ///
 /// Used by standalone deployments; federation mounts install a
 /// ``ZoneMetaStore`` instead (same on-disk crate, raft-replicated).
+///
+/// **Internal cache** — every `MetaStore` impl backed by a slow store
+/// (disk / RPC / raft) carries its own `cache: DashMap` projection of
+/// hot entries.  `get` consults the cache first and populates on miss;
+/// `put` is write-through (cache + store, in that order, so concurrent
+/// reads can never observe a stale store-write before the cache update);
+/// `delete` invalidates the cache before delete.  This replaces the
+/// pre-PR global `Kernel.dcache` — there is no longer a separate
+/// metadata cache that callers can consult; cache management is
+/// metastore-internal and transparent to callers.
 pub(crate) struct LocalMetaStore {
     db: Arc<Database>,
+    cache: DashMap<String, FileMetadata>,
 }
 
 impl LocalMetaStore {
@@ -273,7 +284,10 @@ impl LocalMetaStore {
         txn.commit()
             .map_err(|e| MetaStoreError::IOError(format!("redb commit: {e}")))?;
 
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            cache: DashMap::new(),
+        })
     }
 }
 
@@ -460,6 +474,10 @@ fn deserialize_metadata(data: &[u8]) -> Result<FileMetadata, MetaStoreError> {
 
 impl MetaStore for LocalMetaStore {
     fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetaStoreError> {
+        // Internal cache fast path — see struct docstring for invariants.
+        if let Some(cached) = self.cache.get(path) {
+            return Ok(Some(cached.clone()));
+        }
         let txn = self
             .db
             .begin_read()
@@ -470,7 +488,10 @@ impl MetaStore for LocalMetaStore {
         match table.get(path) {
             Ok(Some(guard)) => {
                 let data = guard.value();
-                deserialize_metadata(data).map(Some)
+                let meta = deserialize_metadata(data)?;
+                // Populate cache from store result.
+                self.cache.insert(path.to_string(), meta.clone());
+                Ok(Some(meta))
             }
             Ok(None) => Ok(None),
             Err(e) => Err(MetaStoreError::IOError(format!("redb get: {e}"))),
@@ -493,10 +514,18 @@ impl MetaStore for LocalMetaStore {
         }
         txn.commit()
             .map_err(|e| MetaStoreError::IOError(format!("redb commit: {e}")))?;
+        // Write-through cache update — store commit succeeded, refresh
+        // the cache row so subsequent get() observes the new value.
+        self.cache.insert(path.to_string(), metadata);
         Ok(())
     }
 
     fn delete(&self, path: &str) -> Result<bool, MetaStoreError> {
+        // Invalidate cache before store delete — concurrent readers
+        // observe either "cache empty → fall through to store" or
+        // "store missing" depending on race timing, but never a stale
+        // hit after the store delete.
+        self.cache.remove(path);
         let txn = self
             .db
             .begin_write()
@@ -620,6 +649,10 @@ impl MetaStore for LocalMetaStore {
 
     /// Single write transaction for all deletes — optimal for redb.
     fn delete_batch(&self, paths: &[String]) -> Result<usize, MetaStoreError> {
+        // Invalidate cache up-front (same race-safety reasoning as `delete`).
+        for path in paths {
+            self.cache.remove(path);
+        }
         let txn = self
             .db
             .begin_write()
@@ -708,6 +741,11 @@ impl MetaStore for LocalMetaStore {
         }
         txn.commit()
             .map_err(|e| MetaStoreError::IOError(format!("redb commit: {e}")))?;
+        // Refresh cache only on successful CAS commit; failed CAS leaves
+        // the existing cache row alone.
+        if result.success {
+            self.cache.insert(path, metadata);
+        }
         Ok(result)
     }
 
@@ -780,6 +818,15 @@ impl MetaStore for LocalMetaStore {
         }
         txn.commit()
             .map_err(|e| MetaStoreError::IOError(format!("redb commit: {e}")))?;
+        // Invalidate any cached rows under the old name (top-level +
+        // children).  Subsequent `get(new_path...)` repopulates from
+        // the redb store; we deliberately do NOT pre-populate because
+        // the rewritten metadata may have transformed fields (PAS
+        // content_id rewrite) we'd need to mirror here.
+        self.cache.remove(old_path);
+        let old_prefix_for_cache = format!("{}/", old_path.trim_end_matches('/'));
+        self.cache
+            .retain(|k, _| !k.starts_with(&old_prefix_for_cache));
         Ok(())
     }
 

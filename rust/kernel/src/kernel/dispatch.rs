@@ -58,6 +58,104 @@ impl Kernel {
         self.native_hooks.write().register(hook);
     }
 
+    // ── Service registry facade ───────────────────────────────────────
+    //
+    // Every ServiceRegistry method is exposed through Kernel so that
+    // consumers (PyKernel wrapper, peer crates) never reach the
+    // pub(crate) ServiceRegistry directly.
+
+    /// Register a managed (language-agnostic) service.
+    pub fn register_managed_service(
+        &self,
+        name: &str,
+        instance: Box<dyn crate::service_registry::ServiceLifecycle>,
+        exports: Vec<String>,
+        allow_overwrite: bool,
+    ) -> Result<(), String> {
+        self.service_registry
+            .enlist(name, instance, exports, allow_overwrite)
+    }
+
+    /// Unregister a service by name. Returns true if found.
+    pub fn unregister_service(&self, name: &str) -> bool {
+        self.service_registry.unregister(name)
+    }
+
+    /// Hot-swap a managed service: drain → replace.
+    pub fn swap_managed_service(
+        &self,
+        name: &str,
+        new_instance: Box<dyn crate::service_registry::ServiceLifecycle>,
+        exports: Vec<String>,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
+        self.service_registry
+            .swap(name, new_instance, exports, timeout_ms)
+    }
+
+    /// Look up a managed service by name.
+    pub fn service_lookup_managed(
+        &self,
+        name: &str,
+    ) -> Option<Box<dyn crate::service_registry::ServiceLifecycle>> {
+        self.service_registry.lookup_managed(name)
+    }
+
+    /// Start all services (managed + Rust).
+    pub fn service_start_all(&self, timeout_secs: f64) -> Result<Vec<String>, String> {
+        self.service_registry.start_all(timeout_secs)
+    }
+
+    /// Stop all services (reverse order).
+    pub fn service_stop_all(&self, timeout_secs: f64) -> Result<Vec<String>, String> {
+        self.service_registry.stop_all(timeout_secs)
+    }
+
+    /// Close all managed services (reverse order).
+    pub fn service_close_all(&self) {
+        self.service_registry.close_all()
+    }
+
+    /// Mark bootstrap complete — future enlist() auto-starts.
+    pub fn service_mark_bootstrapped(&self) {
+        self.service_registry.mark_bootstrapped()
+    }
+
+    /// Check if a service is registered.
+    pub fn service_contains(&self, name: &str) -> bool {
+        self.service_registry.contains(name)
+    }
+
+    /// Number of registered services.
+    pub fn service_count(&self) -> usize {
+        self.service_registry.count()
+    }
+
+    /// Service names in registration order.
+    pub fn service_names(&self) -> Vec<String> {
+        self.service_registry.names()
+    }
+
+    /// Snapshot: list of (name, type_name, exports) for diagnostics.
+    pub fn service_snapshot(&self) -> Vec<(String, String, Vec<String>)> {
+        self.service_registry.snapshot()
+    }
+
+    /// Acquire a refcount for a service (for ServiceRef proxy).
+    pub fn service_ref_acquire(&self, name: &str) {
+        self.service_registry.ref_acquire(name)
+    }
+
+    /// Release a refcount. Notifies drain waiters if count reaches 0.
+    pub fn service_ref_release(&self, name: &str) {
+        self.service_registry.ref_release(name)
+    }
+
+    /// Drain: wait for refcount on `name` to reach 0.
+    pub fn service_drain(&self, name: &str, timeout_ms: u64) {
+        self.service_registry.drain(name, timeout_ms)
+    }
+
     /// Register a Rust-flavoured service with the kernel's
     /// `ServiceRegistry`. The Rust-callable parallel of the
     /// `sys_setattr("/__sys__/services/X", service=…)` syscall —

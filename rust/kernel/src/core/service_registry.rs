@@ -15,12 +15,9 @@
 //! Thread-safe: all methods take `&self` (interior mutability via DashMap/atomics).
 
 use dashmap::DashMap;
-#[cfg(feature = "python")]
 use parking_lot::Condvar;
 use parking_lot::Mutex;
-#[cfg(feature = "python")]
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 // ── RustService trait ───────────────────────────────────────────────────
@@ -86,13 +83,10 @@ impl Clone for ServiceEntry {
 /// Kernel service symbol table — DashMap<name, ServiceEntry>.
 pub(crate) struct ServiceRegistry {
     services: DashMap<String, ServiceEntry>,
-    /// Per-service refcounts for drain-before-swap (python-only: hot-swap).
-    #[cfg(feature = "python")]
+    /// Per-service refcounts for drain-before-swap.
     refcounts: DashMap<String, Arc<AtomicU64>>,
-    /// Condvar for drain waiters (python-only: hot-swap).
-    #[cfg(feature = "python")]
+    /// Condvar for drain waiters.
     drain_condvar: Condvar,
-    #[cfg(feature = "python")]
     drain_mutex: Mutex<()>,
     /// True after bootstrap() completes.
     bootstrapped: AtomicBool,
@@ -104,11 +98,8 @@ impl ServiceRegistry {
     pub(crate) fn new() -> Self {
         Self {
             services: DashMap::new(),
-            #[cfg(feature = "python")]
             refcounts: DashMap::new(),
-            #[cfg(feature = "python")]
             drain_condvar: Condvar::new(),
-            #[cfg(feature = "python")]
             drain_mutex: Mutex::new(()),
             bootstrapped: AtomicBool::new(false),
             insertion_order: Mutex::new(Vec::new()),
@@ -119,7 +110,6 @@ impl ServiceRegistry {
     ///
     /// The caller (PyKernel wrapper) validates exports and wraps the
     /// Python object in a `PyServiceLifecycle` before calling this.
-    #[cfg(feature = "python")]
     pub(crate) fn enlist(
         &self,
         name: &str,
@@ -192,7 +182,6 @@ impl ServiceRegistry {
     /// Kernel-internal lookup for managed services, returning a ref to
     /// the `ServiceLifecycle` trait object. The PyO3 layer downcasts
     /// to `PyServiceLifecycle` to extract the `Py<PyAny>`.
-    #[cfg(feature = "python")]
     pub(crate) fn lookup_managed(&self, name: &str) -> Option<Box<dyn ServiceLifecycle>> {
         self.services.get(name).and_then(|e| match &e.instance {
             ServiceInstance::Managed(lc) => Some(lc.clone_box()),
@@ -210,38 +199,28 @@ impl ServiceRegistry {
     }
 
     /// Check if a service is registered.
-    #[cfg(feature = "python")]
     pub(crate) fn contains(&self, name: &str) -> bool {
         self.services.contains_key(name)
     }
 
     /// Number of registered services.
-    #[cfg(feature = "python")]
     pub(crate) fn count(&self) -> usize {
         self.services.len()
     }
 
     /// Service names in registration order.
-    #[cfg(feature = "python")]
     pub(crate) fn names(&self) -> Vec<String> {
         self.insertion_order.lock().clone()
     }
 
     /// Service names in reverse registration order.
-    #[cfg(feature = "python")]
     pub(crate) fn names_reversed(&self) -> Vec<String> {
         let mut names = self.insertion_order.lock().clone();
         names.reverse();
         names
     }
 
-    // NOTE: unregister / unregister_full / swap / drain / ref_acquire /
-    // ref_release are python-only — called from PyKernel wrapper in
-    // generated_kernel_abi_pyo3.rs. Ideally Python would go through
-    // syscalls instead of poking kernel internals directly.
-
     /// Unregister a service. Returns true if found.
-    #[cfg(feature = "python")]
     pub(crate) fn unregister(&self, name: &str) -> bool {
         let removed = self.services.remove(name).is_some();
         if removed {
@@ -251,14 +230,7 @@ impl ServiceRegistry {
         removed
     }
 
-    /// Full unregister: unhook + remove.
-    #[cfg(feature = "python")]
-    pub(crate) fn unregister_full(&self, name: &str) -> bool {
-        self.unregister(name)
-    }
-
     /// Hot-swap a managed service: drain → replace.
-    #[cfg(feature = "python")]
     pub(crate) fn swap(
         &self,
         name: &str,
@@ -295,7 +267,6 @@ impl ServiceRegistry {
     }
 
     /// Acquire a refcount for a service (for ServiceRef proxy).
-    #[cfg(feature = "python")]
     pub(crate) fn ref_acquire(&self, name: &str) {
         self.refcounts
             .entry(name.to_string())
@@ -304,7 +275,6 @@ impl ServiceRegistry {
     }
 
     /// Release a refcount. Notifies drain waiters if count reaches 0.
-    #[cfg(feature = "python")]
     pub(crate) fn ref_release(&self, name: &str) {
         if let Some(rc) = self.refcounts.get(name) {
             let prev = rc.fetch_sub(1, Ordering::Relaxed);
@@ -315,7 +285,6 @@ impl ServiceRegistry {
     }
 
     /// Drain: wait for refcount on `name` to reach 0.
-    #[cfg(feature = "python")]
     pub(crate) fn drain(&self, name: &str, timeout_ms: u64) {
         let current = self
             .refcounts
@@ -332,7 +301,6 @@ impl ServiceRegistry {
     }
 
     /// Start all services (managed + Rust).
-    #[cfg(feature = "python")]
     pub(crate) fn start_all(&self, timeout_secs: f64) -> Result<Vec<String>, String> {
         let mut started = Vec::new();
         for name in self.names() {
@@ -353,7 +321,6 @@ impl ServiceRegistry {
     }
 
     /// Stop all services (reverse order).
-    #[cfg(feature = "python")]
     pub(crate) fn stop_all(&self, timeout_secs: f64) -> Result<Vec<String>, String> {
         let mut stopped = Vec::new();
         for name in self.names_reversed() {
@@ -374,7 +341,6 @@ impl ServiceRegistry {
     }
 
     /// Close all managed services (reverse order).
-    #[cfg(feature = "python")]
     pub(crate) fn close_all(&self) {
         for name in self.names_reversed() {
             if let Some(entry) = self.services.get(&name) {
@@ -388,13 +354,11 @@ impl ServiceRegistry {
     }
 
     /// Mark bootstrap complete — future enlist() auto-starts.
-    #[cfg(feature = "python")]
     pub(crate) fn mark_bootstrapped(&self) {
         self.bootstrapped.store(true, Ordering::Relaxed);
     }
 
     /// Snapshot: list of (name, type_name, exports) for diagnostics.
-    #[cfg(feature = "python")]
     pub(crate) fn snapshot(&self) -> Vec<(String, String, Vec<String>)> {
         let mut result = Vec::new();
         for name in self.names() {

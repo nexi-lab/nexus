@@ -140,6 +140,7 @@ impl DCache {
     /// List immediate children under a prefix path.
     /// Returns Vec of (child_name, entry_type).
     /// Only returns direct children (no nested paths).
+    #[allow(dead_code)] // Removed in commit N (dcache module deletion).
     pub(crate) fn list_children(&self, prefix: &str) -> Vec<(String, u8, Option<String>)> {
         self.cache
             .iter()

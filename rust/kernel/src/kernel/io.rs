@@ -2092,7 +2092,11 @@ impl Kernel {
 
             match write_result {
                 Some(wr) => {
-                    let batch_old_entry = self.dcache.get_entry(path);
+                    let batch_old_entry: Option<CachedEntry> = self
+                        .with_metastore_route(route, |ms| {
+                            ms.get(path).ok().flatten().map(|m| (&m).into())
+                        })
+                        .flatten();
                     let old_version = batch_old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                     let new_version = old_version + 1;
 
@@ -2176,21 +2180,13 @@ impl Kernel {
                 }
             }
             if !global_items.is_empty() {
-                let dcache_updates: Vec<(String, CachedEntry)> = global_items
-                    .iter()
-                    .map(|(p, m)| (p.clone(), m.into()))
-                    .collect();
                 let put_ok = self
                     .metastore
                     .read()
                     .as_ref()
                     .map(|ms| ms.put_batch(&global_items).is_ok())
                     .unwrap_or(false);
-                if put_ok {
-                    for (p, e) in dcache_updates {
-                        self.dcache.put(&p, e);
-                    }
-                } else {
+                if !put_ok {
                     for idx in global_idx {
                         if let Some(r) = results.get_mut(idx) {
                             r.hit = false;
@@ -2267,7 +2263,7 @@ impl Kernel {
         Ok(results)
     }
 
-    /// List immediate children of a directory path from dcache + metastore.
+    /// List immediate children of a directory path via the routed metastore.
     ///
     /// When `is_admin` is false and `zone_id` is not ROOT_ZONE_ID, entries
     /// are filtered to only include those belonging to the caller's zone or
@@ -2299,7 +2295,6 @@ impl Kernel {
 
         let needs_zone_filter = !is_admin && zone_id != contracts::ROOT_ZONE_ID;
 
-        // Merge dcache children with per-mount metastore list.
         // Track (entry_type, zone_id) so we can zone-filter at the end.
         let mut seen: std::collections::BTreeMap<String, (u8, Option<String>)> =
             std::collections::BTreeMap::new();
@@ -2308,13 +2303,9 @@ impl Kernel {
         } else {
             parent_path.trim_end_matches('/')
         };
-        for (child, etype, entry_zone) in self.dcache.list_children(&global_prefix) {
-            let global = format!("{}/{}", parent_for_join, child);
-            seen.insert(global, (etype, entry_zone));
-        }
 
         if let Some(ms_children) =
-            self.with_metastore(&route.mount_point, |ms| ms.list(&global_prefix).ok())
+            self.with_metastore_route(&route, |ms| ms.list(&global_prefix).ok())
         {
             let parent_depth = global_prefix.matches('/').count();
             for meta in ms_children.into_iter().flatten() {

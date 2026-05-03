@@ -644,6 +644,11 @@ impl MetaStore for LocalMetaStore {
         }
         txn.commit()
             .map_err(|e| MetaStoreError::IOError(format!("redb commit: {e}")))?;
+        // Write-through cache: refresh every put row after the redb
+        // commit succeeds, mirroring single-key `put`.
+        for (path, meta) in items {
+            self.cache.insert(path.clone(), meta.clone());
+        }
         Ok(())
     }
 

@@ -196,7 +196,7 @@ def search(q: str, limit: int = 20) -> list[dict]:
             "limit": limit,
             "type": "hybrid",
         },
-        timeout=30,
+        timeout=300,
     )
     return r.get("results", [])
 

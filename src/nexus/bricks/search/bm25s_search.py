@@ -686,10 +686,14 @@ class BM25SIndex:
     ) -> list[BM25SSearchResult]:
         """Synchronous search."""
         with self._lock:
-            # Merge any pending delta documents first
-            if self._delta_corpus:
-                self._merge_delta()
-
+            # Do NOT merge delta on the query path. ``_merge_delta`` rebuilds
+            # the entire BM25 index (tokenize_batch + bm25s.BM25.index) which
+            # is O(N) over the corpus and dominates query latency once any
+            # background indexer keeps trickling docs into the delta. Merge
+            # happens at index time (``_index_document_sync`` at delta_threshold
+            # and ``_index_documents_bulk_sync`` always). Delta-only docs
+            # remain searchable via the txtai pgtext fallback path; bm25s is
+            # the keyword fast-path, not the source of truth.
             if not self._corpus or self._retriever is None:
                 return []
 

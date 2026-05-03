@@ -1,41 +1,20 @@
-//! Session bookkeeping for managed-agent gRPC handlers.
+//! Pid allocator + epoch-ms helper for `ManagedAgentService`.
 //!
-//! `Session` is the row carried by `ManagedAgentService` for every
-//! active managed-agent invocation: it carries the surface sudowork
-//! addresses (session_id, agent name, workspace_path) and the
-//! AgentRegistry pid so cancel / get_session can reach AgentRegistry
-//! without sudowork having to track pids.
-//!
-//! sudowork sees `session_id`; nexus tracks both. The map lives on the
-//! service struct (`DashMap<session_id, Session>`); this module only
-//! defines the row shape and the `pid` / `session_id` allocators.
+//! There is no separate `session_id` for managed-agent sessions: the
+//! AgentRegistry pid IS the session identifier sudowork sends back
+//! over `cancel_v1` / `get_session_v1`.  Everything else
+//! (workspace_path, model, agent name, state) is derived from the
+//! descriptor on demand.
 
 use uuid::Uuid;
-
-#[derive(Clone, Debug)]
-pub(crate) struct Session {
-    pub session_id: String,
-    pub pid: String,
-    pub agent: String,
-    pub model: String,
-    pub workspace_path: String,
-    /// Repo aliases materialised inside the workspace at start_session
-    /// time.  Tracked here so cancel can reap the per-alias DT_LINKs
-    /// without re-reading sudowork's original request.
-    pub repo_aliases: Vec<String>,
-}
 
 pub(crate) fn alloc_pid() -> String {
     format!("pid-{}", short_uuid())
 }
 
-pub(crate) fn alloc_session_id() -> String {
-    format!("sess-{}", short_uuid())
-}
-
 /// 12-char hex prefix of a v4 uuid. Plenty of entropy for kernel-local
-/// session / pid scope, and short enough to fit in log lines + path
-/// segments (`/proc/{pid}/workspace/`) without being noisy.
+/// pid scope, and short enough to fit in log lines + path segments
+/// (`/proc/{pid}/workspace/`) without being noisy.
 fn short_uuid() -> String {
     let s = Uuid::new_v4().simple().to_string();
     s[..12].to_string()
@@ -58,13 +37,6 @@ mod tests {
         let p = alloc_pid();
         assert!(p.starts_with("pid-"));
         assert_eq!(p.len(), 4 + 12);
-    }
-
-    #[test]
-    fn alloc_session_id_has_sess_prefix() {
-        let s = alloc_session_id();
-        assert!(s.starts_with("sess-"));
-        assert_eq!(s.len(), 5 + 12);
     }
 
     #[test]

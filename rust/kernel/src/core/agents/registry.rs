@@ -36,6 +36,17 @@ pub struct ExternalProcessInfo {
     pub last_heartbeat_ms: Option<u64>,
 }
 
+// ── RepoMount ──────────────────────────────────────────────────────────
+
+/// One workspace repo mount carried in the per-pid descriptor.  Read by
+/// `ProcWorkspaceResolver` to render `/proc/{pid}/workspace/{alias}` as a
+/// link target without ever persisting the link in the metastore.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepoMount {
+    pub alias: String,
+    pub mount_path: String,
+}
+
 // ── AgentDescriptor ────────────────────────────────────────────────────
 
 /// Agent process descriptor — analogous to Linux task_struct.
@@ -74,6 +85,11 @@ pub struct AgentDescriptor {
 
     // Opaque labels — Kubernetes-style.
     pub labels: HashMap<String, String>,
+
+    // Workspace repo mounts — one entry per `/proc/{pid}/workspace/{alias}`
+    // link the runtime expects to be reachable.  Drives the procfs view
+    // served by `ProcWorkspaceResolver`; never materialised in metastore.
+    pub repos: Vec<RepoMount>,
 }
 
 impl Default for AgentDescriptor {
@@ -97,6 +113,7 @@ impl Default for AgentDescriptor {
             connection_id: None,
             external_info: None,
             labels: HashMap::new(),
+            repos: Vec::new(),
         }
     }
 }
@@ -494,6 +511,7 @@ impl AgentRegistry {
             connection_id,
             external_info,
             labels,
+            repos: Vec::new(),
         };
 
         self.agents.insert(pid.clone(), desc.clone());

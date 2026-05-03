@@ -27,7 +27,9 @@ use kernel::abc::object_store::ObjectStore;
 use kernel::core::dcache::DT_MOUNT;
 use kernel::kernel::Kernel;
 
-use nexus_raft::distributed_coordinator::{bootstrap_or_join_root, read_or_mint_node_id};
+use nexus_raft::distributed_coordinator::{
+    bootstrap_or_join_root, read_or_mint_node_id, validate_peers_excludes_self,
+};
 use nexus_raft::federation::{parse_federation_env, ENV_FEDERATION_MOUNTS, ENV_FEDERATION_ZONES};
 use nexus_raft::transport::{bootstrap_tls, NodeAddress};
 use nexus_raft::{TlsFiles, ZoneManager};
@@ -280,6 +282,12 @@ fn open_zone_manager(common: &CommonArgs) -> Result<ZoneManagerBundle> {
         .and_then(|(_, p)| p.parse::<u16>().ok())
         .unwrap_or(2126);
     let self_address = format!("{hostname}:{bind_port}");
+
+    // Reject "self listed in --peers" early — see
+    // `validate_peers_excludes_self` for why this is a hard error
+    // under the PR #3996 opaque-ID contract.
+    validate_peers_excludes_self(&peer_addrs, &self_address)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let zm = ZoneManager::with_node_id(
         &hostname,

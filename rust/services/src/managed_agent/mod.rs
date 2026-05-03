@@ -44,7 +44,6 @@
 
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 use kernel::core::agents::registry::{
@@ -61,7 +60,13 @@ pub(crate) mod workspace_boundary_hook;
 
 use proc_entry::{register_proc_entry, unregister_proc_entry};
 
-use session::{alloc_pid, alloc_session_id, now_ms, Session};
+/// Label key used to stash the LLM model id on the descriptor so
+/// `get_session` can echo it back without a sidecar table.  Read by
+/// `GetSessionResponse.model`; the runtime crate may also read it
+/// when wiring the loop.
+const MODEL_LABEL: &str = "model";
+
+use session::{alloc_pid, now_ms};
 
 // ── Public request / response shapes ────────────────────────────────────
 
@@ -157,7 +162,6 @@ pub(crate) struct ManagedAgentService {
     /// [`Self::install`] which always provides the kernel.
     kernel: Option<Arc<kernel::kernel::Kernel>>,
     agent_registry: Arc<AgentRegistry>,
-    sessions: DashMap<String, Session>,
 }
 
 impl ManagedAgentService {
@@ -171,7 +175,6 @@ impl ManagedAgentService {
         Self {
             kernel: None,
             agent_registry,
-            sessions: DashMap::new(),
         }
     }
 
@@ -185,7 +188,6 @@ impl ManagedAgentService {
         Self {
             kernel: Some(kernel),
             agent_registry,
-            sessions: DashMap::new(),
         }
     }
 
@@ -233,23 +235,14 @@ impl ManagedAgentService {
         // by `ProcWorkspaceResolver` (derived from the descriptor)
         // and goes away with the descriptor itself; only the dirent
         // stamped at start_session needs explicit removal.  The
-        // callback also drops the session row so subsequent
-        // `get_session` returns `UnknownSession`.
-        let svc_for_cb = Arc::clone(&svc);
+        // descriptor itself is reaped by AgentRegistry on the
+        // SIGKILL / orphan-auto-reap path so subsequent `get_session`
+        // returns `UnknownSession`.
         let kernel_for_cb = Arc::clone(kernel);
         kernel.agent_registry().register_on_terminate(
             Self::NAME,
             Arc::new(move |pid: &str| {
                 unregister_proc_entry(&kernel_for_cb, pid);
-                let pid_owned = pid.to_string();
-                let session_id_opt = svc_for_cb
-                    .sessions
-                    .iter()
-                    .find(|e| e.value().pid == pid_owned)
-                    .map(|e| e.key().clone());
-                if let Some(session_id) = session_id_opt {
-                    svc_for_cb.sessions.remove(&session_id);
-                }
             }),
         );
 
@@ -265,10 +258,11 @@ impl ManagedAgentService {
     /// and returns the session identity tuple sudowork uses for
     /// follow-up cancel / get_session calls and chat-with-me writes.
     ///
-    /// State on success: pid is `WARMING_UP` in AgentRegistry; the session
-    /// row is in `self.sessions`. On `register` collision (effectively
-    /// impossible given uuid-allocated pids) we surface `Internal` so
-    /// the caller sees a hard error.
+    /// `session_id` and `agent_id` are the same value: the AgentRegistry
+    /// pid.  No second identifier is allocated — the descriptor is the
+    /// SSOT for everything cancel / get_session needs.  On `register`
+    /// collision (effectively impossible given uuid-allocated pids) we
+    /// surface `Internal` so the caller sees a hard error.
     pub(crate) fn start_session(
         &self,
         req: StartSessionRequest,
@@ -291,7 +285,6 @@ impl ManagedAgentService {
 
         let pid = alloc_pid();
         let workspace_path = format!("/proc/{pid}/workspace/");
-        let session_id = alloc_session_id();
 
         let repos: Vec<RepoMount> = req
             .repos
@@ -303,6 +296,11 @@ impl ManagedAgentService {
             })
             .collect();
 
+        let mut labels = std::collections::HashMap::new();
+        if !req.model.is_empty() {
+            labels.insert(MODEL_LABEL.to_string(), req.model.clone());
+        }
+
         let now = now_ms();
         let desc = AgentDescriptor {
             pid: pid.clone(),
@@ -313,6 +311,7 @@ impl ManagedAgentService {
             zone_id,
             created_at_ms: now,
             updated_at_ms: now,
+            labels,
             repos,
             ..Default::default()
         };
@@ -345,16 +344,8 @@ impl ManagedAgentService {
             }
         }
 
-        let sess = Session {
-            session_id: session_id.clone(),
-            pid: pid.clone(),
-            agent: req.agent,
-            model: req.model,
-        };
-        self.sessions.insert(session_id.clone(), sess);
-
         Ok(StartSessionResponse {
-            session_id,
+            session_id: pid.clone(),
             agent_id: pid,
             workspace_path,
         })
@@ -367,18 +358,19 @@ impl ManagedAgentService {
     /// mechanism it picks (channel, atomic flag, …) — kernel doesn't
     /// know about turn boundaries.
     ///
-    /// `Session` — terminate: transition AgentRegistry to `Terminated`,
-    /// drop the session row. The runtime crate observes the state
+    /// `Session` — terminate: transition AgentRegistry to `Terminated`.
+    /// The on_terminate observer registered at install time tears down
+    /// the per-pid procfs dirent.  The runtime crate observes the state
     /// transition and shuts down the agent task.
     pub(crate) fn cancel(
         &self,
         session_id: &str,
         mode: CancelMode,
     ) -> Result<CancelResponse, ManagedAgentError> {
-        let sess = match self.sessions.get(session_id) {
-            Some(s) => s.clone(),
-            None => return Err(ManagedAgentError::UnknownSession(session_id.to_string())),
-        };
+        // session_id IS the pid in AgentRegistry (no second identifier).
+        if self.agent_registry.get(session_id).is_none() {
+            return Err(ManagedAgentError::UnknownSession(session_id.to_string()));
+        }
 
         match mode {
             CancelMode::Turn => {
@@ -389,18 +381,18 @@ impl ManagedAgentService {
                 Ok(CancelResponse { cancelled: true })
             }
             CancelMode::Session => {
-                // The state transition fires the on_terminate
-                // observer registered at install-time, which both
-                // tears down the procfs dirent and removes the
-                // session row.  Belt-and-braces session removal
-                // below is a no-op when the observer ran first and
-                // covers the kernel-less test fixtures where no
-                // observer is registered.
+                // `kill` transitions to Terminated (firing the
+                // on_terminate observer that drops the procfs dirent)
+                // and auto-reaps the descriptor when the agent is an
+                // orphan — which managed agents always are today
+                // (start_session passes parent_pid=None).  Reaping is
+                // what surfaces `UnknownSession` on a follow-up
+                // cancel / get_session.
                 let cancelled = self
                     .agent_registry
-                    .update_state_with_exit(&sess.pid, AgentState::Terminated, 0)
+                    .kill(session_id, 0)
+                    .map(|_| true)
                     .unwrap_or(false);
-                self.sessions.remove(session_id);
                 Ok(CancelResponse { cancelled })
             }
         }
@@ -413,23 +405,20 @@ impl ManagedAgentService {
         &self,
         session_id: &str,
     ) -> Result<GetSessionResponse, ManagedAgentError> {
-        let sess = match self.sessions.get(session_id) {
-            Some(s) => s.clone(),
-            None => return Err(ManagedAgentError::UnknownSession(session_id.to_string())),
-        };
-        let state = self
+        // session_id IS the pid; the descriptor is the SSOT.
+        let desc = self
             .agent_registry
-            .get(&sess.pid)
-            .map(|d| d.state.as_str().to_lowercase())
-            .unwrap_or_else(|| "terminated".to_string());
-        let workspace_path = format!("/proc/{}/workspace/", sess.pid);
+            .get(session_id)
+            .ok_or_else(|| ManagedAgentError::UnknownSession(session_id.to_string()))?;
+        let workspace_path = format!("/proc/{}/workspace/", desc.pid);
+        let model = desc.labels.get(MODEL_LABEL).cloned().unwrap_or_default();
         Ok(GetSessionResponse {
-            session_id: sess.session_id,
-            agent_id: sess.pid,
-            agent: sess.agent,
+            session_id: desc.pid.clone(),
+            agent_id: desc.pid.clone(),
+            agent: desc.name.clone(),
             workspace_path,
-            model: sess.model,
-            state,
+            model,
+            state: desc.state.as_str().to_lowercase(),
         })
     }
 }
@@ -528,7 +517,8 @@ mod tests {
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
 
-        assert!(resp.session_id.starts_with("sess-"));
+        // session_id IS the pid — no second identifier.
+        assert_eq!(resp.session_id, resp.agent_id);
         assert!(resp.agent_id.starts_with("pid-"));
         assert_eq!(
             resp.workspace_path,
@@ -543,6 +533,12 @@ mod tests {
         assert_eq!(desc.state, AgentState::WarmingUp);
         assert_eq!(desc.owner_id, "ethan");
         assert_eq!(desc.zone_id, "root");
+        // Model lands on the descriptor as a label so get_session can
+        // echo it back without a sidecar table.
+        assert_eq!(
+            desc.labels.get("model").map(String::as_str),
+            Some("claude-sonnet-4-6")
+        );
     }
 
     #[test]
@@ -566,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_session_terminates_pid_and_drops_session() {
+    fn cancel_session_terminates_pid_and_reaps_descriptor() {
         let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
@@ -576,11 +572,12 @@ mod tests {
         let r = svc.cancel(&session_id, CancelMode::Session).unwrap();
         assert!(r.cancelled);
 
-        let desc = table.get(&pid).unwrap();
-        assert_eq!(desc.state, AgentState::Terminated);
-        assert_eq!(desc.exit_code, Some(0));
+        // Managed agents are orphans (start_session passes parent_pid=
+        // None), so AgentRegistry::kill auto-reaps the descriptor on
+        // the Terminated transition.
+        assert!(table.get(&pid).is_none());
 
-        // Second cancel surfaces UnknownSession (the row was dropped).
+        // Second cancel surfaces UnknownSession (descriptor reaped).
         let err = svc.cancel(&session_id, CancelMode::Session).unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
@@ -597,14 +594,14 @@ mod tests {
         // pid still WARMING_UP — turn cancel doesn't terminate.
         let desc = table.get(&pid).unwrap();
         assert_eq!(desc.state, AgentState::WarmingUp);
-        // session row still present — get_session still works.
+        // Descriptor still present — get_session still works.
         let _ = svc.get_session(&resp.session_id).unwrap();
     }
 
     #[test]
     fn cancel_unknown_session_errors() {
         let svc = fresh_service();
-        let err = svc.cancel("sess-bogus", CancelMode::Session).unwrap_err();
+        let err = svc.cancel("pid-bogus", CancelMode::Session).unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
 
@@ -622,20 +619,24 @@ mod tests {
     }
 
     #[test]
-    fn get_session_surfaces_terminated_for_reaped_pid() {
+    fn get_session_surfaces_unknown_for_reaped_pid() {
+        // Pre-collapse, the service kept its own session row so a
+        // get_session against a reaped pid returned the snapshot with
+        // state="terminated".  Post-collapse the descriptor IS the
+        // SSOT: once it's reaped, get_session must surface
+        // UnknownSession.
         let table = Arc::new(AgentRegistry::new());
         let svc = ManagedAgentService::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
-        // Simulate out-of-band reap (e.g. SIGKILL from operator).
         table.unregister(&resp.agent_id);
-        let snap = svc.get_session(&resp.session_id).unwrap();
-        assert_eq!(snap.state, "terminated");
+        let err = svc.get_session(&resp.session_id).unwrap_err();
+        assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
 
     #[test]
     fn get_session_unknown_session_errors() {
         let svc = fresh_service();
-        let err = svc.get_session("sess-bogus").unwrap_err();
+        let err = svc.get_session("pid-bogus").unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
 
@@ -660,7 +661,7 @@ mod tests {
                 .dispatch("start_session_v1", payload.as_bytes())
                 .unwrap();
             let resp: StartSessionResponse = serde_json::from_slice(&bytes).unwrap();
-            assert!(resp.session_id.starts_with("sess-"));
+            assert_eq!(resp.session_id, resp.agent_id);
             assert!(resp.agent_id.starts_with("pid-"));
             assert_eq!(
                 resp.workspace_path,
@@ -676,7 +677,8 @@ mod tests {
                 .dispatch("start_session_v1", payload.as_bytes())
                 .unwrap();
             let resp: StartSessionResponse = serde_json::from_slice(&bytes).unwrap();
-            assert!(resp.session_id.starts_with("sess-"));
+            assert!(resp.agent_id.starts_with("pid-"));
+            assert_eq!(resp.session_id, resp.agent_id);
         }
 
         #[test]
@@ -702,7 +704,7 @@ mod tests {
         #[test]
         fn cancel_v1_unknown_session_surfaces_invalid_argument() {
             let svc = fresh_service();
-            let payload = json!({"session_id": "sess-bogus", "mode": "session"}).to_string();
+            let payload = json!({"session_id": "pid-bogus", "mode": "session"}).to_string();
             let err = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap_err();
             assert!(matches!(err, RustCallError::InvalidArgument(_)));
         }
@@ -850,13 +852,12 @@ mod tests {
         }
 
         #[test]
-        fn cancel_session_drops_dirent_and_descriptor_on_kernelless_path() {
+        fn cancel_session_reaps_descriptor_on_kernelless_path() {
             // svc_with_kernel() does NOT call install_returning, so the
-            // on_terminate observer is not registered.  This test
-            // exercises the bookkeeping path: cancel transitions the
-            // descriptor to Terminated and drops the session row, but
-            // the dirent stays put because no observer fires to remove
-            // it.  The companion test
+            // on_terminate observer is not registered.  cancel(Session)
+            // still runs `kill` which auto-reaps the orphan descriptor;
+            // the procfs dirent however stays put because no observer
+            // fires to remove it.  The companion test
             // `cancel_session_with_observer_drops_dirent_idempotently`
             // covers the install-path semantics.
             let (kernel, svc) = svc_with_kernel();
@@ -868,11 +869,13 @@ mod tests {
             let resp = svc.start_session(r).unwrap();
             assert!(dir_exists(&kernel, &resp.workspace_path));
             svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
+            // Descriptor reaped → both get_session and a follow-up
+            // cancel surface UnknownSession.
             let err = svc.get_session(&resp.session_id).unwrap_err();
             assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
-            let desc = kernel.agent_registry().get(&resp.agent_id).unwrap();
-            assert_eq!(desc.state, AgentState::Terminated);
-            assert_eq!(desc.exit_code, Some(0));
+            assert!(kernel.agent_registry().get(&resp.agent_id).is_none());
+            // Dirent still in metastore — no observer ran.
+            assert!(dir_exists(&kernel, &resp.workspace_path));
         }
 
         #[test]
@@ -919,15 +922,17 @@ mod tests {
         }
 
         #[test]
-        fn cancel_session_with_observer_drops_dirent_idempotently() {
+        fn cancel_session_with_observer_reaps_descriptor_and_dirent() {
             // With an installed observer, cancel(Session) ends with
-            // both the dirent dropped (observer) and the session row
-            // gone (cancel's belt-and-braces remove).
+            // both the descriptor reaped (orphan auto-reap inside
+            // AgentRegistry::kill) and the procfs dirent dropped
+            // (on_terminate observer).
             let kernel = Arc::new(Kernel::new());
             let svc = install_managed_agent(&kernel);
             let resp = svc.start_session(req("scode-standard")).unwrap();
             svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
             assert!(!dir_exists(&kernel, &resp.workspace_path));
+            assert!(kernel.agent_registry().get(&resp.agent_id).is_none());
             let err = svc.get_session(&resp.session_id).unwrap_err();
             assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
         }

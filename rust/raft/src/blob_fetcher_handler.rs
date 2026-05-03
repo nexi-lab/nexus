@@ -4,8 +4,9 @@
 //! Lives in the raft crate alongside the `BlobFetcher` trait + the
 //! gRPC server: raft owns the wire-format and dispatch fabric, kernel
 //! owns the data plane (mount backends). This handler bridges the two
-//! by reaching kernel-side state (`VFSRouter`, `DCache`) through the
-//! kernel's runtime API surface.
+//! by reaching kernel-side state (`VFSRouter`) through the kernel's
+//! syscall surface — no ``MetaStore`` Arc leaks across the crate
+//! boundary.
 //!
 //! Store-and-forward: ``content_id`` is opaque. The fetcher resolves
 //! it via the local ``VFSRouter`` — for federation reads ``content_id``
@@ -27,13 +28,14 @@ use crate::blob_fetcher::BlobFetcher;
 use kernel::kernel::OperationContext;
 use kernel::vfs_router::VFSRouter;
 
-/// Closure type for "look up cached local content_id at this path" —
-/// federation builds this from `Kernel::dcache_lookup_local_content_id`
-/// so the fetcher can consult the dcache without holding `Arc<DCache>`.
+/// Closure type for "look up locally-stored content_id at this path" —
+/// federation builds this from `Kernel::content_id_lookup_fn` so the
+/// fetcher consults the metastore through the kernel's syscall layer
+/// (no ``MetaStore`` symbol crossing the crate boundary).
 type LocalContentIdLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 /// Kernel-side `BlobFetcher` — backed by the kernel's `VFSRouter` plus
-/// a narrow dcache-lookup closure.
+/// a narrow content-id-lookup closure.
 pub struct KernelBlobFetcher {
     vfs_router: Arc<VFSRouter>,
     lookup_local_content_id: LocalContentIdLookup,
@@ -126,7 +128,7 @@ impl BlobFetcher for KernelBlobFetcher {
 /// Kernel hands back the slot as `Box<dyn Any + Send + Sync>`; this
 /// handler downcasts to the concrete `BlobFetcherSlot` here, which
 /// is fine because the handler lives in raft alongside the type.
-pub fn install(kernel: &kernel::kernel::Kernel) {
+pub fn install(kernel: &Arc<kernel::kernel::Kernel>) {
     let Some(any_slot) = kernel.take_pending_blob_fetcher_slot() else {
         return;
     };
@@ -140,7 +142,7 @@ pub fn install(kernel: &kernel::kernel::Kernel) {
             return;
         }
     };
-    let lookup = kernel.dcache_local_content_id_lookup_fn();
+    let lookup = kernel.content_id_lookup_fn(contracts::ROOT_ZONE_ID);
     let fetcher = Arc::new(KernelBlobFetcher::new(kernel.vfs_router_arc(), lookup));
     *slot.write() = Some(fetcher as Arc<dyn BlobFetcher>);
 }

@@ -866,7 +866,8 @@ fn federation_is_initialized_py(
 fn install_federation_wiring_py(
     kernel: PyRef<'_, kernel::generated_kernel_abi_pyo3::PyKernel>,
 ) -> PyResult<()> {
-    crate::distributed_coordinator::install(kernel.kernel_ref())
+    let kernel_arc = kernel.kernel_arc();
+    crate::distributed_coordinator::install(&kernel_arc)
         .map_err(pyo3::exceptions::PyRuntimeError::new_err)
 }
 

@@ -1557,10 +1557,10 @@ fn wire_mount_impl(
 ///
 /// Mirrors `transport::blob::peer_client::install` — called once per
 /// process from the cdylib boot path. Idempotent for re-imports.
-pub fn install(kernel: &Kernel) -> Result<(), String> {
+pub fn install(kernel: &Arc<Kernel>) -> Result<(), String> {
     let coordinator = Arc::new(RaftDistributedCoordinator::new());
     kernel.set_distributed_coordinator(coordinator.clone() as Arc<dyn DistributedCoordinator>);
-    coordinator.init_from_env(kernel)?;
+    coordinator.init_from_env(kernel.as_ref())?;
     crate::blob_fetcher_handler::install(kernel);
     Ok(())
 }

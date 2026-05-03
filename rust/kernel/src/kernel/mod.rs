@@ -2231,26 +2231,40 @@ impl Kernel {
         Arc::clone(&self.vfs_router)
     }
 
-    /// Hand out a closure that looks up the cached local content_id for
-    /// a path (or `None` on dcache miss / empty content_id).  Federation
-    /// `KernelBlobFetcher` captures this in an `Arc<dyn Fn>` so it can
-    /// translate VFS paths into backend-specific content handles
-    /// without holding `Arc<DCache>` directly.
+    /// Resolve a VFS path to its locally-stored ``content_id``.
     ///
-    /// Replaced in commit L by ``content_id_lookup_fn`` — the
-    /// syscall-shaped helper that goes through ``route() +
-    /// metastore.get()`` instead of the kernel-global dcache.
+    /// Runs the same chain as ``sys_stat``'s metadata fetch (validate,
+    /// route, per-mount metastore lookup, ``content_id`` non-empty
+    /// filter) and returns the value the local backend expects: CAS
+    /// hash for content-addressed mounts, backend-relative path for
+    /// path-addressed mounts. Returns ``None`` on routing failure,
+    /// missing metadata, or empty content_id.
+    ///
+    /// Public surface (kernel's syscall layer, not MetaStore-shaped) so
+    /// cross-crate callers (federation's ``KernelBlobFetcher``) reach it
+    /// through the same boundary the syscall API uses — no
+    /// ``Arc<dyn MetaStore>`` leak across crates.
+    pub fn lookup_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
+        let route = self.vfs_router.route(path, zone_id).ok()?;
+        self.with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+            .flatten()
+            .and_then(|m| m.content_id)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Hand out a long-lived closure that calls
+    /// [`Self::lookup_content_id`] under a fixed ``zone_id``. The
+    /// closure clones the kernel's ``Arc`` so it survives the call
+    /// frame that produced it — federation's ``KernelBlobFetcher``
+    /// holds it for the lifetime of the gRPC server.
     #[allow(clippy::type_complexity)]
-    pub fn dcache_local_content_id_lookup_fn(
-        &self,
+    pub fn content_id_lookup_fn(
+        self: &Arc<Self>,
+        zone_id: &str,
     ) -> Arc<dyn Fn(&str) -> Option<String> + Send + Sync> {
-        let dcache = Arc::clone(&self.dcache);
-        Arc::new(move |path: &str| {
-            dcache
-                .get_entry(path)
-                .and_then(|e| e.content_id)
-                .filter(|s| !s.is_empty())
-        })
+        let kernel = Arc::clone(self);
+        let zone = zone_id.to_string();
+        Arc::new(move |path: &str| kernel.lookup_content_id(path, &zone))
     }
 
     /// Borrow the kernel's `AgentRegistry` (the per-PID SSOT).  Used by

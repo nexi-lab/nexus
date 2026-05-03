@@ -47,25 +47,37 @@ def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str | int] | None]:
     pgvector hnsw 2000-dim cap; operators can override with
     NEXUS_TXTAI_DIMENSIONS.
     """
-    use_api_embeddings = _env_truthy("NEXUS_TXTAI_USE_API_EMBEDDINGS")
     configured_model = os.environ.get("NEXUS_TXTAI_MODEL", "").strip()
     openai_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     openai_base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
-    model = configured_model or "sentence-transformers/all-MiniLM-L6-v2"
+    # Auto-prefer OpenAI when a key is available — local sentence-transformers
+    # is the fallback for keyless dev setups, not the default. ``text-embedding-3-large``
+    # matches the prevailing production storage dim (1536 truncated via Matryoshka)
+    # and beats local MiniLM (384d) on retrieval quality across MTEB.
+    # Operators can force local with ``NEXUS_TXTAI_USE_API_EMBEDDINGS=false``.
+    api_env = os.environ.get("NEXUS_TXTAI_USE_API_EMBEDDINGS", "").strip().lower()
+    if api_env in ("true", "1", "yes"):
+        use_api_embeddings = True
+    elif api_env in ("false", "0", "no"):
+        use_api_embeddings = False
+    else:
+        use_api_embeddings = bool(openai_api_key)
+
+    model = configured_model or (
+        "openai/text-embedding-3-large"
+        if use_api_embeddings and openai_api_key
+        else "sentence-transformers/all-MiniLM-L6-v2"
+    )
     vectors: dict[str, str | int] | None = None
 
-    if use_api_embeddings:
-        if not configured_model and openai_api_key:
-            model = "openai/text-embedding-3-small"
+    if use_api_embeddings and model.startswith("openai/") and openai_api_key:
+        vectors = {"api_key": openai_api_key}
+        if openai_base_url:
+            vectors["api_base"] = openai_base_url
 
-        if model.startswith("openai/") and openai_api_key:
-            vectors = {"api_key": openai_api_key}
-            if openai_base_url:
-                vectors["api_base"] = openai_base_url
-
-            dim = _resolve_embedding_dimensions(model)
-            if dim is not None:
-                vectors["dimensions"] = dim
+        dim = _resolve_embedding_dimensions(model)
+        if dim is not None:
+            vectors["dimensions"] = dim
 
     return model, vectors or None
 

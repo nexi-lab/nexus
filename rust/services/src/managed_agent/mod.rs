@@ -953,7 +953,14 @@ mod tests {
 
             let shortcut = format!("{}chat-with-me", &resp.workspace_path);
             let canonical = format!("/proc/{}/chat-with-me", resp.session_id);
-            let payload = br#"{"to":"scode-standard","body":"ping"}"#;
+            // Pre-stamp the envelope's `from` field with the caller's
+            // agent_id so MailboxStampingHook's rewrite is a no-op for
+            // this test — keeps the assertion focused on "bytes
+            // followed the DT_LINK to the canonical stream" without
+            // coupling to the stamping policy.  The MailboxStamping
+            // e2e companion exercises the rewrite path explicitly.
+            let payload =
+                br#"{"from":"scode-standard","to":"human-ethan","body":"ping"}"#;
 
             let ctx = OperationContext {
                 user_id: "ethan".into(),
@@ -978,6 +985,61 @@ mod tests {
                 .expect("sys_read on canonical chat-with-me");
             let bytes = read.data.expect("stream data present after write");
             assert_eq!(bytes.as_slice(), payload);
+        }
+
+        /// MailboxStampingHook end-to-end: a sys_write through the
+        /// workspace shortcut DT_LINK runs through the registered hook,
+        /// which rewrites the envelope's `from` field to match
+        /// `OperationContext.agent_id`. Reading the canonical stream
+        /// returns the stamped envelope, not the LLM-authored one.
+        /// Validates dispatch_native_pre_with_replacement is wired
+        /// through sys_write_with_link_depth's EXECUTE phase.
+        #[test]
+        fn mailbox_stamping_hook_rewrites_envelope_through_link_path() {
+            use kernel::kernel::OperationContext;
+
+            let kernel = Arc::new(Kernel::new());
+            mount_proc(&kernel);
+            let svc = install_managed_agent(&kernel);
+            let resp = svc.start_session(req("scode-standard")).unwrap();
+
+            let shortcut = format!("{}chat-with-me", &resp.workspace_path);
+            let canonical = format!("/proc/{}/chat-with-me", resp.session_id);
+            // LLM-authored envelope claims to be from "scode-standard"
+            // but the real caller is human-ethan; the hook should
+            // rewrite the `from` field.
+            let llm_authored =
+                br#"{"from":"scode-standard","to":"human-ethan","body":"hi"}"#.to_vec();
+
+            let ctx = OperationContext {
+                user_id: "ethan".into(),
+                zone_id: "root".into(),
+                is_admin: false,
+                agent_id: Some("human-ethan".into()),
+                is_system: false,
+                groups: vec![],
+                admin_capabilities: vec![],
+                subject_type: "user".into(),
+                subject_id: None,
+                request_id: "req-stamp".into(),
+                context_zone_id: None,
+            };
+
+            kernel
+                .sys_write(&shortcut, &ctx, &llm_authored, 0)
+                .expect("sys_write through workspace shortcut DT_LINK");
+
+            let read = kernel
+                .sys_read(&canonical, &ctx, 0, 0)
+                .expect("sys_read on canonical chat-with-me");
+            let bytes = read.data.expect("stream data present");
+            let json: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("envelope is valid JSON");
+            assert_eq!(
+                json.get("from").and_then(|v| v.as_str()),
+                Some("human-ethan"),
+                "MailboxStampingHook should overwrite from-field with caller agent_id",
+            );
         }
 
         /// Companion structural assertion — keeps the metastore-level

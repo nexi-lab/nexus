@@ -424,21 +424,38 @@ impl Kernel {
             return miss();
         }
 
-        // 1c. Native INTERCEPT PRE hooks (§11 native hooks)
-        self.dispatch_native_pre(&HookContext::Write(WriteHookCtx {
-            path: path.to_string(),
-            identity: HookIdentity {
-                user_id: ctx.user_id.clone(),
-                zone_id: ctx.zone_id.clone(),
-                agent_id: ctx.agent_id.clone().unwrap_or_default(),
-                is_admin: ctx.is_admin,
-            },
-            content: vec![], // no clone — no current hook inspects content
-            is_new_file: false,
-            content_id: None,
-            new_version: 0,
-            size_bytes: None,
-        }))?;
+        // 1c. Native INTERCEPT PRE hooks (§11 native hooks).
+        // Clone gate: hooks that mutate write content declare a
+        // `mutating_path_suffix` so the dispatcher only clones the
+        // content slice into `WriteHookCtx` when one matches. Steady-
+        // state writes (no mutating hooks registered, or the path
+        // doesn't end in a registered suffix) pay zero clones.
+        let needs_content_for_hook = self.has_mutating_hook_match(path);
+        let hook_content = if needs_content_for_hook {
+            content.to_vec()
+        } else {
+            Vec::new()
+        };
+        let replacement =
+            self.dispatch_native_pre_with_replacement(&HookContext::Write(WriteHookCtx {
+                path: path.to_string(),
+                identity: HookIdentity {
+                    user_id: ctx.user_id.clone(),
+                    zone_id: ctx.zone_id.clone(),
+                    agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                    is_admin: ctx.is_admin,
+                },
+                content: hook_content,
+                is_new_file: false,
+                content_id: None,
+                new_version: 0,
+                size_bytes: None,
+            }))?;
+        // EXECUTE phase uses replacement bytes when a mutating hook
+        // returned `HookOutcome::Replace(...)`, otherwise the original
+        // content slice. Hooks that returned `Pass` leave `replacement`
+        // as None.
+        let effective_content: &[u8] = replacement.as_deref().unwrap_or(content);
 
         // 2. Route (check write access)
         let route = match self.vfs_router.route(path, &ctx.zone_id) {
@@ -474,7 +491,7 @@ impl Kernel {
                 return self.sys_write_with_link_depth(
                     target,
                     ctx,
-                    content,
+                    effective_content,
                     offset,
                     max_link_hops - 1,
                 );
@@ -485,7 +502,7 @@ impl Kernel {
         if let Some(entry) = entry {
             if entry.entry_type == DT_PIPE {
                 if let Some(buf) = self.pipe_manager.get(path) {
-                    match buf.push(content) {
+                    match buf.push(effective_content) {
                         Ok(n) => {
                             return Ok(SysWriteResult {
                                 hit: true,
@@ -514,7 +531,7 @@ impl Kernel {
             }
             if entry.entry_type == DT_STREAM {
                 if let Some(buf) = self.stream_manager.get(path) {
-                    match buf.push(content) {
+                    match buf.push(effective_content) {
                         Ok(offset) => {
                             return Ok(SysWriteResult {
                                 hit: true,
@@ -579,7 +596,7 @@ impl Kernel {
         };
         let write_result = match self.vfs_router.write_content(
             &route.mount_point,
-            content,
+            effective_content,
             &effective_content_id,
             ctx,
             offset,

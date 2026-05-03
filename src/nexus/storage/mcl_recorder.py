@@ -210,10 +210,11 @@ class MCLRecorder:
         if aspect_name is not None:
             stmt = stmt.where(MetadataChangeLogModel.aspect_name == aspect_name)
 
-        offset = 0
+        last_sequence = from_sequence - 1
         while True:
-            batch = list(self._session.execute(stmt.limit(batch_size).offset(offset)).scalars())
+            page_stmt = stmt.where(MetadataChangeLogModel.sequence_number > last_sequence)
+            batch = list(self._session.execute(page_stmt.limit(batch_size)).scalars())
             if not batch:
                 break
             yield from batch
-            offset += batch_size
+            last_sequence = batch[-1].sequence_number

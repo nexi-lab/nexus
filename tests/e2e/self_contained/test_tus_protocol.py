@@ -50,7 +50,12 @@ def upload_service(tmp_backend: CASLocalBackend) -> ChunkedUploadService:
 
 
 @pytest.fixture
-def app(upload_service: ChunkedUploadService) -> FastAPI:
+def auth_state() -> dict[str, object]:
+    return {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
+
+
+@pytest.fixture
+def app(upload_service: ChunkedUploadService, auth_state: dict[str, object]) -> FastAPI:
     """Create a FastAPI app with the tus router."""
     _app = FastAPI()
     public_router, auth_router = create_tus_uploads_router(
@@ -59,8 +64,7 @@ def app(upload_service: ChunkedUploadService) -> FastAPI:
     _app.include_router(public_router, prefix="/api/v2/uploads")
     _app.include_router(auth_router, prefix="/api/v2/uploads")
     # Override require_auth for functional tests
-    _auth_result = {"authenticated": True, "is_admin": False, "subject_id": "test-user"}
-    _app.dependency_overrides[require_auth] = lambda: _auth_result
+    _app.dependency_overrides[require_auth] = lambda: auth_state
     return _app
 
 
@@ -265,6 +269,31 @@ class TestResumeAfterDisconnect:
         )
         assert patch2.status_code == 204
         assert patch2.headers["Upload-Offset"] == str(len(full_content))
+
+    @pytest.mark.asyncio
+    async def test_different_user_cannot_resume_upload(
+        self,
+        client: AsyncClient,
+        auth_state: dict[str, object],
+    ) -> None:
+        create_resp = await client.post(
+            "/api/v2/uploads",
+            headers={**TUS_HEADERS, "Upload-Length": "4"},
+        )
+        upload_path = create_resp.headers["Location"].replace("http://test", "")
+
+        auth_state["subject_id"] = "other-user"
+        patch_resp = await client.patch(
+            upload_path,
+            headers={
+                **TUS_HEADERS,
+                "Upload-Offset": "0",
+                "Content-Type": "application/offset+octet-stream",
+            },
+            content=b"data",
+        )
+
+        assert patch_resp.status_code == 403
 
 
 class TestChecksumEndpoints:

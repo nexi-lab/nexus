@@ -59,6 +59,7 @@ async def startup_uploads(app: "FastAPI", svc: "LifespanServices") -> list[async
                     backend=_backend,
                     metadata_store=getattr(svc.nexus_fs, "metadata", None),
                     config=ChunkedUploadConfig(**_upload_kwargs),
+                    nexus_fs=svc.nexus_fs,
                 )
                 cleanup_task = asyncio.create_task(
                     app.state.chunked_upload_service.start_cleanup_loop()

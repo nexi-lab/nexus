@@ -93,10 +93,12 @@ class ChunkedUploadService:
         backend: "ConnectorProtocol",
         metadata_store: Any = None,
         config: ChunkedUploadConfig | None = None,
+        nexus_fs: Any = None,
     ):
         self._session_factory = record_store.session_factory
         self._backend = backend
         self._metadata_store = metadata_store
+        self._nexus_fs = nexus_fs
         # Pull the kernel out of the proxy so the metadata put inside
         # ``finalize`` lands on ``kernel.metastore_*`` (survives W3).
         self._kernel = metadata_store
@@ -110,6 +112,10 @@ class ChunkedUploadService:
 
     # --- Public API ---
 
+    def attach_filesystem(self, nexus_fs: Any) -> None:
+        """Attach NexusFS so completed uploads use the normal write pipeline."""
+        self._nexus_fs = nexus_fs
+
     async def create_upload(
         self,
         target_path: str,
@@ -119,6 +125,7 @@ class ChunkedUploadService:
         zone_id: str = ROOT_ZONE_ID,
         user_id: str = "anonymous",
         checksum_algorithm: str | None = None,
+        context: Any | None = None,
     ) -> UploadSession:
         """Create a new upload session.
 
@@ -148,6 +155,8 @@ class ChunkedUploadService:
         # Lazy cleanup on create
         await self._lazy_cleanup()
 
+        await self._enforce_write_permission(target_path, context)
+
         # Acquire semaphore (non-blocking — return 429 if full)
         if not self._semaphore.locked():
             await self._semaphore.acquire()
@@ -160,10 +169,13 @@ class ChunkedUploadService:
             now = datetime.now(UTC)
             expires_at = now + timedelta(hours=self._config.session_ttl_hours)
 
-            # Initialize backend multipart if supported
+            # Initialize backend multipart only for standalone services. When
+            # NexusFS is attached, completed uploads must flow through
+            # NexusFS.write so permission, metadata, and audit hooks match
+            # ordinary writes.
             backend_upload_id: str | None = None
             backend_name: str | None = None
-            if self._supports_multipart():
+            if self._nexus_fs is None and self._supports_multipart():
                 mixin = cast("MultipartUpload", self._backend)
                 backend_upload_id = await asyncio.to_thread(
                     mixin.init_multipart,
@@ -189,6 +201,7 @@ class ChunkedUploadService:
                 expires_at=expires_at,
                 backend_upload_id=backend_upload_id,
                 backend_name=backend_name,
+                parts=(),
             )
 
             await self._persist_session(session)
@@ -213,6 +226,7 @@ class ChunkedUploadService:
         offset: int,
         chunk_data: bytes,
         checksum_header: str | None = None,
+        context: Any | None = None,
     ) -> UploadSession:
         """Receive and store a chunk of data.
 
@@ -243,6 +257,8 @@ class ChunkedUploadService:
             if session.is_expired:
                 await self._expire_session(session)
                 raise UploadExpiredError(upload_id)
+
+            await self._enforce_write_permission(session.target_path, context)
 
             # Validate offset
             if offset != session.upload_offset:
@@ -278,7 +294,7 @@ class ChunkedUploadService:
             part_number = session.parts_received + 1
             part_info = await self._store_chunk(session, part_number, chunk_data)
 
-            parts = self._parts_registry.get(upload_id, [])
+            parts = list(session.parts)
             parts.append(part_info)
             self._parts_registry[upload_id] = parts
 
@@ -301,6 +317,7 @@ class ChunkedUploadService:
                 backend_upload_id=session.backend_upload_id,
                 backend_name=session.backend_name,
                 parts_received=part_number,
+                parts=tuple(parts),
                 content_id=session.content_id,
             )
 
@@ -308,7 +325,7 @@ class ChunkedUploadService:
 
             # If upload is complete, assemble and write
             if updated.is_complete:
-                updated = await self._assemble_and_write(updated, parts)
+                updated = await self._assemble_and_write(updated, parts, context=context)
 
             return updated
 
@@ -382,6 +399,7 @@ class ChunkedUploadService:
             backend_upload_id=session.backend_upload_id,
             backend_name=session.backend_name,
             parts_received=session.parts_received,
+            parts=session.parts,
             content_id=session.content_id,
         )
         await self._update_session(terminated)
@@ -542,6 +560,10 @@ class ChunkedUploadService:
                 model.parts_received = s.parts_received
                 model.content_id = s.content_id
                 model.backend_upload_id = s.backend_upload_id
+                model.metadata_json = UploadSessionModel.encode_metadata_state(
+                    s.metadata,
+                    s.parts,
+                )
                 db.commit()
             except Exception:
                 db.rollback()
@@ -603,6 +625,8 @@ class ChunkedUploadService:
         self,
         session: UploadSession,
         parts: list[dict[str, Any]],
+        *,
+        context: Any | None = None,
     ) -> UploadSession:
         """Assemble chunks and write the final file.
 
@@ -615,6 +639,7 @@ class ChunkedUploadService:
         content_id: str
 
         if self._supports_multipart() and session.backend_upload_id:
+            await self._enforce_write_permission(session.target_path, context)
             mixin = cast("MultipartUpload", self._backend)
             content_id = await asyncio.to_thread(
                 mixin.complete_multipart,
@@ -634,13 +659,22 @@ class ChunkedUploadService:
 
             # Write assembled content to CAS
             content = bytes(assembled)
-            _write = self._backend.write_content
-            result = await asyncio.to_thread(_write, content)
-            content_id = result.content_id
+            if self._nexus_fs is not None:
+                result = await asyncio.to_thread(
+                    self._nexus_fs.write,
+                    session.target_path,
+                    content,
+                    context=context,
+                )
+                content_id = result["content_id"]
+            else:
+                _write = self._backend.write_content
+                result = await asyncio.to_thread(_write, content)
+                content_id = result.content_id
 
-            # Link content to target_path via metadata store so the file is
-            # reachable (multipart backends do this inside complete_multipart).
-            if self._kernel is not None:
+            # Link content to target_path via metadata store when NexusFS is not
+            # attached. NexusFS.write handles metadata, hooks, and observers.
+            if self._nexus_fs is None and self._kernel is not None:
                 from nexus.contracts.metadata import FileMetadata
 
                 metadata = FileMetadata(
@@ -648,7 +682,10 @@ class ChunkedUploadService:
                     size=len(content),
                     content_id=content_id,
                 )
-                await asyncio.to_thread(self._kernel.metastore_put, metadata)
+                write_metadata = getattr(self._kernel, "metastore_put", None)
+                if write_metadata is None:
+                    write_metadata = self._kernel.put
+                await asyncio.to_thread(write_metadata, metadata)
 
         # Update session to completed
         completed = UploadSession(
@@ -666,6 +703,7 @@ class ChunkedUploadService:
             backend_upload_id=session.backend_upload_id,
             backend_name=session.backend_name,
             parts_received=session.parts_received,
+            parts=tuple(parts),
             content_id=content_id,
         )
         await self._update_session(completed)
@@ -716,6 +754,7 @@ class ChunkedUploadService:
             backend_upload_id=session.backend_upload_id,
             backend_name=session.backend_name,
             parts_received=session.parts_received,
+            parts=session.parts,
             content_id=session.content_id,
         )
 
@@ -740,6 +779,13 @@ class ChunkedUploadService:
                 await self.cleanup_expired()
             except Exception as e:
                 logger.warning("Lazy cleanup failed: %s", e)
+
+    async def _enforce_write_permission(self, path: str, context: Any | None) -> None:
+        if context is None or self._nexus_fs is None:
+            return
+        enforce = getattr(self._nexus_fs, "_enforce_lock_write_permission", None)
+        if callable(enforce):
+            await asyncio.to_thread(enforce, path, context)
 
     @staticmethod
     def _verify_checksum(

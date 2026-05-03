@@ -1,0 +1,5 @@
+[env]
+# Cargo passes this to dependency build scripts before crate-local build.rs files run.
+# The wrapper keeps old protobuf-build version parsing compatible with modern
+# libprotoc versions while still executing the real compiler.
+PROTOC = { value = "scripts/protoc-compat.py", relative = true }

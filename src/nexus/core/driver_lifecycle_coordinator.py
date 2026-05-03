@@ -1,19 +1,29 @@
-"""DriverLifecycleCoordinator — kernel primitive for driver mount lifecycle.
+"""DriverLifecycleCoordinator — Python-side mount-event broadcaster.
 
-Linux analogue: ``register_filesystem()`` + ``kern_mount()`` + ``kill_sb()``.
-Orthogonal to ``ServiceRegistry`` lifecycle orchestration (services vs drivers).
+Linux analogue: ``udev`` listening to kernel uevents.  This coordinator
+does NOT own a routing table, a metastore, or a dcache — those live in
+the Rust kernel:
 
-Services have singleton cardinality and are boot-triggered.
-Drivers have N-per-type cardinality and are mount-triggered.
+    routing table → ``rust/kernel/src/core/vfs_router.rs::VFSRouter``
+                     (`entries: DashMap<canonical_key, MountEntry>`)
+    metastore     → ``Kernel::metastore`` (global default) +
+                     per-mount ``MountEntry::metastore``
+    dcache        → ``Kernel::dcache`` (a kernel primitive; not part of
+                     MetaStore — exposed via ``Kernel::dcache_arc()`` so
+                     federation install hooks can wire invalidation)
 
-Responsibilities:
-    1. Add/remove backend in kernel MountTable (via ``PyKernel.add_mount``)
-    2. Register/unregister backend's hook_spec with KernelDispatch
-    3. Broadcast mount/unmount events via KernelDispatch hooks
+The Rust ``DriverLifecycleCoordinator`` (``rust/kernel/src/core/dlc.rs``)
+threads mount mutations into those kernel-owned tables.  This Python
+class only:
+    1. Generates canonical backend keys for AuthProfile lookup (via
+       ``backend_key()``) — federated nodes append ``@self_address``.
+    2. Fires the Python ``KernelDispatch`` ``unmount`` event so brick
+       hooks (e.g. ``CasLocalBackend._on_unmount``) get notified — the
+       Rust kernel does not yet have a parallel hook-firing primitive.
 
-The Rust kernel is the single source of truth for routing, mount existence,
-backend ownership, and metadata.  This Python-side coordinator is a thin
-bookkeeping layer for lifecycle events (mount/unmount dispatch).
+Once the Rust kernel grows an unmount-hook firing primitive, this whole
+class becomes deletable.  Until then it stays as the smallest possible
+event-bus shim.
 
 Kernel-owned: created in ``NexusFS.__init__()`` (like ServiceRegistry).
 Always available after kernel construction.
@@ -38,12 +48,18 @@ logger = logging.getLogger(__name__)
 
 
 class DriverLifecycleCoordinator:
-    """Kernel primitive: driver mount lifecycle (Python bookkeeping).
+    """Python-side mount-event broadcaster.
 
-    Rust DLC (``dlc.rs``) owns routing table + metastore + dcache.
-    Python DLC dispatches mount/unmount events.
+    Wraps the Rust kernel's ``DriverLifecycleCoordinator`` (``dlc.rs``)
+    only to fire the Python ``KernelDispatch`` ``unmount`` event after a
+    Rust unmount completes — the Rust kernel does not yet have a
+    parallel hook-firing primitive.  ``backend_key()`` generates the
+    canonical backend key (with optional federated ``@self_address``
+    suffix) for AuthProfile resolution.
 
-    Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
+    Routing table, metastore, dcache, and mount existence checks all
+    live Rust-side; this class delegates every read/mutation through
+    ``self._kernel`` and never caches kernel state.
     """
 
     __slots__ = (

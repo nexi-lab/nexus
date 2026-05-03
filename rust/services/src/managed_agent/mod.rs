@@ -52,6 +52,7 @@ use kernel::service_registry::{RustCallError, RustService};
 
 pub(crate) mod mailbox_stamping_hook;
 pub(crate) mod mailbox_stamping_policy;
+pub(crate) mod proc_entry;
 pub(crate) mod session;
 pub(crate) mod workspace_boundary_hook;
 

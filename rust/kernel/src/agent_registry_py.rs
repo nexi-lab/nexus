@@ -22,7 +22,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::core::agents::registry::{
-    AgentDescriptor, AgentError, AgentKind, AgentRegistry, AgentSignal, AgentState,
+    AgentDescriptor, AgentError, AgentKind, AgentRegistry, AgentSignal, AgentState, RepoMount,
 };
 
 fn agent_error_to_pyerr(e: AgentError) -> PyErr {
@@ -137,6 +137,17 @@ impl PyAgentDescriptor {
     fn labels(&self) -> HashMap<String, String> {
         self.inner.labels.clone()
     }
+    /// Workspace repo mounts as a list of dicts (`{alias, mount_path}`).
+    /// Drives `/proc/{pid}/workspace/{alias}` rendering through the
+    /// `ProcWorkspaceResolver` procfs view.
+    #[getter]
+    fn repos<'py>(&self, py: Python<'py>) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.inner
+            .repos
+            .iter()
+            .map(|r| repo_to_dict(py, r))
+            .collect()
+    }
     /// `external_info` as a dict (matches Python ExternalProcessInfo
     /// shape) or None for managed agents.
     #[getter]
@@ -171,6 +182,13 @@ impl PyAgentDescriptor {
     }
 }
 
+fn repo_to_dict<'py>(py: Python<'py>, repo: &RepoMount) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    dict.set_item("alias", &repo.alias)?;
+    dict.set_item("mount_path", &repo.mount_path)?;
+    Ok(dict)
+}
+
 fn descriptor_to_dict<'py>(
     py: Python<'py>,
     desc: &AgentDescriptor,
@@ -193,6 +211,12 @@ fn descriptor_to_dict<'py>(
     dict.set_item("last_heartbeat_ms", desc.last_heartbeat_ms)?;
     dict.set_item("connection_id", desc.connection_id.as_deref())?;
     dict.set_item("labels", desc.labels.clone())?;
+    let repos: Vec<Bound<'py, PyDict>> = desc
+        .repos
+        .iter()
+        .map(|r| repo_to_dict(py, r))
+        .collect::<PyResult<_>>()?;
+    dict.set_item("repos", repos)?;
     if let Some(info) = desc.external_info.as_ref() {
         let ext = PyDict::new(py);
         ext.set_item("connection_id", &info.connection_id)?;

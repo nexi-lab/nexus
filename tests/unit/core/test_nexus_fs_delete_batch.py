@@ -438,6 +438,153 @@ class TestImplicitRecursiveRaceRecheck:
         assert "concurrent" in result["/parent"]["error"].lower()
 
 
+class TestPreDeleteMetadataFailClosed:
+    """Codex round-9 finding: pre-delete metadata.get() must fail-closed.
+    A metastore error during the probe means rollback hooks would never
+    record original_hash — so refuse the delete instead of silently
+    proceeding with metadata=None."""
+
+    def test_metastore_failure_aborts_delete(self, nx, monkeypatch):
+        nx.write_batch([("/tracked.txt", b"x")])
+
+        def flaky_get(p):
+            if p == "/tracked.txt":
+                raise RuntimeError("metastore degraded")
+            return None
+
+        monkeypatch.setattr(nx.metadata, "get", flaky_get)
+
+        result = nx.delete_batch(["/tracked.txt"])
+
+        assert result["/tracked.txt"]["success"] is False
+        assert "metastore degraded" in result["/tracked.txt"]["error"]
+
+
+class TestMountVerifyFailClosed:
+    """Codex round-9 finding: has_mount errors after metadata.delete
+    must fail-closed (raise) rather than silently masking a possibly
+    live route as 'gone'."""
+
+    def test_has_mount_failure_raises(self, nx, monkeypatch):
+        from nexus.contracts.exceptions import BackendError
+        from nexus.contracts.metadata import FileMetadata
+
+        class _ExternalResult:
+            hit = False
+            entry_type = 5
+            post_hook_needed = False
+
+        class _UnverifiableKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                return _ExternalResult()
+
+            def dispatch_pre_hooks(self, *_a, **_kw):
+                return None
+
+            def has_mount(self, *_a, **_kw):
+                raise RuntimeError("kernel verification crashed")
+
+        meta = FileMetadata(
+            path="/unverifiable",
+            content_id=None,
+            mime_type="inode/external_storage",
+            size=0,
+            zone_id="root",
+        )
+        monkeypatch.setattr(nx.metadata, "get", lambda _p: meta)
+        monkeypatch.setattr(nx, "_kernel", _UnverifiableKernel(nx._kernel))
+
+        with pytest.raises(BackendError, match="cannot verify mount route teardown"):
+            nx.sys_unlink("/unverifiable")
+
+
+class TestStrandedMountVerifyFailClosed:
+    """Codex round-10 finding: et=0 stranded-mount recovery must
+    fail-closed when has_mount can't be evaluated. Probe AND
+    post-teardown verification both raise BackendError instead of
+    silently treating verification failure as 'route absent'."""
+
+    def test_stranded_probe_failure_raises(self, nx, monkeypatch):
+        """has_mount raises during the initial probe — must surface
+        BackendError, not fall through to NexusFileNotFoundError."""
+        from nexus.contracts.exceptions import BackendError
+
+        class _FlakyProbeKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                class R:
+                    hit = False
+                    entry_type = 0
+                    post_hook_needed = False
+
+                return R()
+
+            def has_mount(self, *_a, **_kw):
+                raise RuntimeError("kernel routing degraded")
+
+        monkeypatch.setattr(nx, "_kernel", _FlakyProbeKernel(nx._kernel))
+
+        with pytest.raises(BackendError, match="cannot verify mount route"):
+            nx.sys_unlink("/probe-fails")
+
+    def test_stranded_post_unmount_verify_failure_raises(self, nx, monkeypatch):
+        """has_mount succeeds for the initial probe (route is live)
+        but the post-teardown re-check raises — must surface
+        BackendError, not silently report success."""
+        from nexus.contracts.exceptions import BackendError
+
+        class _PostUnmountFlakyKernel:
+            def __init__(self, real):
+                self._real = real
+                self._calls = 0
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                class R:
+                    hit = False
+                    entry_type = 0
+                    post_hook_needed = False
+
+                return R()
+
+            def has_mount(self, *_a, **_kw):
+                self._calls += 1
+                if self._calls == 1:
+                    return True  # route is live → recovery triggers
+                raise RuntimeError("kernel verification crashed")
+
+        class _RecoveringCoordinator:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def unmount(self, _p, _z=None):
+                return True
+
+        monkeypatch.setattr(nx, "_kernel", _PostUnmountFlakyKernel(nx._kernel))
+        monkeypatch.setattr(
+            nx, "_driver_coordinator", _RecoveringCoordinator(nx._driver_coordinator)
+        )
+
+        with pytest.raises(BackendError, match="cannot verify stranded mount route"):
+            nx.sys_unlink("/post-unmount-fails")
+
+
 class TestImplicitRecursiveStrictRecheck:
     """Codex round-6 finding: post-drain recheck must distinguish
     'verified absent' from 'cannot verify'. A degraded metastore that
@@ -523,6 +670,71 @@ class TestStrandedMountRecovery:
 
         assert result == {}
         assert unmount_calls == ["/stranded-mount"]
+
+    def test_unmount_uses_metadata_zone_not_caller_zone(self, nx, monkeypatch):
+        """Codex round-8 finding: route zone must come from pre-delete
+        FileMetadata, not the caller context. An admin operating from
+        the root zone deleting a tenant mount must tear down the route
+        in the tenant's zone, not in root."""
+        from nexus.contracts.metadata import FileMetadata
+
+        captured: list = []
+
+        class _ExternalResult:
+            hit = False
+            entry_type = 5
+            post_hook_needed = False
+
+        class _ZoneRecordingKernel:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def sys_unlink(self, *_a, **_kw):
+                return _ExternalResult()
+
+            def dispatch_pre_hooks(self, *_a, **_kw):
+                return None
+
+            def has_mount(self, p, z):
+                captured.append(("has_mount", p, z))
+                return False
+
+        class _ZoneRecordingCoordinator:
+            def __init__(self, real):
+                self._real = real
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def unmount(self, p, z=None):
+                captured.append(("unmount", p, z))
+                return True
+
+        # Pre-delete metadata reports the mount lives in tenant-A.
+        tenant_meta = FileMetadata(
+            path="/tenant-mount",
+            content_id=None,
+            mime_type="inode/external_storage",
+            size=0,
+            zone_id="tenant-A",
+        )
+        monkeypatch.setattr(nx.metadata, "get", lambda _p: tenant_meta)
+        monkeypatch.setattr(nx, "_kernel", _ZoneRecordingKernel(nx._kernel))
+        monkeypatch.setattr(
+            nx, "_driver_coordinator", _ZoneRecordingCoordinator(nx._driver_coordinator)
+        )
+
+        nx.sys_unlink("/tenant-mount")
+
+        unmount_calls = [c for c in captured if c[0] == "unmount"]
+        has_mount_calls = [c for c in captured if c[0] == "has_mount"]
+        assert unmount_calls == [("unmount", "/tenant-mount", "tenant-A")]
+        assert all(c[2] == "tenant-A" for c in has_mount_calls), (
+            "has_mount must probe the metadata zone, not caller zone"
+        )
 
     def test_zone_id_propagated_to_unmount_external_storage(self, nx, monkeypatch):
         """Codex round-7 finding: external-storage teardown must pass

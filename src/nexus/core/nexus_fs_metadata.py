@@ -778,10 +778,12 @@ class MetadataMixin:
         # Without this, SnapshotWriteHook.on_post_delete returns early
         # on ctx.metadata=None and never records original_hash for
         # transactional rollback (Codex review, Issue #4002 round 4).
-        try:
-            _pre_delete_meta = self.metadata.get(path)
-        except Exception:  # noqa: BLE001 — best-effort capture
-            _pre_delete_meta = None
+        # Let metastore errors propagate (Codex review, round 9): if
+        # the probe fails we cannot prove the delete is observable,
+        # so refuse rather than silently lose rollback data.  None is
+        # still legitimate (implicit dirs / external storage entries
+        # carry no metastore row).
+        _pre_delete_meta = self.metadata.get(path)
 
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         zone_id, agent_id, is_admin = self._get_context_identity(context)
@@ -830,34 +832,51 @@ class MetadataMixin:
         # ── Rust miss: only DT_EXTERNAL_STORAGE (5) or not-found ─────
         et = _unlink_result.entry_type
         if et == 0:
-            # Stranded-mount recovery (Codex review, Issue #4002 round 5):
-            # if a previous teardown deleted metadata but failed to
-            # remove the kernel mount route, the kernel now reports
-            # not-found while the route is still live.  Attempt cleanup
-            # before raising so this API stays self-healing instead of
-            # leaving an invisible orphan.
-            try:
-                stranded = self._kernel.has_mount(path, zone_id)
-            except Exception:  # noqa: BLE001 — best-effort verify
-                stranded = False
-            if stranded:
-                # Pass the caller's zone_id so non-root tenant mounts
-                # are torn down in the correct zone instead of
-                # no-op'ing against ROOT_ZONE_ID (Codex review,
-                # Issue #4002 round 7).
-                self._driver_coordinator.unmount(path, zone_id or ROOT_ZONE_ID)
+            # Stranded-mount recovery (Codex review, Issue #4002
+            # rounds 5 + 8): if a previous teardown deleted metadata
+            # but failed to remove the kernel mount route, the kernel
+            # now reports not-found while the route is still live.
+            # Probe the caller's zone first, then fall back to root —
+            # mount routes are keyed by the *mounted* zone, which can
+            # differ from the caller's zone.
+            # Fail-closed on probe errors (Codex review, round 10):
+            # in the et=0 retry path, an unverifiable route presence
+            # means we cannot prove the path is clean, so we must
+            # raise rather than treat as 'gone'.
+            stranded_zone: str | None = None
+            for candidate in (zone_id, ROOT_ZONE_ID):
+                if candidate is None:
+                    continue
                 try:
-                    still_present = self._kernel.has_mount(path, zone_id)
-                except Exception:  # noqa: BLE001 — best-effort verify
-                    still_present = False
+                    present = self._kernel.has_mount(path, candidate)
+                except Exception as probe_exc:
+                    raise BackendError(
+                        f"sys_unlink: cannot verify mount route in zone "
+                        f"{candidate!r} for {path!r}: {probe_exc}",
+                        path=path,
+                    ) from probe_exc
+                if present:
+                    stranded_zone = candidate
+                    break
+            if stranded_zone is not None:
+                self._driver_coordinator.unmount(path, stranded_zone)
+                try:
+                    still_present = self._kernel.has_mount(path, stranded_zone)
+                except Exception as verify_exc:
+                    raise BackendError(
+                        f"sys_unlink: cannot verify stranded mount route "
+                        f"teardown for {path!r}: {verify_exc}",
+                        path=path,
+                    ) from verify_exc
                 if still_present:
                     raise BackendError(
                         f"sys_unlink: stranded mount route remains for {path!r}",
                         path=path,
                     )
                 logger.info(
-                    "sys_unlink: cleaned up stranded mount route for %s",
+                    "sys_unlink: cleaned up stranded mount route for %s in zone %s",
                     path,
+                    stranded_zone,
                 )
                 return {}
             raise NexusFileNotFoundError(path)
@@ -876,19 +895,29 @@ class MetadataMixin:
             ctx = self._resolve_cred(context)
             from nexus.contracts.vfs_hooks import RmdirHookContext
 
+            # Resolve the mount-route zone from pre-delete metadata
+            # (Codex review, Issue #4002 round 8). Mount routes are
+            # keyed by the *mounted* zone, which can differ from the
+            # caller's zone — e.g. an admin context deleting a tenant
+            # mount.  Fall back to caller zone if metadata is missing
+            # the field (older entries) and finally to ROOT_ZONE_ID.
+            route_zone = getattr(_pre_delete_meta, "zone_id", None) or zone_id or ROOT_ZONE_ID
             self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
             self.metadata.delete(path)
-            # Zone-aware teardown so tenant-scoped external mounts are
-            # torn down in their own zone, not ROOT_ZONE_ID (Codex
-            # review, Issue #4002 round 7).
-            removed = self._driver_coordinator.unmount(path, zone_id or ROOT_ZONE_ID)
+            removed = self._driver_coordinator.unmount(path, route_zone)
             # Verify the kernel mount route is actually gone so a real
             # teardown failure surfaces even when unmount() reports
             # already-cleared (Codex review, Issue #4002 round 4).
+            # Fail-closed on verification errors after metadata is
+            # committed (Codex review, round 9): we can't risk
+            # reporting success while a route may still be live.
             try:
-                mount_remains = self._kernel.has_mount(path, zone_id)
-            except Exception:  # noqa: BLE001 — best-effort verify
-                mount_remains = False
+                mount_remains = self._kernel.has_mount(path, route_zone)
+            except Exception as verify_exc:
+                raise BackendError(
+                    f"sys_unlink: cannot verify mount route teardown for {path!r}: {verify_exc}",
+                    path=path,
+                ) from verify_exc
             if mount_remains:
                 raise BackendError(
                     f"sys_unlink: mount route remains after teardown for {path!r}",

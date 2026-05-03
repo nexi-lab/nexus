@@ -64,6 +64,7 @@ KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset(
         "sys_stat",
         "sys_unlink",
         "sys_unlock",
+        "sys_watch",
         "sys_write",
         "write",
     }

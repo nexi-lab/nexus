@@ -768,30 +768,34 @@ class TupleWriter:
         subject_relation: str | None,
         relation: str,
         object_entity: Entity,
-        zone_id: str | None,
+        zone_id: str | None,  # noqa: ARG002 — kept for caller-API stability
     ) -> str | None:
-        """Check if a tuple already exists (idempotency). Returns tuple_id or None."""
+        """Check if a tuple already exists (idempotency). Returns tuple_id or None.
+
+        Mirrors ``idx_rebac_tuple_unique`` exactly — that index is zone-agnostic
+        and uses ``COALESCE(subject_relation, '')``, so the lookup must be
+        zone-agnostic too. Filtering by zone_id here let the auto-grant tuple
+        from a post-mkdir hook (zone="root") slip past the check, after which
+        the explicit ``rebac create`` (zone=None) hit a unique-constraint
+        violation in PostgreSQL.
+        """
         cursor.execute(
             self._fix_sql(
                 """
                 SELECT tuple_id FROM rebac_tuples
                 WHERE subject_type = ? AND subject_id = ?
-                AND (subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL))
+                AND COALESCE(subject_relation, '') = COALESCE(?, '')
                 AND relation = ?
                 AND object_type = ? AND object_id = ?
-                AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
                 """
             ),
             (
                 subject_entity.entity_type,
                 subject_entity.entity_id,
                 subject_relation,
-                subject_relation,
                 relation,
                 object_entity.entity_type,
                 object_entity.entity_id,
-                zone_id,
-                zone_id,
             ),
         )
         existing = cursor.fetchone()

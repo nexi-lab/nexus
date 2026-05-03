@@ -10,6 +10,7 @@ Seeding is idempotent by default.  A manifest file
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import logging
@@ -118,6 +119,23 @@ class _RestApiNexusClient:
     def write(self, path: str, content: bytes) -> None:
         text = content.decode("utf-8", errors="replace")
         self._client.post("/api/v2/files/write", json_body={"path": path, "content": text})
+
+    def write_batch(self, files: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
+        payload = {
+            "files": [
+                {
+                    "path": path,
+                    "content_base64": base64.b64encode(content).decode("ascii"),
+                }
+                for path, content in files
+            ]
+        }
+        result = self._client.post("/api/v2/files/batch/write", json_body=payload)
+        if isinstance(result, dict):
+            raw_results = result.get("results", [])
+            if isinstance(raw_results, list):
+                return raw_results
+        return []
 
     def mkdir(self, path: str, *, parents: bool = False, exist_ok: bool = False) -> None:  # noqa: ARG002
         try:
@@ -368,6 +386,7 @@ async def _seed_files(
 
     # Seed both core demo files and HERB-derived corpus
     all_files = list(DEMO_FILES) + list(HERB_CORPUS)
+    pending: list[tuple[str, str, str]] = []
     for path, content, _description in all_files:
         if path in seeded:
             try:
@@ -381,6 +400,34 @@ async def _seed_files(
             parent = "/".join(path.split("/")[:-1])
             if parent:
                 nx.mkdir(parent, parents=True, exist_ok=True)
+        except Exception as e:
+            console.print(
+                f"  [nexus.warning]Warning:[/nexus.warning] Could not create parent for {path}: {e}"
+            )
+            continue
+        pending.append((path, content, _description))
+
+    if pending and hasattr(nx, "write_batch"):
+        try:
+            batch_results = nx.write_batch(
+                [(path, content.encode()) for path, content, _ in pending]
+            )
+            if len(batch_results) == len(pending):
+                for path, _content, _description in pending:
+                    seeded.append(path)
+                    created += 1
+                manifest["files"] = seeded
+                return created
+            logger.debug(
+                "Batch demo file seed returned %d results for %d files; falling back",
+                len(batch_results),
+                len(pending),
+            )
+        except Exception as e:
+            logger.debug("Batch demo file seed failed; falling back to sequential writes: %s", e)
+
+    for path, content, _description in pending:
+        try:
             nx.write(path, content.encode())
             seeded.append(path)
             created += 1

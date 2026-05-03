@@ -23,11 +23,13 @@
 pub mod auth;
 pub mod error;
 pub mod middleware;
+pub mod pdu;
 pub mod room_id;
 pub mod router;
 pub mod types;
 
 pub use auth::{AuthBackend, AuthError, AuthSession};
 pub use error::AdapterError;
+pub use pdu::{chat_envelope_to_pdu_event, pdu_send_to_chat_envelope};
 pub use room_id::{decode_room_id, encode_room_id};
 pub use router::{build_router, AdapterState};

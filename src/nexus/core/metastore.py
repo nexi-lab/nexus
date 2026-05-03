@@ -10,12 +10,6 @@ MetastoreABC is the kernel's inode layer: the typed contract between
 VFS and the underlying ordered KV store.  The kernel cannot describe
 files without it.  Linux analogue: ``struct inode_operations``.
 
-Includes a built-in dcache (dentry cache): an in-process dict that
-caches deserialized FileMetadata objects. Point lookups via ``get()``
-hit the dict (~50ns) instead of the storage backend (~6μs for redb
-FFI + protobuf decode). The cache is write-through and authoritative
-(single-process, single-writer — no TTL or LRU needed).
-
 Implementations:
   - RaftMetadataStore  (storage/raft_metadata_store.py)
 
@@ -49,30 +43,6 @@ def _is_direct_child(path: str, prefix: str) -> bool:
     return "/" not in rel
 
 
-def _sync_to_rust(kernel: Any, meta: FileMetadata) -> None:
-    """Push a FileMetadata into the Rust DashMap (hot-path projection).
-
-    Phase H: added mime_type for sys_stat acceleration.
-
-    ``backend_name``/``physical_path`` were dropped from FileMetadata
-    (the kernel resolves the physical location at read time via the
-    mount/route layer); the Rust ``dcache_put`` signature was reshaped
-    to match.
-    """
-    if kernel is None:
-        return
-    kernel.dcache_put(
-        meta.path,
-        meta.size,
-        meta.entry_type,
-        meta.version,
-        meta.content_id,
-        meta.zone_id,
-        meta.mime_type,
-        meta.last_writer_address,
-    )
-
-
 class MetastoreABC(ABC):
     """Abstract base class for metadata storage (the "Metastore" pillar).
 
@@ -81,13 +51,9 @@ class MetastoreABC(ABC):
 
     Subclasses implement ``_get_raw``, ``_put_raw``, ``_delete_raw``,
     ``_exists_raw``, ``_list_raw``, and ``close``.  The public API
-    (``get``, ``put``, ``delete``, etc.) adds an in-process dcache layer
-    that eliminates repeated deserialization overhead.
-
-    The Rust DashMap (accessed via ``_kernel.dcache_*``) mirrors the Python
-    dict for hot-path fields only (size, content_id, version, entry_type, zone_id,
-    mime_type, last_writer_address).  It is dual-written on every mutation
-    and consumed by Kernel (#1817) for single-FFI sys_read/sys_write.
+    (``get``, ``put``, ``delete``, etc.) is a thin pass-through —
+    cache management lives inside each Rust ``MetaStore`` impl
+    (``LocalMetaStore`` / ``RemoteMetaStore`` / ``ZoneMetaStore``).
 
     Abstract methods (must override):
         _get_raw, _put_raw, _delete_raw, _exists_raw, _list_raw, close
@@ -98,70 +64,31 @@ class MetastoreABC(ABC):
     """
 
     def __init__(self) -> None:
-        self._dcache: dict[str, FileMetadata] = {}
-        self._dcache_hits: int = 0
-        self._dcache_misses: int = 0
         self._kernel: Any = None  # late-bound; set after Kernel is created
 
-    # ── Cached public API (signatures unchanged) ──────────────────────
+    # ── Public API (delegates to ``_*_raw`` subclass overrides) ───────
 
     def get(self, path: str) -> FileMetadata | None:
-        """Get metadata for a file (dcache-accelerated)."""
-        cached = self._dcache.get(path)
-        if cached is not None:
-            self._dcache_hits += 1
-            return cached
-        self._dcache_misses += 1
-        result = self._get_raw(path)
-        if result is not None:
-            self._dcache[path] = result
-            _sync_to_rust(self._kernel, result)
-        return result
+        """Get metadata for a file."""
+        return self._get_raw(path)
 
     def put(self, metadata: FileMetadata) -> None:
-        """Store or update file metadata (write-through dcache)."""
-        self._dcache[metadata.path] = metadata
-        _sync_to_rust(self._kernel, metadata)
+        """Store or update file metadata."""
         self._put_raw(metadata)
 
     def delete(self, path: str) -> dict[str, Any] | None:
-        """Delete file metadata (evicts dcache entry)."""
-        self._dcache.pop(path, None)
-        if self._kernel is not None:
-            self._kernel.dcache_evict(path)
+        """Delete file metadata."""
         return self._delete_raw(path)
 
-    def dcache_evict_prefix(self, prefix: str) -> int:
-        """Evict all dcache entries whose path starts with *prefix*.
-
-        Used by mount/unmount operations to invalidate stale cross-zone
-        cache entries that were resolved through a now-changed mount point.
-
-        Returns the number of entries evicted.
-        """
-        keys = [k for k in self._dcache if k.startswith(prefix)]
-        for k in keys:
-            del self._dcache[k]
-        if self._kernel is not None:
-            self._kernel.dcache_evict_prefix(prefix)
-        return len(keys)
-
     def exists(self, path: str) -> bool:
-        """Check if metadata exists for a path (dcache-accelerated)."""
-        if path in self._dcache:
-            return True
+        """Check if metadata exists for a path."""
         return self._exists_raw(path)
 
     def list(
         self, prefix: str = "", recursive: bool = True, **kwargs: Any
     ) -> builtins.list[FileMetadata]:
-        """List all files with given path prefix (populates dcache)."""
-        results = self._list_raw(prefix, recursive, **kwargs)
-        kernel = self._kernel
-        for meta in results:
-            self._dcache[meta.path] = meta
-            _sync_to_rust(kernel, meta)
-        return results
+        """List all files with given path prefix."""
+        return self._list_raw(prefix, recursive, **kwargs)
 
     def list_iter(
         self,
@@ -169,7 +96,7 @@ class MetastoreABC(ABC):
         recursive: bool = True,
         **kwargs: Any,
     ) -> Iterator[FileMetadata]:
-        """Iterate over file metadata matching prefix (populates dcache).
+        """Iterate over file metadata matching prefix.
 
         Memory-efficient alternative to list(). Yields results one at a time.
         Subclasses that define ``_list_iter_raw`` get true streaming;
@@ -183,43 +110,16 @@ class MetastoreABC(ABC):
             if raw_iter is not None
             else self._list_raw(prefix, recursive, **kwargs)
         )
-        kernel = self._kernel
-        for meta in source:
-            self._dcache[meta.path] = meta
-            _sync_to_rust(kernel, meta)
-            yield meta
+        yield from source
 
-    # ── Batch operations (dcache-aware) ───────────────────────────────
+    # ── Batch operations ──────────────────────────────────────────────
 
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        """Get metadata for multiple files (partial dcache hits)."""
-        result: dict[str, FileMetadata | None] = {}
-        misses: list[str] = []
-        for p in paths:
-            cached = self._dcache.get(p)
-            if cached is not None:
-                result[p] = cached
-                self._dcache_hits += 1
-            else:
-                misses.append(p)
-                self._dcache_misses += 1
-        if misses:
-            raw = self._get_batch_raw(misses)
-            kernel = self._kernel
-            for p, meta in raw.items():
-                if meta is not None:
-                    self._dcache[p] = meta
-                    _sync_to_rust(kernel, meta)
-                result[p] = meta
-        return result
+        """Get metadata for multiple files."""
+        return self._get_batch_raw(list(paths))
 
     def delete_batch(self, paths: Sequence[str]) -> None:
-        """Delete multiple files (evicts dcache entries)."""
-        kernel = self._kernel
-        for p in paths:
-            self._dcache.pop(p, None)
-            if kernel is not None:
-                kernel.dcache_evict(p)
+        """Delete multiple files."""
         self._delete_batch_raw(paths)
 
     def put_batch(
@@ -228,32 +128,16 @@ class MetastoreABC(ABC):
         *,
         skip_snapshot: bool = False,
     ) -> None:
-        """Store or update multiple file metadata (write-through dcache)."""
-        kernel = self._kernel
-        for meta in metadata_list:
-            self._dcache[meta.path] = meta
-            _sync_to_rust(kernel, meta)
+        """Store or update multiple file metadata."""
         self._put_batch_raw(metadata_list, skip_snapshot=skip_snapshot)
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
-        """Get content IDs (hashes) for multiple paths (dcache-accelerated)."""
+        """Get content IDs (hashes) for multiple paths."""
         result: dict[str, str | None] = {}
         for path in paths:
             metadata = self.get(path)
             result[path] = metadata.content_id if metadata else None
         return result
-
-    # ── Observability ─────────────────────────────────────────────────
-
-    @property
-    def cache_stats(self) -> dict[str, Any]:
-        """Return dcache hit/miss/size statistics."""
-        return {
-            "hits": self._dcache_hits,
-            "misses": self._dcache_misses,
-            "size": len(self._dcache),
-            "rust": self._kernel.dcache_stats() if self._kernel is not None else {},
-        }
 
     # ── Abstract raw methods (subclasses implement these) ─────────────
 
@@ -312,9 +196,9 @@ class RustMetastoreProxy(MetastoreABC):
     methods (metastore_get, metastore_put, etc.). Rust kernel exclusively
     owns the redb file — Python no longer opens it directly.
 
-    The Python dcache layer is bypassed — Rust DCache (DashMap ~100ns) is
-    the authoritative read cache. All public methods override MetastoreABC
-    to skip the Python dict dcache.
+    Cache management lives entirely inside the Rust ``MetaStore`` impl
+    (each impl owns its own internal ``DashMap`` projection). All
+    public methods are thin wrappers over ``self._rust_kernel.metastore_*``.
 
     Usage:
         kernel.set_metastore_path(str(redb_path))
@@ -346,9 +230,12 @@ class RustMetastoreProxy(MetastoreABC):
         self._rust_kernel.metastore_put(metadata)
 
     def delete(self, path: str) -> dict[str, Any] | None:
-        """Delete metadata via Rust metastore + evict from Rust DCache."""
+        """Delete metadata via Rust metastore.
+
+        The Rust impl invalidates its own internal cache before the
+        store delete (see commit_delete in rust/kernel/src/kernel/mod.rs).
+        """
         deleted = self._rust_kernel.metastore_delete(path)
-        self._rust_kernel.dcache_evict(path)
         return {"deleted": deleted}
 
     def exists(self, path: str) -> bool:
@@ -383,21 +270,16 @@ class RustMetastoreProxy(MetastoreABC):
         recursive: bool = True,
         **kwargs: Any,  # noqa: ARG002
     ) -> Iterator[FileMetadata]:
-        """Iterate metadata from Rust metastore (bypasses Python dcache).
+        """Iterate metadata from Rust metastore.
 
-        Issue #3706: like list(), delegates directly to Rust without
-        populating the Python-side _dcache. Honors ``recursive=False`` via
-        the same post-filter as list() — the Rust call returns everything
-        under ``prefix`` and we drop deeper entries here.
+        Issue #3706: like list(), delegates directly to Rust. Honors
+        ``recursive=False`` via the same post-filter as list() — the
+        Rust call returns everything under ``prefix`` and we drop
+        deeper entries here.
         """
         for e in self._rust_kernel.metastore_list(prefix):
             if recursive or _is_direct_child(e.path, prefix):
                 yield e
-
-    def dcache_evict_prefix(self, prefix: str) -> int:
-        """Evict all dcache entries under prefix (Rust DCache only)."""
-        n: int = self._rust_kernel.dcache_evict_prefix(prefix)
-        return n
 
     # ── Batch operations ─────────────────────────────────────────────────
 
@@ -419,7 +301,6 @@ class RustMetastoreProxy(MetastoreABC):
         """Batch delete via Rust metastore."""
         for p in paths:
             self._rust_kernel.metastore_delete(p)
-            self._rust_kernel.dcache_evict(p)
 
     # ── Implicit directory check ─────────────────────────────────────────
 
@@ -556,13 +437,3 @@ class RustMetastoreProxy(MetastoreABC):
     def get_searchable_text(self, path: str) -> str | None:  # noqa: ARG002
         self._warn_parsed_text_unavailable_once()
         return None
-
-    @property
-    def cache_stats(self) -> dict[str, Any]:
-        """Return Rust DCache stats (no Python dcache)."""
-        return {
-            "hits": 0,
-            "misses": 0,
-            "size": 0,
-            "rust": self._rust_kernel.dcache_stats(),
-        }

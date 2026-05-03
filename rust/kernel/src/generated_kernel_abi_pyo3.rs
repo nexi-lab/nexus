@@ -1394,67 +1394,6 @@ impl PyKernel {
         Ok(out)
     }
 
-    // ── DCache proxy methods ─────────────��─────────────────────────────
-
-    #[pyo3(signature = (path, size, entry_type, version=1, content_id=None, zone_id=None, mime_type=None, last_writer_address=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn dcache_put(
-        &self,
-        path: &str,
-        size: u64,
-        entry_type: u8,
-        version: u32,
-        content_id: Option<&str>,
-        zone_id: Option<&str>,
-        mime_type: Option<&str>,
-        last_writer_address: Option<&str>,
-    ) {
-        self.inner.dcache_put(
-            path,
-            size,
-            entry_type,
-            version,
-            content_id,
-            zone_id,
-            mime_type,
-            last_writer_address,
-        );
-    }
-
-    fn dcache_get(&self, path: &str) -> Option<(u8, Option<String>)> {
-        self.inner.dcache_get(path)
-    }
-
-    fn dcache_evict(&self, path: &str) -> bool {
-        self.inner.dcache_evict(path)
-    }
-
-    fn dcache_evict_prefix(&self, prefix: &str) -> usize {
-        self.inner.dcache_evict_prefix(prefix)
-    }
-
-    fn dcache_contains(&self, path: &str) -> bool {
-        self.inner.dcache_contains(path)
-    }
-
-    fn dcache_stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let stats = self.inner.dcache_stats();
-        let dict = PyDict::new(py);
-        dict.set_item("hits", stats.hits)?;
-        dict.set_item("misses", stats.misses)?;
-        dict.set_item("size", stats.size)?;
-        dict.set_item("hit_rate", stats.hit_rate)?;
-        Ok(dict.into())
-    }
-
-    fn dcache_clear(&self) {
-        self.inner.dcache_clear();
-    }
-
-    fn dcache_len(&self) -> usize {
-        self.inner.dcache_len()
-    }
-
     // ── R10c: direct CAS surface — PyKernel delegators ───────────────
     //
     // Thin wrappers around Kernel::cas_* that release the GIL for the

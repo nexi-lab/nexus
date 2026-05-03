@@ -14,6 +14,7 @@ use crate::matrix_adapter::auth::{AuthBackendRef, AuthError, AuthSession};
 use crate::matrix_adapter::error::AdapterError;
 use crate::matrix_adapter::media;
 use crate::matrix_adapter::middleware::require_access_token;
+use crate::matrix_adapter::push;
 use crate::matrix_adapter::rooms::{
     create_room, joined_members, room_join, room_leave, room_messages, room_send, room_state,
     room_state_event,
@@ -113,6 +114,8 @@ pub fn build_router(state: AdapterState) -> Router {
             "/_matrix/media/v3/thumbnail/:server/:media_id",
             get(media::thumbnail),
         )
+        .route("/_matrix/client/v3/pushrules", get(push::pushrules))
+        .route("/_matrix/client/v3/pushers", get(push::pushers))
         .route_layer(from_fn_with_state(state.clone(), require_access_token));
 
     public.merge(protected).with_state(state)

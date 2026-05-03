@@ -25,6 +25,7 @@ pub mod error;
 pub mod media;
 pub mod middleware;
 pub mod pdu;
+pub mod push;
 pub mod room_id;
 pub mod rooms;
 pub mod router;

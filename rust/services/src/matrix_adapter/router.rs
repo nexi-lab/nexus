@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::matrix_adapter::auth::{AuthBackendRef, AuthError, AuthSession};
 use crate::matrix_adapter::error::AdapterError;
+use crate::matrix_adapter::media;
 use crate::matrix_adapter::middleware::require_access_token;
 use crate::matrix_adapter::rooms::{
     create_room, joined_members, room_join, room_leave, room_messages, room_send, room_state,
@@ -100,6 +101,18 @@ pub fn build_router(state: AdapterState) -> Router {
         .route("/_matrix/client/v3/rooms/:room_id/join", post(room_join))
         .route("/_matrix/client/v3/rooms/:room_id/leave", post(room_leave))
         .route("/_matrix/client/v3/sync", get(sync))
+        .route(
+            "/_matrix/media/v3/upload",
+            post(media::upload),
+        )
+        .route(
+            "/_matrix/media/v3/download/:server/:media_id",
+            get(media::download),
+        )
+        .route(
+            "/_matrix/media/v3/thumbnail/:server/:media_id",
+            get(media::thumbnail),
+        )
         .route_layer(from_fn_with_state(state.clone(), require_access_token));
 
     public.merge(protected).with_state(state)

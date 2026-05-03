@@ -22,6 +22,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod media;
 pub mod middleware;
 pub mod pdu;
 pub mod room_id;

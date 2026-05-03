@@ -592,11 +592,12 @@ pub struct Kernel {
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // FileWatchRegistry — inotify equivalent. Arc-shared with observer registry.
     file_watches: Arc<FileWatchRegistry>,
-    // Agent table — Rust SSOT for agent lifecycle state. Source lives in
-    // the services rlib (rust/services/src/agent_registry.rs); the kernel
-    // owns an Arc handle so AgentStatusResolver and other kernel-internal
-    // consumers can share read access without depending on field layout.
-    pub agent_registry: Arc<crate::core::agents::registry::AgentRegistry>,
+    // Agent registry — kernel SSOT for agent lifecycle state.  Visibility
+    // is `pub(crate)`; peer crates reach it through
+    // [`Self::agent_registry`] (parallel to `vfs_router_arc()` /
+    // `dcache_arc()`) so any future kernel-side invariant — audit,
+    // distributed replication, scheduling — has a single chokepoint.
+    pub(crate) agent_registry: Arc<crate::core::agents::registry::AgentRegistry>,
     // Service registry — DashMap backing store for service lifecycle.
     pub(crate) service_registry: Arc<crate::service_registry::ServiceRegistry>,
     // Per-mount metastores now live inside `VFSRouter::entries` as
@@ -653,17 +654,12 @@ pub struct Kernel {
     // shape as the PeerBlobClient slot above.
     pub(crate) distributed_coordinator:
         parking_lot::RwLock<Arc<dyn crate::hal::distributed_coordinator::DistributedCoordinator>>,
-    // Scatter-gather fetcher: drives bounded fan-out against
-    // `backend_name.origins` whenever a local chunk miss occurs.
-    // Installed on every `CASEngine` via `VFSRouter` on mount
-    // registration.
-    //
-    // Type is `Arc<dyn RemoteChunkFetcher>` so `ObjectStoreProvider`
-    // impls in the backends crate `Arc::clone(&self.inner.chunk_fetcher)`
-    // and pass it through to `CasLocalBackend::new_with_fetcher`
-    // without an explicit cast.
-    #[allow(dead_code)]
-    pub(crate) chunk_fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher>,
+    // No `chunk_fetcher` field: `Kernel::peer_client` is the SSOT for
+    // the cross-node blob client.  `PyKernel::sys_setattr` constructs a
+    // fresh `GrpcChunkFetcher` per `DT_MOUNT` against the just-cloned
+    // peer_client + current `self_address`, so a peer_client swap (or
+    // a `set_self_address` after federation init) is reflected on the
+    // next mount with no rebuild dance.
     /// Blob-fetcher slot stashed by federation init for the cdylib's
     /// transport-tier install hook to drain. Typed as
     /// `Box<dyn Any + Send + Sync>` so kernel does not name the
@@ -706,12 +702,12 @@ impl Kernel {
         // `transport::blob::peer_client`. Kernel boots with the no-op
         // fallback; the cdylib wires the real impl via
         // `Kernel::set_peer_client` before any federation read fires.
+        // No `chunk_fetcher` snapshot is built here — `PyKernel::sys_setattr`
+        // derives a fresh `GrpcChunkFetcher` per `DT_MOUNT` against the
+        // current peer_client + self_address (see `Kernel.peer_client`
+        // doc).
         let peer_client_dyn: Arc<dyn crate::hal::peer::PeerBlobClient> =
             crate::hal::peer::NoopPeerBlobClient::arc();
-        // GrpcChunkFetcher takes the trait object directly.
-        let chunk_fetcher: Arc<dyn crate::cas_remote::RemoteChunkFetcher> = Arc::new(
-            crate::cas_remote::GrpcChunkFetcher::new(Arc::clone(&peer_client_dyn), None),
-        );
         let k = Self {
             dlc: crate::dlc::DriverLifecycleCoordinator::new(),
             dcache: Arc::new(DCache::new()),
@@ -751,7 +747,6 @@ impl Kernel {
             distributed_coordinator: parking_lot::RwLock::new(
                 crate::hal::distributed_coordinator::NoopDistributedCoordinator::arc(),
             ),
-            chunk_fetcher,
             pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
         };
         // Distributed-coordinator bootstrap is driven by
@@ -2218,6 +2213,14 @@ impl Kernel {
     /// dcache without holding the lock across `.await`.
     pub fn dcache_arc(&self) -> Arc<DCache> {
         Arc::clone(&self.dcache)
+    }
+
+    /// Borrow the kernel's `AgentRegistry` (the per-PID SSOT).  Used by
+    /// service-tier callers (`services::managed_agent`, ACP install
+    /// hooks, AgentStatusResolver) that need to register / observe /
+    /// query agent state without going through a syscall.
+    pub fn agent_registry(&self) -> &Arc<crate::core::agents::registry::AgentRegistry> {
+        &self.agent_registry
     }
 
     /// Clone the LockManager `Arc` — used by federation install hooks

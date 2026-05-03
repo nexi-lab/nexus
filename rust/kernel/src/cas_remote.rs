@@ -53,9 +53,16 @@ pub struct GrpcChunkFetcher {
     self_address: Option<String>,
 }
 
-#[allow(dead_code)]
 impl GrpcChunkFetcher {
-    pub(crate) fn new(client: Arc<dyn PeerBlobClient>, self_address: Option<String>) -> Self {
+    /// Construct a per-mount scatter-gather fetcher.  `client` must be
+    /// the kernel's live `peer_client` snapshot (the SSOT slot exposed
+    /// through `Kernel::peer_client_arc()` / cloned at `sys_setattr`
+    /// time); `self_address` is the snapshot of `Kernel::self_address`
+    /// that lets the fetcher skip this node when scattering reads.
+    /// Public so backends-tier (`backends::python::factory`) can build
+    /// the fetcher inline at mount time without going through a kernel
+    /// shadow field.
+    pub fn new(client: Arc<dyn PeerBlobClient>, self_address: Option<String>) -> Self {
         Self {
             client,
             self_address,

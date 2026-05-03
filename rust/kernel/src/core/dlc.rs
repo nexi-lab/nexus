@@ -11,35 +11,26 @@
 //!   2. Write DT_MOUNT metadata to per-mount metastore
 //!   3. Populate dcache with mount point entry
 //!   4. Upgrade LockManager to distributed for root zone federation mounts
-//!   5. Own a map of `MountInfo` records for kernel-internal queries
+//!
+//! DLC owns no mount table of its own — `VFSRouter::entries` is the SSOT
+//! for "what mounts exist".  Querying mount existence goes through
+//! `Kernel::has_mount` (which delegates to the router); listing mount
+//! points goes through `Kernel::get_mount_points`.
 
 use crate::dcache::CachedEntry;
 use crate::kernel::{Kernel, KernelError};
-use crate::vfs_router::canonicalize_mount_path as canonicalize;
-use dashmap::DashMap;
 use std::sync::Arc;
-
-/// Kernel-internal mount metadata tracked by the DLC.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct MountInfo {
-    pub zone_id: String,
-    pub backend_name: String,
-}
 
 /// Kernel primitive: driver mount lifecycle.
 ///
-/// Manages routing table + metastore + dcache + lock manager upgrade.
-/// Created once at `Kernel::new()` — always available after construction.
-pub(crate) struct DriverLifecycleCoordinator {
-    mounts: DashMap<String, MountInfo>,
-}
+/// Stateless coordinator — `mount()` / `unmount()` thread mutations into
+/// the kernel's owned tables (`VFSRouter`, `dcache`, per-mount metastore)
+/// rather than caching anything locally.  Created once at `Kernel::new()`.
+pub(crate) struct DriverLifecycleCoordinator;
 
 impl DriverLifecycleCoordinator {
     pub fn new() -> Self {
-        Self {
-            mounts: DashMap::new(),
-        }
+        Self
     }
 
     /// Mount a backend with full lifecycle: routing + metastore + dcache + lock.
@@ -140,16 +131,6 @@ impl DriverLifecycleCoordinator {
             },
         );
 
-        // 4. Store in DLC mounts map
-        let canonical = canonicalize(mount_point, zone_id);
-        self.mounts.insert(
-            canonical,
-            MountInfo {
-                zone_id: zone_id.to_string(),
-                backend_name: backend_name.to_string(),
-            },
-        );
-
         Ok(())
     }
 
@@ -157,8 +138,6 @@ impl DriverLifecycleCoordinator {
     ///
     /// Returns `true` if mount was removed, `false` if not found.
     pub fn unmount(&self, kernel: &Kernel, mount_point: &str, zone_id: &str) -> bool {
-        let canonical = canonicalize(mount_point, zone_id);
-
         // 1. Delete the DT_MOUNT metadata from the PARENT zone (the one
         //    that "owns" `mount_point`).  Symmetric with `mount()`:
         //    federation's apply-cb on the parent zone fires
@@ -191,23 +170,6 @@ impl DriverLifecycleCoordinator {
         kernel.dcache_evict_prefix(&prefix);
 
         // 3. Remove from routing table
-        let removed = kernel.remove_mount(mount_point, zone_id);
-
-        // 4. Remove from DLC mounts map
-        self.mounts.remove(&canonical);
-
-        removed
-    }
-
-    /// Check if a mount exists in the DLC map.
-    #[allow(dead_code)]
-    pub fn has_mount(&self, canonical_key: &str) -> bool {
-        self.mounts.contains_key(canonical_key)
-    }
-
-    /// Return all canonical mount keys.
-    #[allow(dead_code)]
-    pub fn mount_keys(&self) -> Vec<String> {
-        self.mounts.iter().map(|r| r.key().clone()).collect()
+        kernel.remove_mount(mount_point, zone_id)
     }
 }

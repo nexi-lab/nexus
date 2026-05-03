@@ -1622,8 +1622,6 @@ impl PyKernel {
                     "sys_setattr: ObjectStoreProvider not registered — non-cdylib build needs to call kernel::hal::object_store_provider::set_provider at boot",
                 )
             })?;
-        let chunk_fetcher_dyn: Arc<dyn crate::cas_remote::RemoteChunkFetcher> =
-            Arc::clone(&self.inner.chunk_fetcher);
         // peer_client is a `RwLock<Arc<dyn PeerBlobClient>>` so the
         // cdylib's `install_transport_wiring` swaps the Noop default
         // for the real concrete impl post-boot. Lock and clone the
@@ -1631,6 +1629,10 @@ impl PyKernel {
         // not outlive this scope.
         let peer_client_arc: Arc<dyn crate::hal::peer::PeerBlobClient> =
             Arc::clone(&self.inner.peer_client.read());
+        // Snapshot of self_address — `cas_local` plumbs into the per-mount
+        // `GrpcChunkFetcher` so chunk-miss scatter skips this node.  Snapshotted
+        // once here so the provider call sees a consistent `&str` borrow.
+        let self_addr_snapshot: Option<String> = self.inner.self_address_string();
         let provider_args = crate::hal::object_store_provider::ObjectStoreProviderArgs {
             backend_type,
             backend_name,
@@ -1670,7 +1672,7 @@ impl PyKernel {
             remote_key_pem,
             remote_timeout,
             peer_client: &peer_client_arc,
-            chunk_fetcher: chunk_fetcher_dyn,
+            self_address: self_addr_snapshot.as_deref(),
             runtime: self.inner.runtime(),
         };
         let backend_result = provider

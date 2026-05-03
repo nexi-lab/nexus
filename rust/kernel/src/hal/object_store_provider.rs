@@ -22,7 +22,6 @@ use std::collections::HashSet;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::abc::object_store::ObjectStore;
-use crate::cas_remote::RemoteChunkFetcher;
 use crate::hal::peer::PeerBlobClient;
 use crate::meta_store::MetaStore;
 
@@ -72,12 +71,15 @@ pub struct ObjectStoreProviderArgs<'a> {
     pub remote_timeout: f64,
     /// Shared `peer_blob_client::PeerBlobClient` — needed by the LLM
     /// connector backends (anthropic / openai) so streaming SSE
-    /// responses can land in the kernel CAS via shared transport.
+    /// responses can land in the kernel CAS via shared transport, and
+    /// by `cas_local` to construct the per-mount scatter-gather fetcher
+    /// against the live peer client.
     pub peer_client: &'a Arc<dyn PeerBlobClient>,
-    /// Shared scatter-gather chunk fetcher.  Pre-wired into the
-    /// `CasLocalBackend` constructor so chunk misses on this mount
-    /// fall through to peer RPCs against `backend_name.origins`.
-    pub chunk_fetcher: Arc<dyn RemoteChunkFetcher>,
+    /// Snapshot of `Kernel::self_address_string()` at the time of this
+    /// `sys_setattr` call.  `cas_local` plumbs it into the per-mount
+    /// `GrpcChunkFetcher` so the fetcher can skip the local node when
+    /// scattering reads against `backend_name.origins`.
+    pub self_address: Option<&'a str>,
     /// Kernel's tokio runtime — backends that issue async network IO
     /// (anthropic / openai SSE, RPC transport for remote backends)
     /// share this runtime instead of building their own. The HAL

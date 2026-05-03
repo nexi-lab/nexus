@@ -4,9 +4,7 @@
 //! Every method stays a member of [`Kernel`] via this submodule's
 //! `impl Kernel { ... }` block.
 
-use crate::dispatch::{
-    HookContext, NativeInterceptHook, Permission, PermissionDecision, PermissionProvider,
-};
+use crate::dispatch::{HookContext, NativeInterceptHook, Permission, PermissionProvider};
 
 use super::{Kernel, KernelError, OperationContext, RwLockExt};
 
@@ -100,6 +98,7 @@ impl Kernel {
             return Ok(());
         }
 
+        // 5. Zone perms check (federation tokens)
         if !ctx.zone_perms.is_empty() {
             let perm_char = match permission {
                 Permission::Read => "r",
@@ -120,6 +119,9 @@ impl Kernel {
         }
 
         // Full permission check runs in NativeInterceptHook dispatch
+        // Full permission check (admin bypass, ReBAC, new-vs-existing file
+        // logic) runs in NativeInterceptHook dispatch — dispatch_native_pre()
+        // is called immediately after check_permission() in every sys_*.
         Ok(())
     }
 

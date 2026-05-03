@@ -61,7 +61,16 @@ impl From<&crate::meta_store::FileMetadata> for CachedEntry {
     }
 }
 
-/// Dentry cache — owned directly by Kernel.
+/// Dentry cache — kernel-internal hot-path projection of MetaStore.
+///
+/// Per `docs/architecture/KERNEL-ARCHITECTURE.md` §3.A there are exactly
+/// three Storage HAL pillars (MetaStore, ObjectStore, CacheStore); DCache
+/// is **not** a fourth pillar — it's a metastore-internal cache layer.
+///
+/// All mutators are `pub(crate)` so external crates cannot reach in;
+/// federation goes through the narrow `Kernel::seed_dt_mount_dcache` /
+/// `Kernel::evict_dt_mount_dcache` /
+/// `Kernel::install_zone_apply_invalidator` helpers instead.
 ///
 /// All methods take `&self` (DashMap provides interior mutability).
 pub struct DCache {
@@ -82,7 +91,7 @@ impl DCache {
     // ── Read methods (used by Kernel plan_*/sys_*) ────────────────────────
 
     /// Get a full CachedEntry clone (updates hit/miss counters).
-    pub fn get_entry(&self, path: &str) -> Option<CachedEntry> {
+    pub(crate) fn get_entry(&self, path: &str) -> Option<CachedEntry> {
         match self.cache.get(path) {
             Some(entry) => {
                 self.hits.fetch_add(1, Ordering::Relaxed);
@@ -100,22 +109,21 @@ impl DCache {
         self.cache.contains_key(path)
     }
 
-    // ── Write methods (called via Kernel proxy #[pymethods] +
-    //    federation provider's `wire_mount` apply-side coherence) ──
+    // ── Write methods — kernel-internal only ──────────────────────────
 
     /// Insert or update a cache entry.
-    pub fn put(&self, path: &str, entry: CachedEntry) {
+    pub(crate) fn put(&self, path: &str, entry: CachedEntry) {
         self.cache.insert(path.to_string(), entry);
     }
 
     /// Evict a single path. Returns true if the entry existed.
-    pub fn evict(&self, path: &str) -> bool {
+    pub(crate) fn evict(&self, path: &str) -> bool {
         self.cache.remove(path).is_some()
     }
 
     /// Evict all entries whose path starts with the given prefix.
     /// Returns the number of entries evicted.
-    pub fn evict_prefix(&self, prefix: &str) -> usize {
+    pub(crate) fn evict_prefix(&self, prefix: &str) -> usize {
         let keys: Vec<String> = self
             .cache
             .iter()

@@ -24,19 +24,27 @@ use std::sync::Arc;
 
 use crate::blob_fetcher::BlobFetcher;
 
-use kernel::core::dcache::DCache;
 use kernel::kernel::OperationContext;
 use kernel::vfs_router::VFSRouter;
 
-/// Kernel-side `BlobFetcher` — backed by the kernel's `VFSRouter`.
+/// Closure type for "look up cached local content_id at this path" —
+/// federation builds this from `Kernel::dcache_lookup_local_content_id`
+/// so the fetcher can consult the dcache without holding `Arc<DCache>`.
+type LocalContentIdLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// Kernel-side `BlobFetcher` — backed by the kernel's `VFSRouter` plus
+/// a narrow dcache-lookup closure.
 pub struct KernelBlobFetcher {
     vfs_router: Arc<VFSRouter>,
-    dcache: Arc<DCache>,
+    lookup_local_content_id: LocalContentIdLookup,
 }
 
 impl KernelBlobFetcher {
-    pub fn new(vfs_router: Arc<VFSRouter>, dcache: Arc<DCache>) -> Self {
-        Self { vfs_router, dcache }
+    pub fn new(vfs_router: Arc<VFSRouter>, lookup_local_content_id: LocalContentIdLookup) -> Self {
+        Self {
+            vfs_router,
+            lookup_local_content_id,
+        }
     }
 }
 
@@ -77,11 +85,7 @@ impl BlobFetcher for KernelBlobFetcher {
 
         // Step 1: try path-style routing → local mount read.
         if let Ok(route) = self.vfs_router.route(content_id, contracts::ROOT_ZONE_ID) {
-            let local_content_id = self
-                .dcache
-                .get_entry(content_id)
-                .and_then(|e| e.content_id)
-                .filter(|s| !s.is_empty())
+            let local_content_id = (self.lookup_local_content_id)(content_id)
                 .unwrap_or_else(|| route.backend_path.clone());
             if let Some(bytes) =
                 self.vfs_router
@@ -136,9 +140,7 @@ pub fn install(kernel: &kernel::kernel::Kernel) {
             return;
         }
     };
-    let fetcher = Arc::new(KernelBlobFetcher::new(
-        kernel.vfs_router_arc(),
-        kernel.dcache_arc(),
-    ));
+    let lookup = kernel.dcache_local_content_id_lookup_fn();
+    let fetcher = Arc::new(KernelBlobFetcher::new(kernel.vfs_router_arc(), lookup));
     *slot.write() = Some(fetcher as Arc<dyn BlobFetcher>);
 }

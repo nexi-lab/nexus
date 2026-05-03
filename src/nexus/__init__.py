@@ -170,7 +170,15 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
     """
     from pathlib import Path
 
-    _redb_path = Path(metadata_path).with_suffix(".redb")
+    # ``":memory:"`` is the SQLite-style sentinel for "no on-disk file —
+    # in-memory only".  Skip ``Path`` construction in that case: on
+    # Windows the colon is parsed as a drive separator, so
+    # ``Path(":memory:").with_suffix(".redb")`` yields the syntactically
+    # invalid ``:memory:.redb`` and any later ``str(_redb_path)`` raises
+    # ``IOError`` from redb.  ``PyKernel::new()`` already wires a
+    # ``MemoryMetastore`` as the boot-time default, so the proxy works
+    # in fully-in-memory mode without any path at all.
+    _redb_path = None if metadata_path == ":memory:" else Path(metadata_path).with_suffix(".redb")
 
     if kernel is None:
         from nexus_runtime import PyKernel as _Kernel
@@ -202,13 +210,15 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "Metasto
     from nexus.core.metastore import RustMetastoreProxy
 
     try:
+        if _redb_path is None:
+            return RustMetastoreProxy(kernel, None)
         return RustMetastoreProxy(
             kernel, str(_redb_path) if _redb_path.exists() or _redb_path.parent.exists() else None
         )
     except Exception as e:
         # An existing on-disk store that we can't open is a hard error:
         # silently falling back would hide previously written data.
-        if _redb_path.exists():
+        if _redb_path is not None and _redb_path.exists():
             raise RuntimeError(
                 f"RustMetastoreProxy failed for existing {_redb_path}: {e}. "
                 "Refusing to fall back to a different metadata format. "

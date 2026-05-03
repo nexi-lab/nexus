@@ -112,12 +112,20 @@ def scope_params_for_zone(params: Any, zone_id: str) -> None:
     # ``scope_single_path``.
     files = getattr(params, "files", None)
     if isinstance(files, (list, tuple)):
-        scoped_files = [
-            (scope_single_path(item[0], prefix, zone_id), *item[1:])
-            if (isinstance(item, (list, tuple)) and len(item) >= 1 and isinstance(item[0], str))
-            else item
-            for item in files
-        ]
+        scoped_files: list[Any] = []
+        for item in files:
+            # #4005 round-8: ``files`` has two real shapes:
+            #   - ``list[str]`` for GrepParams / GlobParams (path-only)
+            #   - ``list[tuple[str, bytes]]`` for WriteBatchParams
+            # Without scoping the str shape, a tenant caller can submit
+            # ``["/zone/<other>/x"]`` to grep / glob and bypass the
+            # mismatched-zone rejection.
+            if isinstance(item, str):
+                scoped_files.append(scope_single_path(item, prefix, zone_id))
+            elif isinstance(item, (list, tuple)) and len(item) >= 1 and isinstance(item[0], str):
+                scoped_files.append((scope_single_path(item[0], prefix, zone_id), *item[1:]))
+            else:
+                scoped_files.append(item)
         params.files = type(files)(scoped_files)
 
     renames = getattr(params, "renames", None)

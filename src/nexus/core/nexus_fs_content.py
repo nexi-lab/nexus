@@ -1115,10 +1115,50 @@ class ContentMixin:
             ...     {"old_str": "def foo():", "new_str": "def bar():", "hint_line": 42}
             ... ], fuzzy_threshold=0.8)
         """
-        from nexus.utils.edit_engine import EditEngine
-        from nexus.utils.edit_engine import EditOperation as EditOp
 
         path = self._validate_path(path)
+
+        # #4005 round-8: serialize the if_match read-modify-write under the
+        # same per-path OCC lock occ_write_sync uses. Without this, a
+        # concurrent write could commit between our content_id check and
+        # the final write below, lost-updating the caller's intent.
+        # Plain edits (no if_match) skip the lock — same fast path as
+        # occ_write_sync.
+        if if_match is None:
+            return self._edit_locked(
+                path,
+                edits,
+                context=context,
+                if_match=if_match,
+                preview=preview,
+                fuzzy_threshold=fuzzy_threshold,
+            )
+
+        from nexus.lib.occ import _occ_path_lock
+
+        with _occ_path_lock(path):
+            return self._edit_locked(
+                path,
+                edits,
+                context=context,
+                if_match=if_match,
+                preview=preview,
+                fuzzy_threshold=fuzzy_threshold,
+            )
+
+    def _edit_locked(
+        self,
+        path: str,
+        edits: list,
+        *,
+        context: object | None = None,
+        if_match: str | None = None,
+        preview: bool = False,
+        fuzzy_threshold: float = 1.0,
+    ) -> dict:
+        """Inner edit body — caller holds ``_occ_path_lock(path)`` when if_match."""
+        from nexus.utils.edit_engine import EditEngine
+        from nexus.utils.edit_engine import EditOperation as EditOp
 
         # Read current content with metadata (via Tier 2 convenience)
         result = self.read(path, context=context, return_metadata=True)

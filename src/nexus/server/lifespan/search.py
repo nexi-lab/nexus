@@ -20,8 +20,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_TRUTHY = ("true", "1", "yes")
+_FALSY = ("false", "0", "no")
+
+
 def _env_truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("true", "1", "yes")
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+def _env_tristate(name: str) -> bool | None:
+    """Return True/False if the env var is set to a recognized value, else None."""
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in _TRUTHY:
+        return True
+    if raw in _FALSY:
+        return False
+    return None
 
 
 # pgvector hnsw indexes cap at 2000 dims for full-precision `vector` columns
@@ -55,13 +69,11 @@ def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str | int] | None]:
     # matches the prevailing production storage dim (1536 truncated via Matryoshka)
     # and beats local MiniLM (384d) on retrieval quality across MTEB.
     # Operators can force local with ``NEXUS_TXTAI_USE_API_EMBEDDINGS=false``.
-    api_env = os.environ.get("NEXUS_TXTAI_USE_API_EMBEDDINGS", "").strip().lower()
-    if api_env in ("true", "1", "yes"):
-        use_api_embeddings = True
-    elif api_env in ("false", "0", "no"):
-        use_api_embeddings = False
-    else:
+    use_api = _env_tristate("NEXUS_TXTAI_USE_API_EMBEDDINGS")
+    if use_api is None:
         use_api_embeddings = bool(openai_api_key)
+    else:
+        use_api_embeddings = use_api
 
     model = configured_model or (
         "openai/text-embedding-3-large"

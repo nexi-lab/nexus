@@ -5083,6 +5083,13 @@ _KERNEL_SYSCALL_ALIASES: dict[str, str] = {
     "rename": "sys_rename",
     "exists": "access",
     "list": "sys_readdir",
+    # #4005 round-2: ``sys_readdir`` is the canonical wire name CLI clients
+    # use directly (no rewrite). PyKernel exposes only ``sys_readdir_backend``
+    # so the allowlist scan filters it out — register the identity alias here
+    # so KERNEL_SYSCALL_NAMES (built from alias keys) includes it and the
+    # gRPC servicer routes ``sys_readdir`` straight to NexusFS.sys_readdir
+    # rather than dropping it into the legacy "Unknown method" path.
+    "sys_readdir": "sys_readdir",
     # PyKernel says sys_mkdir / sys_rmdir; NexusFS Tier 2 says mkdir / rmdir.
     "sys_mkdir": "mkdir",
     "sys_rmdir": "rmdir",
@@ -5467,7 +5474,10 @@ async def _occ_write_dispatch(
             if_none_match=if_none_match,
             offset=offset,
         )
-    return nexus_fs.write(params["path"], content, context=context, offset=offset)
+    # #4005 round-2: NexusFS.write is sync — offload like dispatch_kernel_syscall.
+    return await asyncio.to_thread(
+        nexus_fs.write, params["path"], content, context=context, offset=offset
+    )
 
 
 def _apply_pre_call_defaults(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -5549,7 +5559,11 @@ async def dispatch_kernel_syscall(
         if asyncio.iscoroutinefunction(func):
             raw_result = await func(**kwargs)
         else:
-            raw_result = func(**kwargs)
+            # #4005 round-2: NexusFS sys_* methods are sync and may do
+            # blocking I/O (DB hits, large reads). Calling them inline
+            # would park the asyncio loop — same DoS class that justified
+            # excluding sys_watch. Offload to the default thread pool.
+            raw_result = await asyncio.to_thread(func, **kwargs)
 
     result = _apply_result_adapter(method, raw_result, params)
 

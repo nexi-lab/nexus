@@ -361,11 +361,16 @@ impl ObjectStoreProvider for DefaultObjectStoreProvider {
                     let root = args
                         .local_root
                         .ok_or("backend_type='cas-local' requires local_root")?;
-                    // CAS-local backend with the kernel's chunk_fetcher pre-wired
-                    // so local chunk misses on this mount fall through to peer
-                    // RPCs against `backend_name.origins`.
+                    // CAS-local backend wires a per-mount scatter-gather
+                    // fetcher built from `args.peer_client` (the kernel's
+                    // live SSOT slot, snapshotted at this `sys_setattr`
+                    // call) + `args.self_address`.  No `Kernel.chunk_fetcher`
+                    // shadow to keep in sync with peer_client swaps.
                     let fetcher: Arc<dyn kernel::cas_remote::RemoteChunkFetcher> =
-                        Arc::clone(&args.chunk_fetcher);
+                        Arc::new(kernel::cas_remote::GrpcChunkFetcher::new(
+                            Arc::clone(args.peer_client),
+                            args.self_address.map(str::to_string),
+                        ));
                     let b = crate::storage::cas_local::CasLocalBackend::new_with_fetcher(
                         Path::new(root),
                         args.fsync,
@@ -409,23 +414,14 @@ mod tests {
     //! the end so other tests in the same process aren't affected).
 
     use super::*;
-    use kernel::cas_remote::RemoteChunkFetcher;
     use kernel::hal::object_store_provider::set_enabled_drivers;
     use kernel::hal::peer::NoopPeerBlobClient;
     use std::sync::Arc;
-
-    struct NoopChunkFetcher;
-    impl RemoteChunkFetcher for NoopChunkFetcher {
-        fn fetch_chunk(&self, _hash: &str, _origins: &[String]) -> Option<Vec<u8>> {
-            None
-        }
-    }
 
     fn make_args<'a>(
         backend_type: &'a str,
         local_root: Option<&'a str>,
         peer: &'a Arc<dyn kernel::hal::peer::PeerBlobClient>,
-        chunk: Arc<dyn RemoteChunkFetcher>,
         rt: &'a Arc<tokio::runtime::Runtime>,
     ) -> ObjectStoreProviderArgs<'a> {
         ObjectStoreProviderArgs {
@@ -467,7 +463,7 @@ mod tests {
             remote_key_pem: None,
             remote_timeout: 0.0,
             peer_client: peer,
-            chunk_fetcher: chunk,
+            self_address: None,
             runtime: rt,
         }
     }
@@ -480,12 +476,11 @@ mod tests {
         // Gate the test process to a set that excludes path_local.
         set_enabled_drivers(["remote"]);
         let peer: Arc<dyn kernel::hal::peer::PeerBlobClient> = NoopPeerBlobClient::arc();
-        let chunk: Arc<dyn RemoteChunkFetcher> = Arc::new(NoopChunkFetcher);
         let rt = Arc::new(tokio::runtime::Runtime::new().expect("rt"));
         let tmp = std::env::temp_dir().join("nexus-driver-gate-regression");
         let _ = std::fs::create_dir_all(&tmp);
         let root = tmp.to_string_lossy().to_string();
-        let args = make_args("path_local", Some(&root), &peer, chunk, &rt);
+        let args = make_args("path_local", Some(&root), &peer, &rt);
         let res = DefaultObjectStoreProvider.build(&args);
         // Restore an open gate immediately so we don't poison sibling tests.
         set_enabled_drivers(std::iter::empty::<String>());

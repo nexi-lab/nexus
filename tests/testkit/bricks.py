@@ -81,10 +81,12 @@ async def probe_service_lifecycle(
     """Start, health-check, and stop a service/brick with common lifecycle names."""
 
     await _call_first(service, ("start", "startup", "initialize"))
-    started_after_start = _started_state(service)
-    healthy_after_start = await _health_state(service)
+    try:
+        started_after_start = _started_state(service)
+        healthy_after_start = await _health_state(service)
+    finally:
+        await _call_first(service, ("stop", "shutdown", "close"))
 
-    await _call_first(service, ("stop", "shutdown", "close"))
     started_after_stop = _started_state(service)
     healthy_after_stop = await _health_state(service)
 

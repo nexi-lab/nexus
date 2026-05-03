@@ -26,6 +26,18 @@ def test_make_context_builds_user_context() -> None:
     assert ctx.is_admin is False
 
 
+def test_make_context_preserves_custom_zone_set_with_zone_id() -> None:
+    ctx = make_context(
+        user_id="alice",
+        zone_id="zone-a",
+        zone_set=("zone-a", "zone-b"),
+    )
+
+    assert ctx.zone_id == "zone-a"
+    assert ctx.zone_set == ("zone-a", "zone-b")
+    assert ctx.zone_perms == (("zone-a", "rw"), ("zone-b", "rw"))
+
+
 def test_make_admin_context_sets_admin_flag() -> None:
     ctx = make_admin_context(user_id="root", groups=["ops"])
     assert ctx.user_id == "root"

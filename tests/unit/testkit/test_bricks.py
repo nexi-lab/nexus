@@ -39,6 +39,21 @@ async def test_probe_service_lifecycle_exercises_start_health_and_stop() -> None
 
 
 @pytest.mark.asyncio
+async def test_probe_service_lifecycle_stops_after_health_failure() -> None:
+    class _FailingHealthBrick(FakeLifecycleBrick):
+        async def health_check(self) -> bool:
+            raise RuntimeError("health failed")
+
+    brick = _FailingHealthBrick(name="scheduler")
+
+    with pytest.raises(RuntimeError, match="health failed"):
+        await probe_service_lifecycle(brick)
+
+    assert brick.started is False
+    assert brick.events == ("start", "stop")
+
+
+@pytest.mark.asyncio
 async def test_fake_search_brick_satisfies_search_protocol_and_records_calls() -> None:
     brick = FakeSearchBrick(results=[{"path": "/docs/a.txt"}, {"path": "/docs/b.txt"}])
 

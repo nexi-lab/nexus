@@ -29,12 +29,6 @@ def make_context(
 ) -> OperationContext:
     """Build an `OperationContext` with explicit identity fields."""
 
-    if zone_id is not None:
-        if not zone_set:
-            zone_set = (zone_id,)
-        if not zone_perms:
-            zone_perms = ((zone_id, "rw"),)
-
     return OperationContext(
         user_id=user_id,
         groups=list(groups or []),

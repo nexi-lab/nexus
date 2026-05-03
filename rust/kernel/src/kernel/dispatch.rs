@@ -119,9 +119,6 @@ impl Kernel {
         }
 
         // Full permission check runs in NativeInterceptHook dispatch
-        // Full permission check (admin bypass, ReBAC, new-vs-existing file
-        // logic) runs in NativeInterceptHook dispatch — dispatch_native_pre()
-        // is called immediately after check_permission() in every sys_*.
         Ok(())
     }
 

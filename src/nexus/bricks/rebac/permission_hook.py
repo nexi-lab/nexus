@@ -111,6 +111,23 @@ class PermissionCheckHook:
         """Extract agent_id from context, or None if unavailable."""
         return getattr(context, "agent_id", None) if context else None
 
+    # ------------------------------------------------------------------
+    # Rust PermissionProvider entry point
+    # ------------------------------------------------------------------
+
+    def check(self, path: str, permission: "Permission") -> None:
+        """Single entry point for the Rust PermissionProvider adapter.
+
+        Delegates to the internal ``PermissionChecker.check()`` which
+        handles admin bypass, zone boundary, and ReBAC graph checks.
+        Raises ``PermissionError`` on deny (Rust adapter maps to Deny).
+        """
+        if not self._enforce_permissions:
+            return
+        if path.startswith(SYSTEM_PATH_PREFIX):
+            return
+        self._checker.check(path, permission)
+
     @staticmethod
     def _is_system_path(path: str) -> bool:
         """``True`` for paths under the kernel system namespace ``/__sys__/``.

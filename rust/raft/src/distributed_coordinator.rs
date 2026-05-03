@@ -348,6 +348,23 @@ fn bootstrap_or_join_root(
     }
 
     // Branch 3: empty storage, no flag — wait for an existing cluster.
+    //
+    // Empty peer_addrs (no NEXUS_PEERS) + flag unset = "no cluster
+    // intent yet" — daemon comes up federation-active but zoneless.
+    // An operator can later set NEXUS_BOOTSTRAP_NEW=1 + restart, or
+    // call `coordinator.create_zone("root")` via RPC under the
+    // dynamic-bootstrap mode.  Without this early return, branch 3
+    // loops forever with no targets — a hang for any test or
+    // single-node deployment that constructs a kernel without
+    // declaring federation intent.
+    if peer_addrs.is_empty() {
+        tracing::info!(
+            node_id,
+            "empty storage, no NEXUS_PEERS, no NEXUS_BOOTSTRAP_NEW — \
+             federation up but rootless; operator drives create_zone later",
+        );
+        return Ok(());
+    }
     tracing::info!(
         node_id,
         peer_count = peer_addrs.len(),

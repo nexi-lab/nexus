@@ -730,7 +730,14 @@ def search_query(
                 f"[nexus.warning]Searching for: {query}[/nexus.warning]", spinner="dots"
             ):
                 search_svc = nx.service("search")
-                raw = search_svc.semantic_search(query, path=path, limit=limit, search_mode=mode)
+                # ``RemoteServiceProxy.__getattr__`` cannot infer parameter names
+                # for ``semantic_search`` (no NexusFS method, no METHOD_PARAMS entry),
+                # so it would silently drop the positional ``query`` argument and
+                # the server-side handler would error with
+                # ``'SimpleNamespace' object has no attribute 'query'``.
+                raw = search_svc.semantic_search(
+                    query=query, path=path, limit=limit, search_mode=mode
+                )
                 # RPC handler wraps as {"results": [...]}, unwrap if needed
                 results: list[dict[str, Any]] = (
                     raw["results"] if isinstance(raw, dict) and "results" in raw else raw

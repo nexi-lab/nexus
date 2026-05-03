@@ -287,15 +287,23 @@ def main(
         return
 
     # --- Defaults -----------------------------------------------------------
+    # Capture whether --port was user-supplied BEFORE we apply the default,
+    # so the gRPC port derivation logic below knows which signal to trust.
+    _port_explicit = ctx.get_parameter_source("port") == click.core.ParameterSource.COMMANDLINE
     host = host or "0.0.0.0"
     port = port or 2026
     log_level = log_level or "info"
 
-    # Derive gRPC port from HTTP port (port + 2).  Always set this so the
-    # gRPC server binds relative to --port, not to an inherited NEXUS_GRPC_PORT
-    # from a parent nexus hub in the environment (e.g. `eval $(nexus env)`).
-    # Default: HTTP 2026 → gRPC 2028; custom --port N → gRPC N+2.
-    os.environ["NEXUS_GRPC_PORT"] = str(port + 2)
+    # gRPC port resolution (Issue #3980 follow-up):
+    #   1. ``--port`` explicit  → derive grpc = port + 2 (overrides env). This
+    #      stops a child nexusd from inheriting a parent hub's NEXUS_GRPC_PORT
+    #      via ``eval $(nexus env)`` when the user explicitly chose --port.
+    #   2. ``NEXUS_GRPC_PORT`` set in env → honor it. Required for Docker
+    #      compose deployments that map host:N → container:N and need the
+    #      server to actually bind on N (not on the default 2028).
+    #   3. Otherwise default to ``port + 2`` (HTTP 2026 → gRPC 2028).
+    if _port_explicit or "NEXUS_GRPC_PORT" not in os.environ:
+        os.environ["NEXUS_GRPC_PORT"] = str(port + 2)
 
     deployment_profile = deployment_profile or "auto"
 

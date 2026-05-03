@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset(
     {
         "access",
+        "close",
         "delete",
         "exists",
         "list",
@@ -56,6 +57,7 @@ KERNEL_SYSCALL_NAMES: frozenset[str] = frozenset(
         "sys_lock",
         "sys_mkdir",
         "sys_read",
+        "sys_readdir",
         "sys_rename",
         "sys_rmdir",
         "sys_setattr",
@@ -371,6 +373,14 @@ async def dispatch_kernel_syscall(
 
     Returns the (possibly adapted) result; gRPC servicer encodes it.
     """
+    # ``close`` is a client-side lifecycle method that some REMOTE service
+    # proxies erroneously dispatch through the RPC transport during teardown.
+    # Calling ``NexusFS.close`` server-side would tear down the live server
+    # filesystem — short-circuit to a no-op so the wire call succeeds without
+    # affecting server state.
+    if method == "close":
+        return {}
+
     params = _apply_pre_call_defaults(method, params)
 
     if method in ("write", "sys_write"):

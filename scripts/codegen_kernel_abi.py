@@ -5164,8 +5164,18 @@ def generate_kernel_syscall_dispatch(classes: dict[str, "ClassDef"]) -> str:
     """
     syscalls = _scan_pykernel_syscalls(classes)
     # All wire-form names the dispatcher recognizes — direct PyKernel
-    # method names plus the alias map's keys.
-    wire_names = sorted(set(syscalls) | set(_KERNEL_SYSCALL_ALIASES.keys()))
+    # method names plus the alias map's keys plus the manual extras
+    # below.  ``sys_readdir`` is the canonical NexusFS method name that
+    # REMOTE clients dispatch directly through the gRPC ``Call`` channel
+    # (see ``factory/_remote.py::_remote_sys_readdir``); ``close`` is a
+    # client-lifecycle method some service proxies erroneously dispatch
+    # as RPC during teardown — short-circuited to a no-op in
+    # ``dispatch_kernel_syscall`` to avoid tearing down the live server
+    # filesystem.
+    _MANUAL_WIRE_NAMES = ("sys_readdir", "close")
+    wire_names = sorted(
+        set(syscalls) | set(_KERNEL_SYSCALL_ALIASES.keys()) | set(_MANUAL_WIRE_NAMES)
+    )
 
     names_block = ",\n        ".join(f'"{n}"' for n in wire_names)
     aliases_block = ",\n    ".join(
@@ -5514,6 +5524,14 @@ async def dispatch_kernel_syscall(
 
     Returns the (possibly adapted) result; gRPC servicer encodes it.
     """
+    # ``close`` is a client-side lifecycle method that some REMOTE service
+    # proxies erroneously dispatch through the RPC transport during teardown.
+    # Calling ``NexusFS.close`` server-side would tear down the live server
+    # filesystem — short-circuit to a no-op so the wire call succeeds without
+    # affecting server state.
+    if method == "close":
+        return {{}}
+
     params = _apply_pre_call_defaults(method, params)
 
     if method in ("write", "sys_write"):

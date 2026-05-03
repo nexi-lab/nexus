@@ -148,6 +148,24 @@ class DaemonConfig:
     # need it. Operators who want the feature can flip this in config.
     txtai_graph: bool = False  # Enable semantic graph (opt-in; see note above)
 
+    # Page-level aggregation for chunked retrieval (Issue #3980).
+    # txtai's pgtext BM25 scores at chunk granularity; for rare-phrase queries
+    # the literal-match chunk's signal gets diluted across the page's other
+    # chunks (e.g. a "40 Under 40" mention buried at chunk-rank 33 instead of
+    # top-5). Aggregating chunk scores up to page level via max-pool fixes
+    # this — it's the same pattern as Vespa/ColBERT MaxSim and gbrain's
+    # "Best-of-Page" dedup. Default on; set NEXUS_SEARCH_PAGE_AGGREGATION=false
+    # to disable for ablation.
+    page_aggregation: bool = True
+    chunks_per_page: int = 2  # gbrain emission cap; protects against one-doc dominance
+    # Page-level BM25 leg (Issue #3980 follow-up). Per-term FTS lookups against
+    # the full-document text, RRF-fused, then folded into the chunk-aggregated
+    # ranking. Recovers rare-phrase docs that lose at chunk granularity because
+    # tsquery AND-zeros pages missing any single query term. Default on; set
+    # NEXUS_SEARCH_PAGE_BM25=false to disable.
+    page_bm25: bool = True
+    page_bm25_rrf_k: int = 60
+
     # Per-directory semantic index scoping (Issue #3698).
     # ``scope_refresh_seconds`` controls how often the daemon re-reads
     # ``zones.indexing_mode`` and ``indexed_directories`` from the DB
@@ -648,6 +666,10 @@ class SearchDaemon:
                 sparse=self.config.txtai_sparse,
                 embedding_cache=_emb_cache,
                 data_path=self.config.data_path if hasattr(self.config, "data_path") else None,
+                page_aggregation=self.config.page_aggregation,
+                chunks_per_page=self.config.chunks_per_page,
+                page_bm25=self.config.page_bm25,
+                page_bm25_rrf_k=self.config.page_bm25_rrf_k,
             )
             self._backend.kickoff_startup()
             self._txtai_bootstrap_task = asyncio.create_task(self._bootstrap_txtai_backend())

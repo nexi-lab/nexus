@@ -1320,30 +1320,10 @@ impl Kernel {
             }
         }
 
-        // 9. DCache: evict old + put new; evict children prefix for directories.
-        // For PAS backends, content_id is the backend-relative path. After a rename
-        // the disk file is at the new backend path, so we must update content_id in
-        // the cached entry before inserting it at new_path — otherwise sys_read
-        // fetches the stale old-path backend file (which no longer exists).
-        if let Some(mut entry) = self.dcache.get_entry(old_path) {
-            self.dcache.evict(old_path);
-            // PAS only: update content_id to new backend path.
-            // Use the route's authoritative is_cas flag rather than a
-            // string-shape heuristic — a PAS file named like a BLAKE3 hex
-            // digest would otherwise be incorrectly treated as CAS.
-            if !old_route.is_cas {
-                if let Some(ref cid) = entry.content_id.clone() {
-                    if *cid == old_route.backend_path {
-                        entry.content_id = Some(new_route.backend_path.clone());
-                    }
-                }
-            }
-            self.dcache.put(new_path, entry);
-        }
-        if is_directory {
-            let prefix = format!("{}/", old_path.trim_end_matches('/'));
-            self.dcache.evict_prefix(&prefix);
-        }
+        // 9. Each metastore impl owns its own internal cache and
+        // already invalidated old_path / repopulated new_path during
+        // ``rename_path`` above. The kernel side has nothing left to do
+        // — there is no kernel-global metadata cache to keep in sync.
 
         // 10. Release sorted locks
         release_locks(&self.lock_manager, lock1, lock2);
@@ -1973,13 +1953,11 @@ impl Kernel {
             .vfs_router
             .rmdir(&route.mount_point, &route.backend_path, recursive);
 
-        // 7. Atomic delete — metastore (raft) first, dcache evict on
-        // success. The prefix evict for child entries follows the
-        // delete because the children share fate with the directory's
-        // metadata commit.
+        // 7. Atomic delete — metastore is the SSOT. Per-key cache
+        // invalidation already happened: ``delete_batch`` invalidated
+        // each child's cache row, and ``commit_delete`` → ``ms.delete``
+        // invalidates the parent's. No kernel-global cache to evict.
         self.commit_delete(path, &route.mount_point)?;
-        let prefix = format!("{}/", path.trim_end_matches('/'));
-        self.dcache.evict_prefix(&prefix);
 
         // 9. OBSERVE-phase dispatch (§11 OBSERVE): queue DirDelete.
         // Like sys_mkdir, only the top-level rmdir event fires —

@@ -2,11 +2,20 @@
 //!
 //! Stamps every per-pid metastore entry the integration doc §2.2 lists:
 //!
-//!   * `/proc/`, `/proc/{pid}/`, `/proc/{pid}/workspace/` — DT_DIR dirents
+//!   * `/proc/`, `/proc/{pid}/`, `/proc/{pid}/workspace/`,
+//!     `/proc/{pid}/sessions/`, `/proc/{pid}/tasks/` — DT_DIR dirents
+//!   * `/proc/{pid}/agent` — DT_LINK to `/agents/{desc.name}`
+//!     (Linux `/proc/{pid}/exe` analogue; readlink returns the static
+//!     profile dir).  May dangle until `/agents/{name}/` is materialised
+//!     by upstream profile-management code — kernel does not validate
+//!     link target existence.
+//!   * `/proc/{pid}/chat-with-me` — DT_STREAM (capacity 65_536), the
+//!     canonical mailbox.  io_profile is `wal` when federation is up
+//!     (writes raft-replicate across voters per integration doc §6) and
+//!     `memory` otherwise (test mode).
 //!   * `/proc/{pid}/workspace/chat-with-me` — DT_LINK to
-//!     `/proc/{pid}/chat-with-me` (canonical mailbox stream lives at the
-//!     pid-level path; the workspace shortcut lets agents address
-//!     `chat-with-me` relative to their cwd)
+//!     `/proc/{pid}/chat-with-me` (workspace shortcut so agents can
+//!     address `chat-with-me` relative to their cwd)
 //!   * `/proc/{pid}/workspace/{alias}` — one DT_LINK per
 //!     `RepoMount` in the descriptor, target is `mount_path`
 //!
@@ -23,12 +32,16 @@ use kernel::core::agents::registry::AgentDescriptor;
 use kernel::kernel::Kernel;
 
 const DT_DIR: i32 = 1;
+const DT_STREAM: i32 = 4;
 const DT_LINK: i32 = 6;
 
-/// Stamp the dirent + DT_LINK rows for a freshly-spawned pid. Idempotent
-/// against re-spawn / restart paths — `sys_setattr(DT_DIR)` is a no-op
-/// on already-present directories, and `sys_setattr(DT_LINK)` accepts a
-/// matching existing link as a successful no-op.
+/// chat-with-me DT_STREAM capacity — sized for the per-pid conversation
+/// flow described in integration doc §3.
+const CHAT_STREAM_CAPACITY: usize = 65_536;
+
+/// Stamp the per-pid metastore subtree at start_session time. Idempotent
+/// against re-spawn / restart paths — every `sys_setattr` call accepts
+/// a matching existing entry as a successful no-op.
 pub(crate) fn register_proc_entry(
     kernel: &Arc<Kernel>,
     desc: &AgentDescriptor,
@@ -36,14 +49,40 @@ pub(crate) fn register_proc_entry(
     let pid = desc.pid.as_str();
     let pid_root = format!("/proc/{pid}");
     let workspace_root = format!("/proc/{pid}/workspace");
-    for dir in ["/proc", pid_root.as_str(), workspace_root.as_str()] {
+    let sessions_root = format!("/proc/{pid}/sessions");
+    let tasks_root = format!("/proc/{pid}/tasks");
+
+    // Dirent layer first — children attach below.
+    for dir in [
+        "/proc",
+        pid_root.as_str(),
+        workspace_root.as_str(),
+        sessions_root.as_str(),
+        tasks_root.as_str(),
+    ] {
         create_dt_dir(kernel, dir)?;
     }
 
+    // Canonical chat-with-me stream — wal-backed when federation is up
+    // so writes raft-replicate, in-memory otherwise (test mode).
+    let cwm_canonical = format!("/proc/{pid}/chat-with-me");
+    create_dt_stream(
+        kernel,
+        &cwm_canonical,
+        CHAT_STREAM_CAPACITY,
+        chat_stream_profile(kernel),
+    )?;
+
+    // /proc/{pid}/agent → /agents/{desc.name} (Linux /proc/{pid}/exe
+    // analogue). Target may not exist yet; DT_LINK rows are not
+    // validated against entry presence.
+    let agent_link = format!("{pid_root}/agent");
+    let agent_target = format!("/agents/{}", desc.name);
+    create_dt_link(kernel, &agent_link, &agent_target)?;
+
     // Workspace `chat-with-me` shortcut → canonical pid-level stream.
-    let cwm_link = format!("{workspace_root}/chat-with-me");
-    let cwm_target = format!("/proc/{pid}/chat-with-me");
-    create_dt_link(kernel, &cwm_link, &cwm_target)?;
+    let cwm_shortcut = format!("{workspace_root}/chat-with-me");
+    create_dt_link(kernel, &cwm_shortcut, &cwm_canonical)?;
 
     // One DT_LINK per repo mount carried in the descriptor.
     for repo in &desc.repos {
@@ -56,20 +95,46 @@ pub(crate) fn register_proc_entry(
 
 /// Reverse of [`register_proc_entry`]. Best-effort: missing entries
 /// (e.g. partial registration that failed) are not an error. Children
-/// drop before the parent dirent so directory removal sees an empty
-/// parent.
+/// drop before parents so directory removal sees an empty parent. The
+/// canonical chat-with-me DT_STREAM also goes here — its lifetime is
+/// the pid's; any persistent inbox lives at `/agents/{name}/chat-with-me`
+/// instead.
 pub(crate) fn unregister_proc_entry(kernel: &Arc<Kernel>, desc: &AgentDescriptor) {
     let pid = desc.pid.as_str();
-    let workspace_root = format!("/proc/{pid}/workspace");
     let pid_root = format!("/proc/{pid}");
+    let workspace_root = format!("/proc/{pid}/workspace");
+    let sessions_root = format!("/proc/{pid}/sessions");
+    let tasks_root = format!("/proc/{pid}/tasks");
 
-    // Workspace links first, then the workspace dir, then pid root.
+    // Workspace shortcut + alias links first, then the workspace dir.
     let _ = kernel.metastore_delete(&format!("{workspace_root}/chat-with-me"));
     for repo in &desc.repos {
         let _ = kernel.metastore_delete(&format!("{workspace_root}/{}", repo.alias));
     }
     let _ = kernel.metastore_delete(&workspace_root);
+
+    // Sessions / tasks are leaf dirents from this layer's perspective —
+    // any sub-entries are sudo-code's bookkeeping, dropped here as a
+    // bulk-delete because the pid is going away.
+    let _ = kernel.metastore_delete(&sessions_root);
+    let _ = kernel.metastore_delete(&tasks_root);
+
+    // Canonical chat-with-me stream + agent link, then pid root itself.
+    let _ = kernel.metastore_delete(&format!("{pid_root}/chat-with-me"));
+    let _ = kernel.metastore_delete(&format!("{pid_root}/agent"));
     let _ = kernel.metastore_delete(&pid_root);
+}
+
+/// Pick `wal` when federation is initialised, `memory` otherwise.
+/// `is_initialized` is the same readiness probe used by `setattr_mount`
+/// — true once `init_from_env` completes, regardless of whether any
+/// zones are loaded yet.
+fn chat_stream_profile(kernel: &Kernel) -> &'static str {
+    if kernel.distributed_coordinator().is_initialized(kernel) {
+        "wal"
+    } else {
+        "memory"
+    }
 }
 
 fn create_dt_dir(kernel: &Kernel, path: &str) -> Result<(), String> {
@@ -102,6 +167,25 @@ fn create_dt_link(kernel: &Kernel, path: &str, target: &str) -> Result<(), Strin
         .map_err(|e| format!("sys_setattr(DT_LINK at {path:?} → {target:?}): {e:?}"))
 }
 
+fn create_dt_stream(
+    kernel: &Kernel,
+    path: &str,
+    capacity: usize,
+    io_profile: &str,
+) -> Result<(), String> {
+    kernel
+        .sys_setattr(
+            path, DT_STREAM, /* backend_name */ "", /* backend */ None,
+            /* metastore */ None, /* raft_backend */ None, io_profile,
+            /* zone_id */ "root", /* is_external */ false, capacity,
+            /* read_fd */ None, /* write_fd */ None, /* mime_type */ None,
+            /* modified_at_ms */ None, /* link_target */ None,
+            /* source */ None, /* remote_metastore */ None,
+        )
+        .map(|_| ())
+        .map_err(|e| format!("sys_setattr(DT_STREAM at {path:?} io_profile={io_profile:?}): {e:?}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +209,14 @@ mod tests {
             .and_then(|e| e.link_target)
     }
 
+    fn stream_exists(kernel: &Kernel, path: &str) -> bool {
+        kernel
+            .metastore_get(path)
+            .ok()
+            .flatten()
+            .is_some_and(|e| e.entry_type == DT_STREAM as u8)
+    }
+
     fn entry_present(kernel: &Kernel, path: &str) -> bool {
         kernel.metastore_get(path).ok().flatten().is_some()
     }
@@ -145,13 +237,35 @@ mod tests {
     }
 
     #[test]
-    fn register_proc_entry_creates_pid_and_workspace_dirents() {
+    fn register_proc_entry_creates_full_per_pid_dirent_layer() {
         let kernel = Arc::new(Kernel::new());
         register_proc_entry(&kernel, &make_desc("pid-test", Vec::new()))
             .expect("register_proc_entry");
         assert!(dir_exists(&kernel, "/proc"));
         assert!(dir_exists(&kernel, "/proc/pid-test"));
         assert!(dir_exists(&kernel, "/proc/pid-test/workspace"));
+        assert!(dir_exists(&kernel, "/proc/pid-test/sessions"));
+        assert!(dir_exists(&kernel, "/proc/pid-test/tasks"));
+    }
+
+    #[test]
+    fn register_proc_entry_stamps_canonical_chat_with_me_dt_stream() {
+        let kernel = Arc::new(Kernel::new());
+        register_proc_entry(&kernel, &make_desc("pid-cwm", Vec::new())).unwrap();
+        assert!(stream_exists(&kernel, "/proc/pid-cwm/chat-with-me"));
+    }
+
+    #[test]
+    fn register_proc_entry_stamps_agent_dt_link_to_profile() {
+        let kernel = Arc::new(Kernel::new());
+        register_proc_entry(&kernel, &make_desc("pid-agent", Vec::new())).unwrap();
+        // Target may dangle until /agents/{name} is materialised by
+        // upstream profile-management code — the link is stamped
+        // unconditionally.
+        assert_eq!(
+            link_target(&kernel, "/proc/pid-agent/agent").as_deref(),
+            Some("/agents/scode-standard"),
+        );
     }
 
     #[test]
@@ -208,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn unregister_proc_entry_removes_dirents_and_links() {
+    fn unregister_proc_entry_removes_full_per_pid_subtree() {
         let kernel = Arc::new(Kernel::new());
         let desc = make_desc(
             "pid-y",
@@ -218,14 +332,38 @@ mod tests {
             }],
         );
         register_proc_entry(&kernel, &desc).unwrap();
+        // All entries planted.
+        assert!(entry_present(&kernel, "/proc/pid-y/agent"));
+        assert!(entry_present(&kernel, "/proc/pid-y/chat-with-me"));
+        assert!(entry_present(&kernel, "/proc/pid-y/sessions"));
+        assert!(entry_present(&kernel, "/proc/pid-y/tasks"));
         assert!(entry_present(&kernel, "/proc/pid-y/workspace/chat-with-me"));
         assert!(entry_present(&kernel, "/proc/pid-y/workspace/core"));
 
         unregister_proc_entry(&kernel, &desc);
+
+        // Every per-pid entry gone.
+        assert!(!entry_present(&kernel, "/proc/pid-y/agent"));
+        assert!(!entry_present(&kernel, "/proc/pid-y/chat-with-me"));
+        assert!(!entry_present(&kernel, "/proc/pid-y/sessions"));
+        assert!(!entry_present(&kernel, "/proc/pid-y/tasks"));
         assert!(!entry_present(&kernel, "/proc/pid-y/workspace/chat-with-me"));
         assert!(!entry_present(&kernel, "/proc/pid-y/workspace/core"));
         assert!(!dir_exists(&kernel, "/proc/pid-y/workspace"));
         assert!(!dir_exists(&kernel, "/proc/pid-y"));
+    }
+
+    #[test]
+    fn chat_stream_falls_back_to_memory_without_federation() {
+        // Default `Kernel::new()` has no federation initialised, so the
+        // canonical chat-with-me stream is created with io_profile=memory
+        // and the call succeeds.  Production use installs a real
+        // distributed coordinator (set_distributed_coordinator) so the
+        // probe selects io_profile=wal — covered by federation e2e.
+        let kernel = Arc::new(Kernel::new());
+        register_proc_entry(&kernel, &make_desc("pid-mem", Vec::new()))
+            .expect("memory profile must succeed without federation");
+        assert!(stream_exists(&kernel, "/proc/pid-mem/chat-with-me"));
     }
 
     #[test]

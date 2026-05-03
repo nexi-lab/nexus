@@ -66,9 +66,9 @@ class TestPerformanceTuningOnAppState:
     def test_full_profile_tuning_set(self, app_full_profile: FastAPI) -> None:
         tuning = app_full_profile.state.profile_tuning
         assert tuning.concurrency.default_workers == 4
-        assert tuning.concurrency.thread_pool_size == 200
+        assert tuning.concurrency.thread_pool_size == 40
         assert tuning.network.default_http_timeout == 30.0
-        assert tuning.storage.db_pool_size == 20
+        assert tuning.storage.db_pool_size == 5
 
     def test_full_profile_new_slices(self, app_full_profile: FastAPI) -> None:
         tuning = app_full_profile.state.profile_tuning
@@ -107,11 +107,11 @@ class TestFeaturesEndpointWithTuning:
         assert "performance_tuning" in data
         pt = data["performance_tuning"]
         assert pt is not None
-        assert pt["thread_pool_size"] == 200
+        assert pt["thread_pool_size"] == 40
         assert pt["default_workers"] == 4
         assert pt["task_runner_workers"] == 4
         assert pt["default_http_timeout"] == 30.0
-        assert pt["db_pool_size"] == 20
+        assert pt["db_pool_size"] == 5
         assert pt["search_max_concurrency"] == 10
 
     def test_full_features_includes_new_slices(self, app_full_profile: FastAPI) -> None:

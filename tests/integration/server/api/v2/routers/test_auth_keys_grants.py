@@ -22,8 +22,8 @@ from nexus.server.api.v2.routers.auth_keys import (
     GrantRequest,
     router,
 )
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
+from tests.testkit.records import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -22,7 +22,7 @@ from nexus.bricks.rebac.namespace_manager import (
     build_mount_entries,
 )
 from nexus.storage.models import Base
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures

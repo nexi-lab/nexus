@@ -3,7 +3,7 @@
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.testkit.records import InMemoryRecordStore
 
 
 @pytest.fixture()

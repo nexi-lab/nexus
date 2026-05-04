@@ -13,7 +13,7 @@ from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNa
 from nexus.storage.models import Base
 from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Fixtures

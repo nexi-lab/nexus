@@ -75,7 +75,7 @@ async def _create_factory_nexus_fs(
     """
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.factory import create_nexus_fs, create_record_store
-    from tests.helpers.dict_metastore import DictMetastore
+    from tests.testkit.metadata import DictMetastore
 
     data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)

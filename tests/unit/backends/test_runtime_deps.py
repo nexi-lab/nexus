@@ -10,6 +10,7 @@ from nexus.backends.base.runtime_deps import (
     RuntimeDep,
     ServiceDep,
 )
+from tests.testkit.profiles import TestProfile, pytest_profile_params
 
 
 class TestDepTypes:
@@ -43,6 +44,15 @@ class TestDepTypes:
             ServiceDep("kernel"),
         )
         assert len(deps) == 3
+
+
+@pytest.mark.parametrize(
+    "profile",
+    pytest_profile_params("slim", "sandbox", "remote"),
+)
+def test_runtime_dep_profile_matrix_ids_are_usable(profile: TestProfile) -> None:
+    """Smoke-test the shared profile matrix in a backend-facing suite."""
+    assert profile.config["profile"] in {"slim", "sandbox", "remote"}
 
 
 from unittest.mock import patch  # noqa: E402

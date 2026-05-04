@@ -21,7 +21,7 @@ from nexus.bricks.rebac.consistency.zone_manager import ZoneIsolationError
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.storage.models import Base
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
 
 
 @pytest.fixture

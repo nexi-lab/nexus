@@ -10,7 +10,7 @@ Tests cover:
 
 import pytest
 
-from tests.conftest import make_test_nexus
+from tests.testkit import make_test_nexus
 
 
 @pytest.fixture()

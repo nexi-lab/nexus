@@ -35,7 +35,7 @@ class TestWirableFSConformance:
     def test_nexus_fs_is_wirable(self, tmp_path) -> None:
         from nexus.contracts.wirable_fs import WirableFS
         from nexus.core.nexus_fs import NexusFS
-        from tests.conftest import make_test_nexus
+        from tests.testkit import make_test_nexus
 
         # NexusFS.sys_read exists at class level (method)
         assert callable(getattr(NexusFS, "sys_read", None))

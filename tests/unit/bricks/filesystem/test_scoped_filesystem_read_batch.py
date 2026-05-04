@@ -13,7 +13,7 @@ import pytest
 
 from nexus.bricks.filesystem.scoped_filesystem import ScopedFilesystem
 from nexus.contracts.exceptions import AccessDeniedError
-from tests.conftest import make_test_nexus
+from tests.testkit import make_test_nexus
 
 
 @pytest.fixture()

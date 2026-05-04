@@ -14,7 +14,7 @@ class TestEnlistWiredServices:
     @pytest.fixture()
     def nx(self, tmp_path: Any) -> Any:
         """Minimal NexusFS via factory boot path."""
-        from tests.conftest import make_test_nexus
+        from tests.testkit import make_test_nexus
 
         return make_test_nexus(tmp_path)
 

@@ -14,6 +14,8 @@ on:
       - "src/nexus/backends/connectors/**"
       - "src/nexus/bricks/auth/**"
       - "src/nexus/bricks/search/primitives/**"
+      # Pytest loads the root conftest before collecting slim tests.
+      - "tests/conftest.py"
       - "tests/integration/slim/**"
       - ".github/workflows/slim-wheel-smoke.yml"
       # Rust runtime changes affect rename/copy/read correctness

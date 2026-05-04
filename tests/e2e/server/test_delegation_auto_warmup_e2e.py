@@ -23,7 +23,8 @@ from nexus.server.api.v2.routers.delegation import (
     DelegateResponse,
     _handle_delegation_error,
 )
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from nexus.storage.zone_bootstrap import ensure_root_zone
+from tests.testkit.records import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -33,6 +34,7 @@ from tests.helpers.in_memory_record_store import InMemoryRecordStore
 @pytest.fixture()
 def record_store():
     store = InMemoryRecordStore()
+    ensure_root_zone(store.session_factory)
     yield store
     store.close()
 
@@ -49,7 +51,7 @@ def agent_registry():
 
 @pytest.fixture()
 def rebac_manager(record_store):
-    manager = EnhancedReBACManager(engine=record_store.engine, cache_ttl_seconds=0, max_depth=10)
+    manager = EnhancedReBACManager(engine=record_store.engine, cache_ttl_seconds=1, max_depth=10)
     yield manager
     manager.close()
 

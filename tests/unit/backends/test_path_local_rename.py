@@ -4,7 +4,7 @@ import pytest
 
 from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.factory.orchestrator import create_nexus_fs
-from tests.helpers.dict_metastore import DictMetastore
+from tests.testkit.metadata import DictMetastore
 
 _LARGE_CONTENT = b"x" * 100
 

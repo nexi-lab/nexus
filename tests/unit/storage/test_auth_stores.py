@@ -27,7 +27,7 @@ from nexus.storage.auth_stores import (
 
 @pytest.fixture()
 def session_factory():
-    from tests.helpers.in_memory_record_store import InMemoryRecordStore
+    from tests.testkit.records import InMemoryRecordStore
 
     store = InMemoryRecordStore()
     yield store.session_factory
@@ -338,7 +338,7 @@ class TestZoneStore:
 class TestSettingsStore:
     @pytest.fixture()
     def store(self):
-        from tests.helpers.dict_metastore import DictMetastore
+        from tests.testkit.metadata import DictMetastore
 
         return MetastoreSettingsStore(DictMetastore())
 

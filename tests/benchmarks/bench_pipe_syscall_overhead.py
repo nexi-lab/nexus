@@ -76,7 +76,7 @@ async def _setup(tmp_dir: Path):
     from nexus.core.config import ParseConfig
     from nexus.factory import create_nexus_fs
     from nexus.storage.raft_metadata_store import RaftMetadataStore
-    from tests.helpers.test_context import TEST_ADMIN_CONTEXT
+    from tests.testkit.auth import TEST_ADMIN_CONTEXT
 
     raft_path = tmp_dir / "raft"
     data_dir = tmp_dir / "data"

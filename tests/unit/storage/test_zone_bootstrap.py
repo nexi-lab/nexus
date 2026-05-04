@@ -8,6 +8,7 @@ they must satisfy the ``api_key_zones`` FK without depending on
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -72,6 +73,25 @@ def test_init_database_script_seeds_root_zone_for_docker_entrypoint(tmp_path, mo
     assert zone is not None
     assert zone.phase == "Active"
     assert zone.deleted_at is None
+
+
+def test_init_database_preserves_existing_application_loggers(tmp_path, monkeypatch):
+    """Alembic migration logging must not disable already-imported app loggers."""
+    from scripts.init_database import init_database
+
+    logger = logging.getLogger("nexus.backends.wrappers.logging")
+    was_disabled = logger.disabled
+    logger.disabled = False
+
+    db = tmp_path / "docker-init.db"
+    database_url = f"sqlite:///{db}"
+    monkeypatch.setenv("NEXUS_DATABASE_URL", database_url)
+
+    try:
+        init_database(database_url)
+        assert logger.disabled is False
+    finally:
+        logger.disabled = was_disabled
 
 
 def test_ensure_root_zone_idempotent_across_calls(tmp_path):

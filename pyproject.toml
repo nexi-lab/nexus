@@ -571,6 +571,15 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
+module = ["tests.testkit", "tests.testkit.*"]
+# Test helper modules can be followed by mypy when brick-internal tests import
+# them from under src/nexus. Keep them out of production strictness.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_return_any = false
+disable_error_code = ["attr-defined", "func-returns-value", "override", "return-value"]
+
+[[tool.mypy.overrides]]
 module = "nexus.backends.delegating"
 # DelegatingBackend delegates all Backend methods to _inner via explicit forwarding.
 # mypy resolves _inner.method() return types as Any when Backend is imported under

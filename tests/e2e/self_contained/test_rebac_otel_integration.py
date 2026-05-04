@@ -37,7 +37,7 @@ from nexus.bricks.rebac.rebac_tracing import (
     reset_tracer,
 )
 from nexus.storage.models import Base
-from tests.helpers.inmemory_nexus_fs import InMemoryNexusFS
+from tests.testkit.metadata import InMemoryNexusFS
 
 # ---------------------------------------------------------------------------
 # Helpers — in-memory span exporter compatible with all OTel SDK versions

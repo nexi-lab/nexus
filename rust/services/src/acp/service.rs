@@ -422,7 +422,12 @@ impl AcpService<Kernel> {
     pub(crate) fn handle() -> Option<Arc<Self>> {
         ACP_SVC_HANDLE.get().cloned()
     }
+}
 
+// `persist_result` lives in the generic impl because its body only
+// touches the `KernelAbi` trait surface (`sys_write`); the
+// `call_agent` path (which is generic over K) needs to call it.
+impl<K: KernelAbi> AcpService<K> {
     pub(crate) fn persist_result(
         &self,
         result: &AcpResult,
@@ -530,7 +535,7 @@ impl<K: KernelAbi> AcpService<K> {
 
         // Spawn the agent CLI + register DT_PIPEs.
         let mut subproc =
-            match AcpSubprocess::spawn(&cfg, &host_cwd, &self.kernel, &req.zone_id, &pid).await {
+            match AcpSubprocess::spawn(&cfg, &host_cwd, self.kernel.as_ref(), &req.zone_id, &pid).await {
                 Ok(s) => s,
                 Err(e) => {
                     let _ = reg.kill(&pid, 127);
@@ -576,7 +581,7 @@ impl<K: KernelAbi> AcpService<K> {
 
         // Tear down: drop connection (fd close), unregister DT_PIPEs,
         // kill subprocess, wait for exit, mark TERMINATED in registry.
-        subproc.unregister_pipes(&self.kernel);
+        subproc.unregister_pipes(self.kernel.as_ref());
         subproc.kill().await;
         let _ = subproc.wait().await;
         self.active.remove(&pid);

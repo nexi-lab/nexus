@@ -38,9 +38,10 @@ pub struct ExternalProcessInfo {
 
 // ── RepoMount ──────────────────────────────────────────────────────────
 
-/// One workspace repo mount carried in the per-pid descriptor.  Read by
-/// `ProcWorkspaceResolver` to render `/proc/{pid}/workspace/{alias}` as a
-/// link target without ever persisting the link in the metastore.
+/// One workspace repo mount carried in the per-pid descriptor.
+/// Drives the per-alias DT_LINK rows stamped under
+/// `/proc/{pid}/workspace/{alias}` at start_session time
+/// (services::managed_agent::proc_entry::register_proc_entry).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RepoMount {
     pub alias: String,
@@ -87,8 +88,8 @@ pub struct AgentDescriptor {
     pub labels: HashMap<String, String>,
 
     // Workspace repo mounts — one entry per `/proc/{pid}/workspace/{alias}`
-    // link the runtime expects to be reachable.  Drives the procfs view
-    // served by `ProcWorkspaceResolver`; never materialised in metastore.
+    // DT_LINK row stamped at start_session time. Useful PCB metadata for
+    // inspection; the metastore DT_LINK rows are the routing SSOT.
     pub repos: Vec<RepoMount>,
 }
 

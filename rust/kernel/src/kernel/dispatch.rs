@@ -26,13 +26,47 @@ impl Kernel {
         if registry.count() == 0 {
             return Ok(());
         }
-        // The hook chain may return a HookOutcome::Replace; today only
-        // sys_write threads it through (separate dispatch entry point).
-        // For accept/reject hooks we drop the replacement.
+        // The hook chain may return a HookOutcome::Replace; the
+        // accept/reject path drops the replacement — `sys_write` calls
+        // `dispatch_native_pre_with_replacement` instead so it can
+        // thread the replacement bytes through to the EXECUTE phase.
         registry
             .dispatch_pre(ctx)
             .map(|_replacement| ())
             .map_err(KernelError::PermissionDenied)
+    }
+
+    /// Like [`Self::dispatch_native_pre`] but returns the
+    /// `HookOutcome::Replace` payload so callers can substitute write
+    /// content at the EXECUTE phase. `sys_write` is the only consumer
+    /// today — `MailboxStampingHook` (registered for `*/chat-with-me`)
+    /// rewrites the envelope's `from` field through this path, and the
+    /// caller passes `replacement.unwrap_or(content)` into DT_STREAM
+    /// push / DT_FILE backend write. Empty registry returns
+    /// `Ok(None)` so the no-hook hot path stays allocation-free.
+    pub fn dispatch_native_pre_with_replacement(
+        &self,
+        ctx: &HookContext,
+    ) -> Result<Option<Vec<u8>>, KernelError> {
+        let registry = self.native_hooks.read_unconditional();
+        if registry.count() == 0 {
+            return Ok(None);
+        }
+        registry
+            .dispatch_pre(ctx)
+            .map_err(KernelError::PermissionDenied)
+    }
+
+    /// Returns true when at least one registered hook declared a
+    /// `mutating_path_suffix` that matches `path`. `sys_write` uses
+    /// this as a clone gate: only when a mutating hook matches does the
+    /// dispatcher clone the write content into `WriteHookCtx`. The
+    /// steady-state path (no mutating hooks) returns false on the
+    /// empty-Vec check before any string comparison.
+    pub fn has_mutating_hook_match(&self, path: &str) -> bool {
+        self.native_hooks
+            .read_unconditional()
+            .has_mutating_match(path)
     }
 
     /// Dispatch POST-INTERCEPT hooks from NativeHookRegistry (fire-and-forget).

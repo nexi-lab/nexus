@@ -138,8 +138,8 @@ impl PyAgentDescriptor {
         self.inner.labels.clone()
     }
     /// Workspace repo mounts as a list of dicts (`{alias, mount_path}`).
-    /// Drives `/proc/{pid}/workspace/{alias}` rendering through the
-    /// `ProcWorkspaceResolver` procfs view.
+    /// Drives the per-alias DT_LINK rows stamped under
+    /// `/proc/{pid}/workspace/{alias}` at start_session time.
     #[getter]
     fn repos<'py>(&self, py: Python<'py>) -> PyResult<Vec<Bound<'py, PyDict>>> {
         self.inner

@@ -133,11 +133,10 @@ class DaemonConfig:
     entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
 
-    # txtai backend config (Issue #2663). ``None`` -> BM25 keyword-only
-    # fast-path (Issue #3997: resolver returns ``None`` when there is no
-    # API key and no explicit local model). ``TxtaiBackend._startup_impl``
-    # detects ``model=None`` and skips ``Embeddings(path=...)`` entirely,
-    # saving ~900 MB RSS at boot for default deploys.
+    # txtai backend config (Issue #2663). ``None`` disables the txtai backend
+    # and uses the daemon's legacy BM25/FTS keyword path only. This is the
+    # default when there is no API key and no explicit local model, avoiding
+    # native txtai/faiss startup in default Docker deployments.
     txtai_model: str | None = "sentence-transformers/all-MiniLM-L6-v2"
     txtai_vectors: dict[str, Any] | None = None
     txtai_reranker: str | None = None  # e.g. "cross-encoder/ms-marco-MiniLM-L-2-v2"
@@ -648,42 +647,50 @@ class SearchDaemon:
         # synchronously — do NOT kick off as a background task.
         await self._load_index_scope()
 
-        # Initialize txtai backend for semantic/hybrid/graph search (Issue #2663)
-        try:
-            from nexus.bricks.search.txtai_backend import TxtaiBackend
-
-            # Pass embedding cache so txtai can skip redundant API calls
-            _emb_cache = None
-            if self._cache_brick:
-                import contextlib
-
-                with contextlib.suppress(Exception):
-                    _emb_cache = self._cache_brick.embedding_cache
-
-            self._backend = TxtaiBackend(
-                database_url=self.config.database_url,
-                model=self.config.txtai_model,
-                vectors=self.config.txtai_vectors,
-                hybrid=True,
-                graph=self.config.txtai_graph,
-                reranker_model=self.config.txtai_reranker,
-                sparse=self.config.txtai_sparse,
-                embedding_cache=_emb_cache,
-                data_path=self.config.data_path if hasattr(self.config, "data_path") else None,
-                page_aggregation=self.config.page_aggregation,
-                chunks_per_page=self.config.chunks_per_page,
-                page_bm25=self.config.page_bm25,
-                page_bm25_rrf_k=self.config.page_bm25_rrf_k,
-            )
-            self._backend.kickoff_startup()
-            self._txtai_bootstrap_task = asyncio.create_task(self._bootstrap_txtai_backend())
-            logger.info("txtai backend startup kicked off in background")
-        except Exception:
-            logger.warning(
-                "txtai backend init failed, falling back to legacy search", exc_info=True
-            )
+        # Initialize txtai backend for semantic/hybrid/graph search (Issue #2663).
+        # ``txtai_model=None`` means BM25-only mode: avoid importing txtai/faiss
+        # at all, because native FAISS wheels can SIGILL on older CI/edge CPUs.
+        if self.config.txtai_model is None:
             self._backend = None
-            self._txtai_bootstrapped = False
+            self._txtai_bootstrap_task = None
+            self._txtai_bootstrapped = True
+            logger.info("txtai backend disabled; using BM25/FTS keyword search only")
+        else:
+            try:
+                from nexus.bricks.search.txtai_backend import TxtaiBackend
+
+                # Pass embedding cache so txtai can skip redundant API calls
+                _emb_cache = None
+                if self._cache_brick:
+                    import contextlib
+
+                    with contextlib.suppress(Exception):
+                        _emb_cache = self._cache_brick.embedding_cache
+
+                self._backend = TxtaiBackend(
+                    database_url=self.config.database_url,
+                    model=self.config.txtai_model,
+                    vectors=self.config.txtai_vectors,
+                    hybrid=True,
+                    graph=self.config.txtai_graph,
+                    reranker_model=self.config.txtai_reranker,
+                    sparse=self.config.txtai_sparse,
+                    embedding_cache=_emb_cache,
+                    data_path=self.config.data_path if hasattr(self.config, "data_path") else None,
+                    page_aggregation=self.config.page_aggregation,
+                    chunks_per_page=self.config.chunks_per_page,
+                    page_bm25=self.config.page_bm25,
+                    page_bm25_rrf_k=self.config.page_bm25_rrf_k,
+                )
+                self._backend.kickoff_startup()
+                self._txtai_bootstrap_task = asyncio.create_task(self._bootstrap_txtai_backend())
+                logger.info("txtai backend startup kicked off in background")
+            except Exception:
+                logger.warning(
+                    "txtai backend init failed, falling back to legacy search", exc_info=True
+                )
+                self._backend = None
+                self._txtai_bootstrapped = False
 
         # Initialize entropy-aware chunker if enabled (Issue #1024)
         if self.config.entropy_filtering:
@@ -3332,10 +3339,9 @@ class SearchDaemon:
             },
             # Issue #2663: txtai backend
             "backend": "txtai" if self._backend is not None else "legacy",
-            # Issue #3997: ``None`` (serialised as JSON ``null``) means the
-            # backend is in BM25 keyword-only mode — no embedding model was
-            # configured, so the heavy ``Embeddings(path=...)`` load was
-            # skipped to save RSS at boot.
+            # Issue #3997: ``None`` (serialised as JSON ``null``) means no
+            # embedding model was configured, so the txtai/faiss backend is
+            # not imported and queries use legacy BM25/FTS keyword search.
             "txtai_model": self.config.txtai_model,
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,

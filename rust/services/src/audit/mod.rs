@@ -28,7 +28,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use chrono::SecondsFormat;
-use contracts::OperationContext;
+use contracts::{is_system_path, OperationContext};
 use serde::Serialize;
 
 use kernel::abi::KernelAbi;
@@ -73,6 +73,11 @@ pub struct AuditRecord {
 /// don't recursively re-enter the audit hook.
 pub struct AuditHook<K: KernelAbi> {
     sender: mpsc::SyncSender<AuditRecord>,
+    /// Audit-stream path the background flush thread appends records
+    /// to. Stored on the hook so `on_post` can early-exit when the
+    /// caller is auditing the audit-stream itself — recursion guard,
+    /// see [`Self::on_post`].
+    audit_path: String,
     _kernel: Arc<K>,
 }
 
@@ -87,6 +92,7 @@ impl<K: KernelAbi> AuditHook<K> {
     pub fn new(kernel: Arc<K>, audit_path: String, zone_id: String) -> Self {
         let (tx, rx) = mpsc::sync_channel::<AuditRecord>(Self::CHANNEL_CAP);
         let kernel_for_thread = Arc::clone(&kernel);
+        let audit_path_for_thread = audit_path.clone();
 
         std::thread::Builder::new()
             .name("audit-flush".into())
@@ -96,7 +102,7 @@ impl<K: KernelAbi> AuditHook<K> {
                     match serde_json::to_vec(&record) {
                         Ok(json) => {
                             if let Err(e) =
-                                kernel_for_thread.sys_write(&audit_path, &ctx, &json, 0)
+                                kernel_for_thread.sys_write(&audit_path_for_thread, &ctx, &json, 0)
                             {
                                 tracing::warn!(error = ?e, "audit stream write failed");
                             }
@@ -111,6 +117,7 @@ impl<K: KernelAbi> AuditHook<K> {
 
         Self {
             sender: tx,
+            audit_path,
             _kernel: kernel,
         }
     }
@@ -162,6 +169,26 @@ impl<K: KernelAbi> NativeInterceptHook for AuditHook<K> {
     }
 
     fn on_post(&self, ctx: &HookContext) {
+        // Hook self-exclusion. AuditHook is "unnamed" (LSM-style
+        // global; runs on every path), and the audit-flush thread
+        // itself writes records via `kernel.sys_write(audit_path,
+        // ...)`. Without these guards, every audit write would
+        // re-enter `on_post`, enqueue another record, write again,
+        // and recurse.
+        //
+        // 1. `/__sys__/` namespace: kernel-internal config the
+        //    audit-flush thread (or any future hook) might read.
+        //    Mirrors PermissionHook._is_system_path() in Python —
+        //    same contract, same reason (PR #3890 CI hang).
+        // 2. The audit-stream path itself: today's deployments
+        //    default to `/audit/traces/` (outside `/__sys__/`), so
+        //    the system-path check alone wouldn't break the
+        //    self-write loop. Excluding the literal `audit_path`
+        //    closes that.
+        let path = ctx.path();
+        if is_system_path(path) || path == self.audit_path {
+            return;
+        }
         let op = match ctx {
             HookContext::Write(_) => "write",
             HookContext::Read(_) => "read",

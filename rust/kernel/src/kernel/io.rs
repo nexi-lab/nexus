@@ -497,10 +497,29 @@ impl Kernel {
                 if let Some(buf) = self.pipe_manager.get(path) {
                     match buf.push(effective_content) {
                         Ok(n) => {
+                            // POST hooks fire on the IPC short-circuit
+                            // path the same as for DT_REG. Hook
+                            // self-exclusion (e.g. AuditHook on
+                            // /__sys__/) prevents recursion when an
+                            // observer's own sys_write would re-enter.
+                            self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
+                                path: path.to_string(),
+                                identity: HookIdentity {
+                                    user_id: ctx.user_id.clone(),
+                                    zone_id: ctx.zone_id.clone(),
+                                    agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                                    is_admin: ctx.is_admin,
+                                },
+                                content: effective_content.to_vec(),
+                                is_new_file: false,
+                                content_id: None,
+                                new_version: 0,
+                                size_bytes: Some(n as u64),
+                            }));
                             return Ok(SysWriteResult {
                                 hit: true,
                                 content_id: None,
-                                post_hook_needed: false,
+                                post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                                 version: 0,
                                 size: n as u64,
                                 is_new: false,
@@ -526,10 +545,29 @@ impl Kernel {
                 if let Some(buf) = self.stream_manager.get(path) {
                     match buf.push(effective_content) {
                         Ok(offset) => {
+                            // POST hooks fire on the IPC short-circuit
+                            // path the same as for DT_REG. Hook
+                            // self-exclusion (e.g. AuditHook on
+                            // /__sys__/) prevents recursion when an
+                            // observer's own sys_write would re-enter.
+                            self.dispatch_native_post(&HookContext::Write(WriteHookCtx {
+                                path: path.to_string(),
+                                identity: HookIdentity {
+                                    user_id: ctx.user_id.clone(),
+                                    zone_id: ctx.zone_id.clone(),
+                                    agent_id: ctx.agent_id.clone().unwrap_or_default(),
+                                    is_admin: ctx.is_admin,
+                                },
+                                content: effective_content.to_vec(),
+                                is_new_file: false,
+                                content_id: None,
+                                new_version: 0,
+                                size_bytes: Some(offset as u64),
+                            }));
                             return Ok(SysWriteResult {
                                 hit: true,
                                 content_id: None,
-                                post_hook_needed: false,
+                                post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                                 version: 0,
                                 size: offset as u64,
                                 is_new: false,

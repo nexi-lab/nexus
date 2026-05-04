@@ -31,7 +31,6 @@ def mock_fs():
     fs.version_service = MagicMock()
     fs.skill_service = MagicMock()
     fs.skill_package_service = MagicMock()
-    fs.metadata = MagicMock()
     mock_rebac = MagicMock()
     mock_search = MagicMock()
     fs._kernel = MagicMock()

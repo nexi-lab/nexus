@@ -74,14 +74,18 @@ class _FakeMeta:
 
 
 def _build_fs(entries: list[_FakeMeta]) -> NexusFS:
-    """Create a NexusFS with a mocked metadata store returning *entries*."""
-    meta = MagicMock()
-    meta.list.return_value = entries
-    meta.list_iter.return_value = iter(entries)
-    meta.is_implicit_directory.return_value = False
+    """Create a NexusFS with a mocked kernel returning *entries*.
+
+    Post-W3b ``sys_readdir`` reaches the metastore via
+    ``kernel_helpers.metastore_list_iter(self._kernel, …)`` which
+    iterates ``kernel.metastore_list(prefix)``. Mock that path.
+    """
+    kernel = MagicMock()
+    kernel.metastore_list.return_value = list(entries)
+    kernel.metastore_is_implicit_directory.return_value = False
 
     fs = object.__new__(NexusFS)
-    fs.metadata = meta
+    fs._kernel = kernel
     return fs
 
 

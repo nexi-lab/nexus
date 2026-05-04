@@ -85,8 +85,9 @@ class TestNexusFSServiceComposition:
 
         # Services that take filesystem should have it
         assert fs.service("mcp")._filesystem == fs
-        # SearchService should have metadata and permission_enforcer
-        assert fs.service("search").metadata == fs.metadata
+        # SearchService should hold the kernel handle (post-W3 the
+        # ``metadata`` field was deleted; services hold ``self._kernel``).
+        assert fs.service("search")._kernel == fs._kernel
         assert fs.service("search")._permission_enforcer == fs.service("permission_enforcer")
 
         # ShareLinkService should have nexus_fs reference

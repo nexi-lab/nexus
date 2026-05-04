@@ -23,17 +23,23 @@ from nexus.contracts.vfs_hooks import WriteHookContext
 
 
 class _StubMetastore:
-    """Minimal metastore stub for testing (mirrors DictMetastore API)."""
+    """Minimal kernel-handle stub for testing.
+
+    Post-W3 the ``MarkdownStructureWriteHook`` reaches the metastore
+    via ``self._kernel.metastore_*`` (the constructor's
+    ``hasattr(metadata, "_rust_kernel")`` guard treats anything without
+    that attribute as a bare kernel — so this stub is used directly).
+    """
 
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Any]] = {}
 
-    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
+    def metastore_set_file_metadata(self, path: str, key: str, value: Any) -> None:
         if path not in self._data:
             self._data[path] = {}
         self._data[path][key] = value
 
-    def get_file_metadata(self, path: str, key: str) -> Any:
+    def metastore_get_file_metadata(self, path: str, key: str) -> Any:
         return self._data.get(path, {}).get(key)
 
 

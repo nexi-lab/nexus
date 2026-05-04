@@ -93,8 +93,8 @@ def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: CASLo
     assert embedded_cas.access("/file2.txt")
 
     # Get metadata - should have same content_id
-    meta1 = embedded_cas.metadata.get("/file1.txt")
-    meta2 = embedded_cas.metadata.get("/file2.txt")
+    meta1 = embedded_cas._kernel.metastore_get("/file1.txt")
+    meta2 = embedded_cas._kernel.metastore_get("/file2.txt")
 
     assert meta1 is not None
     assert meta2 is not None
@@ -113,7 +113,7 @@ def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocalBacken
     # Write content
     embedded_cas.write("/shared1.txt", content)
 
-    meta1 = embedded_cas.metadata.get("/shared1.txt")
+    meta1 = embedded_cas._kernel.metastore_get("/shared1.txt")
     content_id = meta1.content_id
 
     assert local_backend.content_exists(content_id)
@@ -137,12 +137,12 @@ def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalB
 
     # Write initial content
     embedded_cas.write("/test.txt", content1)
-    meta1 = embedded_cas.metadata.get("/test.txt")
+    meta1 = embedded_cas._kernel.metastore_get("/test.txt")
     hash1 = meta1.content_id
 
     # Update with new content
     embedded_cas.write("/test.txt", content2)
-    meta2 = embedded_cas.metadata.get("/test.txt")
+    meta2 = embedded_cas._kernel.metastore_get("/test.txt")
     hash2 = meta2.content_id
 
     # Hash should be different
@@ -169,7 +169,7 @@ def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: CASLocalBa
         assert embedded_cas.access(f"/file{i}.txt")
 
     # Get content hash
-    meta = embedded_cas.metadata.get("/file0.txt")
+    meta = embedded_cas._kernel.metastore_get("/file0.txt")
     content_id = meta.content_id
 
     # Content should only be stored once
@@ -181,8 +181,8 @@ def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
     embedded_cas.write("/file1.txt", b"Content A")
     embedded_cas.write("/file2.txt", b"Content B")
 
-    meta1 = embedded_cas.metadata.get("/file1.txt")
-    meta2 = embedded_cas.metadata.get("/file2.txt")
+    meta1 = embedded_cas._kernel.metastore_get("/file1.txt")
+    meta2 = embedded_cas._kernel.metastore_get("/file2.txt")
 
     # Different content should have different hashes
     assert meta1.content_id != meta2.content_id
@@ -236,7 +236,7 @@ def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
 
     embedded_cas.write("/test.txt", content)
 
-    meta = embedded_cas.metadata.get("/test.txt")
+    meta = embedded_cas._kernel.metastore_get("/test.txt")
     assert meta is not None
     assert meta.path == "/test.txt"
     assert meta.size == len(content)
@@ -259,7 +259,7 @@ def test_cas_concurrent_deduplication(
         assert embedded_cas.access(path)
 
     # Get content hash
-    meta = embedded_cas.metadata.get(paths[0])
+    meta = embedded_cas._kernel.metastore_get(paths[0])
     content_id = meta.content_id
 
     # Content should exist (deduplication means single blob)
@@ -270,13 +270,13 @@ def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:
     """Test that updating content preserves created_at timestamp."""
     embedded_cas.write("/test.txt", b"Original")
 
-    meta1 = embedded_cas.metadata.get("/test.txt")
+    meta1 = embedded_cas._kernel.metastore_get("/test.txt")
     created_at = meta1.created_at
 
     # Wait a tiny bit and update
     embedded_cas.write("/test.txt", b"Updated")
 
-    meta2 = embedded_cas.metadata.get("/test.txt")
+    meta2 = embedded_cas._kernel.metastore_get("/test.txt")
 
     # created_at should be preserved
     assert meta2.created_at == created_at

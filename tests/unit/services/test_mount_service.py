@@ -43,7 +43,6 @@ def mock_nexus_fs():
     fs = MagicMock()
     fs.mkdir = MagicMock()
     fs.sys_write = MagicMock()
-    fs.metadata = MagicMock()
     fs._kernel.metastore_delete = MagicMock()
     fs.rebac_add_tuple = MagicMock()
     fs.rebac_check = MagicMock(return_value=True)

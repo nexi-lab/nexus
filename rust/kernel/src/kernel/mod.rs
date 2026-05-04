@@ -2306,8 +2306,10 @@ impl Kernel {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        self.vfs_router
-            .list_dir(&route.mount_point, &route.backend_path)
+        route
+            .backend
+            .as_ref()
+            .and_then(|b| b.list_dir(&route.backend_path).ok())
             .unwrap_or_default()
     }
 

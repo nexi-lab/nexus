@@ -94,11 +94,11 @@ impl Kernel {
                 // (hash-addressed).  Path-local/external backends serve the
                 // file if it exists on disk / via API.  No ABC leak: kernel
                 // treats every backend the same through ObjectStore trait.
-                if let Some(data) = self.vfs_router.read_content(
-                    &route.mount_point,
-                    &route.backend_path, // PAS uses as path; CAS rejects (not a hash)
-                    ctx,
-                ) {
+                if let Some(data) = route
+                    .backend
+                    .as_ref()
+                    .and_then(|b| b.read_content(&route.backend_path, ctx).ok())
+                {
                     return Ok(SysReadResult {
                         data: Some(data),
                         post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
@@ -251,9 +251,10 @@ impl Kernel {
         }
 
         // 5. Backend read (Rust-native ObjectStore)
-        let content = self
-            .vfs_router
-            .read_content(&route.mount_point, content_id, ctx);
+        let content = route
+            .backend
+            .as_ref()
+            .and_then(|b| b.read_content(content_id, ctx).ok());
 
         // 6. Release VFS lock (always, even on miss)
         self.lock_manager.do_release(lock_handle);
@@ -270,7 +271,7 @@ impl Kernel {
             // Local backend miss + metadata exists → federation path:
             // try the origin encoded in backend_name. Otherwise it's a
             // genuine miss.
-            None => self.try_remote_fetch(path, &entry, &route.mount_point, ctx),
+            None => self.try_remote_fetch(path, &entry, &route, ctx),
         }
     }
 
@@ -291,7 +292,7 @@ impl Kernel {
         &self,
         path: &str,
         entry: &FileMetadata,
-        mount_point: &str,
+        route: &crate::vfs_router::RouteResult,
         ctx: &OperationContext,
     ) -> Result<SysReadResult, KernelError> {
         let not_found = || KernelError::FileNotFound(path.to_string());
@@ -359,9 +360,10 @@ impl Kernel {
         // will simply remote-fetch again.
         let cache_key = entry.content_id.as_deref().unwrap_or("");
         if !cache_key.is_empty() {
-            let _ = self
-                .vfs_router
-                .write_content(mount_point, &data, cache_key, ctx, 0);
+            let _ = route
+                .backend
+                .as_ref()
+                .map(|b| b.write_content(&data, cache_key, ctx, 0));
         }
 
         Ok(SysReadResult {
@@ -582,23 +584,24 @@ impl Kernel {
                 }
             }
         };
-        let write_result = match self.vfs_router.write_content(
-            &route.mount_point,
-            effective_content,
-            &effective_content_id,
-            ctx,
-            offset,
-        ) {
-            Ok(opt) => opt,
-            Err(storage_err) => {
-                // Storage/backend-level failure (connector wrapper raised a
-                // BackendError, disk full, permission denied, etc.). Release
-                // the VFS lock and surface the error to Python so callers
-                // can react (F2 C4 / Issue #3765 Cat-7 regression — previous
-                // code silently swallowed this via ``.ok()``).
-                self.lock_manager.do_release(lock_handle);
-                return Err(KernelError::BackendError(format!("{storage_err:?}")));
+        let write_result = match route.backend.as_ref() {
+            Some(backend) => {
+                match backend.write_content(effective_content, &effective_content_id, ctx, offset) {
+                    Ok(wr) => Some(wr),
+                    Err(storage_err) => {
+                        // Storage/backend-level failure (connector wrapper raised a
+                        // BackendError, disk full, permission denied, etc.). Release
+                        // the VFS lock and surface the error to Python so callers
+                        // can react (F2 C4 / Issue #3765 Cat-7 regression — previous
+                        // code silently swallowed this via ``.ok()``).
+                        self.lock_manager.do_release(lock_handle);
+                        return Err(KernelError::BackendError(format!("{storage_err:?}")));
+                    }
+                }
             }
+            // Mount has no Rust backend (Python-side connector) — caller treats
+            // as a hit=false miss.
+            None => None,
         };
 
         // 6. After write -> build metadata + metastore.put + dcache update
@@ -1042,9 +1045,10 @@ impl Kernel {
         // Errors are not surfaced to the caller — the namespace is already clean
         // and orphaned bytes are harmless pending GC. CAS backends do not track
         // content by path; their GC handles unreferenced blobs independently.
-        let _ = self
-            .vfs_router
-            .delete_file(&route.mount_point, &route.backend_path);
+        let _ = route
+            .backend
+            .as_ref()
+            .map(|b| b.delete_file(&route.backend_path));
 
         // 8. Release VFS lock
         self.lock_manager.do_release(lock_handle);
@@ -1261,11 +1265,11 @@ impl Kernel {
             // leaves metadata committed to a path where no bytes were moved.
             // CAS backends do not move bytes on rename; drive them after metadata.
             let backend_renamed = if !old_route.is_cas {
-                match self.vfs_router.rename_file(
-                    &old_route.mount_point,
-                    &old_route.backend_path,
-                    &new_route.backend_path,
-                ) {
+                match old_route
+                    .backend
+                    .as_ref()
+                    .map(|b| b.rename(&old_route.backend_path, &new_route.backend_path))
+                {
                     Some(Err(e)) => {
                         release_locks(&self.lock_manager, lock1, lock2);
                         return Err(KernelError::IOError(format!(
@@ -1273,8 +1277,8 @@ impl Kernel {
                         )));
                     }
                     Some(Ok(())) => true,
-                    // None = backend does not implement rename (external connectors);
-                    // fall through to metadata-only rename for those.
+                    // None = no Rust backend (external connectors); fall through
+                    // to metadata-only rename for those.
                     None => false,
                 }
             } else {
@@ -1298,11 +1302,11 @@ impl Kernel {
                 // file is accessible again. If rollback also fails, report both
                 // errors; data is at new backend path but metadata is at old path.
                 if backend_renamed {
-                    if let Some(Err(rollback_err)) = self.vfs_router.rename_file(
-                        &old_route.mount_point,
-                        &new_route.backend_path,
-                        &old_route.backend_path,
-                    ) {
+                    if let Some(Err(rollback_err)) = old_route
+                        .backend
+                        .as_ref()
+                        .map(|b| b.rename(&new_route.backend_path, &old_route.backend_path))
+                    {
                         release_locks(&self.lock_manager, lock1, lock2);
                         return Err(KernelError::IOError(format!(
                             "sys_rename: metastore failed and storage rollback also failed \
@@ -1319,11 +1323,10 @@ impl Kernel {
 
             // CAS: drive backend rename (no-op for hash-addressed content) after metadata.
             if old_route.is_cas {
-                let _ = self.vfs_router.rename_file(
-                    &old_route.mount_point,
-                    &old_route.backend_path,
-                    &new_route.backend_path,
-                );
+                let _ = old_route
+                    .backend
+                    .as_ref()
+                    .map(|b| b.rename(&old_route.backend_path, &new_route.backend_path));
             }
         }
 
@@ -1495,10 +1498,18 @@ impl Kernel {
         // the copy rather than silently overwriting and potentially losing bytes
         // if the subsequent metastore commit fails.
         if !dst_route.is_cas {
-            if let Some(true) = self
-                .vfs_router
-                .backend_path_exists(&dst_route.mount_point, &dst_route.backend_path)
-            {
+            // Probe via the inline backend Arc — Some(true) means the file
+            // exists, Some(false) means NotFound, None means no Rust backend
+            // or the backend doesn't implement size probing (treat as
+            // unknown — let the actual copy decide).
+            let exists = dst_route.backend.as_ref().and_then(|b| {
+                match b.get_content_size(&dst_route.backend_path) {
+                    Ok(_) => Some(true),
+                    Err(crate::abc::object_store::StorageError::NotFound(_)) => Some(false),
+                    Err(_) => None,
+                }
+            });
+            if exists == Some(true) {
                 return Err(KernelError::IOError(format!(
                     "sys_copy: destination backend path already exists (untracked): {dst_path}"
                 )));
@@ -1544,11 +1555,11 @@ impl Kernel {
 
         let copy_result: Result<(String, u64), KernelError> = if same_mount {
             // Try server-side copy first (PAS backends)
-            match self.vfs_router.copy_file(
-                &src_route.mount_point,
-                &src_route.backend_path,
-                &dst_route.backend_path,
-            ) {
+            match src_route
+                .backend
+                .as_ref()
+                .map(|b| b.copy_file(&src_route.backend_path, &dst_route.backend_path))
+            {
                 Some(Ok(wr)) => {
                     wrote_dst_bytes = true;
                     Ok((wr.content_id, wr.size))
@@ -1640,8 +1651,10 @@ impl Kernel {
             // Only delete the destination if this operation created those bytes
             // (wrote_dst_bytes=true); never delete pre-existing untracked backend objects.
             let rollback_err = if wrote_dst_bytes {
-                self.vfs_router
-                    .delete_file(&dst_route.mount_point, &dst_route.backend_path)
+                dst_route
+                    .backend
+                    .as_ref()
+                    .map(|b| b.delete_file(&dst_route.backend_path))
             } else {
                 None
             };
@@ -1686,9 +1699,10 @@ impl Kernel {
             }
         };
 
-        let content = self
-            .vfs_router
-            .read_content(&src_route.mount_point, content_id, ctx)
+        let content = src_route
+            .backend
+            .as_ref()
+            .and_then(|b| b.read_content(content_id, ctx).ok())
             .ok_or_else(|| {
                 KernelError::IOError(format!(
                     "sys_copy: failed to read source content at {}",
@@ -1696,22 +1710,17 @@ impl Kernel {
                 ))
             })?;
 
-        let wr = self
-            .vfs_router
-            .write_content(
-                &dst_route.mount_point,
-                &content,
-                &dst_route.backend_path,
-                ctx,
-                0,
-            )
-            .map_err(|e| KernelError::BackendError(format!("sys_copy: {e:?}")))?
+        let wr = dst_route
+            .backend
+            .as_ref()
             .ok_or_else(|| {
                 KernelError::IOError(format!(
                     "sys_copy: failed to write destination at {}",
                     dst_route.backend_path
                 ))
-            })?;
+            })?
+            .write_content(&content, &dst_route.backend_path, ctx, 0)
+            .map_err(|e| KernelError::BackendError(format!("sys_copy: {e:?}")))?;
 
         Ok((wr.content_id, wr.size))
     }
@@ -1796,9 +1805,10 @@ impl Kernel {
         }
 
         // 4. Backend mkdir (best-effort, PAS backends create physical dirs)
-        let _ = self
-            .vfs_router
-            .mkdir(&route.mount_point, &route.backend_path, parents, true);
+        let _ = route
+            .backend
+            .as_ref()
+            .map(|b| b.mkdir(&route.backend_path, parents, true));
 
         // 5. Ensure parent directories
         if parents {
@@ -1958,9 +1968,10 @@ impl Kernel {
         }
 
         // 6. Backend rmdir (best-effort)
-        let _ = self
-            .vfs_router
-            .rmdir(&route.mount_point, &route.backend_path, recursive);
+        let _ = route
+            .backend
+            .as_ref()
+            .map(|b| b.rmdir(&route.backend_path, recursive));
 
         // 7. Atomic delete — metastore is the SSOT. Per-key cache
         // invalidation already happened: ``delete_batch`` invalidated
@@ -2101,10 +2112,10 @@ impl Kernel {
             // Backend write error (batch variant): collapse to None so the
             // per-item result surfaces as hit=false (observer + post-hook
             // path skipped). Caller inspects ``SysWriteResult.hit`` + retries.
-            let write_result = self
-                .vfs_router
-                .write_content(&route.mount_point, content, &route.backend_path, ctx, 0)
-                .unwrap_or_default();
+            let write_result = route
+                .backend
+                .as_ref()
+                .and_then(|b| b.write_content(content, &route.backend_path, ctx, 0).ok());
 
             match write_result {
                 Some(wr) => {
@@ -2341,9 +2352,10 @@ impl Kernel {
         // CAS/S3/GCS return Err(NotSupported) → ignored.  Path-local
         // returns disk entries, external connectors return API results.
         // No ABC leak: kernel treats every backend the same.
-        if let Ok(backend_entries) = self
-            .vfs_router
-            .list_dir(&route.mount_point, &route.backend_path)
+        if let Some(Ok(backend_entries)) = route
+            .backend
+            .as_ref()
+            .map(|b| b.list_dir(&route.backend_path))
         {
             for name in backend_entries {
                 let is_dir = name.ends_with('/');

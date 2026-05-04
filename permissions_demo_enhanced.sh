@@ -190,6 +190,10 @@ print_error() {
 }
 print_test() { echo -e "${MAGENTA}TEST:${NC} $1"; }
 
+is_permission_denial_output() {
+    grep -qiE 'permission[[:space:]_-]*denied|access[[:space:]_-]*denied|forbidden|does[[:space:]]+not[[:space:]]+have.*permission|lacks?[[:space:]].*permission|requires?[[:space:]].*permission|not[[:space:]]+allowed'
+}
+
 # Auto-detect connection info from nexus stack if available.
 # This ensures DATABASE_URL, NEXUS_GRPC_HOST, etc. are set even if
 # the user only ran `nexus up` without `eval $(nexus env)`.
@@ -544,8 +548,10 @@ print_test "Bob (editor) should NOT be able to create permissions"
 log_step "rebac create as bob (expect denied/forbidden)"
 BOB_PERM_OUT=$(nexus rebac create user bob direct_editor file $DEMO_BASE/bob-attempt.txt 2>&1) && BOB_PERM_RC=0 || BOB_PERM_RC=$?
 echo "    output: $(echo "$BOB_PERM_OUT" | head -3)" >&2
-if [ "$BOB_PERM_RC" -ne 0 ]; then
+if [ "$BOB_PERM_RC" -ne 0 ] && echo "$BOB_PERM_OUT" | is_permission_denial_output; then
     print_success "✅ Execute properly enforced - editor cannot manage permissions"
+elif [ "$BOB_PERM_RC" -ne 0 ]; then
+    print_error "Bob rebac create failed without permission-denial evidence (exit=$BOB_PERM_RC): $(echo "$BOB_PERM_OUT" | head -2)"
 else
     record_warning "Editor was able to create permissions. This smoke test records the current data-plane behavior but does not fail CI on it."
 fi
@@ -707,8 +713,10 @@ log_step "charlie attempts deep write (expect denied)"
 echo "Charlie attempt" > /tmp/demo-charlie-deep.txt
 CHARLIE_DEEP_OUT=$(cat /tmp/demo-charlie-deep.txt | nexus write $DEMO_BASE/project1/docs/guides/advanced/charlie-attempt.txt - 2>&1) && CHARLIE_DEEP_RC=0 || CHARLIE_DEEP_RC=$?
 echo "    charlie deep write output: $(echo "$CHARLIE_DEEP_OUT" | head -2)" >&2
-if [ "$CHARLIE_DEEP_RC" -ne 0 ]; then
+if [ "$CHARLIE_DEEP_RC" -ne 0 ] && echo "$CHARLIE_DEEP_OUT" | is_permission_denial_output; then
     print_success "✅ Viewer correctly denied write on deep path"
+elif [ "$CHARLIE_DEEP_RC" -ne 0 ]; then
+    print_error "Charlie deep write failed without permission-denial evidence (exit=$CHARLIE_DEEP_RC): $(echo "$CHARLIE_DEEP_OUT" | head -2)"
 else
     record_warning "Viewer was able to write on a deep child path. Recording current behavior without failing the container smoke test."
 fi
@@ -1007,8 +1015,10 @@ for user in alice bob charlie; do
     echo "$user attempt" > /tmp/demo-write-attempt.txt
     WRITE_ATTEMPT=$(cat /tmp/demo-write-attempt.txt | nexus write $SHARED_DIR/$user-file.txt - 2>&1) && WRITE_ATTEMPT_RC=0 || WRITE_ATTEMPT_RC=$?
     echo "    write output: $(echo "$WRITE_ATTEMPT" | head -2)" >&2
-    if [ "$WRITE_ATTEMPT_RC" -ne 0 ]; then
+    if [ "$WRITE_ATTEMPT_RC" -ne 0 ] && echo "$WRITE_ATTEMPT" | is_permission_denial_output; then
         print_success "✅ $user correctly denied write"
+    elif [ "$WRITE_ATTEMPT_RC" -ne 0 ]; then
+        print_error "$user shared write failed without permission-denial evidence (exit=$WRITE_ATTEMPT_RC): $(echo "$WRITE_ATTEMPT" | head -2)"
     else
         record_warning "$user was able to write under the shared read-only demo path. Recording current behavior without failing the smoke test."
     fi
@@ -1099,8 +1109,10 @@ print_test "User in tenant 'acme' should NOT access tenant 'default' resources"
 log_step "acme_user: nexus cat $DEMO_BASE/test-file.txt (expect denied)"
 CROSS_OUT=$(nexus cat $DEMO_BASE/test-file.txt 2>&1) && CROSS_RC=0 || CROSS_RC=$?
 echo "    cross-tenant read output: $(echo "$CROSS_OUT" | head -2)" >&2
-if [ "$CROSS_RC" -ne 0 ]; then
+if [ "$CROSS_RC" -ne 0 ] && echo "$CROSS_OUT" | is_permission_denial_output; then
     print_success "✅ Tenant isolation enforced"
+elif [ "$CROSS_RC" -ne 0 ]; then
+    print_error "ACME cross-tenant read failed without permission-denial evidence (exit=$CROSS_RC): $(echo "$CROSS_OUT" | head -2)"
 else
     record_warning "Cross-tenant read allowed (zone isolation for reads is a known limitation — tracked)"
 fi

@@ -152,6 +152,47 @@ impl std::fmt::Display for ManagedAgentError {
 
 impl std::error::Error for ManagedAgentError {}
 
+// ── Spawn-task DI surface ──────────────────────────────────────────────
+//
+// Services rlib does NOT depend on the sudocode crate (cross-repo
+// git-deps would couple services' build to a specific sudocode rev,
+// which is the wrong layer for cross-repo coupling — same reason
+// `KernelAbi` lives at the trait boundary). Instead, services
+// declares a small DI trait that nexus's binary edge
+// (`profiles/cluster` for cluster builds, `nexus-cdylib` for the
+// Python wheel) implements by wrapping `sudocode_runtime::spawn_task`.
+// The trait method is `dyn`-dispatched but only fires once per
+// `start_session` call (out of the hot path); the spawn body itself
+// is fully monomorphised over `K: KernelAbi` inside the concrete
+// impl, so there's no per-`sys_read` vtable cost.
+
+/// Per-pid spawn handle returned by [`SpawnTask::spawn`]. Concrete
+/// impls (e.g. the sudocode-runtime adapter) hold whatever
+/// in-process state the spawn body needs (worker thread join handle,
+/// abort signal, future tokio task handle). The services-tier sees
+/// only the abort capability — that's what the on_terminate observer
+/// needs to tear the loop down on session termination.
+pub trait SpawnHandle: Send + Sync {
+    /// Signal the spawn body to stop. Implementations MUST be
+    /// idempotent — the on_terminate observer can fire concurrently
+    /// with an in-progress `cancel(Session)`.
+    fn abort(&self);
+}
+
+/// Spawn-task provider. `start_session` calls
+/// [`Self::spawn`] after `register_proc_entry` succeeds to kick off
+/// the per-pid runtime body. The concrete impl wraps whatever
+/// runtime crate the deployment chose (today: sudocode); generic K
+/// keeps the spawn body monomorphised against the same kernel
+/// concrete that the service holds.
+pub trait SpawnTask<K: KernelAbi>: Send + Sync + 'static {
+    /// Spawn the per-pid runtime body. Returns an opaque handle the
+    /// service stores in its `spawn_handles` sidecar; the
+    /// on_terminate observer aborts via the handle on session
+    /// termination.
+    fn spawn(&self, kernel: Arc<K>, desc: AgentDescriptor) -> Box<dyn SpawnHandle>;
+}
+
 // ── Service ─────────────────────────────────────────────────────────────
 
 pub(crate) struct ManagedAgentService<K: KernelAbi> {
@@ -161,6 +202,19 @@ pub(crate) struct ManagedAgentService<K: KernelAbi> {
     /// the on_terminate observer to tear it down.
     kernel: Arc<K>,
     agent_registry: Arc<AgentRegistry>,
+    /// Optional per-pid spawn provider. `None` for slim deployments
+    /// that ship managed-agent without a runtime body (procfs +
+    /// AgentRegistry only); `Some` when `install_with_spawn` injects
+    /// a concrete provider (production: the binary edge wraps
+    /// `sudocode_runtime::spawn_task`). `start_session` calls
+    /// `provider.spawn(...)` after `register_proc_entry` and stores
+    /// the returned handle in [`Self::spawn_handles`].
+    spawn_provider: Option<Arc<dyn SpawnTask<K>>>,
+    /// Per-pid spawn handles populated by `start_session` when a
+    /// provider is wired. The on_terminate observer (registered in
+    /// `install_returning`) removes and aborts the handle on session
+    /// termination so the worker thread leaves cleanly.
+    spawn_handles: Arc<dashmap::DashMap<String, Box<dyn SpawnHandle>>>,
 }
 
 impl<K: KernelAbi> ManagedAgentService<K> {
@@ -176,6 +230,27 @@ impl<K: KernelAbi> ManagedAgentService<K> {
         Self {
             kernel,
             agent_registry,
+            spawn_provider: None,
+            spawn_handles: Arc::new(dashmap::DashMap::new()),
+        }
+    }
+
+    /// Constructor variant that injects a [`SpawnTask`] provider.
+    /// The binary edge (`profiles/cluster` / `nexus-cdylib`) calls
+    /// this with a concrete adapter (e.g. sudocode-runtime
+    /// `spawn_task` wrapper) so `start_session` actually kicks off a
+    /// runtime body. Pure-Rust slim builds without a runtime body
+    /// use [`Self::new`] which leaves the provider unset.
+    pub(crate) fn with_spawn(
+        kernel: Arc<K>,
+        agent_registry: Arc<AgentRegistry>,
+        spawn_provider: Arc<dyn SpawnTask<K>>,
+    ) -> Self {
+        Self {
+            kernel,
+            agent_registry,
+            spawn_provider: Some(spawn_provider),
+            spawn_handles: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -269,6 +344,23 @@ impl<K: KernelAbi> ManagedAgentService<K> {
         if let Some(desc) = self.agent_registry.get(&pid) {
             if let Err(e) = register_proc_entry(self.kernel.as_ref(), &desc) {
                 tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
+            }
+            // Spawn the per-pid runtime body right after procfs is
+            // ready so the worker sees a routable
+            // `/proc/{pid}/chat-with-me` on its first sys_read.
+            //
+            // The DI trait `SpawnTask<K>` (defined above) keeps
+            // services rlib free of a hard dep on any specific
+            // runtime crate (sudocode today, future runtimes
+            // tomorrow); the concrete adapter lives at the binary
+            // edge (`profiles/cluster` / `nexus-cdylib`) and
+            // monomorphises `spawn_task::<K>` internally — no
+            // per-`sys_read` vtable cost. Slim builds without a
+            // provider (`spawn_provider: None`) skip the spawn and
+            // run procfs-only.
+            if let Some(provider) = self.spawn_provider.as_ref() {
+                let handle = provider.spawn(Arc::clone(&self.kernel), desc);
+                self.spawn_handles.insert(pid.clone(), handle);
             }
         }
 
@@ -371,7 +463,20 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
     /// `AgentStatusResolver` reads — so `start_session` mutates the
     /// same SSOT every other agent surface reads from.
     pub(crate) fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
-        Self::install_returning(kernel).map(|_| ())
+        Self::install_returning(kernel, None).map(|_| ())
+    }
+
+    /// Install variant that injects a [`SpawnTask`] provider. Used
+    /// by the binary edge (`profiles/cluster` / `nexus-cdylib`) to
+    /// wire the sudocode-runtime adapter — the actual managed-agent
+    /// runtime body. Slim builds without a runtime body call
+    /// [`Self::install`] which leaves `spawn_provider = None` and
+    /// ships procfs + AgentRegistry only.
+    pub(crate) fn install_with_spawn(
+        kernel: &Arc<kernel::kernel::Kernel>,
+        spawn_provider: Arc<dyn SpawnTask<kernel::kernel::Kernel>>,
+    ) -> Result<(), String> {
+        Self::install_returning(kernel, Some(spawn_provider)).map(|_| ())
     }
 
     /// Install variant that returns the wired service handle so tests
@@ -379,6 +484,7 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
     /// having to fish the service back out of the kernel registry.
     pub(crate) fn install_returning(
         kernel: &Arc<kernel::kernel::Kernel>,
+        spawn_provider: Option<Arc<dyn SpawnTask<kernel::kernel::Kernel>>>,
     ) -> Result<Arc<Self>, String> {
         // Mount the /proc namespace this service stamps into. VFSRouter
         // routes by mount-point lookup, so `sys_unlink` on
@@ -402,10 +508,14 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
         // lifetime — same convention AcpService follows. The procfs
         // dirent stamp in `start_session` and the on_terminate
         // teardown both need the owned Arc.
-        let svc = Arc::new(Self::new(
-            Arc::clone(kernel),
-            Arc::clone(kernel.agent_registry()),
-        ));
+        let svc = Arc::new(match spawn_provider {
+            Some(provider) => Self::with_spawn(
+                Arc::clone(kernel),
+                Arc::clone(kernel.agent_registry()),
+                provider,
+            ),
+            None => Self::new(Arc::clone(kernel), Arc::clone(kernel.agent_registry())),
+        });
 
         // Tear down the per-pid procfs subtree on out-of-band
         // termination — SIGKILL, orphan auto-reap, any path that flips
@@ -417,11 +527,23 @@ impl ManagedAgentService<kernel::kernel::Kernel> {
         // descriptor itself is reaped by AgentRegistry after the
         // observer returns, so subsequent `get_session` returns
         // `UnknownSession`.
+        //
+        // The spawn-handles sidecar lives on the service itself, so
+        // the observer captures `Arc::clone(&svc.spawn_handles)`.
+        // Removing the handle and aborting it is best-effort — the
+        // worker thread also exits naturally when its sys_read on
+        // the now-missing chat-with-me path returns FileNotFound,
+        // but the explicit abort gives a clean exit without an
+        // error-path walk.
         let kernel_for_cb = Arc::clone(kernel);
         let registry_for_cb = Arc::clone(kernel.agent_registry());
+        let spawn_handles_for_cb = Arc::clone(&svc.spawn_handles);
         kernel.agent_registry().register_on_terminate(
             Self::NAME,
             Arc::new(move |pid: &str| {
+                if let Some((_, handle)) = spawn_handles_for_cb.remove(pid) {
+                    handle.abort();
+                }
                 if let Some(desc) = registry_for_cb.get(pid) {
                     unregister_proc_entry(kernel_for_cb.as_ref(), &desc);
                 }
@@ -798,7 +920,7 @@ mod tests {
         }
 
         fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService<Kernel>> {
-            ManagedAgentService::install_returning(kernel).expect("install ManagedAgentService")
+            ManagedAgentService::install_returning(kernel, None).expect("install ManagedAgentService")
         }
 
         #[test]

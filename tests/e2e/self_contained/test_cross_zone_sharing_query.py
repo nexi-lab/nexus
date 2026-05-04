@@ -118,6 +118,8 @@ def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
     """Create a minimal SearchService with a fake metadata store and ReBAC manager."""
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        # Post-W3: ``metadata_store`` is just a path string; the
+        # SearchService opens its own kernel-backed redb internally.
         metadata_store = str(Path(tmpdir) / "meta")
 
         from nexus.bricks.search.search_service import SearchService
@@ -128,7 +130,6 @@ def _make_search_service(rebac_manager: FakeReBACManager | None = None) -> Any:
             enforce_permissions=False,
         )
         yield svc
-        metadata_store.close()
 
 
 @pytest.fixture

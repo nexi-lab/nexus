@@ -18,8 +18,8 @@ def _build_kernel_metastore(db_path) -> tuple[object, RustMetastoreProxy]:
     Mirrors ``nexus.connect()`` — production builds metastore via
     ``RustMetastoreProxy(kernel, redb_path)`` so kernel.sys_write /
     sys_readdir / sys_stat persist through the same store Python reads
-    from. Benchmarks that constructed ``RaftMetadataStore.embedded``
-    directly bypassed the kernel's metastore wiring and hit empty
+    from. Benchmarks that constructed standalone Python metastores
+    bypassed the kernel's metastore wiring and hit empty
     dcache/metastore after F2 C4 delegated writes to ``kernel.sys_write``.
     """
     from nexus_runtime import PyKernel as _Kernel

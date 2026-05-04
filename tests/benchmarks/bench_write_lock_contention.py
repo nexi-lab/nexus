@@ -186,7 +186,6 @@ async def _run(n_seq: int = 20, ops_per_agent: int = 10, burst_count: int = 50) 
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import CacheConfig, ParseConfig, PermissionConfig
     from nexus.factory import create_nexus_fs
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # Prevent the standalone benchmark from touching the operator's
@@ -203,7 +202,7 @@ async def _run(n_seq: int = 20, ops_per_agent: int = 10, burst_count: int = 50) 
             db_base = str(tmp_path / f"bench{suffix}")
             return create_nexus_fs(
                 backend=CASLocalBackend(str(storage)),
-                metadata_store=RaftMetadataStore.embedded(db_base),
+                metadata_store=db_base,
                 record_store=SQLAlchemyRecordStore(db_path=str(tmp_path / f"records{suffix}.db")),
                 is_admin=True,
                 permissions=PermissionConfig(enforce=False),

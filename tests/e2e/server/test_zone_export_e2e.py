@@ -25,7 +25,6 @@ from nexus.bricks.portability import (
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
@@ -44,7 +43,7 @@ async def nexus_fs(temp_dir):
 
     fs = create_nexus_fs(
         backend=CASLocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
+        metadata_store=str(data_dir / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=False),

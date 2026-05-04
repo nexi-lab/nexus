@@ -17,7 +17,6 @@ import pytest
 
 from nexus.contracts.metadata import DT_MOUNT
 from nexus.core.config import PermissionConfig
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 def _mount_via_setattr(nx, mount_point: str, backend) -> None:
@@ -39,7 +38,7 @@ def nx_with_mount():
     with tempfile.TemporaryDirectory() as tmpdir:
         root_backend = CASLocalBackend(root_path=tmpdir)
         db_file = Path(tmpdir) / "metadata.db"
-        metadata_store = RaftMetadataStore.embedded(str(db_file).replace(".db", ""))
+        metadata_store = str(db_file).replace(".db", "")
 
         nx = create_nexus_fs(
             backend=root_backend,

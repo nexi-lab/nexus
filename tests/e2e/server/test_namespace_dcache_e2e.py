@@ -67,11 +67,10 @@ def main():
         from nexus.core.config import PermissionConfig
         from nexus.factory import create_nexus_fs
         from nexus.server.fastapi_server import create_app
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         backend = CASLocalBackend(root_path=BACKEND_DIR)
-        metadata_store = RaftMetadataStore.embedded(METADATA_DIR)
+        metadata_store = METADATA_DIR
         record_store = SQLAlchemyRecordStore(db_path=RECORD_DB)
 
         nx = asyncio.run(

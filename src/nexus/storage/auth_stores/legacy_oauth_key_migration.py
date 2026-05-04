@@ -4,9 +4,10 @@
 Context
 -------
 Prior to R20.18.5, OAuth encryption keys were persisted via
-``MetastoreSettingsStore`` backed by a Python ``RaftMetadataStore`` at
-``~/.nexus/metastore`` (no extension). R20.18.5 swapped the wrapper to
-``RustMetastoreProxy`` and appended a ``.redb`` extension to the path.
+``MetastoreSettingsStore`` backed by the legacy Python ``RaftMetadataStore``
+(deleted in commit R) at ``~/.nexus/metastore`` (no extension). R20.18.5
+swapped the wrapper to ``RustMetastoreProxy`` and appended a ``.redb``
+extension to the path.
 Neither change migrated existing key data, so any install that had
 already written an OAuth key silently lost it on upgrade: next boot
 generated an ephemeral key, and every secret encrypted under the old
@@ -41,7 +42,7 @@ def _legacy_redb_candidates() -> list[Path]:
     base = Path.home() / ".nexus"
     return [
         base / "metastore.redb",  # post-R20.18.5 naming
-        base / "metastore",  # pre-R20.18.5 naming (Python RaftMetadataStore.embedded)
+        base / "metastore",  # pre-R20.18.5 naming (legacy Python store, no .redb)
     ]
 
 
@@ -110,9 +111,9 @@ def _read_oauth_key_from_redb(
     by the main PyKernel), the key is read through that connection — avoiding
     a second ``PyKernel()`` that would hit the redb exclusive-file-lock.
 
-    For the pre-redb ``~/.nexus/metastore`` path (Python RaftMetadataStore
-    format) the main Kernel's ``LocalMetastore`` cannot read it, but neither
-    could the old standalone ``PyKernel()`` approach (``Database::create``
+    For the pre-redb ``~/.nexus/metastore`` path (legacy non-redb format)
+    the main Kernel's ``LocalMetastore`` cannot read it, but neither could
+    the old standalone ``PyKernel()`` approach (``Database::create``
     fails on a non-redb file).  Returns ``None`` with a log line in that case.
 
     Returns ``None`` when the file can't be opened, when the Rust kernel

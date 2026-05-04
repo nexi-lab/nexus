@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -197,7 +198,7 @@ def create_nexus_services(
 
 def create_nexus_fs(
     backend: "Backend",
-    metadata_store: "MetastoreABC",
+    metadata_store: "MetastoreABC | str | Path | None",
     record_store: "RecordStoreABC | None" = None,
     *,
     cache_store: Any = None,
@@ -222,7 +223,11 @@ def create_nexus_fs(
 
     Args:
         backend: Backend instance for file storage.
-        metadata_store: MetastoreABC instance.
+        metadata_store: One of: a pre-built ``MetastoreABC`` (typically
+            ``RustMetastoreProxy`` from ``nexus.open_local_metastore``),
+            a redb file path (``str`` or ``Path``) — NexusFS constructs a
+            fresh ``PyKernel`` + ``RustMetastoreProxy`` against it, or
+            ``None`` for a tempfile-backed throwaway store.
         record_store: Optional RecordStoreABC. When provided, all services
             (ReBAC, Audit, Permissions, etc.) are created and injected.
         cache_store: CacheStoreABC instance for ephemeral cache.
@@ -304,10 +309,15 @@ def create_nexus_fs(
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
     # this branch is skipped — bare kernel with no services.
+    #
+    # Always pass ``nx.metadata`` (the freshly-constructed RustMetastoreProxy)
+    # to services rather than the original ``metadata_store`` argument: when
+    # the caller handed us a path/None, the original is no longer a usable
+    # MetastoreABC. ``nx.metadata`` is the SSOT after NexusFS init.
     if services is None and record_store is not None:
         services = create_nexus_services(
             record_store=record_store,
-            metadata_store=metadata_store,
+            metadata_store=nx.metadata,
             backend=backend,
             dlc=nx._driver_coordinator,
             permissions=permissions,

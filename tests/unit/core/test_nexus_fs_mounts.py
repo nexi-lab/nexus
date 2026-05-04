@@ -25,7 +25,6 @@ import pytest
 from nexus import CASLocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
@@ -41,7 +40,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+        metadata_store=str(temp_dir / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=False),
@@ -55,7 +54,7 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
     nx = create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
+        metadata_store=str(temp_dir / "raft-metadata-perms"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=True),
@@ -270,7 +269,7 @@ class TestSaveMount:
         # Create NexusFS without database (no mount manager)
         nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-save-mount")),
+            metadata_store=str(temp_dir / "raft-test-save-mount"),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_save_mount.db"),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -318,9 +317,7 @@ class TestListSavedMounts:
         """Test that list_saved_mounts raises RuntimeError without mount manager."""
         nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(
-                str(temp_dir / "raft-test-list-saved-mounts")
-            ),
+            metadata_store=str(temp_dir / "raft-test-list-saved-mounts"),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_list_saved_mounts.db"),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -343,7 +340,7 @@ class TestLoadMount:
         """Test that load_mount raises RuntimeError without mount manager."""
         nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-load-mount")),
+            metadata_store=str(temp_dir / "raft-test-load-mount"),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_load_mount.db"),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),
@@ -366,9 +363,7 @@ class TestDeleteSavedMount:
         """Test that delete_saved_mount raises RuntimeError without mount manager."""
         nx = create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(
-                str(temp_dir / "raft-test-delete-saved-mount")
-            ),
+            metadata_store=str(temp_dir / "raft-test-delete-saved-mount"),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_delete_saved_mount.db"),
             parsing=ParseConfig(auto_parse=False),
             permissions=PermissionConfig(enforce=False),

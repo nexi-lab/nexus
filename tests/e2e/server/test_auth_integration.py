@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Set up test database URL before importing
@@ -48,7 +47,7 @@ async def test_app():
     backend = CASLocalBackend(root_path=auth_tmpdir)
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=RaftMetadataStore.embedded(os.path.join(auth_tmpdir, "raft-metadata")),
+        metadata_store=os.path.join(auth_tmpdir, "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=":memory:"),
         permissions=PermissionConfig(enforce=False),
     )

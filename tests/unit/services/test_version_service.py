@@ -465,7 +465,7 @@ class TestVersionServiceHelpers:
 #         """Create real metadata store."""
 #         from nexus.storage.raft_metadata_store import RaftMetadataStore
 #
-#         store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft"))
+#         store = str(isolated_db).replace(".db", "-raft")
 #         yield store
 #         store.close()
 #

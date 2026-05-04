@@ -23,7 +23,6 @@ from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from tests.testkit.auth import TEST_CONTEXT
 
@@ -35,7 +34,7 @@ async def nexus_fs_local(tmp_path: Path):
     storage_path.mkdir()
     backend = CASLocalBackend(root_path=storage_path)
     raft_dir = str(tmp_path / "raft-metadata")
-    metadata_store = RaftMetadataStore.embedded(raft_dir)
+    metadata_store = raft_dir
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / 'records.db'}")
     nx = create_nexus_fs(
         backend=backend,

@@ -1,6 +1,6 @@
 """Integration tests for list + permissions + zone filtering (Issue #904).
 
-Wire up real SearchService + RaftMetadataStore + OperationContext
+Wire up real SearchService + RustMetastoreProxy + OperationContext
 to verify zone-scoped listing with permission filtering.
 """
 
@@ -8,19 +8,25 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: F401 — kept for future use
 from nexus.contracts.metadata import FileMetadata
-from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.core.metastore import RustMetastoreProxy
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_store(zone_id: str = ROOT_ZONE_ID) -> RaftMetadataStore:
-    """Create a RaftMetadataStore with a temp directory."""
+def _make_store(zone_id: str = ROOT_ZONE_ID) -> RustMetastoreProxy:  # noqa: ARG001
+    """Open a fresh RustMetastoreProxy backed by a tempdir redb.
+
+    ``zone_id`` is accepted for API compatibility — every call yields a
+    separate kernel + redb so distinct stores are naturally isolated.
+    """
+    import nexus
+
     tmpdir = tempfile.mkdtemp()
-    return RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id=zone_id)
+    return nexus.open_local_metastore(str(Path(tmpdir) / "meta"))
 
 
 def _make_meta(path: str, size: int = 100) -> FileMetadata:
@@ -31,7 +37,7 @@ def _make_meta(path: str, size: int = 100) -> FileMetadata:
 
 
 def _make_search_service(
-    store: RaftMetadataStore,
+    store: RustMetastoreProxy,
     enforce_permissions: bool = False,
 ) -> Any:
     """Create a SearchService backed by the given store."""

@@ -84,7 +84,7 @@ def _rpc_call(
 async def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
     """Create a NexusFS with RaftMetadataStore + persistent SQLAlchemyRecordStore.
 
-    Uses RaftMetadataStore.embedded() for file metadata (sled KV) and
+    Uses  for file metadata (sled KV) and
     SQLAlchemyRecordStore backed by a SQLite file for ReBAC tuples, so
     permission data persists to disk and can be shared with the server
     subprocess via NEXUS_DATABASE_URL.
@@ -92,7 +92,6 @@ async def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import ParseConfig, PermissionConfig
     from nexus.factory import create_nexus_fs
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +99,7 @@ async def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
 
     return create_nexus_fs(
         backend=CASLocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
+        metadata_store=str(data_dir / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=enforce_permissions),

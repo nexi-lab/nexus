@@ -17,7 +17,6 @@ from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.dict_metastore import DictMetastore
 from nexus.storage.operation_logger import OperationLogger
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
@@ -61,7 +60,7 @@ class TestTimeTravelDebug:
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
         try:
-            metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
+            metadata_store = str(data_dir / "raft-metadata")
         except RuntimeError:
             metadata_store = DictMetastore(data_dir / "raft-metadata.json")
         nx = create_nexus_fs(

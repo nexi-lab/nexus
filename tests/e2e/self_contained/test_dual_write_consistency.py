@@ -26,23 +26,12 @@ from tests.testkit.auth import TEST_CONTEXT
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
-# Try to import RaftMetadataStore — skip if native module unavailable
-try:
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-    _raft_available = True
-except Exception:
-    _raft_available = False
-
-
-def _try_create_raft_store(path: str) -> object | None:
-    """Try to create a RaftMetadataStore; return None if native module unavailable."""
-    if not _raft_available:
-        return None
-    try:
-        return RaftMetadataStore.embedded(path)
-    except RuntimeError:
-        return None
+# Kernel-backed metastore (post-RaftMetadataStore-deletion) is always
+# available because the redb engine ships in the nexus_runtime extension.
+def _try_create_raft_store(path: str) -> str:
+    """Return a redb path; ``create_nexus_fs`` opens the kernel-backed proxy."""
+    return path
 
 
 @pytest.fixture
@@ -60,13 +49,7 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 @pytest.fixture
 async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore):
-    raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
-    if raft_store is None:
-        from tests.testkit.metadata import DictMetastore
-
-        metadata_store = DictMetastore()
-    else:
-        metadata_store = raft_store
+    metadata_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
 
     nx = create_nexus_fs(
         backend=CASLocalBackend(str(temp_dir / "data")),

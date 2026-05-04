@@ -21,7 +21,7 @@ Usage::
 
     nx = create_nexus_fs(
         backend=CASLocalBackend(root_path="./data"),
-        metadata_store=RaftMetadataStore.embedded("./raft"),
+        metadata_store="./metadata.redb",
         record_store=SQLAlchemyRecordStore(db_path="./db.sqlite"),
         permissions=PermissionConfig(enforce=False),
     )

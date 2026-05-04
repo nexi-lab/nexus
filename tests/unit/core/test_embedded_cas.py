@@ -12,7 +12,6 @@ import pytest
 from nexus import CASLocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Mount points auto-created by factory boot.
@@ -50,7 +49,7 @@ def embedded_cas(temp_dir: Path, local_backend: CASLocalBackend) -> Generator[Ne
     """
     emb = create_nexus_fs(
         backend=local_backend,
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+        metadata_store=str(temp_dir / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),  # Disable auto-parsing for unit tests
         permissions=PermissionConfig(

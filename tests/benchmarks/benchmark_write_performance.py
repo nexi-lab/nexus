@@ -16,7 +16,6 @@ import tempfile
 import time
 from pathlib import Path
 
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from tests.testkit.auth import TEST_CONTEXT
 
@@ -103,7 +102,7 @@ async def run_benchmark(enable_deferred: bool = False):
         # Create NexusFS with permissions ENABLED via factory
         nx = create_nexus_fs(
             backend=backend,
-            metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
+            metadata_store=str(db_path).replace(".db", "-raft"),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             permissions=PermissionConfig(enforce=True),
             parsing=ParseConfig(auto_parse=False),

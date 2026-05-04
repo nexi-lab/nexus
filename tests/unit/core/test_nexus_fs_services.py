@@ -13,14 +13,13 @@ from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 
 try:
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
+    import nexus_runtime  # noqa: F401
 
-    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
-    _raft_available = True
+    _kernel_available = True
 except Exception:
-    _raft_available = False
+    _kernel_available = False
 
-pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
+pytestmark = pytest.mark.skipif(not _kernel_available, reason="Kernel runtime not available")
 
 
 def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
@@ -33,7 +32,7 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     db_path = tmp_path / "metadata"
 
     backend = CASLocalBackend(str(backend_path))
-    metadata_store = RaftMetadataStore.embedded(str(db_path))
+    metadata_store = str(db_path)
     record_store = SQLAlchemyRecordStore(db_path=str(tmp_path / "nexus.db"))
 
     return create_nexus_fs(

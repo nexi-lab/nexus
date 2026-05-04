@@ -28,7 +28,6 @@ import pytest
 
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Conditionally ignore MCP tests if fastmcp is not installed
@@ -257,7 +256,7 @@ async def nexus_fs(isolated_db, tmp_path):
     storage_path.mkdir(exist_ok=True)
     backend = CASLocalBackend(root_path=str(storage_path))
 
-    metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
+    metadata_store = str(isolated_db).replace(".db", "")
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for tests
     nx = create_nexus_fs(
         backend=backend,
@@ -297,7 +296,7 @@ def metadata_store(tmp_path):
     Returns:
         RaftMetadataStore: Raft-backed metadata store (SC mode)
     """
-    store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+    store = str(tmp_path / "raft-metadata")
     yield store
     # Cleanup handled by tmp_path
 

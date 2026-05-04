@@ -75,14 +75,13 @@ async def _setup(tmp_dir: Path):
     from nexus.backends.storage.path_local import PathLocalBackend
     from nexus.core.config import ParseConfig
     from nexus.factory import create_nexus_fs
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
     from tests.testkit.auth import TEST_ADMIN_CONTEXT
 
     raft_path = tmp_dir / "raft"
     data_dir = tmp_dir / "data"
     data_dir.mkdir(exist_ok=True)
 
-    metastore = RaftMetadataStore.embedded(str(raft_path))
+    metastore = str(raft_path)
 
     nx = create_nexus_fs(
         backend=PathLocalBackend(root_path=str(data_dir)),

@@ -13,7 +13,6 @@ import pytest
 from nexus import CASLocalBackend, NexusFS
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
@@ -29,7 +28,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+        metadata_store=str(temp_dir / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=False),

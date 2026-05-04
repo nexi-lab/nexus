@@ -190,6 +190,10 @@ print_error() {
 }
 print_test() { echo -e "${MAGENTA}TEST:${NC} $1"; }
 
+is_permission_denial_output() {
+    grep -qiE 'permission[[:space:]_-]*denied|access[[:space:]_-]*denied|forbidden|does[[:space:]]+not[[:space:]]+have.*permission|lacks?[[:space:]].*permission|requires?[[:space:]].*permission|not[[:space:]]+allowed'
+}
+
 # Auto-detect connection info from nexus stack if available.
 # This ensures DATABASE_URL, NEXUS_GRPC_HOST, etc. are set even if
 # the user only ran `nexus up` without `eval $(nexus env)`.
@@ -542,10 +546,12 @@ print_subsection "1.2 Verify EXECUTE enforcement (editor cannot manage permissio
 export NEXUS_API_KEY="$BOB_KEY"
 print_test "Bob (editor) should NOT be able to create permissions"
 log_step "rebac create as bob (expect denied/forbidden)"
-BOB_PERM_OUT=$(nexus rebac create user bob direct_editor file $DEMO_BASE/bob-attempt.txt 2>&1 || true)
+BOB_PERM_OUT=$(nexus rebac create user bob direct_editor file $DEMO_BASE/bob-attempt.txt 2>&1) && BOB_PERM_RC=0 || BOB_PERM_RC=$?
 echo "    output: $(echo "$BOB_PERM_OUT" | head -3)" >&2
-if echo "$BOB_PERM_OUT" | grep -qiE "denied|forbidden|permission|execute"; then
+if [ "$BOB_PERM_RC" -ne 0 ] && echo "$BOB_PERM_OUT" | is_permission_denial_output; then
     print_success "✅ Execute properly enforced - editor cannot manage permissions"
+elif [ "$BOB_PERM_RC" -ne 0 ]; then
+    print_error "Bob rebac create failed without permission-denial evidence (exit=$BOB_PERM_RC): $(echo "$BOB_PERM_OUT" | head -2)"
 else
     record_warning "Editor was able to create permissions. This smoke test records the current data-plane behavior but does not fail CI on it."
 fi
@@ -623,9 +629,9 @@ export NEXUS_API_KEY="$BOB_KEY"
 print_test "Bob writes to team-file.txt using group-based permission"
 log_step "bob writes to team-file.txt via group permission (real I/O)"
 echo "Written via group membership by Bob" > /tmp/demo-group-write.txt
-WRITE_OUT=$(cat /tmp/demo-group-write.txt | nexus write $DEMO_BASE/team-file.txt - 2>&1 || true)
+WRITE_OUT=$(cat /tmp/demo-group-write.txt | nexus write $DEMO_BASE/team-file.txt - 2>&1) && WRITE_RC=0 || WRITE_RC=$?
 echo "    write output: $(echo "$WRITE_OUT" | head -3)" >&2
-if echo "$WRITE_OUT" | grep -qiE "error|denied|forbidden"; then
+if [ "$WRITE_RC" -ne 0 ]; then
     print_error "Group-based write failed! output: $WRITE_OUT"
 else
     print_success "✅ Group-based write successful!"
@@ -693,9 +699,9 @@ export NEXUS_API_KEY="$BOB_KEY"
 print_test "Bob (editor on /project1) should inherit write to deep child"
 log_step "bob writes to deep path via parent inheritance"
 echo "Deep content by Bob" > /tmp/demo-deep.txt
-DEEP_OUT=$(cat /tmp/demo-deep.txt | nexus write $DEMO_BASE/project1/docs/guides/advanced/deep-file.txt - 2>&1 || true)
+DEEP_OUT=$(cat /tmp/demo-deep.txt | nexus write $DEMO_BASE/project1/docs/guides/advanced/deep-file.txt - 2>&1) && DEEP_RC=0 || DEEP_RC=$?
 echo "    deep write output: $(echo "$DEEP_OUT" | head -2)" >&2
-if echo "$DEEP_OUT" | grep -qiE "error|denied|forbidden"; then
+if [ "$DEEP_RC" -ne 0 ]; then
     print_error "Inheritance failed on write! output: $DEEP_OUT"
 else
     print_success "✅ Bob wrote to deep path via inheritance"
@@ -705,10 +711,12 @@ export NEXUS_API_KEY="$CHARLIE_KEY"
 print_test "Charlie (viewer on /project1) should NOT be able to write to deep child"
 log_step "charlie attempts deep write (expect denied)"
 echo "Charlie attempt" > /tmp/demo-charlie-deep.txt
-CHARLIE_DEEP_OUT=$(cat /tmp/demo-charlie-deep.txt | nexus write $DEMO_BASE/project1/docs/guides/advanced/charlie-attempt.txt - 2>&1 || true)
+CHARLIE_DEEP_OUT=$(cat /tmp/demo-charlie-deep.txt | nexus write $DEMO_BASE/project1/docs/guides/advanced/charlie-attempt.txt - 2>&1) && CHARLIE_DEEP_RC=0 || CHARLIE_DEEP_RC=$?
 echo "    charlie deep write output: $(echo "$CHARLIE_DEEP_OUT" | head -2)" >&2
-if echo "$CHARLIE_DEEP_OUT" | grep -qiE "error|denied|forbidden"; then
+if [ "$CHARLIE_DEEP_RC" -ne 0 ] && echo "$CHARLIE_DEEP_OUT" | is_permission_denial_output; then
     print_success "✅ Viewer correctly denied write on deep path"
+elif [ "$CHARLIE_DEEP_RC" -ne 0 ]; then
+    print_error "Charlie deep write failed without permission-denial evidence (exit=$CHARLIE_DEEP_RC): $(echo "$CHARLIE_DEEP_OUT" | head -2)"
 else
     record_warning "Viewer was able to write on a deep child path. Recording current behavior without failing the container smoke test."
 fi
@@ -1005,10 +1013,12 @@ for user in alice bob charlie; do
 
     log_step "$user: write to $SHARED_DIR (expect denied)"
     echo "$user attempt" > /tmp/demo-write-attempt.txt
-    WRITE_ATTEMPT=$(cat /tmp/demo-write-attempt.txt | nexus write $SHARED_DIR/$user-file.txt - 2>&1 || true)
+    WRITE_ATTEMPT=$(cat /tmp/demo-write-attempt.txt | nexus write $SHARED_DIR/$user-file.txt - 2>&1) && WRITE_ATTEMPT_RC=0 || WRITE_ATTEMPT_RC=$?
     echo "    write output: $(echo "$WRITE_ATTEMPT" | head -2)" >&2
-    if echo "$WRITE_ATTEMPT" | grep -qiE "error|denied|forbidden"; then
+    if [ "$WRITE_ATTEMPT_RC" -ne 0 ] && echo "$WRITE_ATTEMPT" | is_permission_denial_output; then
         print_success "✅ $user correctly denied write"
+    elif [ "$WRITE_ATTEMPT_RC" -ne 0 ]; then
+        print_error "$user shared write failed without permission-denial evidence (exit=$WRITE_ATTEMPT_RC): $(echo "$WRITE_ATTEMPT" | head -2)"
     else
         record_warning "$user was able to write under the shared read-only demo path. Recording current behavior without failing the smoke test."
     fi
@@ -1051,7 +1061,7 @@ fi
 
 print_subsection "8.2 Test cache invalidation on permission DELETE"
 # Get tuple ID via Python SDK
-TUPLE_ID=$(nexus_python << PYTHON_TUPLE_ID
+TUPLE_ID=$(nexus_python << PYTHON_TUPLE_ID | grep -Eo '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | tail -1
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
@@ -1064,16 +1074,20 @@ PYTHON_TUPLE_ID
 )
 
 print_test "Delete permission and check IMMEDIATELY (no manual cache clear)"
-log_step "rebac delete tuple_id=$TUPLE_ID"
-echo "    → nexus rebac delete $TUPLE_ID" >&2
-nexus rebac delete "$TUPLE_ID"
-log_step "rebac check alice write cache-test.txt after delete (expect DENIED)"
-CACHE_DEL=$(nexus rebac check user alice write file $DEMO_BASE/cache-test.txt 2>&1)
-echo "    alice write after delete: $(echo "$CACHE_DEL" | grep -oE 'GRANTED|DENIED' | head -1)" >&2
-if echo "$CACHE_DEL" | grep -q "DENIED"; then
-    print_success "✅ Cache auto-invalidated on DELETE!"
+if [ -z "$TUPLE_ID" ]; then
+    print_error "Could not extract tuple_id for cache-test.txt owner grant"
 else
-    print_error "Cache not invalidated on delete — result: $(echo "$CACHE_DEL" | grep -oE 'GRANTED|DENIED' | head -1)"
+    log_step "rebac delete tuple_id=$TUPLE_ID"
+    echo "    → nexus rebac delete $TUPLE_ID" >&2
+    nexus rebac delete "$TUPLE_ID"
+    log_step "rebac check alice write cache-test.txt after delete (expect DENIED)"
+    CACHE_DEL=$(nexus rebac check user alice write file $DEMO_BASE/cache-test.txt 2>&1)
+    echo "    alice write after delete: $(echo "$CACHE_DEL" | grep -oE 'GRANTED|DENIED' | head -1)" >&2
+    if echo "$CACHE_DEL" | grep -q "DENIED"; then
+        print_success "✅ Cache auto-invalidated on DELETE!"
+    else
+        print_error "Cache not invalidated on delete — result: $(echo "$CACHE_DEL" | grep -oE 'GRANTED|DENIED' | head -1)"
+    fi
 fi
 
 # ════════════════════════════════════════════════════════════
@@ -1093,10 +1107,12 @@ export NEXUS_API_KEY="$TENANT_ACME_KEY"
 
 print_test "User in tenant 'acme' should NOT access tenant 'default' resources"
 log_step "acme_user: nexus cat $DEMO_BASE/test-file.txt (expect denied)"
-CROSS_OUT=$(nexus cat $DEMO_BASE/test-file.txt 2>&1 || true)
+CROSS_OUT=$(nexus cat $DEMO_BASE/test-file.txt 2>&1) && CROSS_RC=0 || CROSS_RC=$?
 echo "    cross-tenant read output: $(echo "$CROSS_OUT" | head -2)" >&2
-if echo "$CROSS_OUT" | grep -qiE "denied|forbidden|permission|not found|error"; then
+if [ "$CROSS_RC" -ne 0 ] && echo "$CROSS_OUT" | is_permission_denial_output; then
     print_success "✅ Tenant isolation enforced"
+elif [ "$CROSS_RC" -ne 0 ]; then
+    print_error "ACME cross-tenant read failed without permission-denial evidence (exit=$CROSS_RC): $(echo "$CROSS_OUT" | head -2)"
 else
     record_warning "Cross-tenant read allowed (zone isolation for reads is a known limitation — tracked)"
 fi

@@ -49,7 +49,7 @@ use crate::{TlsFiles, ZoneManager};
 /// Architecture: `docs/architecture/federation-memo.md` § 6.3.1.
 const NODE_ID_FILE: &str = ".node_id";
 
-/// Cadence for `bootstrap_or_join_root`'s JoinZone retry loop when
+/// Cadence for `bootstrap_or_join_zone`'s JoinZone retry loop when
 /// every peer in NEXUS_PEERS is unreachable.  Indefinite by design —
 /// the daemon waits for the operator to bring up the first peer with
 /// `NEXUS_BOOTSTRAP_NEW=1`; any deadline here would just make the
@@ -240,7 +240,7 @@ impl Default for RaftDistributedCoordinator {
 ///
 /// Public so non-`init_from_env` boot paths (cluster-profile binary
 /// `nexusd-cluster::run_daemon`) share the same SSOT for raft node
-/// identity.  See `bootstrap_or_join_root` for why opaque random IDs
+/// identity.  See `bootstrap_or_join_zone` for why opaque random IDs
 /// are required under raft-rs 0.7's stale-`Progress` heartbeat
 /// invariant.
 pub fn read_or_mint_node_id(zones_dir: &str) -> Result<u64, String> {
@@ -340,40 +340,60 @@ pub fn validate_peers_excludes_self(
     Ok(())
 }
 
-/// Bring root zone online — dispatch table for the three bootstrap
-/// branches under the opaque-ID contract.
+/// Bring a zone online — dispatch table for the three bootstrap
+/// branches under the opaque-ID contract.  Generalised over `zone_id`
+/// so the same SSOT machinery serves:
 ///
-///   1. **Restart** — `zm.get_zone("root").is_some()` means
+///   * `init_from_env` and `nexusd-cluster::run_daemon` for the root
+///     zone (`zone_id="root"`, `max_attempts=None` — daemon boot path
+///     wants forever-retry on misconfig).
+///   * `nexusd-cluster::run_join` for non-root zones via the offline
+///     `join` subcommand (`zone_id=<remote_zone>`,
+///     `max_attempts=Some(N)` — CLI must terminate, so cap retries).
+///   * Future Python `nexusd` `federation_create_zone` /
+///     `federation_join` RPC handlers can call the same helper.
+///
+/// Branches:
+///
+///   1. **Restart** — `zm.get_zone(zone_id).is_some()` means
 ///      `open_existing_zones_from_disk` already loaded the local
-///      replica from `<zones_dir>/root/raft/raft.redb`.  Persisted
+///      replica from `<zones_dir>/<zone_id>/raft/raft.redb`.  Persisted
 ///      ConfState is authoritative; we just resume from it.
 ///
-///   2. **Fresh create** — `bootstrap_new=true` (operator set
-///      `NEXUS_BOOTSTRAP_NEW=1`).  Create a 1-voter cluster
-///      consisting of `self.node_id` only.  Other nodes will land in
-///      branch 3 and JoinZone here.  Without the operator flag this
-///      path is forbidden — accidentally creating a second 1-voter
-///      cluster on a joiner would partition the federation.
+///   2. **Fresh create** — `bootstrap_new=true`.  Create a 1-voter
+///      cluster consisting of `self.node_id` only.  Other nodes will
+///      land in branch 3 and JoinZone here.  Without the operator
+///      flag this path is forbidden — accidentally creating a second
+///      1-voter cluster on a joiner would partition the federation.
 ///
-///   3. **Wait-and-join** — empty storage, no flag.  Loop forever
-///      calling JoinZone RPC against each peer in the address book.
-///      The leader's response commits a `ConfChangeV2(AddNode(self))`;
-///      we then locally `join_zone(skip_bootstrap=true)` so the
+///   3. **Wait-and-join** — empty storage, no flag.  Loop calling
+///      JoinZone RPC against each peer in the address book.  The
+///      leader's response commits a `ConfChangeV2(AddNode(self))`;
+///      we locally `join_zone(skip_bootstrap=true)` first so the
 ///      leader's snapshot installs the authoritative ConfState.
-///      No deadline by design — misconfig surfaces as "daemon stays
-///      up retrying" rather than a silent exit.
-pub fn bootstrap_or_join_root(
+///      `max_attempts=None` retries forever (daemon boot — misconfig
+///      surfaces as "daemon stays up retrying" rather than a silent
+///      exit); `max_attempts=Some(N)` bounds the loop to N rounds
+///      (CLI — operator command must terminate).
+///
+/// Returns `Err` with a descriptive string if `max_attempts` was
+/// exhausted without a successful JoinZone — caller surfaces this to
+/// the operator.
+pub fn bootstrap_or_join_zone(
     zm: &ZoneManager,
+    zone_id: &str,
     node_id: u64,
     self_address: &str,
     peer_addrs: &[NodeAddress],
     bootstrap_new: bool,
+    max_attempts: Option<u32>,
 ) -> Result<(), String> {
     // Branch 1: zone already loaded from disk.
-    if zm.get_zone("root").is_some() {
+    if zm.get_zone(zone_id).is_some() {
         tracing::info!(
             node_id,
-            "root zone loaded from persisted storage; resuming from ConfState",
+            zone = %zone_id,
+            "zone loaded from persisted storage; resuming from ConfState",
         );
         return Ok(());
     }
@@ -382,13 +402,14 @@ pub fn bootstrap_or_join_root(
     if bootstrap_new {
         tracing::warn!(
             node_id,
+            zone = %zone_id,
             self_address = %self_address,
-            "NEXUS_BOOTSTRAP_NEW honored; creating 1-voter root zone. \
+            "NEXUS_BOOTSTRAP_NEW honored; creating 1-voter zone. \
              Other nodes must JoinZone."
         );
         let self_peer = format!("{node_id}@{self_address}");
-        zm.create_zone("root", vec![self_peer])
-            .map_err(|e| format!("create_zone(root): {e}"))?;
+        zm.create_zone(zone_id, vec![self_peer])
+            .map_err(|e| format!("create_zone({zone_id}): {e}"))?;
         return Ok(());
     }
 
@@ -397,7 +418,7 @@ pub fn bootstrap_or_join_root(
     // Empty peer_addrs (no NEXUS_PEERS) + flag unset = "no cluster
     // intent yet" — daemon comes up federation-active but zoneless.
     // An operator can later set NEXUS_BOOTSTRAP_NEW=1 + restart, or
-    // call `coordinator.create_zone("root")` via RPC under the
+    // call `coordinator.create_zone(zone_id)` via RPC under the
     // dynamic-bootstrap mode.  Without this early return, branch 3
     // loops forever with no targets — a hang for any test or
     // single-node deployment that constructs a kernel without
@@ -405,16 +426,18 @@ pub fn bootstrap_or_join_root(
     if peer_addrs.is_empty() {
         tracing::info!(
             node_id,
-            "empty storage, no NEXUS_PEERS, no NEXUS_BOOTSTRAP_NEW — \
-             federation up but rootless; operator drives create_zone later",
+            zone = %zone_id,
+            "empty storage, no peers, no NEXUS_BOOTSTRAP_NEW — \
+             federation up but zoneless; operator drives create_zone later",
         );
         return Ok(());
     }
     tracing::info!(
         node_id,
+        zone = %zone_id,
         peer_count = peer_addrs.len(),
-        "empty storage and NEXUS_BOOTSTRAP_NEW unset — \
-         retrying JoinZone against NEXUS_PEERS indefinitely",
+        max_attempts = ?max_attempts,
+        "empty storage and NEXUS_BOOTSTRAP_NEW unset — retrying JoinZone",
     );
 
     // Spin a small temporary multi-thread runtime for the JoinZone
@@ -430,6 +453,7 @@ pub fn bootstrap_or_join_root(
         .build()
         .map_err(|e| format!("bootstrap join runtime: {e}"))?;
 
+    let mut attempts: u32 = 0;
     loop {
         for peer in peer_addrs {
             // No self-skip here.  Contract: `peer_addrs` lists OTHER
@@ -450,11 +474,12 @@ pub fn bootstrap_or_join_root(
                 // times out the JoinZone RPC.  Local register is
                 // idempotent — calling it on every retry costs only a
                 // hashmap lookup.
-                if zm.get_zone("root").is_none() {
+                if zm.get_zone(zone_id).is_none() {
                     let zone_peers = vec![peer.to_raft_peer_str()];
-                    if let Err(e) = zm.join_zone("root", zone_peers, /* learner */ false) {
+                    if let Err(e) = zm.join_zone(zone_id, zone_peers, /* learner */ false) {
                         tracing::warn!(
                             endpoint = %endpoint,
+                            zone = %zone_id,
                             error = %e,
                             "local join_zone setup failed; will retry next peer",
                         );
@@ -463,7 +488,7 @@ pub fn bootstrap_or_join_root(
                 }
                 let attempt = join_runtime.block_on(crate::transport::call_join_zone_rpc(
                     &endpoint,
-                    "root",
+                    zone_id,
                     node_id,
                     self_address,
                     /* as_learner */ false,
@@ -473,8 +498,9 @@ pub fn bootstrap_or_join_root(
                     Ok(result) if result.success => {
                         tracing::info!(
                             endpoint = %endpoint,
+                            zone = %zone_id,
                             node_id,
-                            "joined root zone via leader",
+                            "joined zone via leader",
                         );
                         return Ok(());
                     }
@@ -484,6 +510,7 @@ pub fn bootstrap_or_join_root(
                                 tracing::info!(
                                     from = %endpoint,
                                     to = %addr,
+                                    zone = %zone_id,
                                     "JoinZone redirect to leader",
                                 );
                                 endpoint = addr.clone();
@@ -493,6 +520,7 @@ pub fn bootstrap_or_join_root(
                         }
                         tracing::debug!(
                             endpoint = %endpoint,
+                            zone = %zone_id,
                             error = ?result.error,
                             "JoinZone non-success; trying next peer",
                         );
@@ -501,12 +529,22 @@ pub fn bootstrap_or_join_root(
                     Err(e) => {
                         tracing::debug!(
                             endpoint = %endpoint,
+                            zone = %zone_id,
                             error = %e,
                             "JoinZone RPC error; trying next peer",
                         );
                         break;
                     }
                 }
+            }
+        }
+        attempts = attempts.saturating_add(1);
+        if let Some(max) = max_attempts {
+            if attempts >= max {
+                return Err(format!(
+                    "JoinZone({zone_id}): no peer accepted after {attempts} attempts; \
+                     leader unreachable or quorum lost on remote zone",
+                ));
             }
         }
         std::thread::sleep(JOIN_ZONE_RETRY_INTERVAL);
@@ -546,7 +584,7 @@ impl RaftDistributedCoordinator {
         //      flag unset → block on JoinZone forever.  Non-empty
         //      storage → resume from persisted ConfState.
         //
-        // See `bootstrap_or_join_root` for the dispatch table.
+        // See `bootstrap_or_join_zone` for the dispatch table.
         let peers_csv = std::env::var("NEXUS_PEERS").unwrap_or_default();
         let bootstrap_new = std::env::var("NEXUS_BOOTSTRAP_NEW")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -692,10 +730,19 @@ impl RaftDistributedCoordinator {
 
         // Bring root zone online — restart-from-disk, fresh-create, or
         // wait-and-join, depending on storage state and the operator
-        // flag.  Blocks indefinitely under the join branch (no deadline)
-        // so misconfig surfaces as "daemon stays up retrying" rather
-        // than "daemon exits after timeout".  See `bootstrap_or_join_root`.
-        bootstrap_or_join_root(zm.as_ref(), node_id, &self_addr, &peer_addrs, bootstrap_new)?;
+        // flag.  `max_attempts=None` blocks indefinitely under the join
+        // branch (no deadline) so misconfig surfaces as "daemon stays
+        // up retrying" rather than "daemon exits after timeout".
+        // See `bootstrap_or_join_zone`.
+        bootstrap_or_join_zone(
+            zm.as_ref(),
+            "root",
+            node_id,
+            &self_addr,
+            &peer_addrs,
+            bootstrap_new,
+            /* max_attempts */ None,
+        )?;
 
         // Federation zones listed in `NEXUS_FEDERATION_ZONES` are
         // brought up only when this node bootstrapped root (1-voter

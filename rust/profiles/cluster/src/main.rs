@@ -28,7 +28,7 @@ use kernel::core::dcache::DT_MOUNT;
 use kernel::kernel::Kernel;
 
 use nexus_raft::distributed_coordinator::{
-    bootstrap_or_join_root, read_or_mint_node_id, validate_peers_excludes_self,
+    bootstrap_or_join_zone, read_or_mint_node_id, validate_peers_excludes_self,
 };
 use nexus_raft::federation::{parse_federation_env, ENV_FEDERATION_MOUNTS, ENV_FEDERATION_ZONES};
 use nexus_raft::transport::{bootstrap_tls, NodeAddress};
@@ -207,7 +207,7 @@ async fn main() -> Result<()> {
 /// `node_id` minted/loaded from `<data_dir>/.node_id` plus the
 /// structured peer address book and self-address derived from
 /// `--bind-addr`/`--hostname`.  `run_daemon` hands the lot to
-/// [`bootstrap_or_join_root`] which owns the actual root-zone
+/// [`bootstrap_or_join_zone`] which owns the actual root-zone
 /// dispatch.
 struct ZoneManagerBundle {
     zm: std::sync::Arc<ZoneManager>,
@@ -268,7 +268,7 @@ fn open_zone_manager(common: &CommonArgs) -> Result<ZoneManagerBundle> {
     // Parse `--peers` into structured `NodeAddress` entries — address
     // book only.  ZoneManager seeds its transport peer map from this;
     // ConfState is independent (mutated only by ConfChange via
-    // JoinZone driven by `bootstrap_or_join_root`).
+    // JoinZone driven by `bootstrap_or_join_zone`).
     let peer_addrs: Vec<NodeAddress> = NodeAddress::parse_peer_list(&common.peers, use_tls)
         .map_err(|e| anyhow::anyhow!("--peers/NEXUS_PEERS parse: {}", e))?;
     let peers_str: Vec<String> = peer_addrs.iter().map(NodeAddress::to_raft_peer_str).collect();
@@ -340,7 +340,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true"))
         .unwrap_or(false);
 
-    // `bootstrap_or_join_root` is a sync helper that, in branch 3
+    // `bootstrap_or_join_zone` is a sync helper that, in branch 3
     // (wait-and-join), spins a nested `tokio::runtime` to drive the
     // JoinZone retry loop's RPCs.  Python `nexusd::init_from_env`
     // calls it from a sync PyO3 entry point — no outer runtime — so
@@ -356,17 +356,19 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     let self_addr_for_bootstrap = self_address.clone();
     let peer_addrs_for_bootstrap = peer_addrs.clone();
     tokio::task::spawn_blocking(move || {
-        bootstrap_or_join_root(
+        bootstrap_or_join_zone(
             zm_for_bootstrap.as_ref(),
+            "root",
             node_id,
             &self_addr_for_bootstrap,
             &peer_addrs_for_bootstrap,
             bootstrap_new,
+            /* max_attempts */ None, // daemon boot — retry forever
         )
     })
     .await
     .map_err(|e| anyhow::anyhow!("bootstrap join task panicked: {}", e))?
-    .map_err(|e| anyhow::anyhow!("bootstrap_or_join_root: {}", e))?;
+    .map_err(|e| anyhow::anyhow!("bootstrap_or_join_zone: {}", e))?;
 
     // `bootstrap_static` — invoked below when federation env vars are
     // set — is `NEXUS_FEDERATION_ZONES`/`_MOUNTS` driven and only

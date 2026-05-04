@@ -26,13 +26,6 @@ fn now_secs() -> u64 {
     FullStateMachine::now()
 }
 
-fn local_now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 /// Distributed ``Locks`` backend — raft-replicated advisory locks.
 ///
 /// Wraps a ``ZoneConsensus<FullStateMachine>`` + its tokio runtime +
@@ -59,14 +52,16 @@ impl DistributedLocks {
     /// constructed; never overwrite raft-owned paths with stale
     /// local data).
     ///
-    /// Returns ``(backend, shared_state_arc)`` — callers pass the
-    /// second tuple element to ``LockManager::install_locks`` so the
-    /// kernel swaps its read-side Arc alongside the backend.
+    /// The returned backend exposes its shared state via the
+    /// ``Locks::shared_state_arc`` trait method, so callers don't pass
+    /// a separate state Arc to ``LockManager::install_locks`` — the
+    /// kernel pulls it back through the trait, eliminating the misuse
+    /// risk of mismatching backend/state Arcs at install time.
     pub fn new(
         node: ZoneConsensus<FullStateMachine>,
         runtime: tokio::runtime::Handle,
         kernel_local_state: Arc<Mutex<LockState>>,
-    ) -> (Self, Arc<Mutex<LockState>>) {
+    ) -> Self {
         // Adopt the state machine's shared advisory Arc.  Two callers
         // reach this path:
         //
@@ -119,12 +114,11 @@ impl DistributedLocks {
             }
         }
 
-        let backend = Self {
+        Self {
             node,
             runtime,
-            shared_state: shared_state.clone(),
-        };
-        (backend, shared_state)
+            shared_state,
+        }
     }
 }
 
@@ -222,17 +216,18 @@ impl Locks for DistributedLocks {
     }
 
     fn get_lock(&self, path: &str) -> Option<LockInfo> {
-        // GC expired holders in-line so callers never observe a stale
-        // record that the raft apply path hasn't had reason to touch
-        // (committed writes prune on apply; reads don't).
-        let mut guard = self.shared_state.lock();
-        guard.gc_expired(local_now_secs());
-        guard.get_lock(path)
+        // Reads share semantics with ``LocalLocks`` post-fix: no
+        // read-side GC. ``apply_*`` paths prune expired holders on
+        // every write, so unmutated rows that survive are by
+        // definition cold and never block live decisions.
+        self.shared_state.lock().get_lock(path)
     }
 
     fn list_locks(&self, prefix: &str, limit: usize) -> Vec<LockInfo> {
-        let mut guard = self.shared_state.lock();
-        guard.gc_expired(local_now_secs());
-        guard.list_locks(prefix, limit)
+        self.shared_state.lock().list_locks(prefix, limit)
+    }
+
+    fn shared_state_arc(&self) -> Arc<Mutex<LockState>> {
+        self.shared_state.clone()
     }
 }

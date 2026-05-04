@@ -1034,7 +1034,7 @@ impl DistributedCoordinator for RaftDistributedCoordinator {
             .get_node(zone_id)
             .ok_or_else(|| format!("zone '{zone_id}' not loaded locally"))?;
         let kernel_state = kernel.lock_manager_arc().advisory_state_arc();
-        let (backend, _shared) =
+        let backend =
             crate::federation::DistributedLocks::new(consensus, runtime.clone(), kernel_state);
         Ok(Arc::new(backend))
     }
@@ -1548,12 +1548,12 @@ fn wire_mount_core(
                     "wire_mount: installing distributed locks bound to ROOT zone"
                 );
                 let kernel_state = lock_manager.advisory_state_arc();
-                let (backend, shared_state) = crate::federation::DistributedLocks::new(
+                let backend = crate::federation::DistributedLocks::new(
                     root_consensus,
                     runtime.clone(),
                     kernel_state,
                 );
-                lock_manager.install_locks(Arc::new(backend), shared_state);
+                lock_manager.install_locks(Arc::new(backend));
             }
             None => {
                 tracing::warn!(

@@ -1,18 +1,14 @@
-//! Advisory-lock backends for the kernel's ``LockManager``.
+//! Local advisory-lock backend for the kernel's ``LockManager``.
 //!
-//! Two impls live in the tree today:
-//!   - ``LocalLocks`` (this file) — direct mutation of the shared
-//!     ``Arc<Mutex<LockState>>``, no replication.
-//!   - ``nexus_raft::federation::DistributedLocks`` — proposes a
-//!     ``Command::{Acquire,Release,Force,Extend}Lock`` through a raft
-//!     ``ZoneConsensus``; apply mutates the same shared map on every
-//!     peer.
-//!
-//! ``LockManager`` stores the backend as ``Arc<dyn contracts::Locks>``
-//! so the kernel has no dependency on any raft concrete type. The
-//! default backend is ``LocalLocks``; federation DI swaps in
-//! ``DistributedLocks`` via ``Kernel::install_locks`` at nexus init
-//! time (first-wins; idempotent).
+//! ``LocalLocks`` mutates the shared ``Arc<Mutex<LockState>>`` directly
+//! — no replication. It is the kernel's default backend, used in
+//! standalone deployments and as the boot-time default before the
+//! distributed-coordinator HAL installs a replicated backend (if
+//! configured). The trait boundary ``Arc<dyn contracts::Locks>``
+//! keeps the kernel free of any HAL-impl concrete type — replicated
+//! backends live in their own crate and are wired in via
+//! ``Kernel::install_locks`` at nexus init time (first-wins,
+//! idempotent).
 
 use std::sync::Arc;
 
@@ -24,8 +20,8 @@ use crate::lock_manager::lock_now_secs;
 
 /// Local-mode advisory lock backend: one Arc-wrapped ``LockState``
 /// mutated directly on every call. Never proposes anything — used by
-/// standalone deployments and as the kernel's default before
-/// federation DI fires.
+/// standalone deployments and as the kernel's default before any
+/// replicated HAL backend installs.
 pub struct LocalLocks {
     state: Arc<Mutex<LockState>>,
 }
@@ -33,16 +29,16 @@ pub struct LocalLocks {
 impl LocalLocks {
     /// Construct a LocalLocks that shares ``state`` with whoever owns
     /// the Arc (typically the kernel's own ``LockManager``). When the
-    /// backend is later swapped for ``DistributedLocks``, the kernel
-    /// passes the current state Arc along so existing holders are not
-    /// lost — the federation-side impl merges them into the state
-    /// machine's map under the same mutex discipline.
+    /// backend is later swapped for a replicated HAL impl, the kernel
+    /// hands the current state Arc to that impl's constructor so
+    /// existing holders are not lost — the impl merges them into its
+    /// own map under the same mutex discipline.
     pub fn new(state: Arc<Mutex<LockState>>) -> Self {
         Self { state }
     }
 
-    /// Snapshot the shared state Arc — used by federation setup to
-    /// migrate local holders into the raft state machine's map.
+    /// Snapshot the shared state Arc — kept for symmetry with the
+    /// trait method ``shared_state_arc``; both surface the same Arc.
     pub fn state(&self) -> Arc<Mutex<LockState>> {
         self.state.clone()
     }
@@ -84,6 +80,10 @@ impl Locks for LocalLocks {
 
     fn list_locks(&self, prefix: &str, limit: usize) -> Vec<LockInfo> {
         self.state.lock().list_locks(prefix, limit)
+    }
+
+    fn shared_state_arc(&self) -> Arc<Mutex<LockState>> {
+        self.state.clone()
     }
 }
 

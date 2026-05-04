@@ -1,12 +1,21 @@
-"""Metadata store test helpers."""
+"""Metadata store test helpers.
+
+Post-W3 the Python ``MetastoreABC`` / ``RustMetastoreProxy`` /
+``DictMetastore`` classes are gone. The kernel exposes
+``metastore_*`` PyO3 bindings; tests that previously instantiated a
+Python metastore subclass now get a bare ``PyKernel`` from
+``DictMetastore()``. ``FailingMetastore`` becomes a fault-injection
+wrapper that monkeypatches ``kernel.metastore_*`` calls.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+import tempfile
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.metastore import MetastoreABC
 
 __all__ = [
     "DictMetastore",
@@ -20,11 +29,21 @@ def DictMetastore(  # noqa: N802
     storage_path: Any = None,
     *_args: Any,
     **_kwargs: Any,
-) -> MetastoreABC:
-    """Return a fresh production-compatible metastore for tests."""
-    from nexus.storage.dict_metastore import DictMetastore as _factory
+) -> Any:
+    """Return a fresh kernel-backed metastore for tests.
 
-    return _factory(storage_path)
+    A new ``PyKernel`` is constructed per call with its redb store opened
+    against either ``storage_path`` (when supplied) or a tempfile.
+    """
+    from nexus_runtime import PyKernel
+
+    if storage_path is None:
+        redb_path = str(Path(tempfile.mkdtemp()) / "dict.redb")
+    else:
+        redb_path = str(storage_path)
+    kernel = PyKernel()
+    kernel.set_metastore_path(redb_path)
+    return kernel
 
 
 class MetastoreError(RuntimeError):
@@ -36,19 +55,29 @@ class MetastoreError(RuntimeError):
         super().__init__(f"Injected metastore failure (method={method}, call #{call_count})")
 
 
-class FailingMetastore(MetastoreABC):
-    """MetastoreABC wrapper that injects failures for testing."""
+class FailingMetastore:
+    """Kernel-handle wrapper that injects failures for testing.
+
+    Wraps a real ``PyKernel`` and routes every ``metastore_*`` call
+    through ``_maybe_fail`` before delegating. The wrapper exposes the
+    same surface tests use (``get`` / ``put`` / ``delete`` /
+    ``metastore_get`` / ``metastore_put`` / etc.) so existing call
+    sites work unchanged.
+    """
 
     def __init__(
         self,
-        inner: MetastoreABC,
+        inner: Any,
         *,
         fail_on: list[str] | None = None,
         fail_on_nth: int = 0,
         fail_permanently: bool = False,
     ) -> None:
-        super().__init__()
-        self._inner = inner
+        # ``inner`` may be a bare kernel or a kernel wrapper. We extract
+        # the kernel handle via the same dual-shape guard used elsewhere.
+        self._inner = (
+            inner._rust_kernel if inner is not None and hasattr(inner, "_rust_kernel") else inner
+        )
         self._fail_on = set(fail_on) if fail_on else set()
         self._fail_on_nth = fail_on_nth
         self._fail_permanently = fail_permanently
@@ -81,87 +110,84 @@ class FailingMetastore(MetastoreABC):
         if should_fail:
             raise MetastoreError(method_name, self._call_count)
 
-    def _get_raw(self, path: str) -> FileMetadata | None:
+    # ── proxy-shape compatibility (legacy callers expect ``.get`` etc.) ──
+
+    def get(self, path: str) -> FileMetadata | None:
         self._maybe_fail("get")
-        return self._inner.get(path)
+        return self._inner.metastore_get(path)
 
-    def _put_raw(self, metadata: FileMetadata) -> int | None:
+    def put(self, metadata: FileMetadata) -> Any:
         self._maybe_fail("put")
-        return self._inner.put(metadata)
+        return self._inner.metastore_put(metadata)
 
-    def _delete_raw(self, path: str) -> dict[str, Any] | None:
+    def delete(self, path: str) -> Any:
         self._maybe_fail("delete")
-        return self._inner.delete(path)
+        return self._inner.metastore_delete(path)
 
-    def _exists_raw(self, path: str) -> bool:
+    def exists(self, path: str) -> bool:
         self._maybe_fail("exists")
-        return self._inner.exists(path)
+        return self._inner.metastore_exists(path)
 
-    def _list_raw(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> list[FileMetadata]:
+    def list(self, prefix: str = "", recursive: bool = True, **_kwargs: Any) -> list[FileMetadata]:
         self._maybe_fail("list")
-        return self._inner.list(prefix, recursive, **kwargs)
-
-    def close(self) -> None:
-        self._inner.close()
-
-    def is_committed(self, token: int) -> str | None:
-        self._maybe_fail("is_committed")
-        return self._inner.is_committed(token)
-
-    def _list_iter_raw(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> Iterator[FileMetadata]:
-        self._maybe_fail("list_iter")
-        return self._inner.list_iter(prefix, recursive, **kwargs)
-
-    def _get_batch_raw(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        self._maybe_fail("get_batch")
-        return self._inner.get_batch(paths)
-
-    def _delete_batch_raw(self, paths: Sequence[str]) -> None:
-        self._maybe_fail("delete_batch")
-        self._inner.delete_batch(paths)
-
-    def _put_batch_raw(
-        self,
-        metadata_list: Sequence[FileMetadata],
-        *,
-        skip_snapshot: bool = False,
-    ) -> None:
-        self._maybe_fail("put_batch")
-        self._inner.put_batch(metadata_list, skip_snapshot=skip_snapshot)
-
-    def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
-        self._maybe_fail("batch_get_content_ids")
-        return self._inner.batch_get_content_ids(paths)
-
-    def rename_path(self, old_path: str, new_path: str) -> None:
-        self._maybe_fail("rename_path")
-        rename_path = getattr(self._inner, "rename_path", None)
-        if callable(rename_path):
-            rename_path(old_path, new_path)
-
-    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
-        self._maybe_fail("set_file_metadata")
-        set_file_metadata = getattr(self._inner, "set_file_metadata", None)
-        if callable(set_file_metadata):
-            set_file_metadata(path, key, value)
-
-    def get_file_metadata(self, path: str, key: str) -> Any:
-        self._maybe_fail("get_file_metadata")
-        get_file_metadata = getattr(self._inner, "get_file_metadata", None)
-        if callable(get_file_metadata):
-            return get_file_metadata(path, key)
-        return None
+        return list(self._inner.metastore_list(prefix))
 
     def is_implicit_directory(self, path: str) -> bool:
         self._maybe_fail("is_implicit_directory")
-        is_implicit_directory = getattr(self._inner, "is_implicit_directory", None)
-        if callable(is_implicit_directory):
-            return is_implicit_directory(path)
-        return False
+        return bool(self._inner.metastore_is_implicit_directory(path))
+
+    def rename_path(self, old_path: str, new_path: str) -> None:
+        self._maybe_fail("rename_path")
+        self._inner.metastore_rename_path(old_path, new_path)
+
+    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
+        self._maybe_fail("set_file_metadata")
+        if value is None:
+            return
+        if not isinstance(value, str):
+            import json
+
+            value = json.dumps(value)
+        self._inner.metastore_set_file_metadata(path, key, value)
+
+    def get_file_metadata(self, path: str, key: str) -> Any:
+        self._maybe_fail("get_file_metadata")
+        return self._inner.metastore_get_file_metadata(path, key)
+
+    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+        self._maybe_fail("get_batch")
+        plist = list(paths)
+        return dict(zip(plist, self._inner.metastore_get_batch(plist), strict=True))
+
+    def put_batch(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        skip_snapshot: bool = False,  # noqa: ARG002
+    ) -> None:
+        self._maybe_fail("put_batch")
+        self._inner.metastore_put_batch(list(metadata_list))
+
+    def delete_batch(self, paths: Sequence[str]) -> None:
+        self._maybe_fail("delete_batch")
+        for p in paths:
+            self._inner.metastore_delete(p)
+
+    def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
+        self._maybe_fail("batch_get_content_ids")
+        result: dict[str, str | None] = {}
+        for path in paths:
+            metadata = self._inner.metastore_get(path)
+            result[path] = metadata.content_id if metadata else None
+        return result
+
+    def close(self) -> None:
+        """No-op — kernel manages redb lifecycle."""
+
+    # ── ``_rust_kernel`` shim so legacy callers that read it still work ──
+    @property
+    def _rust_kernel(self) -> Any:
+        return self._inner
 
 
 class InMemoryNexusFS:

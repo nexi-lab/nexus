@@ -40,8 +40,6 @@ def make_test_nexus(
         del use_raft
         from nexus_runtime import PyKernel as _Kernel
 
-        from nexus.core.metastore import RustMetastoreProxy
-
         _kernel = _Kernel()
         try:
             import nexus_runtime as _nk
@@ -55,7 +53,8 @@ def make_test_nexus(
                 "install_transport_wiring/install_federation_wiring failed in test fixture: %s",
                 _wiring_exc,
             )
-        metadata_store = RustMetastoreProxy(_kernel, str(tmp_path / "metastore.redb"))
+        _kernel.set_metastore_path(str(tmp_path / "metastore.redb"))
+        metadata_store = _kernel
 
     if backend is None:
         from pathlib import Path

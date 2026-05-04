@@ -639,11 +639,18 @@ impl Kernel {
                     created_at_ms,
                     Some(now_ms),
                 );
-                // Atomic commit — metastore (raft) first, dcache on
-                // success. Releases the VFS lock before propagating
-                // so the next caller doesn't block on stale state if
-                // raft propose fails.
-                if let Err(e) = self.commit_metadata(path, &route.mount_point, meta) {
+                // Atomic commit — metastore (raft) write. Releases the VFS
+                // lock before propagating so the next caller doesn't block
+                // on stale state if raft propose fails. Hot path: bypass
+                // the routing wrapper and dispatch through the trait via
+                // route.metastore (already resolved above).
+                let put_res = self
+                    .with_metastore_route(&route, |ms| ms.put(path, meta))
+                    .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+                    .and_then(|r| {
+                        r.map_err(|e| KernelError::IOError(format!("metastore_put({path}): {e:?}")))
+                    });
+                if let Err(e) = put_res {
                     self.lock_manager.do_release(lock_handle);
                     return Err(e);
                 }
@@ -1020,7 +1027,13 @@ impl Kernel {
         // from a failed backend delete are collected by a background GC sweep.
         // The inverse ordering (backend-first) risks deleting bytes while leaving
         // live metadata if the metastore call fails — unrecoverable data loss.
-        if let Err(e) = self.commit_delete(path, &route.mount_point) {
+        let del_res = self
+            .with_metastore_route(&route, |ms| ms.delete(path))
+            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+            .and_then(|r| {
+                r.map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}")))
+            });
+        if let Err(e) = del_res {
             self.lock_manager.do_release(lock_handle);
             return Err(e);
         }
@@ -1743,7 +1756,7 @@ impl Kernel {
         // parent path (caught by tests/unit/core/test_mount_directory_creation).
         if route.backend_path.is_empty() {
             if parents {
-                self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+                self.ensure_parent_directories(path, ctx, &route)?;
             }
             return Ok(SysMkdirResult {
                 hit: true,
@@ -1773,7 +1786,7 @@ impl Kernel {
             // Implicit dir: fall through to create explicit DT_DIR entry.
             if explicit_exists {
                 if parents {
-                    self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+                    self.ensure_parent_directories(path, ctx, &route)?;
                 }
                 return Ok(SysMkdirResult {
                     hit: true,
@@ -1789,7 +1802,7 @@ impl Kernel {
 
         // 5. Ensure parent directories
         if parents {
-            self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+            self.ensure_parent_directories(path, ctx, &route)?;
         }
 
         // 6. Create directory metadata in metastore (per-mount or global) — full path
@@ -1804,8 +1817,10 @@ impl Kernel {
             None,
             None,
         );
-        // 7. Atomic commit — metastore (raft) first, dcache on success.
-        self.commit_metadata(path, &route.mount_point, meta)?;
+        // 7. Atomic commit via the per-mount metastore Arc on RouteResult.
+        self.with_metastore_route(&route, |ms| ms.put(path, meta))
+            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))?
+            .map_err(|e| KernelError::IOError(format!("metastore_put({path}): {e:?}")))?;
 
         // 8. OBSERVE-phase dispatch (§11 OBSERVE): queue DirCreate.
         // Only fires on the newly-created path — the early return at
@@ -1830,7 +1845,7 @@ impl Kernel {
         &self,
         path: &str,
         ctx: &OperationContext,
-        mount_point: &str,
+        route: &crate::vfs_router::RouteResult,
     ) -> Result<(), KernelError> {
         // Walk up path from parent to root, collecting missing dirs.
         let mut cur = path;
@@ -1844,7 +1859,7 @@ impl Kernel {
                         break;
                     }
                     let exists = self
-                        .with_metastore(mount_point, |ms| ms.exists(cur).unwrap_or(true))
+                        .with_metastore_route(route, |ms| ms.exists(cur).unwrap_or(true))
                         .unwrap_or(true);
                     if !exists {
                         to_create.push(cur.to_string());
@@ -1869,7 +1884,9 @@ impl Kernel {
                 None,
                 None,
             );
-            self.commit_metadata(dir_ref, mount_point, meta)?;
+            self.with_metastore_route(route, |ms| ms.put(dir_ref, meta))
+                .ok_or_else(|| KernelError::IOError("no metastore wired".into()))?
+                .map_err(|e| KernelError::IOError(format!("metastore_put({dir_ref}): {e:?}")))?;
         }
         Ok(())
     }
@@ -1947,9 +1964,11 @@ impl Kernel {
 
         // 7. Atomic delete — metastore is the SSOT. Per-key cache
         // invalidation already happened: ``delete_batch`` invalidated
-        // each child's cache row, and ``commit_delete`` → ``ms.delete``
-        // invalidates the parent's. No kernel-global cache to evict.
-        self.commit_delete(path, &route.mount_point)?;
+        // each child's cache row, and ``ms.delete`` invalidates the
+        // parent's. No kernel-global cache to evict.
+        self.with_metastore_route(&route, |ms| ms.delete(path))
+            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))?
+            .map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}")))?;
 
         // 9. OBSERVE-phase dispatch (§11 OBSERVE): queue DirDelete.
         // Like sys_mkdir, only the top-level rmdir event fires —
@@ -2144,14 +2163,12 @@ impl Kernel {
             }
         }
 
-        // 4b. Atomic per-item commit. Per-mount items go through
-        // commit_metadata (raft propose, ms.put then dcache). Global
-        // items (no per-mount metastore) collect into a batch put
-        // since the global LocalMetaStore can do that as one redb
-        // txn — but we still update dcache only after the txn lands.
-        // Failures flip the corresponding result entry from
-        // hit=true → hit=false so the caller learns which items
-        // actually committed.
+        // 4b. Atomic per-item commit. Per-mount items dispatch through the
+        // mount's own metastore (raft propose for federation zones); global
+        // items (no per-mount metastore) collect into a batch put since the
+        // global LocalMetaStore can do that as one redb txn. Failures flip
+        // the corresponding result entry from hit=true → hit=false so the
+        // caller learns which items actually committed.
         if !batch_meta.is_empty() {
             let mut global_items: Vec<(String, crate::meta_store::FileMetadata)> = Vec::new();
             let mut global_idx: Vec<usize> = Vec::new();
@@ -2162,7 +2179,11 @@ impl Kernel {
                     .map(|e| e.metastore.is_some())
                     .unwrap_or(false);
                 if has_per_mount {
-                    if let Err(_e) = self.commit_metadata(&path, &mp, meta) {
+                    let put_res = self
+                        .with_metastore(&mp, move |ms| ms.put(&path, meta))
+                        .ok_or_else(|| KernelError::IOError("no metastore wired".into()))
+                        .and_then(|r| r.map_err(|e| KernelError::IOError(format!("{e:?}"))));
+                    if let Err(_e) = put_res {
                         // Mark this batch entry as not-hit so the
                         // caller knows the propose didn't commit.
                         if let Some(r) = results.get_mut(idx) {

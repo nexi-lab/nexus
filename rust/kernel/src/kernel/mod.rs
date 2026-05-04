@@ -853,57 +853,6 @@ impl Kernel {
         }
     }
 
-    /// Atomic metadata commit — propose to metastore.
-    ///
-    /// Replaces the legacy "best-effort metastore put + eager dcache
-    /// update" pattern that scattered across 10+ sys_* paths. That
-    /// pattern silently lost data on raft propose failure: leader's
-    /// dcache held the entry but it was never committed to the
-    /// state machine, so followers caught up to leader's
-    /// applied_index without ever seeing the file
-    /// (TestPartialReplicationFailure::test_partition_then_heal CI
-    /// regression — see PR #3890 for the full diagnostic).
-    ///
-    /// MetaStore is the SSOT. Each impl owns an internal cache that
-    /// the `put` write-through populates — there is no longer a
-    /// separate kernel-global cache to keep in sync.
-    pub(crate) fn commit_metadata(
-        &self,
-        path: &str,
-        mount_point: &str,
-        meta: crate::meta_store::FileMetadata,
-    ) -> Result<(), KernelError> {
-        let put_result = self
-            .with_metastore(mount_point, move |ms| ms.put(path, meta))
-            .ok_or_else(|| {
-                KernelError::IOError(format!(
-                    "commit_metadata({path}): no metastore wired for mount {mount_point}"
-                ))
-            })?;
-        put_result.map_err(|e| {
-            KernelError::IOError(format!("commit_metadata({path}): metastore.put: {e:?}"))
-        })?;
-        Ok(())
-    }
-
-    /// Atomic metadata delete — same pattern as `commit_metadata` but
-    /// for the unlink path. The metastore impl invalidates its own
-    /// internal cache before the store delete, so concurrent readers
-    /// never observe a stale hit after the store delete.
-    pub(crate) fn commit_delete(&self, path: &str, mount_point: &str) -> Result<bool, KernelError> {
-        let del_result = self
-            .with_metastore(mount_point, move |ms| ms.delete(path))
-            .ok_or_else(|| {
-                KernelError::IOError(format!(
-                    "commit_delete({path}): no metastore wired for mount {mount_point}"
-                ))
-            })?;
-        let removed = del_result.map_err(|e| {
-            KernelError::IOError(format!("commit_delete({path}): metastore.delete: {e:?}"))
-        })?;
-        Ok(removed)
-    }
-
     /// Resolve metastore for a syscall: per-mount first, then global fallback.
     ///
     /// In federation mode each mount has its own state machine (Raft-backed
@@ -1038,12 +987,21 @@ impl Kernel {
         }
     }
 
+    /// Persist a metadata row.
+    ///
+    /// Routing zone is derived from ``metadata.zone_id`` — the row IS the
+    /// SSOT for which zone owns it, so callers don't pass a separate zone
+    /// parameter. ``None``/``"root"`` falls back to the root namespace.
     pub fn metastore_put(
         &self,
         path: &str,
         mut metadata: crate::meta_store::FileMetadata,
     ) -> Result<(), KernelError> {
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        let zone = metadata
+            .zone_id
+            .as_deref()
+            .unwrap_or(contracts::ROOT_ZONE_ID);
+        let mount_point = self.resolve_mount_point(path, zone);
         metadata.path = path.to_string();
         match self.with_metastore(&mount_point, move |ms| ms.put(path, metadata)) {
             Some(result) => {
@@ -1878,7 +1836,6 @@ impl Kernel {
     /// Write DT_PIPE inode to metastore + dcache (shared by create_pipe and SHM path).
     #[allow(dead_code)]
     fn write_pipe_inode(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         let meta = self.build_metadata(
             path,
             contracts::ROOT_ZONE_ID,
@@ -1890,13 +1847,12 @@ impl Kernel {
             None,
             None,
         );
-        self.commit_metadata(path, &mount_point, meta)
+        self.metastore_put(path, meta)
     }
 
-    /// Write DT_STREAM inode to metastore + dcache (shared by create_stream and SHM path).
+    /// Write DT_STREAM inode to metastore (shared by create_stream and SHM path).
     #[allow(dead_code)]
     fn write_stream_inode(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         let meta = self.build_metadata(
             path,
             contracts::ROOT_ZONE_ID,
@@ -1908,22 +1864,20 @@ impl Kernel {
             None,
             None,
         );
-        self.commit_metadata(path, &mount_point, meta)
+        self.metastore_put(path, meta)
     }
 
-    /// DT_DIR: create directory inode via metastore + dcache.
+    /// DT_DIR: create directory inode via metastore.
     fn setattr_create_dir(
         &self,
         path: &str,
         zone_id: &str,
     ) -> Result<SysSetAttrResult, KernelError> {
-        // Route first to locate the right per-mount metastore.
-        let mount_point = self.resolve_mount_point(path, zone_id);
-
         // Idempotent: if DT_DIR (or DT_MOUNT, which is directory-like since
         // a mount point IS a directory) already exists, no-op. This matches
         // ``mkdir(exist_ok=True)`` semantics — a mount creates the directory
         // slot, so a follow-up mkdir on the same path shouldn't fail.
+        let mount_point = self.resolve_mount_point(path, zone_id);
         let existing = self
             .with_metastore(&mount_point, |ms| ms.get(path).ok().flatten())
             .flatten();
@@ -1963,8 +1917,9 @@ impl Kernel {
             Some(now_ms),
             Some(now_ms),
         );
-        // Atomic commit — metastore (raft) first, dcache on success.
-        self.commit_metadata(path, &mount_point, meta)?;
+        // metastore_put derives routing zone from meta.zone_id — set it
+        // above (build_metadata writes zone_id), so this is zone-aware.
+        self.metastore_put(path, meta)?;
 
         Ok(SysSetAttrResult {
             path: path.to_string(),

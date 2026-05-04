@@ -27,6 +27,7 @@ from nexus.contracts.exceptions import (
 )
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
 from nexus.contracts.types import OperationContext
+from nexus.kernel_helpers import metastore_list_iter
 from nexus.lib.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -201,7 +202,7 @@ class MetadataMixin:
         parents_to_create: list[str] = []
 
         while parent_path and parent_path != "/":
-            if not self.metadata.exists(parent_path):
+            if not self._kernel.metastore_exists(parent_path):
                 parents_to_create.append(parent_path)
             else:
                 break
@@ -236,7 +237,7 @@ class MetadataMixin:
                     _meta.is_dir or _meta.is_mount or _meta.is_external_storage
                 ):
                     return True
-                return self.metadata.is_implicit_directory(path)
+                return self._kernel.metastore_is_implicit_directory(path)
             # Single Rust round-trip: dcache → metastore → implicit directory
             stat = self.sys_stat(path, context=context)
             return stat is not None and stat.get("is_directory", False)
@@ -271,7 +272,7 @@ class MetadataMixin:
         """
         self._resolve_cred(context)
         names: set[str] = set()
-        for meta in self.metadata.list("/"):
+        for meta in self._kernel.metastore_list("/"):
             if not (meta.is_mount or meta.is_external_storage):
                 continue
             top = meta.path.lstrip("/").split("/")[0]
@@ -883,7 +884,7 @@ class MetadataMixin:
             # the field (older entries) and finally to ROOT_ZONE_ID.
             route_zone = getattr(_pre_delete_meta, "zone_id", None) or zone_id or ROOT_ZONE_ID
             self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
-            self.metadata.delete(path)
+            self._kernel.metastore_delete(path)
             removed = self._driver_coordinator.unmount(path, route_zone)
             # Verify the kernel mount route is actually gone so a real
             # teardown failure surfaces even when unmount() reports
@@ -1112,7 +1113,7 @@ class MetadataMixin:
         path = self._validate_path(path)
 
         # Check if it's an implicit directory first (for permission check optimization)
-        is_implicit_dir = self.metadata.is_implicit_directory(path)
+        is_implicit_dir = self._kernel.metastore_is_implicit_directory(path)
 
         # Issue #1815: permission check via KernelDispatch INTERCEPT hook.
         ctx = self._resolve_cred(context)
@@ -1151,7 +1152,7 @@ class MetadataMixin:
             }
 
         # Get file metadata
-        meta = self.metadata.get(path)
+        meta = self._kernel.metastore_get(path)
         if meta is None:
             raise NexusFileNotFoundError(path)
 
@@ -1256,11 +1257,18 @@ class MetadataMixin:
         # is typically called on paths returned by list(). If a path isn't found,
         # we check if it's an implicit directory as a fallback.
         try:
-            batch_meta = self.metadata.get_batch(list(allowed_set))
+            allowed_paths = list(allowed_set)
+            batch_meta = dict(
+                zip(
+                    allowed_paths,
+                    self._kernel.metastore_get_batch(allowed_paths),
+                    strict=True,
+                )
+            )
             for path, meta in batch_meta.items():
                 if meta is None:
                     # Path not found in metadata - check if it's an implicit directory
-                    if self.metadata.is_implicit_directory(path):
+                    if self._kernel.metastore_is_implicit_directory(path):
                         results[path] = {
                             "size": 0,
                             "content_id": None,
@@ -1394,11 +1402,16 @@ class MetadataMixin:
                 results[path] = None
 
         # Batch fetch metadata from database
-        if valid_paths and hasattr(self.metadata, "get_batch"):
-            batch_metadata = self.metadata.get_batch(valid_paths)
+        if valid_paths:
+            batch_metadata = dict(
+                zip(
+                    valid_paths,
+                    self._kernel.metastore_get_batch(list(valid_paths)),
+                    strict=True,
+                )
+            )
         else:
-            # Fallback to individual fetches if get_batch not available
-            batch_metadata = {p: self.metadata.get(p) for p in valid_paths}
+            batch_metadata = {}
 
         # Process results with permission checks
         for path in valid_paths:
@@ -1660,7 +1673,7 @@ class MetadataMixin:
             if (
                 not recursive
                 and entry.entry_type == 0
-                and self.metadata.is_implicit_directory(entry.path)
+                and self._kernel.metastore_is_implicit_directory(entry.path)
             )
             else entry.entry_type,
             "zone_id": entry.zone_id,
@@ -1857,7 +1870,7 @@ class MetadataMixin:
 
             items_iter = (
                 e
-                for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
+                for e in metastore_list_iter(self._kernel, prefix=prefix, recursive=recursive)
                 if not self._is_internal_path(e.path) and _zone_allowed(e)
             )
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
@@ -1874,7 +1887,7 @@ class MetadataMixin:
         # true streaming requires a Rust-level paginated API (future work).
         entries_iter = (
             e
-            for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
+            for e in metastore_list_iter(self._kernel, prefix=prefix, recursive=recursive)
             if not self._is_internal_path(e.path) and _zone_allowed(e)
         )
         if details:
@@ -1902,8 +1915,14 @@ class MetadataMixin:
         Returns:
             Dict with entries_created count
         """
-        created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
-        return {"entries_created": created, "prefix": prefix}
+        # backfill_directory_index never had a kernel-side equivalent;
+        # the legacy ``RaftMetadataStore`` exposed it as part of the
+        # sparse-index optimisation that is no longer load-bearing
+        # (kernel-internal metastores keep their own DashMap projection
+        # so list lookups don't need a backfill pass). Returning zero
+        # keeps the RPC entry-point a no-op rather than raising.
+        del zone_id
+        return {"entries_created": 0, "prefix": prefix}
 
     @rpc_expose(description="Flush pending write observer events to DB", admin_only=True)
     def flush_write_observer(

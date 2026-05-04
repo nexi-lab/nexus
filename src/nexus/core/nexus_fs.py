@@ -966,8 +966,8 @@ class NexusFS(  # type: ignore[misc]
         if self._kernel is not None:
             self._kernel.service_close_all()
 
-        # Close metadata store
-        self.metadata.close()
+        # Metadata store close is a no-op — kernel manages the redb
+        # lifecycle via ``release_metastores`` below.
 
         # Release Rust-owned redb/SQLite file handles. Without this call the
         # Rust kernel keeps the metastore Box alive until Python GC runs —

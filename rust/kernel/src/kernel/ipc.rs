@@ -12,15 +12,13 @@ impl Kernel {
 
     /// Create a pipe buffer in the IPC registry.
     ///
-    /// PipeManager owns the buffer; Kernel persists DT_PIPE inode to
-    /// metastore + dcache so sys_read/sys_write dispatch to IPC fast-path.
+    /// PipeManager owns the buffer; Kernel persists DT_PIPE inode so
+    /// sys_read/sys_write dispatch to IPC fast-path.
     pub fn create_pipe(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
         self.pipe_manager
             .create(path, capacity)
             .map_err(pipe_mgr_err)?;
 
-        // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests).
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         let meta = self.build_metadata(
             path,
             contracts::ROOT_ZONE_ID,
@@ -32,7 +30,7 @@ impl Kernel {
             None,
             None,
         );
-        self.commit_metadata(path, &mount_point, meta)?;
+        self.metastore_put(path, meta)?;
 
         Ok(())
     }
@@ -41,10 +39,7 @@ impl Kernel {
     pub fn destroy_pipe(&self, path: &str) -> Result<(), KernelError> {
         self.pipe_manager.destroy(path).map_err(pipe_mgr_err)?;
 
-        // Atomic delete — metastore (raft) first, dcache eviction on
-        // success.
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
-        self.commit_delete(path, &mount_point)?;
+        self.metastore_delete(path)?;
 
         Ok(())
     }
@@ -109,7 +104,6 @@ impl Kernel {
             .create(path, capacity)
             .map_err(stream_mgr_err)?;
 
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
         let meta = self.build_metadata(
             path,
             contracts::ROOT_ZONE_ID,
@@ -121,7 +115,7 @@ impl Kernel {
             None,
             None,
         );
-        self.commit_metadata(path, &mount_point, meta)?;
+        self.metastore_put(path, meta)?;
 
         Ok(())
     }
@@ -130,10 +124,7 @@ impl Kernel {
     pub fn destroy_stream(&self, path: &str) -> Result<(), KernelError> {
         self.stream_manager.destroy(path).map_err(stream_mgr_err)?;
 
-        // Atomic delete — metastore (raft) first, dcache eviction on
-        // success.
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
-        self.commit_delete(path, &mount_point)?;
+        self.metastore_delete(path)?;
 
         Ok(())
     }

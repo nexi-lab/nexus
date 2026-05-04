@@ -48,7 +48,7 @@ def _build_fs(tmp_path: Path) -> NexusFS:
 
     # Mount via coordinator (registers in backend pool + routing table + hooks)
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-    metastore.put(_make_mount_entry("/local", backend.name))
+    metastore.metastore_put(_make_mount_entry("/local", backend.name))
 
     return kernel
 

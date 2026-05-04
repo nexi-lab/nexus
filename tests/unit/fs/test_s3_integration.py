@@ -59,7 +59,7 @@ def s3_fs(tmp_path: Path):
             is_admin=True,
         )
         kernel.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=backend)
-        metastore.put(_make_mount_entry(mount_point, backend.name))
+        metastore.metastore_put(_make_mount_entry(mount_point, backend.name))
 
         yield kernel, mount_point
 

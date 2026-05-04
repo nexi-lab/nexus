@@ -28,7 +28,7 @@ use kernel::core::dcache::DT_MOUNT;
 use kernel::kernel::Kernel;
 
 use nexus_raft::distributed_coordinator::{
-    bootstrap_or_join_root, read_or_mint_node_id, validate_peers_excludes_self,
+    bootstrap_or_join_zone, read_or_mint_node_id, validate_peers_excludes_self,
 };
 use nexus_raft::federation::{parse_federation_env, ENV_FEDERATION_MOUNTS, ENV_FEDERATION_ZONES};
 use nexus_raft::transport::{bootstrap_tls, NodeAddress};
@@ -207,7 +207,7 @@ async fn main() -> Result<()> {
 /// `node_id` minted/loaded from `<data_dir>/.node_id` plus the
 /// structured peer address book and self-address derived from
 /// `--bind-addr`/`--hostname`.  `run_daemon` hands the lot to
-/// [`bootstrap_or_join_root`] which owns the actual root-zone
+/// [`bootstrap_or_join_zone`] which owns the actual root-zone
 /// dispatch.
 struct ZoneManagerBundle {
     zm: std::sync::Arc<ZoneManager>,
@@ -268,7 +268,7 @@ fn open_zone_manager(common: &CommonArgs) -> Result<ZoneManagerBundle> {
     // Parse `--peers` into structured `NodeAddress` entries — address
     // book only.  ZoneManager seeds its transport peer map from this;
     // ConfState is independent (mutated only by ConfChange via
-    // JoinZone driven by `bootstrap_or_join_root`).
+    // JoinZone driven by `bootstrap_or_join_zone`).
     let peer_addrs: Vec<NodeAddress> = NodeAddress::parse_peer_list(&common.peers, use_tls)
         .map_err(|e| anyhow::anyhow!("--peers/NEXUS_PEERS parse: {}", e))?;
     let peers_str: Vec<String> = peer_addrs.iter().map(NodeAddress::to_raft_peer_str).collect();
@@ -340,7 +340,7 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true"))
         .unwrap_or(false);
 
-    // `bootstrap_or_join_root` is a sync helper that, in branch 3
+    // `bootstrap_or_join_zone` is a sync helper that, in branch 3
     // (wait-and-join), spins a nested `tokio::runtime` to drive the
     // JoinZone retry loop's RPCs.  Python `nexusd::init_from_env`
     // calls it from a sync PyO3 entry point — no outer runtime — so
@@ -356,17 +356,19 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     let self_addr_for_bootstrap = self_address.clone();
     let peer_addrs_for_bootstrap = peer_addrs.clone();
     tokio::task::spawn_blocking(move || {
-        bootstrap_or_join_root(
+        bootstrap_or_join_zone(
             zm_for_bootstrap.as_ref(),
+            "root",
             node_id,
             &self_addr_for_bootstrap,
             &peer_addrs_for_bootstrap,
             bootstrap_new,
+            /* max_attempts */ None, // daemon boot — retry forever
         )
     })
     .await
     .map_err(|e| anyhow::anyhow!("bootstrap join task panicked: {}", e))?
-    .map_err(|e| anyhow::anyhow!("bootstrap_or_join_root: {}", e))?;
+    .map_err(|e| anyhow::anyhow!("bootstrap_or_join_zone: {}", e))?;
 
     // `bootstrap_static` — invoked below when federation env vars are
     // set — is `NEXUS_FEDERATION_ZONES`/`_MOUNTS` driven and only
@@ -479,6 +481,27 @@ async fn run_share(
         zm.create_zone(new_zone_id, peers_str)
             .map_err(|e| anyhow::anyhow!("create_zone({}): {}", new_zone_id, e))?;
     }
+
+    // ``share_subtree_core`` is a leader-required raft proposal
+    // against ``parent_zone``.  The freshly-opened ZoneManager has
+    // not finished election yet, so without this wait we hit
+    // ``NotLeader { leader_hint: Some(self_id) }`` — surfaced today
+    // during cross-machine smoke (PR #4014 follow-up).  10 s covers
+    // a few election timeouts; if we still are not leader, quorum
+    // for ``parent_zone`` is unreachable and the operator must
+    // resolve that before retrying.
+    let parent_handle = zm.get_zone(parent_zone).ok_or_else(|| {
+        anyhow::anyhow!("share: parent zone '{}' not found in storage", parent_zone)
+    })?;
+    if !parent_handle.wait_for_leader(std::time::Duration::from_secs(10)) {
+        anyhow::bail!(
+            "share: did not become leader of '{}' within 10s (leader hint: {:?}); \
+             quorum for parent zone is unreachable from this node",
+            parent_zone,
+            parent_handle.leader_id(),
+        );
+    }
+
     let copied = zm
         .share_subtree_core(parent_zone, path, new_zone_id)
         .map_err(|e| anyhow::anyhow!("share_subtree: {}", e))?;
@@ -587,17 +610,57 @@ async fn run_join(
     local_path: &str,
     parent_zone: &str,
 ) -> Result<()> {
-    let ZoneManagerBundle { zm, .. } = open_zone_manager(&common)?;
-    // Treat the supplied peer as the only known voter; raft will
-    // discover the rest via the remote's ConfState once we propose.
-    let peers = vec![peer_addr.to_string()];
+    let ZoneManagerBundle {
+        zm,
+        node_id,
+        self_address,
+        ..
+    } = open_zone_manager(&common)?;
 
-    if zm.get_zone(remote_zone_id).is_none() {
-        // CLI `join` defaults to full voter; learner promotion is reserved
-        // for the gRPC path (PyZoneManager.join_zone exposes the flag).
-        zm.join_zone(remote_zone_id, peers, false)
-            .map_err(|e| anyhow::anyhow!("join_zone({}): {}", remote_zone_id, e))?;
-    }
+    // Pre-#3996 (and pre-this commit) ``run_join`` only invoked
+    // ``zm.join_zone(remote_zone_id, peers, false)`` — that registers
+    // the zone locally with ``skip_bootstrap=true`` but never tells
+    // the leader on ``peer_addr`` "I want in".  No JoinZone RPC fires,
+    // no AddNode commits, the joiner waits forever after restart.
+    //
+    // Drive the same SSOT machinery ``init_from_env`` and
+    // ``run_daemon`` use for the root zone:
+    // ``bootstrap_or_join_zone`` with ``bootstrap_new=false``.  That
+    // (a) registers the zone locally with ``skip_bootstrap=true`` so
+    // the local gRPC server can serve append-entries from the leader
+    // once AddNode commits, then (b) sends ``JoinZone`` RPC to
+    // ``peer_addr``, then (c) returns once the leader's response
+    // confirms AddNode + the snapshot has installed authoritative
+    // ConfState locally.
+    //
+    // ``max_attempts=Some(15)`` × ``JOIN_ZONE_RETRY_INTERVAL`` (2 s)
+    // ≈ 30 s upper bound on the operator command — long enough to
+    // absorb a leader election round on the remote, short enough that
+    // a stuck command terminates with a clear error rather than
+    // hanging forever like the daemon-boot path does.
+    let use_tls = !common.no_tls;
+    let peer = NodeAddress::parse(peer_addr, use_tls)
+        .map_err(|e| anyhow::anyhow!("--peer-addr parse '{}': {}", peer_addr, e))?;
+    let peer_addrs = vec![peer];
+
+    let zm_for_join = zm.clone();
+    let self_addr_for_join = self_address.clone();
+    let zone_id_for_join = remote_zone_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        nexus_raft::distributed_coordinator::bootstrap_or_join_zone(
+            zm_for_join.as_ref(),
+            &zone_id_for_join,
+            node_id,
+            &self_addr_for_join,
+            &peer_addrs,
+            /* bootstrap_new */ false,
+            /* max_attempts */ Some(15),
+        )
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("join task panicked: {}", e))?
+    .map_err(|e| anyhow::anyhow!("bootstrap_or_join_zone({}): {}", remote_zone_id, e))?;
+
     zm.mount(parent_zone, local_path, remote_zone_id, true)
         .map_err(|e| anyhow::anyhow!("mount: {}", e))?;
 

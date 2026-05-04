@@ -47,11 +47,20 @@ transport = { workspace = true, features = ["python"] }
 # linkage shape: pyo3 does NOT link libpython itself; the .so is
 # loaded by the running Python which provides the symbols.
 pyo3 = { version = "0.27.2", features = ["extension-module"] }
-# Cross-repo runtime-body adapter — provides
-# `install_managed_agent_with_sudocode_spawn(kernel)` which wires
-# `sudocode_runtime::spawn_task` as the `SpawnTask<Kernel>`
-# provider on `services::managed_agent::ManagedAgentService`.
-# Cluster binary depends on the same rlib for runtime-body parity;
-# the cross-repo git-dep on sudocode-runtime is centralised in
-# `managed-agent-runtime/Cargo.toml`, not duplicated here.
-managed-agent-runtime = { workspace = true }
+# Sudo-code runtime — provides `runtime::spawn_task<K: KernelAbi>`
+# that the cdylib boot wires into ManagedAgentService via the
+# `SpawnTask` DI trait defined in `services::managed_agent`.
+#
+# Cross-repo coupling lives **here** at the binary-edge cdylib
+# (the allowed seam) instead of in services rlib — services stays
+# runtime-agnostic and ships in the slim cluster binary path
+# without the sudocode dep. Cdylib path is the Python wheel where
+# wiring sudocode-as-managed-agent-runtime is the deployment
+# default; no extra wrapper crate.
+#
+# Lockstep merge order: when sudocode PR sudoprivacy/sudocode#99
+# merges to main, bump rev pin to that commit. The current rev
+# (sudocode branch HEAD `2b67d5b`) stays reachable in git history
+# even after sudocode merges, so re-pinning is optional for
+# correctness — only matters for reproducibility audit.
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "2b67d5b452ea69b8ea4aba1fca3fa73588df60da" }

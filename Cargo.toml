@@ -14,12 +14,6 @@ members = [
     "rust/backends",
     "rust/services",
     "rust/raft",
-    # Cross-repo runtime-body adapter (PR-C v1) — wraps third-party
-    # runtime crates (today: sudocode-runtime) as concrete
-    # `services::managed_agent::SpawnTask<Kernel>` impls. Both
-    # binary edges (cdylib + cluster binary) depend on this rlib so
-    # the managed-agent runtime body is wired in one place.
-    "rust/managed-agent-runtime",
     # Deployment binaries.
     "rust/profiles/cluster",
     # Build artifact: Python wheel cdylib.
@@ -38,7 +32,6 @@ contracts = { path = "rust/contracts" }
 lib = { path = "rust/lib" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
-managed-agent-runtime = { path = "rust/managed-agent-runtime" }
 # Driver impls. `default-features = false` so transitive workspace
 # consumers (e.g. `nexus-cluster`) can pick a slim driver set without
 # fighting Cargo's feature unification.  Crates that want the full

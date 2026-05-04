@@ -1976,15 +1976,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "managed-agent-runtime"
-version = "0.10.0"
-dependencies = [
- "kernel",
- "runtime",
- "services",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2094,9 +2085,9 @@ dependencies = [
  "backends",
  "kernel",
  "lib",
- "managed-agent-runtime",
  "pyo3",
  "raft 0.1.0",
+ "runtime",
  "services",
  "transport",
 ]
@@ -2111,7 +2102,6 @@ dependencies = [
  "contracts",
  "gethostname",
  "kernel",
- "managed-agent-runtime",
  "raft 0.1.0",
  "tokio",
  "tracing",

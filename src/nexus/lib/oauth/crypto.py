@@ -136,7 +136,7 @@ class OAuthCrypto:
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("OAuthCrypto: No key found in store, generating new one")
-            new_key = Fernet.generate_key().decode("utf-8")
+            new_key: str = Fernet.generate_key().decode("utf-8")
 
             self._settings_store.set_setting(
                 OAUTH_ENCRYPTION_KEY_NAME,

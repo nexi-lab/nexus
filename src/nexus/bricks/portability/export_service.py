@@ -314,6 +314,8 @@ class ZoneExportService:
         # Get all files from metadata store
         # Note: The actual implementation depends on the metadata store API
         prefix = options.path_prefix or ""
+        if self._kernel is None:
+            raise RuntimeError("ZoneExportService requires a kernel-backed NexusFS")
         all_files = list(self._kernel.metastore_list(prefix))
 
         # Apply zone filter if metadata store doesn't do it

@@ -769,7 +769,7 @@ class MetadataMixin:
         # so refuse rather than silently lose rollback data.  None is
         # still legitimate (implicit dirs / external storage entries
         # carry no metastore row).
-        _pre_delete_meta = self.metadata.get(path)
+        _pre_delete_meta = self._kernel.metastore_get(path)
 
         # ── Call Rust — handles DT_REG, DT_PIPE, DT_STREAM, DT_DIR, DT_MOUNT ──
         zone_id, agent_id, is_admin = self._get_context_identity(context)
@@ -1514,7 +1514,7 @@ class MetadataMixin:
                 # enumeration in a per-path try so a degraded metastore
                 # doesn't abort the whole batch (round 3 finding).
                 try:
-                    is_implicit = self.metadata.is_implicit_directory(normalized)
+                    is_implicit = self._kernel.metastore_is_implicit_directory(normalized)
                 except Exception as e:
                     results[path] = {"success": False, "error": str(e)}
                     continue
@@ -1563,8 +1563,10 @@ class MetadataMixin:
                         # a "looks empty" verdict.  Success requires
                         # both probes to confirm absence.
                         try:
-                            explicit_after = self.metadata.get(normalized)
-                            implicit_after = self.metadata.is_implicit_directory(normalized)
+                            explicit_after = self._kernel.metastore_get(normalized)
+                            implicit_after = self._kernel.metastore_is_implicit_directory(
+                                normalized
+                            )
                         except Exception as e:
                             results[path] = {
                                 "success": False,

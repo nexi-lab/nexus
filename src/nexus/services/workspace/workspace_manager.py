@@ -287,7 +287,7 @@ class WorkspaceManager:
                 workspace_prefix += "/"
 
             # Get current workspace files
-            current_files = self.metadata.list(prefix=workspace_prefix)
+            current_files = self._kernel.metastore_list(workspace_prefix)
             current_paths = {
                 f.path[len(workspace_prefix) :]
                 for f in current_files
@@ -300,7 +300,7 @@ class WorkspaceManager:
             for current_path in current_paths:
                 if current_path not in manifest_paths and not current_path.endswith("/"):
                     full_path = workspace_prefix + current_path
-                    self.metadata.delete(full_path)
+                    self._kernel.metastore_delete(full_path)
                     files_deleted += 1
 
             # Restore files from snapshot
@@ -317,7 +317,7 @@ class WorkspaceManager:
                 full_path = workspace_prefix + rel_path
 
                 # Check if file exists with same content
-                existing = self.metadata.get(full_path)
+                existing = self._kernel.metastore_get(full_path)
                 if existing and existing.content_id == entry.content_id:
                     continue  # Already up to date
 
@@ -331,7 +331,7 @@ class WorkspaceManager:
                     modified_at=datetime.now(UTC),
                     version=1,  # Will be updated by metadata store  # Track who restored this version
                 )
-                self.metadata.put(file_meta)
+                self._kernel.metastore_put(file_meta)
                 files_restored += 1
 
             return {

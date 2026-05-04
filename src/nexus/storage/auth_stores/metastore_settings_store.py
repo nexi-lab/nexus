@@ -36,9 +36,7 @@ class MetastoreSettingsStore:
 
     def __init__(self, metastore: Any) -> None:
         self._metastore = metastore
-        self._kernel = (
-            metastore if not hasattr(metastore, "_rust_kernel") else metastore._rust_kernel
-        )
+        self._kernel = metastore
 
     def get_setting(self, key: str) -> SystemSettingDTO | None:
         fm = self._kernel.metastore_get(f"{_CFG_PREFIX}{key}")

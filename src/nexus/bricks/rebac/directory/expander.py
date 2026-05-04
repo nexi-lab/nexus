@@ -127,21 +127,13 @@ class DirectoryExpander:
         self._metadata_store = metadata_store
         # Pull the kernel out of the proxy so calls go to ``kernel.metastore_*``
         # directly (and survive W3).
-        self._kernel: Any = (
-            metadata_store
-            if metadata_store is not None and not hasattr(metadata_store, "_rust_kernel")
-            else (metadata_store._rust_kernel if metadata_store is not None else None)
-        )
+        self._kernel: Any = metadata_store
         self._version_store = version_store
 
     def set_metadata_store(self, metadata_store: Any) -> None:
         """Set the metadata store reference for directory queries."""
         self._metadata_store = metadata_store
-        self._kernel = (
-            metadata_store
-            if metadata_store is not None and not hasattr(metadata_store, "_rust_kernel")
-            else (metadata_store._rust_kernel if metadata_store is not None else None)
-        )
+        self._kernel = metadata_store
 
     # -- Path detection ----------------------------------------------------
 

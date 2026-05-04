@@ -61,11 +61,7 @@ class CASGarbageCollector:
     ) -> None:
         self._engine = engine
         self._metastore = metastore
-        self._kernel = (
-            metastore
-            if metastore is not None and not hasattr(metastore, "_rust_kernel")
-            else (metastore._rust_kernel if metastore is not None else None)
-        )
+        self._kernel = metastore
         self._grace_period = grace_period
         self._scan_interval = scan_interval
         self._task: asyncio.Task[None] | None = None
@@ -74,11 +70,7 @@ class CASGarbageCollector:
     def set_metastore(self, metastore: Any) -> None:
         """Deferred injection — metastore may not be available at construction time."""
         self._metastore = metastore
-        self._kernel = (
-            metastore
-            if metastore is not None and not hasattr(metastore, "_rust_kernel")
-            else (metastore._rust_kernel if metastore is not None else None)
-        )
+        self._kernel = metastore
 
     def start(self) -> None:
         """Start GC background task in the current event loop."""

@@ -41,11 +41,7 @@ class DescendantAccessChecker:
         self._metadata_store = metadata_store
         # Pull the kernel out of the proxy so listing goes directly to
         # ``kernel.metastore_*`` (survives W3).
-        self._kernel: Any = (
-            metadata_store
-            if metadata_store is not None and not hasattr(metadata_store, "_rust_kernel")
-            else (metadata_store._rust_kernel if metadata_store is not None else None)
-        )
+        self._kernel: Any = metadata_store
 
     # ------------------------------------------------------------------
     # Public API

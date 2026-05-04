@@ -105,13 +105,7 @@ class TransactionalSnapshotService:
         self._session_factory = record_store.session_factory
         self._cas_store = cas_store
         self._metadata_store = metadata_store
-        # Accept either a bare ``PyKernel`` (post-W3b factory wiring) or a
-        # legacy ``RustMetastoreProxy`` shim (pre-W3b: unwrap _rust_kernel).
-        self._kernel = (
-            metadata_store
-            if not hasattr(metadata_store, "_rust_kernel")
-            else metadata_store._rust_kernel
-        )
+        self._kernel = metadata_store
         self._metadata_factory = metadata_factory
         self._registry = TransactionRegistry()
 

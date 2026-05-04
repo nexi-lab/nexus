@@ -68,11 +68,7 @@ class VirtualViewResolver(VFSPathResolver):
     ) -> None:
         self._metadata = metadata
         # Pull the kernel out of the proxy for direct ``metastore_*`` callbacks.
-        self._kernel: Any = (
-            metadata._rust_kernel
-            if metadata is not None and hasattr(metadata, "_rust_kernel")
-            else metadata
-        )
+        self._kernel: Any = metadata
         self._dlc = dlc
         self._permission_checker = permission_checker
         self._parse_fn = parse_fn

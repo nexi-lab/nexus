@@ -106,11 +106,7 @@ class VersionService:
         """
         self.metadata = metadata_store
         # Accept either a bare ``PyKernel`` or a legacy proxy shim.
-        self._kernel = (
-            metadata_store
-            if not hasattr(metadata_store, "_rust_kernel")
-            else metadata_store._rust_kernel
-        )
+        self._kernel = metadata_store
         self.cas = cas_store
         self._permission_enforcer = permission_enforcer
         self._dlc = dlc

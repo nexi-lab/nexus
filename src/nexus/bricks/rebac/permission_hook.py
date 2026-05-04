@@ -86,11 +86,7 @@ class PermissionCheckHook:
         self._metadata_store = metadata_store
         # Extract the kernel from the proxy so per-call lookups go directly
         # to ``kernel.metastore_*`` (and survive W3, which deletes the proxy).
-        self._kernel: Any = (
-            metadata_store
-            if metadata_store is not None and not hasattr(metadata_store, "_rust_kernel")
-            else (metadata_store._rust_kernel if metadata_store is not None else None)
-        )
+        self._kernel: Any = metadata_store
         self._default_context = default_context
         self._enforce_permissions = enforce_permissions
         self._permission_enforcer = permission_enforcer

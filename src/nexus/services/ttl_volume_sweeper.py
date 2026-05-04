@@ -55,11 +55,7 @@ class TTLVolumeSweeper:
     ) -> None:
         self._transport = transport
         self._metastore = metastore
-        self._kernel: Any = (
-            metastore
-            if metastore is not None and not hasattr(metastore, "_rust_kernel")
-            else (metastore._rust_kernel if metastore is not None else None)
-        )
+        self._kernel: Any = metastore
         self._interval = interval
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -67,11 +63,7 @@ class TTLVolumeSweeper:
     def set_metastore(self, metastore: Any) -> None:
         """Deferred injection — metastore may not be available at construction time."""
         self._metastore = metastore
-        self._kernel = (
-            metastore
-            if metastore is not None and not hasattr(metastore, "_rust_kernel")
-            else (metastore._rust_kernel if metastore is not None else None)
-        )
+        self._kernel = metastore
 
     async def start(self) -> None:
         """Start the background sweep loop."""

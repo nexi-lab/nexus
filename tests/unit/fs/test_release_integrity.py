@@ -218,7 +218,7 @@ class TestConcurrentMetastore:
 
         # Verify all entries were written
         verify = SQLiteMetastore(db_path)
-        total = len(verify.list(prefix="/", recursive=True))
+        total = len(list(verify.metastore_list("/")))
         pass  # kernel manages redb lifecycle
         assert total == n_threads * n_ops
 

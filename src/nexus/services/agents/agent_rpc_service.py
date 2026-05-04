@@ -52,9 +52,7 @@ class AgentRPCService:
         self._vfs = vfs
         # Accept either a bare ``PyKernel`` or a legacy proxy shim.
         self._metastore = metastore
-        self._kernel = (
-            metastore if not hasattr(metastore, "_rust_kernel") else metastore._rust_kernel
-        )
+        self._kernel = metastore
         self._session_factory = session_factory
         self._record_store = record_store
         self._agent_registry = agent_registry

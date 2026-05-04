@@ -30,11 +30,7 @@ class ContentParserEngine:
     ) -> None:
         self._metadata = metadata
         # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
-        self._kernel = (
-            metadata._rust_kernel
-            if metadata is not None and hasattr(metadata, "_rust_kernel")
-            else metadata
-        )
+        self._kernel = metadata
         self._provider_registry = provider_registry
 
     async def get_parsed_content_async(

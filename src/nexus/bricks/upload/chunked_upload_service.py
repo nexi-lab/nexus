@@ -99,11 +99,7 @@ class ChunkedUploadService:
         self._metadata_store = metadata_store
         # Pull the kernel out of the proxy so the metadata put inside
         # ``finalize`` lands on ``kernel.metastore_*`` (survives W3).
-        self._kernel = (
-            metadata_store
-            if metadata_store is not None and not hasattr(metadata_store, "_rust_kernel")
-            else (metadata_store._rust_kernel if metadata_store is not None else None)
-        )
+        self._kernel = metadata_store
         self._config = config or ChunkedUploadConfig()
 
         self._semaphore = asyncio.Semaphore(self._config.max_concurrent_uploads)

@@ -1,5 +1,5 @@
-//! `KernelAbi` — the canonical Rust syscall + accessor surface for
-//! every in-process Rust service.
+//! `KernelAbi` — the canonical Rust syscall surface that every
+//! in-process Rust service uses to reach the kernel.
 //!
 //! All Rust services (in-tree `services::*` and any future
 //! managed-agent runtime that lives alongside them) reach kernel
@@ -12,38 +12,41 @@
 //! Linux's `include/linux/` syscall ABI surface, lifted into Rust as
 //! a single trait. The trait declaration lives in `kernel::abi`
 //! rather than in the `contracts` crate to keep the
-//! kernel-internal result types (`SysReadResult`, `KernelError`,
-//! `WalStreamCore`, …) on their existing module path; promoting
-//! them to `contracts` is a future cleanup that does not block the
-//! ABI shape.
+//! kernel-internal result types (`SysReadResult`, `KernelError`, …)
+//! on their existing module path.
 //!
-//! Surface scope: only what services actually call today (cf. the
-//! per-service inventory in nexus-para-pc-3 plan §"KernelAbi Trait
-//! Surface Inventory"). Methods are added as new consumers need
-//! them; not 1:1 with `Kernel`'s full pub fn list.
+//! ## Surface scope
+//!
+//! Trait methods are 1:1 with the inherent `Kernel::sys_*` syscalls —
+//! same name, same signature. No invented syscalls. No
+//! kernel-internal struct accessors (`vfs_router_arc`,
+//! `agent_registry`, `distributed_coordinator`, …); services that
+//! need those reach them through the production-only
+//! `impl ManagedAgentService<Kernel>` install paths or through
+//! syscalls (a future `/__sys__/agents/{pid}/...` metadata-syscall
+//! migration tracks the AgentRegistry case).
+//!
+//! `is_federation_initialized` is the one high-level probe in the
+//! trait — it wraps `distributed_coordinator().is_initialized(self)`
+//! because services need the boolean, not the coordinator handle.
 
 use std::sync::Arc;
 
 use contracts::{OperationContext, RustService};
 
-use crate::core::agents::registry::AgentRegistry;
 use crate::core::dispatch::NativeInterceptHook;
-use crate::core::stream::wal::WalStreamCore;
-use crate::core::vfs_router::VFSRouter;
-use crate::hal::distributed_coordinator::DistributedCoordinator;
 use crate::kernel::{
-    KernelError, SysReadResult, SysSetAttrResult, SysUnlinkResult, SysWriteResult,
+    KernelError, StatResult, SysReadResult, SysSetAttrResult, SysUnlinkResult, SysWriteResult,
 };
-use crate::meta_store::FileMetadata;
 
-/// Canonical syscall + accessor surface that every Rust service
-/// uses to reach the kernel.
+/// Canonical syscall surface that every Rust service uses to reach
+/// the kernel.
 ///
-/// Bounds: `Send + Sync + 'static` so consumers can pass
-/// `Arc<K>` across thread boundaries (the managed-agent runtime
-/// spawns OS threads that hold a kernel handle).
+/// Bounds: `Send + Sync + 'static` so consumers can pass `Arc<K>`
+/// across thread boundaries (the managed-agent runtime spawns OS
+/// threads that hold a kernel handle).
 pub trait KernelAbi: Send + Sync + 'static {
-    // ── Syscalls ─────────────────────────────────────────────────────
+    // ── Syscalls (1:1 with inherent `Kernel::sys_*`) ────────────────
 
     fn sys_read(
         &self,
@@ -68,34 +71,47 @@ pub trait KernelAbi: Send + Sync + 'static {
         recursive: bool,
     ) -> Result<SysUnlinkResult, KernelError>;
 
-    /// Service-facing subset of `Kernel::sys_setattr`. Covers the
-    /// DT_DIR / DT_LINK / DT_STREAM / UPDATE shapes services use;
-    /// DT_MOUNT params (backend / metastore / raft_backend / source /
-    /// remote_metastore) stay on the inherent `sys_setattr` because
-    /// they are kernel-construction concerns, not service-call
-    /// concerns.
+    /// Full inherent `sys_setattr` signature (17 args). Kernel-internal
+    /// types (`Arc<dyn ObjectStore>`, `Arc<dyn MetaStore>`, `Box<dyn
+    /// Any + Send + Sync>`) appear here because the trait lives in
+    /// the kernel crate. Service callers that don't touch DT_MOUNT
+    /// pass `""` / `None` for the mount-only params; production
+    /// labelling (`/* backend */ None`, `/* metastore */ None`, …)
+    /// keeps callsites readable.
     #[allow(clippy::too_many_arguments)]
-    fn sys_setattr_simple(
+    fn sys_setattr(
         &self,
         path: &str,
         entry_type: i32,
-        zone_id: &str,
-        capacity: usize,
+        backend_name: &str,
+        backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
+        metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
+        raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
         io_profile: &str,
+        zone_id: &str,
+        is_external: bool,
+        capacity: usize,
+        read_fd: Option<i32>,
+        write_fd: Option<i32>,
         mime_type: Option<&str>,
+        modified_at_ms: Option<i64>,
         link_target: Option<&str>,
+        source: Option<&str>,
+        remote_metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
     ) -> Result<SysSetAttrResult, KernelError>;
+
+    fn sys_stat(&self, path: &str, zone_id: &str) -> Option<StatResult>;
 
     /// Backend-direct readdir (bypasses native hooks). Used by ACP
     /// to scan `/__sys__/agents/` and `/__proc__/` without firing
     /// the agent-status pre-hook on every entry.
     fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String>;
 
-    /// DT_PIPE creation helper.  Used by `AcpSubprocess::spawn` to
+    /// DT_PIPE creation helper. Used by `AcpSubprocess::spawn` to
     /// surface the agent's stdio fds inside VFS as
-    /// `/{zone}/proc/{pid}/fd/{0,1,2}`.  Stays a dedicated method
+    /// `/{zone}/proc/{pid}/fd/{0,1,2}`. Stays a dedicated method
     /// because the `read_fd` / `write_fd` shape is pipe-specific and
-    /// does not generalise into `sys_setattr_simple`.
+    /// does not generalise into the generic `sys_setattr` matrix.
     fn setattr_pipe(
         &self,
         path: &str,
@@ -106,12 +122,8 @@ pub trait KernelAbi: Send + Sync + 'static {
         zone_id: &str,
     ) -> Result<SysSetAttrResult, KernelError>;
 
-    // ── Metastore (single-key surface used by services) ──────────────
-
-    fn metastore_get(&self, path: &str) -> Result<Option<FileMetadata>, KernelError>;
-    fn metastore_delete(&self, path: &str) -> Result<bool, KernelError>;
-
-    // ── Hook + service registration ─────────────────────────────────
+    // ── Install-time control plane (LSM-style hook + Rust service
+    //    registry) ────────────────────────────────────────────────
 
     fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>);
 
@@ -122,29 +134,13 @@ pub trait KernelAbi: Send + Sync + 'static {
         deps: Vec<String>,
     ) -> Result<(), String>;
 
-    // ── Accessors returning shared SSOT handles ─────────────────────
-
-    fn agent_registry(&self) -> &Arc<AgentRegistry>;
-
-    fn distributed_coordinator(&self) -> Arc<dyn DistributedCoordinator>;
+    // ── High-level federation probe ─────────────────────────────────
 
     /// True once `init_federation_from_env` has completed — the same
-    /// readiness probe `setattr_mount` uses.  Service-level callers
-    /// reach the federation state through this helper rather than
-    /// `distributed_coordinator().is_initialized(&Kernel)` directly,
-    /// because the latter takes a `&Kernel` argument that
-    /// monomorphisable callers cannot produce.
+    /// readiness probe `setattr_mount` uses. Wraps
+    /// `distributed_coordinator().is_initialized(self)` so service
+    /// callers don't need to reach the coordinator handle.
     fn is_federation_initialized(&self) -> bool;
-
-    fn vfs_router_arc(&self) -> Arc<VFSRouter>;
-
-    // ── Audit stream lifecycle ──────────────────────────────────────
-
-    fn prepare_audit_stream(
-        &self,
-        zone_id: &str,
-        stream_path: &str,
-    ) -> Result<Arc<WalStreamCore>, KernelError>;
 }
 
 // ── `impl KernelAbi for Kernel` ──────────────────────────────────────
@@ -184,35 +180,50 @@ impl KernelAbi for crate::kernel::Kernel {
         Self::sys_unlink(self, path, ctx, recursive)
     }
 
-    fn sys_setattr_simple(
+    fn sys_setattr(
         &self,
         path: &str,
         entry_type: i32,
-        zone_id: &str,
-        capacity: usize,
+        backend_name: &str,
+        backend: Option<Arc<dyn crate::abc::object_store::ObjectStore>>,
+        metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
+        raft_backend: Option<Box<dyn std::any::Any + Send + Sync>>,
         io_profile: &str,
+        zone_id: &str,
+        is_external: bool,
+        capacity: usize,
+        read_fd: Option<i32>,
+        write_fd: Option<i32>,
         mime_type: Option<&str>,
+        modified_at_ms: Option<i64>,
         link_target: Option<&str>,
+        source: Option<&str>,
+        remote_metastore: Option<Arc<dyn crate::meta_store::MetaStore>>,
     ) -> Result<SysSetAttrResult, KernelError> {
-        self.sys_setattr(
+        Self::sys_setattr(
+            self,
             path,
             entry_type,
-            /* backend_name */ "",
-            /* backend */ None,
-            /* metastore */ None,
-            /* raft_backend */ None,
+            backend_name,
+            backend,
+            metastore,
+            raft_backend,
             io_profile,
             zone_id,
-            /* is_external */ false,
+            is_external,
             capacity,
-            /* read_fd */ None,
-            /* write_fd */ None,
+            read_fd,
+            write_fd,
             mime_type,
-            /* modified_at_ms */ None,
+            modified_at_ms,
             link_target,
-            /* source */ None,
-            /* remote_metastore */ None,
+            source,
+            remote_metastore,
         )
+    }
+
+    fn sys_stat(&self, path: &str, zone_id: &str) -> Option<StatResult> {
+        Self::sys_stat(self, path, zone_id)
     }
 
     fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
@@ -231,14 +242,6 @@ impl KernelAbi for crate::kernel::Kernel {
         Self::setattr_pipe(self, path, capacity, io_profile, read_fd, write_fd, zone_id)
     }
 
-    fn metastore_get(&self, path: &str) -> Result<Option<FileMetadata>, KernelError> {
-        Self::metastore_get(self, path)
-    }
-
-    fn metastore_delete(&self, path: &str) -> Result<bool, KernelError> {
-        Self::metastore_delete(self, path)
-    }
-
     fn register_native_hook(&self, hook: Box<dyn NativeInterceptHook>) {
         Self::register_native_hook(self, hook)
     }
@@ -252,27 +255,7 @@ impl KernelAbi for crate::kernel::Kernel {
         Self::register_rust_service(self, name, svc, deps)
     }
 
-    fn agent_registry(&self) -> &Arc<AgentRegistry> {
-        Self::agent_registry(self)
-    }
-
-    fn distributed_coordinator(&self) -> Arc<dyn DistributedCoordinator> {
-        Self::distributed_coordinator(self)
-    }
-
     fn is_federation_initialized(&self) -> bool {
         self.distributed_coordinator().is_initialized(self)
-    }
-
-    fn vfs_router_arc(&self) -> Arc<VFSRouter> {
-        Self::vfs_router_arc(self)
-    }
-
-    fn prepare_audit_stream(
-        &self,
-        zone_id: &str,
-        stream_path: &str,
-    ) -> Result<Arc<WalStreamCore>, KernelError> {
-        Self::prepare_audit_stream(self, zone_id, stream_path)
     }
 }

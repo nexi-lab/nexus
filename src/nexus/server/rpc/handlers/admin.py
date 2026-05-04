@@ -201,7 +201,15 @@ def handle_admin_write_permission(nexus_fs: Any, params: Any, context: Any) -> d
 
     require_admin(context)
 
-    rebac = getattr(nexus_fs, "_rebac_manager", None) or getattr(nexus_fs, "rebac_manager", None)
+    rebac = None
+    service = getattr(nexus_fs, "service", None)
+    if service is not None:
+        rebac = service("rebac_manager")
+    rebac = (
+        rebac
+        or getattr(nexus_fs, "_rebac_manager", None)
+        or getattr(nexus_fs, "rebac_manager", None)
+    )
     if rebac is None:
         raise ConfigurationError("ReBAC manager not available on this server")
 

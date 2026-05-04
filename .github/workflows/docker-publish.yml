@@ -187,6 +187,18 @@ jobs:
             -e NEXUS_GRPC_PORT=2028 \
             -e NEXUS_GRPC_TLS=false \
             -e NEXUS_PROFILE=full \
+            -e NEXUS_ENFORCE_PERMISSIONS=true \
+            -e NEXUS_ALLOW_ADMIN_BYPASS=true \
+            -e NEXUS_DB_ASYNC_USE_POOL=1 \
+            -e NEXUS_DB_POOL_SIZE=5 \
+            -e NEXUS_DB_MAX_OVERFLOW=10 \
+            -e NEXUS_THREAD_POOL_SIZE=24 \
+            -e NEXUS_INDEX_MAX_CONCURRENCY=2 \
+            -e NEXUS_INDEX_MAX_EMBEDDING_CONCURRENCY=1 \
+            -e NEXUS_ML_WORKERS=1 \
+            -e NEXUS_VDB_WORKERS=1 \
+            -e NEXUS_SEARCH_POOL_MIN=2 \
+            -e NEXUS_SEARCH_POOL_MAX=8 \
             -v /tmp/nexus-data:/app/data \
             ghcr.io/nexi-lab/nexus:edge
 
@@ -250,6 +262,19 @@ jobs:
             -e NEXUS_GRPC_TLS=false \
             nexus-e2e nexus demo init --skip-semantic
 
+      - name: Copy test scripts into container
+        run: |
+          docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/
+          docker cp scripts/test_build_perf_e2e.py nexus-e2e:/tmp/
+
+      - name: Run permissions demo
+        run: |
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            nexus-e2e bash /tmp/permissions_demo_enhanced.sh
+
       - name: Seed search index
         run: |
           # Docker Publish uses `nexus demo init --skip-semantic` above to keep
@@ -270,12 +295,19 @@ jobs:
           # nexus search index queries file_paths WHERE virtual_path LIKE '/workspace/demo/%';
           # if this table is empty the index step returns "Files indexed: 0".
           echo "Step 2: Checking file_paths table after demo init..."
-          docker exec nexus-e2e psql postgresql://postgres:nexus@localhost/nexus \
-            -c "SELECT count(*) AS demo_files, min(zone_id) AS zone FROM file_paths WHERE virtual_path LIKE '/workspace/demo%' AND deleted_at IS NULL;" \
-            2>/dev/null || echo "  (psql unavailable — skipping diagnostic)"
-          docker exec nexus-e2e psql postgresql://postgres:nexus@localhost/nexus \
-            -c "SELECT count(*) AS op_log_rows FROM operation_log WHERE path LIKE '/workspace/demo%';" \
-            2>/dev/null || true
+          docker exec -i nexus-e2e python3 - <<'PY' || echo "  (SQL diagnostic unavailable — skipping)"
+          from sqlalchemy import create_engine, text
+          eng = create_engine("postgresql://postgres:nexus@localhost/nexus")
+          with eng.connect() as conn:
+              row = conn.execute(text(
+                  "SELECT count(*) AS demo_files, min(zone_id) AS min_zone, max(zone_id) AS max_zone "
+                  "FROM file_paths WHERE virtual_path LIKE '/workspace/demo%' AND deleted_at IS NULL"
+              )).mappings().one()
+              op_rows = conn.execute(text(
+                  "SELECT count(*) FROM operation_log WHERE path LIKE '/workspace/demo%'"
+              )).scalar()
+          print(f"  demo_files={row['demo_files']} zones={row['min_zone']}..{row['max_zone']} op_log_rows={op_rows}")
+          PY
 
           # Step 3: Show search daemon stats for diagnostics
           echo "Step 3: Search daemon stats..."
@@ -319,19 +351,6 @@ jobs:
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_PROFILE=remote \
             nexus-e2e nexus search query "Nexus Core" --path /workspace/demo/herb --mode hybrid --limit 1 || true
-
-      - name: Copy test scripts into container
-        run: |
-          docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/
-          docker cp scripts/test_build_perf_e2e.py nexus-e2e:/tmp/
-
-      - name: Run permissions demo
-        run: |
-          docker exec \
-            -e NEXUS_URL=http://localhost:2026 \
-            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-            -e NEXUS_PROFILE=remote \
-            nexus-e2e bash /tmp/permissions_demo_enhanced.sh
 
       - name: Run build perf e2e
         run: |

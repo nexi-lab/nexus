@@ -324,48 +324,47 @@ nexus rmdir -r -f /shared-readonly-test >/dev/null 2>&1 || true
 nexus_python << 'CLEANUP'
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
-import nexus
 
-nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
-rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 
-# 1. Delete all tuples related to demo paths (file objects, parent relationships)
-print("  Deleting file object tuples...")
-all_tuples = rebac.rebac_list_tuples_sync()
-demo_tuples = [t for t in all_tuples if
-               base in str(t.get('object_id', '')) or
-               base in str(t.get('subject_id', '')) or
-               '/shared-readonly-test' in str(t.get('object_id', '')) or
-               '/shared-readonly-test' in str(t.get('subject_id', ''))]
-for t in demo_tuples:
-    try:
-        rebac.rebac_delete_sync(t['tuple_id'])
-    except:
-        pass
-print(f"  Deleted {len(demo_tuples)} tuples related to demo paths")
+# 1. Delete stale demo ReBAC tuples directly. Avoid an unfiltered
+# rebac_list_tuples RPC here: on CI runners it can scan enough data to hit the
+# 30s gRPC deadline before the actual demo starts.
+print("  Deleting stale ReBAC tuples...")
+try:
+    import psycopg2
 
-# 2. Delete all tuples for test users to ensure clean state
-print("  Deleting test user tuples...")
-for user in ['alice', 'bob', 'charlie', 'acme_user']:
-    tuples = rebac.rebac_list_tuples_sync(subject=("user", user))
-    for t in tuples:
-        try:
-            rebac.rebac_delete_sync(t['tuple_id'])
-        except:
-            pass
+    db_url = os.getenv('NEXUS_DATABASE_URL', 'postgresql://postgres:nexus@localhost/nexus')
+    users = ['alice', 'bob', 'charlie', 'acme_user']
+    groups = ['project1-editors', 'project1-viewers']
 
-# 3. Delete group tuples
-print("  Deleting group tuples...")
-for group in ['project1-editors', 'project1-viewers']:
-    tuples = rebac.rebac_list_tuples_sync(subject=("group", group))
-    for t in tuples:
-        try:
-            rebac.rebac_delete_sync(t['tuple_id'])
-        except:
-            pass
+    with psycopg2.connect(db_url) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """DELETE FROM rebac_tuples
+                   WHERE object_id LIKE %s
+                      OR subject_id LIKE %s
+                      OR object_id LIKE %s
+                      OR subject_id LIKE %s
+                      OR (subject_type = 'user' AND subject_id = ANY(%s))
+                      OR (subject_type = 'group' AND subject_id = ANY(%s))
+                      OR (object_type = 'group' AND object_id = ANY(%s))""",
+                (
+                    f"{base}%",
+                    f"{base}%",
+                    "/shared-readonly-test%",
+                    "/shared-readonly-test%",
+                    users,
+                    groups,
+                    groups,
+                ),
+            )
+            print(f"  Deleted {cursor.rowcount} ReBAC tuples")
+        conn.commit()
+except Exception as e:
+    print(f"  ⚠ Could not clean ReBAC tuples directly: {e}")
 
-# 4. Clean up stale version history and file_paths from database
+# 2. Clean up stale version history and file_paths from database
 print("  Cleaning version history...")
 try:
     # Use direct database access to clean version history
@@ -417,6 +416,11 @@ except Exception as e:
     print(f"  ⚠ Could not clean version history: {e}")
 
 print("✓ Cleaned up stale tuples")
+
+import nexus
+
+nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')})
+rebac = nx.service("rebac")
 
 # Bootstrap ReBAC namespaces — ensure relation→permission expansion rules are loaded.
 # On fresh servers (or after Raft leader election), namespaces may not be initialized

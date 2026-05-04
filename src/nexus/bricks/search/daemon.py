@@ -212,6 +212,7 @@ class SearchDaemon:
         cache_brick: Any | None = None,
         settings_store: Any | None = None,
         path_context_cache: "PathContextCache | None" = None,
+        sqlite_vec_backend: Any | None = None,
     ):
         """Initialize the search daemon.
 
@@ -233,6 +234,13 @@ class SearchDaemon:
         self._cache_brick = cache_brick
         self._settings_store = settings_store
         self._path_context_cache = path_context_cache
+        # Codex review R6 (high): SANDBOX local sqlite-vec backend so
+        # daemon-driven indexing (mutation events → IndexingPipeline)
+        # populates the hybrid vector lane. Without this, only the
+        # SearchService.initialize_semantic_search RPC path mirrors
+        # writes; the production daemon refresh loop would silently
+        # leave the vec lane empty.
+        self._sqlite_vec_backend = sqlite_vec_backend
         self._path_context_cache_by_loop: dict[Any, Any] = {}
         # Engines we created for loop-local caches — tracked for disposal
         # on shutdown so pooled connections don't leak (Issue #3773 review).
@@ -728,6 +736,10 @@ class SearchDaemon:
             # a fresh snapshot on every call so in-flight registrations are
             # reflected without cross-thread gymnastics.
             scope_provider=self._current_index_scope,
+            # Codex review R6 (high): forward the SANDBOX vec backend
+            # so daemon refresh writes mirror into the hybrid vector
+            # lane.
+            sqlite_vec_backend=self._sqlite_vec_backend,
         )
         if self._async_session is not None:
             self._chunk_store = ChunkStore(
@@ -2431,6 +2443,35 @@ class SearchDaemon:
                 with contextlib.suppress(Exception):
                     await self._bm25s_index.delete_document(mutation.path_id)
 
+        # Codex review R8 #4 (high): the legacy refresh path is the
+        # fallback delete carrier when the durable op-log consumer
+        # isn't wired (older deployments, recovery boots). Without
+        # this prune the SANDBOX vec lane retained rows for deleted/
+        # renamed paths while ChunkStore/BM25/txtai lanes were
+        # cleaned up, leading to zombie hits in the semantic lane.
+        if self._sqlite_vec_backend is not None:
+            # Codex review R9 #3 (high): canonical (unscoped virtual_path)
+            # + legacy (scoped event.path) keys per zone so legacy rows
+            # from pre-R9 builds also get pruned during recovery boots.
+            vec_deletes_by_zone: dict[str, list[str]] = {}
+            for mutation in resolved:
+                bucket = vec_deletes_by_zone.setdefault(mutation.zone_id, [])
+                if mutation.virtual_path not in bucket:
+                    bucket.append(mutation.virtual_path)
+                if (
+                    mutation.event.path != mutation.virtual_path
+                    and mutation.event.path not in bucket
+                ):
+                    bucket.append(mutation.event.path)
+            for zone_id, vec_paths in vec_deletes_by_zone.items():
+                with contextlib.suppress(Exception):
+                    await self._sqlite_vec_backend.delete(vec_paths, zone_id=zone_id)
+                    logger.debug(
+                        "delete-propagation: sqlite-vec dropped %d path(s) for zone=%s",
+                        len(vec_paths),
+                        zone_id,
+                    )
+
         logger.info("delete-propagation: completed for %d path(s)", len(paths))
 
     @staticmethod
@@ -2549,6 +2590,57 @@ class SearchDaemon:
             await self._chunk_store.replace_document_chunks(path_id, records)
         except Exception as e:
             logger.debug("Failed to index %s to document_chunks: %s", path, e)
+            return
+
+        # Codex review R7 (high): mirror naive-chunk writes into the
+        # SANDBOX vec backend. The embedding consumer's _bulk_insert
+        # path is wired up, but it only fires when an embedding
+        # provider is configured — current txtai-era wiring sets
+        # provider=None, so the FTS consumer is the SOLE carrier of
+        # production writes. Without this mirror, the SANDBOX hybrid
+        # vec lane stays empty in real use. Best-effort: failures
+        # log but don't break the primary FTS write.
+        if self._sqlite_vec_backend is None:
+            return
+        try:
+            from nexus.bricks.search.mutation_events import extract_zone_id, strip_zone_prefix
+
+            zone_id = extract_zone_id(path)
+            # Codex review R9 #3 (high): vec rows MUST be keyed on the
+            # unscoped virtual_path so they line up with BM25
+            # (``mutation.virtual_path``), the IndexingPipeline writer
+            # (unscoped), and the SearchService ``path_filter``
+            # (unscoped). Mixing scoped /zone/<zone>/foo.md with
+            # unscoped /foo.md leaves doppelgänger rows that ignore
+            # path-filter prefix matches and break dedup with BM25.
+            canonical_path = strip_zone_prefix(path) if path.startswith("/zone/") else path
+            # Full-replace: drop all prior vec rows for (zone_id, path)
+            # so a doc shrinking from N to fewer chunks doesn't leave
+            # stale higher-index rows searchable. Mirrors ChunkStore's
+            # replace_document_chunks contract. Pass BOTH the canonical
+            # and the original (possibly scoped) form so legacy rows
+            # written before R9 also get pruned.
+            delete_keys = [canonical_path]
+            if path != canonical_path:
+                delete_keys.append(path)
+            await self._sqlite_vec_backend.delete(delete_keys, zone_id=zone_id)
+            if records:
+                items = [
+                    {
+                        "path": canonical_path,
+                        "text": rec.chunk_text,
+                        "chunk_index": i,
+                    }
+                    for i, rec in enumerate(records)
+                ]
+                await self._sqlite_vec_backend.upsert(items, zone_id=zone_id)
+        except Exception as exc:
+            logger.warning(
+                "[SearchDaemon] sqlite-vec FTS-path mirror failed for %s "
+                "(hybrid vec lane will degrade for this doc): %s",
+                path,
+                exc,
+            )
 
     def _checkpoint_key(self, consumer_name: str) -> str:
         return f"search_mutation_checkpoint:{consumer_name}"
@@ -2832,7 +2924,50 @@ class SearchDaemon:
             return
         resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
-            if mutation.event.op != SearchMutationOp.UPSERT or not mutation.content:
+            # Codex review R8 #2 / R9 #1 / R10 #1: handle delete-shaped
+            # operations. The resolver now exposes ``content_resolved``
+            # to distinguish "truly empty" (resolver successfully read
+            # an empty file) from "couldn't read" (file_reader failed
+            # AND content_cache had no entry). With that signal:
+            #   * UPSERT + content_resolved=False → raise (don't
+            #     checkpoint a transient read failure).
+            #   * UPSERT + content_resolved=True + content="" → real
+            #     truncation; treat as DELETE.
+            #   * DELETE → prune.
+            #   * UPSERT + content → index.
+            if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
+                raise RuntimeError(
+                    f"BM25 mutation content unresolved for "
+                    f"event_id={mutation.event.event_id} "
+                    f"path={mutation.event.path} — refusing to checkpoint "
+                    "so the consumer retries on next pass"
+                )
+            is_delete_shaped = mutation.event.op == SearchMutationOp.DELETE or (
+                mutation.event.op == SearchMutationOp.UPSERT and mutation.content == ""
+            )
+            if is_delete_shaped:
+                if not self._has_resolved_path_id(mutation):
+                    continue
+                # Codex review R9 #2 (high): do NOT swallow delete
+                # failures. ``_run_mutation_consumer`` advances the
+                # checkpoint when this handler returns successfully, so
+                # silent failure here means stale postings live forever.
+                # Let exceptions propagate; raise on a falsey return so
+                # the consumer retries on the next pass.
+                if hasattr(self._bm25s_index, "delete_document"):
+                    deleted = await self._bm25s_index.delete_document(mutation.path_id)
+                    if not deleted:
+                        raise RuntimeError(
+                            f"BM25 delete_document returned False for "
+                            f"path_id={mutation.path_id} — refusing to "
+                            "checkpoint so the consumer retries"
+                        )
+                continue
+            # Past the gates above, ``mutation.content`` is a non-empty
+            # string (we raised on unresolved + None, branched on
+            # DELETE/empty-content above). Assert for mypy + as a
+            # defensive guard if a future caller drops a gate.
+            if mutation.content is None:
                 continue
             await self._bm25s_index.index_document(
                 mutation.path_id,
@@ -2848,12 +2983,46 @@ class SearchDaemon:
         )
         resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
-            if mutation.event.op == SearchMutationOp.DELETE:
+            # Codex review R10 #1 (high): refuse to checkpoint
+            # unresolved-content UPSERTs — see ``_consume_bm25_mutations``
+            # for the rationale.
+            if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
+                raise RuntimeError(
+                    f"FTS mutation content unresolved for "
+                    f"event_id={mutation.event.event_id} "
+                    f"path={mutation.event.path} — refusing to checkpoint "
+                    "so the consumer retries on next pass"
+                )
+            is_delete_shaped = mutation.event.op == SearchMutationOp.DELETE or (
+                mutation.event.op == SearchMutationOp.UPSERT and mutation.content == ""
+            )
+            if is_delete_shaped:
                 # When embedding consumer is active, it owns deletes for
                 # document_chunks (Issue #3708). FTS only handles deletes
                 # when it is the sole writer.
                 if not embedding_active and self._has_resolved_path_id(mutation):
                     await self._chunk_store.delete_document_chunks(mutation.path_id)
+                # Codex review R7 (high): always prune the SANDBOX vec
+                # lane on DELETE here too. The embedding consumer's
+                # prune (R6) only fires when an embedding provider is
+                # wired (rare in current txtai-era wiring), so the FTS
+                # consumer is the production carrier of deletes.
+                #
+                # Codex review R10 #2 (high): do NOT swallow vec delete
+                # failures. The consumer checkpoints whenever this
+                # handler returns successfully, so a swallowed failure
+                # means deleted/renamed paths stay searchable in the
+                # vector lane forever. Let exceptions propagate so the
+                # batch is retried.
+                if self._sqlite_vec_backend is not None and mutation.event.path:
+                    # Codex review R9 #3 (high): prune BOTH the
+                    # canonical (unscoped) key and the original
+                    # event-path key so legacy scoped rows from
+                    # pre-R9 builds also get cleaned up.
+                    delete_keys = [mutation.virtual_path]
+                    if mutation.event.path != mutation.virtual_path:
+                        delete_keys.append(mutation.event.path)
+                    await self._sqlite_vec_backend.delete(delete_keys, zone_id=mutation.zone_id)
                 continue
             if mutation.content:
                 if not self._has_resolved_path_id(mutation):
@@ -2881,12 +3050,39 @@ class SearchDaemon:
             return
         resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
-            # Handle deletes — the embedding consumer is now the sole
-            # document_chunks writer when active (Issue #3708), so it must
-            # propagate DELETE ops that the FTS consumer used to handle.
-            if mutation.event.op == SearchMutationOp.DELETE:
+            # Codex review R10 #1 (high): refuse to checkpoint
+            # unresolved-content UPSERTs — see ``_consume_bm25_mutations``
+            # for the rationale.
+            if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
+                raise RuntimeError(
+                    f"Embedding mutation content unresolved for "
+                    f"event_id={mutation.event.event_id} "
+                    f"path={mutation.event.path} — refusing to checkpoint "
+                    "so the consumer retries on next pass"
+                )
+            # Codex review R10 #1 (high): treat resolved-empty UPSERTs
+            # as DELETEs (real truncation). Combined with the explicit
+            # DELETE op below.
+            is_delete_shaped = mutation.event.op == SearchMutationOp.DELETE or (
+                mutation.event.op == SearchMutationOp.UPSERT and mutation.content == ""
+            )
+            if is_delete_shaped:
                 if self._chunk_store is not None and self._has_resolved_path_id(mutation):
                     await self._chunk_store.delete_document_chunks(mutation.path_id)
+                # Codex review R6 (high): also prune the SANDBOX vec
+                # backend so deleted/renamed paths don't survive in
+                # the hybrid vector lane. Renames arrive here as
+                # DELETE-on-old-path (followed by an UPSERT on the new
+                # path that the side-write in _bulk_insert will cover).
+                #
+                # Codex review R10 #2 (high): do NOT swallow vec delete
+                # failures (see ``_consume_fts_mutations`` for the same
+                # rationale).
+                if self._sqlite_vec_backend is not None and mutation.event.path:
+                    delete_keys = [mutation.virtual_path]
+                    if mutation.event.path != mutation.virtual_path:
+                        delete_keys.append(mutation.event.path)
+                    await self._sqlite_vec_backend.delete(delete_keys, zone_id=mutation.zone_id)
                 continue
             if not mutation.content:
                 continue

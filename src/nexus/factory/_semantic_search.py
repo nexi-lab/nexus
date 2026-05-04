@@ -65,6 +65,10 @@ async def create_semantic_search_components(
     metadata: Any = None,
     file_reader: Any = None,
     file_lister: Any = None,
+    # SANDBOX local vector backend (Codex review R5 #2): when present,
+    # the IndexingPipeline mirrors writes into it so the hybrid
+    # vector lane is populated by normal indexing flows.
+    sqlite_vec_backend: Any = None,
     # Legacy params absorbed for backward compat (txtai handles these now)
     **_kwargs: Any,
 ) -> SemanticSearchComponents:
@@ -136,6 +140,7 @@ async def create_semantic_search_components(
         async_session_factory=_async_sf,
         max_concurrency=10,
         cross_doc_batching=True,
+        sqlite_vec_backend=sqlite_vec_backend,
     )
 
     # --- QueryService ---

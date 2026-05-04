@@ -1,8 +1,18 @@
 """sqlite-vec search backend for SANDBOX profile (Issue #3778).
 
-Uses the ``sqlite-vec`` extension for vector storage + KNN; ``litellm``
-for remote embeddings (BYO API key — any provider). Keeps zone isolation
-via a ``zone_id`` column on the ``vec0`` virtual table.
+Uses the ``sqlite-vec`` extension for vector storage + KNN. Embeddings
+come from one of two backends, picked at construct time:
+
+* ``litellm`` — remote embeddings (BYO API key, any provider). Default
+  model ``text-embedding-3-small`` (1536 dim).
+* ``fastembed`` — local ONNX embeddings, zero network. Default model
+  ``BAAI/bge-small-en-v1.5`` (384 dim). Used when no API key is
+  available so SANDBOX keeps its "zero external services" promise even
+  without a key.
+
+Auto-selection (``embedder='auto'``, the default): pick ``fastembed``
+when ``NEXUS_OFFLINE_EMBED`` is truthy or no embedding API key is in
+the environment; otherwise pick ``litellm``.
 
 Design notes
 ------------
@@ -28,6 +38,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import sqlite3
 import struct
 import threading
@@ -40,7 +51,95 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_EMBEDDING_DIM = 1536  # text-embedding-3-small native dim
+DEFAULT_FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
+DEFAULT_FASTEMBED_DIM = 384  # bge-small-en-v1.5 native dim
 _VEC_TABLE = "nexus_vec"
+# Codex review R3 (medium): companion table that stores the identity of
+# the embedder that originally created the ``nexus_vec`` table. Enforces
+# "only one embedder may share a DB" even when two backends happen to
+# share the same vector dimension (e.g. two different 384-dim models —
+# bge-small vs. all-MiniLM-L6 — would silently mix embedding spaces and
+# corrupt KNN ranking otherwise). The dim check alone is insufficient.
+_VEC_META_TABLE = "nexus_vec_meta"
+
+# Env vars consulted to decide whether a remote embedding API is available.
+# Order matches litellm's own provider precedence loosely.
+_REMOTE_API_KEY_ENVS = (
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "COHERE_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_API_KEY",
+    "VOYAGE_API_KEY",
+    "MISTRAL_API_KEY",
+    "NEXUS_EMBEDDING_API_KEY",
+)
+
+
+class SqliteVecDimMismatchError(RuntimeError):
+    """Raised when an existing ``nexus_vec`` table was created with a
+    different embedding dim than the backend now wants to use.
+
+    sqlite-vec fixes the embedding dim at table creation time, so a
+    backend configured for dim=384 cannot insert vectors into a table
+    created with dim=1536. This commonly happens when a SANDBOX user
+    initially populated the database with a remote (litellm) embedder,
+    then later restarted without an API key and the auto-detect picks
+    the local fastembed embedder. Surfacing the mismatch loudly is
+    safer than silently failing every upsert.
+
+    Resolution: either delete the existing ``nexus_vec`` table /
+    database to rebuild with the new embedder, or pin the original
+    embedder by setting an embedding API key (or
+    ``NEXUS_EMBEDDER=litellm`` + ``NEXUS_EMBEDDING_MODEL``).
+    """
+
+
+class SqliteVecEmbedderMismatchError(RuntimeError):
+    """Raised when an existing DB was populated by a *different*
+    embedder than the one currently configured, even when the embedding
+    dimension happens to match.
+
+    Two different models (e.g. ``BAAI/bge-small-en-v1.5`` and
+    ``sentence-transformers/all-MiniLM-L6-v2``) can both produce 384-d
+    vectors but live in completely incompatible embedding spaces. Mixing
+    their outputs in the same vec0 table silently corrupts KNN ranking
+    — searches still return rows but the ordering becomes meaningless.
+
+    The dim-check (``SqliteVecDimMismatchError``) cannot catch this
+    case; the companion ``nexus_vec_meta`` table records the embedder
+    identity at first start so subsequent opens can fail loudly instead
+    of corrupting recall.
+
+    Resolution: same as the dim case — delete the DB to rebuild with
+    the new embedder, or pin the original embedder via env vars
+    (``NEXUS_EMBEDDER`` / ``NEXUS_EMBEDDING_MODEL`` /
+    ``NEXUS_OFFLINE_EMBED_MODEL``).
+    """
+
+
+_DIM_REGEX = re.compile(r"embedding\s+float\[(\d+)\]", re.IGNORECASE)
+
+
+def _detect_embedder_kind(api_key: str | None) -> str:
+    """Return ``"litellm"`` or ``"fastembed"`` based on env + arg.
+
+    Rule:
+      * ``NEXUS_OFFLINE_EMBED`` truthy → ``fastembed``
+      * Explicit ``api_key`` arg present → ``litellm``
+      * Any standard provider env var set → ``litellm``
+      * Otherwise → ``fastembed`` (offline default — keeps SANDBOX's
+        "zero external services" promise)
+    """
+    flag = (os.environ.get("NEXUS_OFFLINE_EMBED") or "").lower()
+    if flag in ("1", "true", "yes", "on"):
+        return "fastembed"
+    if api_key:
+        return "litellm"
+    for env in _REMOTE_API_KEY_ENVS:
+        if os.environ.get(env):
+            return "litellm"
+    return "fastembed"
 
 
 class SqliteVecBackend:
@@ -63,10 +162,9 @@ class SqliteVecBackend:
         embedding_model: str | None = None,
         embedding_dim: int | None = None,
         api_key: str | None = None,
+        embedder: str | None = None,
     ) -> None:
-        # Import-time check so callers see a clear error before they try
-        # to startup() the backend. The factory swallows ImportError and
-        # logs a WARNING naming the missing package.
+        # sqlite-vec is required for both embedder kinds.
         try:
             import sqlite_vec  # noqa: F401
         except ImportError as exc:
@@ -74,19 +172,45 @@ class SqliteVecBackend:
                 "SqliteVecBackend requires the 'sqlite-vec' package. "
                 "Install with: pip install 'nexus-ai-fs[sandbox]'"
             ) from exc
-        try:
-            import litellm  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(
-                "SqliteVecBackend requires the 'litellm' package. "
-                "Install with: pip install 'nexus-ai-fs[sandbox]'"
-            ) from exc
 
+        # Pick the embedder. Explicit arg > env override > auto-detect.
+        kind = (embedder or os.environ.get("NEXUS_EMBEDDER") or "auto").lower()
+        if kind == "auto":
+            kind = _detect_embedder_kind(api_key)
+        if kind not in ("litellm", "fastembed"):
+            raise ValueError(
+                f"unknown embedder kind: {kind!r} (expected 'auto', 'litellm', 'fastembed')"
+            )
+
+        if kind == "litellm":
+            try:
+                import litellm  # noqa: F401
+            except ImportError as exc:
+                raise ImportError(
+                    "SqliteVecBackend(embedder='litellm') requires the 'litellm' package. "
+                    "Install with: pip install 'nexus-ai-fs[sandbox]'"
+                ) from exc
+            self._embedding_model = embedding_model or os.environ.get(
+                "NEXUS_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
+            )
+            self._embedding_dim = int(embedding_dim or DEFAULT_EMBEDDING_DIM)
+        else:  # fastembed
+            try:
+                import fastembed  # noqa: F401
+            except ImportError as exc:
+                raise ImportError(
+                    "SqliteVecBackend(embedder='fastembed') requires the 'fastembed' package. "
+                    "Install with: pip install 'nexus-ai-fs[sandbox]' (includes fastembed) "
+                    "or set an embedding API key (e.g. OPENAI_API_KEY) to use litellm."
+                ) from exc
+            self._embedding_model = embedding_model or os.environ.get(
+                "NEXUS_OFFLINE_EMBED_MODEL", DEFAULT_FASTEMBED_MODEL
+            )
+            self._embedding_dim = int(embedding_dim or DEFAULT_FASTEMBED_DIM)
+
+        self._embedder_kind = kind
+        self._fastembed_model: Any = None  # lazy ONNX session
         self._db_path = db_path
-        self._embedding_model = embedding_model or os.environ.get(
-            "NEXUS_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
-        )
-        self._embedding_dim = int(embedding_dim or DEFAULT_EMBEDDING_DIM)
         self._api_key = api_key  # optional; litellm reads env by default
         self._conn: sqlite3.Connection | None = None
         # Locking strategy (Issue #3976, mirrors TxtaiBackend #3894):
@@ -151,15 +275,109 @@ class SqliteVecBackend:
             if self._started:
                 return
 
+            def _dim_mismatch(existing_dim: int, *, race: bool) -> SqliteVecDimMismatchError:
+                """Build a clear mismatch error. ``race=True`` means the
+                table was created by a concurrent backend between our
+                pre-check and our CREATE; the user message is otherwise
+                identical."""
+                race_note = (
+                    " A concurrent SqliteVecBackend with a different "
+                    "embedder created the table first; only one embedder "
+                    "may share a DB."
+                    if race
+                    else ""
+                )
+                return SqliteVecDimMismatchError(
+                    f"existing '{_VEC_TABLE}' table was created with "
+                    f"embedding dim={existing_dim}, but this backend "
+                    f"is configured for dim={self._embedding_dim} "
+                    f"(model={self._embedding_model!r}, "
+                    f"embedder={self._embedder_kind!r}).{race_note} "
+                    f"sqlite-vec fixes the dim at table creation. "
+                    f"Resolution: delete the '{_VEC_TABLE}' table "
+                    f"(or the whole DB at {self._db_path}) to "
+                    f"rebuild with the new embedder, or pin the "
+                    f"original embedder via an embedding API key + "
+                    f"NEXUS_EMBEDDING_MODEL / NEXUS_EMBEDDER=litellm."
+                )
+
+            def _read_existing_dim(conn: sqlite3.Connection) -> int | None:
+                cur = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (_VEC_TABLE,),
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return None
+                m = _DIM_REGEX.search(row[0])
+                return int(m.group(1)) if m else None
+
+            def _embedder_mismatch(
+                stored_kind: str, stored_model: str, *, race: bool
+            ) -> SqliteVecEmbedderMismatchError:
+                race_note = (
+                    " A concurrent SqliteVecBackend with a different "
+                    "embedder identity registered first; only one embedder "
+                    "may share a DB."
+                    if race
+                    else ""
+                )
+                return SqliteVecEmbedderMismatchError(
+                    f"existing DB at {self._db_path!r} was populated by "
+                    f"embedder={stored_kind!r} model={stored_model!r}, "
+                    f"but this backend is configured for "
+                    f"embedder={self._embedder_kind!r} "
+                    f"model={self._embedding_model!r} "
+                    f"(dim={self._embedding_dim}).{race_note} Two models "
+                    f"with the same dim still live in different embedding "
+                    f"spaces — mixing them silently corrupts KNN ranking. "
+                    f"Resolution: delete the DB to rebuild with the new "
+                    f"embedder, or pin the original embedder via "
+                    f"NEXUS_EMBEDDER / NEXUS_EMBEDDING_MODEL / "
+                    f"NEXUS_OFFLINE_EMBED_MODEL."
+                )
+
+            def _read_meta(conn: sqlite3.Connection) -> tuple[str, str] | None:
+                """Return ``(embedder_kind, embedding_model)`` if the meta
+                table exists AND has both rows; ``None`` on first start."""
+                # Guard against the meta table not existing yet on a DB
+                # populated by an older build that only had ``nexus_vec``.
+                cur = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (_VEC_META_TABLE,),
+                )
+                if not cur.fetchone():
+                    return None
+                cur = conn.execute(
+                    f"SELECT key, value FROM {_VEC_META_TABLE} "
+                    f"WHERE key IN ('embedder_kind', 'embedding_model')"
+                )
+                kv = {row[0]: row[1] for row in cur.fetchall()}
+                k = kv.get("embedder_kind")
+                m = kv.get("embedding_model")
+                return (k, m) if k is not None and m is not None else None
+
             def _open() -> sqlite3.Connection:
                 # check_same_thread=False because we hop through to_thread
                 # and the executor's worker may differ between calls.
                 conn = sqlite3.connect(self._db_path, check_same_thread=False)
+                # Codex review R2 (high): wait through another backend's
+                # CREATE under concurrent first-start instead of failing
+                # fast with SQLITE_BUSY.
+                conn.execute("PRAGMA busy_timeout = 5000")
                 conn.enable_load_extension(True)
                 import sqlite_vec
 
                 sqlite_vec.load(conn)
                 conn.enable_load_extension(False)
+                # Codex review R1 (high): pre-check — when the table
+                # already exists, validate its embedding dim against the
+                # backend's configured dim BEFORE CREATE IF NOT EXISTS
+                # (which would silently no-op). Catches the common case
+                # quickly with a clear error.
+                existing = _read_existing_dim(conn)
+                if existing is not None and existing != self._embedding_dim:
+                    raise _dim_mismatch(existing, race=False)
                 # Create vec0 virtual table; embedding dim is fixed at
                 # init time (sqlite-vec requirement). Auxiliary columns
                 # carry zone isolation + result rendering data.
@@ -173,13 +391,97 @@ class SqliteVecBackend:
                     f");"
                 )
                 conn.commit()
+                # Codex review R2 (high): post-check — re-read the
+                # schema after CREATE to catch the race where a
+                # concurrent backend with a different dim created the
+                # table during our pre-check window. Without this, the
+                # losing backend would mark itself started with a dim
+                # that does not match the actual table and silently fail
+                # every later upsert/search.
+                created = _read_existing_dim(conn)
+                if created is not None and created != self._embedding_dim:
+                    raise _dim_mismatch(created, race=True)
+                # Codex review R3 (medium) + R4 (high): persist + validate
+                # the embedder identity (kind + model). The dim check above
+                # cannot tell two same-dim models apart — silently mixing
+                # them in the same vec0 table corrupts KNN ranking.
+                #
+                # Three states must be distinguished BEFORE we INSERT:
+                #   (a) brand-new DB (vec table empty AND meta absent or
+                #       empty): safe to register OUR identity as the
+                #       table owner.
+                #   (b) populated DB with valid meta: validate ours
+                #       matches; raise mismatch otherwise.
+                #   (c) populated DB with NO meta — pre-R3 upgrade path:
+                #       FAIL CLOSED. The existing rows could have been
+                #       written by any embedder, and blindly tagging
+                #       them with the current backend's identity would
+                #       silently bless an incompatible embedder if the
+                #       original differed. Force the operator to
+                #       rebuild rather than risk silent corruption.
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {_VEC_META_TABLE} ("
+                    f"key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
+                # Read meta + row count BEFORE any INSERT so we can tell
+                # state (c) apart from state (a).
+                pre_meta = _read_meta(conn)
+                vec_has_rows = (
+                    conn.execute(f"SELECT 1 FROM {_VEC_TABLE} LIMIT 1").fetchone() is not None
+                )
+                if pre_meta is None and vec_has_rows:
+                    # State (c): pre-R3 DB upgrade. Refuse to bless.
+                    raise SqliteVecEmbedderMismatchError(
+                        f"existing DB at {self._db_path!r} has rows in "
+                        f"'{_VEC_TABLE}' but no embedder identity recorded "
+                        f"in '{_VEC_META_TABLE}' (pre-R3 build). The "
+                        f"existing rows may have been written by any "
+                        f"embedder; tagging them with the current backend "
+                        f"({self._embedder_kind!r}, "
+                        f"{self._embedding_model!r}) would risk silent "
+                        f"KNN ranking corruption if the original differed. "
+                        f"Resolution: delete the DB at {self._db_path} "
+                        f"(or just drop '{_VEC_TABLE}' and "
+                        f"'{_VEC_META_TABLE}') to rebuild from scratch."
+                    )
+                # States (a) + (b): safe to INSERT OR IGNORE. The IGNORE
+                # makes the first writer win under concurrent first-
+                # start; the post-write SELECT then reveals which
+                # identity actually got persisted.
+                conn.executemany(
+                    f"INSERT OR IGNORE INTO {_VEC_META_TABLE}(key, value) VALUES (?, ?)",
+                    [
+                        ("embedder_kind", self._embedder_kind),
+                        ("embedding_model", self._embedding_model),
+                    ],
+                )
+                conn.commit()
+                meta = _read_meta(conn)
+                if meta is not None:
+                    stored_kind, stored_model = meta
+                    if stored_kind != self._embedder_kind or stored_model != self._embedding_model:
+                        # Whether this is a steady-state mismatch (DB
+                        # populated by a different embedder days ago) or
+                        # a true race (concurrent first-start, the other
+                        # backend's INSERT OR IGNORE landed first) is
+                        # not user-distinguishable and the resolution is
+                        # the same in both cases. Flag race=True if at
+                        # least one field still matches ours — that's
+                        # the only scenario where a concurrent open is
+                        # a plausible explanation.
+                        race_now = (
+                            stored_kind == self._embedder_kind
+                            or stored_model == self._embedding_model
+                        )
+                        raise _embedder_mismatch(stored_kind, stored_model, race=race_now)
                 return conn
 
             self._conn = await self._run_native(_open)
             self._started = True
             logger.info(
-                "[SqliteVecBackend] started (db=%s model=%s dim=%d)",
+                "[SqliteVecBackend] started (db=%s embedder=%s model=%s dim=%d)",
                 self._db_path,
+                self._embedder_kind,
                 self._embedding_model,
                 self._embedding_dim,
             )
@@ -225,7 +527,10 @@ class SqliteVecBackend:
         return struct.pack(f"{len(vec)}f", *vec)
 
     async def _embed_one(self, text: str) -> list[float]:
-        """Embed a single string via litellm.aembedding."""
+        """Embed a single string. Dispatches by ``self._embedder_kind``."""
+        if self._embedder_kind == "fastembed":
+            vecs = await self._embed_many([text])
+            return vecs[0] if vecs else []
         import litellm
 
         kwargs: dict[str, Any] = {"model": self._embedding_model, "input": [text]}
@@ -237,9 +542,11 @@ class SqliteVecBackend:
         return list(vec)
 
     async def _embed_many(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of strings. Falls back to per-item on TypeError."""
+        """Embed a batch of strings. Dispatches by ``self._embedder_kind``."""
         if not texts:
             return []
+        if self._embedder_kind == "fastembed":
+            return await self._fastembed_many(texts)
         import litellm
 
         kwargs: dict[str, Any] = {"model": self._embedding_model, "input": texts}
@@ -247,6 +554,44 @@ class SqliteVecBackend:
             kwargs["api_key"] = self._api_key
         resp = await litellm.aembedding(**kwargs)
         return [list(item["embedding"]) for item in resp.data]
+
+    async def _fastembed_many(self, texts: list[str]) -> list[list[float]]:
+        """Embed via fastembed (sync ONNX). Lazy-loads model on first call."""
+        if self._fastembed_model is None:
+            await self._init_fastembed_model()
+        model = self._fastembed_model
+
+        def _run() -> list[list[float]]:
+            # ``model.embed`` returns an iterator of numpy.ndarray[float32].
+            return [list(map(float, vec)) for vec in model.embed(list(texts))]
+
+        return await asyncio.to_thread(_run)
+
+    async def _init_fastembed_model(self) -> None:
+        """Lazy-init the fastembed TextEmbedding model in a worker thread.
+
+        ONNX session construction does network I/O (model download on
+        first run) and CPU work, so we hop off the loop. Idempotent.
+        """
+        if self._fastembed_model is not None:
+            return
+
+        model_name = self._embedding_model
+
+        def _open() -> Any:
+            from fastembed import TextEmbedding
+
+            return TextEmbedding(model_name=model_name)
+
+        model = await asyncio.to_thread(_open)
+        # Double-init is harmless (we'd just keep the latter model);
+        # don't bother with a lock to keep the cold path simple.
+        self._fastembed_model = model
+        logger.info(
+            "[SqliteVecBackend] fastembed model loaded (model=%s dim=%d)",
+            self._embedding_model,
+            self._embedding_dim,
+        )
 
     def _require_conn(self) -> sqlite3.Connection:
         if self._conn is None:

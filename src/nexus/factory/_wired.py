@@ -198,15 +198,19 @@ def _boot_post_kernel_services(
         # env var is the canonical signal here.
         _profile = (_os.environ.get("NEXUS_PROFILE") or "").strip().lower() or None
 
-        # Issue #3778: optional local sqlite-vec backend (SANDBOX only).
-        # We only attempt the import when:
-        #   * profile == "sandbox"  AND
-        #   * enable_vector_search is True  (opt-in; default False on SANDBOX)
+        # Issue #3778: local sqlite-vec backend (SANDBOX profile).
         #
-        # The user can opt-in via either ``cfg.enable_vector_search=True`` in
-        # the config dict (preferred) or ``NEXUS_ENABLE_VECTOR_SEARCH=true``
-        # in the env. Both ``sqlite-vec`` and ``litellm`` must be importable;
-        # missing either degrades silently to the federation/BM25S chain.
+        # On SANDBOX: vector search is ON by default — the [sandbox] extra
+        # bundles ``sqlite-vec`` + ``fastembed`` so the offline path works
+        # out of the box. Users can opt out with
+        # ``NEXUS_DISABLE_VECTOR_SEARCH=1`` (e.g. to skip the ~30 MB ONNX
+        # model download). On other profiles vector search remains opt-in
+        # via ``NEXUS_ENABLE_VECTOR_SEARCH=1``.
+        #
+        # If both ``sqlite-vec`` and an embedder (fastembed OR a remote
+        # API key for litellm) are reachable, we wire the backend.
+        # Missing pieces degrade silently (with a clear WARNING) to the
+        # federation/BM25S chain.
         #
         # Note: ``nx._config`` is only attached AFTER ``create_nexus_fs()``
         # returns (see nexus/__init__.py), so at this point in the boot we
@@ -223,7 +227,33 @@ def _boot_post_kernel_services(
                 "on",
             )
 
-        _enable_vec = _env_truthy("NEXUS_ENABLE_VECTOR_SEARCH")
+        def _env_falsy(name: str) -> bool:
+            return (_os.environ.get(name) or "").strip().lower() in (
+                "0",
+                "false",
+                "no",
+                "off",
+            )
+
+        if _profile == "sandbox":
+            # SANDBOX: vector search ON by default. Two opt-outs honored,
+            # in priority order:
+            #   1. ``NEXUS_DISABLE_VECTOR_SEARCH=1`` — new explicit knob.
+            #   2. ``NEXUS_ENABLE_VECTOR_SEARCH=false`` — preserves the
+            #      legacy ``config.enable_vector_search=False`` opt-out
+            #      that ``connect()`` propagates to this env var. Without
+            #      this branch, deployments that previously turned vec
+            #      OFF via config would silently get it back on after the
+            #      default flip (Codex review, high).
+            if _env_truthy("NEXUS_DISABLE_VECTOR_SEARCH") or _env_falsy(
+                "NEXUS_ENABLE_VECTOR_SEARCH"
+            ):
+                _enable_vec = False
+            else:
+                _enable_vec = True
+        else:
+            _enable_vec = _env_truthy("NEXUS_ENABLE_VECTOR_SEARCH")
+
         if _profile == "sandbox" and _enable_vec:
             try:
                 from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
@@ -259,13 +289,15 @@ def _boot_post_kernel_services(
                     )
             except ImportError as exc:
                 logger.warning(
-                    "[BOOT:WIRED] SANDBOX enable_vector_search=true but optional dep missing (%s); "
-                    "install with: pip install 'nexus-ai-fs[sandbox]' — falling back to federation/BM25S",
+                    "[BOOT:WIRED] SANDBOX vector search disabled — optional dep missing (%s). "
+                    "Install with: pip install 'nexus-ai-fs[sandbox]' (bundles sqlite-vec + "
+                    "fastembed for offline embeddings). Falling back to keyword-only search.",
                     exc,
                 )
             except Exception as exc:
                 logger.warning(
-                    "[BOOT:WIRED] SqliteVecBackend init failed: %s — falling back to federation/BM25S",
+                    "[BOOT:WIRED] SqliteVecBackend init failed: %s — "
+                    "falling back to keyword-only search.",
                     exc,
                 )
 

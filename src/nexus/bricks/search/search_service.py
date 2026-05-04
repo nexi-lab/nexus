@@ -278,6 +278,10 @@ class SearchService:
         # the instance so a long-running sandbox doesn't spam the log.
         self._deployment_profile = (deployment_profile or "").lower() or None
         self._sandbox_fallback_warned = False
+        # One-shot warning when SANDBOX hybrid is requested but the local
+        # vec backend is missing (no sqlite-vec / no embedder reachable),
+        # so the user sees exactly once that hybrid degraded to keyword.
+        self._sandbox_hybrid_no_vec_warned = False
         # Issue #3778: optional local vector backend (sqlite-vec + litellm).
         # When non-None on SANDBOX, semantic search tries the local backend
         # first and only falls back to federation/BM25S when it returns
@@ -3187,6 +3191,13 @@ class SearchService:
             cache_url=cache_url,
             embedding_cache_ttl=embedding_cache_ttl,
             nx=nx,
+            # Codex review R5 #2 (high): forward the SANDBOX local
+            # vec backend so the IndexingPipeline can mirror writes
+            # into it on every indexed doc. Without this, the
+            # _sqlite_vec_backend attached to SearchService for
+            # SEARCH would never receive any vectors via the
+            # production indexing flow.
+            sqlite_vec_backend=self._sqlite_vec_backend,
         )
         self._query_service = components.query_service
         self._indexing_service = components.indexing_service
@@ -3340,6 +3351,180 @@ class SearchService:
 
         return hits[:limit] if hits else None
 
+    async def _hybrid_search_sandbox(
+        self,
+        *,
+        query: str,
+        path: str,
+        limit: int,
+        context: "OperationContext | None",
+    ) -> builtins.list[dict[str, Any]] | None:
+        """SANDBOX hybrid: run sqlite-vec + BM25S in parallel, fuse via RRF.
+
+        FULL-profile parity: both lanes are real (vec via local
+        sqlite-vec, keyword via the daemon's BM25S backend), so the fused
+        result carries no ``semantic_degraded`` marker.
+
+        Returns:
+            * fused list of dicts when at least one lane produced results.
+            * ``None`` when both lanes are empty / errored — caller falls
+              through to the semantic-only chain (which itself ends in
+              the BM25S degradation path).
+        """
+        backend = self._sqlite_vec_backend
+        if backend is None:
+            # SANDBOX hybrid was requested but vector search is not wired
+            # (likely missing sqlite-vec / fastembed, or the user opted
+            # out via NEXUS_DISABLE_VECTOR_SEARCH). Warn once so users
+            # understand they're on the keyword-only fallback, then let
+            # the caller's semantic-only chain handle the degradation.
+            if not self._sandbox_hybrid_no_vec_warned:
+                logger.warning(
+                    "[SearchService] SANDBOX hybrid requested but no local "
+                    "vector backend wired — degrading to keyword-only "
+                    "(BM25S) results. Install with: "
+                    "pip install 'nexus-ai-fs[sandbox]' (bundles sqlite-vec "
+                    "+ fastembed) and unset NEXUS_DISABLE_VECTOR_SEARCH to "
+                    "enable. Further occurrences will be logged at DEBUG."
+                )
+                self._sandbox_hybrid_no_vec_warned = True
+            else:
+                logger.debug("[SearchService] SANDBOX hybrid: no vec backend; keyword-only")
+            return None
+
+        zone_id = getattr(context, "zone_id", None) if context else None
+        if not zone_id:
+            zone_id = ROOT_ZONE_ID
+
+        from nexus.server.path_utils import unscope_internal_path as _unscope
+
+        db_path = _unscope(path) if path != "/" else None
+        # Over-fetch on each lane so RRF has more material to merge.
+        # Permission filtering happens after fusion, so account for that
+        # too when an enforcer is active.
+        per_lane_limit = limit * 3
+        if self._permission_enforcer:
+            per_lane_limit = max(per_lane_limit, limit * 5)
+
+        async def _vec_lane() -> builtins.list[Any]:
+            try:
+                return list(
+                    await backend.search(
+                        query=query,
+                        limit=per_lane_limit,
+                        zone_id=zone_id,
+                        search_type="hybrid",
+                        path_filter=db_path,
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[SearchService] SANDBOX hybrid: vec lane failed (%s); "
+                    "fusion will use keyword-only",
+                    exc,
+                )
+                return []
+
+        async def _kw_lane() -> builtins.list[dict[str, Any]]:
+            # Codex review R8 #1 (high): the prior gate required
+            # ``daemon._backend`` (the optional txtai backend), but
+            # SANDBOX installs bm25s + sqlite-vec + fastembed and
+            # does NOT install txtai by default. With the strict
+            # gate, the keyword lane returned empty under the SANDBOX
+            # default install shape — turning hybrid-by-default into
+            # vec-only without any degradation marker. The daemon's
+            # ``search(search_type="keyword", ...)`` path serves
+            # BM25S/FTS without the txtai backend, so we only require
+            # a wired daemon — the daemon itself decides whether
+            # BM25S, FTS, or txtai answers.
+            daemon = getattr(self, "_search_daemon", None)
+            if daemon is None:
+                return []
+            try:
+                rows = await daemon.search(
+                    query=query,
+                    search_type="keyword",
+                    limit=per_lane_limit,
+                    path_filter=db_path,
+                    zone_id=zone_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[SearchService] SANDBOX hybrid: keyword lane failed (%s); "
+                    "fusion will use vec-only",
+                    exc,
+                )
+                return []
+            out: builtins.list[dict[str, Any]] = []
+            for r in rows:
+                entry: dict[str, Any] = {
+                    "path": r.path,
+                    "chunk_text": getattr(r, "chunk_text", ""),
+                    "score": round(r.score, 4),
+                    "chunk_index": getattr(r, "chunk_index", 0),
+                    "start_offset": getattr(r, "start_offset", 0) or 0,
+                    "end_offset": getattr(r, "end_offset", 0) or 0,
+                    "line_start": getattr(r, "line_start", 0) or 0,
+                    "line_end": getattr(r, "line_end", 0) or 0,
+                }
+                ctx_val = getattr(r, "context", None)
+                if ctx_val is not None:
+                    entry["context"] = ctx_val
+                out.append(entry)
+            return out
+
+        vec_results, kw_results = await asyncio.gather(_vec_lane(), _kw_lane())
+        if not vec_results and not kw_results:
+            return None
+
+        # Codex review R1 (high): track whether the vector lane
+        # contributed anything at all so we can flag keyword-only
+        # results. We must record the vec keys BEFORE fusion so the
+        # post-filter check (R2) can ask "did any surviving row come
+        # from the vec lane?" without trusting fields stamped by
+        # fusion (e.g. vector_score=0.0 inherited from a BaseSearchResult
+        # default would falsely look like a vec contribution).
+        vec_keys: builtins.set[tuple[str, int]] = {
+            (getattr(r, "path", ""), int(getattr(r, "chunk_index", 0) or 0)) for r in vec_results
+        }
+        vec_lane_empty = not vec_results
+
+        from nexus.bricks.search.fusion import (
+            FusionConfig,
+            FusionMethod,
+            fuse_results,
+        )
+
+        fused = fuse_results(
+            keyword_results=kw_results,
+            vector_results=vec_results,
+            config=FusionConfig(method=FusionMethod.RRF),
+            limit=limit if not self._permission_enforcer else limit * 3,
+            id_key=None,  # use path:chunk_index — no chunk_id stamped here
+        )
+
+        if self._permission_enforcer and fused and context is not None:
+            all_paths = [h.get("path", "") for h in fused]
+            accessible = set(self._permission_enforcer.filter_list(all_paths, context))
+            fused = [h for h in fused if h.get("path", "") in accessible]
+
+        # Codex review R2 (high): recompute degradation AFTER
+        # permission filtering. If every fused row that originated in
+        # the vec lane was filtered out, the caller is effectively on
+        # keyword-only results even though the vec lane itself returned
+        # hits, and must be flagged degraded.
+        surviving_from_vec = any(
+            (r.get("path", ""), int(r.get("chunk_index", 0) or 0)) in vec_keys for r in fused
+        )
+        vec_degraded = vec_lane_empty or not surviving_from_vec
+
+        if vec_degraded and fused:
+            LAST_SEMANTIC_DEGRADED.set(True)
+            for r in fused:
+                r["semantic_degraded"] = True
+
+        return fused[:limit] if fused else None
+
     async def _semantic_search_sandbox(
         self,
         *,
@@ -3347,20 +3532,26 @@ class SearchService:
         path: str,
         limit: int,
         context: "OperationContext | None",
+        search_mode: str = "semantic",
     ) -> builtins.list[dict[str, Any]]:
         """SANDBOX-profile semantic_search: local vec → federation → BM25S.
 
         Issue #3778. The fallback chain on SANDBOX is:
 
-        1. **Local sqlite-vec** (``self._sqlite_vec_backend``). When wired
-           and the KNN query returns hits, those hits are returned directly
-           and ``semantic_degraded`` is NOT set (this is a real semantic
-           match, just on a local store rather than a federated peer).
-        2. **Federation**: SANDBOX never has peers configured, so the
+        1. **Hybrid (RRF)**: when ``search_mode == "hybrid"`` and the
+           local sqlite-vec backend is wired, run the vec lane and the
+           daemon BM25S keyword lane in parallel and fuse via RRF. This
+           is the FULL-profile parity path — both lanes are real, so we
+           do NOT stamp ``semantic_degraded``.
+        2. **Local sqlite-vec semantic** (``self._sqlite_vec_backend``).
+           For ``search_mode == "semantic"`` (or when hybrid sees an empty
+           keyword lane), the KNN query alone is treated as a real
+           semantic match and ``semantic_degraded`` is NOT set.
+        3. **Federation**: SANDBOX never has peers configured, so the
            ``FederatedSearchResponse`` is synthesised as "no peers" — that
            causes ``_semantic_with_sandbox_fallback`` to invoke the BM25S
            callable.
-        3. **BM25S** (via the local SearchDaemon's keyword path), or the
+        4. **BM25S** (via the local SearchDaemon's keyword path), or the
            SQL chunk search when no daemon is wired. Results carry
            ``semantic_degraded=True`` so MCP / HTTP clients can warn users
            that the answer is keyword-only.
@@ -3371,7 +3562,21 @@ class SearchService:
         # fallback actually fires.
         LAST_SEMANTIC_DEGRADED.set(False)
 
-        # Step 1 — try the local vector backend first.
+        # Step 1 — real RRF hybrid when requested. We always invoke the
+        # helper (even with no vec backend) so the one-shot "no-vec"
+        # warning fires for users who asked for hybrid explicitly via
+        # the public API. The helper returns None when it can't produce
+        # fused results; the caller falls through to the existing
+        # semantic-only / degraded chain.
+        if search_mode == "hybrid":
+            fused = await self._hybrid_search_sandbox(
+                query=query, path=path, limit=limit, context=context
+            )
+            if fused is not None:
+                return fused
+
+        # Step 2 — try the local vector backend (semantic-only path, or
+        # hybrid fallback when fusion couldn't run).
         local = await self._try_sqlite_vec_sandbox(
             query=query, path=path, limit=limit, context=context
         )
@@ -3577,12 +3782,22 @@ class SearchService:
         # and stamp ``semantic_degraded=True`` on every result.  We delegate
         # the "no-peers" detection + stamping to _semantic_with_sandbox_fallback
         # so the fallback logic is shared with any future federation caller.
+        #
+        # SANDBOX hybrid-by-default: when the caller asks for the default
+        # "semantic" mode AND a local vec backend is wired, transparently
+        # upgrade to "hybrid" so users get the fused vec+BM25 path without
+        # needing to remember the keyword. Explicit "keyword" requests are
+        # untouched. When no vec backend is wired we leave the request as
+        # "semantic" so the existing degraded chain handles it.
         if self._deployment_profile == "sandbox" and search_mode in ("semantic", "hybrid"):
+            if search_mode == "semantic" and self._sqlite_vec_backend is not None:
+                search_mode = "hybrid"
             return await self._semantic_search_sandbox(
                 query=query,
                 path=path,
                 limit=limit,
                 context=context,
+                search_mode=search_mode,
             )
 
         # Issue #2663: _query_service was removed (txtai handles search via
@@ -3911,6 +4126,7 @@ class SearchService:
             metadata=self.metadata,
             file_reader=self._read,
             file_lister=self.list,
+            sqlite_vec_backend=self._sqlite_vec_backend,
         )
         self._query_service = components.query_service
         self._indexing_service = components.indexing_service

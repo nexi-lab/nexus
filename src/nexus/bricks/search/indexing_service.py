@@ -235,6 +235,23 @@ class IndexingService:
                         )
                         locked.indexed_content_id = current_content_id
                         locked.last_indexed_at = datetime.now(UTC)
+                        # Codex review R9 #4 / R10 #3 (high+medium):
+                        # bypass branch must prune the vec lane.
+                        # R10 #3: prune BEFORE the SQL commit so vec
+                        # work happens INSIDE the FOR UPDATE lock
+                        # window. Two effects:
+                        #   1. A concurrent reindex that would
+                        #      otherwise land vec rows for the same
+                        #      path between our commit and our prune
+                        #      is blocked from advancing
+                        #      ``indexed_content_id`` (it serializes
+                        #      behind us via SELECT ... FOR UPDATE),
+                        #      so we can't delete its fresh rows.
+                        #   2. A vec-prune failure now raises BEFORE
+                        #      the SQL commit fires, so the CAS
+                        #      doesn't advance and the next tick
+                        #      retries — no silent lane divergence.
+                        await self._pipeline.prune_vec_rows(path)
                         session.commit()
                         logger.info(
                             "[INDEXING-SVC] Successful empty parse for %s — cleared "
@@ -293,6 +310,15 @@ class IndexingService:
                                 DocumentChunkModel.path_id == path_id,
                             ),
                         )
+                        # Codex review R9 #4 / R10 #3 (high+medium):
+                        # vec prune INSIDE the CAS lock window so a
+                        # concurrent reindex can't slip fresh vec rows
+                        # in before our prune deletes them, and a vec
+                        # failure rolls back the SQL transaction for
+                        # retry instead of silently skipping the
+                        # prune. See the empty-parse branch above for
+                        # the same rationale.
+                        await self._pipeline.prune_vec_rows(path)
                         session.commit()
                         logger.warning(
                             "[INDEXING-SVC] Parse failed for changed %s — cleared "

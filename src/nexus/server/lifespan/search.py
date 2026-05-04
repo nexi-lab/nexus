@@ -283,6 +283,19 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # ``create_app(database_url=...)``.
         app.state.database_url = svc.database_url
 
+        # Codex review R6 (high): forward SearchService's already-
+        # constructed sqlite_vec_backend (set by _wired.py at factory
+        # boot) so the daemon's IndexingPipeline mirrors writes into
+        # the hybrid vector lane and the DELETE mutation handler can
+        # prune stale vec rows. Pulled from SearchService rather than
+        # re-constructed because both paths must point at the same
+        # underlying DB / connection / dim.
+        _vec_backend = None
+        with contextlib.suppress(AttributeError):
+            _ss = svc.nexus_fs.service("search")
+            if _ss is not None:
+                _vec_backend = getattr(_ss, "_sqlite_vec_backend", None)
+
         app.state.search_daemon = SearchDaemon(
             config,
             async_session_factory=_async_sf,
@@ -290,6 +303,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             cache_brick=_cache_brick,
             settings_store=_settings_store,
             path_context_cache=path_context_cache,  # Issue #3773
+            sqlite_vec_backend=_vec_backend,
         )
 
         # Embeddings are now handled by txtai backend (Issue #2663).

@@ -69,6 +69,7 @@ async def backend(mock_embed):
         db_path=":memory:",
         embedding_model="fake-model",
         embedding_dim=TEST_DIM,
+        embedder="litellm",
     )
     await b.startup()
     yield b
@@ -84,7 +85,7 @@ class TestImportGuards:
     def test_construction_succeeds_when_deps_present(self) -> None:
         # Both deps are installed in the test env (importorskip above);
         # constructing the backend must not raise.
-        b = SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM)
+        b = SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="litellm")
         assert b._embedding_dim == TEST_DIM
 
     def test_missing_sqlite_vec_raises_clear_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,13 +104,13 @@ class TestImportGuards:
 
             monkeypatch.setattr(builtins, "__import__", _fake_import)
             with pytest.raises(ImportError, match="sqlite-vec"):
-                SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM)
+                SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="litellm")
         finally:
             if real_sqlite_vec is not None:
                 sys.modules["sqlite_vec"] = real_sqlite_vec
 
     def test_missing_litellm_raises_clear_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Construction must fail with a clear ImportError when litellm is absent."""
+        """Construction with embedder='litellm' must fail clearly when litellm is absent."""
         real_litellm = sys.modules.pop("litellm", None)
         try:
             import builtins
@@ -123,7 +124,7 @@ class TestImportGuards:
 
             monkeypatch.setattr(builtins, "__import__", _fake_import)
             with pytest.raises(ImportError, match="litellm"):
-                SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM)
+                SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="litellm")
         finally:
             if real_litellm is not None:
                 sys.modules["litellm"] = real_litellm
@@ -137,7 +138,7 @@ class TestImportGuards:
 class TestLifecycle:
     @pytest.mark.asyncio
     async def test_startup_is_idempotent(self, mock_embed) -> None:
-        b = SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM)
+        b = SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="litellm")
         await b.startup()
         # Second call must not raise and must not recreate the conn.
         first_conn = b._conn
@@ -147,7 +148,7 @@ class TestLifecycle:
 
     @pytest.mark.asyncio
     async def test_default_embedding_dim_matches_expected(self) -> None:
-        b = SqliteVecBackend(db_path=":memory:")
+        b = SqliteVecBackend(db_path=":memory:", embedder="litellm")
         assert b._embedding_dim == DEFAULT_EMBEDDING_DIM
 
 
@@ -341,7 +342,10 @@ class TestPerLoopLocks:
         import threading
 
         backend = SqliteVecBackend(
-            db_path=":memory:", embedding_model="fake-model", embedding_dim=TEST_DIM
+            db_path=":memory:",
+            embedding_model="fake-model",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
         )
         seen: list[asyncio.Lock] = []
         errors: list[BaseException] = []
@@ -372,7 +376,10 @@ class TestPerLoopLocks:
         import time as _time
 
         backend = SqliteVecBackend(
-            db_path=":memory:", embedding_model="fake-model", embedding_dim=TEST_DIM
+            db_path=":memory:",
+            embedding_model="fake-model",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
         )
         active = 0
         max_active = 0
@@ -408,3 +415,509 @@ class TestPerLoopLocks:
         assert errors == [], f"native section raised: {errors!r}"
         assert max_active == 1, f"cross-loop critical sections overlapped: max={max_active}"
         assert elapsed >= 0.18, f"sections did not serialise: elapsed={elapsed:.3f}s"
+
+
+# =============================================================================
+# Embedder kind detection + fastembed offline fallback
+# =============================================================================
+
+
+from nexus.bricks.search.sqlite_vec_backend import (  # noqa: E402
+    _REMOTE_API_KEY_ENVS,
+    DEFAULT_FASTEMBED_DIM,
+    DEFAULT_FASTEMBED_MODEL,
+    SqliteVecDimMismatchError,
+    SqliteVecEmbedderMismatchError,
+    _detect_embedder_kind,
+)
+
+
+class TestEmbedderDetection:
+    def test_no_keys_no_flag_picks_fastembed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for env in _REMOTE_API_KEY_ENVS:
+            monkeypatch.delenv(env, raising=False)
+        monkeypatch.delenv("NEXUS_OFFLINE_EMBED", raising=False)
+        assert _detect_embedder_kind(api_key=None) == "fastembed"
+
+    def test_explicit_api_key_arg_picks_litellm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for env in _REMOTE_API_KEY_ENVS:
+            monkeypatch.delenv(env, raising=False)
+        monkeypatch.delenv("NEXUS_OFFLINE_EMBED", raising=False)
+        assert _detect_embedder_kind(api_key="sk-test") == "litellm"
+
+    def test_openai_env_picks_litellm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for env in _REMOTE_API_KEY_ENVS:
+            monkeypatch.delenv(env, raising=False)
+        monkeypatch.delenv("NEXUS_OFFLINE_EMBED", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        assert _detect_embedder_kind(api_key=None) == "litellm"
+
+    def test_offline_flag_overrides_env_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Even with a key present, the explicit offline flag wins.
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("NEXUS_OFFLINE_EMBED", "1")
+        assert _detect_embedder_kind(api_key="sk-test") == "fastembed"
+
+    def test_fastembed_defaults_when_no_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for env in _REMOTE_API_KEY_ENVS:
+            monkeypatch.delenv(env, raising=False)
+        monkeypatch.delenv("NEXUS_OFFLINE_EMBED", raising=False)
+        monkeypatch.delenv("NEXUS_EMBEDDER", raising=False)
+        b = SqliteVecBackend(db_path=":memory:")
+        assert b._embedder_kind == "fastembed"
+        assert b._embedding_model == DEFAULT_FASTEMBED_MODEL
+        assert b._embedding_dim == DEFAULT_FASTEMBED_DIM
+
+    def test_invalid_embedder_kind_raises(self) -> None:
+        with pytest.raises(ValueError, match="unknown embedder kind"):
+            SqliteVecBackend(db_path=":memory:", embedder="bogus")
+
+
+class _FakeFastembedModel:
+    """Stand-in for fastembed.TextEmbedding — returns deterministic vectors."""
+
+    def __init__(self, vectors_by_text: dict[str, list[float]]) -> None:
+        self._vectors_by_text = vectors_by_text
+
+    def embed(self, texts: list[str]):
+        # fastembed yields numpy arrays; lists of floats also work since
+        # the backend wraps with ``map(float, ...)``.
+        for i, t in enumerate(texts):
+            yield self._vectors_by_text.get(t, [float(i + 1), 0.0, 0.0, 0.0])
+
+
+class TestFastembedRoundtrip:
+    """End-to-end upsert/search using the fastembed code path."""
+
+    @pytest.fixture
+    async def fast_backend(self):
+        vectors_by_text: dict[str, list[float]] = {}
+        b = SqliteVecBackend(
+            db_path=":memory:",
+            embedding_dim=TEST_DIM,
+            embedder="fastembed",
+        )
+        # Pre-fill the lazy slot so we never touch the real ONNX model
+        # (or hit the network on a fresh CI runner).
+        b._fastembed_model = _FakeFastembedModel(vectors_by_text)
+        await b.startup()
+        yield b, vectors_by_text
+        await b.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_upsert_then_search_via_fastembed(self, fast_backend) -> None:
+        b, vectors_by_text = fast_backend
+        vectors_by_text["alpha"] = [1.0, 0.0, 0.0, 0.0]
+        vectors_by_text["beta"] = [0.0, 1.0, 0.0, 0.0]
+        vectors_by_text["alpha?"] = [1.0, 0.0, 0.0, 0.0]
+
+        n = await b.upsert(
+            [
+                {"path": "/a.md", "text": "alpha", "chunk_index": 0},
+                {"path": "/b.md", "text": "beta", "chunk_index": 0},
+            ],
+            zone_id="z",
+        )
+        assert n == 2
+
+        results = await b.search("alpha?", limit=2, zone_id="z")
+        assert results, "fastembed-backed KNN returned nothing"
+        assert results[0].path == "/a.md"
+        assert results[0].vector_score > 0.0
+
+    @pytest.mark.asyncio
+    async def test_litellm_not_required_when_fastembed_selected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Construction with embedder='fastembed' must succeed even if
+        litellm is missing — that's the whole point of the offline path."""
+        real_litellm = sys.modules.pop("litellm", None)
+        try:
+            import builtins
+
+            real_import = builtins.__import__
+
+            def _fake_import(name: str, *a: Any, **kw: Any) -> Any:
+                if name == "litellm":
+                    raise ImportError("simulated missing litellm")
+                return real_import(name, *a, **kw)
+
+            monkeypatch.setattr(builtins, "__import__", _fake_import)
+            b = SqliteVecBackend(db_path=":memory:", embedding_dim=TEST_DIM, embedder="fastembed")
+            assert b._embedder_kind == "fastembed"
+        finally:
+            if real_litellm is not None:
+                sys.modules["litellm"] = real_litellm
+
+
+# =============================================================================
+# Existing-table dim validation (Codex review, high)
+# =============================================================================
+
+
+class TestExistingTableDimValidation:
+    """Codex review (high): if a SANDBOX user populated nexus.db with a
+    1536-dim litellm backend and later restarted without an API key,
+    the auto-detect picks the 384-dim fastembed embedder. Without
+    validation the table stays at 1536 while every upsert packs 384
+    floats — silent corruption / per-call errors.
+
+    Validation must surface the mismatch loudly at startup so the
+    factory's error handler can disable vec gracefully."""
+
+    @pytest.mark.asyncio
+    async def test_dim_match_starts_clean(self, mock_embed, tmp_path) -> None:
+        db = str(tmp_path / "vec.sqlite")
+        # First start at dim=4 — creates the table.
+        b1 = SqliteVecBackend(db_path=db, embedding_dim=TEST_DIM, embedder="litellm")
+        await b1.startup()
+        await b1.shutdown()
+        # Second start at the same dim must succeed.
+        b2 = SqliteVecBackend(db_path=db, embedding_dim=TEST_DIM, embedder="litellm")
+        await b2.startup()
+        assert b2._started is True
+        await b2.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_dim_mismatch_raises_clear_error(self, mock_embed, tmp_path) -> None:
+        db = str(tmp_path / "vec.sqlite")
+        # Populate at dim=8 via one backend.
+        b1 = SqliteVecBackend(db_path=db, embedding_dim=8, embedder="litellm")
+        await b1.startup()
+        await b1.shutdown()
+        # New backend opens at dim=4 (mimics the litellm→fastembed
+        # auto-detect switch after an API key disappears). Must raise.
+        b2 = SqliteVecBackend(db_path=db, embedding_dim=4, embedder="litellm")
+        with pytest.raises(SqliteVecDimMismatchError) as excinfo:
+            await b2.startup()
+        msg = str(excinfo.value)
+        assert "dim=8" in msg and "dim=4" in msg
+        # Resolution hint must point at the recovery path so users
+        # aren't stuck guessing.
+        assert "rebuild" in msg.lower() or "delete" in msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_startup_race_caught_by_post_check(self, mock_embed, tmp_path) -> None:
+        """Codex review R2 (high): when two backends with different dims
+        race on first start, the loser's pre-check sees an empty schema
+        and proceeds to ``CREATE VIRTUAL TABLE IF NOT EXISTS`` — which
+        becomes a no-op because the winner's table already exists at a
+        different dim. Without the post-check the loser would mark
+        itself started with the WRONG dim and silently fail every
+        upsert/search forever.
+
+        Simulating the race deterministically: patch ``_DIM_REGEX`` to
+        report a fabricated dim of 999 on the post-check (the pre-check
+        is unaffected because the table truly doesn't exist yet, so
+        ``_read_existing_dim`` short-circuits without calling the
+        regex). The post-check should fire and raise the ``race=True``
+        variant of the dim-mismatch error.
+        """
+        from unittest.mock import MagicMock
+
+        from nexus.bricks.search import sqlite_vec_backend as svb
+
+        db = str(tmp_path / "vec.sqlite")
+        b = SqliteVecBackend(db_path=db, embedding_dim=TEST_DIM, embedder="litellm")
+
+        fake_match = MagicMock()
+        fake_match.group.return_value = "999"
+        fake_regex = MagicMock()
+        fake_regex.search.return_value = fake_match
+
+        with (
+            patch.object(svb, "_DIM_REGEX", fake_regex),
+            pytest.raises(SqliteVecDimMismatchError) as excinfo,
+        ):
+            await b.startup()
+
+        msg = str(excinfo.value)
+        # The fabricated existing dim must appear in the message so the
+        # operator can see what they're up against.
+        assert "dim=999" in msg, msg
+        assert f"dim={TEST_DIM}" in msg, msg
+        # The race-only branch of the error string must distinguish this
+        # from the simpler "stale DB" mismatch — ops needs to know it
+        # was a concurrent open, not a config drift.
+        assert "concurrent" in msg.lower(), f"race=True error must mention concurrency: {msg}"
+        # Backend must NOT be marked started after a failed startup.
+        assert b._started is False
+
+    def test_open_sets_busy_timeout_pragma(self, mock_embed, tmp_path) -> None:
+        """Codex review R2: a 5s ``PRAGMA busy_timeout`` is what lets the
+        loser of a concurrent CREATE wait for the winner instead of
+        failing fast with SQLITE_BUSY. Verify the pragma is actually set
+        on the open connection (regression guard for someone removing
+        the line without realising it backstops the race fix)."""
+        import asyncio
+
+        async def _run() -> int:
+            b = SqliteVecBackend(
+                db_path=str(tmp_path / "vec.sqlite"),
+                embedding_dim=TEST_DIM,
+                embedder="litellm",
+            )
+            await b.startup()
+            try:
+                cur = b._conn.execute("PRAGMA busy_timeout")
+                row = cur.fetchone()
+                return int(row[0])
+            finally:
+                await b.shutdown()
+
+        timeout_ms = asyncio.run(_run())
+        assert timeout_ms >= 5000, (
+            f"busy_timeout must be ≥5000ms to absorb concurrent first-start; got {timeout_ms}ms"
+        )
+
+
+class TestEmbedderIdentityValidation:
+    """Codex review R3 (medium): the dim check alone misses the case
+    where two different models produce the same dim (e.g. bge-small
+    and all-MiniLM-L6 both yield 384-d). Mixing their outputs in the
+    same vec0 table silently corrupts KNN ranking. The companion meta
+    table must record the embedder kind + model name on first start
+    and reject mismatched opens loudly."""
+
+    @pytest.mark.asyncio
+    async def test_same_embedder_starts_clean(self, mock_embed, tmp_path) -> None:
+        db = str(tmp_path / "vec.sqlite")
+        b1 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="model-A",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        await b1.startup()
+        await b1.shutdown()
+        # Re-open with the same identity must succeed.
+        b2 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="model-A",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        await b2.startup()
+        assert b2._started is True
+        await b2.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_same_dim_different_model_raises_clear_error(self, mock_embed, tmp_path) -> None:
+        """Sequential mismatch: DB populated with model-A then re-opened
+        with model-B at the same dim. Without the meta-table check, both
+        would silently start against the same table and corrupt ranking."""
+        db = str(tmp_path / "vec.sqlite")
+        b1 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="model-A",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        await b1.startup()
+        await b1.shutdown()
+
+        b2 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="model-B",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        with pytest.raises(SqliteVecEmbedderMismatchError) as excinfo:
+            await b2.startup()
+        msg = str(excinfo.value)
+        assert "model-A" in msg and "model-B" in msg, msg
+        # Resolution hint must be present.
+        assert "delete the DB" in msg or "pin the original embedder" in msg.lower(), msg
+        # Race-flag-only language must NOT appear when this is a
+        # steady-state mismatch (neither field matched ours).
+        # However our heuristic flags race=True when at least one field
+        # matches; same kind, different model → kind matches → race-ish.
+        # Either is acceptable for the sequential case.
+
+    @pytest.mark.asyncio
+    async def test_same_model_different_kind_raises(self, mock_embed, tmp_path) -> None:
+        """Cross-embedder mismatch: same dim + same model name but
+        different ``kind`` (litellm vs fastembed) is still incompatible
+        because the underlying embedding implementations differ."""
+        db = str(tmp_path / "vec.sqlite")
+        b1 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="shared-name",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        await b1.startup()
+        await b1.shutdown()
+
+        # Force fastembed by patching out the fastembed import error path.
+        b2 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="shared-name",
+            embedding_dim=TEST_DIM,
+            embedder="fastembed",
+        )
+        with pytest.raises(SqliteVecEmbedderMismatchError):
+            await b2.startup()
+
+    @pytest.mark.asyncio
+    async def test_pre_r3_populated_db_without_meta_refuses_to_bless(
+        self, mock_embed, tmp_path
+    ) -> None:
+        """Codex review R4 (high): a pre-R3 database has rows in
+        ``nexus_vec`` but no ``nexus_vec_meta`` table. Blindly INSERT-
+        OR-IGNORE-ing the new backend's identity would tag those rows
+        with whichever embedder happens to open the DB after upgrade —
+        a silent corruption mode if the original embedder differed but
+        shared the same dim. Startup must FAIL CLOSED on this state."""
+        import sqlite3
+
+        from nexus.bricks.search.sqlite_vec_backend import _VEC_META_TABLE, _VEC_TABLE
+
+        db = str(tmp_path / "vec.sqlite")
+
+        # Phase 1: simulate a pre-R3 build by populating nexus_vec at
+        # TEST_DIM=4 WITHOUT creating the meta table. We use the real
+        # backend to create the vec table cleanly, insert a row, then
+        # drop the meta table to simulate the upgrade scenario.
+        b1 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="original-model",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        await b1.startup()
+        await b1.upsert(
+            [{"path": "/seed.md", "text": "seed", "chunk_index": 0}],
+            zone_id="z",
+        )
+        await b1.shutdown()
+
+        # Surgically remove the meta table to simulate a pre-R3 DB.
+        # Load the sqlite-vec extension so vec0 virtual tables are
+        # queryable from this prep connection.
+        prep = sqlite3.connect(db)
+        try:
+            prep.enable_load_extension(True)
+            sqlite_vec.load(prep)
+            prep.enable_load_extension(False)
+            prep.execute(f"DROP TABLE {_VEC_META_TABLE}")
+            prep.commit()
+            # Sanity: vec table still has the row.
+            row = prep.execute(f"SELECT 1 FROM {_VEC_TABLE} LIMIT 1").fetchone()
+            assert row is not None, "test setup invariant: vec table must still hold rows"
+        finally:
+            prep.close()
+
+        # Phase 2: open with a DIFFERENT model at the same dim. Without
+        # the R4 pre-INSERT check, the new backend would INSERT OR
+        # IGNORE its own identity and silently bless the existing rows
+        # as belonging to the new embedder. With the fix, startup must
+        # raise rather than risk corrupted ranking.
+        b2 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="new-after-upgrade",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        with pytest.raises(SqliteVecEmbedderMismatchError) as excinfo:
+            await b2.startup()
+
+        msg = str(excinfo.value)
+        assert "pre-R3" in msg or "no embedder identity recorded" in msg, msg
+        assert "new-after-upgrade" in msg, (
+            "error must surface the configured backend's identity so the "
+            "operator can confirm what they're about to overwrite"
+        )
+        # Resolution hint must point at the rebuild path.
+        assert "delete the DB" in msg or "drop" in msg.lower(), msg
+
+    @pytest.mark.asyncio
+    async def test_pre_r3_empty_db_without_meta_starts_clean(self, mock_embed, tmp_path) -> None:
+        """Counter-test for R4 #3: when the pre-R3 vec table exists but
+        is EMPTY, it's safe to register the current backend as the
+        owner. Only populated tables must fail closed."""
+        import sqlite3
+
+        from nexus.bricks.search.sqlite_vec_backend import _VEC_META_TABLE
+
+        db = str(tmp_path / "vec.sqlite")
+
+        # Create an empty vec table at TEST_DIM and drop meta.
+        b1 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="some-model",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        await b1.startup()
+        await b1.shutdown()
+
+        prep = sqlite3.connect(db)
+        try:
+            prep.enable_load_extension(True)
+            sqlite_vec.load(prep)
+            prep.enable_load_extension(False)
+            prep.execute(f"DROP TABLE {_VEC_META_TABLE}")
+            prep.commit()
+        finally:
+            prep.close()
+
+        # Re-open: empty vec table + missing meta = state (a) (brand
+        # new for our purposes), startup must succeed.
+        b2 = SqliteVecBackend(
+            db_path=db,
+            embedding_model="any-model",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        await b2.startup()
+        assert b2._started is True
+        await b2.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_start_same_dim_different_model(
+        self, mock_embed, tmp_path
+    ) -> None:
+        """True race: two backends with the same dim but different model
+        names race on first-start. INSERT OR IGNORE makes the first
+        write win; the loser's post-write SELECT must reveal the stored
+        identity diverges from its own and raise. Simulated
+        deterministically via a pre-populated meta row that mimics the
+        winner's INSERT having landed first."""
+        import sqlite3
+
+        from nexus.bricks.search.sqlite_vec_backend import _VEC_META_TABLE
+
+        db = str(tmp_path / "vec.sqlite")
+        # Mimic the "winner" backend having run first: create the meta
+        # table + row before our backend's startup tries to insert.
+        # (We don't need an actual nexus_vec table — the meta check runs
+        # after CREATE IF NOT EXISTS so our backend's CREATE will fire.)
+        prep = sqlite3.connect(db)
+        try:
+            prep.execute(
+                f"CREATE TABLE {_VEC_META_TABLE} (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            prep.executemany(
+                f"INSERT INTO {_VEC_META_TABLE}(key, value) VALUES (?, ?)",
+                [("embedder_kind", "litellm"), ("embedding_model", "winner-model")],
+            )
+            prep.commit()
+        finally:
+            prep.close()
+
+        loser = SqliteVecBackend(
+            db_path=db,
+            embedding_model="loser-model",
+            embedding_dim=TEST_DIM,
+            embedder="litellm",
+        )
+        with pytest.raises(SqliteVecEmbedderMismatchError) as excinfo:
+            await loser.startup()
+        msg = str(excinfo.value)
+        assert "winner-model" in msg and "loser-model" in msg, msg
+        # Race-flagged language must appear because at least one field
+        # (kind=litellm) matches between stored and configured.
+        assert "concurrent" in msg.lower(), (
+            f"same-dim race must surface the concurrent-open hint: {msg}"
+        )

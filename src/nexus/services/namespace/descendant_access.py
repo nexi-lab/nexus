@@ -39,6 +39,9 @@ class DescendantAccessChecker:
         self._dir_visibility_cache = dir_visibility_cache
         self._permission_enforcer = permission_enforcer
         self._metadata_store = metadata_store
+        # Pull the kernel out of the proxy so listing goes directly to
+        # ``kernel.metastore_*`` (survives W3).
+        self._kernel: Any = metadata_store._rust_kernel if metadata_store is not None else None
 
     # ------------------------------------------------------------------
     # Public API
@@ -202,7 +205,7 @@ class DescendantAccessChecker:
             prefix = ""
 
         try:
-            all_descendants = self._metadata_store.list(prefix)
+            all_descendants = self._kernel.metastore_list(prefix)
         except Exception as exc:
             # If metadata query fails, return False
             logger.debug("Metadata query failed for prefix %s: %s", prefix, exc)
@@ -441,7 +444,9 @@ class DescendantAccessChecker:
                 f"querying '{common_prefix}' once for {len(paths)} directories"
             )
             try:
-                all_descendants = self._metadata_store.list(common_prefix if common_prefix else "/")
+                all_descendants = self._kernel.metastore_list(
+                    common_prefix if common_prefix else "/"
+                )
                 all_paths_set = {meta.path for meta in all_descendants}
                 logger.debug(
                     f"has_access_bulk: Got {len(all_paths_set)} paths from common ancestor"
@@ -481,7 +486,7 @@ class DescendantAccessChecker:
                     prefix = ""
 
                 try:
-                    descendants = self._metadata_store.list(prefix)
+                    descendants = self._kernel.metastore_list(prefix)
                     descendant_paths = [meta.path for meta in descendants]
                     path_to_descendants[path] = descendant_paths
 

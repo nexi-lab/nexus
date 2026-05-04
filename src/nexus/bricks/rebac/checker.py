@@ -49,6 +49,9 @@ class PermissionChecker:
         """
         self._permission_enforcer = permission_enforcer
         self._metadata_store: Any = metadata_store
+        # Extract the kernel from the proxy so per-call lookups go directly
+        # to ``kernel.metastore_*`` (and survive W3, which deletes the proxy).
+        self._kernel: Any = metadata_store._rust_kernel
         self._default_context = default_context
         self._enforce_permissions = enforce_permissions
 
@@ -143,7 +146,7 @@ class PermissionChecker:
         from nexus.lib.virtual_views import parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
-            return bool(self._metadata_store.exists(check_path))
+            return bool(self._kernel.metastore_exists(check_path))
 
         original_path, view_type, _ = parse_virtual_path(path, metadata_exists)
         if view_type == "md":
@@ -200,7 +203,7 @@ class PermissionChecker:
             _owner_meta = (
                 file_metadata
                 if (file_metadata is not None and permission_path == path)
-                else self._metadata_store.get(permission_path)
+                else self._kernel.metastore_get(permission_path)
             )
             if self._permission_enforcer.check_owner(_owner_meta, ctx):
                 return  # Owner has all permissions — skip ReBAC

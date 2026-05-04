@@ -125,11 +125,15 @@ class DirectoryExpander:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._metadata_store = metadata_store
+        # Pull the kernel out of the proxy so calls go to ``kernel.metastore_*``
+        # directly (and survive W3).
+        self._kernel: Any = metadata_store._rust_kernel if metadata_store is not None else None
         self._version_store = version_store
 
     def set_metadata_store(self, metadata_store: Any) -> None:
         """Set the metadata store reference for directory queries."""
         self._metadata_store = metadata_store
+        self._kernel = metadata_store._rust_kernel if metadata_store is not None else None
 
     # -- Path detection ----------------------------------------------------
 
@@ -156,10 +160,10 @@ class DirectoryExpander:
             if extension in _FILE_EXTENSIONS:
                 return False
 
-        # If we have a metadata store reference, check for children
-        if self._metadata_store:
+        # If we have a kernel reference, check for children
+        if self._kernel is not None:
             try:
-                return bool(self._metadata_store.is_implicit_directory(path))
+                return bool(self._kernel.metastore_is_implicit_directory(path))
             except (RuntimeError, OperationalError) as e:
                 logger.debug("[LEOPARD] Failed to check directory via metadata: %s", e)
 
@@ -302,14 +306,12 @@ class DirectoryExpander:
         Returns:
             List of descendant file paths.
         """
-        # Try using metadata store if available
-        if self._metadata_store:
+        # Try using the kernel metastore if available. ``kernel.metastore_list``
+        # is single-zone (the proxy ignored ``zone_id`` too); the SQL fallback
+        # below honours the parameter for federated installs.
+        if self._kernel is not None:
             try:
-                files = self._metadata_store.list(
-                    prefix=directory_path,
-                    recursive=True,
-                    zone_id=zone_id,
-                )
+                files = self._kernel.metastore_list(directory_path)
                 return [f.path for f in files]
             except (RuntimeError, OperationalError) as e:
                 logger.warning("[LEOPARD] Metadata store query failed: %s", e)

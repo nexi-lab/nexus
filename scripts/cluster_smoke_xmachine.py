@@ -231,14 +231,14 @@ def main() -> int:
         if args.bootstrap_new:
             line = wait_for_marker(
                 log_path,
-                re.compile(r"NEXUS_BOOTSTRAP_NEW honored.*creating 1-voter root zone"),
+                re.compile(r"NEXUS_BOOTSTRAP_NEW honored.*creating 1-voter zone"),
                 timeout_s=30.0,
                 label="founder create 1-voter zone",
             )
         else:
             line = wait_for_marker(
                 log_path,
-                re.compile(r"retrying JoinZone against NEXUS_PEERS|joined root zone via leader"),
+                re.compile(r"retrying JoinZone|joined zone via leader"),
                 timeout_s=30.0,
                 label="joiner enters retry-or-join",
             )
@@ -259,7 +259,7 @@ def main() -> int:
         else:
             line = wait_for_marker(
                 log_path,
-                re.compile(r"joined root zone via leader|raft\.conf_change\.applied"),
+                re.compile(r"joined zone via leader|raft\.conf_change\.applied"),
                 timeout_s=args.cluster_form_timeout,
                 label="joiner sees AddNode applied",
             )

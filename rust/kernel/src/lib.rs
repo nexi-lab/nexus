@@ -87,6 +87,13 @@ pub mod cas_transport;
 // to Python through `generated_kernel_abi_pyo3`.
 pub mod kernel;
 
+// `KernelAbi` trait — generic-over-K syscall surface that every
+// Rust service uses to reach the kernel. `impl KernelAbi for Kernel`
+// is a pure forwarder; production binaries monomorphise `K = Kernel`
+// at link time so service code paths inline back to direct inherent
+// calls (no vtable, no perf cost vs holding `Arc<Kernel>` directly).
+pub mod abi;
+
 // PyO3 surface generated from `kernel.rs` syscalls by
 // `scripts/codegen_kernel_abi.py`.  Other rlibs (`raft`,
 // `transport`) reference `PyKernel` here for cross-crate PyO3

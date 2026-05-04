@@ -11,7 +11,8 @@ pub mod operation_context;
 pub mod rust_service;
 
 pub use constants::{
-    env, BLAKE3_EMPTY, MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID, SHARE_REGISTRY_PREFIX, VFS_ROOT,
+    env, is_system_path, BLAKE3_EMPTY, MAX_GRPC_MESSAGE_BYTES, ROOT_ZONE_ID,
+    SHARE_REGISTRY_PREFIX, SYSTEM_PATH_PREFIX, VFS_ROOT,
 };
 pub use lock_state::{
     HolderInfo, LockAcquireResult, LockEntry, LockInfo, LockMode, LockState, Locks,

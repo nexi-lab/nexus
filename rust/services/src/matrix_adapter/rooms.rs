@@ -399,14 +399,24 @@ fn create_chat_stream<K: kernel::abi::KernelAbi>(
     const DT_STREAM: i32 = 4;
     const CAPACITY: usize = 65_536;
     kernel
-        .sys_setattr_simple(
+        .sys_setattr(
             path,
             DT_STREAM,
-            "root",
+            /* backend_name */ "",
+            /* backend */ None,
+            /* metastore */ None,
+            /* raft_backend */ None,
+            /* io_profile */ "memory",
+            /* zone_id */ "root",
+            /* is_external */ false,
             CAPACITY,
-            "memory",
+            /* read_fd */ None,
+            /* write_fd */ None,
             /* mime_type */ None,
+            /* modified_at_ms */ None,
             /* link_target */ None,
+            /* source */ None,
+            /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| AdapterError::Internal(format!("createRoom sys_setattr({path}): {e:?}")))

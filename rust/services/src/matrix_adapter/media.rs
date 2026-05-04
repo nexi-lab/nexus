@@ -108,14 +108,24 @@ pub async fn upload<K: kernel::abi::KernelAbi>(
         const DT_STREAM: i32 = 4;
         let capacity = payload_len.next_power_of_two().max(4096);
         kernel_for_write
-            .sys_setattr_simple(
+            .sys_setattr(
                 &media_path_for_write,
                 DT_STREAM,
-                "root",
+                /* backend_name */ "",
+                /* backend */ None,
+                /* metastore */ None,
+                /* raft_backend */ None,
+                /* io_profile */ "memory",
+                /* zone_id */ "root",
+                /* is_external */ false,
                 capacity,
-                "memory",
+                /* read_fd */ None,
+                /* write_fd */ None,
                 /* mime_type */ None,
+                /* modified_at_ms */ None,
                 /* link_target */ None,
+                /* source */ None,
+                /* remote_metastore */ None,
             )
             .map_err(|e| {
                 AdapterError::Internal(format!("sys_setattr DT_STREAM({media_path_for_write}): {e:?}"))
@@ -128,14 +138,24 @@ pub async fn upload<K: kernel::abi::KernelAbi>(
         // Stamp mime_type via the UPDATE arm (entry_type=0) on the
         // same path so /download can echo it back as Content-Type.
         kernel_for_write
-            .sys_setattr_simple(
+            .sys_setattr(
                 &media_path_for_write,
                 /* entry_type */ 0,
-                "root",
-                0,
-                "memory",
-                Some(&mime_for_write),
+                /* backend_name */ "",
+                /* backend */ None,
+                /* metastore */ None,
+                /* raft_backend */ None,
+                /* io_profile */ "memory",
+                /* zone_id */ "root",
+                /* is_external */ false,
+                /* capacity */ 0,
+                /* read_fd */ None,
+                /* write_fd */ None,
+                /* mime_type */ Some(&mime_for_write),
+                /* modified_at_ms */ None,
                 /* link_target */ None,
+                /* source */ None,
+                /* remote_metastore */ None,
             )
             .map_err(|e| {
                 AdapterError::Internal(format!(
@@ -209,12 +229,13 @@ pub async fn download<K: kernel::abi::KernelAbi>(
             let bytes = read.data.ok_or_else(|| {
                 AdapterError::Forbidden(format!("media {media_path_for_read} not found"))
             })?;
-            // Mime type lives on the metastore entry; pull it back.
+            // Mime type lives on the metastore entry; pull it back via
+            // sys_stat. StatResult.mime_type is `String` (empty when
+            // unset), so fall back to the standard binary default.
             let mime = kernel_for_read
-                .metastore_get(&media_path_for_read)
-                .ok()
-                .flatten()
-                .and_then(|e| e.mime_type)
+                .sys_stat(&media_path_for_read, /* zone_id */ "root")
+                .map(|s| s.mime_type)
+                .filter(|m| !m.is_empty())
                 .unwrap_or_else(|| "application/octet-stream".to_string());
             Ok((bytes, mime))
         },

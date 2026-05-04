@@ -77,6 +77,9 @@ services:
       # Founder of the cluster under the opaque-ID contract: creates
       # a 1-voter `root` zone; nexus-2 + witness JoinZone into it.
       NEXUS_BOOTSTRAP_NEW: "1"
+      # Explicit bootstrap intent — `static` for env-driven cluster
+      # formation.  See `BootstrapMode` in `nexus_raft`.
+      NEXUS_BOOTSTRAP_MODE: "static"
 
       # gRPC VFS (bind 0.0.0.0 for cross-container access)
       NEXUS_GRPC_BIND_ALL: "true"
@@ -137,6 +140,9 @@ services:
       NEXUS_PEERS: "nexus-1:2126,witness:2126"
       NEXUS_RAFT_TLS: "false"
       NEXUS_GRPC_BIND_ALL: "true"
+      # Explicit bootstrap intent — `static` for env-driven cluster
+      # formation.  See `BootstrapMode` in `nexus_raft`.
+      NEXUS_BOOTSTRAP_MODE: "static"
 
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}

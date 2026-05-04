@@ -28,7 +28,8 @@ use kernel::kernel::Kernel;
 use kernel::meta_store::DT_MOUNT;
 
 use nexus_raft::distributed_coordinator::{
-    bootstrap_or_join_zone, read_or_mint_node_id, validate_peers_excludes_self,
+    bootstrap_or_join_zone, read_or_mint_node_id, validate_bootstrap_mode,
+    validate_peers_excludes_self, BootstrapMode,
 };
 use nexus_raft::federation::{parse_federation_env, ENV_FEDERATION_MOUNTS, ENV_FEDERATION_ZONES};
 use nexus_raft::transport::{bootstrap_tls, NodeAddress};
@@ -85,6 +86,16 @@ struct CommonArgs {
     /// Defaults to `<data_dir>/root` for self-contained operation.
     #[arg(long, env = "NEXUS_ROOT_FS", global = true)]
     root_path: Option<PathBuf>,
+
+    /// Bootstrap mode declaration — `static`, `dynamic`, or `restart`.
+    ///
+    /// Operator must declare intent at startup so the daemon does not
+    /// silently mix scenarios.  See `BootstrapMode` in `nexus_raft`
+    /// for the full contract.  Required for the daemon mode (no
+    /// subcommand) — share/join/mount/unmount subcommands skip the
+    /// validator since they always operate on existing state.
+    #[arg(long, env = "NEXUS_BOOTSTRAP_MODE", global = true)]
+    bootstrap_mode: Option<String>,
 }
 
 impl CommonArgs {
@@ -327,6 +338,45 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         "nexusd-cluster starting (daemon mode)",
     );
 
+    let bootstrap_new = std::env::var("NEXUS_BOOTSTRAP_NEW")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true"))
+        .unwrap_or(false);
+
+    let peers_non_empty = common.peers.split(',').any(|s| !s.trim().is_empty());
+
+    // `<data_dir>/root/raft/` — caller-side check the validator
+    // uses to detect "this is actually a restart, not a fresh
+    // bootstrap".  Cheap filesystem stat.
+    let data_dir_has_root = common.data_dir.join("root").join("raft").exists();
+
+    // Operator MUST declare bootstrap intent when federation is in
+    // play — `BootstrapMode` doc has the contract.  "Federation in
+    // play" = any of: data dir already holds a root zone (restart),
+    // `--bootstrap-new` (static founder), or non-empty `--peers`
+    // (static joiner).  CLI invocations with none of those signals
+    // skip the validator (no federation intent yet).
+    let federation_in_play = data_dir_has_root || bootstrap_new || peers_non_empty;
+    if federation_in_play {
+        let mode_str = common.bootstrap_mode.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "--bootstrap-mode (or NEXUS_BOOTSTRAP_MODE) is required when bootstrapping \
+                 federation (data dir holds root, --bootstrap-new set, or --peers \
+                 non-empty).  Pass one of: static, dynamic, restart.  \
+                 See BootstrapMode docs in nexus_raft.",
+            )
+        })?;
+        let mode = BootstrapMode::parse(mode_str).map_err(|e| anyhow::anyhow!("{}", e))?;
+        validate_bootstrap_mode(mode, data_dir_has_root, bootstrap_new, peers_non_empty)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        tracing::info!(
+            mode = mode.as_str(),
+            bootstrap_new,
+            peers_non_empty,
+            data_dir_has_root,
+            "bootstrap mode validated",
+        );
+    }
+
     let ZoneManagerBundle {
         zm,
         node_id,
@@ -334,8 +384,9 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         peer_addrs,
     } = open_zone_manager(&common)?;
 
-    // Bring root zone online via the same dispatcher Python `nexusd`
-    // uses (`init_from_env`).  Three branches by storage state:
+    // Bring root zone online via `bootstrap_or_join_zone` — the SSOT
+    // dispatch Python `nexusd::init_from_env` and this binary share.
+    // Three branches by storage state:
     //
     //   1. restart — persisted ConfState resumes;
     //   2. fresh create — `NEXUS_BOOTSTRAP_NEW=1` honored, 1-voter
@@ -343,12 +394,9 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     //   3. wait-and-join — empty storage + flag unset + non-empty
     //      peer list = retry JoinZone forever (no deadline).
     //
-    // Without this, the previous unconditional `zm.create_zone(...)`
-    // produced a fresh 1-voter zone on every joiner, partitioning
-    // the federation into disjoint single-node clusters.
-    let bootstrap_new = std::env::var("NEXUS_BOOTSTRAP_NEW")
-        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true"))
-        .unwrap_or(false);
+    // BootstrapMode validation above already gates which of these
+    // branches is reachable for the declared mode, so no in-helper
+    // fall-through happens silently.
 
     // `bootstrap_or_join_zone` is a sync helper that, in branch 3
     // (wait-and-join), spins a nested `tokio::runtime` to drive the

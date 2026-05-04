@@ -824,6 +824,44 @@ impl RaftDistributedCoordinator {
         // `validate_peers_excludes_self` for the full rationale.
         validate_peers_excludes_self(&peer_addrs, &self_addr)?;
 
+        // Operator MUST declare bootstrap intent when federation is in
+        // play — `BootstrapMode` doc has the contract.  Implicit
+        // dispatch (state-driven) was the source of the silent
+        // mode-mixing that surfaced in cross-machine smoke; explicit
+        // declaration kills that footgun.
+        //
+        // "Federation in play" = any of: data dir already holds a
+        // root zone (restart), `NEXUS_BOOTSTRAP_NEW=1` (static
+        // founder), or non-empty peers (static joiner).  Tests /
+        // single-node dev workflows that touch none of those signals
+        // skip the validator entirely — no federation intent, nothing
+        // to validate.
+        let data_dir_has_root = Path::new(&zones_dir).join("root").join("raft").exists();
+        let federation_in_play = data_dir_has_root || bootstrap_new || !peer_addrs.is_empty();
+        if federation_in_play {
+            let mode_str = std::env::var("NEXUS_BOOTSTRAP_MODE").map_err(|_| {
+                "NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation \
+                 (NEXUS_PEERS, NEXUS_BOOTSTRAP_NEW, or persisted root zone state \
+                 detected).  Pass one of: static, dynamic, restart.  \
+                 See BootstrapMode docs in nexus_raft."
+                    .to_string()
+            })?;
+            let mode = BootstrapMode::parse(&mode_str)?;
+            validate_bootstrap_mode(
+                mode,
+                data_dir_has_root,
+                bootstrap_new,
+                !peer_addrs.is_empty(),
+            )?;
+            tracing::info!(
+                mode = mode.as_str(),
+                bootstrap_new,
+                peers_non_empty = !peer_addrs.is_empty(),
+                data_dir_has_root,
+                "bootstrap mode validated",
+            );
+        }
+
         let tls = if tls_disabled {
             None
         } else {

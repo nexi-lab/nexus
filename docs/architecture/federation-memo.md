@@ -172,13 +172,13 @@ Etcd / TiKV-style opaque IDs + leader-driven `AddNode`.
 
 - **Identity** — `node_id` is an opaque random `u64` minted at first daemon boot, persisted as 8 bytes BE u64 to `<NEXUS_DATA_DIR>/.node_id`.  Decoupling identity from hostname lets a wiped follower rejoin under a fresh ID; the leader's `Progress[new_id]` is created with `matched=0` by `AddNode`, so the first heartbeat carries `m.commit=0` — within `RaftLog::commit_to`'s safe range on a fresh follower (`last_index=0`).  Pinned by [`test_handle_heartbeat_on_empty_follower_with_stale_commit_panics`](../../rust/raft/src/raft/storage.rs).
 - **Address book** — `NEXUS_PEERS` is a hostname → endpoint mapping for OTHER nodes only that seeds the transport peer map.  Self joins the cluster through `create_zone(self)` (founder) or `AddNode(self)` on the leader (joiner) — never through the address book.  Boot fails loud (`peer list contains self ...`) when `NEXUS_PEERS` includes the local node so the joiner-loop self-RPC stall surfaces at parse time, not after `Zone 'root' registered`.  `ConfState` lives in raft storage and is mutated only by `ConfChange` (AddNode / RemoveNode) driven by JoinZone.
-- **Bootstrap dispatch** ([`bootstrap_or_join_root`](../../rust/raft/src/distributed_coordinator.rs)):
+- **Bootstrap mode** — operator declares intent up front via `NEXUS_BOOTSTRAP_MODE` (or `--bootstrap-mode` for `nexusd-cluster`).  The validator runs once at boot and rejects any state × flag combination that does not match the declared mode, so misconfiguration surfaces before the gRPC server starts rather than as a silent stall later.  See [`BootstrapMode`](../../rust/raft/src/distributed_coordinator.rs).
 
-  | State                                         | Action                                                       |
-  |-----------------------------------------------|--------------------------------------------------------------|
-  | Storage holds a `root` zone                   | Resume from persisted ConfState                              |
-  | Empty storage + `NEXUS_BOOTSTRAP_NEW=1`       | `create_zone("root")` — 1-voter cluster                      |
-  | Empty storage                                  | Loop on JoinZone RPC against `NEXUS_PEERS`, indefinite       |
+  | Mode | Required state | Required flags | Forbidden flags | Bootstrap dispatch |
+  |------|---------------|----------------|-----------------|---------------------|
+  | `static` | Empty data dir | `NEXUS_BOOTSTRAP_NEW=1` (founder) **or** `NEXUS_PEERS` non-empty (joiner) | — | Founder: `create_zone("root")` 1-voter.  Joiner: loop on JoinZone RPC against `NEXUS_PEERS`, indefinite |
+  | `dynamic` | Empty data dir | — | `NEXUS_BOOTSTRAP_NEW`, `NEXUS_PEERS` | Daemon comes up rootless; runtime API (`nexusd-cluster share`/`join`, Python `federation_create_zone`) drives zone formation |
+  | `restart` | Data dir holds `<dir>/root/raft/` | — | `NEXUS_BOOTSTRAP_NEW`, `NEXUS_PEERS` | Resume from persisted ConfState — state on disk is the SSOT, env flags would be ambiguous |
 
 - **Wipe-rejoin** — wiping `<NEXUS_DATA_DIR>` mints a fresh `node_id` on the next boot; the daemon JoinZones, the leader commits `AddNode(new_id)`.
 

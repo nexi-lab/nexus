@@ -481,6 +481,27 @@ async fn run_share(
         zm.create_zone(new_zone_id, peers_str)
             .map_err(|e| anyhow::anyhow!("create_zone({}): {}", new_zone_id, e))?;
     }
+
+    // ``share_subtree_core`` is a leader-required raft proposal
+    // against ``parent_zone``.  The freshly-opened ZoneManager has
+    // not finished election yet, so without this wait we hit
+    // ``NotLeader { leader_hint: Some(self_id) }`` — surfaced today
+    // during cross-machine smoke (PR #4014 follow-up).  10 s covers
+    // a few election timeouts; if we still are not leader, quorum
+    // for ``parent_zone`` is unreachable and the operator must
+    // resolve that before retrying.
+    let parent_handle = zm.get_zone(parent_zone).ok_or_else(|| {
+        anyhow::anyhow!("share: parent zone '{}' not found in storage", parent_zone)
+    })?;
+    if !parent_handle.wait_for_leader(std::time::Duration::from_secs(10)) {
+        anyhow::bail!(
+            "share: did not become leader of '{}' within 10s (leader hint: {:?}); \
+             quorum for parent zone is unreachable from this node",
+            parent_zone,
+            parent_handle.leader_id(),
+        );
+    }
+
     let copied = zm
         .share_subtree_core(parent_zone, path, new_zone_id)
         .map_err(|e| anyhow::anyhow!("share_subtree: {}", e))?;

@@ -43,6 +43,11 @@ impl Kernel {
     /// observer re-enters the kernel.
     ///
     /// Called by every successful Tier 1 mutation syscall via dispatch_mutation.
+    /// Also wakes any thread parked in `FileWatchRegistry::wait_for_event`
+    /// (i.e. blocking `sys_watch` callers) whose pattern matches the event
+    /// path — service-tier callers like sudocode `spawn_task`'s mailbox poll
+    /// loop and the matrix-adapter `/sync` long-poll fallback drop their
+    /// busy-poll sleeps once they pass a non-zero timeout.
     pub fn dispatch_observers(&self, event: &FileEvent) {
         let observers = self.observers.lock().matching(event.event_type as u32);
         for obs in observers {
@@ -50,6 +55,10 @@ impl Kernel {
                 obs.on_mutation(event);
             }));
         }
+        // Wake `wait_for_event` waiters whose pattern matches.
+        // Cheap when no blocking watches are registered (single
+        // RwLock read + iter filter — ~50ns).
+        self.file_watches.notify_match(event);
     }
 
     /// No-op — observers dispatch inline (no background pool).

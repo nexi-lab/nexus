@@ -89,9 +89,10 @@ impl BlobFetcher for KernelBlobFetcher {
         if let Ok(route) = self.vfs_router.route(content_id, contracts::ROOT_ZONE_ID) {
             let local_content_id = (self.lookup_local_content_id)(content_id)
                 .unwrap_or_else(|| route.backend_path.clone());
-            if let Some(bytes) =
-                self.vfs_router
-                    .read_content(&route.mount_point, &local_content_id, &ctx)
+            if let Some(bytes) = route
+                .backend
+                .as_ref()
+                .and_then(|b| b.read_content(&local_content_id, &ctx).ok())
             {
                 return Ok(bytes);
             }

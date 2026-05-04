@@ -26,8 +26,7 @@
 use dashmap::DashMap;
 use std::sync::Arc;
 
-use crate::abc::object_store::{ExternalTransport, ObjectStore, StorageError, WriteResult};
-use crate::kernel::OperationContext;
+use crate::abc::object_store::{ExternalTransport, ObjectStore, StorageError};
 use crate::meta_store::MetaStore;
 
 // ---------------------------------------------------------------------------
@@ -164,6 +163,14 @@ pub struct RouteResult {
     /// after `route()` already did one. Same hot-path cost as the legacy
     /// `route() + dcache.get_entry()` pair.
     pub metastore: Option<Arc<dyn MetaStore>>,
+    /// Per-mount backend Arc, populated from the same DashMap lookup that
+    /// produced the routing result. `None` when the mount has no Rust
+    /// backend (Python-side connector). Hot-path callers dispatch through
+    /// the trait method (`route.backend.as_ref()?.read_content(...)`)
+    /// instead of going back through a `VFSRouter::read_content` wrapper
+    /// that would re-probe the entry table for the same mount we just
+    /// routed to.
+    pub backend: Option<Arc<dyn ObjectStore>>,
 }
 
 impl RouteResult {
@@ -190,6 +197,7 @@ impl std::fmt::Debug for RouteResult {
             .field("is_external", &self.is_external)
             .field("is_cas", &self.is_cas)
             .field("metastore", &self.metastore.is_some())
+            .field("backend", &self.backend.is_some())
             .finish()
     }
 }
@@ -520,6 +528,7 @@ impl VFSRouter {
                     .clone()
                     .unwrap_or_else(|| zone_id.to_string());
                 let metastore = entry.metastore.as_ref().map(Arc::clone);
+                let backend = entry.backend.as_ref().map(Arc::clone);
                 drop(entry);
 
                 return Some(RouteResult {
@@ -529,6 +538,7 @@ impl VFSRouter {
                     is_external,
                     is_cas,
                     metastore,
+                    backend,
                 });
             }
 
@@ -544,151 +554,11 @@ impl VFSRouter {
         None
     }
 
-    // ── Backend-operation delegation ───────────────────────────────────
-    //
-    // Thin wrappers that look up a mount by canonical key and call the
-    // matching `ObjectStore` method. Kept on `VFSRouter` (not `Kernel`)
-    // so the lookup + call live in one place and the `dashmap::Ref` is
-    // held for the shortest possible window. A mount without a backend
-    // returns `None` — callers treat this as "no Rust-side backend, fall
-    // back to Python connector or cold-path dcache lookup".
-
-    /// Read content from the mount's backend.
-    pub fn read_content(
-        &self,
-        canonical_key: &str,
-        content_id: &str,
-        ctx: &OperationContext,
-    ) -> Option<Vec<u8>> {
-        let entry = self.entries.get(canonical_key)?;
-        entry.backend.as_ref()?.read_content(content_id, ctx).ok()
-    }
-
-    /// Write content to the mount's backend.
-    ///
-    /// `offset == 0` is full-file write (current behavior). `offset > 0`
-    /// is POSIX pwrite(2) — see `ObjectStore::write_content` for the
-    /// zero-fill / NotSupported contract.
-    pub fn write_content(
-        &self,
-        canonical_key: &str,
-        content: &[u8],
-        content_id: &str,
-        ctx: &OperationContext,
-        offset: u64,
-    ) -> Result<Option<WriteResult>, StorageError> {
-        let Some(entry) = self.entries.get(canonical_key) else {
-            // Mount not found — caller treats as a hit=false miss.
-            return Ok(None);
-        };
-        let Some(backend) = entry.backend.as_ref() else {
-            return Ok(None);
-        };
-        backend
-            .write_content(content, content_id, ctx, offset)
-            .map(Some)
-    }
-
-    /// Delete a file via the mount's backend.
-    ///
-    /// Returns `None` when the mount has no Rust backend (Python-side connector).
-    /// Returns `Some(Ok(()))` on success, `Some(Err(_))` on backend error.
-    pub fn delete_file(
-        &self,
-        canonical_key: &str,
-        backend_path: &str,
-    ) -> Option<Result<(), crate::abc::object_store::StorageError>> {
-        let entry = self.entries.get(canonical_key)?;
-        Some(entry.backend.as_ref()?.delete_file(backend_path))
-    }
-
-    /// Rename a file via the mount's backend.
-    pub fn rename_file(
-        &self,
-        canonical_key: &str,
-        old_backend_path: &str,
-        new_backend_path: &str,
-    ) -> Option<Result<(), crate::abc::object_store::StorageError>> {
-        let entry = self.entries.get(canonical_key)?;
-        let backend = entry.backend.as_ref()?;
-        Some(backend.rename(old_backend_path, new_backend_path))
-    }
-
-    /// Probe whether a backend path exists without reading content.
-    ///
-    /// Returns `None` when the mount has no Rust backend or the backend does not
-    /// implement `get_content_size`. Returns `Some(true)` if the path exists,
-    /// `Some(false)` if `NotFound` is returned.
-    pub fn backend_path_exists(&self, canonical_key: &str, backend_path: &str) -> Option<bool> {
-        let entry = self.entries.get(canonical_key)?;
-        let backend = entry.backend.as_ref()?;
-        match backend.get_content_size(backend_path) {
-            Ok(_) => Some(true),
-            Err(crate::abc::object_store::StorageError::NotFound(_)) => Some(false),
-            Err(_) => None, // NotSupported or other error — cannot determine
-        }
-    }
-
-    /// Copy a file via the mount's backend (PAS server-side copy).
-    ///
-    /// Returns `None` when the mount has no Rust backend (Python-side connector).
-    /// Returns `Some(Ok(_))` on success, `Some(Err(_))` on backend error.
-    /// Callers should fall back to read+write only for `StorageError::NotSupported`;
-    /// other errors indicate a real failure and should be propagated.
-    pub fn copy_file(
-        &self,
-        canonical_key: &str,
-        src_backend_path: &str,
-        dst_backend_path: &str,
-    ) -> Option<Result<crate::abc::object_store::WriteResult, crate::abc::object_store::StorageError>>
-    {
-        let entry = self.entries.get(canonical_key)?;
-        Some(
-            entry
-                .backend
-                .as_ref()?
-                .copy_file(src_backend_path, dst_backend_path),
-        )
-    }
-
-    /// Create a directory via the mount's backend.
-    pub fn mkdir(
-        &self,
-        canonical_key: &str,
-        backend_path: &str,
-        parents: bool,
-        exist_ok: bool,
-    ) -> Option<()> {
-        let entry = self.entries.get(canonical_key)?;
-        entry
-            .backend
-            .as_ref()?
-            .mkdir(backend_path, parents, exist_ok)
-            .ok()
-    }
-
-    /// Remove a directory via the mount's backend.
-    pub fn rmdir(&self, canonical_key: &str, backend_path: &str, recursive: bool) -> Option<()> {
-        let entry = self.entries.get(canonical_key)?;
-        entry.backend.as_ref()?.rmdir(backend_path, recursive).ok()
-    }
-
-    /// List directory entries via the mount's backend.
-    pub fn list_dir(
-        &self,
-        canonical_key: &str,
-        backend_path: &str,
-    ) -> Result<Vec<String>, StorageError> {
-        let entry = self
-            .entries
-            .get(canonical_key)
-            .ok_or_else(|| StorageError::NotFound(format!("mount not found: {canonical_key}")))?;
-        let backend = entry
-            .backend
-            .as_ref()
-            .ok_or(StorageError::NotSupported("no backend for mount"))?;
-        backend.list_dir(backend_path)
-    }
+    // Backend-operation dispatch happens at the call site through the
+    // pre-resolved ``RouteResult::backend`` Arc (see ``route()``).  The
+    // syscall layer in ``kernel/io.rs`` always has a fresh ``RouteResult``
+    // in scope, so no second DashMap lookup is needed to reach the
+    // backend trait method.
 }
 
 // ---------------------------------------------------------------------------

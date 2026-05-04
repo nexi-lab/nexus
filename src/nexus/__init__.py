@@ -447,6 +447,7 @@ def connect(
 
         _boot_remote_services(nfs, call_rpc=transport.call_rpc)
         install_remote_kernel_rpc_overrides(nfs, transport)
+        cast(Any, nfs)._nexus_remote_call_rpc = transport.call_rpc
         nfs._register_runtime_closeable(transport)
 
         return nfs

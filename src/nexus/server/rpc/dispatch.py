@@ -78,6 +78,12 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_semantic_search,
         handle_semantic_search_index,
     )
+    from nexus.server.rpc.handlers.hub_admin import (
+        handle_hub_admin_status,
+        handle_hub_admin_token_create,
+        handle_hub_admin_token_list,
+        handle_hub_admin_token_revoke,
+    )
 
     # Kernel syscalls (sys_*, mkdir, rmdir, access, is_directory, locks
     # + aliases) are NOT in this table — they're routed by the thin
@@ -108,6 +114,19 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "admin_get_key": DispatchEntry(handle_admin_get_key, pass_auth_provider=True),
         "admin_revoke_key": DispatchEntry(handle_admin_revoke_key, pass_auth_provider=True),
         "admin_update_key": DispatchEntry(handle_admin_update_key, pass_auth_provider=True),
+        "hub_admin_token_create": DispatchEntry(
+            handle_hub_admin_token_create,
+            pass_auth_provider=True,
+        ),
+        "hub_admin_token_list": DispatchEntry(
+            handle_hub_admin_token_list,
+            pass_auth_provider=True,
+        ),
+        "hub_admin_token_revoke": DispatchEntry(
+            handle_hub_admin_token_revoke,
+            pass_auth_provider=True,
+        ),
+        "hub_admin_status": DispatchEntry(handle_hub_admin_status, pass_auth_provider=True),
     }
 
 

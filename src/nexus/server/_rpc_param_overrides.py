@@ -116,6 +116,39 @@ class AdminWritePermissionParams:
 
 
 @dataclass
+class HubAdminTokenCreateParams:
+    """Parameters for hub_admin_token_create() method."""
+
+    name: str
+    zones: str | None = None
+    zones_glob: str | None = None
+    admin: bool = False
+    expires: str | None = None
+    user_id: str | None = None
+
+
+@dataclass
+class HubAdminTokenListParams:
+    """Parameters for hub_admin_token_list() method."""
+
+    show_revoked: bool = False
+
+
+@dataclass
+class HubAdminTokenRevokeParams:
+    """Parameters for hub_admin_token_revoke() method."""
+
+    identifier: str
+
+
+@dataclass
+class HubAdminStatusParams:
+    """Parameters for hub_admin_status() method."""
+
+    pass
+
+
+@dataclass
 class AdminGcVersionsParams:
     """Parameters for admin_gc_versions() method."""
 
@@ -190,6 +223,10 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "admin_revoke_key": AdminRevokeKeyParams,
     "admin_update_key": AdminUpdateKeyParams,
     "admin_write_permission": AdminWritePermissionParams,
+    "hub_admin_token_create": HubAdminTokenCreateParams,
+    "hub_admin_token_list": HubAdminTokenListParams,
+    "hub_admin_token_revoke": HubAdminTokenRevokeParams,
+    "hub_admin_status": HubAdminStatusParams,
     "admin_gc_versions": AdminGcVersionsParams,
     "admin_gc_versions_stats": AdminGcVersionsStatsParams,
     # Namespace

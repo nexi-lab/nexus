@@ -20,12 +20,19 @@ from sqlalchemy import func, select
 from nexus.cli.commands._hub_common import (
     format_table,
     get_session_factory,
-    parse_duration,
+)
+from nexus.cli.commands._hub_remote import HubRemoteError, call_hub_admin_tool
+from nexus.hub.admin_ops import (
+    HubAdminAmbiguousTargetError,
+    HubAdminError,
+    create_hub_token,
+    list_hub_tokens,
+    parse_zones_csv,
+    revoke_hub_token,
 )
 from nexus.storage.api_key_ops import (
     add_zone_to_key,
     create_api_key,
-    get_primary_zones_for_keys,
     get_zone_perms_for_key,
     remove_zone_from_key,
 )
@@ -40,26 +47,10 @@ def _parse_zones_csv(raw: str) -> list[str | tuple[str, str]]:
     Bare entries (no colon) default to ``"rw"`` and are returned as plain
     strings so ``create_api_key`` records the default uniformly.
     """
-    out: list[str | tuple[str, str]] = []
-    for chunk in raw.split(","):
-        item = chunk.strip()
-        if not item:
-            continue
-        if ":" in item:
-            zid, perms = item.split(":", 1)
-            zid = zid.strip()
-            perms = perms.strip()
-            if not zid:
-                raise click.ClickException(f"empty zone id in {chunk!r}")
-            if perms not in _VALID_PERMS:
-                raise click.ClickException(
-                    f"invalid permissions {perms!r} for zone {zid!r}; "
-                    f"expected one of {', '.join(_VALID_PERMS)}"
-                )
-            out.append((zid, perms))
-        else:
-            out.append(item)
-    return out
+    try:
+        return parse_zones_csv(raw)
+    except HubAdminError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @click.group()
@@ -104,6 +95,8 @@ def token() -> None:
     help="Expiry duration (e.g. 90d, 24h, 30m).",
 )
 @click.option("--user-id", default=None, help="Owner user_id. Defaults to --name.")
+@click.option("--remote", default=None, help="Remote hub base URL or MCP URL.")
+@click.option("--admin-token", default=None, help="Admin token for --remote.")
 def token_create(
     name: str,
     zones_csv: str | None,
@@ -112,9 +105,10 @@ def token_create(
     is_admin: bool,
     expires: str | None,
     user_id: str | None,
+    remote: str | None,
+    admin_token: str | None,
 ) -> None:
     """Create a new bearer token. Prints the raw key once; not retrievable after."""
-    # Mutually-exclusive validation
     sources = [s for s in (zones_csv, zone_alias, zones_glob) if s is not None]
     if len(sources) == 0:
         raise click.ClickException("One of --zones, --zone, or --zones-glob is required.")
@@ -123,125 +117,45 @@ def token_create(
             "--zones, --zone, and --zones-glob are mutually exclusive; pass only one."
         )
 
+    if remote:
+        token = _resolve_remote_admin_token(admin_token, remote)
+        payload = _call_remote_admin_tool(
+            remote,
+            token,
+            "nexus_hub_token_create",
+            {
+                "name": name,
+                "zones": zones_csv if zones_csv is not None else zone_alias,
+                "zones_glob": zones_glob,
+                "admin": is_admin,
+                "expires": expires,
+                "user_id": user_id,
+            },
+        )
+        _render_token_create(payload)
+        return
+
     factory = get_session_factory()
-    expires_at: datetime | None = None
-    if expires:
-        try:
-            expires_at = datetime.now(UTC) + parse_duration(expires)
-        except ValueError as exc:
-            raise click.ClickException(str(exc)) from exc
-
-    with factory() as session, session.begin():
-        existing = (
-            session.execute(
-                select(APIKeyModel).where(APIKeyModel.name == name).where(APIKeyModel.revoked == 0)
-            )
-            .scalars()
-            .first()
-        )
-        if existing is not None and getattr(existing, "name", None) == name:
-            raise click.ClickException(
-                f"token named {name!r} already exists (key_id={existing.key_id}). "
-                "Revoke it first or use a different --name."
-            )
-
-        # Bootstrap escape: if the zones table is completely empty,
-        # allow the first admin token to be minted for any zone so
-        # a fresh hub can be bootstrapped before any zone is
-        # created. After that, every zone must refer to an active,
-        # non-deleted row.
-        any_zone = session.execute(select(ZoneModel).limit(1)).scalars().first()
-
-        zones: list[str | tuple[str, str]]
-        if zones_glob is not None:
-            import fnmatch
-
-            active = (
-                session.execute(
-                    select(ZoneModel)
-                    .where(ZoneModel.phase == "Active")
-                    .where(ZoneModel.deleted_at.is_(None))
-                )
-                .scalars()
-                .all()
-            )
-            matched = sorted(z.zone_id for z in active if fnmatch.fnmatch(z.zone_id, zones_glob))
-            if not matched:
-                known = [z.zone_id for z in active]
-                raise click.ClickException(
-                    f"--zones-glob {zones_glob!r}: no active zones match this pattern. "
-                    f"Active zones: {', '.join(sorted(known)) or '(none)'}."
-                )
-            # Glob can't carry per-zone perms; everything resolves to default rw.
-            zones = list(matched)
-        else:
-            if zones_csv is not None:
-                zones = _parse_zones_csv(zones_csv)
-            else:
-                zones = (
-                    [z.strip() for z in zone_alias.split(",") if z.strip()] if zone_alias else []
-                )
-            if not zones:
-                raise click.ClickException("--zones must contain at least one non-empty zone.")
-            # Validate zone lifecycle state against the authoritative registry
-            # so a typo ("proud" instead of "prod") or a deleted/terminating
-            # zone can't silently mint a credential bound to a zone the
-            # operator intended to isolate or remove (#3784 rounds 6/9).
-            if any_zone is not None:
-                for entry in zones:
-                    zid = entry[0] if isinstance(entry, tuple) else entry
-                    active_zone = (
-                        session.execute(
-                            select(ZoneModel)
-                            .where(ZoneModel.zone_id == zid)
-                            .where(ZoneModel.phase == "Active")
-                            .where(ZoneModel.deleted_at.is_(None))
-                        )
-                        .scalars()
-                        .first()
-                    )
-                    if active_zone is None:
-                        known = [
-                            z.zone_id
-                            for z in session.execute(
-                                select(ZoneModel)
-                                .where(ZoneModel.phase == "Active")
-                                .where(ZoneModel.deleted_at.is_(None))
-                            )
-                            .scalars()
-                            .all()
-                        ]
-                        raise click.ClickException(
-                            f"zone {zid!r} is not active (not found, deleted, or "
-                            f"terminating). Active zones: "
-                            f"{', '.join(sorted(known)) or '(none)'}. "
-                            "Create it first with `nexus zone create` or use --zones <existing>."
-                        )
-
-        # #3871 round 4: bootstrap path — auto-create missing ZoneModel rows
-        # so the api_key_zones FK insert below doesn't fail with IntegrityError.
-        # The validation block above only runs when any_zone is not None; in
-        # the bootstrap escape path (empty zones table) the requested zones
-        # may not exist yet, but create_api_key will still insert junction
-        # rows whose zone_id has a FK to zones.zone_id.
-        if any_zone is None:
-            for entry in zones:
-                zid = entry[0] if isinstance(entry, tuple) else entry
-                if not session.scalar(select(ZoneModel).where(ZoneModel.zone_id == zid)):
-                    session.add(ZoneModel(zone_id=zid, name=zid, phase="Active"))
-            session.flush()
-
-        key_id, raw_key = create_api_key(
-            session,
-            user_id=user_id or name,
+    try:
+        payload = create_hub_token(
+            factory,
             name=name,
-            zones=zones,
+            zones_csv=zones_csv if zones_csv is not None else zone_alias,
+            zones_glob=zones_glob,
             is_admin=is_admin,
-            expires_at=expires_at,
+            expires=expires,
+            user_id=user_id,
+            create_api_key_fn=create_api_key,
         )
+    except HubAdminError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    click.echo(f"key_id: {key_id}")
-    click.echo(f"token:  {raw_key}")
+    _render_token_create(payload)
+
+
+def _render_token_create(payload: dict[str, Any]) -> None:
+    click.echo(f"key_id: {payload['key_id']}")
+    click.echo(f"token:  {payload['token']}")
     click.echo("")
     click.echo("Save this token now — it will not be shown again.")
 
@@ -259,127 +173,87 @@ def token_create(
     is_flag=True,
     help="Emit JSON instead of a text table.",
 )
-def token_list(show_revoked: bool, as_json: bool) -> None:
+@click.option("--remote", default=None, help="Remote hub base URL or MCP URL.")
+@click.option("--admin-token", default=None, help="Admin token for --remote.")
+def token_list(
+    show_revoked: bool,
+    as_json: bool,
+    remote: str | None,
+    admin_token: str | None,
+) -> None:
     """List tokens (active by default)."""
-    import json as _json
-
-    factory = get_session_factory()
-    with factory() as session:
-        stmt = select(APIKeyModel).order_by(APIKeyModel.created_at.desc())
-        if not show_revoked:
-            stmt = stmt.where(APIKeyModel.revoked == 0)
-        rows = session.execute(stmt).scalars().all()
-
-        # Single batched junction query — not N+1 (#3785).
-        key_ids = [r.key_id for r in rows]
-        junction_rows: list[APIKeyZoneModel] = []
-        if key_ids:
-            junction_rows = list(
-                session.execute(select(APIKeyZoneModel).where(APIKeyZoneModel.key_id.in_(key_ids)))
-                .scalars()
-                .all()
-            )
-
-        # Batch-fetch primary zones from junction (#3871).
-        primary_by_key: dict[str, str | None] = dict.fromkeys(key_ids)
-        if key_ids:
-            primary_by_key.update(get_primary_zones_for_keys(session, key_ids))
-
-    # Build zones_by_key: primary zone first, then sorted others.
-    zones_by_key: dict[str, list[str]] = {}
-    for jr in junction_rows:
-        zones_by_key.setdefault(jr.key_id, []).append(jr.zone_id)
-    for kid in zones_by_key:
-        primary = primary_by_key.get(kid)
-        others = sorted(z for z in zones_by_key[kid] if z != primary)
-        zones_by_key[kid] = ([primary] if primary else []) + others
-
-    def _zones(r: APIKeyModel) -> list[str]:
-        """Return zones list for a token row, falling back to primary zone if no junction rows."""
-        if r.key_id in zones_by_key:
-            return zones_by_key[r.key_id]
-        fallback = primary_by_key.get(r.key_id)
-        return [fallback] if fallback is not None else []
-
-    def _iso(dt: datetime | None) -> str:
-        return dt.isoformat() if dt else "-"
-
-    if as_json:
-        payload = {
-            "tokens": [
-                {
-                    "key_id": r.key_id,
-                    "name": r.name,
-                    "zone": primary_by_key.get(
-                        r.key_id
-                    ),  # deprecated: use 'zones' (kept one release for compat)
-                    "zones": _zones(r),
-                    "admin": bool(r.is_admin),
-                    "created": _iso(r.created_at),
-                    "last_used": _iso(r.last_used_at),
-                    "revoked": bool(r.revoked),
-                    "revoked_at": _iso(r.revoked_at),
-                }
-                for r in rows
-            ]
-        }
-        click.echo(_json.dumps(payload, indent=2))
+    if remote:
+        token = _resolve_remote_admin_token(admin_token, remote)
+        payload = _call_remote_admin_tool(
+            remote,
+            token,
+            "nexus_hub_token_list",
+            {"show_revoked": show_revoked},
+        )
+        _render_token_list(payload, as_json=as_json)
         return
 
+    factory = get_session_factory()
+    payload = list_hub_tokens(factory, show_revoked=show_revoked)
+    _render_token_list(payload, as_json=as_json)
+
+
+def _render_token_list(payload: dict[str, Any], *, as_json: bool) -> None:
+    import json as _json
+
+    if as_json:
+        click.echo(_json.dumps(payload, indent=2))
+        return
     body = format_table(
         headers=["key_id", "name", "zone", "zones", "admin", "created", "last_used", "revoked_at"],
         rows=[
             [
-                r.key_id[:12] + "…" if len(r.key_id) > 12 else r.key_id,
-                r.name,
-                primary_by_key.get(r.key_id) or "-",
-                ",".join(_zones(r)),
-                "yes" if r.is_admin else "no",
-                _iso(r.created_at),
-                _iso(r.last_used_at),
-                _iso(r.revoked_at),
+                row["key_id"][:12] + "…" if len(row["key_id"]) > 12 else row["key_id"],
+                row["name"],
+                row["zone"] or "-",
+                ",".join(_zone_ids(row["zones"])),
+                "yes" if row["admin"] else "no",
+                row["created"],
+                row["last_used"],
+                row["revoked_at"],
             ]
-            for r in rows
+            for row in payload["tokens"]
         ],
     )
     click.echo(body)
 
 
+def _zone_ids(zones: list[Any]) -> list[str]:
+    return [zone["zone_id"] if isinstance(zone, dict) else zone for zone in zones]
+
+
 @token.command("revoke")
 @click.argument("identifier")
-def token_revoke(identifier: str) -> None:
+@click.option("--remote", default=None, help="Remote hub base URL or MCP URL.")
+@click.option("--admin-token", default=None, help="Admin token for --remote.")
+def token_revoke(identifier: str, remote: str | None, admin_token: str | None) -> None:
     """Revoke a token by key_id prefix or name. Soft-delete (audit trail preserved)."""
-    factory = get_session_factory()
-    with factory() as session, session.begin():
-        # Match by exact key_id, key_id prefix, or name (all must be non-revoked).
-        matches = (
-            session.execute(
-                select(APIKeyModel)
-                .where(APIKeyModel.revoked == 0)
-                .where(
-                    (APIKeyModel.key_id == identifier)
-                    | (APIKeyModel.key_id.startswith(identifier))
-                    | (APIKeyModel.name == identifier)
-                )
-            )
-            .scalars()
-            .all()
+    if remote:
+        token = _resolve_remote_admin_token(admin_token, remote)
+        payload = _call_remote_admin_tool(
+            remote,
+            token,
+            "nexus_hub_token_revoke",
+            {"identifier": identifier},
         )
-        if len(matches) == 0:
-            raise click.ClickException(f"no active token matches {identifier!r}")
-        if len(matches) > 1:
-            names = ", ".join(f"{m.name} ({m.key_id})" for m in matches)
-            click.echo(
-                f"ambiguous: {len(matches)} tokens match {identifier!r} — {names}",
-                err=True,
-            )
-            raise SystemExit(2)
+        click.echo(payload["message"])
+        return
 
-        row = matches[0]
-        row.revoked = 1
-        row.revoked_at = datetime.now(UTC)
+    factory = get_session_factory()
+    try:
+        payload = revoke_hub_token(factory, identifier=identifier)
+    except HubAdminAmbiguousTargetError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2) from exc
+    except HubAdminError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    click.echo(f"revoked {row.name} ({row.key_id}). Effective within 60s (auth cache TTL).")
+    click.echo(payload["message"])
 
 
 @token.group("zones")
@@ -546,9 +420,22 @@ def _read_redis_stats() -> dict[str, Any]:
     is_flag=True,
     help="Include per-zone, per-token, rate-limit, and search detail.",
 )
-def hub_status(as_json: bool, detail: bool) -> None:
+@click.option("--remote", default=None, help="Remote hub base URL or MCP URL.")
+@click.option("--admin-token", default=None, help="Admin token for --remote.")
+def hub_status(
+    as_json: bool,
+    detail: bool,
+    remote: str | None,
+    admin_token: str | None,
+) -> None:
     """Show hub health: postgres, redis, tokens, connections, qps."""
-    import json as _json
+    if remote:
+        if detail:
+            raise click.ClickException("--detail is only available for local hub status")
+        token = _resolve_remote_admin_token(admin_token, remote)
+        payload = _call_remote_admin_tool(remote, token, "nexus_hub_status", {})
+        _render_status(payload, as_json=as_json)
+        return
 
     postgres_status = _collect_postgres_status(detail=detail)
     payload = _base_status_payload(postgres_status)
@@ -559,6 +446,12 @@ def hub_status(as_json: bool, detail: bool) -> None:
         payload.update(
             _collect_status_detail(zone_ids, postgres_status["tokens_detail"], redis_detail)
         )
+
+    _render_status(payload, as_json=as_json, detail=detail)
+
+
+def _render_status(payload: dict[str, Any], *, as_json: bool, detail: bool = False) -> None:
+    import json as _json
 
     if as_json:
         click.echo(_json.dumps(payload, indent=2))
@@ -943,3 +836,26 @@ def _emit_detail_status_text(payload: dict[str, Any]) -> None:
             ],
         )
     )
+
+
+def _resolve_remote_admin_token(admin_token: str | None, remote: str | None) -> str:
+    if not remote:
+        raise click.ClickException("internal error: remote token requested without --remote")
+    token = admin_token or os.environ.get("NEXUS_HUB_ADMIN_TOKEN")
+    if not token:
+        raise click.ClickException(
+            "--admin-token or NEXUS_HUB_ADMIN_TOKEN is required with --remote"
+        )
+    return token
+
+
+def _call_remote_admin_tool(
+    remote: str,
+    admin_token: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        return call_hub_admin_tool(remote, admin_token, tool_name, arguments)
+    except HubRemoteError as exc:
+        raise click.ClickException(str(exc)) from exc

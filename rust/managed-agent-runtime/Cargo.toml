@@ -1,0 +1,28 @@
+[package]
+name = "managed-agent-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "ManagedAgentService — per-pid procfs lifecycle, mailbox + workspace hooks, session dispatch.  Lifted out of `services/src/managed_agent/` so it owns a crate-level boundary; this is the future home of the in-process agent loop (run_turn, ApiClient, ToolExecutor) once that work lands."
+
+[lib]
+name = "managed_agent_runtime"
+crate-type = ["rlib"]
+
+[dependencies]
+contracts = { workspace = true }
+# Same one-way kernel dep policy as `services` — runtime depends on
+# kernel through the `KernelAbi` trait + concrete kernel result types
+# (`SysReadResult`, `KernelError`, …).  `default-features = false`
+# keeps the kernel runtime defaults off so this rlib stays slim.
+kernel = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = "0.12"
+dashmap = "6.1"
+tracing = "0.1"
+# `session` allocates session_id using uuid v4, mirrors the
+# `kernel/Cargo.toml` choice.
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

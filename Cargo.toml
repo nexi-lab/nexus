@@ -13,6 +13,7 @@ members = [
     "rust/kernel",
     "rust/backends",
     "rust/services",
+    "rust/managed-agent-runtime",
     "rust/raft",
     # Deployment binaries.
     "rust/profiles/cluster",
@@ -32,6 +33,13 @@ contracts = { path = "rust/contracts" }
 lib = { path = "rust/lib" }
 transport = { path = "rust/transport" }
 services = { path = "rust/services" }
+# ManagedAgentService — per-pid procfs lifecycle, mailbox + workspace
+# hooks, session dispatch.  Lifted out of `services::managed_agent` so
+# it owns a crate-level boundary; future home of the in-process agent
+# loop (run_turn / ApiClient / ToolExecutor).  `services` re-exports it
+# behind the `service-managed-agent` feature so cdylib + cluster boot
+# wiring keeps a single Cargo edge.
+managed-agent-runtime = { path = "rust/managed-agent-runtime" }
 # Driver impls. `default-features = false` so transitive workspace
 # consumers (e.g. `nexus-cluster`) can pick a slim driver set without
 # fighting Cargo's feature unification.  Crates that want the full

@@ -153,7 +153,7 @@ impl std::error::Error for ManagedAgentError {}
 
 // ── Service ─────────────────────────────────────────────────────────────
 
-pub(crate) struct ManagedAgentService {
+pub struct ManagedAgentService {
     /// Shared kernel handle for `start_session` to stamp the per-pid
     /// procfs subtree (`/proc/{pid}/`, `/proc/{pid}/workspace/`,
     /// workspace shortcut DT_LINK, per-repo alias DT_LINKs) and for the
@@ -204,14 +204,14 @@ impl ManagedAgentService {
     /// — the same `Arc` `Kernel` keeps for `AgentStatusResolver` reads —
     /// so `start_session` mutates the same SSOT every other agent
     /// surface reads from.
-    pub(crate) fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
+    pub fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
         Self::install_returning(kernel).map(|_| ())
     }
 
     /// Install variant that returns the wired service handle so tests
     /// can assert the on_terminate observer behaves correctly without
     /// having to fish the service back out of the kernel registry.
-    pub(crate) fn install_returning(
+    pub fn install_returning(
         kernel: &Arc<kernel::kernel::Kernel>,
     ) -> Result<Arc<Self>, String> {
         kernel.register_native_hook(Box::new(

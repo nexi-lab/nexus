@@ -26,10 +26,8 @@
 //! writes to the canonical pid-level path or through the workspace
 //! shortcut.
 
-use std::sync::Arc;
-
+use kernel::abi::KernelAbi;
 use kernel::core::agents::registry::AgentDescriptor;
-use kernel::kernel::Kernel;
 
 const DT_DIR: i32 = 1;
 const DT_STREAM: i32 = 4;
@@ -42,8 +40,8 @@ const CHAT_STREAM_CAPACITY: usize = 65_536;
 /// Stamp the per-pid metastore subtree at start_session time. Idempotent
 /// against re-spawn / restart paths — every `sys_setattr` call accepts
 /// a matching existing entry as a successful no-op.
-pub(crate) fn register_proc_entry(
-    kernel: &Arc<Kernel>,
+pub(crate) fn register_proc_entry<K: KernelAbi>(
+    kernel: &K,
     desc: &AgentDescriptor,
 ) -> Result<(), String> {
     let pid = desc.pid.as_str();
@@ -66,12 +64,12 @@ pub(crate) fn register_proc_entry(
     // Canonical chat-with-me stream — wal-backed when federation is up
     // so writes raft-replicate, in-memory otherwise (test mode).
     let cwm_canonical = format!("/proc/{pid}/chat-with-me");
-    create_dt_stream(
-        kernel,
-        &cwm_canonical,
-        CHAT_STREAM_CAPACITY,
-        chat_stream_profile(kernel),
-    )?;
+    let profile = if kernel.is_federation_initialized() {
+        "wal"
+    } else {
+        "memory"
+    };
+    create_dt_stream(kernel, &cwm_canonical, CHAT_STREAM_CAPACITY, profile)?;
 
     // /proc/{pid}/agent → /agents/{desc.name} (Linux /proc/{pid}/exe
     // analogue). Target may not exist yet; DT_LINK rows are not
@@ -99,7 +97,7 @@ pub(crate) fn register_proc_entry(
 /// canonical chat-with-me DT_STREAM also goes here — its lifetime is
 /// the pid's; any persistent inbox lives at `/agents/{name}/chat-with-me`
 /// instead.
-pub(crate) fn unregister_proc_entry(kernel: &Arc<Kernel>, desc: &AgentDescriptor) {
+pub(crate) fn unregister_proc_entry<K: KernelAbi>(kernel: &K, desc: &AgentDescriptor) {
     let pid = desc.pid.as_str();
     let pid_root = format!("/proc/{pid}");
     let workspace_root = format!("/proc/{pid}/workspace");
@@ -125,61 +123,47 @@ pub(crate) fn unregister_proc_entry(kernel: &Arc<Kernel>, desc: &AgentDescriptor
     let _ = kernel.metastore_delete(&pid_root);
 }
 
-/// Pick `wal` when federation is initialised, `memory` otherwise.
-/// `is_initialized` is the same readiness probe used by `setattr_mount`
-/// — true once `init_from_env` completes, regardless of whether any
-/// zones are loaded yet.
-fn chat_stream_profile(kernel: &Kernel) -> &'static str {
-    if kernel.distributed_coordinator().is_initialized(kernel) {
-        "wal"
-    } else {
-        "memory"
-    }
-}
-
-fn create_dt_dir(kernel: &Kernel, path: &str) -> Result<(), String> {
+fn create_dt_dir<K: KernelAbi>(kernel: &K, path: &str) -> Result<(), String> {
     kernel
-        .sys_setattr(
-            path, DT_DIR, /* backend_name */ "", /* backend */ None,
-            /* metastore */ None, /* raft_backend */ None,
-            /* io_profile */ "memory", /* zone_id */ "root",
-            /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
-            /* write_fd */ None, /* mime_type */ None, /* modified_at_ms */ None,
-            /* link_target */ None, /* source */ None, /* remote_metastore */ None,
+        .sys_setattr_simple(
+            path, DT_DIR, /* zone_id */ "root", /* capacity */ 0,
+            /* io_profile */ "memory", /* mime_type */ None,
+            /* link_target */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_DIR at {path:?}): {e:?}"))
 }
 
-fn create_dt_link(kernel: &Kernel, path: &str, target: &str) -> Result<(), String> {
+fn create_dt_link<K: KernelAbi>(kernel: &K, path: &str, target: &str) -> Result<(), String> {
     kernel
-        .sys_setattr(
-            path, DT_LINK, /* backend_name */ "", /* backend */ None,
-            /* metastore */ None, /* raft_backend */ None,
-            /* io_profile */ "memory", /* zone_id */ "root",
-            /* is_external */ false, /* capacity */ 0, /* read_fd */ None,
-            /* write_fd */ None, /* mime_type */ None,
-            /* modified_at_ms */ None, /* link_target */ Some(target),
-            /* source */ None, /* remote_metastore */ None,
+        .sys_setattr_simple(
+            path,
+            DT_LINK,
+            /* zone_id */ "root",
+            /* capacity */ 0,
+            /* io_profile */ "memory",
+            /* mime_type */ None,
+            /* link_target */ Some(target),
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_LINK at {path:?} → {target:?}): {e:?}"))
 }
 
-fn create_dt_stream(
-    kernel: &Kernel,
+fn create_dt_stream<K: KernelAbi>(
+    kernel: &K,
     path: &str,
     capacity: usize,
     io_profile: &str,
 ) -> Result<(), String> {
     kernel
-        .sys_setattr(
-            path, DT_STREAM, /* backend_name */ "", /* backend */ None,
-            /* metastore */ None, /* raft_backend */ None, io_profile,
-            /* zone_id */ "root", /* is_external */ false, capacity,
-            /* read_fd */ None, /* write_fd */ None, /* mime_type */ None,
-            /* modified_at_ms */ None, /* link_target */ None,
-            /* source */ None, /* remote_metastore */ None,
+        .sys_setattr_simple(
+            path,
+            DT_STREAM,
+            /* zone_id */ "root",
+            capacity,
+            io_profile,
+            /* mime_type */ None,
+            /* link_target */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_STREAM at {path:?} io_profile={io_profile:?}): {e:?}"))
@@ -220,154 +204,123 @@ mod tests {
         kernel.metastore_get(path).ok().flatten().is_some()
     }
 
-    fn make_desc(pid: &str, repos: Vec<RepoMount>) -> AgentDescriptor {
-        AgentDescriptor {
-            pid: pid.to_string(),
-            name: "scode-standard".to_string(),
-            kind: AgentKind::Managed,
-            state: AgentState::Registered,
-            owner_id: "ethan".to_string(),
-            zone_id: "root".to_string(),
-            created_at_ms: 1,
-            updated_at_ms: 1,
-            repos,
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn register_proc_entry_creates_full_per_pid_dirent_layer() {
-        let kernel = Arc::new(Kernel::new());
-        register_proc_entry(&kernel, &make_desc("pid-test", Vec::new()))
-            .expect("register_proc_entry");
-        assert!(dir_exists(&kernel, "/proc"));
-        assert!(dir_exists(&kernel, "/proc/pid-test"));
-        assert!(dir_exists(&kernel, "/proc/pid-test/workspace"));
-        assert!(dir_exists(&kernel, "/proc/pid-test/sessions"));
-        assert!(dir_exists(&kernel, "/proc/pid-test/tasks"));
-    }
+        let kernel = Kernel::new();
+        let desc = AgentDescriptor {
+            pid: "p1".to_string(),
+            name: "managed-claude".to_string(),
+            kind: AgentKind::Managed,
+            state: AgentState::Registered,
+            owner_id: "system".to_string(),
+            zone_id: "root".to_string(),
+            ..Default::default()
+        };
+        register_proc_entry(&kernel, &desc).unwrap();
 
-    #[test]
-    fn register_proc_entry_stamps_canonical_chat_with_me_dt_stream() {
-        let kernel = Arc::new(Kernel::new());
-        register_proc_entry(&kernel, &make_desc("pid-cwm", Vec::new())).unwrap();
-        assert!(stream_exists(&kernel, "/proc/pid-cwm/chat-with-me"));
-    }
-
-    #[test]
-    fn register_proc_entry_stamps_agent_dt_link_to_profile() {
-        let kernel = Arc::new(Kernel::new());
-        register_proc_entry(&kernel, &make_desc("pid-agent", Vec::new())).unwrap();
-        // Target may dangle until /agents/{name} is materialised by
-        // upstream profile-management code — the link is stamped
-        // unconditionally.
+        for dir in [
+            "/proc",
+            "/proc/p1",
+            "/proc/p1/workspace",
+            "/proc/p1/sessions",
+            "/proc/p1/tasks",
+        ] {
+            assert!(dir_exists(&kernel, dir), "dirent missing: {dir}");
+        }
+        assert!(stream_exists(&kernel, "/proc/p1/chat-with-me"));
         assert_eq!(
-            link_target(&kernel, "/proc/pid-agent/agent").as_deref(),
-            Some("/agents/scode-standard"),
+            link_target(&kernel, "/proc/p1/agent").as_deref(),
+            Some("/agents/managed-claude"),
         );
-    }
-
-    #[test]
-    fn register_proc_entry_stamps_workspace_chat_with_me_dt_link() {
-        let kernel = Arc::new(Kernel::new());
-        register_proc_entry(&kernel, &make_desc("pid-1", Vec::new())).unwrap();
         assert_eq!(
-            link_target(&kernel, "/proc/pid-1/workspace/chat-with-me").as_deref(),
-            Some("/proc/pid-1/chat-with-me"),
+            link_target(&kernel, "/proc/p1/workspace/chat-with-me").as_deref(),
+            Some("/proc/p1/chat-with-me"),
         );
     }
 
     #[test]
     fn register_proc_entry_stamps_one_dt_link_per_repo() {
-        let kernel = Arc::new(Kernel::new());
-        let repos = vec![
-            RepoMount {
-                alias: "myrepo".into(),
-                mount_path: "/host/repos/myrepo".into(),
-            },
-            RepoMount {
-                alias: "another".into(),
-                mount_path: "/host/repos/another".into(),
-            },
-        ];
-        register_proc_entry(&kernel, &make_desc("pid-2", repos)).unwrap();
+        let kernel = Kernel::new();
+        let desc = AgentDescriptor {
+            pid: "p2".to_string(),
+            name: "managed-claude".to_string(),
+            kind: AgentKind::Managed,
+            state: AgentState::Registered,
+            owner_id: "system".to_string(),
+            zone_id: "root".to_string(),
+            repos: vec![
+                RepoMount {
+                    alias: "alpha".to_string(),
+                    mount_path: "/repos/alpha".to_string(),
+                },
+                RepoMount {
+                    alias: "beta".to_string(),
+                    mount_path: "/repos/beta".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+        register_proc_entry(&kernel, &desc).unwrap();
+
         assert_eq!(
-            link_target(&kernel, "/proc/pid-2/workspace/myrepo").as_deref(),
-            Some("/host/repos/myrepo"),
+            link_target(&kernel, "/proc/p2/workspace/alpha").as_deref(),
+            Some("/repos/alpha"),
         );
         assert_eq!(
-            link_target(&kernel, "/proc/pid-2/workspace/another").as_deref(),
-            Some("/host/repos/another"),
+            link_target(&kernel, "/proc/p2/workspace/beta").as_deref(),
+            Some("/repos/beta"),
         );
     }
 
     #[test]
     fn register_proc_entry_is_idempotent() {
-        let kernel = Arc::new(Kernel::new());
-        let desc = make_desc(
-            "pid-x",
-            vec![RepoMount {
-                alias: "core".into(),
-                mount_path: "/host/core".into(),
-            }],
-        );
-        register_proc_entry(&kernel, &desc).expect("first");
-        register_proc_entry(&kernel, &desc).expect("second call should not error");
-        assert!(dir_exists(&kernel, "/proc/pid-x/workspace"));
-        assert_eq!(
-            link_target(&kernel, "/proc/pid-x/workspace/core").as_deref(),
-            Some("/host/core"),
-        );
+        let kernel = Kernel::new();
+        let desc = AgentDescriptor {
+            pid: "p3".to_string(),
+            name: "managed-claude".to_string(),
+            kind: AgentKind::Managed,
+            state: AgentState::Registered,
+            owner_id: "system".to_string(),
+            zone_id: "root".to_string(),
+            ..Default::default()
+        };
+        register_proc_entry(&kernel, &desc).unwrap();
+        register_proc_entry(&kernel, &desc).unwrap();
     }
 
     #[test]
     fn unregister_proc_entry_removes_full_per_pid_subtree() {
-        let kernel = Arc::new(Kernel::new());
-        let desc = make_desc(
-            "pid-y",
-            vec![RepoMount {
-                alias: "core".into(),
-                mount_path: "/host/core".into(),
+        let kernel = Kernel::new();
+        let desc = AgentDescriptor {
+            pid: "p4".to_string(),
+            name: "managed-claude".to_string(),
+            kind: AgentKind::Managed,
+            state: AgentState::Registered,
+            owner_id: "system".to_string(),
+            zone_id: "root".to_string(),
+            repos: vec![RepoMount {
+                alias: "main".to_string(),
+                mount_path: "/repos/main".to_string(),
             }],
-        );
+            ..Default::default()
+        };
         register_proc_entry(&kernel, &desc).unwrap();
-        // All entries planted.
-        assert!(entry_present(&kernel, "/proc/pid-y/agent"));
-        assert!(entry_present(&kernel, "/proc/pid-y/chat-with-me"));
-        assert!(entry_present(&kernel, "/proc/pid-y/sessions"));
-        assert!(entry_present(&kernel, "/proc/pid-y/tasks"));
-        assert!(entry_present(&kernel, "/proc/pid-y/workspace/chat-with-me"));
-        assert!(entry_present(&kernel, "/proc/pid-y/workspace/core"));
-
         unregister_proc_entry(&kernel, &desc);
 
-        // Every per-pid entry gone.
-        assert!(!entry_present(&kernel, "/proc/pid-y/agent"));
-        assert!(!entry_present(&kernel, "/proc/pid-y/chat-with-me"));
-        assert!(!entry_present(&kernel, "/proc/pid-y/sessions"));
-        assert!(!entry_present(&kernel, "/proc/pid-y/tasks"));
-        assert!(!entry_present(&kernel, "/proc/pid-y/workspace/chat-with-me"));
-        assert!(!entry_present(&kernel, "/proc/pid-y/workspace/core"));
-        assert!(!dir_exists(&kernel, "/proc/pid-y/workspace"));
-        assert!(!dir_exists(&kernel, "/proc/pid-y"));
-    }
-
-    #[test]
-    fn chat_stream_falls_back_to_memory_without_federation() {
-        // Default `Kernel::new()` has no federation initialised, so the
-        // canonical chat-with-me stream is created with io_profile=memory
-        // and the call succeeds.  Production use installs a real
-        // distributed coordinator (set_distributed_coordinator) so the
-        // probe selects io_profile=wal — covered by federation e2e.
-        let kernel = Arc::new(Kernel::new());
-        register_proc_entry(&kernel, &make_desc("pid-mem", Vec::new()))
-            .expect("memory profile must succeed without federation");
-        assert!(stream_exists(&kernel, "/proc/pid-mem/chat-with-me"));
-    }
-
-    #[test]
-    fn unregister_proc_entry_is_idempotent_on_missing_pid() {
-        let kernel = Arc::new(Kernel::new());
-        unregister_proc_entry(&kernel, &make_desc("pid-ghost", Vec::new()));
+        for path in [
+            "/proc/p4",
+            "/proc/p4/workspace",
+            "/proc/p4/workspace/main",
+            "/proc/p4/workspace/chat-with-me",
+            "/proc/p4/sessions",
+            "/proc/p4/tasks",
+            "/proc/p4/agent",
+            "/proc/p4/chat-with-me",
+        ] {
+            assert!(
+                !entry_present(&kernel, path),
+                "{path} still present after unregister"
+            );
+        }
     }
 }

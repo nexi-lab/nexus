@@ -113,6 +113,14 @@ pub trait KernelAbi: Send + Sync + 'static {
 
     fn distributed_coordinator(&self) -> Arc<dyn DistributedCoordinator>;
 
+    /// True once `init_federation_from_env` has completed — the same
+    /// readiness probe `setattr_mount` uses.  Service-level callers
+    /// reach the federation state through this helper rather than
+    /// `distributed_coordinator().is_initialized(&Kernel)` directly,
+    /// because the latter takes a `&Kernel` argument that
+    /// monomorphisable callers cannot produce.
+    fn is_federation_initialized(&self) -> bool;
+
     fn vfs_router_arc(&self) -> Arc<VFSRouter>;
 
     // ── Audit stream lifecycle ──────────────────────────────────────
@@ -223,6 +231,10 @@ impl KernelAbi for crate::kernel::Kernel {
 
     fn distributed_coordinator(&self) -> Arc<dyn DistributedCoordinator> {
         Self::distributed_coordinator(self)
+    }
+
+    fn is_federation_initialized(&self) -> bool {
+        self.distributed_coordinator().is_initialized(self)
     }
 
     fn vfs_router_arc(&self) -> Arc<VFSRouter> {

@@ -46,6 +46,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use kernel::abi::KernelAbi;
 use kernel::core::agents::registry::{
     AgentDescriptor, AgentKind, AgentRegistry, AgentState, RepoMount,
 };
@@ -153,7 +154,7 @@ impl std::error::Error for ManagedAgentError {}
 
 // ── Service ─────────────────────────────────────────────────────────────
 
-pub(crate) struct ManagedAgentService {
+pub(crate) struct ManagedAgentService<K: KernelAbi> {
     /// Shared kernel handle for `start_session` to stamp the per-pid
     /// procfs subtree (`/proc/{pid}/`, `/proc/{pid}/workspace/`,
     /// workspace shortcut DT_LINK, per-repo alias DT_LINKs) and for the
@@ -161,11 +162,11 @@ pub(crate) struct ManagedAgentService {
     /// test fixtures that build `ManagedAgentService::new` without a
     /// real kernel keep compiling; production callers construct via
     /// [`Self::install`] which always provides the kernel.
-    kernel: Option<Arc<kernel::kernel::Kernel>>,
+    kernel: Option<Arc<K>>,
     agent_registry: Arc<AgentRegistry>,
 }
 
-impl ManagedAgentService {
+impl<K: KernelAbi> ManagedAgentService<K> {
     pub(crate) const NAME: &'static str = "managed_agent";
 
     /// Test-only constructor — leaves the kernel handle empty so unit
@@ -182,10 +183,7 @@ impl ManagedAgentService {
     /// Production constructor used by [`Self::install`] — passes the
     /// kernel handle through so the per-pid procfs entries can be
     /// stamped inside `start_session`.
-    pub(crate) fn with_kernel(
-        kernel: Arc<kernel::kernel::Kernel>,
-        agent_registry: Arc<AgentRegistry>,
-    ) -> Self {
+    pub(crate) fn with_kernel(kernel: Arc<K>, agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
             kernel: Some(kernel),
             agent_registry,
@@ -204,26 +202,24 @@ impl ManagedAgentService {
     /// — the same `Arc` `Kernel` keeps for `AgentStatusResolver` reads —
     /// so `start_session` mutates the same SSOT every other agent
     /// surface reads from.
-    pub(crate) fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
+    pub(crate) fn install(kernel: &Arc<K>) -> Result<(), String> {
         Self::install_returning(kernel).map(|_| ())
     }
 
     /// Install variant that returns the wired service handle so tests
     /// can assert the on_terminate observer behaves correctly without
     /// having to fish the service back out of the kernel registry.
-    pub(crate) fn install_returning(
-        kernel: &Arc<kernel::kernel::Kernel>,
-    ) -> Result<Arc<Self>, String> {
+    pub(crate) fn install_returning(kernel: &Arc<K>) -> Result<Arc<Self>, String> {
         kernel.register_native_hook(Box::new(
             workspace_boundary_hook::WorkspaceBoundaryHook::new(),
         ));
         kernel.register_native_hook(Box::new(mailbox_stamping_hook::MailboxStampingHook::new()));
 
-        // Holding `Arc<Kernel>` inside the service does create a
-        // Kernel ↔ Service Arc cycle, but services live for process
-        // lifetime — same convention AcpService follows.  The procfs
-        // dirent stamp in `start_session` and the on_terminate
-        // teardown both need the owned Arc.
+        // Holding `Arc<K>` inside the service does create a Kernel ↔
+        // Service Arc cycle, but services live for process lifetime
+        // — same convention AcpService follows.  The procfs dirent
+        // stamp in `start_session` and the on_terminate teardown both
+        // need the owned Arc.
         let svc = Arc::new(Self::with_kernel(
             Arc::clone(kernel),
             Arc::clone(kernel.agent_registry()),
@@ -245,7 +241,7 @@ impl ManagedAgentService {
             Self::NAME,
             Arc::new(move |pid: &str| {
                 if let Some(desc) = registry_for_cb.get(pid) {
-                    unregister_proc_entry(&kernel_for_cb, &desc);
+                    unregister_proc_entry(kernel_for_cb.as_ref(), &desc);
                 }
             }),
         );
@@ -344,7 +340,7 @@ impl ManagedAgentService {
         // re-stamp closes the gap.
         if let Some(kernel) = self.kernel.as_ref() {
             if let Some(desc) = self.agent_registry.get(&pid) {
-                if let Err(e) = register_proc_entry(kernel, &desc) {
+                if let Err(e) = register_proc_entry(kernel.as_ref(), &desc) {
                     tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
                 }
             }
@@ -439,7 +435,7 @@ impl From<ManagedAgentError> for RustCallError {
     }
 }
 
-impl RustService for ManagedAgentService {
+impl<K: KernelAbi> RustService for ManagedAgentService<K> {
     fn name(&self) -> &str {
         Self::NAME
     }
@@ -487,8 +483,10 @@ impl RustService for ManagedAgentService {
 mod tests {
     use super::*;
 
-    fn fresh_service() -> ManagedAgentService {
-        ManagedAgentService::new(Arc::new(AgentRegistry::new()))
+    use kernel::kernel::Kernel;
+
+    fn fresh_service() -> ManagedAgentService<Kernel> {
+        ManagedAgentService::<Kernel>::new(Arc::new(AgentRegistry::new()))
     }
 
     fn req(agent_id: &str) -> StartSessionRequest {
@@ -505,7 +503,7 @@ mod tests {
     fn service_has_canonical_name() {
         let svc = fresh_service();
         assert_eq!(svc.name(), "managed_agent");
-        assert_eq!(ManagedAgentService::NAME, "managed_agent");
+        assert_eq!(ManagedAgentService::<Kernel>::NAME, "managed_agent");
     }
 
     #[test]
@@ -518,7 +516,7 @@ mod tests {
     #[test]
     fn start_session_returns_identity_tuple_and_plants_agent_registry_record() {
         let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::new(Arc::clone(&table));
+        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
 
         // session_id IS the pid — no second identifier.
@@ -567,7 +565,7 @@ mod tests {
     #[test]
     fn cancel_session_terminates_pid_and_reaps_descriptor() {
         let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::new(Arc::clone(&table));
+        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let pid = resp.session_id.clone();
 
@@ -587,7 +585,7 @@ mod tests {
     #[test]
     fn cancel_turn_keeps_pid_alive() {
         let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::new(Arc::clone(&table));
+        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let pid = resp.session_id.clone();
 
@@ -628,7 +626,7 @@ mod tests {
         // SSOT: once it's reaped, get_session must surface
         // UnknownSession.
         let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::new(Arc::clone(&table));
+        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&table));
         let resp = svc.start_session(req("scode-standard")).unwrap();
         table.unregister(&resp.session_id);
         let err = svc.get_session(&resp.session_id).unwrap_err();
@@ -779,14 +777,14 @@ mod tests {
 
         /// Build a `ManagedAgentService` with a real Kernel inside —
         /// the only setup needed is `Kernel::new` (no PyO3 boot).
-        fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService) {
+        fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService<Kernel>) {
             let k = Arc::new(Kernel::new());
             let svc =
                 ManagedAgentService::with_kernel(Arc::clone(&k), Arc::clone(k.agent_registry()));
             (k, svc)
         }
 
-        fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService> {
+        fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService<Kernel>> {
             ManagedAgentService::install_returning(kernel).expect("install ManagedAgentService")
         }
 

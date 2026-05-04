@@ -81,15 +81,18 @@ class TestSysReaddir:
 
     @pytest.mark.asyncio
     def test_sys_readdir_uses_metadata(self, mock_fs, context):
-        """sys_readdir calls self.metadata.list_iter() — no SearchService delegation."""
+        """sys_readdir routes through ``kernel_helpers.metastore_list_iter``
+        which iterates ``kernel.metastore_list(prefix)`` — no SearchService
+        delegation.
+        """
         entry1 = SimpleNamespace(path="/data/a.txt", size=10, content_id="e1")
         entry2 = SimpleNamespace(path="/data/b.txt", size=20, content_id="e2")
-        mock_fs.metadata.list_iter = MagicMock(return_value=iter([entry1, entry2]))
+        mock_fs._kernel.metastore_list = MagicMock(return_value=[entry1, entry2])
 
         result = mock_fs.sys_readdir(path="/data", recursive=False, context=context)
 
         assert result == ["/data/a.txt", "/data/b.txt"]
-        mock_fs.metadata.list_iter.assert_called_once_with(prefix="/data/", recursive=False)
+        mock_fs._kernel.metastore_list.assert_called_once_with("/data/")
 
     @pytest.mark.asyncio
     def test_sys_readdir_details(self, mock_fs, context):
@@ -104,8 +107,8 @@ class TestSysReaddir:
             modified_at=None,
             version=1,
         )
-        mock_fs.metadata.list_iter = MagicMock(return_value=iter([entry]))
-        mock_fs.metadata.is_implicit_directory = MagicMock(return_value=False)
+        mock_fs._kernel.metastore_list = MagicMock(return_value=[entry])
+        mock_fs._kernel.metastore_is_implicit_directory = MagicMock(return_value=False)
 
         result = mock_fs.sys_readdir(path="/data", details=True, context=context)
 
@@ -125,11 +128,11 @@ class TestSysReaddir:
     @pytest.mark.asyncio
     def test_sys_readdir_root_prefix(self, mock_fs, context):
         """sys_readdir with path='/' uses empty prefix."""
-        mock_fs.metadata.list_iter = MagicMock(return_value=iter([]))
+        mock_fs._kernel.metastore_list = MagicMock(return_value=[])
 
         mock_fs.sys_readdir(path="/", context=context)
 
-        mock_fs.metadata.list_iter.assert_called_once_with(prefix="", recursive=True)
+        mock_fs._kernel.metastore_list.assert_called_once_with("")
 
 
 # =============================================================================

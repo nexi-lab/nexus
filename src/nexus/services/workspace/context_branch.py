@@ -1006,7 +1006,9 @@ class ContextBranchService:
             workspace_prefix = (
                 workspace_path if workspace_path.endswith("/") else workspace_path + "/"
             )
-            files = self._wm.metadata.list_iter(prefix=workspace_prefix)
+            from nexus.kernel_helpers import metastore_list_iter
+
+            files = metastore_list_iter(self._wm._kernel, prefix=workspace_prefix)
             file_entries: list[tuple[str, str, int, str | None]] = []
             for file_meta in files:
                 if file_meta.mime_type == "directory" or not file_meta.content_id:

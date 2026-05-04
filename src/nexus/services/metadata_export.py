@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
+from nexus.kernel_helpers import metastore_list_iter, metastore_set_file_metadata
 from nexus.lib.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -39,6 +40,8 @@ class MetadataExportService:
         created_by: str | None = None,
     ) -> None:
         self._metadata: Any = metadata
+        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
+        self._kernel: Any = metadata._rust_kernel if metadata is not None else None
         self._created_by = created_by
 
     @rpc_expose(description="Export metadata to JSONL file")
@@ -70,7 +73,7 @@ class MetadataExportService:
 
         all_files = [
             m
-            for m in self._metadata.list_iter(filter.path_prefix)
+            for m in metastore_list_iter(self._kernel, filter.path_prefix)
             if not m.path.startswith(SYSTEM_PATH_PREFIX)
         ]
 
@@ -181,7 +184,7 @@ class MetadataExportService:
                     if metadata_dict.get("modified_at"):
                         modified_at = datetime.fromisoformat(metadata_dict["modified_at"])
 
-                    existing = self._metadata.get(path)
+                    existing = self._kernel.metastore_get(path)
                     imported_content_id = metadata_dict.get("content_id")
 
                     if existing:
@@ -244,7 +247,7 @@ class MetadataExportService:
                 modified_at=modified_at or existing.modified_at,
                 version=metadata_dict.get("version", existing.version),
             )
-            self._metadata.put(file_meta)
+            self._kernel.metastore_put(file_meta)
             self._import_custom_metadata(path, metadata_dict)
             result.updated += 1
             return
@@ -331,7 +334,7 @@ class MetadataExportService:
             modified_at=modified_at,
             version=metadata_dict.get("version", existing.version + 1),
         )
-        self._metadata.put(file_meta)
+        self._kernel.metastore_put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
         result.updated += 1
         result.collisions.append(
@@ -382,7 +385,7 @@ class MetadataExportService:
             modified_at=modified_at,
             version=metadata_dict.get("version", 1),
         )
-        self._metadata.put(file_meta)
+        self._kernel.metastore_put(file_meta)
         self._import_custom_metadata(remapped_path, metadata_dict)
         result.remapped += 1
         result.collisions.append(
@@ -438,7 +441,7 @@ class MetadataExportService:
                 modified_at=modified_at,
                 version=metadata_dict.get("version", existing.version + 1),
             )
-            self._metadata.put(file_meta)
+            self._kernel.metastore_put(file_meta)
             self._import_custom_metadata(path, metadata_dict)
             result.updated += 1
             result.collisions.append(
@@ -487,7 +490,7 @@ class MetadataExportService:
             version=metadata_dict.get("version", 1),
         )
 
-        self._metadata.put(file_meta)
+        self._kernel.metastore_put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
         result.created += 1
 
@@ -498,6 +501,6 @@ class MetadataExportService:
             if isinstance(custom_meta, dict):
                 for key, value in custom_meta.items():
                     try:
-                        self._metadata.set_file_metadata(path, key, value)
+                        metastore_set_file_metadata(self._kernel, path, key, value)
                     except Exception as e:
                         logger.debug("Failed to set custom metadata %s for %s: %s", key, path, e)

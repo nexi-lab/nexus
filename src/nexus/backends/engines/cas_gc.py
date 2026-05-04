@@ -62,6 +62,7 @@ class CASGarbageCollector:
     ) -> None:
         self._engine = engine
         self._metastore = metastore
+        self._kernel = metastore._rust_kernel if metastore is not None else None
         self._grace_period = grace_period
         self._scan_interval = scan_interval
         self._task: asyncio.Task[None] | None = None
@@ -70,6 +71,7 @@ class CASGarbageCollector:
     def set_metastore(self, metastore: RustMetastoreProxy) -> None:
         """Deferred injection — metastore may not be available at construction time."""
         self._metastore = metastore
+        self._kernel = metastore._rust_kernel if metastore is not None else None
 
     def start(self) -> None:
         """Start GC background task in the current event loop."""
@@ -209,14 +211,14 @@ class CASGarbageCollector:
         blob to add individual chunk hashes to the referenced set.
         """
         engine = self._engine
-        metastore = self._metastore
-        assert metastore is not None
+        kernel = self._kernel
+        assert kernel is not None
 
         # Scan all entries in metastore for content_ids
         try:
-            all_entries = metastore.list(prefix="", recursive=True)
+            all_entries = kernel.metastore_list("")
         except Exception:
-            logger.warning("CAS GC: metastore.list() failed", exc_info=True)
+            logger.warning("CAS GC: kernel.metastore_list() failed", exc_info=True)
             return
 
         for entry in all_entries:

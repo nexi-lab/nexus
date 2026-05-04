@@ -59,6 +59,8 @@ class WorkspaceManager:
             record_store: RecordStoreABC instance providing session_factory
         """
         self.metadata = metadata
+        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
+        self._kernel: Any = metadata._rust_kernel if metadata is not None else None
         self.backend = backend
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
@@ -149,7 +151,9 @@ class WorkspaceManager:
 
         # Get all files in workspace
         with self.metadata_session_factory() as session:
-            files = self.metadata.list_iter(prefix=workspace_prefix)
+            from nexus.kernel_helpers import metastore_list_iter
+
+            files = metastore_list_iter(self._kernel, prefix=workspace_prefix)
 
             # Collect file metadata for manifest
             file_entries: list[tuple[str, str, int, str | None]] = []

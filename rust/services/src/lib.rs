@@ -16,10 +16,8 @@
 //!                      ACP-over-stdio for AgentKind::UNMANAGED agents)
 //!   agents/          — agent table + procfs-style status resolver
 //!   audit/           — AuditHook (NativeInterceptHook) + factory
-//!   managed_agent    — re-export of `managed-agent-runtime` (sibling
-//!                      crate housing ManagedAgentService for
-//!                      AgentKind::MANAGED — mailbox + workspace hooks
-//!                      plus the per-pid procfs lifecycle)
+//!   managed_agent/   — ManagedAgentService (mailbox + workspace hooks
+//!                      plus session lifecycle for AgentKind::MANAGED)
 //!   permission/      — PermissionHook scaffolding (§11; dead today)
 //!   python/          — `#[cfg(feature = "python")]` PyO3 sub-module
 //! ```
@@ -53,14 +51,12 @@ pub mod acp;
 pub mod agents;
 #[cfg(feature = "service-audit")]
 pub mod audit;
-// ManagedAgentService lives in `managed-agent-runtime`, a sibling
-// crate that owns the per-pid procfs lifecycle, mailbox + workspace
-// hooks, and session dispatch.  Re-exported here under the historic
-// `services::managed_agent` path so the `service-managed-agent`
-// feature gate still toggles the same artefact at the cdylib + cluster
-// boot wiring layer.
+// ManagedAgentService — first Rust-flavoured service. Owns the
+// chat-with-me mailbox stamping hook, the workspace-boundary
+// teaching hook, and the `start_session_v1` / `cancel_v1` /
+// `get_session_v1` lifecycle for `AgentKind::MANAGED` agents.
 #[cfg(feature = "service-managed-agent")]
-pub use managed_agent_runtime as managed_agent;
+pub mod managed_agent;
 // `tasks` lives in this crate so the runtime ships a single Python
 // wheel; `services::python::register` exposes the PyTaskEngine /
 // PyTaskRecord / PyQueueStats pyclasses.  Internal pyo3 use today, so

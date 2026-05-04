@@ -17,7 +17,7 @@ default = []
 # service on so the runtime gate (DeploymentProfile) decides at boot.
 service-audit = []
 service-agents = []
-service-managed-agent = ["dep:managed-agent-runtime"]
+service-managed-agent = []
 service-acp = []
 service-tasks = []
 service-permission = []
@@ -55,11 +55,6 @@ contracts = { workspace = true }
 # (mimalloc allocator, connector HTTP stack, py-hook adapters) off so
 # this rlib stays slim; the cdylib pulls them via its own kernel dep.
 kernel = { workspace = true }
-# Sibling crate housing ManagedAgentService — the chat-with-me +
-# workspace hooks plus per-pid procfs lifecycle.  Pulled in only when
-# the `service-managed-agent` feature is enabled; non-managed builds
-# (raft-witness, slim WASM) skip the entire crate.
-managed-agent-runtime = { workspace = true, optional = true }
 # **HARD INVARIANT** — services ⊥ backends ⊥ raft. Services that need
 # backend or raft-replicated behaviour reach it through `kernel.sys_*`
 # syscalls (the same path Python takes), never via direct cross-crate

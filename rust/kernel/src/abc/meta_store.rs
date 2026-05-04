@@ -5,10 +5,9 @@
 //! storage for file metadata (inodes, config, topology).
 //!
 //! The `abc/` directory holds the strict §3 invariant set (3 trait
-//! files, period). Concrete impls (`MemoryMetaStore` reference impl +
-//! `LocalMetaStore` redb impl) live in `crate::core::meta_store`. The
-//! remote / raft impls live in their respective parallel crates
-//! (`raft::meta_store`).
+//! files, period). The concrete impl `LocalMetaStore` (redb-backed)
+//! lives in `crate::core::meta_store`. Remote / raft impls live in
+//! their respective parallel crates (`raft::meta_store`).
 //!
 //! Pure Rust ABI — no PyO3 dependency. PyO3 adapters live in
 //! `generated_kernel_abi_pyo3.rs` (auto-generated).

@@ -39,9 +39,9 @@ pub mod dispatch;
 // §4.7 — permission lease cache (DashMap-based, pure Rust).
 pub mod permission_cache;
 
-// §4.6 — metastore primitive impls (MemoryMetaStore + LocalMetaStore +
-// remote proxy). The trait declaration lives in `crate::abc::meta_store`;
-// this module only holds the kernel-internal concrete impls.
+// §4.6 — metastore primitive impls (LocalMetaStore + remote proxy).
+// The trait declaration lives in `crate::abc::meta_store`; this module
+// only holds the kernel-internal concrete impls.
 pub mod meta_store;
 
 // §4.2 — DT_PIPE / DT_STREAM IPC pillars.

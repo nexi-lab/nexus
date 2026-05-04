@@ -157,35 +157,23 @@ impl std::error::Error for ManagedAgentError {}
 pub(crate) struct ManagedAgentService<K: KernelAbi> {
     /// Shared kernel handle for `start_session` to stamp the per-pid
     /// procfs subtree (`/proc/{pid}/`, `/proc/{pid}/workspace/`,
-    /// workspace shortcut DT_LINK, per-repo alias DT_LINKs) and for the
-    /// on_terminate observer to tear it down.  `Option` so the existing
-    /// test fixtures that build `ManagedAgentService::new` without a
-    /// real kernel keep compiling; production callers construct via
-    /// [`Self::install`] which always provides the kernel.
-    kernel: Option<Arc<K>>,
+    /// workspace shortcut DT_LINK, per-repo alias DT_LINKs) and for
+    /// the on_terminate observer to tear it down.
+    kernel: Arc<K>,
     agent_registry: Arc<AgentRegistry>,
 }
 
 impl<K: KernelAbi> ManagedAgentService<K> {
     pub(crate) const NAME: &'static str = "managed_agent";
 
-    /// Test-only constructor — leaves the kernel handle empty so unit
-    /// tests can exercise lifecycle bookkeeping (start_session /
-    /// cancel / get_session) without a real kernel.  The procfs
-    /// entries are skipped when `kernel` is `None`.
-    pub(crate) fn new(agent_registry: Arc<AgentRegistry>) -> Self {
+    /// Service constructor.  Production callers reach this through
+    /// [`Self::install`] which wraps the cdylib's freshly-built
+    /// `Kernel`; tests instantiate directly with a `Kernel::new()`
+    /// (cheap in-memory construction) so the per-pid procfs entries
+    /// land in the same metastore the assertion helpers read back.
+    pub(crate) fn new(kernel: Arc<K>, agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
-            kernel: None,
-            agent_registry,
-        }
-    }
-
-    /// Production constructor used by [`Self::install`] — passes the
-    /// kernel handle through so the per-pid procfs entries can be
-    /// stamped inside `start_session`.
-    pub(crate) fn with_kernel(kernel: Arc<K>, agent_registry: Arc<AgentRegistry>) -> Self {
-        Self {
-            kernel: Some(kernel),
+            kernel,
             agent_registry,
         }
     }
@@ -220,7 +208,7 @@ impl<K: KernelAbi> ManagedAgentService<K> {
         // — same convention AcpService follows.  The procfs dirent
         // stamp in `start_session` and the on_terminate teardown both
         // need the owned Arc.
-        let svc = Arc::new(Self::with_kernel(
+        let svc = Arc::new(Self::new(
             Arc::clone(kernel),
             Arc::clone(kernel.agent_registry()),
         ));
@@ -338,11 +326,9 @@ impl<K: KernelAbi> ManagedAgentService<K> {
         // failed stamp is logged but doesn't abort the session — the
         // AgentRegistry record is already planted and a future
         // re-stamp closes the gap.
-        if let Some(kernel) = self.kernel.as_ref() {
-            if let Some(desc) = self.agent_registry.get(&pid) {
-                if let Err(e) = register_proc_entry(kernel.as_ref(), &desc) {
-                    tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
-                }
+        if let Some(desc) = self.agent_registry.get(&pid) {
+            if let Err(e) = register_proc_entry(self.kernel.as_ref(), &desc) {
+                tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
             }
         }
 
@@ -485,8 +471,15 @@ mod tests {
 
     use kernel::kernel::Kernel;
 
-    fn fresh_service() -> ManagedAgentService<Kernel> {
-        ManagedAgentService::<Kernel>::new(Arc::new(AgentRegistry::new()))
+    /// Build a `ManagedAgentService` with a real `Kernel::new()`.  The
+    /// returned tuple shares the AgentRegistry between caller and
+    /// service so tests can read the descriptor table without going
+    /// through the service's read accessors.
+    fn fresh_service() -> (Arc<Kernel>, Arc<AgentRegistry>, ManagedAgentService<Kernel>) {
+        let kernel = Arc::new(Kernel::new());
+        let registry = Arc::clone(kernel.agent_registry());
+        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&kernel), Arc::clone(&registry));
+        (kernel, registry, svc)
     }
 
     fn req(agent_id: &str) -> StartSessionRequest {
@@ -501,22 +494,21 @@ mod tests {
 
     #[test]
     fn service_has_canonical_name() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         assert_eq!(svc.name(), "managed_agent");
         assert_eq!(ManagedAgentService::<Kernel>::NAME, "managed_agent");
     }
 
     #[test]
     fn lifecycle_methods_succeed_on_empty_service() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         svc.start().unwrap();
         svc.stop().unwrap();
     }
 
     #[test]
     fn start_session_returns_identity_tuple_and_plants_agent_registry_record() {
-        let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&table));
+        let (_kernel, table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
 
         // session_id IS the pid — no second identifier.
@@ -544,14 +536,14 @@ mod tests {
 
     #[test]
     fn start_session_rejects_empty_agent_name() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let err = svc.start_session(req("")).unwrap_err();
         assert!(matches!(err, ManagedAgentError::InvalidArgument(_)));
     }
 
     #[test]
     fn start_session_defaults_owner_and_zone() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let r = StartSessionRequest {
             agent_id: "scode-standard".to_string(),
             ..Default::default()
@@ -564,8 +556,7 @@ mod tests {
 
     #[test]
     fn cancel_session_terminates_pid_and_reaps_descriptor() {
-        let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&table));
+        let (_kernel, table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let pid = resp.session_id.clone();
 
@@ -584,8 +575,7 @@ mod tests {
 
     #[test]
     fn cancel_turn_keeps_pid_alive() {
-        let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&table));
+        let (_kernel, table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let pid = resp.session_id.clone();
 
@@ -600,14 +590,14 @@ mod tests {
 
     #[test]
     fn cancel_unknown_session_errors() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let err = svc.cancel("pid-bogus", CancelMode::Session).unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
 
     #[test]
     fn get_session_returns_state_from_agent_registry() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let snap = svc.get_session(&resp.session_id).unwrap();
         assert_eq!(snap.session_id, resp.session_id);
@@ -625,8 +615,7 @@ mod tests {
         // state="terminated".  Post-collapse the descriptor IS the
         // SSOT: once it's reaped, get_session must surface
         // UnknownSession.
-        let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&table));
+        let (_kernel, table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         table.unregister(&resp.session_id);
         let err = svc.get_session(&resp.session_id).unwrap_err();
@@ -635,7 +624,7 @@ mod tests {
 
     #[test]
     fn get_session_unknown_session_errors() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let err = svc.get_session("pid-bogus").unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
@@ -648,7 +637,7 @@ mod tests {
 
         #[test]
         fn start_session_v1_round_trip() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let payload = json!({
                 "agent_id": "scode-standard",
                 "model": "claude-sonnet-4-6",
@@ -670,7 +659,7 @@ mod tests {
 
         #[test]
         fn start_session_v1_defaults_optional_fields() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let payload = json!({"agent_id": "scode-standard"}).to_string();
             let bytes = svc
                 .dispatch("start_session_v1", payload.as_bytes())
@@ -681,7 +670,7 @@ mod tests {
 
         #[test]
         fn cancel_v1_session_round_trip() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let resp = svc.start_session(req("scode-standard")).unwrap();
             let payload = json!({"session_id": resp.session_id, "mode": "session"}).to_string();
             let bytes = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap();
@@ -691,7 +680,7 @@ mod tests {
 
         #[test]
         fn cancel_v1_turn_round_trip() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let resp = svc.start_session(req("scode-standard")).unwrap();
             let payload = json!({"session_id": resp.session_id, "mode": "turn"}).to_string();
             let bytes = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap();
@@ -701,7 +690,7 @@ mod tests {
 
         #[test]
         fn cancel_v1_unknown_session_surfaces_invalid_argument() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let payload = json!({"session_id": "pid-bogus", "mode": "session"}).to_string();
             let err = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap_err();
             assert!(matches!(err, RustCallError::InvalidArgument(_)));
@@ -709,7 +698,7 @@ mod tests {
 
         #[test]
         fn get_session_v1_round_trip() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let resp = svc.start_session(req("scode-standard")).unwrap();
             let payload = json!({"session_id": resp.session_id}).to_string();
             let bytes = svc.dispatch("get_session_v1", payload.as_bytes()).unwrap();
@@ -720,14 +709,14 @@ mod tests {
 
         #[test]
         fn unknown_method_returns_not_found() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let err = svc.dispatch("does_not_exist", b"{}").unwrap_err();
             assert!(matches!(err, RustCallError::NotFound));
         }
 
         #[test]
         fn malformed_payload_surfaces_invalid_argument() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let err = svc
                 .dispatch("start_session_v1", b"this is not json")
                 .unwrap_err();
@@ -779,8 +768,7 @@ mod tests {
         /// the only setup needed is `Kernel::new` (no PyO3 boot).
         fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService<Kernel>) {
             let k = Arc::new(Kernel::new());
-            let svc =
-                ManagedAgentService::with_kernel(Arc::clone(&k), Arc::clone(k.agent_registry()));
+            let svc = ManagedAgentService::new(Arc::clone(&k), Arc::clone(k.agent_registry()));
             (k, svc)
         }
 

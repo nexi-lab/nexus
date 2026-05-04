@@ -1971,7 +1971,15 @@ impl Kernel {
             updated_fields.push("modified_at_ms".to_string());
         }
 
-        self.metastore_put(path, new_meta)?;
+        // commit_metadata invalidates the dcache after the metastore
+        // write — required for a follow-up sys_stat to see the new
+        // mime_type/modified_at_ms instead of the stale cached entry.
+        // metastore_put on its own leaves dcache pointing at the
+        // pre-update CachedEntry, which silently swallowed mime_type
+        // updates back when service-tier readers used metastore_get
+        // (dcache-bypassing) directly.
+        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
+        self.commit_metadata(path, &mount_point, new_meta)?;
 
         Ok(SysSetAttrResult {
             path: path.to_string(),

@@ -24,10 +24,11 @@ use crate::managed_agent::ManagedAgentService;
 /// Install an `AuditHook` on `kernel` for `zone_id`, backed by a
 /// WAL-replicated DT_STREAM at `stream_path`.
 ///
-/// Service-tier owns hook lifecycle: kernel exposes
-/// `prepare_audit_stream` (stream lifecycle) + `register_native_hook`
-/// (LSM-style in-tree API), and this function composes the two with the
-/// local `AuditHook::new`.
+/// Service-tier owns hook lifecycle: kernel exposes the syscall
+/// surface (`sys_setattr` for the DT_STREAM, `sys_write` for hook
+/// appends, `register_native_hook` for the LSM-style hook
+/// registration), and this function composes them with the local
+/// `AuditHook::new`.
 ///
 /// Python signature:
 ///
@@ -41,7 +42,7 @@ fn install_audit_hook_py(
     zone_id: &str,
     stream_path: &str,
 ) -> PyResult<()> {
-    audit::install(kernel.kernel_ref(), zone_id, stream_path)
+    audit::install(kernel.kernel_arc(), zone_id, stream_path)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))
 }
 

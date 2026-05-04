@@ -58,13 +58,13 @@ def _real_protoc() -> str:
     if override:
         return override
 
-    system_protoc = shutil.which("protoc")
-    if system_protoc:
-        return system_protoc
-
     vendored = _find_vendored_protoc()
     if vendored:
         return vendored
+
+    system_protoc = shutil.which("protoc")
+    if system_protoc:
+        return system_protoc
 
     raise SystemExit(
         "Unable to locate protoc. Install protobuf-compiler, set NEXUS_REAL_PROTOC, "

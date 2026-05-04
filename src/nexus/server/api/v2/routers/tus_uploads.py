@@ -331,7 +331,7 @@ def create_tus_uploads_router(
         auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Terminate an upload and release resources (tus termination extension)."""
-        from nexus.contracts.exceptions import UploadNotFoundError
+        from nexus.contracts.exceptions import UploadExpiredError, UploadNotFoundError
 
         service = _get_service()
 
@@ -341,6 +341,8 @@ def create_tus_uploads_router(
             await service.terminate_upload(upload_id)
         except UploadNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
+        except UploadExpiredError as e:
+            raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
 
         return Response(
             status_code=204,

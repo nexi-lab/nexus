@@ -6,11 +6,13 @@ tus uploads router with a real service and in-memory SQLite backend.
 
 import base64
 import hashlib
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.upload.chunked_upload_service import (
@@ -19,6 +21,7 @@ from nexus.bricks.upload.chunked_upload_service import (
 )
 from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
 from nexus.server.dependencies import require_auth
+from nexus.storage.models.upload_session import UploadSessionModel
 
 # --- Test fixtures ---
 
@@ -405,6 +408,32 @@ class TestTerminateEndpoint:
             headers=TUS_HEADERS,
         )
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_terminate_expired_upload_returns_410(
+        self,
+        client: AsyncClient,
+        upload_service: ChunkedUploadService,
+    ) -> None:
+        create_resp = await client.post(
+            "/api/v2/uploads",
+            headers={**TUS_HEADERS, "Upload-Length": "100"},
+        )
+        upload_path = create_resp.headers["Location"].replace("http://test", "")
+        upload_id = upload_path.rsplit("/", 1)[-1]
+
+        db = upload_service._session_factory()
+        try:
+            model = db.execute(
+                select(UploadSessionModel).filter_by(upload_id=upload_id)
+            ).scalar_one()
+            model.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            db.commit()
+        finally:
+            db.close()
+
+        resp = await client.delete(upload_path, headers=TUS_HEADERS)
+        assert resp.status_code == 410
 
 
 class TestZeroByteUpload:

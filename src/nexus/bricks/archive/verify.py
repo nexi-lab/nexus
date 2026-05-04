@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import tarfile
+from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -31,7 +32,10 @@ def _current_nexus_version() -> str:
     try:
         return version("nexus-ai-fs")
     except PackageNotFoundError:
-        return "0.0.0"
+        try:
+            return str(import_module("nexus").__version__)
+        except Exception:
+            return "0.0.0"
 
 
 def _parse_semver(s: str) -> tuple[int, int, int]:

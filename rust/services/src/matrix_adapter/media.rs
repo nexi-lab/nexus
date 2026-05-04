@@ -99,6 +99,7 @@ pub async fn upload<K: kernel::abi::KernelAbi>(
             subject_id: None,
             request_id,
             context_zone_id: None,
+            zone_perms: vec![],
         };
         // Plant a DT_STREAM at the media path big enough to hold the
         // upload, then push the bytes as a single entry. DT_STREAM is
@@ -206,6 +207,7 @@ pub async fn download<K: kernel::abi::KernelAbi>(
                 subject_id: None,
                 request_id: "download".into(),
                 context_zone_id: None,
+                zone_perms: vec![],
             };
             let read_result = kernel_for_read.sys_read(
                 &media_path_for_read,

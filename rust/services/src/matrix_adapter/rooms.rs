@@ -52,6 +52,7 @@ pub(super) fn ctx_from_session(session: &AuthSession) -> kernel::kernel::Operati
         subject_id: None,
         request_id: format!("matrix-{}", session.access_token),
         context_zone_id: None,
+        zone_perms: vec![],
     }
 }
 

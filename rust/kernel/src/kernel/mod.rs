@@ -1971,15 +1971,17 @@ impl Kernel {
             updated_fields.push("modified_at_ms".to_string());
         }
 
-        // commit_metadata invalidates the dcache after the metastore
-        // write — required for a follow-up sys_stat to see the new
-        // mime_type/modified_at_ms instead of the stale cached entry.
-        // metastore_put on its own leaves dcache pointing at the
-        // pre-update CachedEntry, which silently swallowed mime_type
-        // updates back when service-tier readers used metastore_get
-        // (dcache-bypassing) directly.
-        let mount_point = self.resolve_mount_point(path, contracts::ROOT_ZONE_ID);
-        self.commit_metadata(path, &mount_point, new_meta)?;
+        // metastore_put owns dcache coherence after PR #4027 collapsed
+        // commit_metadata/commit_delete into the metastore layer: the
+        // put() write atomically invalidates the dcache so a
+        // follow-up sys_stat sees the new mime_type/modified_at_ms
+        // instead of the stale cached entry. Earlier this method
+        // wrote via metastore_put without the dcache update; service-
+        // tier readers using metastore_get (dcache-bypassing) papered
+        // over the bug. Since v2 services route through sys_stat
+        // (which consults dcache first), the post-#4027 metastore_put
+        // is the right SSOT.
+        self.metastore_put(path, new_meta)?;
 
         Ok(SysSetAttrResult {
             path: path.to_string(),
@@ -3667,21 +3669,29 @@ mod tests {
         use crate::hal::distributed_coordinator::{
             ClusterInfo, CoordinatorResult, DistributedCoordinator, ShareInfo,
         };
-        use crate::meta_store::MemoryMetaStore;
+        use crate::meta_store::LocalMetaStore;
+        use tempfile::TempDir;
 
         /// Minimal `DistributedCoordinator` impl that reports
-        /// `is_initialized=true` and hands back a shared in-memory
-        /// `MemoryMetaStore` from `metastore_for_zone`. Every other
+        /// `is_initialized=true` and hands back a tempdir-backed
+        /// `LocalMetaStore` from `metastore_for_zone`. Every other
         /// trait method is a stub — the wal-stream path under test
-        /// never calls them.
+        /// never calls them. `TempDir` is held on the coordinator
+        /// so the redb file lives as long as the metastore.
         struct TestFederationCoordinator {
             metastore: Arc<dyn MetaStore>,
+            _tempdir: TempDir,
         }
 
         impl TestFederationCoordinator {
             fn new() -> Self {
+                let tempdir = TempDir::new().expect("tempdir for fed-wal test");
+                let path = tempdir.path().join("fed-wal-metastore.redb");
+                let metastore: Arc<dyn MetaStore> =
+                    Arc::new(LocalMetaStore::open(&path).expect("open LocalMetaStore"));
                 Self {
-                    metastore: Arc::new(MemoryMetaStore::new()),
+                    metastore,
+                    _tempdir: tempdir,
                 }
             }
         }

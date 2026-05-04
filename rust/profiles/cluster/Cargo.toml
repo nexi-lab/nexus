@@ -23,6 +23,13 @@ contracts = { workspace = true }
 # HTTP stack so the binary stays at the sudowork target size.
 kernel = { workspace = true }
 backends = { workspace = true, default-features = false, features = ["driver-path-local"] }
+# Cross-repo runtime-body adapter — provides
+# `install_managed_agent_with_sudocode_spawn(kernel)` so the cluster
+# binary boot path wires the same sudocode-runtime managed-agent
+# body the cdylib (Python wheel) uses. Adapter struct + git-dep on
+# sudocode-runtime live in the rlib so neither binary edge has to
+# duplicate the wiring code.
+managed-agent-runtime = { workspace = true }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }

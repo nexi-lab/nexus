@@ -478,6 +478,16 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         "mounted host-fs at \"/\" via PathLocalBackend",
     );
 
+    // Wire the managed-agent runtime body. Same `SpawnTask<Kernel>`
+    // adapter the cdylib (Python wheel) uses — the cluster binary
+    // links the same `managed-agent-runtime` rlib so deployments
+    // that don't run the Python interpreter still get the
+    // sudocode-runtime managed-agent loop. Idempotent against
+    // restart by `register_rust_service`'s duplicate-name check.
+    managed_agent_runtime::install_managed_agent_with_sudocode_spawn(&kernel)
+        .map_err(|e| anyhow::anyhow!("install ManagedAgentService: {}", e))?;
+    tracing::info!("ManagedAgentService installed (sudocode-runtime spawn provider)");
+
     let (zones, mounts) = parse_federation_env();
     if !zones.is_empty() || !mounts.is_empty() {
         tracing::info!(

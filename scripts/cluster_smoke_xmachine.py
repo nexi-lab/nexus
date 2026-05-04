@@ -108,6 +108,10 @@ def launch_daemon(
     if hostname:
         env["NEXUS_HOSTNAME"] = hostname
     env["NEXUS_NO_TLS"] = "1"  # plaintext gRPC for the smoke; mTLS is a separate test
+    # Explicit bootstrap mode declaration — required by daemon since
+    # the BootstrapMode validator gate landed.  Smoke always uses
+    # static mode (env-driven cluster formation).
+    env["NEXUS_BOOTSTRAP_MODE"] = "static"
 
     cmd = [
         str(binary),
@@ -118,6 +122,8 @@ def launch_daemon(
         "--peers",
         peers,
         "--no-tls",
+        "--bootstrap-mode",
+        "static",
     ]
     print(f"[{side}] launch: {' '.join(cmd)}", flush=True)
     print(f"[{side}] data_dir={data_dir} log={log_path} bootstrap_new={bootstrap_new}", flush=True)

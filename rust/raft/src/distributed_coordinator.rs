@@ -217,6 +217,169 @@ impl Default for RaftDistributedCoordinator {
     }
 }
 
+/// Bootstrap mode declared by the operator at daemon start.
+///
+/// Pre-this-enum, `bootstrap_or_join_zone` would dispatch its three
+/// branches purely from runtime state inference (data-dir empty?
+/// `NEXUS_BOOTSTRAP_NEW=1`?  peers non-empty?).  That implicit
+/// dispatch made it possible to mix scenarios — point a `share`
+/// command's `--data-dir` at a static-bootstrap data dir and the CLI
+/// would happily treat it as runtime state of an in-progress dynamic
+/// cluster.  Empirically caused leadership-chase confusion during
+/// cross-machine smoke and conflated two intent layers.
+///
+/// Now operator must declare intent up front:
+///
+///   * `Static` — env-driven cluster formation. `NEXUS_PEERS` /
+///     `--peers` and `NEXUS_BOOTSTRAP_NEW` / `--bootstrap-new` are
+///     consumed at startup. Data dir MUST be empty.
+///   * `Dynamic` — daemon comes up rootless; operator drives zone
+///     formation via runtime API (`nexusd-cluster share` / `join`,
+///     or Python `nexusd federation_create_zone`). Env vars and
+///     `--peers` related to bootstrap are REJECTED. Data dir MUST be
+///     empty.
+///   * `Restart` — data dir holds persisted ConfState from a prior
+///     boot; resume from it. Bootstrap-related env vars / flags are
+///     REJECTED (state on disk is the SSOT).
+///
+/// Validation runs once at boot and fails loud on any contradiction
+/// — operator gets a clear error rather than discovering implicit
+/// behaviour months later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootstrapMode {
+    Static,
+    Dynamic,
+    Restart,
+}
+
+impl BootstrapMode {
+    /// Parse a textual mode declaration.  Accepts case-insensitive
+    /// `"static"` / `"dynamic"` / `"restart"`.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "static" => Ok(BootstrapMode::Static),
+            "dynamic" => Ok(BootstrapMode::Dynamic),
+            "restart" => Ok(BootstrapMode::Restart),
+            other => Err(format!(
+                "invalid bootstrap mode '{other}' — expected one of: static, dynamic, restart",
+            )),
+        }
+    }
+
+    /// Human-readable name (lowercase) for log lines and error messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BootstrapMode::Static => "static",
+            BootstrapMode::Dynamic => "dynamic",
+            BootstrapMode::Restart => "restart",
+        }
+    }
+}
+
+/// Validate that the declared bootstrap mode is consistent with
+/// runtime state and operator inputs.  Fails loud at boot time so
+/// misconfiguration surfaces before the daemon's gRPC server starts
+/// rather than as a silent stall later.
+///
+/// Inputs:
+///   * `mode` — operator declaration (CLI flag or env var).
+///   * `data_dir_has_root` — `<data_dir>/root/raft/` exists, i.e.
+///     persisted ConfState is present.  Caller checks the filesystem.
+///   * `bootstrap_new_set` — operator passed `NEXUS_BOOTSTRAP_NEW=1`
+///     or equivalent CLI flag.
+///   * `peers_non_empty` — operator passed `NEXUS_PEERS` /
+///     `--peers` with at least one entry (after
+///     `validate_peers_excludes_self`).
+///
+/// Rules:
+///   * `Static`: data dir MUST be empty (would-be restart);
+///     `bootstrap_new_set` OR `peers_non_empty` MUST hold (otherwise
+///     nothing tells the daemon which way to bootstrap).
+///   * `Dynamic`: data dir MUST be empty (no persisted state);
+///     `bootstrap_new_set` and `peers_non_empty` MUST both be false
+///     (runtime API drives, not env).
+///   * `Restart`: data dir MUST be non-empty (state to resume);
+///     `bootstrap_new_set` and `peers_non_empty` MUST both be false
+///     (state on disk is authoritative).
+pub fn validate_bootstrap_mode(
+    mode: BootstrapMode,
+    data_dir_has_root: bool,
+    bootstrap_new_set: bool,
+    peers_non_empty: bool,
+) -> Result<(), String> {
+    match mode {
+        BootstrapMode::Static => {
+            if data_dir_has_root {
+                return Err(
+                    "bootstrap mode = static, but data dir already holds a 'root' zone — \
+                     this is a restart scenario.  Either pass mode = restart, or wipe the \
+                     data dir to bootstrap fresh."
+                        .to_string(),
+                );
+            }
+            if !bootstrap_new_set && !peers_non_empty {
+                return Err(
+                    "bootstrap mode = static requires either NEXUS_BOOTSTRAP_NEW=1 (founder) \
+                     or NEXUS_PEERS/--peers (joiner).  Neither is set."
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
+        BootstrapMode::Dynamic => {
+            if data_dir_has_root {
+                return Err(
+                    "bootstrap mode = dynamic, but data dir already holds a 'root' zone — \
+                     dynamic mode requires a fresh data dir; runtime share/join builds the \
+                     cluster from scratch.  Either pass mode = restart, or wipe the data dir."
+                        .to_string(),
+                );
+            }
+            if bootstrap_new_set {
+                return Err(
+                    "bootstrap mode = dynamic forbids NEXUS_BOOTSTRAP_NEW — that flag belongs \
+                     to static mode.  Drop the flag, or switch to mode = static."
+                        .to_string(),
+                );
+            }
+            if peers_non_empty {
+                return Err(
+                    "bootstrap mode = dynamic forbids NEXUS_PEERS / --peers — peer addresses \
+                     enter via runtime share/join commands, not env.  Drop the flag, or \
+                     switch to mode = static."
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
+        BootstrapMode::Restart => {
+            if !data_dir_has_root {
+                return Err(
+                    "bootstrap mode = restart, but data dir is empty — there is no persisted \
+                     state to resume from.  Either pass mode = static (with peers/flag) or \
+                     mode = dynamic (clean start)."
+                        .to_string(),
+                );
+            }
+            if bootstrap_new_set {
+                return Err(
+                    "bootstrap mode = restart forbids NEXUS_BOOTSTRAP_NEW — persisted state \
+                     is the source of truth.  Drop the flag."
+                        .to_string(),
+                );
+            }
+            if peers_non_empty {
+                return Err(
+                    "bootstrap mode = restart forbids NEXUS_PEERS / --peers — persisted \
+                     ConfState carries the address book.  Drop the flag."
+                        .to_string(),
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Read the persisted node ID, or mint a fresh random one and persist it.
 ///
 /// SSOT for raft node identity under the opaque-ID contract.  See
@@ -660,6 +823,44 @@ impl RaftDistributedCoordinator {
         // (founder) or AddNode-on-leader (joiner).  See
         // `validate_peers_excludes_self` for the full rationale.
         validate_peers_excludes_self(&peer_addrs, &self_addr)?;
+
+        // Operator MUST declare bootstrap intent when federation is in
+        // play — `BootstrapMode` doc has the contract.  Implicit
+        // dispatch (state-driven) was the source of the silent
+        // mode-mixing that surfaced in cross-machine smoke; explicit
+        // declaration kills that footgun.
+        //
+        // "Federation in play" = any of: data dir already holds a
+        // root zone (restart), `NEXUS_BOOTSTRAP_NEW=1` (static
+        // founder), or non-empty peers (static joiner).  Tests /
+        // single-node dev workflows that touch none of those signals
+        // skip the validator entirely — no federation intent, nothing
+        // to validate.
+        let data_dir_has_root = Path::new(&zones_dir).join("root").join("raft").exists();
+        let federation_in_play = data_dir_has_root || bootstrap_new || !peer_addrs.is_empty();
+        if federation_in_play {
+            let mode_str = std::env::var("NEXUS_BOOTSTRAP_MODE").map_err(|_| {
+                "NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation \
+                 (NEXUS_PEERS, NEXUS_BOOTSTRAP_NEW, or persisted root zone state \
+                 detected).  Pass one of: static, dynamic, restart.  \
+                 See BootstrapMode docs in nexus_raft."
+                    .to_string()
+            })?;
+            let mode = BootstrapMode::parse(&mode_str)?;
+            validate_bootstrap_mode(
+                mode,
+                data_dir_has_root,
+                bootstrap_new,
+                !peer_addrs.is_empty(),
+            )?;
+            tracing::info!(
+                mode = mode.as_str(),
+                bootstrap_new,
+                peers_non_empty = !peer_addrs.is_empty(),
+                data_dir_has_root,
+                "bootstrap mode validated",
+            );
+        }
 
         let tls = if tls_disabled {
             None
@@ -1643,5 +1844,119 @@ mod tests {
     fn validate_peers_excludes_self_empty_list_is_ok() {
         // Founder mode with no other peers yet.
         validate_peers_excludes_self(&[], "100.64.0.26:2126").expect("empty list ok");
+    }
+
+    // ── BootstrapMode parsing + validation ─────────────────────────────
+
+    #[test]
+    fn bootstrap_mode_parse_accepts_canonical_names() {
+        assert_eq!(
+            BootstrapMode::parse("static").unwrap(),
+            BootstrapMode::Static
+        );
+        assert_eq!(
+            BootstrapMode::parse("dynamic").unwrap(),
+            BootstrapMode::Dynamic
+        );
+        assert_eq!(
+            BootstrapMode::parse("restart").unwrap(),
+            BootstrapMode::Restart
+        );
+        // Case-insensitive
+        assert_eq!(
+            BootstrapMode::parse("STATIC").unwrap(),
+            BootstrapMode::Static
+        );
+        // Trims whitespace
+        assert_eq!(
+            BootstrapMode::parse("  dynamic  ").unwrap(),
+            BootstrapMode::Dynamic
+        );
+    }
+
+    #[test]
+    fn bootstrap_mode_parse_rejects_unknown() {
+        let err = BootstrapMode::parse("auto").expect_err("unknown mode rejected");
+        assert!(err.contains("static, dynamic, restart"));
+    }
+
+    #[test]
+    fn validate_static_happy_paths() {
+        // Founder: BOOTSTRAP_NEW set, peers may be empty, data dir empty.
+        validate_bootstrap_mode(BootstrapMode::Static, false, true, false).expect("founder ok");
+        // Joiner: peers non-empty, BOOTSTRAP_NEW unset, data dir empty.
+        validate_bootstrap_mode(BootstrapMode::Static, false, false, true).expect("joiner ok");
+        // Belt-and-suspenders: both set is OK (founder with peer hint).
+        validate_bootstrap_mode(BootstrapMode::Static, false, true, true).expect("both ok");
+    }
+
+    #[test]
+    fn validate_static_rejects_existing_state() {
+        let err = validate_bootstrap_mode(BootstrapMode::Static, true, true, false)
+            .expect_err("existing state under static is restart-in-disguise");
+        assert!(err.contains("restart"));
+    }
+
+    #[test]
+    fn validate_static_rejects_empty_intent() {
+        // No flag, no peers — daemon has no signal which way to go.
+        let err = validate_bootstrap_mode(BootstrapMode::Static, false, false, false)
+            .expect_err("static without flag or peers must be rejected");
+        assert!(err.contains("BOOTSTRAP_NEW") && err.contains("PEERS"));
+    }
+
+    #[test]
+    fn validate_dynamic_happy_path() {
+        // Pure dynamic: empty state, no flags.
+        validate_bootstrap_mode(BootstrapMode::Dynamic, false, false, false)
+            .expect("clean dynamic ok");
+    }
+
+    #[test]
+    fn validate_dynamic_rejects_existing_state() {
+        let err = validate_bootstrap_mode(BootstrapMode::Dynamic, true, false, false)
+            .expect_err("dynamic on existing state must be rejected");
+        assert!(err.contains("dynamic mode requires a fresh data dir"));
+    }
+
+    #[test]
+    fn validate_dynamic_rejects_bootstrap_new() {
+        let err = validate_bootstrap_mode(BootstrapMode::Dynamic, false, true, false)
+            .expect_err("dynamic + BOOTSTRAP_NEW must be rejected");
+        assert!(err.contains("forbids NEXUS_BOOTSTRAP_NEW"));
+    }
+
+    #[test]
+    fn validate_dynamic_rejects_peers() {
+        let err = validate_bootstrap_mode(BootstrapMode::Dynamic, false, false, true)
+            .expect_err("dynamic + peers must be rejected");
+        assert!(err.contains("forbids NEXUS_PEERS"));
+    }
+
+    #[test]
+    fn validate_restart_happy_path() {
+        validate_bootstrap_mode(BootstrapMode::Restart, true, false, false)
+            .expect("restart with state ok");
+    }
+
+    #[test]
+    fn validate_restart_rejects_empty_state() {
+        let err = validate_bootstrap_mode(BootstrapMode::Restart, false, false, false)
+            .expect_err("restart on empty state must be rejected");
+        assert!(err.contains("data dir is empty"));
+    }
+
+    #[test]
+    fn validate_restart_rejects_bootstrap_new() {
+        let err = validate_bootstrap_mode(BootstrapMode::Restart, true, true, false)
+            .expect_err("restart + BOOTSTRAP_NEW must be rejected");
+        assert!(err.contains("forbids NEXUS_BOOTSTRAP_NEW"));
+    }
+
+    #[test]
+    fn validate_restart_rejects_peers() {
+        let err = validate_bootstrap_mode(BootstrapMode::Restart, true, false, true)
+            .expect_err("restart + peers must be rejected");
+        assert!(err.contains("forbids NEXUS_PEERS"));
     }
 }

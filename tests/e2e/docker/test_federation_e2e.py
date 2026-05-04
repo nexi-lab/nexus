@@ -3833,12 +3833,22 @@ class TestFreshJoinToRunningCluster:
 
     ## What this test does
 
+      0. Capture node-1's pre-wipe `node_id` via `cluster_info` —
+         baseline for the rotation assertion at step 7.
       1. Stop node-1 (n2 + witness keep majority, keep committing).
       2. Drive writes via node-2 → raft commits accumulate across cluster.
       3. WIPE node-1 data volume (raft.redb deleted — fresh state).
       4. Start node-1.
       5. Assert node-1 reaches healthy without panic AND catches up to the
          entries written while it was down.
+      6. Spot-check replicated entries are visible on node-1.
+      7. Assert node-1's post-rejoin `node_id` ≠ pre-wipe id (opaque-ID
+         rotation contract — without rotation the heartbeat panic path
+         is reachable; with rotation `Progress[new_id].matched=0`
+         keeps `m.commit=0` on first heartbeat).
+      8. Assert ConfState `voter_count >= 3` post-rejoin (old voter
+         retained per F5-deferred auto-GC plan; canary against an
+         unwanted auto-RemoveNode regression).
     """
 
     # Order-LAST: this test wipes node-1's data dir and rejoins under
@@ -3867,6 +3877,27 @@ class TestFreshJoinToRunningCluster:
         grpc1 = cluster["grpc1"]
         grpc2 = cluster["grpc2"]
         uid = _uid()
+
+        # 0. Capture node-1's PRE-WIPE node_id from its own root-zone
+        #    view.  PR #3996 contract: post-wipe restart MUST mint a
+        #    fresh opaque random `node_id` (`bootstrap_or_join_zone`'s
+        #    `read_or_mint_node_id` only loads when `<data>/.node_id`
+        #    exists — wiped data dir forces a mint).  Capturing the
+        #    pre-wipe id lets the post-rejoin assertion pin "the id
+        #    actually rotated", which `_wait_healthy` alone does not.
+        pre_wipe_info = _grpc_call(
+            grpc1,
+            "federation_cluster_info",
+            {"zone_id": ROOT_ZONE_ID},
+            api_key=api_key,
+            timeout=10,
+        )
+        assert "error" not in pre_wipe_info, f"pre-wipe cluster_info: {pre_wipe_info}"
+        old_n1_id = pre_wipe_info["result"]["node_id"]
+        assert old_n1_id != 0, (
+            f"pre-wipe node_id is 0 (raft reserves 0 — opaque-ID contract violated): "
+            f"{pre_wipe_info}"
+        )
 
         # 1. Stop node-1; n2 + witness retain quorum (2/3).
         n1_container.stop(timeout=10)
@@ -3974,3 +4005,49 @@ class TestFreshJoinToRunningCluster:
                 msg=f"{path} not visible on freshly-joined node-1",
                 timeout=30,
             )
+
+        # 7. PR #3996 opaque-ID rotation contract pin.  After wipe +
+        #    fresh-join, node-1's `node_id` MUST be a freshly minted
+        #    random `u64`, distinct from `old_n1_id` captured at step 0.
+        #    Without rotation the leader's `Progress[old_id].matched`
+        #    carries pre-wipe history while the local log starts at
+        #    index 0 — `MsgHeartbeat{commit=K}` arrives, raft-rs
+        #    `commit_to(K)` panics on `last_index=0`.  The rotated id
+        #    means leader writes a fresh `Progress[new_id]` from
+        #    `AddNode`, so heartbeats carry `m.commit=0` first and the
+        #    panic path is unreachable.
+        post_wipe_info = _grpc_call(
+            grpc1,
+            "federation_cluster_info",
+            {"zone_id": ROOT_ZONE_ID},
+            api_key=api_key,
+            timeout=10,
+        )
+        assert "error" not in post_wipe_info, f"post-rejoin cluster_info: {post_wipe_info}"
+        new_n1_id = post_wipe_info["result"]["node_id"]
+        assert new_n1_id != 0, (
+            f"post-rejoin node_id is 0 — opaque-ID mint contract violated: {post_wipe_info}"
+        )
+        assert new_n1_id != old_n1_id, (
+            f"REGRESSION: node-1 reused its old node_id after wipe-rejoin "
+            f"(old={old_n1_id}, new={new_n1_id}).  PR #3996 opaque-ID "
+            f"contract says the wiped node MUST mint a fresh random id; "
+            f"reusing the old one re-arms the raft-rs heartbeat panic."
+        )
+
+        # 8. Stale-voter-retained pin.  Per PR #3996 plan §F5 (deferred
+        #    auto-GC), the OLD node_id stays in ConfState — leader has
+        #    not seen any explicit `RemoveNode(old_n1_id)`, so quorum
+        #    arithmetic includes both the dead old voter and the live
+        #    new voter.  Verifying voter_count grew by exactly 1
+        #    (pre-wipe was 2 voters in root: n1+n2; post-wipe is 3:
+        #    old_n1_stale + n2 + new_n1) catches a future regression
+        #    where someone sneaks in an auto-RemoveNode on AddNode
+        #    without the explicit F5 design.
+        new_voter_count = post_wipe_info["result"].get("voter_count", 0)
+        assert new_voter_count >= 3, (
+            f"REGRESSION: post-rejoin voter_count={new_voter_count}, expected >=3 "
+            f"(old_n1 stale + n2 + new_n1).  Either the new voter was not "
+            f"AddNode-d, or someone implemented stale-voter auto-GC without "
+            f"the F5 plan — this assertion is the canary either way."
+        )

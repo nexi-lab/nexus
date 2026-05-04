@@ -359,11 +359,12 @@ def _boot_post_kernel_services(
     try:
         agent_warmup_service: Any = None
         # AgentRegistry is the kernel SSOT — fetch it via the kernel
-        # handle. None for no-agent profiles (REMOTE).
+        # handle. None for no-agent profiles (REMOTE). Use getattr so a stale
+        # PyKernel without the `agent_registry` getter (Issue #4017) degrades
+        # to an AgentRPCService without warmup, instead of taking down the
+        # whole try block and dropping AgentRPCService entirely.
         _kernel_for_warmup = getattr(nx, "_kernel", None)
-        _agent_registry = (
-            _kernel_for_warmup.agent_registry if _kernel_for_warmup is not None else None
-        )
+        _agent_registry = getattr(_kernel_for_warmup, "agent_registry", None)
         if _agent_registry is not None:
             try:
                 from nexus.services.agents.agent_warmup import AgentWarmupService

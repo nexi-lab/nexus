@@ -440,7 +440,6 @@ class NexusConfig(BaseModel):
             "embedded",
             "lite",
             "sandbox",
-            "sandbox",
             "full",
             "cloud",
             "remote",

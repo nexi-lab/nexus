@@ -38,8 +38,12 @@ per-sandbox clients that talk to it.
 
 ```bash
 pip install 'nexus-ai-fs[sandbox]'
-NEXUS_PROFILE=sandbox nexus serve
+nexusd --profile sandbox --data-dir ~/.nexus/sandbox --port 8000 --host 127.0.0.1
 ```
+
+> The long-running server entrypoint is `nexusd`. The workspace `nexus` CLI
+> does not expose a `serve` subcommand. `NEXUS_PROFILE=sandbox` works as an
+> equivalent env-var override if you prefer.
 
 ### From Docker
 
@@ -101,7 +105,8 @@ enable_vector_search: true
 export OPENAI_API_KEY=sk-...
 # (optional) override the embedding model
 # export NEXUS_EMBEDDING_MODEL=text-embedding-3-large
-NEXUS_PROFILE=sandbox NEXUS_ENABLE_VECTOR_SEARCH=true nexus serve
+NEXUS_ENABLE_VECTOR_SEARCH=true nexusd --profile sandbox \
+  --data-dir ~/.nexus/sandbox --port 8000 --host 127.0.0.1
 ```
 
 When enabled, the SANDBOX semantic search path becomes:
@@ -154,6 +159,11 @@ does not require a brick flag.
 
 ## Troubleshooting
 
+- **Boot fails with `'PyKernel' object has no attribute 'agent_registry'`**:
+  the loaded Rust extension predates the `agent_registry` getter. Rebuild
+  with `maturin develop -m rust/nexus-cdylib/Cargo.toml --features full`
+  (running from a fresh `git pull` on `main` requires this when the kernel
+  ABI moves).
 - **Boot fails with `ModuleNotFoundError: bm25s`**: install the extras
   with `pip install 'nexus-ai-fs[sandbox]'`.
 - **Boot tries to connect to Postgres/Redis**: you have a leftover

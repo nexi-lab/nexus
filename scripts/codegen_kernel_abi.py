@@ -1178,7 +1178,11 @@ def generate_api_groups(classes: dict[str, "ClassDef"]) -> str:
     if kernel_cls is None:
         raise ValueError("PyKernel class not found in parsed Rust sources")
 
-    # All public instance/static methods (skip __init__ and private _methods)
+    # All public instance/static methods (skip __init__, getters, and private _methods).
+    # Getters are excluded by design: a missing getter is degradable at the call
+    # site (use `getattr(..., None)` + warn) rather than fatal. Including them
+    # here would mark the whole kernel unusable and short-circuit boot before any
+    # consumer-level fallback can run (Issue #4017 regression class).
     kernel_methods = sorted(
         f.name
         for f in kernel_cls.methods

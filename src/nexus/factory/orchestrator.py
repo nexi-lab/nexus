@@ -550,7 +550,19 @@ def _register_vfs_hooks(
 
     # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──
     _kernel_for_proc = getattr(nx, "_kernel", None)
-    _proc_table = _kernel_for_proc.agent_registry if _kernel_for_proc is not None else None
+    # Guard against stale Rust extension that predates the agent_registry getter
+    # (Issue #4017): if the loaded .so was built before that attribute landed,
+    # `kernel.agent_registry` raises AttributeError and aborts boot. Skip the
+    # resolver and warn the operator to rebuild instead.
+    _proc_table = (
+        getattr(_kernel_for_proc, "agent_registry", None) if _kernel_for_proc is not None else None
+    )
+    if _kernel_for_proc is not None and _proc_table is None:
+        logger.warning(
+            "[BOOT:HOOKS] PyKernel.agent_registry unavailable — Rust extension is "
+            "stale or built without it. Rebuild with: "
+            "maturin develop -m rust/nexus-cdylib/Cargo.toml --features full"
+        )
     if _proc_table is not None:
         try:
             from nexus.services.agents.agent_status_resolver import AgentStatusResolver

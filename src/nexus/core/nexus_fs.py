@@ -19,7 +19,6 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
 )
-from nexus.core.metastore import RustMetastoreProxy
 from nexus.core.nexus_fs_content import ContentMixin
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.nexus_fs_internal import InternalMixin
@@ -118,7 +117,7 @@ class NexusFS(  # type: ignore[misc]
 
     def __init__(
         self,
-        metadata_store: "RustMetastoreProxy | str | Path | None",
+        metadata_store: "Any | str | Path | None",
         record_store: RecordStoreABC | None = None,
         cache_store: CacheStoreABC | None = None,
         *,
@@ -131,40 +130,53 @@ class NexusFS(  # type: ignore[misc]
     ):
         """Initialize NexusFS kernel.
 
-        Kernel boots with RustMetastoreProxy (inode layer). Backends are mounted
-        via ``DriverLifecycleCoordinator.mount()`` (which writes to the
-        Rust kernel's MountTable) — like Linux VFS, no global backend.
+        Backends are mounted via ``DriverLifecycleCoordinator.mount()``
+        (which writes to the Rust kernel's MountTable) — like Linux VFS,
+        no global backend.
 
         Args:
-            metadata_store: Metastore wiring. Three accepted shapes:
+            metadata_store: Metastore wiring. Four accepted shapes:
 
-                - ``RustMetastoreProxy``: a pre-built Python proxy (typically
-                  ``RustMetastoreProxy`` produced by ``nexus.open_local_metastore``
-                  or by a previous NexusFS construction). Reused as-is; its
-                  ``_rust_kernel`` attribute provides the kernel.
+                - ``PyKernel``: a pre-built kernel (typically from
+                  ``nexus.connect()``). Reused as-is; ``set_metastore_path``
+                  is assumed to have been called on it already.
                 - ``str | Path``: redb file path. NexusFS constructs a fresh
-                  ``PyKernel`` and ``RustMetastoreProxy(kernel, str(path))``.
+                  ``PyKernel`` and calls ``set_metastore_path(str(path))``.
                   This is the default for tests and quickstarts — the Rust
                   kernel is the SSOT, no parallel Python store opens the file.
                 - ``None``: tempfile fallback — a fresh kernel + a tempfile
-                  redb path. Suitable for fixtures that don't care about
-                  on-disk persistence between processes.
+                  redb path.
+                - Anything else exposing a ``_rust_kernel`` attribute (the
+                  legacy ``RustMetastoreProxy`` shim, kept until the proxy
+                  class is fully deleted): unwrapped to its kernel.
 
             init_cred: Kernel process credential — like Linux ``init_task.cred``.
                 Used as fallback identity for internal operations (audit pipe
                 writes, service bootstrap mkdir). Immutable after construction.
                 Pass ``None`` only for bare-kernel tests that never call syscalls.
         """
-        # Normalize path-shaped inputs to a string so the kernel boot branch
-        # below doesn't have to re-distinguish them. ``RustMetastoreProxy`` instances
-        # take the existing isinstance branch unchanged.
+        # Normalize the four input shapes into a single shape that the
+        # kernel-boot branch below understands:
+        #   * (kernel, path) — kernel ready to wire, path opened by us.
+        #   * (kernel, None) — kernel already wired (or in-memory).
+        #   * (None, path) — build a fresh kernel and wire it.
+        #   * (None, None) — build a fresh kernel + tempfile redb.
         _metastore_path: str | None = None
+        _provided_kernel: Any = None
         if isinstance(metadata_store, Path):
             _metastore_path = str(metadata_store)
-            metadata_store = None
         elif isinstance(metadata_store, str):
             _metastore_path = metadata_store
-            metadata_store = None
+        elif metadata_store is None:
+            pass
+        elif hasattr(metadata_store, "_rust_kernel"):
+            # Legacy ``RustMetastoreProxy`` shim — unwrap.
+            _provided_kernel = metadata_store._rust_kernel
+        else:
+            # Bare ``PyKernel`` (post-W3b shape).
+            _provided_kernel = metadata_store
+        # ``metadata_store`` is no longer read past this point.
+        metadata_store = None
         # Config defaults
         cache = cache or CacheConfig()
         permissions = permissions or PermissionConfig()
@@ -193,12 +205,13 @@ class NexusFS(  # type: ignore[misc]
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
         self.allow_admin_bypass = permissions.allow_admin_bypass
 
-        # Three pillars: metadata (required), record store, cache store
-        # No self.backend — all I/O goes through router.route().backend
-        # When ``metadata_store`` was a path/None it is None here; the kernel
-        # boot branch further below overwrites ``self.metadata`` with the
-        # freshly-constructed RustMetastoreProxy.
-        self.metadata: RustMetastoreProxy | None = metadata_store
+        # Three pillars: metadata (kernel-owned), record store, cache store.
+        # No self.backend — all I/O goes through router.route().backend.
+        # ``self.metadata`` is gone post-W3b: callers reach the metastore
+        # via ``self._kernel.metastore_*`` (kernel-internal infrastructure)
+        # or through ``nexus.kernel_helpers`` (the five non-trivial
+        # wrappers around ``kernel.metastore_*``). The kernel handle is
+        # the only Python-side metastore reference.
         self._record_store = record_store
         self._sql_engine: Any = None
         self._db_session_factory: Any = None
@@ -243,11 +256,15 @@ class NexusFS(  # type: ignore[misc]
         self._kernel = None
         if RUST_AVAILABLE:
             try:
-                if isinstance(metadata_store, RustMetastoreProxy):
-                    # Caller handed us a pre-built proxy — reuse its kernel
-                    # (the proxy already called ``set_metastore_path`` so the
-                    # redb is open) rather than constructing a parallel one.
-                    self._kernel = metadata_store._rust_kernel
+                if _provided_kernel is not None:
+                    # Caller already owns a kernel (typically from
+                    # ``nexus.connect()`` or a previous NexusFS) — reuse
+                    # it rather than constructing a parallel one. We
+                    # assume ``set_metastore_path`` is already in place
+                    # if ``_metastore_path`` is None.
+                    self._kernel = _provided_kernel
+                    if _metastore_path is not None:
+                        self._kernel.set_metastore_path(str(_metastore_path))
                 else:
                     from nexus_runtime import PyKernel as _Kernel
 
@@ -280,8 +297,7 @@ class NexusFS(  # type: ignore[misc]
 
                         _metastore_path = tempfile.mktemp(suffix=".redb")
 
-                    _proxy = RustMetastoreProxy(self._kernel, str(_metastore_path))
-                    self.metadata = _proxy
+                    self._kernel.set_metastore_path(str(_metastore_path))
                     # All kernel wiring that depends on other NexusFS attributes
                     # (_mount_table, _vfs_lock_manager) is deferred to after
                     # __init__ completes — see "Deferred kernel wiring" block below.
@@ -304,7 +320,6 @@ class NexusFS(  # type: ignore[misc]
         if self._kernel is not None:
             _mt = getattr(self._driver_coordinator, "_mount_table", None)
             if _mt is not None:
-                _mt._default_metastore = self.metadata
                 _mt.bind_kernel(self._kernel)
             _vfs_rust = getattr(getattr(self, "_vfs_lock_manager", None), "_rust", None)
             if _vfs_rust is not None:

@@ -18,7 +18,6 @@ from .workspace_permissions import check_workspace_permission
 if TYPE_CHECKING:
     from nexus.backends.base.backend import Backend
     from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-    from nexus.core.metastore import RustMetastoreProxy
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -41,7 +40,7 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: "RustMetastoreProxy",
+        metadata: "Any",
         backend: "Backend",
         rebac_manager: "ReBACBrickProtocol | None" = None,
         zone_id: str | None = None,
@@ -60,7 +59,11 @@ class WorkspaceManager:
         """
         self.metadata = metadata
         # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
-        self._kernel: Any = metadata._rust_kernel if metadata is not None else None
+        self._kernel: Any = (
+            metadata
+            if metadata is not None and not hasattr(metadata, "_rust_kernel")
+            else (metadata._rust_kernel if metadata is not None else None)
+        )
         self.backend = backend
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id

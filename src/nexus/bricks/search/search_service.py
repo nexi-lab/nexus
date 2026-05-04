@@ -162,7 +162,6 @@ if TYPE_CHECKING:
     from nexus.bricks.search.pipeline_indexer import PipelineIndexer
     from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
-    from nexus.core.metastore import RustMetastoreProxy
     from nexus.core.nexus_fs import NexusFS
 
 
@@ -193,7 +192,7 @@ class SearchService:
 
     def __init__(
         self,
-        metadata_store: "RustMetastoreProxy",
+        metadata_store: "Any",
         permission_enforcer: "PermissionEnforcer | None" = None,
         dlc: Any = None,
         rebac_manager: "ReBACManager | None" = None,
@@ -237,7 +236,11 @@ class SearchService:
         self.metadata = metadata_store
         # Pull the kernel out of the proxy for direct ``metastore_*`` calls
         # (and survive W3, which deletes the proxy).
-        self._kernel = metadata_store._rust_kernel if metadata_store is not None else None
+        self._kernel = (
+            metadata_store
+            if metadata_store is not None and not hasattr(metadata_store, "_rust_kernel")
+            else (metadata_store._rust_kernel if metadata_store is not None else None)
+        )
         self._record_store = record_store
         self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
         # Injected file cache (Issue #690 — replaces global singleton)

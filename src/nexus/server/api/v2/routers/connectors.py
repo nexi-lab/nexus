@@ -599,7 +599,7 @@ async def mount_connector(
 
                 from nexus.contracts.metadata import FileMetadata
 
-                meta_store = nx.metadata
+                meta_store = nx._kernel
                 if meta_store:
                     for dir_path in [
                         "/skills",

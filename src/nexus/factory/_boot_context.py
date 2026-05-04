@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from nexus.backends.base.backend import Backend
     from nexus.contracts.types import AuditConfig
     from nexus.core.config import DistributedConfig, PermissionConfig
-    from nexus.core.metastore import RustMetastoreProxy
     from nexus.lib.performance_tuning import ProfileTuning
     from nexus.storage.record_store import RecordStoreABC
 
@@ -24,7 +23,7 @@ class _BootContext:
     """
 
     record_store: "RecordStoreABC"
-    metadata_store: "RustMetastoreProxy"
+    metadata_store: "Any"
     backend: "Backend"
     dlc: Any
     engine: Any

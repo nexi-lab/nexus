@@ -10,15 +10,14 @@ from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: F401 — kept for future use
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.metastore import RustMetastoreProxy
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_store(zone_id: str = ROOT_ZONE_ID) -> RustMetastoreProxy:  # noqa: ARG001
-    """Open a fresh RustMetastoreProxy backed by a tempdir redb.
+def _make_store(zone_id: str = ROOT_ZONE_ID) -> Any:  # noqa: ARG001
+    """Open a fresh ``PyKernel`` backed by a tempdir redb.
 
     ``zone_id`` is accepted for API compatibility — every call yields a
     separate kernel + redb so distinct stores are naturally isolated.
@@ -27,7 +26,8 @@ def _make_store(zone_id: str = ROOT_ZONE_ID) -> RustMetastoreProxy:  # noqa: ARG
 
     tmpdir = tempfile.mkdtemp()
     kernel = _Kernel()
-    return RustMetastoreProxy(kernel, str(Path(tmpdir) / "meta.redb"))
+    kernel.set_metastore_path(str(Path(tmpdir) / "meta.redb"))
+    return kernel
 
 
 def _make_meta(path: str, size: int = 100) -> FileMetadata:
@@ -38,7 +38,7 @@ def _make_meta(path: str, size: int = 100) -> FileMetadata:
 
 
 def _make_search_service(
-    store: RustMetastoreProxy,
+    store: Any,
     enforce_permissions: bool = False,
 ) -> Any:
     """Create a SearchService backed by the given store."""
@@ -62,9 +62,9 @@ class TestListWithZoneAndPermissions:
         """Basic list returns all files in the store."""
         store = _make_store()
         try:
-            store.put(_make_meta("/file1.txt"))
-            store.put(_make_meta("/file2.txt"))
-            store.put(_make_meta("/dir/file3.txt"))
+            store.metastore_put(_make_meta("/file1.txt"))
+            store.metastore_put(_make_meta("/file2.txt"))
+            store.metastore_put(_make_meta("/dir/file3.txt"))
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=True)
@@ -73,15 +73,15 @@ class TestListWithZoneAndPermissions:
             assert "/file2.txt" in results
             assert "/dir/file3.txt" in results
         finally:
-            store.close()
+            pass  # kernel manages redb lifecycle
 
     def test_list_non_recursive_excludes_nested(self) -> None:
         """Non-recursive list should exclude nested files."""
         store = _make_store()
         try:
-            store.put(_make_meta("/file1.txt"))
-            store.put(_make_meta("/dir/file2.txt"))
-            store.put(_make_meta("/dir/sub/file3.txt"))
+            store.metastore_put(_make_meta("/file1.txt"))
+            store.metastore_put(_make_meta("/dir/file2.txt"))
+            store.metastore_put(_make_meta("/dir/sub/file3.txt"))
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=False)
@@ -91,15 +91,15 @@ class TestListWithZoneAndPermissions:
             assert "/dir/file2.txt" not in results
             assert "/dir/sub/file3.txt" not in results
         finally:
-            store.close()
+            pass  # kernel manages redb lifecycle
 
     def test_list_with_prefix_filters(self) -> None:
         """List with prefix should only return matching files."""
         store = _make_store()
         try:
-            store.put(_make_meta("/a/file1.txt"))
-            store.put(_make_meta("/a/file2.txt"))
-            store.put(_make_meta("/b/file3.txt"))
+            store.metastore_put(_make_meta("/a/file1.txt"))
+            store.metastore_put(_make_meta("/a/file2.txt"))
+            store.metastore_put(_make_meta("/b/file3.txt"))
 
             svc = _make_search_service(store)
             results = svc.list(path="/a/", recursive=True)
@@ -108,7 +108,7 @@ class TestListWithZoneAndPermissions:
             assert "/a/file2.txt" in results
             assert "/b/file3.txt" not in results
         finally:
-            store.close()
+            pass  # kernel manages redb lifecycle
 
     def test_list_empty_store_returns_empty(self) -> None:
         """List on empty store returns empty."""
@@ -118,15 +118,15 @@ class TestListWithZoneAndPermissions:
             results = svc.list(path="/", recursive=True)
             assert results == []
         finally:
-            store.close()
+            pass  # kernel manages redb lifecycle
 
     def test_zone_local_store_isolation(self) -> None:
         """Two separate stores for different zones remain isolated."""
         store_a = _make_store(zone_id="zone_a")
         store_b = _make_store(zone_id="zone_b")
         try:
-            store_a.put(_make_meta("/zone_a/file1.txt"))
-            store_b.put(_make_meta("/zone_b/file2.txt"))
+            store_a.metastore_put(_make_meta("/zone_a/file1.txt"))
+            store_b.metastore_put(_make_meta("/zone_b/file2.txt"))
 
             svc_a = _make_search_service(store_a)
             svc_b = _make_search_service(store_b)
@@ -140,15 +140,14 @@ class TestListWithZoneAndPermissions:
             assert "/zone_b/file2.txt" in results_b
             assert "/zone_a/file1.txt" not in results_b
         finally:
-            store_a.close()
-            store_b.close()
+            pass  # kernel manages redb lifecycle
 
     def test_list_paginated_returns_correct_pages(self) -> None:
         """Paginated list should return correct pages."""
         store = _make_store()
         try:
             for i in range(10):
-                store.put(_make_meta(f"/p/{chr(97 + i)}.txt"))
+                store.metastore_put(_make_meta(f"/p/{chr(97 + i)}.txt"))
 
             svc = _make_search_service(store)
             page1 = svc._list_paginated(
@@ -159,13 +158,13 @@ class TestListWithZoneAndPermissions:
             assert page1.has_more is True
             assert page1.next_cursor is not None
         finally:
-            store.close()
+            pass  # kernel manages redb lifecycle
 
     def test_list_details_includes_metadata(self) -> None:
         """List with details=True should return dicts with metadata."""
         store = _make_store()
         try:
-            store.put(_make_meta("/doc.txt", size=512))
+            store.metastore_put(_make_meta("/doc.txt", size=512))
 
             svc = _make_search_service(store)
             results = svc.list(path="/", recursive=True, details=True)
@@ -176,4 +175,4 @@ class TestListWithZoneAndPermissions:
             assert doc["size"] == 512
             assert doc["is_directory"] is False
         finally:
-            store.close()
+            pass  # kernel manages redb lifecycle

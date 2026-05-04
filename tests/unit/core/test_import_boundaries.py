@@ -178,10 +178,10 @@ class TestFourStoragePillars:
     4. CacheStoreABC     — ephemeral KV + PubSub (Dragonfly, in-memory)
     """
 
-    # Python-side Pillar abstract bases. ``MetastoreABC`` was deleted in
-    # commit V; the Python boundary is now the concrete
-    # ``RustMetastoreProxy`` class — no abstract base, no parallel
-    # hierarchy. The MetaStore SSOT lives in the Rust kernel.
+    # Python-side Pillar abstract bases. The MetaStore SSOT is in the
+    # Rust kernel — there is no Python ABC for it after W3 deleted
+    # ``MetastoreABC`` and the ``RustMetastoreProxy`` shim. Callers
+    # reach the metastore through ``kernel.metastore_*``.
     PILLARS = [
         ("nexus.backends.base.backend", "Backend"),
         ("nexus.storage.record_store", "RecordStoreABC"),
@@ -203,15 +203,18 @@ class TestFourStoragePillars:
         assert isinstance(cls, type), f"{class_name} is not a class"
         assert issubclass(cls, ABC), f"{class_name} is not an ABC"
 
-    def test_metastore_proxy_is_importable(self):
-        """``RustMetastoreProxy`` is the Python boundary class for the
-        MetaStore pillar (the trait + concrete impls live in Rust).
-        Concrete (no inheritance) since commit V deleted ``MetastoreABC``."""
-        from nexus.core.metastore import RustMetastoreProxy
+    def test_metastore_pillar_is_kernel_only(self):
+        """The MetaStore pillar has no Python ABC — its trait lives in
+        ``rust/kernel/src/abc/meta_store.rs`` and the concrete impl is
+        ``LocalMetaStore`` (also Rust). Python reaches the metastore
+        through ``kernel.metastore_*`` PyO3 bindings.
+        """
+        from nexus_runtime import PyKernel
 
-        assert isinstance(RustMetastoreProxy, type)
-        # No abstract methods — instantiable when given a kernel.
-        assert not getattr(RustMetastoreProxy, "__abstractmethods__", frozenset())
+        kernel = PyKernel()
+        assert hasattr(kernel, "metastore_get")
+        assert hasattr(kernel, "metastore_put")
+        assert hasattr(kernel, "metastore_list")
 
     def test_no_old_name_in_codebase(self):
         """FileMetadataProtocol should not appear in src/ (clean rename)."""

@@ -7,27 +7,25 @@ import pytest
 
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import CacheConfig, ParseConfig, PermissionConfig
-from nexus.core.metastore import RustMetastoreProxy
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
-def _build_kernel_metastore(db_path) -> tuple[object, RustMetastoreProxy]:
-    """Create a Rust kernel + RustMetastoreProxy pair for benchmarks.
+def _build_kernel_metastore(db_path) -> tuple[object, object]:
+    """Create a kernel handle pair for benchmarks.
 
-    Mirrors ``nexus.connect()`` — production builds metastore via
-    ``RustMetastoreProxy(kernel, redb_path)`` so kernel.sys_write /
+    Mirrors ``nexus.connect()`` — production wires the metastore via
+    ``kernel.set_metastore_path(redb_path)`` so kernel.sys_write /
     sys_readdir / sys_stat persist through the same store Python reads
-    from. Benchmarks that constructed standalone Python metastores
-    bypassed the kernel's metastore wiring and hit empty
-    dcache/metastore after F2 C4 delegated writes to ``kernel.sys_write``.
+    from. Returns ``(kernel, kernel)`` for API symmetry with the old
+    ``(kernel, proxy)`` shape.
     """
     from nexus_runtime import PyKernel as _Kernel
 
     redb_path = str(db_path).replace(".db", "") + ".redb"
     kernel = _Kernel()
-    metastore = RustMetastoreProxy(kernel, redb_path)
-    return kernel, metastore
+    kernel.set_metastore_path(redb_path)
+    return kernel, kernel
 
 
 @pytest.fixture

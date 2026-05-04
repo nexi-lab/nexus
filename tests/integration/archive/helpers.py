@@ -47,8 +47,6 @@ def boot_lightweight_nexus(db_path: Path) -> Any:
 
     from nexus_runtime import PyKernel
 
-    from nexus.core.metastore import RustMetastoreProxy
-
     kernel = PyKernel()
     try:
         import nexus_runtime as _nk
@@ -58,7 +56,7 @@ def boot_lightweight_nexus(db_path: Path) -> Any:
     except Exception:
         pass
 
-    metadata_store = RustMetastoreProxy(kernel, str(db_path))
+    metadata_store = kernel.set_metastore_path(str(db_path)) or kernel
 
     from tests.helpers.test_context import TEST_ADMIN_CONTEXT
 

@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
-    from nexus.core.metastore import RustMetastoreProxy
 
 logger = logging.getLogger(__name__)
 
@@ -55,23 +54,31 @@ class CASGarbageCollector:
     def __init__(
         self,
         engine: CASAddressingEngine,
-        metastore: RustMetastoreProxy | None = None,
+        metastore: Any | None = None,
         *,
         grace_period: float = DEFAULT_GRACE_PERIOD_S,
         scan_interval: float = DEFAULT_SCAN_INTERVAL_S,
     ) -> None:
         self._engine = engine
         self._metastore = metastore
-        self._kernel = metastore._rust_kernel if metastore is not None else None
+        self._kernel = (
+            metastore
+            if metastore is not None and not hasattr(metastore, "_rust_kernel")
+            else (metastore._rust_kernel if metastore is not None else None)
+        )
         self._grace_period = grace_period
         self._scan_interval = scan_interval
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
 
-    def set_metastore(self, metastore: RustMetastoreProxy) -> None:
+    def set_metastore(self, metastore: Any) -> None:
         """Deferred injection — metastore may not be available at construction time."""
         self._metastore = metastore
-        self._kernel = metastore._rust_kernel if metastore is not None else None
+        self._kernel = (
+            metastore
+            if metastore is not None and not hasattr(metastore, "_rust_kernel")
+            else (metastore._rust_kernel if metastore is not None else None)
+        )
 
     def start(self) -> None:
         """Start GC background task in the current event loop."""

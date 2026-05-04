@@ -41,7 +41,11 @@ class MetadataExportService:
     ) -> None:
         self._metadata: Any = metadata
         # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
-        self._kernel: Any = metadata._rust_kernel if metadata is not None else None
+        self._kernel: Any = (
+            metadata
+            if metadata is not None and not hasattr(metadata, "_rust_kernel")
+            else (metadata._rust_kernel if metadata is not None else None)
+        )
         self._created_by = created_by
 
     @rpc_expose(description="Export metadata to JSONL file")

@@ -283,7 +283,7 @@ def _boot_post_kernel_services(
         )
 
         search_service = SearchService(
-            metadata_store=nx.metadata,
+            metadata_store=nx._kernel,
             permission_enforcer=services.get("permission_enforcer"),
             dlc=nx._driver_coordinator,
             rebac_manager=services.get("rebac_manager"),
@@ -385,7 +385,7 @@ def _boot_post_kernel_services(
 
         agent_rpc_service = AgentRPCService(
             vfs=nx,
-            metastore=nx.metadata,
+            metastore=nx._kernel,
             session_factory=_nx_session_factory,
             record_store=nx._record_store,
             entity_registry=services.get("entity_registry"),
@@ -555,7 +555,7 @@ def _boot_post_kernel_services(
             if _rebac_for_dc
             else None,
             permission_enforcer=services.get("permission_enforcer"),
-            metadata_store=nx.metadata,
+            metadata_store=nx._kernel,
         )
         logger.debug("[BOOT:WIRED] DescendantAccessChecker created")
     except Exception as exc:

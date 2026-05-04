@@ -65,7 +65,7 @@ def initialize_oauth_provider(nexus_fs: "NexusFS", auth_provider: Any) -> None:
         try:
             from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
 
-            _settings_store = MetastoreSettingsStore(nexus_fs.metadata)
+            _settings_store = MetastoreSettingsStore(nexus_fs._kernel)
         except Exception:
             pass
         oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, settings_store=_settings_store)

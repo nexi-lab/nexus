@@ -49,9 +49,13 @@ class PermissionChecker:
         """
         self._permission_enforcer = permission_enforcer
         self._metadata_store: Any = metadata_store
-        # Extract the kernel from the proxy so per-call lookups go directly
-        # to ``kernel.metastore_*`` (and survive W3, which deletes the proxy).
-        self._kernel: Any = metadata_store._rust_kernel
+        # Accept either a bare ``PyKernel`` (post-W3b factory wiring) or a
+        # legacy ``RustMetastoreProxy`` shim (pre-W3b: unwrap _rust_kernel).
+        self._kernel: Any = (
+            metadata_store
+            if not hasattr(metadata_store, "_rust_kernel")
+            else metadata_store._rust_kernel
+        )
         self._default_context = default_context
         self._enforce_permissions = enforce_permissions
 

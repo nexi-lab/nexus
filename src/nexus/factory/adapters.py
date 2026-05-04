@@ -302,10 +302,10 @@ class _NexusFSFileReader:
         ran against the current bytes.
         """
         try:
-            cached_hash = self._nx.metadata.get_file_metadata(path, "parsed_text_hash")
+            cached_hash = self._nx._kernel.get_file_metadata(path, "parsed_text_hash")
             if not cached_hash or cached_hash != content_id:
                 return False
-            cached_text = self._nx.metadata.get_file_metadata(path, "parsed_text")
+            cached_text = self._nx._kernel.get_file_metadata(path, "parsed_text")
         except Exception:
             return False
         return cached_text is not None
@@ -328,7 +328,7 @@ class _NexusFSFileReader:
         # validates the cache against a sha256 of the raw bytes.
         if is_parseable_path(path):
             return None
-        result: str | None = self._nx.metadata.get_searchable_text(path)
+        result: str | None = self._nx._kernel.get_searchable_text(path)
         if result is None:
             return None
         return _sanitize_for_index(result if isinstance(result, str) else str(result))

@@ -102,7 +102,7 @@ def _wire_services(
 
     _permission_checker = _PC(
         permission_enforcer=_svc.get("permission_enforcer"),
-        metadata_store=nx.metadata,
+        metadata_store=nx._kernel,
         default_context=nx._init_cred,
         enforce_permissions=nx._perm_config.enforce,
     )

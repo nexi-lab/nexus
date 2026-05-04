@@ -66,7 +66,11 @@ class DirectoryGrantExpander:
         self._metadata_store = metadata_store
         # Pull the kernel out of the proxy so listing / existence calls
         # land on ``kernel.metastore_*`` directly (survives W3).
-        self._kernel: Any = metadata_store._rust_kernel if metadata_store is not None else None
+        self._kernel: Any = (
+            metadata_store
+            if metadata_store is not None and not hasattr(metadata_store, "_rust_kernel")
+            else (metadata_store._rust_kernel if metadata_store is not None else None)
+        )
         self._is_postgresql = is_postgresql
         self._running = False
         self._stop_event: asyncio.Event | None = None
@@ -74,7 +78,11 @@ class DirectoryGrantExpander:
     def set_metadata_store(self, store: Any) -> None:
         """Set the metadata store for file listing."""
         self._metadata_store = store
-        self._kernel = store._rust_kernel if store is not None else None
+        self._kernel = (
+            store
+            if store is not None and not hasattr(store, "_rust_kernel")
+            else (store._rust_kernel if store is not None else None)
+        )
 
     def get_pending_grants(self, limit: int = 10) -> list[dict]:
         """Get pending directory grants to expand.

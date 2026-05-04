@@ -74,7 +74,6 @@ if TYPE_CHECKING:
         NexusFileNotFoundError,
         NexusPermissionError,
     )
-    from nexus.core.metastore import RustMetastoreProxy
     from nexus.core.nexus_fs import NexusFS
 
 # =============================================================================
@@ -156,17 +155,28 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
-def _open_local_metastore(metadata_path: str, kernel: object = None) -> "RustMetastoreProxy":
-    """Open a local metadata store.
+def _open_local_kernel(metadata_path: str, kernel: object = None) -> Any:
+    """Return a ``PyKernel`` with the redb metastore opened (or in-memory).
 
-    F3 C4: the Rust kernel is the single source of truth for metastore
-    state — this helper always returns a ``RustMetastoreProxy``. When
-    no ``kernel`` is supplied, a bare one is constructed on the fly
-    (``Kernel::new()`` installs a ``MemoryMetastore`` by default, so
-    quickstarts / slim SDK boots without a redb file still get a
-    working metastore for the session). Passing a ``metadata_path``
-    that already exists as a ``.redb`` file wires it through
-    ``kernel.set_metastore_path``.
+    Replaces the historical ``_open_local_metastore`` factory which used
+    to wrap the kernel in a ``RustMetastoreProxy``. After the W3 SSOT
+    cleanup the kernel handle is the SSOT — every caller used to
+    immediately reach ``proxy._rust_kernel`` anyway, so we hand back the
+    kernel directly.
+
+    Args:
+        metadata_path: Filesystem path for the redb store. ``":memory:"``
+            is the SQLite-style sentinel for "no on-disk file"; the
+            kernel keeps its boot-time tempdir-backed ``LocalMetaStore``
+            so the in-memory mode still has a working metastore for the
+            session.
+        kernel: Optional pre-constructed ``PyKernel``. When ``None``, a
+            fresh kernel is built and federation/transport wiring is
+            installed.
+
+    Returns:
+        A ``PyKernel`` instance ready for ``kernel.metastore_*``
+        operations.
     """
     from pathlib import Path
 
@@ -175,9 +185,9 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "RustMet
     # Windows the colon is parsed as a drive separator, so
     # ``Path(":memory:").with_suffix(".redb")`` yields the syntactically
     # invalid ``:memory:.redb`` and any later ``str(_redb_path)`` raises
-    # ``IOError`` from redb.  ``PyKernel::new()`` already wires a
-    # ``MemoryMetastore`` as the boot-time default, so the proxy works
-    # in fully-in-memory mode without any path at all.
+    # ``IOError`` from redb.  ``Kernel::new()`` wires a tempdir-backed
+    # LocalMetaStore as the boot-time default, so an in-memory mode
+    # works without any path at all.
     _redb_path = None if metadata_path == ":memory:" else Path(metadata_path).with_suffix(".redb")
 
     if kernel is None:
@@ -207,24 +217,26 @@ def _open_local_metastore(metadata_path: str, kernel: object = None) -> "RustMet
                 _wiring_exc,
             )
 
-    from nexus.core.metastore import RustMetastoreProxy
-
+    if _redb_path is None:
+        return kernel
     try:
-        if _redb_path is None:
-            return RustMetastoreProxy(kernel, None)
-        return RustMetastoreProxy(
-            kernel, str(_redb_path) if _redb_path.exists() or _redb_path.parent.exists() else None
-        )
+        if _redb_path.exists() or _redb_path.parent.exists():
+            kernel.set_metastore_path(str(_redb_path))
+        return kernel
     except Exception as e:
         # An existing on-disk store that we can't open is a hard error:
         # silently falling back would hide previously written data.
-        if _redb_path is not None and _redb_path.exists():
+        if _redb_path.exists():
             raise RuntimeError(
-                f"RustMetastoreProxy failed for existing {_redb_path}: {e}. "
+                f"set_metastore_path failed for existing {_redb_path}: {e}. "
                 "Refusing to fall back to a different metadata format. "
                 "Rebuild: cd rust/kernel && maturin develop --release"
             ) from e
         raise
+
+
+# Backwards-compatible alias — pre-W3b callers imported the old name.
+_open_local_metastore = _open_local_kernel
 
 
 def connect(
@@ -386,16 +398,16 @@ def connect(
         # the root mount carries backend_type="remote" + connection params,
         # and PyKernel::sys_setattr constructs both the Rust RemoteBackend
         # and the Rust RemoteMetastore from those params — no Python shim.
-        # Metastore is a stock RustMetastoreProxy: the single Rust kernel
-        # routes per-mount reads/writes to the remote backend it built.
+        # The metastore handle is a bare ``PyKernel``: the kernel routes
+        # per-mount reads/writes to the remote backend it built.
         from nexus.contracts.metadata import DT_MOUNT
         from nexus.contracts.types import OperationContext as _RemoteOC
         from nexus.core.config import PermissionConfig as _PermissionConfig
         from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
 
-        remote_metastore = _open_local_metastore(":memory:")
+        remote_kernel = _open_local_kernel(":memory:")
         nfs = _RemoteNexusFS(
-            metadata_store=remote_metastore,
+            metadata_store=remote_kernel,
             permissions=_PermissionConfig(enforce=False),
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
@@ -524,9 +536,9 @@ def connect(
     overrides = cfg.features.to_overrides() if cfg.features else {}
     enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
-    # Create Rust kernel early so RustMetastoreProxy can use it.
+    # Create Rust kernel early so the metastore wiring below shares it.
     # Route through _rust_compat so stale binaries (missing Kernel methods)
-    # are caught here and never passed to RustMetastoreProxy (Issue #3712).
+    # are caught here and never reach the factory wiring (Issue #3712).
     _early_kernel = None
     try:
         from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
@@ -565,10 +577,12 @@ def connect(
     # route through MountTable to the per-zone ZoneMetastore. When
     # those env vars are unset, Kernel::new is a no-op and the
     # store is backed by LocalMetastore/MemoryMetastore as before.
-    metadata_store: RustMetastoreProxy = _open_local_metastore(metadata_path, kernel=_early_kernel)
+    metadata_store: Any = _open_local_kernel(metadata_path, kernel=_early_kernel)
     # Python no longer owns a FederationService object. `federation=None`
     # below just drops a dead kwarg into the orchestrator; _lifecycle.py
-    # handles the None path.
+    # handles the None path. ``metadata_store`` here is a ``PyKernel`` —
+    # the orchestrator passes it straight through to NexusFS.__init__,
+    # which detects the kernel-shape and stashes it as ``self._kernel``.
     federation = None
 
     # Permission defaults: standalone without explicit config → permissive

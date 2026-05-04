@@ -152,7 +152,6 @@ def _read_oauth_key_from_redb(
     # already holds the lock — acceptable for CLI / test callers that
     # don't have a main PyKernel.
     try:
-        from nexus.core.metastore import RustMetastoreProxy
         from nexus.storage.auth_stores.metastore_settings_store import (
             MetastoreSettingsStore,
         )
@@ -175,8 +174,9 @@ def _read_oauth_key_from_redb(
         return None
 
     try:
-        proxy = RustMetastoreProxy(PyKernel(), str(path))
-        store = MetastoreSettingsStore(proxy)
+        kernel = PyKernel()
+        kernel.set_metastore_path(str(path))
+        store = MetastoreSettingsStore(kernel)
         dto = store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
         if dto is None:
             return None

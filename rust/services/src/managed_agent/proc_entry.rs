@@ -26,6 +26,8 @@
 //! writes to the canonical pid-level path or through the workspace
 //! shortcut.
 
+use contracts::OperationContext;
+
 use kernel::abi::KernelAbi;
 use kernel::core::agents::registry::AgentDescriptor;
 
@@ -36,6 +38,25 @@ const DT_LINK: i32 = 6;
 /// chat-with-me DT_STREAM capacity — sized for the per-pid conversation
 /// flow described in integration doc §3.
 const CHAT_STREAM_CAPACITY: usize = 65_536;
+
+/// `OperationContext` proc_entry uses for its teardown `sys_unlink`
+/// calls. `is_system = true` + `is_admin = true` so the unlink
+/// bypasses ReBAC checks — proc_entry teardown is infrastructure,
+/// not a user-issued op. `agent_id = None` so the empty-caller
+/// branch in `WorkspaceBoundaryHook::on_pre` lets the system unlink
+/// past the per-pid boundary check (the hook only constrains
+/// agent-attributed writes).
+fn sys_ctx() -> OperationContext {
+    let mut ctx = OperationContext::new(
+        /* user_id */ "managed_agent",
+        /* zone_id */ "root",
+        /* is_admin */ true,
+        /* agent_id */ None,
+        /* is_system */ true,
+    );
+    ctx.subject_type = "service".to_string();
+    ctx
+}
 
 /// Stamp the per-pid metastore subtree at start_session time. Idempotent
 /// against re-spawn / restart paths — every `sys_setattr` call accepts
@@ -103,32 +124,47 @@ pub(crate) fn unregister_proc_entry<K: KernelAbi>(kernel: &K, desc: &AgentDescri
     let workspace_root = format!("/proc/{pid}/workspace");
     let sessions_root = format!("/proc/{pid}/sessions");
     let tasks_root = format!("/proc/{pid}/tasks");
+    let ctx = sys_ctx();
 
     // Workspace shortcut + alias links first, then the workspace dir.
-    let _ = kernel.metastore_delete(&format!("{workspace_root}/chat-with-me"));
+    let _ = kernel.sys_unlink(&format!("{workspace_root}/chat-with-me"), &ctx, false);
     for repo in &desc.repos {
-        let _ = kernel.metastore_delete(&format!("{workspace_root}/{}", repo.alias));
+        let _ = kernel.sys_unlink(&format!("{workspace_root}/{}", repo.alias), &ctx, false);
     }
-    let _ = kernel.metastore_delete(&workspace_root);
+    let _ = kernel.sys_unlink(&workspace_root, &ctx, false);
 
     // Sessions / tasks are leaf dirents from this layer's perspective —
     // any sub-entries are sudo-code's bookkeeping, dropped here as a
     // bulk-delete because the pid is going away.
-    let _ = kernel.metastore_delete(&sessions_root);
-    let _ = kernel.metastore_delete(&tasks_root);
+    let _ = kernel.sys_unlink(&sessions_root, &ctx, false);
+    let _ = kernel.sys_unlink(&tasks_root, &ctx, false);
 
     // Canonical chat-with-me stream + agent link, then pid root itself.
-    let _ = kernel.metastore_delete(&format!("{pid_root}/chat-with-me"));
-    let _ = kernel.metastore_delete(&format!("{pid_root}/agent"));
-    let _ = kernel.metastore_delete(&pid_root);
+    let _ = kernel.sys_unlink(&format!("{pid_root}/chat-with-me"), &ctx, false);
+    let _ = kernel.sys_unlink(&format!("{pid_root}/agent"), &ctx, false);
+    let _ = kernel.sys_unlink(&pid_root, &ctx, false);
 }
 
 fn create_dt_dir<K: KernelAbi>(kernel: &K, path: &str) -> Result<(), String> {
     kernel
-        .sys_setattr_simple(
-            path, DT_DIR, /* zone_id */ "root", /* capacity */ 0,
-            /* io_profile */ "memory", /* mime_type */ None,
+        .sys_setattr(
+            path,
+            DT_DIR,
+            /* backend_name */ "",
+            /* backend */ None,
+            /* metastore */ None,
+            /* raft_backend */ None,
+            /* io_profile */ "memory",
+            /* zone_id */ "root",
+            /* is_external */ false,
+            /* capacity */ 0,
+            /* read_fd */ None,
+            /* write_fd */ None,
+            /* mime_type */ None,
+            /* modified_at_ms */ None,
             /* link_target */ None,
+            /* source */ None,
+            /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_DIR at {path:?}): {e:?}"))
@@ -136,14 +172,24 @@ fn create_dt_dir<K: KernelAbi>(kernel: &K, path: &str) -> Result<(), String> {
 
 fn create_dt_link<K: KernelAbi>(kernel: &K, path: &str, target: &str) -> Result<(), String> {
     kernel
-        .sys_setattr_simple(
+        .sys_setattr(
             path,
             DT_LINK,
-            /* zone_id */ "root",
-            /* capacity */ 0,
+            /* backend_name */ "",
+            /* backend */ None,
+            /* metastore */ None,
+            /* raft_backend */ None,
             /* io_profile */ "memory",
+            /* zone_id */ "root",
+            /* is_external */ false,
+            /* capacity */ 0,
+            /* read_fd */ None,
+            /* write_fd */ None,
             /* mime_type */ None,
+            /* modified_at_ms */ None,
             /* link_target */ Some(target),
+            /* source */ None,
+            /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_LINK at {path:?} → {target:?}): {e:?}"))
@@ -156,14 +202,24 @@ fn create_dt_stream<K: KernelAbi>(
     io_profile: &str,
 ) -> Result<(), String> {
     kernel
-        .sys_setattr_simple(
+        .sys_setattr(
             path,
             DT_STREAM,
-            /* zone_id */ "root",
-            capacity,
+            /* backend_name */ "",
+            /* backend */ None,
+            /* metastore */ None,
+            /* raft_backend */ None,
             io_profile,
+            /* zone_id */ "root",
+            /* is_external */ false,
+            capacity,
+            /* read_fd */ None,
+            /* write_fd */ None,
             /* mime_type */ None,
+            /* modified_at_ms */ None,
             /* link_target */ None,
+            /* source */ None,
+            /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| format!("sys_setattr(DT_STREAM at {path:?} io_profile={io_profile:?}): {e:?}"))
@@ -291,6 +347,14 @@ mod tests {
     #[test]
     fn unregister_proc_entry_removes_full_per_pid_subtree() {
         let kernel = Kernel::new();
+        // sys_unlink routes through VFSRouter; the production
+        // /proc namespace is mounted by `install_returning` in
+        // managed_agent/mod.rs. This unit test calls register +
+        // unregister directly without going through install, so it
+        // mounts /proc itself to mirror the production setup.
+        kernel
+            .vfs_router_arc()
+            .add_mount("/proc", "root", None, false);
         let desc = AgentDescriptor {
             pid: "p4".to_string(),
             name: "managed-claude".to_string(),

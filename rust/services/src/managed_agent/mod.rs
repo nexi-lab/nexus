@@ -167,76 +167,16 @@ impl<K: KernelAbi> ManagedAgentService<K> {
     pub(crate) const NAME: &'static str = "managed_agent";
 
     /// Service constructor.  Production callers reach this through
-    /// [`Self::install`] which wraps the cdylib's freshly-built
-    /// `Kernel`; tests instantiate directly with a `Kernel::new()`
-    /// (cheap in-memory construction) so the per-pid procfs entries
-    /// land in the same metastore the assertion helpers read back.
+    /// [`ManagedAgentService::<Kernel>::install`] which wraps the
+    /// cdylib's freshly-built `Kernel`; tests instantiate directly
+    /// with a `Kernel::new()` (cheap in-memory construction) so the
+    /// per-pid procfs entries land in the same metastore the
+    /// assertion helpers read back.
     pub(crate) fn new(kernel: Arc<K>, agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
             kernel,
             agent_registry,
         }
-    }
-
-    /// Install the service into a freshly-constructed kernel:
-    ///
-    ///   1. Register the chat-with-me + workspace-boundary hooks into
-    ///      the kernel's `KernelDispatch`.
-    ///   2. Enlist the service into `ServiceRegistry` so future tonic
-    ///      gRPC handlers + Python factory wiring can resolve it via
-    ///      `service_registry.lookup_rust(NAME)`.
-    ///
-    /// Called from `Kernel::new()`. The service holds an `Arc<AgentRegistry>`
-    /// — the same `Arc` `Kernel` keeps for `AgentStatusResolver` reads —
-    /// so `start_session` mutates the same SSOT every other agent
-    /// surface reads from.
-    pub(crate) fn install(kernel: &Arc<K>) -> Result<(), String> {
-        Self::install_returning(kernel).map(|_| ())
-    }
-
-    /// Install variant that returns the wired service handle so tests
-    /// can assert the on_terminate observer behaves correctly without
-    /// having to fish the service back out of the kernel registry.
-    pub(crate) fn install_returning(kernel: &Arc<K>) -> Result<Arc<Self>, String> {
-        kernel.register_native_hook(Box::new(
-            workspace_boundary_hook::WorkspaceBoundaryHook::new(),
-        ));
-        kernel.register_native_hook(Box::new(mailbox_stamping_hook::MailboxStampingHook::new()));
-
-        // Holding `Arc<K>` inside the service does create a Kernel ↔
-        // Service Arc cycle, but services live for process lifetime
-        // — same convention AcpService follows.  The procfs dirent
-        // stamp in `start_session` and the on_terminate teardown both
-        // need the owned Arc.
-        let svc = Arc::new(Self::new(
-            Arc::clone(kernel),
-            Arc::clone(kernel.agent_registry()),
-        ));
-
-        // Tear down the per-pid procfs subtree on out-of-band
-        // termination — SIGKILL, orphan auto-reap, any path that flips
-        // an agent to Terminated without going through
-        // `cancel_session(Session)`.  `fire_on_terminate` runs before
-        // `AgentRegistry::reap` on the orphan path, so the descriptor
-        // is still reachable here and we can use its `repos` to drop
-        // the per-alias DT_LINK rows alongside the dirents.  The
-        // descriptor itself is reaped by AgentRegistry after the
-        // observer returns, so subsequent `get_session` returns
-        // `UnknownSession`.
-        let kernel_for_cb = Arc::clone(kernel);
-        let registry_for_cb = Arc::clone(kernel.agent_registry());
-        kernel.agent_registry().register_on_terminate(
-            Self::NAME,
-            Arc::new(move |pid: &str| {
-                if let Some(desc) = registry_for_cb.get(pid) {
-                    unregister_proc_entry(kernel_for_cb.as_ref(), &desc);
-                }
-            }),
-        );
-
-        let svc_for_return = Arc::clone(&svc);
-        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())?;
-        Ok(svc_for_return)
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────
@@ -406,6 +346,91 @@ impl<K: KernelAbi> ManagedAgentService<K> {
             model,
             state: desc.state.as_str().to_lowercase(),
         })
+    }
+}
+
+// Production install path stays specific to the concrete `Kernel`
+// because `register_on_terminate` is an inherent accessor on
+// `AgentRegistry` reached through `kernel.agent_registry()` — that
+// accessor is deliberately *not* on the `KernelAbi` trait (the v2
+// audit pulled kernel-internal struct accessors out of the
+// service-facing surface). Lifecycle methods stay generic above so
+// non-Kernel `K: KernelAbi` test fixtures and future runtime targets
+// (sudo-code in-process spawn) compile without `Kernel`.
+impl ManagedAgentService<kernel::kernel::Kernel> {
+    /// Install the service into a freshly-constructed kernel:
+    ///
+    ///   1. Register the chat-with-me + workspace-boundary hooks into
+    ///      the kernel's `KernelDispatch`.
+    ///   2. Enlist the service into `ServiceRegistry` so future tonic
+    ///      gRPC handlers + Python factory wiring can resolve it via
+    ///      `service_registry.lookup_rust(NAME)`.
+    ///
+    /// Called from `Kernel::new()`. The service holds an
+    /// `Arc<AgentRegistry>` — the same `Arc` `Kernel` keeps for
+    /// `AgentStatusResolver` reads — so `start_session` mutates the
+    /// same SSOT every other agent surface reads from.
+    pub(crate) fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
+        Self::install_returning(kernel).map(|_| ())
+    }
+
+    /// Install variant that returns the wired service handle so tests
+    /// can assert the on_terminate observer behaves correctly without
+    /// having to fish the service back out of the kernel registry.
+    pub(crate) fn install_returning(
+        kernel: &Arc<kernel::kernel::Kernel>,
+    ) -> Result<Arc<Self>, String> {
+        // Mount the /proc namespace this service stamps into. VFSRouter
+        // routes by mount-point lookup, so `sys_unlink` on
+        // `/proc/{pid}/...` paths needs the mount entry to exist
+        // (`route()` returns NotMounted otherwise and unlink no-ops).
+        // No backing store / per-mount metastore — `metastore=None`
+        // means dirent reads/writes fall through to the global
+        // metastore (matches the procfs-virtualised semantics this
+        // mount represents). Idempotent re-call: VFSRouter::add_mount
+        // ignores duplicates.
+        kernel
+            .vfs_router_arc()
+            .add_mount("/proc", "root", None, false);
+        kernel.register_native_hook(Box::new(
+            workspace_boundary_hook::WorkspaceBoundaryHook::new(),
+        ));
+        kernel.register_native_hook(Box::new(mailbox_stamping_hook::MailboxStampingHook::new()));
+
+        // Holding `Arc<Kernel>` inside the service does create a
+        // Kernel ↔ Service Arc cycle, but services live for process
+        // lifetime — same convention AcpService follows. The procfs
+        // dirent stamp in `start_session` and the on_terminate
+        // teardown both need the owned Arc.
+        let svc = Arc::new(Self::new(
+            Arc::clone(kernel),
+            Arc::clone(kernel.agent_registry()),
+        ));
+
+        // Tear down the per-pid procfs subtree on out-of-band
+        // termination — SIGKILL, orphan auto-reap, any path that flips
+        // an agent to Terminated without going through
+        // `cancel_session(Session)`. `fire_on_terminate` runs before
+        // `AgentRegistry::reap` on the orphan path, so the descriptor
+        // is still reachable here and we can use its `repos` to drop
+        // the per-alias DT_LINK rows alongside the dirents. The
+        // descriptor itself is reaped by AgentRegistry after the
+        // observer returns, so subsequent `get_session` returns
+        // `UnknownSession`.
+        let kernel_for_cb = Arc::clone(kernel);
+        let registry_for_cb = Arc::clone(kernel.agent_registry());
+        kernel.agent_registry().register_on_terminate(
+            Self::NAME,
+            Arc::new(move |pid: &str| {
+                if let Some(desc) = registry_for_cb.get(pid) {
+                    unregister_proc_entry(kernel_for_cb.as_ref(), &desc);
+                }
+            }),
+        );
+
+        let svc_for_return = Arc::clone(&svc);
+        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())?;
+        Ok(svc_for_return)
     }
 }
 

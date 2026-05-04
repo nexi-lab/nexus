@@ -129,8 +129,11 @@ class ZoneExportService:
         """
         self.nexus_fs = nexus_fs
         # ``nx.metadata`` was removed in W3b — reach the kernel directly so
-        # ``list`` calls land on ``kernel.metastore_list``.
-        self._kernel = nexus_fs._kernel
+        # ``list`` calls land on ``kernel.metastore_list``. The protocol
+        # type doesn't declare ``_kernel`` (it's an implementation
+        # detail of the concrete NexusFS); read it via ``getattr`` to
+        # keep the static contract narrow.
+        self._kernel = getattr(nexus_fs, "_kernel", None)
         # R20.18.x: `NexusFS.backend` is gone — the kernel owns mount
         # routing now. Content reads go through `nexus_fs.sys_read`;
         # see `_export_content_blobs`.

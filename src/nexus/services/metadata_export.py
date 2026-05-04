@@ -120,8 +120,9 @@ class MetadataExportService:
                 }
 
                 try:
-                    if file_meta.custom_metadata:
-                        metadata_dict["custom_metadata"] = dict(file_meta.custom_metadata)
+                    custom = getattr(file_meta, "custom_metadata", None)
+                    if custom:
+                        metadata_dict["custom_metadata"] = dict(custom)
                 except (AttributeError, TypeError):
                     pass
 

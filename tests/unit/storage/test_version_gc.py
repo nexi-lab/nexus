@@ -143,8 +143,8 @@ class TestVersionHistoryGC:
     def nx(self, temp_dir, record_store):
         """Create NexusFS instance for testing.
 
-        Uses RaftMetadataStore. TODO: Version history depends on FilePathModel
-        populated by SQLAlchemy, may need adjustment.
+        Version history depends on ``FilePathModel`` populated by
+        SQLAlchemy — see TODO comments in the assertions below.
         """
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)

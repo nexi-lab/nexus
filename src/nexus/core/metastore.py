@@ -310,11 +310,10 @@ class RustMetastoreProxy(MetastoreABC):
 
     # ── Auxiliary per-path metadata (F3 C2 kernel bindings) ───────────────
     #
-    # These route through ``kernel.metastore_set/get_file_metadata`` so
-    # tests that previously stored ``parsed_text`` / ``parser_name`` /
-    # tag blobs on a Python DictMetastore hit the kernel's DashMap
-    # side-car instead. The kernel boundary stores strings — callers
-    # that want to persist structured data JSON-encode themselves.
+    # These route through ``kernel.metastore_set/get_file_metadata``;
+    # tag blobs (``parsed_text`` / ``parser_name`` / etc.) live in the
+    # kernel's DashMap side-car. The kernel boundary stores strings —
+    # callers that want to persist structured data JSON-encode themselves.
 
     def set_file_metadata(self, path: str, key: str, value: Any) -> None:
         if value is None:

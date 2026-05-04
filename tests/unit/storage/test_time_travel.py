@@ -15,7 +15,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.dict_metastore import DictMetastore
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -54,15 +53,12 @@ class TestTimeTravelDebug:
     def nx(self, temp_dir, record_store, backend):
         """Create NexusFS instance for testing.
 
-        Uses RaftMetadataStore. TODO: Time travel depends on FilePathModel
-        populated by SQLAlchemy, may need adjustment.
+        Time travel depends on ``FilePathModel`` populated by SQLAlchemy
+        — see TODO comments in the assertions below.
         """
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            metadata_store = str(data_dir / "raft-metadata")
-        except RuntimeError:
-            metadata_store = DictMetastore(data_dir / "raft-metadata.json")
+        metadata_store = str(data_dir / "raft-metadata")
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
@@ -71,7 +67,6 @@ class TestTimeTravelDebug:
         )
         yield nx
         nx.close()
-        metadata_store.close()
 
     @pytest.fixture
     def time_travel(self, record_store, backend):

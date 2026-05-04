@@ -39,6 +39,12 @@ pub struct OperationContext {
     /// Caller's zone_id (None = no zone restriction). Distinct
     /// from routing zone_id.
     pub context_zone_id: Option<String>,
+    /// Federation zone permission grants — list of (zone_id,
+    /// perm_chars) pairs.  Non-federation tokens carry an empty Vec.
+    /// Threaded through the Rust boundary so the permission gate can
+    /// enforce zone allow-lists without the Python ContextVar hack
+    /// (`request_zone_perms_scope`).
+    pub zone_perms: Vec<(String, String)>,
 }
 
 impl OperationContext {
@@ -61,6 +67,7 @@ impl OperationContext {
             subject_id: None,
             request_id: String::new(),
             context_zone_id: None,
+            zone_perms: Vec::new(),
         }
     }
 }

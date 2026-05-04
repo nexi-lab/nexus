@@ -1,234 +1,85 @@
-//! PermissionHook — Hybrid Rust/Python permission check hook (§11).
+//! RebacPermissionHook — implements PermissionProvider (§13).
 //!
 //! Architecture:
-//!   Fast path: Rust DashMap lease table (~100-200ns)
-//!   Slow path: GIL → Python PermissionChecker.check() (~50-200μs)
+//!   The kernel permission gate (Kernel::check_permission) calls this
+//!   provider on lease-miss / admin-bypass-miss. Single GIL crossing
+//!   to the Python PermissionChecker (was 3-4 before §13).
 //!
-//! The lease table is a (path, agent_id) → Instant map. On hit, the full
-//! ReBAC bitmap check is skipped entirely. On miss, we acquire the GIL,
-//! call the Python checker, and stamp a lease on success.
+//! Hot path (lease hit, admin bypass, system path): zero GIL crossings.
+//! Cold path (lease miss → this provider): 1 GIL crossing + SQL.
 //!
-//! This mirrors the Python PermissionCheckHook (permission_hook.py) but
-//! moves the hot-path lease check into pure Rust — no GIL for cache hits.
-//!
-//! Currently scaffolding only — `register_native_permission_hook` wiring
-//! on PyKernel is not implemented, so this is dead code today.
-//! Conceptually a service-tier hook (same tier as
-//! `services::audit::AuditHook`); §11 will wire it up.
+//! Lives in services tier (same tier as `services::audit::AuditHook`).
+//! Registered via `Kernel::set_permission_provider` at boot.
 
-use dashmap::DashMap;
-use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
+use kernel::core::dispatch::{Permission, PermissionDecision, PermissionProvider};
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 
-/// Permission enum matching Python Permission.READ / Permission.WRITE.
-#[derive(Debug, Clone, Copy)]
-enum Permission {
-    Read,
-    Write,
-}
-
-impl Permission {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Read => "READ",
-            Self::Write => "WRITE",
-        }
-    }
-}
-
-/// Lease entry — records when permission was last verified.
-struct LeaseEntry {
-    granted_at: Instant,
-}
-
-/// Rust-native permission check hook with DashMap lease table.
+/// Rust-side ReBAC permission provider wrapping a Python checker.
 ///
-/// Implements NativeInterceptHook so it can be registered in the kernel's
-/// NativeHookRegistry and dispatched without GIL for lease hits.
+/// Implements `PermissionProvider` so it can be registered with the
+/// kernel's permission gate via `Kernel::set_permission_provider`.
 #[allow(dead_code)]
-pub(crate) struct PermissionHook {
-    /// Global toggle — when false, all checks are skipped.
-    enforce: AtomicBool,
+pub struct RebacPermissionHook {
     /// Python PermissionChecker instance (slow path: GIL required).
     checker: Py<PyAny>,
-    /// Python PermissionEnforcer for stat/access (direct check, no raise).
-    enforcer: Option<Py<PyAny>>,
-    /// Lease table: (path, agent_id) → LeaseEntry.
-    leases: DashMap<(String, String), LeaseEntry>,
-    /// Lease TTL — leases older than this are evicted on check.
-    lease_ttl: Duration,
+    /// Global toggle — when false, returns Unknown (kernel allows).
+    enforce: AtomicBool,
 }
 
 #[allow(dead_code)]
-impl PermissionHook {
-    /// Create a new permission hook wrapping a Python checker.
-    ///
-    /// Called from Python during factory boot via PyKernel.register_native_permission_hook().
-    pub(crate) fn new(
-        checker: Py<PyAny>,
-        enforcer: Option<Py<PyAny>>,
-        enforce: bool,
-        lease_ttl_ms: u64,
-    ) -> Self {
+impl RebacPermissionHook {
+    /// Create a new ReBAC permission hook wrapping a Python checker.
+    pub fn new(checker: Py<PyAny>, enforce: bool) -> Self {
         Self {
-            enforce: AtomicBool::new(enforce),
             checker,
-            enforcer,
-            leases: DashMap::new(),
-            lease_ttl: Duration::from_millis(lease_ttl_ms),
+            enforce: AtomicBool::new(enforce),
         }
     }
 
-    /// Check lease — pure Rust, no GIL.
-    fn lease_check(&self, path: &str, agent_id: &str) -> bool {
-        if agent_id.is_empty() {
-            return false;
-        }
-        let key = (path.to_string(), agent_id.to_string());
-        if let Some(entry) = self.leases.get(&key) {
-            if entry.granted_at.elapsed() < self.lease_ttl {
-                return true;
-            }
-            // Expired — remove
-            drop(entry);
-            self.leases.remove(&key);
-        }
-        false
-    }
-
-    /// Stamp lease after successful permission check.
-    fn lease_stamp(&self, path: &str, agent_id: &str) {
-        if agent_id.is_empty() {
-            return;
-        }
-        self.leases.insert(
-            (path.to_string(), agent_id.to_string()),
-            LeaseEntry {
-                granted_at: Instant::now(),
-            },
-        );
-    }
-
-    /// Slow path: acquire GIL and call Python checker.check(path, permission, context).
-    /// Returns Ok(()) on success, Err(message) if permission denied.
-    fn python_check(&self, path: &str, perm: Permission) -> Result<(), String> {
-        Python::attach(|py| {
-            let checker = self.checker.bind(py);
-            // Import Permission enum from Python
-            let perm_mod = py
-                .import("nexus.contracts.types")
-                .map_err(|e| format!("import error: {e}"))?;
-            let perm_cls = perm_mod
-                .getattr("Permission")
-                .map_err(|e| format!("Permission not found: {e}"))?;
-            let py_perm = perm_cls
-                .getattr(perm.as_str())
-                .map_err(|e| format!("Permission.{} not found: {e}", perm.as_str()))?;
-
-            match checker.call_method1("check", (path, py_perm)) {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    // PermissionError from Python → deny
-                    Err(format!("Permission denied: {e}"))
-                }
-            }
-        })
-    }
-
-    /// Check permission with lease fast-path.
-    fn check_with_lease(&self, path: &str, agent_id: &str, perm: Permission) -> Result<(), String> {
-        // Fast path: lease hit (~100-200ns)
-        if self.lease_check(path, agent_id) {
-            return Ok(());
-        }
-        // Slow path: Python checker (~50-200μs)
-        self.python_check(path, perm)?;
-        // Stamp lease on success
-        self.lease_stamp(path, agent_id);
-        Ok(())
-    }
-
-    /// Stat/access permission check via enforcer (returns bool, doesn't raise).
-    fn enforcer_check(&self, path: &str, perm_str: &str) -> Result<(), String> {
-        let enforcer = match &self.enforcer {
-            Some(e) => e,
-            None => return Ok(()), // No enforcer — allow
-        };
-        Python::attach(|py| {
-            let enf = enforcer.bind(py);
-            let perm_mod = py
-                .import("nexus.contracts.types")
-                .map_err(|e| format!("import error: {e}"))?;
-            let perm_cls = perm_mod
-                .getattr("Permission")
-                .map_err(|e| format!("Permission not found: {e}"))?;
-            let py_perm = perm_cls
-                .getattr(perm_str)
-                .map_err(|e| format!("Permission.{perm_str} not found: {e}"))?;
-
-            let result: bool = enf
-                .call_method1("check", (path, py_perm))
-                .and_then(|r| r.extract())
-                .unwrap_or(false);
-
-            if result {
-                Ok(())
-            } else {
-                Err(format!(
-                    "Access denied: no {perm_str} permission for '{path}'"
-                ))
-            }
-        })
+    /// Toggle enforcement at runtime.
+    pub fn set_enforce(&self, enforce: bool) {
+        self.enforce.store(enforce, Ordering::Relaxed);
     }
 }
 
-impl NativeInterceptHook for PermissionHook {
-    fn name(&self) -> &str {
-        "permission_check"
-    }
-
-    fn on_pre(&self, ctx: &HookContext) -> Result<HookOutcome, String> {
+impl PermissionProvider for RebacPermissionHook {
+    fn check(
+        &self,
+        path: &str,
+        permission: Permission,
+        _ctx: &contracts::OperationContext,
+    ) -> PermissionDecision {
         if !self.enforce.load(Ordering::Relaxed) {
-            return Ok(HookOutcome::Pass);
+            return PermissionDecision::Unknown;
         }
 
-        let identity = ctx.identity();
+        // Single GIL crossing (was 4 before §13)
+        Python::attach(|py| {
+            let checker = self.checker.bind(py);
 
-        // Admin bypass
-        if identity.is_admin {
-            return Ok(HookOutcome::Pass);
-        }
+            // Import Permission enum from Python
+            let perm_mod = match py.import("nexus.contracts.types") {
+                Ok(m) => m,
+                Err(_) => return PermissionDecision::Unknown,
+            };
+            let perm_cls = match perm_mod.getattr("Permission") {
+                Ok(c) => c,
+                Err(_) => return PermissionDecision::Unknown,
+            };
+            let py_perm = match perm_cls.getattr(permission.as_str()) {
+                Ok(p) => p,
+                Err(_) => return PermissionDecision::Unknown,
+            };
 
-        let check: Result<(), String> = match ctx {
-            HookContext::Read(c) => {
-                self.check_with_lease(&c.path, &identity.agent_id, Permission::Read)
+            match checker.call_method1("check", (path, py_perm)) {
+                Ok(_) => PermissionDecision::Allow,
+                Err(_) => PermissionDecision::Deny(format!(
+                    "permission denied: {} on '{}'",
+                    permission.as_str(),
+                    path
+                )),
             }
-            HookContext::Write(c) => {
-                self.check_with_lease(&c.path, &identity.agent_id, Permission::Write)
-            }
-            HookContext::Delete(c) => {
-                self.check_with_lease(&c.path, &identity.agent_id, Permission::Write)
-            }
-            HookContext::Rename(c) => {
-                // Check WRITE on both paths
-                self.python_check(&c.old_path, Permission::Write)
-                    .and_then(|()| self.python_check(&c.new_path, Permission::Write))
-            }
-            HookContext::Copy(c) => {
-                // READ on source, WRITE on destination
-                self.python_check(&c.src_path, Permission::Read)
-                    .and_then(|()| self.python_check(&c.dst_path, Permission::Write))
-            }
-            HookContext::Mkdir(c) => self.python_check(&c.path, Permission::Write),
-            HookContext::Rmdir(c) => {
-                self.check_with_lease(&c.path, &identity.agent_id, Permission::Write)
-            }
-            HookContext::Stat(c) => self.enforcer_check(&c.path, &c.permission),
-            HookContext::Access(c) => self.enforcer_check(&c.path, &c.permission),
-            HookContext::WriteBatch(_) => Ok(()), // Batch checks individual paths
-        };
-        check.map(|()| HookOutcome::Pass)
+        })
     }
 }

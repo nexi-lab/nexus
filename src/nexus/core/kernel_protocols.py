@@ -27,6 +27,11 @@ class MutationObserver(Protocol):
 
 
 @runtime_checkable
+class PermissionProvider(Protocol):
+    def check(self, path: str, permission: Any, ctx: Any) -> Any: ...
+
+
+@runtime_checkable
 class NativeInterceptHook(Protocol):
     def name(self) -> str: ...
     def on_pre(self, _ctx: Any) -> Any: ...

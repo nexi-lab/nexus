@@ -466,6 +466,15 @@ fn rust_ctx_to_python<'py>(
     if !ctx.request_id.is_empty() {
         let _ = kwargs.set_item("request_id", &ctx.request_id);
     }
+    // zone_perms: Vec<(String, String)> → Python tuple of (zone_id, perm_chars) pairs
+    if !ctx.zone_perms.is_empty() {
+        let zp = PyList::new(
+            py,
+            ctx.zone_perms.iter().map(|(z, p)| (z.as_str(), p.as_str())),
+        )
+        .map_err(|e| format!("zone_perms: {e}"))?;
+        let _ = kwargs.set_item("zone_perms", zp);
+    }
     cls.call((), Some(&kwargs))
         .map_err(|e| format!("OperationContext(): {e}"))
 }
@@ -746,6 +755,55 @@ impl PathResolver for PyPathResolverAdapter {
     }
 }
 
+// ── PyPermissionProviderAdapter ──────────────────────────────────────
+
+use crate::core::dispatch::{Permission, PermissionDecision, PermissionProvider};
+
+pub(crate) struct PyPermissionProviderAdapter {
+    checker: Py<PyAny>,
+}
+
+unsafe impl Send for PyPermissionProviderAdapter {}
+
+unsafe impl Sync for PyPermissionProviderAdapter {}
+
+impl PermissionProvider for PyPermissionProviderAdapter {
+    fn check(
+        &self,
+        path: &str,
+        permission: Permission,
+        _ctx: &contracts::OperationContext,
+    ) -> PermissionDecision {
+        Python::attach(|py| {
+            let checker = self.checker.bind(py);
+            let perm_mod = match py.import("nexus.contracts.types") {
+                Ok(m) => m,
+                Err(_) => return PermissionDecision::Unknown,
+            };
+            let perm_cls = match perm_mod.getattr("Permission") {
+                Ok(c) => c,
+                Err(_) => return PermissionDecision::Unknown,
+            };
+            let py_perm = match perm_cls.getattr(permission.as_str()) {
+                Ok(p) => p,
+                Err(_) => return PermissionDecision::Unknown,
+            };
+            let py_ctx = match rust_ctx_to_python(py, _ctx, "") {
+                Ok(c) => c,
+                Err(_) => return PermissionDecision::Unknown,
+            };
+            match checker.call_method1("check", (path, py_perm, py_ctx)) {
+                Ok(_) => PermissionDecision::Allow,
+                Err(_) => PermissionDecision::Deny(format!(
+                    "permission denied: {} on '{}'",
+                    permission.as_str(),
+                    path
+                )),
+            }
+        })
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Direction 1 (WRAPPER): PyO3 wrapper types
 // ═══════════════════════════════════════════════════════════════════════════
@@ -767,12 +825,13 @@ pub struct PyOperationContext {
     pub subject_id: Option<String>,
     pub request_id: String,
     pub context_zone_id: Option<String>,
+    pub zone_perms: Vec<(String, String)>,
 }
 
 #[pymethods]
 impl PyOperationContext {
     #[new]
-    #[pyo3(signature = (user_id="anonymous", zone_id="root", is_admin=false, agent_id=None, is_system=false, groups=Vec::new(), admin_capabilities=Vec::new(), subject_type="user", subject_id=None, request_id="", context_zone_id=None))]
+    #[pyo3(signature = (user_id="anonymous", zone_id="root", is_admin=false, agent_id=None, is_system=false, groups=vec![], admin_capabilities=vec![], subject_type="user", subject_id=None, request_id="", context_zone_id=None, zone_perms=vec![]))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         user_id: &str,
@@ -786,6 +845,7 @@ impl PyOperationContext {
         subject_id: Option<&str>,
         request_id: &str,
         context_zone_id: Option<&str>,
+        zone_perms: Vec<(String, String)>,
     ) -> Self {
         Self {
             user_id: user_id.to_string(),
@@ -799,6 +859,7 @@ impl PyOperationContext {
             subject_id: subject_id.map(|s| s.to_string()),
             request_id: request_id.to_string(),
             context_zone_id: context_zone_id.map(|s| s.to_string()),
+            zone_perms,
         }
     }
 }
@@ -818,6 +879,7 @@ impl PyOperationContext {
             subject_id: self.subject_id.clone(),
             request_id: self.request_id.clone(),
             context_zone_id: self.context_zone_id.clone(),
+            zone_perms: self.zone_perms.clone(),
         }
     }
 }
@@ -988,6 +1050,35 @@ impl PyKernel {
     /// Set node advertise address for origin-aware metadata.
     fn set_self_address(&self, addr: &str) {
         self.inner.set_self_address(addr);
+    }
+
+    // ── §13 Permission gate wiring ──────────────────────────────────
+
+    /// Register a Python permission provider (wraps in PyPermissionProviderAdapter).
+    fn set_permission_provider(&self, provider: Py<PyAny>) {
+        let adapter = PyPermissionProviderAdapter { checker: provider };
+        self.inner
+            .set_permission_provider(std::sync::Arc::new(adapter));
+    }
+
+    /// Configure admin bypass (default: true).
+    fn set_permission_admin_bypass(&self, enabled: bool) {
+        self.inner.set_permission_admin_bypass(enabled);
+    }
+
+    /// Invalidate permission lease for a specific path.
+    fn permission_lease_invalidate_path(&self, path: &str) {
+        self.inner.permission_lease_invalidate_path(path);
+    }
+
+    /// Invalidate permission leases for a specific agent.
+    fn permission_lease_invalidate_agent(&self, agent_id: &str) {
+        self.inner.permission_lease_invalidate_agent(agent_id);
+    }
+
+    /// Invalidate all permission leases.
+    fn permission_lease_invalidate_all(&self) {
+        self.inner.permission_lease_invalidate_all();
     }
 
     // ── MetaStore wiring ──────────────────────────────────────────────

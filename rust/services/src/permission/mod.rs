@@ -1,9 +1,8 @@
-//! Permission service tier — kernel-side permission-check hooks.
+//! Permission service tier — ReBAC permission provider (§13).
 //!
-//! Currently scaffolding: the [`hook::PermissionHook`] type implements
-//! [`kernel::core::dispatch::NativeInterceptHook`] and would be
-//! registered via `Kernel::register_native_hook` — wiring is tracked
-//! under §11.  Lives here for the architectural classification (hook
-//! impls go to services tier, not kernel).
+//! [`hook::RebacPermissionHook`] implements the kernel's
+//! [`kernel::core::dispatch::PermissionProvider`] trait. Registered via
+//! `Kernel::set_permission_provider` at boot; the kernel's permission
+//! gate calls it on lease-miss / admin-bypass-miss.
 
 pub mod hook;

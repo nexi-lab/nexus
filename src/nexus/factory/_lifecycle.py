@@ -140,9 +140,6 @@ def _wire_services(
     # Kernel::install_federation_mount_coherence — no Python bridge.
     _ = federation  # kept in signature for caller compat; unused
 
-    # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
-    # No kernel DI needed — PermissionCheckHook holds the reference internally.
-
     # --- Register close callbacks (Issue #1793, #1789) ---
     # Services that need cleanup at close() register callbacks here.
     # Callbacks run BEFORE pillar

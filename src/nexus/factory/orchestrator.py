@@ -380,43 +380,45 @@ def _register_vfs_hooks(
 
         _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
 
-    # ── Permission pre-intercept hook (Issue #899) ────────────────
+    # ── Permission — PermissionCheckHook as NativeInterceptHook ──
     if permission_checker is not None:
+        from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
         from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
-        # Permission write leases — check once, write many (Issue #3394)
-        _lease_table = None
-        if nx._perm_config.enforce:
-            from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
+        _lease_table = PermissionLeaseTable() if nx._perm_config.enforce else None
 
-            _lease_table = PermissionLeaseTable()
+        _perm_hook = PermissionCheckHook(
+            checker=permission_checker,
+            metadata_store=nx.metadata,
+            default_context=nx._init_cred,
+            enforce_permissions=nx._perm_config.enforce,
+            permission_enforcer=_ss.get("permission_enforcer"),
+            descendant_checker=nx.service("descendant_checker"),
+            lease_table=_lease_table,
+        )
+        _enlist("permission", _perm_hook)
 
-            # Wire invalidation: CacheCoordinator → path-targeted or zone-wide
-            # (Issue #3398 decisions 3A/7A).
-            _lt_ref = _lease_table  # capture for closures below
-
-            def _lease_invalidation_callback(
-                _zone_id: str,
-                _subject: tuple[str, str],
-                _relation: str,
-                object: tuple[str, str],  # noqa: A002
-            ) -> None:
-                obj_type, obj_id = object
-                # Direct grant on a file → invalidate only that path's leases
-                if obj_type == "file":
-                    _lt_ref.invalidate_path(obj_id)
-                else:
-                    # Group/directory/inherited/wildcard → zone-wide clear
-                    _lt_ref.invalidate_all()
-
+        if _lease_table is not None:
+            _lt_ref = _lease_table
             _rebac_mgr = _ss.get("rebac_manager")
             if _rebac_mgr is not None and hasattr(_rebac_mgr, "_cache_coordinator"):
+
+                def _lease_invalidation_callback(
+                    _zone_id: str,
+                    _subject: tuple[str, str],
+                    _relation: str,
+                    object: tuple[str, str],  # noqa: A002
+                ) -> None:
+                    obj_type, obj_id = object
+                    if obj_type == "file":
+                        _lt_ref.invalidate_path(obj_id)
+                    else:
+                        _lt_ref.invalidate_all()
+
                 _rebac_mgr._cache_coordinator.register_lease_invalidator(
                     "perm-write-lease", _lease_invalidation_callback
                 )
 
-                # Cross-zone lease invalidation via Pub/Sub (Issue #3398 decision 4A).
-                # Subscribe to "lease" layer hints published by remote zones.
                 _coord = _rebac_mgr._cache_coordinator
                 if getattr(_coord, "_pubsub", None) is not None:
                     _zone_id = getattr(nx, "_zone_id", "root")
@@ -430,22 +432,6 @@ def _register_vfs_hooks(
                             _lt_ref.invalidate_all()
 
                     _coord._pubsub.subscribe(_zone_id, "lease", _on_cross_zone_lease_hint)
-
-        _perm_hook = PermissionCheckHook(
-            checker=permission_checker,
-            metadata_store=nx.metadata,
-            default_context=nx._init_cred,
-            enforce_permissions=nx._perm_config.enforce,
-            permission_enforcer=_ss.get("permission_enforcer"),
-            descendant_checker=nx.service("descendant_checker"),
-            lease_table=_lease_table,
-        )
-        _enlist("permission", _perm_hook)
-
-        # Expose lease table for late-binding consumers
-        # (e.g., AcpService agent termination → lease revocation, Issue #3398).
-        if _lease_table is not None:
-            nx._permission_lease_table = _lease_table
 
     # ── Audit write interceptor (Issue #900, #1772) ──
     # Both sync and debounced observers now implement on_write/on_delete/etc.

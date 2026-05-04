@@ -13,10 +13,11 @@
 //!
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
+use crate::core::permission_cache::PermissionLeaseCache;
 #[cfg(test)]
 use crate::dcache::DT_REG;
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
-use crate::dispatch::{MutationObserver, Trie};
+use crate::dispatch::{MutationObserver, PermissionProvider, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
 use crate::meta_store::LocalMetaStore;
@@ -25,7 +26,7 @@ use crate::vfs_router::{
 };
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Extension trait giving parking_lot's two read-lock methods names that
@@ -672,6 +673,21 @@ pub struct Kernel {
     // `RaftDistributedCoordinator` in the raft crate. Kernel reaches it
     // through the `kernel::hal::distributed_coordinator::DistributedCoordinator`
     // trait.
+
+    // ── §13 Permission gate ───────────────────────────────────────────
+    //
+    // Pluggable permission provider (set once at boot, never mutated).
+    // When `has_permission_provider` is false, the entire permission
+    // gate is skipped (~1ns AtomicBool load). When true, the gate
+    // runs: lease cache → admin bypass → zone perms → provider.
+    permission_provider: parking_lot::RwLock<Option<Arc<dyn PermissionProvider>>>,
+    permission_lease_cache: PermissionLeaseCache,
+    /// Admin bypass enabled — Docker default true.
+    permission_admin_bypass: AtomicBool,
+    /// Fast-path flag: skip entire permission gate when no provider is
+    /// registered. AtomicBool so the hot path is a single relaxed load
+    /// (~1ns) — not even a pointer dereference.
+    has_permission_provider: AtomicBool,
 }
 
 impl Kernel {
@@ -748,6 +764,13 @@ impl Kernel {
                 crate::hal::distributed_coordinator::NoopDistributedCoordinator::arc(),
             ),
             pending_blob_fetcher_slot: parking_lot::Mutex::new(None),
+            permission_provider: parking_lot::RwLock::new(None),
+            permission_lease_cache: PermissionLeaseCache::new(
+                std::time::Duration::from_secs(30),
+                100_000,
+            ),
+            permission_admin_bypass: AtomicBool::new(true),
+            has_permission_provider: AtomicBool::new(false),
         };
         // Distributed-coordinator bootstrap is driven by
         // `nexus_raft::distributed_coordinator::install`. The cdylib boot
@@ -2983,6 +3006,7 @@ mod tests {
             subject_id: None,
             request_id: "req-1".to_string(),
             context_zone_id: None,
+            zone_perms: vec![],
         };
 
         kernel.dispatch_mutation(FileEventType::FileWrite, "/foo.txt", &ctx, |ev| {
@@ -3032,6 +3056,7 @@ mod tests {
             subject_id: None,
             request_id: String::new(),
             context_zone_id: None,
+            zone_perms: vec![],
         };
 
         kernel.dispatch_mutation(FileEventType::DirCreate, "/d", &ctx, |_ev| {});

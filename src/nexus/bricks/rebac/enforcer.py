@@ -15,21 +15,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
 from nexus.contracts.protocols.activity import EventKind, Result, emit
 from nexus.contracts.types import OperationContext, Permission
 
-# Issue #3786: Zone-perms resurrection cache primitives live in
-# ``nexus.lib.zone_perms_cache`` so the kernel layer (``nexus.core.*``)
-# and storage layer can bind / invalidate request-scope grants without
-# crossing the four-tier import boundary (bricks > services > core >
-# lib+security > contracts).  Re-exported here so existing intra-brick
-# callers keep using the canonical name.
-from nexus.lib.zone_perms_cache import (  # noqa: F401 — re-export
-    cache_zone_perms,
-    invalidate_zone_perms,
-    request_zone_perms_scope,
-)
-from nexus.lib.zone_perms_cache import (
-    lookup_zone_perms as _lookup_zone_perms,
-)
-
 
 def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
     """Check for stale agent sessions and raise if the session is outdated.
@@ -409,18 +394,12 @@ class PermissionEnforcer:
             return dict.fromkeys(prefixes, False)
 
     def _effective_zone_perms(self, context: OperationContext) -> tuple:
-        """Resolve the request's effective zone_perms — context > cache > default.
+        """Return the request's effective zone_perms from context directly.
 
-        Centralized so ``check`` and ``filter_list`` agree on the source of
-        grants for multi-zone federation tokens.  See the matching comment
-        in ``check`` (Issue #3786) for the full reasoning.
+        Now that zone_perms survives the Rust boundary (Phase A), the
+        context always carries the authoritative grant list. No cache
+        resurrection needed.
         """
-        if context.zone_id == ROOT_ZONE_ID:
-            _ctx_has_real_perms = any(z != ROOT_ZONE_ID for z, _ in (context.zone_perms or ()))
-            if _ctx_has_real_perms:
-                return context.zone_perms
-            _cached = _lookup_zone_perms(context.user_id)
-            return _cached if _cached else (context.zone_perms or ())
         return context.zone_perms or ()
 
     def check(
@@ -563,35 +542,10 @@ class PermissionEnforcer:
             self._log_bypass(context, path, permission_str, "admin", allowed=True)
             return True
 
-        # Issue #3786: Zone-perms authorization for multi-zone federation tokens.
-        # When zone_id == ROOT_ZONE_ID the token spans multiple zones; zone_perms
-        # is the authoritative grant list rather than the per-zone ReBAC graph
-        # (which would require ROOT_ZONE_ID grants that don't exist for cross-zone ops).
-        #
-        # Rust's resolve_context drops zone_perms when rebuilding the OperationContext
-        # for native Read/Write/Delete paths.  OperationContext.__post_init__ fills in
-        # zone_perms=(("root","rw"),) as a default when zone_id="root" and zone_perms=().
-        # That default is not the real token zone_perms.  We resurrect the real ones
-        # from the module-level cache populated by authenticate_sync — but ONLY when
-        # the context's own zone_perms are empty/default.  If the context already
-        # carries real (non-default) grants — i.e. the Call RPC dispatch path
-        # rebuilt them from the auth_dict — we trust those over the cache to avoid
-        # cross-token leaks (the cache is keyed only by subject_id; two API keys
-        # for the same subject can otherwise overwrite each other's grants).
-        if context.zone_id == ROOT_ZONE_ID:
-            _ctx_has_real_perms = any(z != ROOT_ZONE_ID for z, _ in (context.zone_perms or ()))
-            if _ctx_has_real_perms:
-                # Trust the request-bound context.
-                _effective_zone_perms = context.zone_perms
-            else:
-                # Fall back to the resurrection cache only when the context is
-                # bare (native Read/Write path with stripped zone_perms).
-                # `_lookup_zone_perms` enforces TTL and LRU eviction so revoked
-                # grants don't survive forever.
-                _cached = _lookup_zone_perms(context.user_id)
-                _effective_zone_perms = _cached if _cached else context.zone_perms
-        else:
-            _effective_zone_perms = context.zone_perms
+        # Zone-perms authorization for multi-zone federation tokens.
+        # Now that zone_perms survives the Rust boundary (Phase A), the
+        # context always carries the authoritative grant list directly.
+        _effective_zone_perms = context.zone_perms or ()
 
         # Only use the fast-path when the token explicitly grants named zones.
         # zone_perms=(("root","rw"),) is the __post_init__ default, not a real grant.

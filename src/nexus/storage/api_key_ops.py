@@ -274,30 +274,9 @@ def revoke_api_key(session: "Session", key_id: str) -> bool:
     if not api_key:
         return False
 
-    # Snapshot the subject_id BEFORE flush so we can invalidate the
-    # zone_perms resurrection cache (#3786).  The cache is keyed by
-    # subject_id and grants would otherwise survive revocation until
-    # eviction or process restart.
-    revoked_subject = api_key.subject_id if hasattr(api_key, "subject_id") else api_key.user_id
-
     api_key.revoked = 1
     api_key.revoked_at = datetime.now(UTC)
     session.flush()
-
-    # Best-effort cache invalidation — this import is local because
-    # `nexus.bricks.rebac.enforcer` pulls in heavier deps and we don't
-    # want to require them for storage-only callers.
-    if revoked_subject:
-        try:
-            from nexus.lib.zone_perms_cache import invalidate_zone_perms
-
-            invalidate_zone_perms(revoked_subject)
-        except Exception:  # noqa: BLE001 — cache invalidation must never block revocation
-            logger.warning(
-                "revoke_api_key(%s): zone_perms cache invalidation failed",
-                key_id,
-                exc_info=True,
-            )
 
     return True
 
@@ -384,47 +363,16 @@ def get_primary_zones_for_keys(session: "Session", key_ids: list[str]) -> dict[s
 
 
 def invalidate_zone_perms_for_subject(subject_id: str) -> None:
-    """Drop the cached zone_perms entry for a subject after a permission-relevant
-    mutation (key revoke, zone add/remove).  Exposes the rebac cache primitive
-    through the storage pillar so brick callers don't violate import boundaries.
+    """No-op — the Python zone_perms resurrection cache has been removed.
+
+    Zone perms now survive the Rust boundary natively (Phase A), so no
+    Python-side cache invalidation is needed.  Kept as a stub so callers
+    don't break.
     """
-    if not subject_id:
-        return
-    try:
-        from nexus.lib.zone_perms_cache import invalidate_zone_perms
-
-        invalidate_zone_perms(subject_id)
-    except Exception:
-        logger.warning(
-            "Failed to invalidate zone_perms cache for subject %s",
-            subject_id,
-            exc_info=True,
-        )
 
 
-def _invalidate_zone_perms_for_key(session: "Session", key_id: str) -> None:
-    """Drop the cached zone_perms entry for this key's subject after a junction
-    mutation, so the resurrection cache (enforcer.py) cannot keep authorising
-    against grants that were just changed.  Issue #3786 / Codex Round 5 finding #3.
-    """
-    from nexus.storage.models import APIKeyModel
-
-    try:
-        ak = session.get(APIKeyModel, key_id)
-        if ak is None:
-            return
-        subject = ak.subject_id if hasattr(ak, "subject_id") else ak.user_id
-        if not subject:
-            return
-        from nexus.lib.zone_perms_cache import invalidate_zone_perms
-
-        invalidate_zone_perms(subject)
-    except Exception:
-        logger.warning(
-            "Failed to invalidate zone_perms cache after junction mutation for key %s",
-            key_id,
-            exc_info=True,
-        )
+def _invalidate_zone_perms_for_key(session: "Session", key_id: str) -> None:  # noqa: ARG001
+    """No-op — the Python zone_perms resurrection cache has been removed."""
 
 
 def add_zone_to_key(session: "Session", key_id: str, zone_id: str, permissions: str = "rw") -> bool:

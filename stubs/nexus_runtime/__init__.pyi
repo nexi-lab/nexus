@@ -174,23 +174,29 @@ def start_vfs_grpc_server(
 class PyOperationContext:
     def __init__(
         self,
-        user_id: str,
-        zone_id: str,
-        is_admin: bool,
-        agent_id: str | None,
-        is_system: bool,
-        groups: list[str],
-        admin_capabilities: list[str],
-        subject_type: str,
-        subject_id: str | None,
-        request_id: str,
-        context_zone_id: str | None,
+        user_id: str = "anonymous",
+        zone_id: str = "root",
+        is_admin: bool = False,
+        agent_id: str | None = None,
+        is_system: bool = False,
+        groups: list[str] = [],
+        admin_capabilities: list[str] = [],
+        subject_type: str = "user",
+        subject_id: str | None = None,
+        request_id: str = "",
+        context_zone_id: str | None = None,
+        zone_perms: list[tuple[str, str]] = [],
     ) -> None: ...
 
 class PyKernel:
     def __init__(self) -> None: ...
     def set_vfs_lock_timeout(self, timeout_ms: int) -> None: ...
     def set_self_address(self, addr: str) -> None: ...
+    def set_permission_provider(self, provider: Any) -> None: ...
+    def set_permission_admin_bypass(self, enabled: bool) -> None: ...
+    def permission_lease_invalidate_path(self, path: str) -> None: ...
+    def permission_lease_invalidate_agent(self, agent_id: str) -> None: ...
+    def permission_lease_invalidate_all(self) -> None: ...
     def set_metastore_path(self, path: str) -> None: ...
     def release_metastores(self) -> None: ...
     def metastore_get(self, path: str) -> Any | None: ...

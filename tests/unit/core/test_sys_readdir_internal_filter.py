@@ -83,6 +83,10 @@ def _build_fs(entries: list[_FakeMeta]) -> NexusFS:
     kernel = MagicMock()
     kernel.metastore_list.return_value = list(entries)
     kernel.metastore_is_implicit_directory.return_value = False
+    # Force the slow-path branch: when ``readdir`` raises, sys_readdir
+    # falls through to ``metastore_list_iter`` which is what these
+    # filter-correctness tests are exercising.
+    kernel.readdir.side_effect = ValueError("mocked: take slow path")
 
     fs = object.__new__(NexusFS)
     fs._kernel = kernel

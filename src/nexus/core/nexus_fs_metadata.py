@@ -1541,8 +1541,8 @@ class MetadataMixin:
                         children = sorted(
                             (
                                 child
-                                for child in self.metadata.list_iter(
-                                    prefix=boundary, recursive=True
+                                for child in metastore_list_iter(
+                                    self._kernel, prefix=boundary, recursive=True
                                 )
                                 if child.path.startswith(boundary)
                             ),

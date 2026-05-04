@@ -32,7 +32,9 @@ class WirableFS(Protocol):
     """
 
     @property
-    def metadata(self) -> Any: ...  # MetastoreABC (core tier — typed as Any to avoid upward import)
+    def metadata(
+        self,
+    ) -> Any: ...  # RustMetastoreProxy (core tier — typed as Any to avoid upward import)
 
     def sys_read(self, path: str, **kwargs: Any) -> bytes: ...
 

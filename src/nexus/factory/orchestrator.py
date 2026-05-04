@@ -19,7 +19,7 @@ if TYPE_CHECKING:
         DistributedConfig,
         PermissionConfig,
     )
-    from nexus.core.metastore import MetastoreABC
+    from nexus.core.metastore import RustMetastoreProxy
     from nexus.core.nexus_fs import NexusFS
     from nexus.storage.record_store import RecordStoreABC
 
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def create_nexus_services(
     record_store: "RecordStoreABC",
-    metadata_store: "MetastoreABC",
+    metadata_store: "RustMetastoreProxy",
     backend: "Backend",
     dlc: Any = None,
     *,
@@ -59,7 +59,7 @@ def create_nexus_services(
 
     Args:
         record_store: RecordStoreABC instance (provides engine + session_factory).
-        metadata_store: MetastoreABC instance (for PermissionEnforcer).
+        metadata_store: RustMetastoreProxy instance (for PermissionEnforcer).
         backend: Backend instance (for WorkspaceManager).
         dlc: DriverLifecycleCoordinator for routing + backend refs.
         permissions: Permission config (defaults from PermissionConfig()).
@@ -198,7 +198,7 @@ def create_nexus_services(
 
 def create_nexus_fs(
     backend: "Backend",
-    metadata_store: "MetastoreABC | str | Path | None",
+    metadata_store: "RustMetastoreProxy | str | Path | None",
     record_store: "RecordStoreABC | None" = None,
     *,
     cache_store: Any = None,
@@ -223,7 +223,7 @@ def create_nexus_fs(
 
     Args:
         backend: Backend instance for file storage.
-        metadata_store: One of: a pre-built ``MetastoreABC`` (typically
+        metadata_store: One of: a pre-built ``RustMetastoreProxy`` (typically
             ``RustMetastoreProxy`` from ``nexus.open_local_metastore``),
             a redb file path (``str`` or ``Path``) — NexusFS constructs a
             fresh ``PyKernel`` + ``RustMetastoreProxy`` against it, or
@@ -313,7 +313,7 @@ def create_nexus_fs(
     # Always pass ``nx.metadata`` (the freshly-constructed RustMetastoreProxy)
     # to services rather than the original ``metadata_store`` argument: when
     # the caller handed us a path/None, the original is no longer a usable
-    # MetastoreABC. ``nx.metadata`` is the SSOT after NexusFS init.
+    # RustMetastoreProxy. ``nx.metadata`` is the SSOT after NexusFS init.
     if services is None and record_store is not None:
         services = create_nexus_services(
             record_store=record_store,

@@ -1,27 +1,34 @@
-"""MetastoreABC — the Metastore storage pillar.
+"""``RustMetastoreProxy`` — Python facade over the kernel-internal MetaStore.
 
-One of the Four Storage Pillars (NEXUS-LEGO-ARCHITECTURE.md §2.0):
-  - MetastoreABC  (required at boot — this file)
-  - ObjectStoreABC (mounted post-init — backends/backend.py)
-  - RecordStoreABC (services-only — storage/record_store.py)
-  - CacheStoreABC  (optional — core/cache_store.py)
+After the post-DCache cleanup the Three Storage Pillars are:
+  - MetaStore     (Rust kernel-internal — ``LocalMetaStore`` /
+                   ``ZoneMetaStore`` / ``RemoteMetaStore``)
+  - ObjectStore   (mounted post-init — ``backends/backend.py``)
+  - RecordStore   (services-only — ``storage/record_store.py``)
+  - CacheStore    (optional — ``core/cache_store.py``)
 
-MetastoreABC is the kernel's inode layer: the typed contract between
-VFS and the underlying ordered KV store.  The kernel cannot describe
-files without it.  Linux analogue: ``struct inode_operations``.
+The kernel's metastore is the inode layer: the typed contract between
+VFS and the underlying ordered KV store. The Rust kernel cannot describe
+files without it. Linux analogue: ``struct inode_operations``.
 
-Implementations:
-  - RaftMetadataStore  (storage/raft_metadata_store.py)
+Python no longer carries a separate ``MetastoreABC`` parallel hierarchy
+— commit V deleted it. ``RustMetastoreProxy`` is a thin pass-through to
+``kernel.metastore_*`` (no inheritance, no abstract base) plus five
+non-trivial wrappers (JSON-encoded ``set_file_metadata``, recursive=False
+post-filter on ``list``/``list_iter``, ``PaginatedResult`` wrap on
+``list_paginated``, None-filter on ``get_searchable_text_bulk``). Those
+wrappers are queued for extraction to ``nexus.kernel_helpers`` in the
+following commit (Y), after which the proxy itself is deleted (W3).
 
-SSOT: proto/nexus/core/metadata.proto defines the FileMetadata fields.
-This ABC defines the *operations* over those fields.
+SSOT: ``proto/nexus/core/metadata.proto`` defines the FileMetadata fields.
+``rust/kernel/src/abc/meta_store.rs`` defines the *operations*; this
+file is purely a Python boundary.
 """
 
 from __future__ import annotations
 
 import builtins
 import logging
-from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from typing import Any
 
@@ -33,200 +40,46 @@ logger = logging.getLogger(__name__)
 def _is_direct_child(path: str, prefix: str) -> bool:
     """Return True when ``path`` is an immediate child of ``prefix``.
 
-    Matches the Python-side filter ``RaftMetadataStore._list_iter_raw``
-    applies for ``recursive=False`` — strip the prefix, then drop any
-    entry whose remainder still contains a ``/`` (i.e. sits in a
-    deeper subdirectory). Used by ``KernelBackedMetastoreABC.list[/_iter]``
-    so recursive-vs-not semantics match across metastore impls.
+    Strip the prefix, then drop any entry whose remainder still contains
+    a ``/`` (i.e. sits in a deeper subdirectory). Used to honour
+    ``recursive=False`` on the ``list``/``list_iter`` proxy methods.
     """
     rel = path[len(prefix) :].lstrip("/") if path.startswith(prefix) else path
     return "/" not in rel
 
 
-class MetastoreABC(ABC):
-    """Abstract base class for metadata storage (the "Metastore" pillar).
+class RustMetastoreProxy:
+    """Python facade backed by the Rust kernel's MetaStore.
 
-    Stores mapping between virtual paths and backend physical locations.
-    All metastore backends (Raft, Federated, etc.) implement this interface.
-
-    Subclasses implement ``_get_raw``, ``_put_raw``, ``_delete_raw``,
-    ``_exists_raw``, ``_list_raw``, and ``close``.  The public API
-    (``get``, ``put``, ``delete``, etc.) is a thin pass-through —
-    cache management lives inside each Rust ``MetaStore`` impl
-    (``LocalMetaStore`` / ``RemoteMetaStore`` / ``ZoneMetaStore``).
-
-    Abstract methods (must override):
-        _get_raw, _put_raw, _delete_raw, _exists_raw, _list_raw, close
-
-    Concrete methods (may override for performance):
-        list_iter,
-        _get_batch_raw, _delete_batch_raw, _put_batch_raw
-    """
-
-    def __init__(self) -> None:
-        self._kernel: Any = None  # late-bound; set after Kernel is created
-
-    # ── Public API (delegates to ``_*_raw`` subclass overrides) ───────
-
-    def get(self, path: str) -> FileMetadata | None:
-        """Get metadata for a file."""
-        return self._get_raw(path)
-
-    def put(self, metadata: FileMetadata) -> None:
-        """Store or update file metadata."""
-        self._put_raw(metadata)
-
-    def delete(self, path: str) -> dict[str, Any] | None:
-        """Delete file metadata."""
-        return self._delete_raw(path)
-
-    def exists(self, path: str) -> bool:
-        """Check if metadata exists for a path."""
-        return self._exists_raw(path)
-
-    def list(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> builtins.list[FileMetadata]:
-        """List all files with given path prefix."""
-        return self._list_raw(prefix, recursive, **kwargs)
-
-    def list_iter(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        **kwargs: Any,
-    ) -> Iterator[FileMetadata]:
-        """Iterate over file metadata matching prefix.
-
-        Memory-efficient alternative to list(). Yields results one at a time.
-        Subclasses that define ``_list_iter_raw`` get true streaming;
-        otherwise falls back to iterating over ``_list_raw``.
-        """
-        # Issue #3706: dispatch to _list_iter_raw for true streaming when
-        # subclass provides it (e.g. RaftMetadataStore, SQLiteMetastore).
-        raw_iter = getattr(self, "_list_iter_raw", None)
-        source = (
-            raw_iter(prefix, recursive, **kwargs)
-            if raw_iter is not None
-            else self._list_raw(prefix, recursive, **kwargs)
-        )
-        yield from source
-
-    # ── Batch operations ──────────────────────────────────────────────
-
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        """Get metadata for multiple files."""
-        return self._get_batch_raw(list(paths))
-
-    def delete_batch(self, paths: Sequence[str]) -> None:
-        """Delete multiple files."""
-        self._delete_batch_raw(paths)
-
-    def put_batch(
-        self,
-        metadata_list: Sequence[FileMetadata],
-        *,
-        skip_snapshot: bool = False,
-    ) -> None:
-        """Store or update multiple file metadata."""
-        self._put_batch_raw(metadata_list, skip_snapshot=skip_snapshot)
-
-    def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
-        """Get content IDs (hashes) for multiple paths."""
-        result: dict[str, str | None] = {}
-        for path in paths:
-            metadata = self.get(path)
-            result[path] = metadata.content_id if metadata else None
-        return result
-
-    # ── Abstract raw methods (subclasses implement these) ─────────────
-
-    @abstractmethod
-    def _get_raw(self, path: str) -> FileMetadata | None:
-        """Get metadata from the underlying store (no cache)."""
-
-    @abstractmethod
-    def _put_raw(self, metadata: FileMetadata) -> None:
-        """Store metadata in the underlying store (no cache)."""
-
-    @abstractmethod
-    def _delete_raw(self, path: str) -> dict[str, Any] | None:
-        """Delete metadata from the underlying store (no cache)."""
-
-    @abstractmethod
-    def _exists_raw(self, path: str) -> bool:
-        """Check existence in the underlying store (no cache)."""
-
-    @abstractmethod
-    def _list_raw(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> builtins.list[FileMetadata]:
-        """List metadata from the underlying store (no cache)."""
-
-    @abstractmethod
-    def close(self) -> None:
-        """Close the metadata store and release resources."""
-
-    # ── Batch raw (concrete defaults, override for performance) ───────
-
-    def _get_batch_raw(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        """Get metadata for multiple paths from the underlying store."""
-        return {p: self._get_raw(p) for p in paths}
-
-    def _delete_batch_raw(self, paths: Sequence[str]) -> None:
-        """Delete multiple paths from the underlying store."""
-        for p in paths:
-            self._delete_raw(p)
-
-    def _put_batch_raw(
-        self,
-        metadata_list: Sequence[FileMetadata],
-        *,
-        skip_snapshot: bool = False,  # noqa: ARG002
-    ) -> None:
-        """Store multiple metadata entries in the underlying store."""
-        for meta in metadata_list:
-            self._put_raw(meta)
-
-
-class RustMetastoreProxy(MetastoreABC):
-    """MetastoreABC implementation backed by Rust LocalMetastore.
-
-    Delegates all operations to the Rust kernel's metastore via PyKernel
-    methods (metastore_get, metastore_put, etc.). Rust kernel exclusively
-    owns the redb file — Python no longer opens it directly.
-
+    Delegates every operation to ``kernel.metastore_*`` PyO3 methods.
     Cache management lives entirely inside the Rust ``MetaStore`` impl
-    (each impl owns its own internal ``DashMap`` projection). All
-    public methods are thin wrappers over ``self._rust_kernel.metastore_*``.
+    (each impl owns its own internal ``DashMap`` projection); this
+    Python class is purely a calling-convention adapter.
 
-    Usage:
+    Usage::
+
         kernel.set_metastore_path(str(redb_path))
         metadata_store = RustMetastoreProxy(kernel)
     """
 
     def __init__(self, kernel: Any, redb_path: str | None = None, /) -> None:
-        super().__init__()
         self._rust_kernel = kernel
         # Federation mode: kernel has no global redb — every call routes
         # via ``mount_table.route(path, ROOT_ZONE_ID, ...)`` and hits a
         # per-mount ZoneMetastore installed by ``kernel.add_mount()``
-        # (via ``py_zone_handle``). Skipping
-        # ``set_metastore_path`` keeps the global fallback unset so an
-        # accidental route miss blows up loudly instead of silently
-        # returning empty.
+        # (via ``py_zone_handle``). Skipping ``set_metastore_path`` keeps
+        # the global fallback unset so an accidental route miss blows up
+        # loudly instead of silently returning empty.
         if redb_path is not None:
             kernel.set_metastore_path(redb_path)
 
-    # ── Public API (bypass Python dcache — Rust DCache is authoritative) ─
+    # ── Public API ───────────────────────────────────────────────────────
 
     def get(self, path: str) -> FileMetadata | None:
-        """Get metadata directly from Rust metastore (no Python dcache)."""
         result: FileMetadata | None = self._rust_kernel.metastore_get(path)
         return result
 
     def put(self, metadata: FileMetadata) -> None:
-        """Store metadata via Rust metastore."""
         self._rust_kernel.metastore_put(metadata)
 
     def delete(self, path: str) -> dict[str, Any] | None:
@@ -239,7 +92,6 @@ class RustMetastoreProxy(MetastoreABC):
         return {"deleted": deleted}
 
     def exists(self, path: str) -> bool:
-        """Check existence via Rust metastore."""
         result: bool = self._rust_kernel.metastore_exists(path)
         return result
 
@@ -251,13 +103,11 @@ class RustMetastoreProxy(MetastoreABC):
     ) -> builtins.list[FileMetadata]:
         """List metadata from Rust metastore.
 
-        The Rust ``metastore_list`` is prefix-only — it returns every entry
-        whose path starts with ``prefix``. When the caller asks for
-        ``recursive=False`` we post-filter in Python to keep entries that
-        live directly under the prefix (no further ``/`` separator). This
-        matches the ``RaftMetadataStore._list_iter_raw`` contract and makes
-        ``sys_readdir(recursive=False, limit=N)`` return only the immediate
-        children it's supposed to.
+        The Rust ``metastore_list`` is prefix-only — it returns every
+        entry whose path starts with ``prefix``. When the caller asks
+        for ``recursive=False`` we post-filter in Python to keep
+        entries that live directly under the prefix (no further ``/``
+        separator).
         """
         result: builtins.list[FileMetadata] = self._rust_kernel.metastore_list(prefix)
         if recursive:
@@ -272,10 +122,9 @@ class RustMetastoreProxy(MetastoreABC):
     ) -> Iterator[FileMetadata]:
         """Iterate metadata from Rust metastore.
 
-        Issue #3706: like list(), delegates directly to Rust. Honors
-        ``recursive=False`` via the same post-filter as list() — the
-        Rust call returns everything under ``prefix`` and we drop
-        deeper entries here.
+        Honours ``recursive=False`` via the same post-filter as
+        ``list()``: the Rust call returns everything under ``prefix``
+        and we drop deeper entries here.
         """
         for e in self._rust_kernel.metastore_list(prefix):
             if recursive or _is_direct_child(e.path, prefix):
@@ -284,7 +133,6 @@ class RustMetastoreProxy(MetastoreABC):
     # ── Batch operations ─────────────────────────────────────────────────
 
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        """Batch get via Rust metastore (no Python dcache)."""
         results = self._rust_kernel.metastore_get_batch(list(paths))
         return dict(zip(paths, results, strict=True))
 
@@ -294,18 +142,23 @@ class RustMetastoreProxy(MetastoreABC):
         *,
         skip_snapshot: bool = False,  # noqa: ARG002
     ) -> None:
-        """Batch put via Rust metastore."""
         self._rust_kernel.metastore_put_batch(list(metadata_list))
 
     def delete_batch(self, paths: Sequence[str]) -> None:
-        """Batch delete via Rust metastore."""
         for p in paths:
             self._rust_kernel.metastore_delete(p)
+
+    def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
+        """Return ``{path: content_id_or_None}`` for the given paths."""
+        result: dict[str, str | None] = {}
+        for path in paths:
+            metadata = self.get(path)
+            result[path] = metadata.content_id if metadata else None
+        return result
 
     # ── Implicit directory check ─────────────────────────────────────────
 
     def is_implicit_directory(self, path: str) -> bool:
-        """Check if path is an implicit directory (has children but no metadata)."""
         return bool(self._rust_kernel.metastore_is_implicit_directory(path))
 
     # ── Auxiliary per-path metadata (F3 C2 kernel bindings) ───────────────
@@ -384,32 +237,6 @@ class RustMetastoreProxy(MetastoreABC):
         bulk = self._rust_kernel.metastore_get_file_metadata_bulk(list(paths), "parsed_text")
         return {p: v for p, v in bulk.items() if v is not None}
 
-    # ── Abstract method implementations (fallback, used by base class) ───
-
-    def _get_raw(self, path: str) -> FileMetadata | None:
-        result: FileMetadata | None = self._rust_kernel.metastore_get(path)
-        return result
-
-    def _put_raw(self, metadata: FileMetadata) -> None:
-        self._rust_kernel.metastore_put(metadata)
-
-    def _delete_raw(self, path: str) -> dict[str, Any] | None:
-        deleted = self._rust_kernel.metastore_delete(path)
-        return {"deleted": deleted}
-
-    def _exists_raw(self, path: str) -> bool:
-        result: bool = self._rust_kernel.metastore_exists(path)
-        return result
-
-    def _list_raw(
-        self,
-        prefix: str = "",
-        recursive: bool = True,  # noqa: ARG002
-        **kwargs: Any,  # noqa: ARG002
-    ) -> builtins.list[FileMetadata]:
-        result: builtins.list[FileMetadata] = self._rust_kernel.metastore_list(prefix)
-        return result
-
     def close(self) -> None:
         """No-op — Rust kernel manages redb lifecycle."""
 
@@ -436,3 +263,7 @@ class RustMetastoreProxy(MetastoreABC):
     def get_searchable_text(self, path: str) -> str | None:  # noqa: ARG002
         self._warn_parsed_text_unavailable_once()
         return None
+
+
+# ``MetastoreABC`` was deleted in commit V. Type hints across the factory
+# now reference ``RustMetastoreProxy`` directly.

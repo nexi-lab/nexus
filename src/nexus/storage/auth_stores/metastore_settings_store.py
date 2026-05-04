@@ -21,15 +21,15 @@ import json
 
 from nexus.contracts.auth_store_types import SystemSettingDTO
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.metastore import MetastoreABC
+from nexus.core.metastore import RustMetastoreProxy
 
 _CFG_PREFIX = "cfg:"
 
 
 class MetastoreSettingsStore:
-    """SystemSettingsStoreProtocol implementation backed by MetastoreABC."""
+    """SystemSettingsStoreProtocol implementation backed by RustMetastoreProxy."""
 
-    def __init__(self, metastore: MetastoreABC) -> None:
+    def __init__(self, metastore: RustMetastoreProxy) -> None:
         self._metastore = metastore
 
     def get_setting(self, key: str) -> SystemSettingDTO | None:

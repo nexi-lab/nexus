@@ -23,10 +23,11 @@ def _make_store(zone_id: str = ROOT_ZONE_ID) -> RustMetastoreProxy:  # noqa: ARG
     ``zone_id`` is accepted for API compatibility — every call yields a
     separate kernel + redb so distinct stores are naturally isolated.
     """
-    import nexus
+    from nexus_runtime import PyKernel as _Kernel
 
     tmpdir = tempfile.mkdtemp()
-    return nexus.open_local_metastore(str(Path(tmpdir) / "meta"))
+    kernel = _Kernel()
+    return RustMetastoreProxy(kernel, str(Path(tmpdir) / "meta.redb"))
 
 
 def _make_meta(path: str, size: int = 100) -> FileMetadata:

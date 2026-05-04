@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
-    from nexus.core.metastore import MetastoreABC
+    from nexus.core.metastore import RustMetastoreProxy
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class TTLVolumeSweeper:
         self,
         transport: BlobPackLocalTransport,
         *,
-        metastore: MetastoreABC | None = None,
+        metastore: RustMetastoreProxy | None = None,
         interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
         self._transport = transport
@@ -60,7 +60,7 @@ class TTLVolumeSweeper:
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
-    def set_metastore(self, metastore: MetastoreABC) -> None:
+    def set_metastore(self, metastore: RustMetastoreProxy) -> None:
         """Deferred injection — metastore may not be available at construction time."""
         self._metastore = metastore
 

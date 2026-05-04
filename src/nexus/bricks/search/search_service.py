@@ -158,7 +158,7 @@ if TYPE_CHECKING:
     from nexus.bricks.search.pipeline_indexer import PipelineIndexer
     from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
-    from nexus.core.metastore import MetastoreABC
+    from nexus.core.metastore import RustMetastoreProxy
     from nexus.core.nexus_fs import NexusFS
 
 
@@ -189,7 +189,7 @@ class SearchService:
 
     def __init__(
         self,
-        metadata_store: "MetastoreABC",
+        metadata_store: "RustMetastoreProxy",
         permission_enforcer: "PermissionEnforcer | None" = None,
         dlc: Any = None,
         rebac_manager: "ReBACManager | None" = None,

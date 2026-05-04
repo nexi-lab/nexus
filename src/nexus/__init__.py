@@ -74,7 +74,7 @@ if TYPE_CHECKING:
         NexusFileNotFoundError,
         NexusPermissionError,
     )
-    from nexus.core.metastore import MetastoreABC
+    from nexus.core.metastore import RustMetastoreProxy
     from nexus.core.nexus_fs import NexusFS
 
 # =============================================================================
@@ -156,7 +156,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
-def _open_local_metastore(metadata_path: str, kernel: object = None) -> "MetastoreABC":
+def _open_local_metastore(metadata_path: str, kernel: object = None) -> "RustMetastoreProxy":
     """Open a local metadata store.
 
     F3 C4: the Rust kernel is the single source of truth for metastore
@@ -565,7 +565,7 @@ def connect(
     # route through MountTable to the per-zone ZoneMetastore. When
     # those env vars are unset, Kernel::new is a no-op and the
     # store is backed by LocalMetastore/MemoryMetastore as before.
-    metadata_store: MetastoreABC = _open_local_metastore(metadata_path, kernel=_early_kernel)
+    metadata_store: RustMetastoreProxy = _open_local_metastore(metadata_path, kernel=_early_kernel)
     # Python no longer owns a FederationService object. `federation=None`
     # below just drops a dead kwarg into the orchestrator; _lifecycle.py
     # handles the None path.

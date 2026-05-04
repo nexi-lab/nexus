@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
-    from nexus.core.metastore import MetastoreABC
+    from nexus.core.metastore import RustMetastoreProxy
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class CASGarbageCollector:
     def __init__(
         self,
         engine: CASAddressingEngine,
-        metastore: MetastoreABC | None = None,
+        metastore: RustMetastoreProxy | None = None,
         *,
         grace_period: float = DEFAULT_GRACE_PERIOD_S,
         scan_interval: float = DEFAULT_SCAN_INTERVAL_S,
@@ -67,7 +67,7 @@ class CASGarbageCollector:
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
 
-    def set_metastore(self, metastore: MetastoreABC) -> None:
+    def set_metastore(self, metastore: RustMetastoreProxy) -> None:
         """Deferred injection — metastore may not be available at construction time."""
         self._metastore = metastore
 

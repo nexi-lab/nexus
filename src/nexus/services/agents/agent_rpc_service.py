@@ -19,7 +19,7 @@ from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import VFSOperations, parse_operation_context
 
 if TYPE_CHECKING:
-    from nexus.core.metastore import MetastoreABC
+    from nexus.core.metastore import RustMetastoreProxy
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class AgentRPCService:
         self,
         *,
         vfs: VFSOperations,
-        metastore: "MetastoreABC",
+        metastore: "RustMetastoreProxy",
         session_factory: Any,
         record_store: Any | None = None,
         agent_registry: Any | None = None,

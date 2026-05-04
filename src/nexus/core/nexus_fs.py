@@ -19,7 +19,7 @@ from nexus.core.config import (
     ParseConfig,
     PermissionConfig,
 )
-from nexus.core.metastore import MetastoreABC
+from nexus.core.metastore import RustMetastoreProxy
 from nexus.core.nexus_fs_content import ContentMixin
 from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.nexus_fs_internal import InternalMixin
@@ -118,7 +118,7 @@ class NexusFS(  # type: ignore[misc]
 
     def __init__(
         self,
-        metadata_store: "MetastoreABC | str | Path | None",
+        metadata_store: "RustMetastoreProxy | str | Path | None",
         record_store: RecordStoreABC | None = None,
         cache_store: CacheStoreABC | None = None,
         *,
@@ -131,14 +131,14 @@ class NexusFS(  # type: ignore[misc]
     ):
         """Initialize NexusFS kernel.
 
-        Kernel boots with MetastoreABC (inode layer). Backends are mounted
+        Kernel boots with RustMetastoreProxy (inode layer). Backends are mounted
         via ``DriverLifecycleCoordinator.mount()`` (which writes to the
         Rust kernel's MountTable) — like Linux VFS, no global backend.
 
         Args:
             metadata_store: Metastore wiring. Three accepted shapes:
 
-                - ``MetastoreABC``: a pre-built Python proxy (typically
+                - ``RustMetastoreProxy``: a pre-built Python proxy (typically
                   ``RustMetastoreProxy`` produced by ``nexus.open_local_metastore``
                   or by a previous NexusFS construction). Reused as-is; its
                   ``_rust_kernel`` attribute provides the kernel.
@@ -156,7 +156,7 @@ class NexusFS(  # type: ignore[misc]
                 Pass ``None`` only for bare-kernel tests that never call syscalls.
         """
         # Normalize path-shaped inputs to a string so the kernel boot branch
-        # below doesn't have to re-distinguish them. ``MetastoreABC`` instances
+        # below doesn't have to re-distinguish them. ``RustMetastoreProxy`` instances
         # take the existing isinstance branch unchanged.
         _metastore_path: str | None = None
         if isinstance(metadata_store, Path):
@@ -198,7 +198,7 @@ class NexusFS(  # type: ignore[misc]
         # When ``metadata_store`` was a path/None it is None here; the kernel
         # boot branch further below overwrites ``self.metadata`` with the
         # freshly-constructed RustMetastoreProxy.
-        self.metadata: MetastoreABC | None = metadata_store
+        self.metadata: RustMetastoreProxy | None = metadata_store
         self._record_store = record_store
         self._sql_engine: Any = None
         self._db_session_factory: Any = None
@@ -243,11 +243,11 @@ class NexusFS(  # type: ignore[misc]
         self._kernel = None
         if RUST_AVAILABLE:
             try:
-                from nexus.core.metastore import RustMetastoreProxy
-
                 if isinstance(metadata_store, RustMetastoreProxy):
+                    # Caller handed us a pre-built proxy — reuse its kernel
+                    # (the proxy already called ``set_metastore_path`` so the
+                    # redb is open) rather than constructing a parallel one.
                     self._kernel = metadata_store._rust_kernel
-                    metadata_store._kernel = self._kernel
                 else:
                     from nexus_runtime import PyKernel as _Kernel
 
@@ -270,16 +270,15 @@ class NexusFS(  # type: ignore[misc]
                             "to Noop): %s",
                             _wiring_exc,
                         )
-                    # Wire redb metastore — ALL reads and writes go through Rust redb.
-                    # When the caller handed us a path/None, use it directly.
-                    # When a non-proxy MetastoreABC was passed, fall back to a
-                    # tempfile redb (the legacy compatibility shim — kept until V).
+                    # Wire redb metastore — ALL reads and writes go through
+                    # Rust redb. When the caller handed us a path, open
+                    # against it. When ``None`` was passed, fall back to a
+                    # tempfile redb (suitable for fixtures that don't care
+                    # about on-disk persistence).
                     if _metastore_path is None:
                         import tempfile
 
                         _metastore_path = tempfile.mktemp(suffix=".redb")
-
-                    from nexus.core.metastore import RustMetastoreProxy
 
                     _proxy = RustMetastoreProxy(self._kernel, str(_metastore_path))
                     self.metadata = _proxy

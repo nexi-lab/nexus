@@ -799,24 +799,34 @@ def _init_audit_hook(nx_fs: "NexusFS") -> None:
     """Wire the root zone's AuditHook at boot.
 
     Writes a Rust AuditHook into the WAL-replicated DT_STREAM at
-    ``/audit/traces/`` so every VFS mutation in the root zone is durably
-    recorded. Only meaningful in federation mode — the call requires a
-    loaded Raft zone and silently skips otherwise.
+    ``/__sys__/audit/traces/`` so every VFS mutation in the root zone
+    is durably recorded. Only meaningful in federation mode — the call
+    requires a loaded Raft zone and silently skips otherwise.
+
+    The audit stream lives under ``SYSTEM_PATH_PREFIX`` because
+    AuditHook is an "unnamed" native dispatch hook (LSM-style global,
+    observes every path). The kernel-internal contract is that all
+    such hooks self-exclude ``/__sys__/`` at the top of ``on_post`` to
+    break self-write recursion (see PR #3890 CI hang root cause). By
+    siting the audit stream itself under ``/__sys__/``, the
+    ``is_system_path`` short-circuit in AuditHook covers the
+    recursion case uniformly with the rest of the kernel-internal
+    namespace — no path-literal exclusion needed on top.
 
     Phase 3 (refactor/rust-workspace-parallel-layers): the audit hook
     moved out of the kernel crate into ``services::audit`` per the
     parallel-layers split. The Python entry point is now a free function
     on the ``nexus_runtime`` module — ``install_audit_hook(kernel, zone,
     stream)`` — instead of a method on the Kernel pyclass. Service-tier
-    owns hook lifecycle; kernel only exposes the stream-prep half via
-    ``Kernel::prepare_audit_stream`` (Rust API).
+    owns hook lifecycle; kernel composes the stream itself via the
+    syscall surface (``sys_setattr DT_STREAM ... io_profile=wal``).
     """
     kernel = getattr(nx_fs, "_kernel", None)
     if kernel is None:
         return
 
     audit_zone = "root"
-    audit_stream_path = "/audit/traces/"
+    audit_stream_path = "/__sys__/audit/traces/"
 
     try:
         import nexus_runtime

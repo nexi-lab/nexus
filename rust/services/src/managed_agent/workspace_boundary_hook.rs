@@ -19,6 +19,7 @@
 //! advertised mailbox and exists precisely so other agents can write to
 //! it without being inside the workspace.
 
+use contracts::is_system_path;
 use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
 
 /// Path prefix that scopes this hook. Anything under `/proc/{pid}/workspace/`
@@ -82,6 +83,16 @@ impl NativeInterceptHook for WorkspaceBoundaryHook {
     }
 
     fn on_pre(&self, ctx: &HookContext) -> Result<HookOutcome, String> {
+        // Native (unnamed) hook contract — short-circuit kernel-internal
+        // paths so any future sys_read/sys_write inside this hook body
+        // cannot recurse. Mirrors PermissionHook._is_system_path() in
+        // Python (see `contracts::SYSTEM_PATH_PREFIX`). `/__sys__/`
+        // paths are not under `/proc/{pid}/workspace/` so they pass
+        // through naturally — the explicit check is the contract every
+        // native hook follows.
+        if is_system_path(ctx.path()) {
+            return Ok(HookOutcome::Pass);
+        }
         // Only mutating-write contexts gate the boundary; reads, stat, and
         // other no-mutation ops walk through.
         let path = match ctx {

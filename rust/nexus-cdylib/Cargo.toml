@@ -47,3 +47,21 @@ transport = { workspace = true, features = ["python"] }
 # linkage shape: pyo3 does NOT link libpython itself; the .so is
 # loaded by the running Python which provides the symbols.
 pyo3 = { version = "0.27.2", features = ["extension-module"] }
+# Sudo-code runtime — provides `runtime::spawn_task<K: KernelAbi>`
+# that the cdylib boot wires into `ManagedAgentService` via the
+# `SpawnTask` DI trait defined in `services::managed_agent`.
+#
+# Cross-repo coupling lives **here** at the binary-edge cdylib
+# (instead of in services rlib) — services stays runtime-agnostic
+# and ships in the slim cluster binary path without the sudocode
+# dep. The cdylib path is the Python wheel, where wiring
+# sudocode-as-managed-agent-runtime is the deployment default.
+#
+# Lockstep merge order: nexus PR #4026 lands → bump rev pin to the
+# sudocode-side merged-to-main commit → this PR (which currently
+# pins to sudocode PR #99 branch HEAD `2b67d5b`) re-pins, then
+# merges.
+sudocode-runtime = { package = "runtime", git = "https://github.com/sudoprivacy/sudocode", rev = "2b67d5b452ea69b8ea4aba1fca3fa73588df60da" }
+# Used by the SudoCodeSpawnAdapter to satisfy
+# `services::managed_agent::SpawnTask<K>` bounds.
+contracts = { workspace = true }

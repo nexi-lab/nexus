@@ -60,6 +60,30 @@ pub(crate) mod workspace_boundary_hook;
 
 use proc_entry::{register_proc_entry, unregister_proc_entry};
 
+/// Install ManagedAgentService on `kernel` with an injected
+/// [`SpawnTask`] provider. This is the entry the binary edge
+/// (`nexus-cdylib`'s pyo3 wrapper for the Python wheel,
+/// `profiles/cluster` for the cluster binary) calls with a
+/// concrete adapter that wraps a runtime crate (e.g.
+/// `sudocode_runtime::spawn_task`).
+///
+/// Pure-Rust slim builds without a runtime body call
+/// [`install_managed_agent`] (no spawn provider) instead.
+pub fn install_managed_agent_with_spawn(
+    kernel: &Arc<kernel::kernel::Kernel>,
+    spawn_provider: Arc<dyn SpawnTask<kernel::kernel::Kernel>>,
+) -> Result<(), String> {
+    ManagedAgentService::<kernel::kernel::Kernel>::install_with_spawn(kernel, spawn_provider)
+}
+
+/// Install ManagedAgentService on `kernel` without a runtime body
+/// (procfs + AgentRegistry only). Mirrors the existing pyo3 path
+/// `services::python::nx_managed_agent_install` for callers that
+/// don't ship a runtime.
+pub fn install_managed_agent(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
+    ManagedAgentService::<kernel::kernel::Kernel>::install(kernel)
+}
+
 /// Label key used to stash the LLM model id on the descriptor so
 /// `get_session` can echo it back without a sidecar table.  Read by
 /// `GetSessionResponse.model`; the runtime crate may also read it

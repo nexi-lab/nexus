@@ -13,6 +13,9 @@
 //! * `backends` — driver impls
 //! * `services` — post-syscall hooks (audit / permission / agents / tasks)
 //! * `transport` — network surface tier (VFS gRPC server + IPC + driver-outgoing clients)
+//! * `sudocode_runtime` — managed-agent runtime body (`spawn_task`),
+//!   wired into `services::managed_agent` through the
+//!   [`services::managed_agent::SpawnTask`] DI trait.
 //!
 //! Each peer rlib exposes its own `python::register(&Bound<PyModule>)`
 //! function; this cdylib is just the envelope that calls all of them.
@@ -21,7 +24,83 @@
 //! cycle-break rationale (why kernel is rlib-only and the cdylib
 //! lives in its own crate).
 
+use std::sync::Arc;
+
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+
+use kernel::generated_kernel_abi_pyo3::PyKernel;
+use kernel::kernel::Kernel;
+use services::managed_agent::{
+    install_managed_agent_with_spawn, SpawnHandle as ServiceSpawnHandle, SpawnTask,
+};
+
+// ── Sudo-code adapter ───────────────────────────────────────────────────
+//
+// Concrete `SpawnTask<Kernel>` impl that wraps
+// `sudocode_runtime::spawn_task::spawn_task::<K>(...)`. Lives in the
+// cdylib (not services rlib) because the binary-edge cdylib is the
+// allowed seam for cross-repo runtime deps — services rlib stays
+// runtime-agnostic so the cluster slim binary can ship without
+// sudocode.
+//
+// Generic-K monomorphisation: `sudocode_runtime::spawn_task::spawn_task`
+// is `pub fn spawn_task<K: KernelAbi + Send + Sync + 'static>(...)`,
+// and `SudoCodeSpawnAdapter` impls `SpawnTask<Kernel>` (concrete
+// kernel, the only K the cdylib path needs). Inside the adapter we
+// call `spawn_task::<Kernel>` so the sudocode side compiles
+// concretely against the same kernel handle the service holds — no
+// per-`sys_read` vtable cost, identical perf to a direct inherent
+// call.
+
+struct SudoCodeSpawnHandle(sudocode_runtime::spawn_task::SpawnHandle);
+
+impl ServiceSpawnHandle for SudoCodeSpawnHandle {
+    fn abort(&self) {
+        // Idempotent — `HookAbortSignal::abort` flips an
+        // `AtomicBool::store(true, Ordering::Release)` so concurrent
+        // callers (on_terminate observer + an in-flight
+        // `cancel(Session)`) both succeed.
+        self.0.abort_signal.abort();
+    }
+}
+
+struct SudoCodeSpawnAdapter;
+
+impl SpawnTask<Kernel> for SudoCodeSpawnAdapter {
+    fn spawn(
+        &self,
+        kernel: Arc<Kernel>,
+        desc: kernel::core::agents::registry::AgentDescriptor,
+    ) -> Box<dyn ServiceSpawnHandle> {
+        let handle = sudocode_runtime::spawn_task::spawn_task::<Kernel>(kernel, desc);
+        Box::new(SudoCodeSpawnHandle(handle))
+    }
+}
+
+/// Install ManagedAgentService on `kernel` with the sudocode-runtime
+/// spawn adapter wired in. This is the cdylib (Python wheel) entry
+/// that replaces the bare-procfs `services::python::nx_managed_agent_install`
+/// from earlier — Python deployments always ship the runtime body,
+/// so the spawn provider is never optional in this path.
+///
+/// Pure-Rust slim builds (cluster binary) skip this and call
+/// `services::managed_agent::install_managed_agent` directly without
+/// a runtime body, OR replicate this wiring with a different runtime
+/// adapter when one lands.
+///
+/// Python signature:
+///
+/// ```python
+/// nexus_runtime.nx_managed_agent_install(kernel)
+/// ```
+#[pyfunction]
+#[pyo3(name = "nx_managed_agent_install")]
+fn nx_managed_agent_install(py_kernel: PyRef<'_, PyKernel>) -> PyResult<()> {
+    let provider: Arc<dyn SpawnTask<Kernel>> = Arc::new(SudoCodeSpawnAdapter);
+    install_managed_agent_with_spawn(&py_kernel.kernel_arc(), provider)
+        .map_err(PyRuntimeError::new_err)
+}
 
 #[pymodule]
 fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
@@ -55,5 +134,12 @@ fn nexus_runtime(m: &Bound<PyModule>) -> PyResult<()> {
     // `nexus_runtime.install_transport_wiring(kernel)` once after
     // federation env vars are read.
     transport::python::register(m)?;
+    // ManagedAgentService boot install — Python wheel deployment
+    // wires sudocode-runtime as the runtime body via the
+    // `SpawnTask` DI trait. Registered here (not in
+    // `services::python`) because services rlib does not depend on
+    // sudocode-runtime; the cross-repo coupling lives at this
+    // binary-edge cdylib boundary.
+    m.add_function(wrap_pyfunction!(nx_managed_agent_install, m)?)?;
     Ok(())
 }

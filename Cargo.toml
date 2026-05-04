@@ -90,3 +90,24 @@ strip = "symbols"
 # the Linux artifact.
 [profile.release.package.nexus-cluster]
 opt-level = "z"
+
+# ── Cross-repo dep deduplication ──────────────────────────────────────
+#
+# `nexus-cdylib` git-deps on the sudocode runtime crate (PR-C v1
+# `spawn_task` integration). That sudocode crate in turn git-deps on
+# *this* nexus repo's `kernel` rlib (because sudocode needs the
+# `KernelAbi` trait declaration). Without this `[patch]`, cargo sees
+# the two `kernel` crates — our local path-based `rust/kernel` and
+# sudocode's git-based copy — as distinct, and the `AgentDescriptor`
+# struct sudocode-runtime hands back from `spawn_task` no longer
+# matches the one our cdylib service code uses (E0308 mismatched
+# types pointing at "two different versions of crate kernel").
+#
+# `[patch."https://github.com/nexi-lab/nexus"]` redirects every
+# transitive git-dep on the nexus repo to our workspace member at
+# `rust/kernel`, so kernel-typed values flow through one canonical
+# struct definition end-to-end. Same trick the standard cargo
+# dedup playbook uses for vendored deps.
+[patch."https://github.com/nexi-lab/nexus"]
+kernel = { path = "rust/kernel" }
+contracts = { path = "rust/contracts" }

@@ -44,8 +44,8 @@ pub struct SyncQuery {
 /// pin a thread forever.
 const MAX_LONG_POLL_MS: u64 = 30_000;
 
-pub async fn sync(
-    State(state): State<AdapterState>,
+pub async fn sync<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<Value>, AdapterError> {
@@ -154,8 +154,8 @@ fn encode_since(offsets: &HashMap<String, u64>) -> String {
 
 // ── room pump ─────────────────────────────────────────────────────
 
-async fn pump_rooms(
-    kernel: &Arc<kernel::kernel::Kernel>,
+async fn pump_rooms<K: kernel::abi::KernelAbi>(
+    kernel: &Arc<K>,
     joined: &[String],
     offsets: &mut HashMap<String, u64>,
     server_name: &str,
@@ -190,8 +190,8 @@ async fn pump_rooms(
     Ok(rooms_with_events)
 }
 
-fn pump_one_room(
-    kernel: &Arc<kernel::kernel::Kernel>,
+fn pump_one_room<K: kernel::abi::KernelAbi>(
+    kernel: &Arc<K>,
     stream_path: &str,
     server_name: &str,
     start: u64,
@@ -220,7 +220,9 @@ fn pump_one_room(
     Ok((events, next_offset))
 }
 
-fn require_kernel(state: &AdapterState) -> Result<&Arc<kernel::kernel::Kernel>, AdapterError> {
+fn require_kernel<K: kernel::abi::KernelAbi>(
+    state: &AdapterState<K>,
+) -> Result<&Arc<K>, AdapterError> {
     state
         .kernel
         .as_ref()

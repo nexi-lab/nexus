@@ -53,7 +53,7 @@ mod tests {
     fn fixture() -> axum::Router {
         let backend = Arc::new(StubAuthBackend::new(SERVER));
         backend.add_user("ethan", "hunter2");
-        let state = AdapterState::new(backend, Arc::from(SERVER), None);
+        let state = AdapterState::<kernel::kernel::Kernel>::new(backend, Arc::from(SERVER), None);
         build_router(state)
     }
 

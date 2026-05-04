@@ -81,7 +81,7 @@ pub(crate) fn nx_acp_register_on_terminate(
     Ok(())
 }
 
-fn lookup_acp(_py_kernel: &PyRef<'_, PyKernel>) -> PyResult<Arc<AcpService>> {
+fn lookup_acp(_py_kernel: &PyRef<'_, PyKernel>) -> PyResult<Arc<AcpService<kernel::kernel::Kernel>>> {
     AcpService::handle()
         .ok_or_else(|| PyRuntimeError::new_err("AcpService not installed (call nx_acp_install)"))
 }

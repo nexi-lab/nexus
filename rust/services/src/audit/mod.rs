@@ -28,7 +28,7 @@ use chrono::SecondsFormat;
 use serde::Serialize;
 
 use kernel::core::dispatch::{HookContext, NativeInterceptHook};
-use kernel::kernel::{Kernel, KernelError};
+use kernel::kernel::KernelError;
 
 /// A single VFS operation record, serialised to JSON and appended to the
 /// audit WAL stream.
@@ -161,7 +161,11 @@ impl NativeInterceptHook for AuditHook {
 /// side is not — calling `install` twice for the same zone would
 /// double-register the hook.  Callers (typically `nexus.__init__`
 /// boot path) call this exactly once per zone.
-pub fn install(kernel: &Kernel, zone_id: &str, stream_path: &str) -> Result<(), KernelError> {
+pub fn install<K: kernel::abi::KernelAbi>(
+    kernel: &K,
+    zone_id: &str,
+    stream_path: &str,
+) -> Result<(), KernelError> {
     let stream = kernel.prepare_audit_stream(zone_id, stream_path)?;
     // AuditHook needs the trait surface — concrete WalStreamCore
     // upcasts via `as Arc<dyn StreamBackend>`.
@@ -181,8 +185,8 @@ pub fn install(kernel: &Kernel, zone_id: &str, stream_path: &str) -> Result<(), 
 /// Mirrors `install`'s idempotency on the stream side; safe to call
 /// repeatedly per zone (the underlying `StreamManager.register`
 /// rejects duplicates with `Ok` for the same path).
-pub fn prepare_stream_only(
-    kernel: &Kernel,
+pub fn prepare_stream_only<K: kernel::abi::KernelAbi>(
+    kernel: &K,
     zone_id: &str,
     stream_path: &str,
 ) -> Result<(), KernelError> {

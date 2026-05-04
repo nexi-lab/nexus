@@ -91,6 +91,21 @@ pub trait KernelAbi: Send + Sync + 'static {
     /// the agent-status pre-hook on every entry.
     fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String>;
 
+    /// DT_PIPE creation helper.  Used by `AcpSubprocess::spawn` to
+    /// surface the agent's stdio fds inside VFS as
+    /// `/{zone}/proc/{pid}/fd/{0,1,2}`.  Stays a dedicated method
+    /// because the `read_fd` / `write_fd` shape is pipe-specific and
+    /// does not generalise into `sys_setattr_simple`.
+    fn setattr_pipe(
+        &self,
+        path: &str,
+        capacity: usize,
+        io_profile: &str,
+        read_fd: Option<i32>,
+        write_fd: Option<i32>,
+        zone_id: &str,
+    ) -> Result<SysSetAttrResult, KernelError>;
+
     // ── Metastore (single-key surface used by services) ──────────────
 
     fn metastore_get(&self, path: &str) -> Result<Option<FileMetadata>, KernelError>;
@@ -202,6 +217,18 @@ impl KernelAbi for crate::kernel::Kernel {
 
     fn sys_readdir_backend(&self, path: &str, zone_id: &str) -> Vec<String> {
         Self::sys_readdir_backend(self, path, zone_id)
+    }
+
+    fn setattr_pipe(
+        &self,
+        path: &str,
+        capacity: usize,
+        io_profile: &str,
+        read_fd: Option<i32>,
+        write_fd: Option<i32>,
+        zone_id: &str,
+    ) -> Result<SysSetAttrResult, KernelError> {
+        Self::setattr_pipe(self, path, capacity, io_profile, read_fd, write_fd, zone_id)
     }
 
     fn metastore_get(&self, path: &str) -> Result<Option<FileMetadata>, KernelError> {

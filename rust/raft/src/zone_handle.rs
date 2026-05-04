@@ -67,6 +67,30 @@ impl ZoneHandle {
         self.node.leader_id()
     }
 
+    /// Block until this node becomes leader of the zone, or the
+    /// timeout elapses.  Returns `true` if leader, `false` on timeout.
+    ///
+    /// `is_leader()` is an atomic read on a cached value updated by
+    /// the raft driver thread, so the poll is cheap (no channel, no
+    /// lock).  Used by leader-required raft proposals (e.g.
+    /// ``share_subtree_core`` invoked from offline operator
+    /// subcommands) that open a fresh ZoneManager and must wait for
+    /// election to settle before issuing a propose.
+    ///
+    /// Sleep interval is 50 ms — small enough that even a snappy
+    /// ~150 ms election window is caught quickly, large enough that
+    /// the polling cost is invisible.
+    pub fn wait_for_leader(&self, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            if self.node.is_leader() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        self.node.is_leader()
+    }
+
     pub fn commit_index(&self) -> u64 {
         self.node.commit_index()
     }

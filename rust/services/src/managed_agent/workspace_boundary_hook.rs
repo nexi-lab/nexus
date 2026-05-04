@@ -3,7 +3,9 @@
 //!
 //! Path layout (sudowork/docs/tech/nexus-integration-architecture.md §3.4):
 //!
-//!     /proc/{owner_pid}/workspace/...   ← owned by the pid named in the path
+//! ```text
+//! /proc/{owner_pid}/workspace/...   ← owned by the pid named in the path
+//! ```
 //!
 //! When a write target falls under that prefix, the hook compares the
 //! workspace owner pid (extracted from the path) against the caller's

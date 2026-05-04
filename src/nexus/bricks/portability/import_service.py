@@ -11,7 +11,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-import contextlib
 import logging
 import re
 from collections.abc import Callable
@@ -250,9 +249,11 @@ class ZoneImportService:
 
                 # Guard 1: target-not-empty check.
                 # Discover zones already present in the target nexus instance.
+                # ``list_zones`` was a Raft-only method that commit V dropped;
+                # the Python boundary returns the empty list now, which means
+                # the target-empty check passes unconditionally. Will need to
+                # be reinstated once the kernel exposes the zone registry.
                 existing_zones: list[str] = []
-                with contextlib.suppress(AttributeError):
-                    existing_zones = [z.zone_id for z in self.nexus_fs.metadata.list_zones()]
                 _check_target_empty(existing_zones=existing_zones, force=options.force)
 
                 # Guard 2: embedding compatibility.
@@ -411,7 +412,7 @@ class ZoneImportService:
         target_zone_id = options.target_zone_id or record.zone_id
 
         # Check if file already exists
-        existing = self.nexus_fs.metadata.get(remapped_path)
+        existing = self.nexus_fs._kernel.metastore_get(remapped_path)
 
         if existing is not None:
             # Handle conflict
@@ -572,7 +573,7 @@ class ZoneImportService:
             )
 
             # Store metadata
-            self.nexus_fs.metadata.put(metadata)
+            self.nexus_fs._kernel.metastore_put(metadata)
 
             if is_update:
                 result.files_updated += 1

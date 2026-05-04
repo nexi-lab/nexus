@@ -95,7 +95,7 @@ class TestNexusFSFileReader:
         nx.sys_read = MagicMock(return_value=raw)
         # Metastore returns cached text AND a matching raw-hash — both must
         # line up for the cache to be trusted.
-        nx.metadata.get_file_metadata = MagicMock(
+        nx._kernel.metastore_get_file_metadata = MagicMock(
             side_effect=lambda _p, key: {
                 "parsed_text": "cached markdown",
                 "parsed_text_hash": raw_hash,
@@ -118,13 +118,13 @@ class TestNexusFSFileReader:
         # where the cached text belongs to the previous revision.
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4 FRESH bytes")
-        nx.metadata.get_file_metadata = MagicMock(
+        nx._kernel.metastore_get_file_metadata = MagicMock(
             side_effect=lambda _p, key: {
                 "parsed_text": "STALE cached markdown",
                 "parsed_text_hash": "hash-of-different-bytes",
             }.get(key)
         )
-        nx.metadata.set_file_metadata = MagicMock()
+        nx._kernel.metastore_set_file_metadata = MagicMock()
         parse_fn = MagicMock(return_value=b"fresh markdown")
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
@@ -132,7 +132,7 @@ class TestNexusFSFileReader:
         parse_fn.assert_called_once_with(b"%PDF-1.4 FRESH bytes", "/doc.pdf")
         # The refreshed parse must be cached under BOTH keys so subsequent
         # reads hit the fast path with the new hash.
-        keys_written = {c.args[1] for c in nx.metadata.set_file_metadata.call_args_list}
+        keys_written = {c.args[1] for c in nx._kernel.metastore_set_file_metadata.call_args_list}
         assert "parsed_text" in keys_written
         assert "parsed_text_hash" in keys_written
 
@@ -144,13 +144,13 @@ class TestNexusFSFileReader:
         # them as stale and re-parse.
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4 bytes")
-        nx.metadata.get_file_metadata = MagicMock(
+        nx._kernel.metastore_get_file_metadata = MagicMock(
             side_effect=lambda _p, key: {
                 "parsed_text": "legacy cached markdown",
                 # No parsed_text_hash for this path.
             }.get(key)
         )
-        nx.metadata.set_file_metadata = MagicMock()
+        nx._kernel.metastore_set_file_metadata = MagicMock()
         parse_fn = MagicMock(return_value=b"fresh markdown")
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
@@ -161,8 +161,8 @@ class TestNexusFSFileReader:
     async def test_read_text_invokes_parse_fn_when_no_cache(self) -> None:
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4 binary-bytes")
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
-        nx.metadata.set_file_metadata = MagicMock()
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_set_file_metadata = MagicMock()
         parse_fn = MagicMock(return_value=b"# Title\n\nBody text.")
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
@@ -171,7 +171,9 @@ class TestNexusFSFileReader:
         parse_fn.assert_called_once_with(b"%PDF-1.4 binary-bytes", "/doc.pdf")
         # Parsed text should be written back to the metastore cache.
         cache_calls = [
-            c for c in nx.metadata.set_file_metadata.call_args_list if c.args[1] == "parsed_text"
+            c
+            for c in nx._kernel.metastore_set_file_metadata.call_args_list
+            if c.args[1] == "parsed_text"
         ]
         assert len(cache_calls) == 1
         assert cache_calls[0].args[2] == "# Title\n\nBody text."
@@ -184,7 +186,7 @@ class TestNexusFSFileReader:
         # skip the file.
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4 unparseable")
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
         parse_fn = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
@@ -195,7 +197,7 @@ class TestNexusFSFileReader:
         # Same fail-closed semantics when no parser is wired at all.
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"hello")
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx, parse_fn=None)
 
         assert await reader.read_text("/doc.pdf") == ""
@@ -204,7 +206,7 @@ class TestNexusFSFileReader:
     async def test_read_text_fails_closed_when_parse_fn_raises(self) -> None:
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4")
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
         parse_fn = MagicMock(side_effect=RuntimeError("boom"))
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
@@ -219,7 +221,7 @@ class TestNexusFSFileReader:
 
         assert await reader.read_text("/notes.txt") == "plain text"
         parse_fn.assert_not_called()
-        nx.metadata.get_file_metadata.assert_not_called()
+        nx._kernel.metastore_get_file_metadata.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_read_text_strips_nul_bytes_from_parsed_output(self) -> None:
@@ -228,7 +230,7 @@ class TestNexusFSFileReader:
         # be rolled back otherwise (SQLSTATE 22021).
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4")
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
         parse_fn = MagicMock(return_value=b"Clean\x00 Dirty\x00\x00Text")
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
@@ -243,14 +245,16 @@ class TestNexusFSFileReader:
         # took the cached fast path re-hit the Postgres NUL rejection.
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4")
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
-        nx.metadata.set_file_metadata = MagicMock()
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_set_file_metadata = MagicMock()
         parse_fn = MagicMock(return_value=b"A\x00B\x00C")
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 
         await reader.read_text("/doc.pdf")
         cache_calls = [
-            c for c in nx.metadata.set_file_metadata.call_args_list if c.args[1] == "parsed_text"
+            c
+            for c in nx._kernel.metastore_set_file_metadata.call_args_list
+            if c.args[1] == "parsed_text"
         ]
         assert len(cache_calls) == 1
         assert "\x00" not in cache_calls[0].args[2]
@@ -268,7 +272,7 @@ class TestNexusFSFileReader:
 
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=raw)
-        nx.metadata.get_file_metadata = MagicMock(
+        nx._kernel.metastore_get_file_metadata = MagicMock(
             side_effect=lambda _p, key: {
                 "parsed_text": "cached\x00 string",
                 "parsed_text_hash": raw_hash,
@@ -297,14 +301,14 @@ class TestNexusFSFileReader:
         # scrubbed on the way out or the Postgres write still rolls back.
         # Non-parseable path — fast path is still allowed there.
         nx = MagicMock()
-        nx.metadata.get_searchable_text = MagicMock(return_value="hello\x00world")
+        nx._kernel.metastore_get_searchable_text = MagicMock(return_value="hello\x00world")
         reader = _NexusFSFileReader(nx)
 
         assert reader.get_searchable_text("/notes.txt") == "helloworld"
 
     def test_get_searchable_text_passes_through_none(self) -> None:
         nx = MagicMock()
-        nx.metadata.get_searchable_text = MagicMock(return_value=None)
+        nx._kernel.metastore_get_searchable_text = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx)
 
         assert reader.get_searchable_text("/missing.txt") is None
@@ -317,14 +321,14 @@ class TestNexusFSFileReader:
         # hash; otherwise a cross-zone collision or pre-reindex rewrite can
         # latch stale markdown against fresh ``indexed_content_id``.
         nx = MagicMock()
-        nx.metadata.get_searchable_text = MagicMock(return_value="stale cached markdown")
+        nx._kernel.metastore_get_searchable_text = MagicMock(return_value="stale cached markdown")
         reader = _NexusFSFileReader(nx)
 
         for path in ("/doc.pdf", "/report.docx", "/sheet.xlsx", "/Slides.PPTX"):
             assert reader.get_searchable_text(path) is None, f"expected None for {path}"
         # The metastore should never even be consulted for parseable paths —
         # we short-circuit before it.
-        nx.metadata.get_searchable_text.assert_not_called()
+        nx._kernel.metastore_get_searchable_text.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_read_text_caches_successful_empty_parse(self) -> None:
@@ -338,8 +342,8 @@ class TestNexusFSFileReader:
         raw = b"%PDF-1.4 image-only"
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=raw)
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
-        nx.metadata.set_file_metadata = MagicMock()
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_set_file_metadata = MagicMock()
         # parse_fn simulates ParsersBrick.create_parse_fn returning b"" for
         # a successfully-parsed image-only PDF.
         parse_fn = MagicMock(return_value=b"")
@@ -350,7 +354,9 @@ class TestNexusFSFileReader:
 
         # Both parsed_text and parsed_text_hash MUST be cached so the
         # indexer's has_successful_parse probe can see the parse ran.
-        cached = {c.args[1]: c.args[2] for c in nx.metadata.set_file_metadata.call_args_list}
+        cached = {
+            c.args[1]: c.args[2] for c in nx._kernel.metastore_set_file_metadata.call_args_list
+        }
         assert cached.get("parsed_text") == ""
         assert cached.get("parsed_text_hash") == hash_content(raw)
 
@@ -359,7 +365,7 @@ class TestNexusFSFileReader:
         # ``parsed_text`` has been populated — the text presence guards
         # against stale-hash latching after a revert-to-previous revision.
         nx = MagicMock()
-        nx.metadata.get_file_metadata = MagicMock(
+        nx._kernel.metastore_get_file_metadata = MagicMock(
             side_effect=lambda _p, key: {
                 "parsed_text_hash": "blake3-hash-of-bytes",
                 "parsed_text": "",  # empty-but-present — valid successful empty parse
@@ -370,7 +376,7 @@ class TestNexusFSFileReader:
 
     def test_has_successful_parse_false_on_hash_mismatch(self) -> None:
         nx = MagicMock()
-        nx.metadata.get_file_metadata = MagicMock(
+        nx._kernel.metastore_get_file_metadata = MagicMock(
             side_effect=lambda _p, key: {
                 "parsed_text_hash": "different-hash",
                 "parsed_text": "whatever",
@@ -382,7 +388,7 @@ class TestNexusFSFileReader:
     def test_has_successful_parse_false_when_no_hash_cached(self) -> None:
         # Parser broken / file never parsed → no parsed_text_hash stored.
         nx = MagicMock()
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx)
         assert reader.has_successful_parse("/doc.pdf", "any-hash") is False
 
@@ -393,7 +399,7 @@ class TestNexusFSFileReader:
         # would match the hash without proof the parser actually ran.  We
         # require parsed_text to be present too.
         nx = MagicMock()
-        nx.metadata.get_file_metadata = MagicMock(
+        nx._kernel.metastore_get_file_metadata = MagicMock(
             side_effect=lambda _p, key: {
                 "parsed_text_hash": "blake3-hash-of-bytes",
                 "parsed_text": None,  # cache invalidated by write hook
@@ -409,8 +415,8 @@ class TestNexusFSFileReader:
         # used to bypass parsing and index raw-byte soup for these files.
         nx = MagicMock()
         nx.sys_read = MagicMock(return_value=b"%PDF-1.4 bytes")
-        nx.metadata.get_file_metadata = MagicMock(return_value=None)
-        nx.metadata.set_file_metadata = MagicMock()
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
+        nx._kernel.metastore_set_file_metadata = MagicMock()
         parse_fn = MagicMock(return_value=b"parsed markdown")
         reader = _NexusFSFileReader(nx, parse_fn=parse_fn)
 

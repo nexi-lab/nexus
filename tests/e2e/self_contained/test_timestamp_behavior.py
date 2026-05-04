@@ -36,7 +36,7 @@ async def nexus_fs(isolated_db, tmp_path):
 
 def get_metadata(nexus_fs, path):
     """Get full metadata including created_at from metadata store."""
-    return nexus_fs.metadata.get(path)
+    return nexus_fs._kernel.metastore_get(path)
 
 
 class TestCreatedAtStability:
@@ -338,12 +338,11 @@ class TestDatabaseDirectAccess:
         # Create file
         nexus_fs.write(path, b"database test content")
 
-        # Clear any cache
-        if hasattr(nexus_fs.metadata, "_cache") and nexus_fs.metadata._cache:
-            nexus_fs.metadata._cache.clear()
+        # The kernel-internal LocalMetaStore cache invalidates automatically
+        # on writes, so no explicit clear is needed. Reads below go through
+        # the same kernel boundary the production path uses.
 
-        # Get fresh from DB
-        meta1 = nexus_fs.metadata.get(path)
+        meta1 = nexus_fs._kernel.metastore_get(path)
         original_modified = meta1.modified_at
         original_created = meta1.created_at
 
@@ -353,12 +352,7 @@ class TestDatabaseDirectAccess:
         for _ in range(5):
             nexus_fs.sys_read(path)
 
-        # Clear cache again
-        if hasattr(nexus_fs.metadata, "_cache") and nexus_fs.metadata._cache:
-            nexus_fs.metadata._cache.clear()
-
-        # Get fresh from DB again
-        meta2 = nexus_fs.metadata.get(path)
+        meta2 = nexus_fs._kernel.metastore_get(path)
 
         assert meta2.created_at == original_created, "created_at changed after reads!"
         assert meta2.modified_at == original_modified, "modified_at changed after reads!"

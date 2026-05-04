@@ -79,7 +79,7 @@ class TestWriteConsistency:
         result = nx.write("/test.txt", b"hello world")
 
         # Metastore has the file
-        meta = nx.metadata.get("/test.txt")
+        meta = nx._kernel.metastore_get("/test.txt")
         assert meta is not None
         assert meta.content_id == result["content_id"]
         assert meta.size == len(b"hello world")
@@ -105,7 +105,7 @@ class TestWriteConsistency:
         """All overlapping fields should match between Metastore and RecordStore."""
         nx.write("/consistent.txt", b"data")
 
-        meta = nx.metadata.get("/consistent.txt")
+        meta = nx._kernel.metastore_get("/consistent.txt")
         assert meta is not None
 
         with record_store.session_factory() as session:
@@ -133,7 +133,7 @@ class TestWriteConsistency:
         nx.write("/ver.txt", b"v2")
         nx.write("/ver.txt", b"v3")
 
-        meta = nx.metadata.get("/ver.txt")
+        meta = nx._kernel.metastore_get("/ver.txt")
         assert meta is not None
         assert meta.version == 3
 
@@ -176,7 +176,7 @@ class TestDeleteConsistency:
         nx.write("/del.txt", b"content")
         nx.sys_unlink("/del.txt")
 
-        assert nx.metadata.get("/del.txt") is None
+        assert nx._kernel.metastore_get("/del.txt") is None
 
     @pytest.mark.asyncio
     async def test_delete_soft_deletes_in_record_store(
@@ -225,8 +225,8 @@ class TestRenameConsistency:
         nx.write("/old.txt", b"content")
         nx.sys_rename("/old.txt", "/new.txt")
 
-        assert nx.metadata.get("/old.txt") is None
-        meta = nx.metadata.get("/new.txt")
+        assert nx._kernel.metastore_get("/old.txt") is None
+        meta = nx._kernel.metastore_get("/new.txt")
         assert meta is not None
         assert meta.path == "/new.txt"
 
@@ -267,7 +267,7 @@ class TestBatchWriteConsistency:
 
         # All files in Metastore
         for path, content in files:
-            meta = nx.metadata.get(path)
+            meta = nx._kernel.metastore_get(path)
             assert meta is not None, f"{path} missing from Metastore"
             assert meta.size == len(content)
 

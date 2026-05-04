@@ -224,15 +224,11 @@ async def pool_metrics(request: Request) -> dict[str, Any]:
     state = request.app.state
     metrics: dict[str, Any] = {}
 
-    # PostgreSQL pool stats from metadata store
-    if state.nexus_fs and hasattr(state.nexus_fs, "metadata"):
-        try:
-            pg_stats = state.nexus_fs.metadata.get_pool_stats()
-            metrics["postgres"] = pg_stats
-        except Exception as e:
-            metrics["postgres"] = {"error": str(e)}
-    else:
-        metrics["postgres"] = {"status": "not_available"}
+    # PostgreSQL pool stats — ``get_pool_stats`` was a method on the
+    # legacy Raft Python store that no longer exists. Surface
+    # "not_available" so the health endpoint stays well-formed; the kernel
+    # metastore is redb-backed, not pgsql, so pool stats don't apply here.
+    metrics["postgres"] = {"status": "not_available"}
 
     # Redis/Dragonfly pool stats from CacheBrick (Issue #1524)
     try:

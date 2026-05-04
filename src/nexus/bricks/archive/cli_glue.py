@@ -393,21 +393,17 @@ def _open_nexus_fs() -> Any:
 def _list_zones(nexus_fs: Any) -> list[str]:
     """Return a list of zone IDs from *nexus_fs*.
 
-    Tries ``nexus_fs.metadata.list_zones()`` first (proxy backends may
-    expose it).  When unavailable, falls back to the kernel ``/__sys__/
-    zones/`` procfs view served by the local Rust runtime.
+    Reads the kernel ``/__sys__/zones/`` procfs view served by the local
+    Rust runtime. The legacy ``nexus_fs.metadata.list_zones()`` path on
+    the Python proxy is gone (commit V dropped the Raft-only methods).
 
     Args:
         nexus_fs: Active nexus filesystem handle.
 
     Returns:
-        List of zone ID strings (may be empty if neither path works).
+        List of zone ID strings (may be empty if the kernel can't be
+        reached).
     """
-    try:
-        return [z.zone_id for z in nexus_fs.metadata.list_zones()]
-    except AttributeError:
-        pass
-
     try:
         kernel = getattr(nexus_fs, "_kernel", None) or getattr(nexus_fs, "kernel", None)
         if kernel is not None:
@@ -417,7 +413,7 @@ def _list_zones(nexus_fs: Any) -> list[str]:
     return []
 
 
-def _print_federation_repair_list(nexus_fs: Any) -> None:
+def _print_federation_repair_list(nexus_fs: Any) -> None:  # noqa: ARG001 — unused after V
     """Print federation re-pair commands to stdout after a restore.
 
     Federations lose their auth tokens during a restore because the tokens
@@ -428,19 +424,15 @@ def _print_federation_repair_list(nexus_fs: Any) -> None:
         nexus_fs: Active nexus filesystem handle.
 
     Notes:
-        Uses ``rich.Console`` for output.  If
-        ``nexus_fs.metadata.list_federations()`` raises ``AttributeError``
-        (backend doesn't support it) or returns an empty list, the function
-        is a no-op.
+        Uses ``rich.Console`` for output. ``list_federations`` was a
+        Raft-only method that V dropped from the Python boundary; the
+        repair-list helper is now an unconditional no-op until the
+        federation registry resurfaces on the kernel side.
     """
     from rich.console import Console
 
     console = Console()
     federations: list[Any] = []
-    try:
-        federations = nexus_fs.metadata.list_federations()
-    except AttributeError:
-        return
 
     if not federations:
         return

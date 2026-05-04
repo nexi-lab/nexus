@@ -511,7 +511,9 @@ def _register_vfs_hooks(
             recursive: bool = True,
             zone_id: str = ROOT_ZONE_ID,  # noqa: ARG001
         ) -> Any:
-            return nx.metadata.list(prefix=prefix, recursive=recursive)
+            from nexus.kernel_helpers import metastore_list
+
+            return metastore_list(nx._kernel, prefix=prefix, recursive=recursive)
 
         _tiger_rename_hook = TigerCacheRenameHook(
             tiger_cache=tiger_cache,

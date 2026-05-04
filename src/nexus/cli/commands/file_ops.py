@@ -177,7 +177,7 @@ def cat(
                         file_size = 0
                         if hasattr(nx, "metadata"):
                             try:
-                                file_meta = nx.metadata.get(path)
+                                file_meta = nx._kernel.metastore_get(path)
                                 file_size = file_meta.size if file_meta else 0
                             except Exception:
                                 file_size = 0

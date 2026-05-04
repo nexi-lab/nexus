@@ -193,10 +193,9 @@ class TestDirectoryGrantExpansion:
         for path in files:
             nx.write(path, f"content of {path}", context=ctx)
 
-        # Verify files exist
-        listed = nx.metadata.list(
-            prefix="/workspace/project/", recursive=True, zone_id=ROOT_ZONE_ID
-        )
+        # Verify files exist (kernel.metastore_list is single-zone and
+        # ignores recursive — both flags match the proxy semantics)
+        listed = nx._kernel.metastore_list("/workspace/project/")
         assert len(listed) == 3, f"Expected 3 files, got {len(listed)}"
 
         # Grant read permission on the directory

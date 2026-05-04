@@ -67,19 +67,19 @@ def test_mount_creates_directory_entry(nx_with_mount):
     nx.mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify directory exists in metadata
-    assert nx.metadata.exists("/mnt")
-    assert nx.metadata.exists("/mnt/test")
+    assert nx._kernel.metastore_exists("/mnt")
+    assert nx._kernel.metastore_exists("/mnt/test")
 
     # Verify /mnt is recognized as a directory by the kernel
     assert nx.is_directory("/mnt")
-    mnt_meta = nx.metadata.get("/mnt")
+    mnt_meta = nx._kernel.metastore_get("/mnt")
     assert mnt_meta is not None
 
     # MountTable.add() is pure in-memory (no metastore.put); DT_MOUNT
     # persistence is the mount subsystem's job.  mkdir creates a DT_DIR
     # entry, which the kernel still treats as directory-like.
     assert nx.is_directory("/mnt/test")
-    test_meta = nx.metadata.get("/mnt/test")
+    test_meta = nx._kernel.metastore_get("/mnt/test")
     assert test_meta is not None
     # mkdir creates a DT_DIR entry (entry_type=1), not DT_MOUNT.
     # DT_MOUNT is set by topology/zone-manager code, not by raw mkdir.
@@ -166,10 +166,10 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
     nx.mkdir("/a/b/c/mount", parents=True, exist_ok=True)
 
     # Verify all parents exist
-    assert nx.metadata.exists("/a")
-    assert nx.metadata.exists("/a/b")
-    assert nx.metadata.exists("/a/b/c")
-    assert nx.metadata.exists("/a/b/c/mount")
+    assert nx._kernel.metastore_exists("/a")
+    assert nx._kernel.metastore_exists("/a/b")
+    assert nx._kernel.metastore_exists("/a/b/c")
+    assert nx._kernel.metastore_exists("/a/b/c/mount")
 
     # Verify all paths are recognized as directories by the kernel.
     # Parent directories are created by mkdir, while the mount point
@@ -179,7 +179,7 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
         assert nx.is_directory(p), f"Expected {p} to be a directory"
 
     # MountTable.add() is pure in-memory; mkdir creates DT_DIR.
-    mount_meta = nx.metadata.get("/a/b/c/mount")
+    mount_meta = nx._kernel.metastore_get("/a/b/c/mount")
     assert mount_meta is not None
     # mkdir creates DT_DIR (entry_type=1); DT_MOUNT is set by topology code.
     from nexus.contracts.metadata import DT_DIR
@@ -210,8 +210,8 @@ def test_add_mount_via_api_creates_directory(nx_with_mount):
     nx.mkdir("/api/mount", parents=True, exist_ok=True)
 
     # Verify directory was created
-    assert nx.metadata.exists("/api")
-    assert nx.metadata.exists("/api/mount")
+    assert nx._kernel.metastore_exists("/api")
+    assert nx._kernel.metastore_exists("/api/mount")
 
     # Verify mount appears in listing
     api_list = nx.sys_readdir("/api", recursive=False, details=False)
@@ -230,7 +230,7 @@ def test_mount_exist_ok_does_not_fail(nx_with_mount):
     nx.mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify it still exists
-    assert nx.metadata.exists("/mnt/test")
+    assert nx._kernel.metastore_exists("/mnt/test")
 
 
 @pytest.mark.asyncio

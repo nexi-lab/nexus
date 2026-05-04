@@ -208,7 +208,7 @@ class ShareLinkService:
             resource_type = "file"
             if self._nexus_fs.access(normalized_path):
                 meta = (
-                    self._nexus_fs.metadata.get(normalized_path)
+                    self._nexus_fs._kernel.metastore_get(normalized_path)
                     if hasattr(self._nexus_fs.metadata, "get")
                     else None
                 )

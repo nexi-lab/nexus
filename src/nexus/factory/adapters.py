@@ -166,8 +166,8 @@ def _get_parsed_text_sync(
             return None
 
     try:
-        cached = nx.metadata.get_file_metadata(path, "parsed_text")
-        cached_hash = nx.metadata.get_file_metadata(path, "parsed_text_hash")
+        cached = nx._kernel.metastore_get_file_metadata(path, "parsed_text")
+        cached_hash = nx._kernel.metastore_get_file_metadata(path, "parsed_text_hash")
         if cached_hash == raw_hash and cached is not None:
             cached_str = (
                 cached if isinstance(cached, str) else cached.decode("utf-8", errors="ignore")
@@ -201,9 +201,11 @@ def _get_parsed_text_sync(
     try:
         from datetime import UTC, datetime
 
-        nx.metadata.set_file_metadata(path, "parsed_text", text)
-        nx.metadata.set_file_metadata(path, "parsed_text_hash", raw_hash)
-        nx.metadata.set_file_metadata(path, "parsed_at", datetime.now(UTC).isoformat())
+        from nexus.kernel_helpers import metastore_set_file_metadata
+
+        metastore_set_file_metadata(nx._kernel, path, "parsed_text", text)
+        metastore_set_file_metadata(nx._kernel, path, "parsed_text_hash", raw_hash)
+        metastore_set_file_metadata(nx._kernel, path, "parsed_at", datetime.now(UTC).isoformat())
     except Exception:
         pass
 

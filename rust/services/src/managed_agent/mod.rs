@@ -44,14 +44,12 @@
 
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 use kernel::core::agents::registry::{
     AgentDescriptor, AgentKind, AgentRegistry, AgentState, RepoMount,
 };
 use kernel::service_registry::{RustCallError, RustService};
-use sudo_code::spawn_task::{spawn_task, SpawnHandle};
 
 pub(crate) mod mailbox_stamping_hook;
 pub(crate) mod mailbox_stamping_policy;
@@ -165,15 +163,6 @@ pub(crate) struct ManagedAgentService {
     /// [`Self::install`] which always provides the kernel.
     kernel: Option<Arc<kernel::kernel::Kernel>>,
     agent_registry: Arc<AgentRegistry>,
-    /// Sidecar table of live sudo-code spawn handles, keyed by pid.
-    /// AgentRegistry is the SSOT for descriptor state but has no place
-    /// for an OS thread join handle, so this rides alongside.
-    /// `start_session` inserts after `register_proc_entry` succeeds;
-    /// `cancel` and the `on_terminate` observer abort the
-    /// `HookAbortSignal` and remove the entry. `Arc<DashMap>` (rather
-    /// than a plain field) so the on_terminate closure can hold a
-    /// clone without depending on the service's `Arc<Self>`.
-    spawn_handles: Arc<DashMap<String, SpawnHandle>>,
 }
 
 impl ManagedAgentService {
@@ -187,7 +176,6 @@ impl ManagedAgentService {
         Self {
             kernel: None,
             agent_registry,
-            spawn_handles: Arc::new(DashMap::new()),
         }
     }
 
@@ -201,7 +189,6 @@ impl ManagedAgentService {
         Self {
             kernel: Some(kernel),
             agent_registry,
-            spawn_handles: Arc::new(DashMap::new()),
         }
     }
 
@@ -254,21 +241,9 @@ impl ManagedAgentService {
         // `UnknownSession`.
         let kernel_for_cb = Arc::clone(kernel);
         let registry_for_cb = Arc::clone(kernel.agent_registry());
-        let spawn_handles_for_cb = Arc::clone(&svc.spawn_handles);
         kernel.agent_registry().register_on_terminate(
             Self::NAME,
             Arc::new(move |pid: &str| {
-                // Drop the spawn handle FIRST so the sudo-code loop
-                // sees the abort while procfs is still present —
-                // ensures the in-flight sys_read returns cleanly
-                // (path-still-there) rather than crashing on a
-                // half-torn-down subtree.  remove() takes ownership
-                // and runs the SpawnHandle's destructor (drops the
-                // JoinHandle, detaching the worker thread); the
-                // worker exits on the next poll.
-                if let Some((_, handle)) = spawn_handles_for_cb.remove(pid) {
-                    handle.abort_signal.abort();
-                }
                 if let Some(desc) = registry_for_cb.get(pid) {
                     unregister_proc_entry(&kernel_for_cb, &desc);
                 }
@@ -371,16 +346,6 @@ impl ManagedAgentService {
             if let Some(desc) = self.agent_registry.get(&pid) {
                 if let Err(e) = register_proc_entry(kernel, &desc) {
                     tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
-                } else {
-                    // Stamp succeeded — spawn the sudo-code
-                    // managed-agent loop. The handle goes into the
-                    // sidecar table; cancel(Turn|Session) and the
-                    // on_terminate observer reach into the table to
-                    // abort the loop. `desc` is cloned because
-                    // spawn_task takes ownership for use inside the
-                    // worker thread.
-                    let handle = spawn_task(Arc::clone(kernel), desc);
-                    self.spawn_handles.insert(pid.clone(), handle);
                 }
             }
         }
@@ -414,35 +379,13 @@ impl ManagedAgentService {
 
         match mode {
             CancelMode::Turn => {
-                // Turn cancel signals the in-flight sudo-code loop
-                // through the shared `HookAbortSignal` — the same wire
-                // the v1 `ConversationRuntime::with_hook_abort_signal`
-                // builder reads.  AgentRegistry record stays so a
-                // follow-up prompt write can still address this pid;
-                // the sidecar entry stays in the map for the same
-                // reason.  v0 stub's loop body has no per-turn
-                // boundary, so today turn-cancel terminates the
-                // worker thread on the next poll iteration —
-                // documented behaviour, gets fixed when v1 wires
-                // run_turn into the loop.
-                if let Some(entry) = self.spawn_handles.get(session_id) {
-                    entry.abort_signal.abort();
-                }
+                // No state transition; the runtime watches a
+                // separate signal. Today this is a no-op at the
+                // kernel layer — the runtime crate will plug in once
+                // it lands.
                 Ok(CancelResponse { cancelled: true })
             }
             CancelMode::Session => {
-                // Abort the sudo-code loop FIRST so the worker thread
-                // sees the signal before procfs disappears — keeps
-                // the in-flight sys_read on a clean tear-down path.
-                // The on_terminate observer registered at install
-                // also performs this abort+remove for the SIGKILL /
-                // orphan auto-reap path; here we do it explicitly
-                // because cancel(Session) is the well-formed exit
-                // route.  Both paths are idempotent against an
-                // already-removed entry.
-                if let Some((_, handle)) = self.spawn_handles.remove(session_id) {
-                    handle.abort_signal.abort();
-                }
                 // `kill` transitions to Terminated (firing the
                 // on_terminate observer that drops the procfs dirent)
                 // and auto-reaps the descriptor when the agent is an
@@ -1149,195 +1092,6 @@ mod tests {
             assert!(kernel.agent_registry().get(&resp.session_id).is_none());
             let err = svc.get_session(&resp.session_id).unwrap_err();
             assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
-        }
-    }
-
-    /// End-to-end coverage of the `ManagedAgentService → sudo_code::
-    /// spawn_task` wiring landed in PR-C: a `start_session` call
-    /// allocates a pid, spawns the managed-agent loop, and a write to
-    /// `/proc/{pid}/chat-with-me` round-trips through the spawned
-    /// thread to a stamped echo response on the same DT_STREAM.
-    /// Cancellation aborts the loop and reaps the sidecar entry.
-    ///
-    /// Today's loop body is the v0 echo stub (see
-    /// `sudo_code::spawn_task` docs); when the v1 LLM body lands
-    /// these tests grow to cover real `run_turn` driving without
-    /// changing the wiring layer this PR adds.
-    mod spawn_task_wiring {
-        use super::*;
-        use kernel::kernel::{Kernel, OperationContext};
-        use std::time::{Duration, Instant};
-
-        const POLL_TIMEOUT: Duration = Duration::from_secs(2);
-
-        fn mount_proc(kernel: &Kernel) {
-            kernel
-                .vfs_router_arc()
-                .add_mount("/proc", "root", None, false);
-        }
-
-        fn user_ctx() -> OperationContext {
-            OperationContext::new(
-                "ethan",
-                "root",
-                /* is_admin */ false,
-                Some("human-ethan"),
-                /* is_system */ false,
-            )
-        }
-
-        fn read_envelopes(
-            kernel: &Kernel,
-            path: &str,
-            ctx: &OperationContext,
-            from_offset: u64,
-        ) -> (Vec<serde_json::Value>, u64) {
-            let mut offset = from_offset;
-            let mut out = Vec::new();
-            loop {
-                match kernel.sys_read(path, ctx, 0, offset) {
-                    Ok(result) => {
-                        if let Some(bytes) = result.data.as_ref() {
-                            if !bytes.is_empty() {
-                                if let Ok(v) =
-                                    serde_json::from_slice::<serde_json::Value>(bytes)
-                                {
-                                    out.push(v);
-                                }
-                            }
-                        }
-                        let next = result.stream_next_offset.map_or(offset, |o| o as u64);
-                        if next == offset {
-                            break;
-                        }
-                        offset = next;
-                    }
-                    Err(_) => break,
-                }
-            }
-            (out, offset)
-        }
-
-        fn wait_for_envelope(
-            kernel: &Kernel,
-            path: &str,
-            ctx: &OperationContext,
-            body_eq: &str,
-            timeout: Duration,
-        ) -> Option<serde_json::Value> {
-            let deadline = Instant::now() + timeout;
-            let mut offset = 0u64;
-            while Instant::now() < deadline {
-                let (envelopes, next) = read_envelopes(kernel, path, ctx, offset);
-                offset = next;
-                for env in envelopes {
-                    if env.get("body").and_then(|v| v.as_str()) == Some(body_eq) {
-                        return Some(env);
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            None
-        }
-
-        /// Full prompt → response round trip through the per-pid
-        /// chat-with-me DT_STREAM: user writes a prompt envelope,
-        /// MailboxStampingHook stamps the `from` field with the
-        /// caller's agent_id, the spawned sudo-code loop reads it,
-        /// writes back an echo envelope, and the user reads the
-        /// response from the same stream. Validates the ManagedAgent
-        /// → sudo_code wiring (Cargo edge + `start_session` spawn +
-        /// per-pid `OperationContext`) without depending on any LLM
-        /// wiring (v0 stub body).
-        #[test]
-        fn prompt_round_trips_through_spawned_loop() {
-            let kernel = Arc::new(Kernel::new());
-            mount_proc(&kernel);
-            let svc = ManagedAgentService::install_returning(&kernel)
-                .expect("install ManagedAgentService");
-            let resp = svc.start_session(req("scode-standard")).unwrap();
-
-            let cwm = format!("/proc/{}/chat-with-me", resp.session_id);
-            let ctx = user_ctx();
-            let prompt = serde_json::json!({
-                "to": "scode-standard",
-                "body": "hello",
-            });
-            kernel
-                .sys_write(&cwm, &ctx, &serde_json::to_vec(&prompt).unwrap(), 0)
-                .expect("user write to chat-with-me");
-
-            let echo = wait_for_envelope(&kernel, &cwm, &ctx, "echo: hello", POLL_TIMEOUT)
-                .expect("agent echo did not arrive within timeout");
-            assert_eq!(
-                echo.get("from").and_then(|v| v.as_str()),
-                Some("scode-standard"),
-                "echo response should carry the agent's stamped from-field",
-            );
-            assert_eq!(
-                echo.get("to").and_then(|v| v.as_str()),
-                Some("human-ethan"),
-                "echo response should be addressed back to the original sender",
-            );
-
-            // Clean shutdown — drains the sidecar entry, drops the
-            // procfs subtree, reaps the descriptor.
-            svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
-        }
-
-        /// `cancel(Session)` aborts the spawned loop and drops its
-        /// sidecar table entry. Procfs teardown + descriptor reap are
-        /// covered by the sibling `procfs::cancel_session_with_observer_…`
-        /// suite; this test focuses on the new spawn-handle bookkeeping
-        /// PR-C added.
-        #[test]
-        fn cancel_session_aborts_spawned_loop_and_drains_sidecar() {
-            let kernel = Arc::new(Kernel::new());
-            mount_proc(&kernel);
-            let svc = ManagedAgentService::install_returning(&kernel)
-                .expect("install ManagedAgentService");
-            let resp = svc.start_session(req("scode-standard")).unwrap();
-
-            assert_eq!(
-                svc.spawn_handles.len(),
-                1,
-                "start_session should plant exactly one spawn handle",
-            );
-
-            svc.cancel(&resp.session_id, CancelMode::Session).unwrap();
-
-            assert_eq!(
-                svc.spawn_handles.len(),
-                0,
-                "cancel(Session) should drain the sidecar table",
-            );
-            assert!(kernel.agent_registry().get(&resp.session_id).is_none());
-        }
-
-        /// `cancel(Turn)` aborts the worker via the same
-        /// `HookAbortSignal` the v1 runtime will use, but leaves the
-        /// AgentRegistry record + procfs subtree intact (the v0 loop
-        /// body has no per-turn boundary, so the worker thread
-        /// terminates today — but the surrounding ManagedAgent state
-        /// is unchanged, which is the well-formed behaviour the v1
-        /// run_turn body keeps when it lands).
-        #[test]
-        fn cancel_turn_aborts_loop_but_keeps_session_alive() {
-            let kernel = Arc::new(Kernel::new());
-            mount_proc(&kernel);
-            let svc = ManagedAgentService::install_returning(&kernel)
-                .expect("install ManagedAgentService");
-            let resp = svc.start_session(req("scode-standard")).unwrap();
-
-            svc.cancel(&resp.session_id, CancelMode::Turn).unwrap();
-
-            // Sidecar entry stays so the gRPC surface can still
-            // address the pid; AgentRegistry record stays;
-            // procfs subtree stays; chat-with-me read still works.
-            assert!(kernel.agent_registry().get(&resp.session_id).is_some());
-            let cwm = format!("/proc/{}/chat-with-me", resp.session_id);
-            let ctx = user_ctx();
-            assert!(kernel.sys_read(&cwm, &ctx, 0, 0).is_ok());
         }
     }
 }

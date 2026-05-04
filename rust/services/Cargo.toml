@@ -17,7 +17,7 @@ default = []
 # service on so the runtime gate (DeploymentProfile) decides at boot.
 service-audit = []
 service-agents = []
-service-managed-agent = ["dep:sudo_code"]
+service-managed-agent = []
 service-acp = []
 service-tasks = []
 service-permission = []
@@ -101,20 +101,6 @@ base32 = { version = "0.5", optional = true }
 # it unconditionally rather than wrapping each impl in a
 # cfg(feature) hop.
 async-trait = "0.1"
-# sudocode runtime crate — path-dep across worktrees so
-# `ManagedAgentService::start_session` can spawn the per-pid
-# managed-agent loop via `sudo_code::spawn_task::spawn_task`.  The
-# `package = "runtime"` rename keeps the import surface as
-# `sudo_code::*` (matches the architectural decision that "sudo-code
-# is in-process Rust, called directly — no DI trait"), even though
-# the upstream crate is named `runtime` inside the sudocode workspace.
-# Optional + gated on `service-managed-agent` so non-managed-agent
-# builds (raft-witness, slim cluster, WASM probes) do not pull
-# sudocode and its transitive deps.  Local path-dep ties the build to
-# the side-by-side layout `<root>/{nexus-para-pc-3,sudocode}/`; CI
-# mirrors this layout, and the dep collapses to a workspace member
-# when sudocode lands in the nexus monorepo.
-sudo_code = { package = "runtime", path = "../../../sudocode/rust/crates/runtime", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

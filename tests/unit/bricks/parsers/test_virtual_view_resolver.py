@@ -28,10 +28,16 @@ class FakeFileMetadata:
 
 @pytest.fixture
 def metadata() -> MagicMock:
+    """Mock kernel-shaped metastore.
+
+    Post-W3 the resolver stores ``self._kernel = metadata`` directly
+    (no proxy unwrap), so tests assert on
+    ``metadata.metastore_{get,exists}`` rather than going through a
+    ``_rust_kernel`` shim.
+    """
     mock = MagicMock()
-    # metadata.get returns FakeFileMetadata for existing files, None otherwise
-    mock.get.return_value = FakeFileMetadata(path="/file.xlsx", content_id="hash123")
-    mock.exists.return_value = True
+    mock.metastore_get.return_value = FakeFileMetadata(path="/file.xlsx", content_id="hash123")
+    mock.metastore_exists.return_value = True
     return mock
 
 
@@ -69,25 +75,25 @@ class TestSingleMetastoreLookup:
     def test_try_read_single_lookup(
         self, resolver: VirtualViewResolver, metadata: MagicMock
     ) -> None:
-        """try_read should call metadata.get exactly once, not exists+get."""
+        """try_read should call metastore_get exactly once, not exists+get."""
         resolver.try_read("/file_parsed.xlsx.md")
 
-        # metadata.get called exactly once (by parse_virtual_path)
-        assert metadata.get.call_count == 1
-        assert metadata.get.call_args == call("/file.xlsx")
+        # kernel.metastore_get called exactly once (by parse_virtual_path)
+        assert metadata.metastore_get.call_count == 1
+        assert metadata.metastore_get.call_args == call("/file.xlsx")
 
-        # metadata.exists must NOT be called during try_read
-        metadata.exists.assert_not_called()
+        # kernel.metastore_exists must NOT be called during try_read
+        metadata.metastore_exists.assert_not_called()
 
     def test_try_read_nonvirtual_single_lookup(
         self, resolver: VirtualViewResolver, metadata: MagicMock
     ) -> None:
-        """Non-virtual path: metadata.get should not be called at all."""
+        """Non-virtual path: metastore_get should not be called at all."""
         result = resolver.try_read("/normal_file.txt")
 
         assert result is None
-        metadata.get.assert_not_called()
-        metadata.exists.assert_not_called()
+        metadata.metastore_get.assert_not_called()
+        metadata.metastore_exists.assert_not_called()
 
 
 class TestTryRead:
@@ -101,7 +107,7 @@ class TestTryRead:
     def test_returns_none_when_original_missing(
         self, resolver: VirtualViewResolver, metadata: MagicMock
     ) -> None:
-        metadata.get.return_value = None
+        metadata.metastore_get.return_value = None
         assert resolver.try_read("/missing_parsed.xlsx.md") is None
 
 

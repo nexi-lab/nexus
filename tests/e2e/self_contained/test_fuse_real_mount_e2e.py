@@ -35,7 +35,6 @@ async def fuse_mount(tmp_path):
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.fuse.mount import MountMode, NexusFUSE
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     storage_path = str(tmp_path / "storage")
     db_path = str(tmp_path / "meta")
@@ -43,7 +42,7 @@ async def fuse_mount(tmp_path):
     os.makedirs(mount_point)
 
     backend = CASLocalBackend(root_path=storage_path)
-    metastore = RaftMetadataStore.embedded(db_path=db_path)
+    metastore = db_path
     nx = create_nexus_fs(
         backend=backend,
         metadata_store=metastore,

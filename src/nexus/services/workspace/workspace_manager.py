@@ -18,7 +18,6 @@ from .workspace_permissions import check_workspace_permission
 if TYPE_CHECKING:
     from nexus.backends.base.backend import Backend
     from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-    from nexus.core.metastore import MetastoreABC
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -41,7 +40,7 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: "MetastoreABC",
+        metadata: "Any",
         backend: "Backend",
         rebac_manager: "ReBACBrickProtocol | None" = None,
         zone_id: str | None = None,
@@ -59,6 +58,8 @@ class WorkspaceManager:
             record_store: RecordStoreABC instance providing session_factory
         """
         self.metadata = metadata
+        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
+        self._kernel: Any = metadata
         self.backend = backend
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
@@ -149,7 +150,9 @@ class WorkspaceManager:
 
         # Get all files in workspace
         with self.metadata_session_factory() as session:
-            files = self.metadata.list_iter(prefix=workspace_prefix)
+            from nexus.kernel_helpers import metastore_list_iter
+
+            files = metastore_list_iter(self._kernel, prefix=workspace_prefix)
 
             # Collect file metadata for manifest
             file_entries: list[tuple[str, str, int, str | None]] = []
@@ -280,7 +283,7 @@ class WorkspaceManager:
                 workspace_prefix += "/"
 
             # Get current workspace files
-            current_files = self.metadata.list(prefix=workspace_prefix)
+            current_files = self._kernel.metastore_list(workspace_prefix)
             current_paths = {
                 f.path[len(workspace_prefix) :]
                 for f in current_files
@@ -293,7 +296,7 @@ class WorkspaceManager:
             for current_path in current_paths:
                 if current_path not in manifest_paths and not current_path.endswith("/"):
                     full_path = workspace_prefix + current_path
-                    self.metadata.delete(full_path)
+                    self._kernel.metastore_delete(full_path)
                     files_deleted += 1
 
             # Restore files from snapshot
@@ -310,7 +313,7 @@ class WorkspaceManager:
                 full_path = workspace_prefix + rel_path
 
                 # Check if file exists with same content
-                existing = self.metadata.get(full_path)
+                existing = self._kernel.metastore_get(full_path)
                 if existing and existing.content_id == entry.content_id:
                     continue  # Already up to date
 
@@ -324,7 +327,7 @@ class WorkspaceManager:
                     modified_at=datetime.now(UTC),
                     version=1,  # Will be updated by metadata store  # Track who restored this version
                 )
-                self.metadata.put(file_meta)
+                self._kernel.metastore_put(file_meta)
                 files_restored += 1
 
             return {

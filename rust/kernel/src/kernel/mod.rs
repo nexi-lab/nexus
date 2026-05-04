@@ -2,25 +2,27 @@
 //!
 //! Zero PyO3 dependency. All Python bridging lives in generated_pyo3.rs.
 //!
-//! Owns DCache, PathRouter, Trie, VFS Lock, MetaStore.
+//! Owns VFSRouter, Trie, VFS Lock, MetaStore.
 //! Hook/Observer registries live in generated_pyo3::PyKernel (wrapper-only).
 //!
 //! Architecture:
 //!   - Created empty via Kernel::new(), then components are wired by wrapper.
-//!   - DCache/Router/Trie use interior mutability (&self methods).
+//!   - VFSRouter / Trie use interior mutability (&self methods).
 //!   - VFS Lock is optionally Arc-shared with VFSLockManager (blocking acquire).
 //!   - MetaStore (Box<dyn MetaStore>) wraps any impl (Python adapter, redb, gRPC).
+//!     Each impl owns its own internal cache; there is no kernel-global
+//!     metadata cache.
 //!
 //! Kernel struct + syscalls — pure Rust kernel boundary.
 
 use crate::core::permission_cache::PermissionLeaseCache;
-#[cfg(test)]
-use crate::dcache::DT_REG;
-use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
 use crate::dispatch::{MutationObserver, PermissionProvider, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock_manager::LockManager;
 use crate::meta_store::LocalMetaStore;
+#[cfg(test)]
+use crate::meta_store::DT_REG;
+use crate::meta_store::{DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
 use crate::vfs_router::{
     canonicalize_mount_path as canonicalize, RouteError, RustRouteResult, VFSRouter,
 };
@@ -291,16 +293,6 @@ pub struct SysSetAttrResult {
     pub space_rd_fd: Option<i32>,
 }
 
-// ── DcacheStats ──────────────────────────────────────────────────────
-
-/// DCache statistics — pure Rust struct returned by dcache_stats().
-pub struct DcacheStats {
-    pub hits: u64,
-    pub misses: u64,
-    pub size: usize,
-    pub hit_rate: f64,
-}
-
 // ── StatResult ───────────────────────────────────────────────────────
 
 /// Result of sys_stat(): pure Rust struct returned by sys_stat().
@@ -536,16 +528,10 @@ impl ZoneRevisionEntry {
 /// Created empty via `Kernel::new()`, then wired by wrapper:
 ///   - `set_lock_manager(lm)` — share unified lock manager.
 ///   - `add_mount(...)` — register mount points.
-///   - `dcache_put(...)` — populate dentry cache.
 ///   - `trie_register(...)` — register path resolvers.
 pub struct Kernel {
-    // DriverLifecycleCoordinator — owns mount lifecycle (routing + metastore + dcache).
+    // DriverLifecycleCoordinator — owns mount lifecycle (routing + metastore).
     pub(crate) dlc: crate::dlc::DriverLifecycleCoordinator,
-    // DCache — ``Arc`` so federation apply-event callbacks can hold a
-    // shared reference that outlives the kernel's call frames (the
-    // state machine's invalidate_cb closure runs on the raft driver
-    // thread, not the kernel's Python-binding thread).
-    dcache: Arc<DCache>,
     // Mount table — owns backend + per-mount metastore + access flags.
     // Replaces the old `router: PathRouter` + `mount_metastores: DashMap`
     // split; both lookups now go through `VFSRouter` (F2 C2). Wrapped
@@ -562,6 +548,16 @@ pub struct Kernel {
     // don't need ``&mut self`` — lets ``PyKernel`` hold an ``Arc<Kernel>``
     // for the apply-side federation-mount callback.
     metastore: parking_lot::RwLock<Option<Box<dyn crate::meta_store::MetaStore>>>,
+    // Tempdir backing the boot-default ``LocalMetaStore``. ``Kernel::new``
+    // creates a tempdir and opens a redb against it so bare kernels
+    // (tests, quickstarts, minimal-mode boots) have a working SSOT
+    // without explicit ``set_metastore_path``. The slot is dropped (set
+    // to ``None``) when ``set_metastore_path`` swaps in a real path so
+    // the ephemeral redb file is released along with the old metastore
+    // ``Box<dyn MetaStore>``. This replaces the pre-U
+    // ``MemoryMetaStore`` boot default — see the U commit body for the
+    // ownership argument.
+    boot_metastore_tempdir: parking_lot::RwLock<Option<tempfile::TempDir>>,
     // VFS lock timeout for blocking acquire (ms) — ``AtomicU64`` so
     // ``set_vfs_lock_timeout`` stays ``&self``; reads are lock-free.
     vfs_lock_timeout_ms: AtomicU64,
@@ -724,20 +720,24 @@ impl Kernel {
         // doc).
         let peer_client_dyn: Arc<dyn crate::hal::peer::PeerBlobClient> =
             crate::hal::peer::NoopPeerBlobClient::arc();
+        // Bare kernels boot with a tempfile-backed ``LocalMetaStore`` so
+        // tests, quickstarts, and minimal-mode boots have a working
+        // redb-backed SSOT without explicit ``set_metastore_path``. The
+        // tempdir is held by the kernel; it drops when the kernel drops
+        // (or when ``set_metastore_path`` swaps in a real path). No
+        // separate in-memory impl: every code path now exercises the
+        // production redb implementation.
+        let boot_tempdir = tempfile::tempdir().expect("failed to create kernel boot tempdir");
+        let boot_redb = boot_tempdir.path().join("meta.redb");
+        let boot_metastore = crate::core::meta_store::LocalMetaStore::open(&boot_redb)
+            .expect("failed to open kernel boot LocalMetaStore");
         let k = Self {
             dlc: crate::dlc::DriverLifecycleCoordinator::new(),
-            dcache: Arc::new(DCache::new()),
             vfs_router: Arc::new(VFSRouter::new()),
             trie: Trie::new(),
             lock_manager: Arc::new(LockManager::new()),
-            // Bare kernels boot with an in-memory metastore so tests,
-            // quickstarts and minimal-mode boots have a working SSOT
-            // without explicit wiring. `set_metastore_path` swaps it
-            // for a redb-backed one on demand; federation installs a
-            // per-mount `ZoneMetaStore` via `install_mount_metastore`.
-            metastore: parking_lot::RwLock::new(Some(Box::new(
-                crate::meta_store::MemoryMetaStore::new(),
-            ))),
+            metastore: parking_lot::RwLock::new(Some(Box::new(boot_metastore))),
+            boot_metastore_tempdir: parking_lot::RwLock::new(Some(boot_tempdir)),
             vfs_lock_timeout_ms: AtomicU64::new(5000),
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
@@ -831,6 +831,10 @@ impl Kernel {
         let ms = LocalMetaStore::open(std::path::Path::new(path))
             .map_err(|e| KernelError::IOError(format!("LocalMetaStore: {e:?}")))?;
         *self.metastore.write() = Some(Box::new(ms));
+        // Drop the boot tempdir so the ephemeral redb file is released.
+        // The old metastore Box drops with the assignment above; the
+        // tempdir's RAII clean-up runs here.
+        *self.boot_metastore_tempdir.write() = None;
         Ok(())
     }
 
@@ -841,6 +845,7 @@ impl Kernel {
     /// SQLite-lifecycle regression).
     pub fn release_metastores(&self) {
         *self.metastore.write() = None;
+        *self.boot_metastore_tempdir.write() = None;
         // Drop per-mount metastores by clearing their slot on each
         // MountEntry. We iterate via `iter_mut` to avoid a full rebuild.
         for mut entry in self.vfs_router.entries_iter_mut() {
@@ -848,8 +853,7 @@ impl Kernel {
         }
     }
 
-    /// Atomic metadata commit — propose to metastore first, update
-    /// dcache only on success.
+    /// Atomic metadata commit — propose to metastore.
     ///
     /// Replaces the legacy "best-effort metastore put + eager dcache
     /// update" pattern that scattered across 10+ sys_* paths. That
@@ -860,31 +864,15 @@ impl Kernel {
     /// (TestPartialReplicationFailure::test_partition_then_heal CI
     /// regression — see PR #3890 for the full diagnostic).
     ///
-    /// Architecture:
-    ///   - MetaStore is the SSOT. dcache is a downstream cache.
-    ///   - For federation mounts (`ZoneMetaStore`), `put` blocks
-    ///     until raft commits the entry on quorum. If the propose
-    ///     times out (e.g., quorum unreachable), this returns Err
-    ///     and the dcache stays consistent with the state machine
-    ///     (i.e., file does NOT appear in subsequent reads).
-    ///   - For standalone mounts (`LocalMetaStore`), `put` is a
-    ///     synchronous redb write — same atomicity story, smaller
-    ///     latency budget.
-    ///
-    /// Perf:
-    ///   - Federation: caller waits one raft RTT per write. Same as
-    ///     the implicit cost of "successful raft commit"; the old
-    ///     pattern only made it look free by lying.
-    ///   - Standalone: redb fsync, microseconds.
-    ///   - All other state mutations (dcache update, observer
-    ///     dispatch) wait for commit. No double-bookkeeping.
+    /// MetaStore is the SSOT. Each impl owns an internal cache that
+    /// the `put` write-through populates — there is no longer a
+    /// separate kernel-global cache to keep in sync.
     pub(crate) fn commit_metadata(
         &self,
         path: &str,
         mount_point: &str,
         meta: crate::meta_store::FileMetadata,
     ) -> Result<(), KernelError> {
-        let cache_entry: CachedEntry = (&meta).into();
         let put_result = self
             .with_metastore(mount_point, move |ms| ms.put(path, meta))
             .ok_or_else(|| {
@@ -895,14 +883,13 @@ impl Kernel {
         put_result.map_err(|e| {
             KernelError::IOError(format!("commit_metadata({path}): metastore.put: {e:?}"))
         })?;
-        self.dcache.put(path, cache_entry);
         Ok(())
     }
 
-    /// Atomic metadata delete — same pattern as `commit_metadata`
-    /// but for the unlink path. Removes from metastore first; on
-    /// success evicts dcache. Failure leaves dcache untouched so a
-    /// retry sees the still-present entry instead of a phantom miss.
+    /// Atomic metadata delete — same pattern as `commit_metadata` but
+    /// for the unlink path. The metastore impl invalidates its own
+    /// internal cache before the store delete, so concurrent readers
+    /// never observe a stale hit after the store delete.
     pub(crate) fn commit_delete(&self, path: &str, mount_point: &str) -> Result<bool, KernelError> {
         let del_result = self
             .with_metastore(mount_point, move |ms| ms.delete(path))
@@ -914,7 +901,6 @@ impl Kernel {
         let removed = del_result.map_err(|e| {
             KernelError::IOError(format!("commit_delete({path}): metastore.delete: {e:?}"))
         })?;
-        self.dcache.evict(path);
         Ok(removed)
     }
 
@@ -936,6 +922,25 @@ impl Kernel {
                 drop(entry);
                 return Some(f(ms_arc.as_ref()));
             }
+        }
+        self.metastore.read().as_ref().map(|ms| f(ms.as_ref()))
+    }
+
+    /// Same as [`Self::with_metastore`], but consumes the per-mount
+    /// metastore Arc already populated on [`crate::vfs_router::RouteResult`]
+    /// — saves the second `get_canonical` lookup `with_metastore`
+    /// otherwise performs on top of `route()`. Hot-path callers
+    /// (sys_read, sys_stat, sys_unlink) prefer this entry.
+    pub(crate) fn with_metastore_route<F, R>(
+        &self,
+        route: &crate::vfs_router::RouteResult,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&dyn crate::meta_store::MetaStore) -> R,
+    {
+        if let Some(ms) = route.metastore.as_ref() {
+            return Some(f(ms.as_ref()));
         }
         self.metastore.read().as_ref().map(|ms| f(ms.as_ref()))
     }
@@ -1315,43 +1320,6 @@ impl Kernel {
     // ── Advisory lock primitive (§4.4) ──────────────────────────
     // (Moved to `kernel::locks` submodule.)
 
-    // ── DCache proxy methods ───────────────────────────────────────────
-
-    /// Insert or update a cache entry.
-    #[allow(clippy::too_many_arguments)]
-    pub fn dcache_put(
-        &self,
-        path: &str,
-        size: u64,
-        entry_type: u8,
-        version: u32,
-        content_id: Option<&str>,
-        zone_id: Option<&str>,
-        mime_type: Option<&str>,
-        last_writer_address: Option<&str>,
-    ) {
-        self.dcache.put(
-            path,
-            CachedEntry {
-                size,
-                content_id: content_id.map(|s| s.to_string()),
-                version,
-                entry_type,
-                zone_id: zone_id.map(|s| s.to_string()),
-                mime_type: mime_type.map(|s| s.to_string()),
-                created_at_ms: None,
-                modified_at_ms: None,
-                last_writer_address: last_writer_address.map(|s| s.to_string()),
-                link_target: None,
-            },
-        );
-    }
-
-    /// Put a pre-built CachedEntry into the dcache. Used by DLC.mount().
-    pub(crate) fn dcache_put_entry(&self, path: &str, entry: CachedEntry) {
-        self.dcache.put(path, entry);
-    }
-
     /// DT_LINK transparent follow for `sys_read` / `sys_write` /
     /// `sys_copy`. Returns the absolute target path for a DT_LINK
     /// `entry`, `None` for non-link entries (caller continues with the
@@ -1362,16 +1330,15 @@ impl Kernel {
     /// `max_link_hops == 0` branch.
     ///
     /// Resolution must happen AFTER the entry is loaded from
-    /// authoritative storage (dcache + metastore fallback). The hot
-    /// dcache alone is not sufficient: cold-cache and cross-mount
-    /// follows would otherwise silently fall through as if the path
-    /// were a regular file.
+    /// authoritative storage. Cold-cache and cross-mount follows would
+    /// otherwise silently fall through as if the path were a regular
+    /// file.
     ///
     /// `sys_stat` deliberately bypasses link follow — `lstat` semantics
     /// require the raw DT_LINK metadata, not the resolved target.
     pub(crate) fn dt_link_target<'e>(
         path: &str,
-        entry: &'e CachedEntry,
+        entry: &'e crate::meta_store::FileMetadata,
     ) -> Result<Option<&'e str>, KernelError> {
         if entry.entry_type != DT_LINK {
             return Ok(None);
@@ -1387,69 +1354,13 @@ impl Kernel {
         Ok(Some(target))
     }
 
-    /// Get hot-path tuple: (entry_type, last_writer_address).
-    pub fn dcache_get(&self, path: &str) -> Option<(u8, Option<String>)> {
-        self.dcache.get_hot(path)
-    }
-
-    /// Evict a single path.
-    pub fn dcache_evict(&self, path: &str) -> bool {
-        self.dcache.evict(path)
-    }
-
-    /// Clone the shared DCache ``Arc`` for federation apply-event
-    /// callbacks. Consumer holds its own reference so the callback
-    /// stays valid even if the kernel's invoking call frame has
-    /// returned — the cache itself lives as long as *any* holder.
-    #[allow(dead_code)]
-    pub(crate) fn dcache_handle(&self) -> Arc<DCache> {
-        Arc::clone(&self.dcache)
-    }
-
     /// Clone the shared VFSRouter ``Arc`` for federation apply-event
     /// callbacks that need to look up mount-points-for-zone at
-    /// invalidation time. See ``dcache_handle`` for the lifetime
-    /// rationale — same contract.
+    /// invalidation time. The cache itself lives as long as *any*
+    /// holder.
     #[allow(dead_code)]
     pub(crate) fn vfs_router_handle(&self) -> Arc<VFSRouter> {
         Arc::clone(&self.vfs_router)
-    }
-
-    /// Evict all entries with given prefix.
-    pub fn dcache_evict_prefix(&self, prefix: &str) -> usize {
-        self.dcache.evict_prefix(prefix)
-    }
-
-    /// Check if path exists in cache.
-    pub fn dcache_contains(&self, path: &str) -> bool {
-        self.dcache.contains(path)
-    }
-
-    /// Return cache statistics.
-    pub fn dcache_stats(&self) -> DcacheStats {
-        let (hits, misses, size) = self.dcache.stats();
-        let total = hits + misses;
-        let hit_rate = if total > 0 {
-            hits as f64 / total as f64
-        } else {
-            0.0
-        };
-        DcacheStats {
-            hits,
-            misses,
-            size,
-            hit_rate,
-        }
-    }
-
-    /// Clear all entries and reset counters.
-    pub fn dcache_clear(&self) {
-        self.dcache.clear();
-    }
-
-    /// Number of entries in dcache.
-    pub fn dcache_len(&self) -> usize {
-        self.dcache.len()
     }
 
     // ── Router proxy methods ───────────────────────────────────────────
@@ -1748,19 +1659,8 @@ impl Kernel {
             link_target: Some(link_target.to_string()),
         };
         self.metastore_put(path, meta)?;
-        let entry = CachedEntry {
-            size: 0,
-            content_id: None,
-            version: 1,
-            entry_type: DT_LINK,
-            zone_id: Some(zone_id.to_string()),
-            mime_type: None,
-            created_at_ms: None,
-            modified_at_ms: None,
-            last_writer_address: None,
-            link_target: Some(link_target.to_string()),
-        };
-        self.dcache_put_entry(path, entry);
+        // The metastore impl populates its own internal cache during
+        // ``put`` — no separate kernel-side cache to seed.
         Ok(SysSetAttrResult {
             path: path.to_string(),
             created: true,
@@ -2231,11 +2131,40 @@ impl Kernel {
         Arc::clone(&self.vfs_router)
     }
 
-    /// Clone the DCache `Arc` — used by federation / transport install
-    /// hooks to wire invalidation callbacks against the kernel's
-    /// dcache without holding the lock across `.await`.
-    pub fn dcache_arc(&self) -> Arc<DCache> {
-        Arc::clone(&self.dcache)
+    /// Resolve a VFS path to its locally-stored ``content_id``.
+    ///
+    /// Runs the same chain as ``sys_stat``'s metadata fetch (validate,
+    /// route, per-mount metastore lookup, ``content_id`` non-empty
+    /// filter) and returns the value the local backend expects: CAS
+    /// hash for content-addressed mounts, backend-relative path for
+    /// path-addressed mounts. Returns ``None`` on routing failure,
+    /// missing metadata, or empty content_id.
+    ///
+    /// Public surface (kernel's syscall layer, not MetaStore-shaped) so
+    /// cross-crate callers (federation's ``KernelBlobFetcher``) reach it
+    /// through the same boundary the syscall API uses — no
+    /// ``Arc<dyn MetaStore>`` leak across crates.
+    pub fn lookup_content_id(&self, path: &str, zone_id: &str) -> Option<String> {
+        let route = self.vfs_router.route(path, zone_id).ok()?;
+        self.with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+            .flatten()
+            .and_then(|m| m.content_id)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Hand out a long-lived closure that calls
+    /// [`Self::lookup_content_id`] under a fixed ``zone_id``. The
+    /// closure clones the kernel's ``Arc`` so it survives the call
+    /// frame that produced it — federation's ``KernelBlobFetcher``
+    /// holds it for the lifetime of the gRPC server.
+    #[allow(clippy::type_complexity)]
+    pub fn content_id_lookup_fn(
+        self: &Arc<Self>,
+        zone_id: &str,
+    ) -> Arc<dyn Fn(&str) -> Option<String> + Send + Sync> {
+        let kernel = Arc::clone(self);
+        let zone = zone_id.to_string();
+        Arc::new(move |path: &str| kernel.lookup_content_id(path, &zone))
     }
 
     /// Borrow the kernel's `AgentRegistry` (the per-PID SSOT).  Used by
@@ -2513,13 +2442,17 @@ impl Kernel {
             if all_matches.len() >= max_results {
                 break;
             }
-            // Probe entry_type via dcache; skip non-regular entries.
-            // A None dcache entry is conservatively treated as
+            // Probe entry_type via the routed metastore; skip
+            // non-regular entries. A miss is conservatively treated as
             // regular (the metastore stamped it; sys_read will fail
             // gracefully if the underlying backend disagrees).
-            if let Some(entry) = self.dcache.get_entry(&fpath) {
-                if entry.entry_type != crate::dcache::DT_REG {
-                    continue;
+            if let Ok(route) = self.vfs_router.route(&fpath, &ctx.zone_id) {
+                if let Some(Some(meta)) =
+                    self.with_metastore_route(&route, |ms| ms.get(&fpath).ok().flatten())
+                {
+                    if meta.entry_type != crate::meta_store::DT_REG {
+                        continue;
+                    }
                 }
             }
             let bytes = match self.sys_read(&fpath, ctx, 5000, 0) {
@@ -3324,14 +3257,15 @@ mod tests {
     fn test_sys_rename_cross_mount_rejected() {
         // Cross-mount rename is always rejected — both PAS and CAS. Callers
         // must use copy + delete. Verify both metastores remain unchanged.
-        use crate::meta_store::{FileMetadata, MemoryMetaStore};
+        use crate::meta_store::{FileMetadata, LocalMetaStore};
         use std::sync::Arc;
 
         let k = Kernel::new();
         let zone = contracts::ROOT_ZONE_ID;
 
-        let ms_a = Arc::new(MemoryMetaStore::new());
-        let ms_b = Arc::new(MemoryMetaStore::new());
+        let _td = tempfile::tempdir().unwrap();
+        let ms_a = Arc::new(LocalMetaStore::open(&_td.path().join("a.redb")).unwrap());
+        let ms_b = Arc::new(LocalMetaStore::open(&_td.path().join("b.redb")).unwrap());
 
         k.vfs_router.add_mount("/mnt_a", zone, None, false);
         k.vfs_router.add_mount("/mnt_b", zone, None, false);
@@ -3385,14 +3319,15 @@ mod tests {
     #[test]
     fn test_sys_rename_cross_mount_directory_rejected() {
         // Cross-mount directory rename is rejected; all source children unchanged.
-        use crate::meta_store::{FileMetadata, MemoryMetaStore};
+        use crate::meta_store::{FileMetadata, LocalMetaStore};
         use std::sync::Arc;
 
         let k = Kernel::new();
         let zone = contracts::ROOT_ZONE_ID;
 
-        let ms_a = Arc::new(MemoryMetaStore::new());
-        let ms_b = Arc::new(MemoryMetaStore::new());
+        let _td = tempfile::tempdir().unwrap();
+        let ms_a = Arc::new(LocalMetaStore::open(&_td.path().join("a.redb")).unwrap());
+        let ms_b = Arc::new(LocalMetaStore::open(&_td.path().join("b.redb")).unwrap());
 
         k.vfs_router.add_mount("/mnt_a", zone, None, false);
         k.vfs_router.add_mount("/mnt_b", zone, None, false);
@@ -3447,13 +3382,14 @@ mod tests {
     /// silent miss; callers no longer need a separate Python-side shim.
     #[test]
     fn test_sys_unlink_mount_root_delegates_to_dlc_unmount() {
-        use crate::meta_store::{FileMetadata, MemoryMetaStore};
+        use crate::meta_store::{FileMetadata, LocalMetaStore};
         use std::sync::Arc;
 
         let k = Kernel::new();
         let zone = contracts::ROOT_ZONE_ID;
 
-        let ms = Arc::new(MemoryMetaStore::new());
+        let _td = tempfile::tempdir().unwrap();
+        let ms = Arc::new(LocalMetaStore::open(&_td.path().join("meta.redb")).unwrap());
         k.vfs_router.add_mount("/mnt", zone, None, false);
         let canon = crate::vfs_router::canonicalize_mount_path("/mnt", zone);
         k.vfs_router
@@ -3564,10 +3500,13 @@ mod tests {
 
     mod dt_link {
         use super::*;
-        use crate::dcache::DT_LINK as DT_LINK_TYPE;
+        use crate::meta_store::DT_LINK as DT_LINK_TYPE;
+        use crate::meta_store::{FileMetadata, LocalMetaStore};
+        use std::sync::Arc;
 
-        fn link_entry(target: &str) -> CachedEntry {
-            CachedEntry {
+        fn link_entry(path: &str, target: &str) -> FileMetadata {
+            FileMetadata {
+                path: path.to_string(),
                 size: 0,
                 content_id: None,
                 version: 1,
@@ -3577,12 +3516,14 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                target_zone_id: None,
                 link_target: Some(target.to_string()),
             }
         }
 
-        fn reg_entry() -> CachedEntry {
-            CachedEntry {
+        fn reg_entry(path: &str) -> FileMetadata {
+            FileMetadata {
+                path: path.to_string(),
                 size: 0,
                 content_id: None,
                 version: 1,
@@ -3592,19 +3533,20 @@ mod tests {
                 created_at_ms: None,
                 modified_at_ms: None,
                 last_writer_address: None,
+                target_zone_id: None,
                 link_target: None,
             }
         }
 
         #[test]
         fn dt_link_target_passthrough_for_non_link() {
-            let e = reg_entry();
+            let e = reg_entry("/x");
             assert_eq!(Kernel::dt_link_target("/x", &e).unwrap(), None);
         }
 
         #[test]
         fn dt_link_target_returns_target_for_link() {
-            let e = link_entry("/agents/scode-standard");
+            let e = link_entry("/proc/p1/agent", "/agents/scode-standard");
             assert_eq!(
                 Kernel::dt_link_target("/proc/p1/agent", &e).unwrap(),
                 Some("/agents/scode-standard"),
@@ -3613,7 +3555,7 @@ mod tests {
 
         #[test]
         fn dt_link_target_self_loop_rejected() {
-            let e = link_entry("/loop");
+            let e = link_entry("/loop", "/loop");
             let err = Kernel::dt_link_target("/loop", &e).unwrap_err();
             match err {
                 KernelError::PermissionDenied(msg) => assert!(msg.contains("self-loop")),
@@ -3623,7 +3565,7 @@ mod tests {
 
         #[test]
         fn dt_link_target_missing_target_rejected() {
-            let mut e = link_entry("/x");
+            let mut e = link_entry("/broken", "/x");
             e.link_target = None;
             let err = Kernel::dt_link_target("/broken", &e).unwrap_err();
             match err {
@@ -3632,15 +3574,19 @@ mod tests {
             }
         }
 
-        /// Cold-cache regression: chained-link rejection must work even
-        /// when the link entries are absent from dcache (only present in
-        /// metastore). The pre-fix dcache-only resolver would silently
-        /// pass `/data/a` through unchanged, masking the chain.
+        /// Chained-link rejection: even when resolution must consult
+        /// the metastore directly (no kernel-side cache hot path),
+        /// chained DT_LINK entries reject at the second hop. The
+        /// per-mount metastore here is a fresh ``LocalMetaStore``
+        /// against a tempfile redb — every lookup hits the underlying
+        /// store, exercising the same path a cold cache hit would.
         #[test]
         fn sys_read_rejects_chained_link_through_metastore_only() {
             let k = Kernel::new();
-            let ms = temp_metastore();
-            k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
+            let _td = tempfile::tempdir().unwrap();
+            let ms: Arc<dyn crate::meta_store::MetaStore> =
+                Arc::new(LocalMetaStore::open(&_td.path().join("meta.redb")).unwrap());
+            k.add_mount("/data", "root", None, Some(ms), None, false)
                 .unwrap();
 
             // /data/a -> /data/b -> /data/c (chain).
@@ -3667,11 +3613,6 @@ mod tests {
                 .unwrap();
             }
 
-            // Evict dcache so resolution must hit metastore fallback.
-            k.dcache.evict("/data/a");
-            k.dcache.evict("/data/b");
-            k.dcache.evict("/data/c");
-
             let ctx = OperationContext::new("test", "root", true, None, true);
             match k.sys_read("/data/a", &ctx, 5000, 0) {
                 Err(KernelError::PermissionDenied(msg)) => {
@@ -3682,15 +3623,16 @@ mod tests {
             }
         }
 
-        /// Cold-cache regression: sys_write follows the link the same
-        /// way (so writes hit the target, not a phantom file at the
-        /// link path). Chain rejection at the second hop reuses the
-        /// same code path as sys_read.
+        /// sys_write follows DT_LINK the same way as sys_read (so
+        /// writes hit the target, not a phantom file at the link path).
+        /// Chain rejection at the second hop reuses the same code path.
         #[test]
         fn sys_write_rejects_chained_link_through_metastore_only() {
             let k = Kernel::new();
-            let ms = temp_metastore();
-            k.add_mount("/data", "root", None, Some(ms.clone()), None, false)
+            let _td = tempfile::tempdir().unwrap();
+            let ms: Arc<dyn crate::meta_store::MetaStore> =
+                Arc::new(LocalMetaStore::open(&_td.path().join("meta.redb")).unwrap());
+            k.add_mount("/data", "root", None, Some(ms), None, false)
                 .unwrap();
 
             for (path, target) in &[("/data/a", "/data/b"), ("/data/b", "/data/c")] {
@@ -3715,9 +3657,6 @@ mod tests {
                 )
                 .unwrap();
             }
-            k.dcache.evict("/data/a");
-            k.dcache.evict("/data/b");
-            k.dcache.evict("/data/c");
 
             let ctx = OperationContext::new("test", "root", true, None, true);
             match k.sys_write("/data/a", &ctx, b"payload", 0) {

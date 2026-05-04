@@ -128,7 +128,12 @@ class ZoneExportService:
             nexus_fs: NexusFS-compatible instance with metadata store and backend access
         """
         self.nexus_fs = nexus_fs
-        self.metadata_store = nexus_fs.metadata
+        # ``nx.metadata`` was removed in W3b — reach the kernel directly so
+        # ``list`` calls land on ``kernel.metastore_list``. The protocol
+        # type doesn't declare ``_kernel`` (it's an implementation
+        # detail of the concrete NexusFS); read it via ``getattr`` to
+        # keep the static contract narrow.
+        self._kernel = getattr(nexus_fs, "_kernel", None)
         # R20.18.x: `NexusFS.backend` is gone — the kernel owns mount
         # routing now. Content reads go through `nexus_fs.sys_read`;
         # see `_export_content_blobs`.
@@ -309,7 +314,9 @@ class ZoneExportService:
         # Get all files from metadata store
         # Note: The actual implementation depends on the metadata store API
         prefix = options.path_prefix or ""
-        all_files = list(self.metadata_store.list(prefix))
+        if self._kernel is None:
+            raise RuntimeError("ZoneExportService requires a kernel-backed NexusFS")
+        all_files = list(self._kernel.metastore_list(prefix))
 
         # Apply zone filter if metadata store doesn't do it
         # (In a real implementation, this would be done at the database level)

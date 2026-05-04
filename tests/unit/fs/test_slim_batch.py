@@ -56,7 +56,7 @@ def slim(tmp_path: Path) -> NexusFS:
         is_admin=True,
     )
     kernel.sys_setattr("/files", entry_type=DT_MOUNT, backend=backend)
-    metastore.put(_make_mount_entry("/files", backend.name))
+    metastore.metastore_put(_make_mount_entry("/files", backend.name))
 
     return kernel
 

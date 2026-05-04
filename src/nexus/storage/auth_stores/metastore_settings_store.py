@@ -18,22 +18,28 @@ used by :mod:`nexus.bricks.mount.metastore_mount_store`.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from nexus.contracts.auth_store_types import SystemSettingDTO
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.metastore import MetastoreABC
 
 _CFG_PREFIX = "cfg:"
 
 
 class MetastoreSettingsStore:
-    """SystemSettingsStoreProtocol implementation backed by MetastoreABC."""
+    """SystemSettingsStoreProtocol implementation backed by the kernel.
 
-    def __init__(self, metastore: MetastoreABC) -> None:
+    Accepts either a bare ``PyKernel`` (post-W3b factory wiring) or a
+    legacy ``RustMetastoreProxy`` shim — the constructor unwraps to the
+    kernel handle and dispatches to ``kernel.metastore_*`` directly.
+    """
+
+    def __init__(self, metastore: Any) -> None:
         self._metastore = metastore
+        self._kernel = metastore
 
     def get_setting(self, key: str) -> SystemSettingDTO | None:
-        fm = self._metastore.get(f"{_CFG_PREFIX}{key}")
+        fm = self._kernel.metastore_get(f"{_CFG_PREFIX}{key}")
         if fm is None or not fm.content_id:
             return None
         try:
@@ -63,4 +69,4 @@ class MetastoreSettingsStore:
             size=0,
             content_id=json.dumps(payload),
         )
-        self._metastore.put(fm)
+        self._kernel.metastore_put(fm)

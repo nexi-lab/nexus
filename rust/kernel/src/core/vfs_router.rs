@@ -136,7 +136,7 @@ pub enum RouteError {
 /// which is the same form `VFSRouter` is keyed by. Pass it straight into
 /// `VFSRouter::{read_content, write_content, get_canonical, …}` without
 /// re-canonicalizing.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RouteResult {
     /// Zone-canonical key (`/{zone_id}{user_mount_point}`).
     pub mount_point: String,
@@ -154,6 +154,44 @@ pub struct RouteResult {
     /// Derived from the backend trait's `as_cas()` downcast — single
     /// source of truth, no string-prefix sniffing on a label.
     pub is_cas: bool,
+    /// Per-mount metastore Arc, populated from the same DashMap lookup
+    /// that produced the routing result. `None` when the mount has no
+    /// per-mount metastore wired — callers fall back to the kernel's
+    /// global metastore via [`RouteResult::resolve_metastore`].
+    ///
+    /// Carried inline so the syscall hot path does not perform a second
+    /// `VFSRouter::get_canonical` lookup just to fetch the metastore Arc
+    /// after `route()` already did one. Same hot-path cost as the legacy
+    /// `route() + dcache.get_entry()` pair.
+    pub metastore: Option<Arc<dyn MetaStore>>,
+}
+
+impl RouteResult {
+    /// Resolve the metastore for this mount, falling back to a
+    /// kernel-supplied global metastore when the mount has no per-mount
+    /// override. Returns `None` only when both are absent.
+    pub fn resolve_metastore(
+        &self,
+        global_fallback: Option<&Arc<dyn MetaStore>>,
+    ) -> Option<Arc<dyn MetaStore>> {
+        self.metastore
+            .as_ref()
+            .map(Arc::clone)
+            .or_else(|| global_fallback.map(Arc::clone))
+    }
+}
+
+impl std::fmt::Debug for RouteResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouteResult")
+            .field("mount_point", &self.mount_point)
+            .field("backend_path", &self.backend_path)
+            .field("zone_id", &self.zone_id)
+            .field("is_external", &self.is_external)
+            .field("is_cas", &self.is_cas)
+            .field("metastore", &self.metastore.is_some())
+            .finish()
+    }
 }
 
 /// Legacy alias retained so callers naming `RustRouteResult` keep
@@ -481,6 +519,7 @@ impl VFSRouter {
                     .target_zone_id
                     .clone()
                     .unwrap_or_else(|| zone_id.to_string());
+                let metastore = entry.metastore.as_ref().map(Arc::clone);
                 drop(entry);
 
                 return Some(RouteResult {
@@ -489,6 +528,7 @@ impl VFSRouter {
                     zone_id: resolved_zone,
                     is_external,
                     is_cas,
+                    metastore,
                 });
             }
 

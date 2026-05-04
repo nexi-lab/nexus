@@ -974,6 +974,7 @@ mod tests {
                 subject_id: None,
                 request_id: "req-cross-link".into(),
                 context_zone_id: None,
+                zone_perms: vec![],
             };
 
             kernel
@@ -1023,6 +1024,7 @@ mod tests {
                 subject_id: None,
                 request_id: "req-stamp".into(),
                 context_zone_id: None,
+                zone_perms: vec![],
             };
 
             kernel

@@ -259,8 +259,8 @@ class TestStartupSyncBasic:
         from nexus.cache.dragonfly import DragonflyClient
         from nexus.services.event_bus.redis import RedisEventBus
         from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
-        from nexus.storage.dict_metastore import DictMetastore
         from nexus.storage.models import OperationLogModel
+        from tests.helpers.dict_metastore import DictMetastore
 
         redis_url = os.environ.get(
             "NEXUS_REDIS_URL",

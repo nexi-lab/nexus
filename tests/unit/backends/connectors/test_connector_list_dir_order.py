@@ -264,7 +264,7 @@ def test_sys_readdir_swallows_connector_backend_error(tmp_path: Path) -> None:
         init_cred=OperationContext(user_id="u", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
     kernel.sys_setattr("/ext", entry_type=DT_MOUNT, backend=backend, is_external=True)
-    metastore.put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
+    metastore.metastore_put(_make_mount_entry("/ext", backend.name, entry_type=DT_EXTERNAL_STORAGE))
 
     # Rust sys_readdir_backend swallows errors and returns empty Vec;
     # the Python sys_readdir layer surfaces an empty list (or only

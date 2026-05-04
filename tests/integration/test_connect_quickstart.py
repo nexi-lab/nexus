@@ -51,7 +51,7 @@ async def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
 
     Phase 4: REMOTE profile now uses Rust RemoteBackend/RemoteMetastore
     installed via sys_setattr(backend_type="remote"). Verify the NexusFS
-    uses RustMetastoreProxy (not Python RemoteMetastore) and has no
+    holds a Rust ``PyKernel`` (not a Python RemoteMetastore) and has no
     brick-layer registries.
     """
     mock_channel = MagicMock()
@@ -72,10 +72,9 @@ async def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
             # Kernel must NOT hold brick-layer parser/provider registry references
             assert not hasattr(nx, "parser_registry")
             assert not hasattr(nx, "provider_registry")
-            # Metastore must be RustMetastoreProxy (delegating to Rust kernel)
-            from nexus.core.metastore import RustMetastoreProxy
-
-            assert isinstance(nx.metadata, RustMetastoreProxy)
+            # Kernel handle must be a Rust ``PyKernel``.
+            assert nx._kernel is not None
+            assert nx._kernel.__class__.__name__ == "PyKernel"
         finally:
             nx.close()
 

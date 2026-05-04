@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.vfs_hooks import WriteHookContext
+from nexus.kernel_helpers import metastore_set_file_metadata
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
@@ -46,6 +47,8 @@ class AutoParseWriteHook:
         self._get_parser = get_parser
         self._parse_fn = parse_fn
         self._metadata = metadata
+        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
+        self._kernel = metadata
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
 
@@ -65,10 +68,10 @@ class AutoParseWriteHook:
         # unavailable.
         if self._metadata is not None:
             try:
-                self._metadata.set_file_metadata(ctx.path, "parsed_text", None)
-                self._metadata.set_file_metadata(ctx.path, "parsed_text_hash", None)
-                self._metadata.set_file_metadata(ctx.path, "parsed_at", None)
-                self._metadata.set_file_metadata(ctx.path, "parser_name", None)
+                metastore_set_file_metadata(self._kernel, ctx.path, "parsed_text", None)
+                metastore_set_file_metadata(self._kernel, ctx.path, "parsed_text_hash", None)
+                metastore_set_file_metadata(self._kernel, ctx.path, "parsed_at", None)
+                metastore_set_file_metadata(self._kernel, ctx.path, "parser_name", None)
             except Exception:
                 pass  # Best-effort cache invalidation
 

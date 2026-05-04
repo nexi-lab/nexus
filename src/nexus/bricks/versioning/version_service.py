@@ -105,6 +105,8 @@ class VersionService:
             record_store: RecordStoreABC instance providing session_factory for version history queries
         """
         self.metadata = metadata_store
+        # Accept either a bare ``PyKernel`` or a legacy proxy shim.
+        self._kernel = metadata_store
         self.cas = cas_store
         self._permission_enforcer = permission_enforcer
         self._dlc = dlc
@@ -343,22 +345,16 @@ class VersionService:
         # Update in-memory metadata store so subsequent reads return rolled-back content
         if result is not None:
             new_hash, new_size = result
-            meta = self.metadata.get(path)
+            meta = self._kernel.metastore_get(path)
             if meta is not None:
                 from dataclasses import replace as dc_replace
 
                 updated_meta = dc_replace(meta, content_id=new_hash, size=new_size)
-                self.metadata.put(updated_meta)
+                self._kernel.metastore_put(updated_meta)
 
-        # Invalidate cache if enabled
-        if (
-            hasattr(self.metadata, "_cache_enabled")
-            and self.metadata._cache_enabled
-            and hasattr(self.metadata, "_cache")
-            and self.metadata._cache
-        ):
-            self.metadata._cache.invalidate_path(path)
-            logger.debug("Cache invalidated for path=%s", path)
+        # Cache invalidation is now handled inside the Rust ``LocalMetaStore``
+        # impl on every ``put`` / ``delete`` (commit U); the Python-side
+        # ``_cache_enabled`` / ``_cache`` flags are gone with the proxy.
 
         logger.info(f"[ROLLBACK] Completed for path={path}")
 

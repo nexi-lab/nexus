@@ -11,6 +11,8 @@ DI dependencies:
 import logging
 from typing import Any
 
+from nexus.kernel_helpers import metastore_set_file_metadata
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,6 +29,8 @@ class ContentParserEngine:
         provider_registry: Any | None = None,
     ) -> None:
         self._metadata = metadata
+        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
+        self._kernel = metadata
         self._provider_registry = provider_registry
 
     async def get_parsed_content_async(
@@ -44,11 +48,13 @@ class ContentParserEngine:
         parse_info: dict[str, Any] = {"parsed": False, "provider": None, "cached": False}
 
         try:
-            cached_text = self._metadata.get_file_metadata(path, "parsed_text")
+            cached_text = self._kernel.metastore_get_file_metadata(path, "parsed_text")
             if cached_text:
                 parse_info["parsed"] = True
                 parse_info["cached"] = True
-                parse_info["provider"] = self._metadata.get_file_metadata(path, "parser_name")
+                parse_info["provider"] = self._kernel.metastore_get_file_metadata(
+                    path, "parser_name"
+                )
                 logger.debug(f"Using cached parsed_text for {path}")
                 return (
                     cached_text.encode("utf-8") if isinstance(cached_text, str) else cached_text,
@@ -75,11 +81,13 @@ class ContentParserEngine:
                     try:
                         from datetime import UTC, datetime
 
-                        self._metadata.set_file_metadata(path, "parsed_text", result.text)
-                        self._metadata.set_file_metadata(
-                            path, "parsed_at", datetime.now(UTC).isoformat()
+                        metastore_set_file_metadata(self._kernel, path, "parsed_text", result.text)
+                        metastore_set_file_metadata(
+                            self._kernel, path, "parsed_at", datetime.now(UTC).isoformat()
                         )
-                        self._metadata.set_file_metadata(path, "parser_name", provider.name)
+                        metastore_set_file_metadata(
+                            self._kernel, path, "parser_name", provider.name
+                        )
                     except Exception as cache_err:
                         logger.warning(f"Failed to cache parsed content for {path}: {cache_err}")
 

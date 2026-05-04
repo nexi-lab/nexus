@@ -22,7 +22,6 @@ from datetime import UTC, datetime
 
 import nexus
 from nexus.contracts.types import OperationContext
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 async def test_provision_user() -> bool:
@@ -38,7 +37,7 @@ async def test_provision_user() -> bool:
 
     backend = CASLocalBackend(root_path="/tmp/nexus_test")
     # Use in-memory SQLite database for testing
-    metadata_store = RaftMetadataStore.embedded("sqlite:///:memory:".replace(".db", ""))
+    metadata_store = "sqlite:///:memory:".replace(".db", "")
     nx = nexus.create_nexus_fs(backend=backend, metadata_store=metadata_store)
     print("   ✓ NexusFS initialized with CASLocalBackend and in-memory database")
     print("   - Root path: /tmp/nexus_test")

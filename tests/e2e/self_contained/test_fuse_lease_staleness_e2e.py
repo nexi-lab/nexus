@@ -42,8 +42,8 @@ async def run_tests() -> int:
     from nexus.factory import create_nexus_fs
     from nexus.fuse.mount import MountMode, NexusFUSE
     from nexus.lib.lease import LocalLeaseManager, SystemClock
-    from nexus.storage.dict_metastore import DictMetastore
     from nexus.storage.file_cache import FileContentCache
+    from tests.helpers.dict_metastore import DictMetastore
 
     tmpdir = tempfile.mkdtemp()
     storage_path = os.path.join(tmpdir, "storage")

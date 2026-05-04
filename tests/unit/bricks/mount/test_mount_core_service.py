@@ -28,11 +28,11 @@ def _mock_nexus_fs(*, permission_ok: bool = True) -> MagicMock:
     rebac_svc.rebac_check_sync.return_value = permission_ok
     rebac_svc.rebac_delete_object_tuples_sync.return_value = 0
     nx.service.return_value = rebac_svc
-    # metadata mock
-    nx.metadata.list.return_value = []
-    nx.metadata.get.return_value = None
-    nx.metadata.delete_batch.return_value = None
-    nx.metadata.delete_directory_entries_recursive.return_value = 0
+    # kernel.metastore_* mocks (post-W1.5: mount_service routes everything
+    # through the kernel boundary, no longer through ``nx.metadata``)
+    nx._kernel.metastore_list.return_value = []
+    nx._kernel.metastore_get.return_value = None
+    nx._kernel.metastore_delete.return_value = True
     nx._record_store = None
     return nx
 
@@ -112,7 +112,7 @@ class TestAddMountRollback:
     def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:
         """metadata.put failure is non-critical -- mount stays active (best effort)."""
         service, nx = _build_service()
-        nx.metadata.put.side_effect = RuntimeError("Metastore down")
+        nx._kernel.metastore_put.side_effect = RuntimeError("Metastore down")
 
         # metadata.put fails but is caught in _setup_mount_point -- mount succeeds
         result = service.add_mount_sync(
@@ -219,7 +219,7 @@ class TestRemoveMountErrorCollection:
     def test_metadata_failure_does_not_block_permission_cleanup(self) -> None:
         """Even if metadata delete fails, permission cleanup still runs."""
         service, nx = _build_service()
-        nx.metadata.list.side_effect = RuntimeError("metadata DB error")
+        nx._kernel.metastore_list.side_effect = RuntimeError("metadata DB error")
 
         result = service.remove_mount_sync("/mnt/test")
 
@@ -231,11 +231,10 @@ class TestRemoveMountErrorCollection:
         """Multiple cleanup failures are all reported in result["errors"]."""
         service, nx = _build_service()
         # Metadata list failure
-        nx.metadata.list.side_effect = RuntimeError("metadata failure")
-        # Directory index cleanup failure
-        nx.metadata.delete_directory_entries_recursive.side_effect = RuntimeError(
-            "dir index failure"
-        )
+        nx._kernel.metastore_list.side_effect = RuntimeError("metadata failure")
+        # Directory-index cleanup is now a no-op (W1.5: kernel doesn't expose
+        # ``delete_directory_entries_recursive``); the side-effect is no
+        # longer reachable but kept here as a documentation marker.
         # ReBAC cleanup failure
         nx.service("rebac").rebac_list_tuples_sync.side_effect = RuntimeError("rebac failure")
         # Hierarchy manager failure
@@ -246,7 +245,12 @@ class TestRemoveMountErrorCollection:
         result = service.remove_mount_sync("/mnt/test")
 
         assert result["removed"] is True
-        assert len(result["errors"]) == 4
+        # 3 errors: metadata list, ReBAC tuples, hierarchy manager.
+        # ``delete_directory_entries_recursive`` is now a no-op (W1.5
+        # collapsed it because the kernel metastore keeps its own
+        # DashMap projection — no separate sparse index to clean), so
+        # the historical 4th error site is unreachable.
+        assert len(result["errors"]) == 3
 
     def test_successful_remove_has_no_errors(self) -> None:
         """Clean removal returns zero errors."""

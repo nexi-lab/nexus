@@ -60,13 +60,12 @@ async def app_with_auth():
     # Create NexusFS via factory
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.factory import create_nexus_fs
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
     backend = CASLocalBackend(root_path=storage_path)
-    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
+    metadata_store = str(tmp_path / "raft")
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
     nx = create_nexus_fs(

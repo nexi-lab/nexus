@@ -35,12 +35,18 @@ def make_hash(seed: int) -> str:
 
 
 class FakeMetastore:
-    """Minimal metastore stub for GC testing."""
+    """Kernel-handle stub for GC testing (post-W3).
+
+    ``CASGarbageCollector._collect`` calls
+    ``self._kernel.metastore_list(prefix)``; the constructor's
+    ``hasattr(metastore, "_rust_kernel")`` guard treats this stub as
+    a bare kernel.
+    """
 
     def __init__(self, entries=None):
         self._entries = entries or []
 
-    def list(self, prefix="", recursive=True):
+    def metastore_list(self, prefix=""):
         return self._entries
 
 

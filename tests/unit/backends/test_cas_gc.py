@@ -28,15 +28,21 @@ class FakeMetaEntry:
 
 
 class FakeMetastore:
+    """Kernel-handle stub for CAS GC tests.
+
+    Post-W3 ``CASGarbageCollector`` reaches the metastore via
+    ``self._kernel.metastore_list``. The constructor's
+    ``hasattr(metastore, "_rust_kernel")`` guard treats this stub as
+    a bare kernel.
+    """
+
     def __init__(self, entries: list[FakeMetaEntry] | None = None):
         self._entries = entries or []
 
     def add(self, path: str, content_id: str) -> None:
         self._entries.append(FakeMetaEntry(path=path, content_id=content_id))
 
-    def list(
-        self, prefix: str = "", recursive: bool = True, **kwargs: object
-    ) -> list[FakeMetaEntry]:
+    def metastore_list(self, prefix: str = "", **kwargs: object) -> list[FakeMetaEntry]:
         return list(self._entries)
 
 

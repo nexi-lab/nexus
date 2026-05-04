@@ -116,7 +116,6 @@ import sys, os, asyncio
 sys.path.insert(0, os.environ.get('PYTHONPATH', ''))
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.backends.storage.cas_local import CASLocalBackend
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -124,7 +123,7 @@ from nexus.server.fastapi_server import create_app
 import uvicorn
 
 backend = CASLocalBackend(root_path='{backend_root}')
-metadata_store = RaftMetadataStore.embedded('{meta_dir}')
+metadata_store = '{meta_dir}'
 record_store = SQLAlchemyRecordStore(db_path='{db_path}')
 
 nx = create_nexus_fs(

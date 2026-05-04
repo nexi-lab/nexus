@@ -30,7 +30,6 @@ import pytest
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Add src to path for imports
@@ -245,7 +244,7 @@ async def test_in_process_thread_exhaustion(
         # Create NexusFS without permissions for setup
         nx = create_nexus_fs(
             backend=backend,
-            metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
+            metadata_store=db_path.replace(".db", "-raft"),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             permissions=PermissionConfig(enforce=False),
         )
@@ -361,7 +360,7 @@ async def test_async_thread_exhaustion(
         # Create NexusFS without permissions for setup
         nx = create_nexus_fs(
             backend=backend,
-            metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
+            metadata_store=db_path.replace(".db", "-raft"),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             permissions=PermissionConfig(enforce=False),  # Disable for setup
         )

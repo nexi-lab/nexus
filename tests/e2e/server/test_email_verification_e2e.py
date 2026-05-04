@@ -56,14 +56,13 @@ pytestmark = [
 
 async def _create_nexus_fs(tmp_path: Path, *, enforce_permissions: bool = False) -> NexusFS:
     """Create a real NexusFS with RaftMetadataStore."""
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     storage_path = tmp_path / "storage_email_verify"
     storage_path.mkdir(exist_ok=True)
     backend = CASLocalBackend(root_path=storage_path)
 
     raft_dir = str(tmp_path / "raft-metadata-email-verify")
-    metadata_store = RaftMetadataStore.embedded(raft_dir)
+    metadata_store = raft_dir
 
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / 'records_email_verify.db'}")
 

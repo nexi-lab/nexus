@@ -18,9 +18,9 @@ pub use contracts::ROOT_ZONE_ID;
 //                     / CacheStore). Trait declarations only.
 //   * `crate::hal`  — §3.B Control-Plane HAL DI surfaces
 //                     (DistributedCoordinator, ObjectStoreProvider).
-//   * `crate::core` — §4 kernel primitives (vfs_router, dlc, dcache,
-//                     locks, dispatch, in-memory reference impls of
-//                     the §3.A pillars).
+//   * `crate::core` — §4 kernel primitives (vfs_router, dlc, locks,
+//                     dispatch, in-memory reference impls of the §3.A
+//                     pillars).
 pub mod abc;
 pub mod core;
 pub mod hal;
@@ -40,7 +40,6 @@ pub mod llm_streaming;
 // exported under a single-segment name here.  Visibility tracks the
 // original module (`pub mod` stays `pub use`, private `mod` stays
 // `pub(crate) use`).
-pub(crate) use core::dcache;
 pub(crate) use core::dispatch;
 #[cfg(feature = "python")]
 pub(crate) use core::dispatch::hook_registry;

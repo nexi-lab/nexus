@@ -17,15 +17,14 @@
 //! `Kernel::has_mount` (which delegates to the router); listing mount
 //! points goes through `Kernel::get_mount_points`.
 
-use crate::dcache::CachedEntry;
 use crate::kernel::{Kernel, KernelError};
 use std::sync::Arc;
 
 /// Kernel primitive: driver mount lifecycle.
 ///
 /// Stateless coordinator — `mount()` / `unmount()` thread mutations into
-/// the kernel's owned tables (`VFSRouter`, `dcache`, per-mount metastore)
-/// rather than caching anything locally.  Created once at `Kernel::new()`.
+/// the kernel's owned tables (`VFSRouter`, per-mount metastore) rather
+/// than caching anything locally.  Created once at `Kernel::new()`.
 pub(crate) struct DriverLifecycleCoordinator;
 
 impl DriverLifecycleCoordinator {
@@ -33,7 +32,7 @@ impl DriverLifecycleCoordinator {
         Self
     }
 
-    /// Mount a backend with full lifecycle: routing + metastore + dcache + lock.
+    /// Mount a backend with full lifecycle: routing + metastore + lock.
     ///
     /// # Arguments
     /// - `kernel` — back-reference to the owning Kernel (interior mutability)
@@ -92,13 +91,10 @@ impl DriverLifecycleCoordinator {
             });
         }
 
-        // Apply-side dcache coherence (the per-zone invalidate callback
-        // that fires on every committed metadata mutation) is installed
-        // by the ``sys_setattr(DT_MOUNT)`` dispatcher via
-        // ``Kernel::install_federation_dcache_coherence`` AFTER this
-        // mount() returns. DLC stays federation-unaware; the install
-        // sees only kernel primitives (dcache handle + metastore Arc
-        // identity).
+        // Apply-side cache coherence is the metastore impl's
+        // responsibility now — each ``ZoneMetaStore`` self-registers an
+        // invalidator on its consensus during construction. DLC stays
+        // federation-unaware.
         kernel.add_mount(
             mount_point,
             zone_id,
@@ -107,34 +103,16 @@ impl DriverLifecycleCoordinator {
             raft_backend,
             is_external,
         )?;
-        let _ = backend_name; // accepted for ABI compat; no longer plumbed.
-                              // ``backend_name`` (the legacy parameter to this fn) is kept for
-                              // API compatibility with callers but no longer persisted in the
-                              // metadata record — each node decides the backend from its own
-                              // mount table at read time.
+        // ``backend_name`` (the legacy parameter to this fn) is kept for
+        // API compatibility with callers but no longer persisted in the
+        // metadata record — each node decides the backend from its own
+        // mount table at read time.
         let _ = backend_name;
-
-        // 3. DCache entry for mount point
-        kernel.dcache_put_entry(
-            mount_point,
-            CachedEntry {
-                size: 0,
-                content_id: None,
-                version: 1,
-                entry_type: 2, // DT_MOUNT
-                zone_id: Some(zone_id.to_string()),
-                mime_type: None,
-                created_at_ms: None,
-                modified_at_ms: None,
-                last_writer_address: None,
-                link_target: None,
-            },
-        );
 
         Ok(())
     }
 
-    /// Unmount with full lifecycle: metastore delete + dcache evict + routing remove.
+    /// Unmount with full lifecycle: metastore delete + routing remove.
     ///
     /// Returns `true` if mount was removed, `false` if not found.
     pub fn unmount(&self, kernel: &Kernel, mount_point: &str, zone_id: &str) -> bool {
@@ -160,16 +138,8 @@ impl DriverLifecycleCoordinator {
             });
         }
 
-        // 2. DCache evict — mount point + all children
-        kernel.dcache_evict(mount_point);
-        let prefix = if mount_point.ends_with('/') {
-            mount_point.to_string()
-        } else {
-            format!("{}/", mount_point)
-        };
-        kernel.dcache_evict_prefix(&prefix);
-
-        // 3. Remove from routing table
+        // 2. Remove from routing table — the per-mount metastore Arc
+        // (with its internal cache) drops with the MountEntry.
         kernel.remove_mount(mount_point, zone_id)
     }
 }

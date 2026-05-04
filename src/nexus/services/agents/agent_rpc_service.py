@@ -11,15 +11,12 @@ import contextlib
 import json
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusPermissionError
 from nexus.contracts.rpc import rpc_expose
 from nexus.contracts.types import VFSOperations, parse_operation_context
-
-if TYPE_CHECKING:
-    from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +33,7 @@ class AgentRPCService:
         self,
         *,
         vfs: VFSOperations,
-        metastore: "MetastoreABC",
+        metastore: "Any",
         session_factory: Any,
         record_store: Any | None = None,
         agent_registry: Any | None = None,
@@ -53,7 +50,9 @@ class AgentRPCService:
         agent_warmup_service: Any | None = None,
     ) -> None:
         self._vfs = vfs
+        # Accept either a bare ``PyKernel`` or a legacy proxy shim.
         self._metastore = metastore
+        self._kernel = metastore
         self._session_factory = session_factory
         self._record_store = record_store
         self._agent_registry = agent_registry
@@ -307,7 +306,7 @@ class AgentRPCService:
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
         config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}/config.yaml"
         try:
-            existing_meta = self._metastore.get(config_path)
+            existing_meta = self._kernel.metastore_get(config_path)
             if existing_meta:
                 raise ValueError(
                     f"Agent already exists at {config_path}. "
@@ -434,7 +433,7 @@ class AgentRPCService:
         config_path = f"{agent_dir}/config.yaml"
 
         try:
-            existing_meta = self._metastore.get(config_path)
+            existing_meta = self._kernel.metastore_get(config_path)
             if not existing_meta:
                 raise ValueError(f"Agent not found at {config_path}")
         except FileNotFoundError as e:

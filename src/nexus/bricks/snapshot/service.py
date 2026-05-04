@@ -105,6 +105,7 @@ class TransactionalSnapshotService:
         self._session_factory = record_store.session_factory
         self._cas_store = cas_store
         self._metadata_store = metadata_store
+        self._kernel = metadata_store
         self._metadata_factory = metadata_factory
         self._registry = TransactionRegistry()
 
@@ -362,7 +363,7 @@ class TransactionalSnapshotService:
         conflicts: list[ConflictInfo] = []
         for entry in entries:
             if entry.new_hash is not None:
-                current_meta = self._metadata_store.get(entry.path)
+                current_meta = self._kernel.metastore_get(entry.path)
                 current_hash = current_meta.content_id if current_meta else None
                 if current_hash != entry.new_hash:
                     conflicts.append(
@@ -463,12 +464,12 @@ class TransactionalSnapshotService:
                     restored = self._restore_metadata_from_snapshot(
                         entry.path, entry.original_hash, entry.original_metadata
                     )
-                    self._metadata_store.put(restored)
+                    self._kernel.metastore_put(restored)
                     logger.debug("Restored file: path=%s hash=%s", entry.path, entry.original_hash)
                 elif entry.original_hash is not None and entry.original_metadata is None:
                     # Restore with minimal metadata (original_metadata was not captured)
                     if self._metadata_factory is not None:
-                        current_meta = self._metadata_store.get(entry.path)
+                        current_meta = self._kernel.metastore_get(entry.path)
                         restored = self._metadata_factory(
                             path=entry.path,
                             size=getattr(current_meta, "size", 0) if current_meta else 0,
@@ -484,7 +485,7 @@ class TransactionalSnapshotService:
                             if current_meta
                             else None,
                         )
-                        self._metadata_store.put(restored)
+                        self._kernel.metastore_put(restored)
                         logger.debug(
                             "Restored file (minimal): path=%s hash=%s",
                             entry.path,
@@ -493,7 +494,7 @@ class TransactionalSnapshotService:
                 elif entry.operation == "write" and entry.original_hash is None:
                     # New file created during transaction — delete it
                     try:
-                        self._metadata_store.delete(entry.path)
+                        self._kernel.metastore_delete(entry.path)
                         if entry.new_hash:
                             self._cas_store.release(entry.new_hash)
                     except Exception:
@@ -504,7 +505,7 @@ class TransactionalSnapshotService:
                         restored = self._restore_metadata_from_snapshot(
                             entry.path, entry.original_hash, entry.original_metadata
                         )
-                        self._metadata_store.put(restored)
+                        self._kernel.metastore_put(restored)
                         logger.debug(
                             "Restored deleted file: path=%s hash=%s",
                             entry.path,

@@ -330,7 +330,7 @@ class MountService:
             for i in range(2, len(parts) + 1):
                 dir_path = "/".join(parts[:i])
                 try:
-                    existing = self.nexus_fs.metadata.get(dir_path)
+                    existing = self.nexus_fs._kernel.metastore_get(dir_path)
                     if existing:
                         continue
                     now = datetime.now(UTC)
@@ -345,7 +345,7 @@ class MountService:
                         version=1,
                         zone_id=zone_id,
                     )
-                    self.nexus_fs.metadata.put(meta)
+                    self.nexus_fs._kernel.metastore_put(meta)
                     logger.info(f"Created directory entry: {dir_path}")
                 except Exception as e:
                     logger.warning(f"Failed to create directory entry {dir_path}: {e}")
@@ -608,27 +608,29 @@ class MountService:
         zone_id = get_zone_id(context)
 
         # --- NexusFS-based cleanup ---
-        if self.nexus_fs is not None and hasattr(self.nexus_fs, "metadata"):
+        if self.nexus_fs is not None and getattr(self.nexus_fs, "_kernel", None) is not None:
+            kernel = self.nexus_fs._kernel
             # Delete all metadata entries (mount point + children)
             try:
                 dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
-                child_entries = list(self.nexus_fs.metadata.list(prefix=dir_prefix))
+                child_entries = list(kernel.metastore_list(dir_prefix))
                 paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
                 paths_to_delete.append(mount_point)  # Include mount point itself
-                self.nexus_fs.metadata.delete_batch(paths_to_delete)
+                for path in paths_to_delete:
+                    kernel.metastore_delete(path)
                 result["files_deleted"] = len(paths_to_delete)
                 logger.info(f"Deleted {len(paths_to_delete)} metadata entries for {mount_point}")
             except Exception as e:
                 _record_error(result, f"Failed to delete metadata entries for {mount_point}: {e}")
 
-            # Clean up sparse directory index entries
+            # Sparse directory-index entries — the legacy
+            # ``delete_directory_entries_recursive`` was a Raft-side helper
+            # that has no kernel equivalent (kernel-internal metastores
+            # keep their own DashMap projection so a separate sparse index
+            # is not load-bearing). Report zero. ``zone_id`` is still used
+            # by the hierarchy-tuple cleanup further below.
             try:
-                if hasattr(self.nexus_fs.metadata, "delete_directory_entries_recursive"):
-                    dir_entries_deleted = self.nexus_fs.metadata.delete_directory_entries_recursive(
-                        mount_point, zone_id
-                    )
-                else:
-                    dir_entries_deleted = 0
+                dir_entries_deleted = 0
                 result["directory_entries_deleted"] = dir_entries_deleted
                 logger.info(
                     f"Deleted {dir_entries_deleted} directory index entries under {mount_point}"

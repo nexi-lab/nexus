@@ -180,7 +180,7 @@ class TestConcurrentMetastore:
         """5 threads each with their own connection doing 20 put/get cycles."""
         db_path = str(tmp_path / "concurrent.db")
         # Create the schema first
-        SQLiteMetastore(db_path).close()
+        _ = SQLiteMetastore(db_path)  # kernel manages redb lifecycle
 
         n_threads = 5
         n_ops = 20
@@ -193,8 +193,8 @@ class TestConcurrentMetastore:
                     path = f"/thread{thread_id}/file{i}.txt"
                     meta = _make_metadata(path)
                     try:
-                        ms.put(meta)
-                        result = ms.get(path)
+                        ms.metastore_put(meta)
+                        result = ms.metastore_get(path)
                         if result is None:
                             errors.append(
                                 f"Thread {thread_id}: get({path}) returned None after put"
@@ -206,7 +206,7 @@ class TestConcurrentMetastore:
                     except Exception as exc:
                         errors.append(f"Thread {thread_id}: {exc}")
             finally:
-                ms.close()
+                pass  # kernel manages redb lifecycle
 
         threads = [threading.Thread(target=worker, args=(t,)) for t in range(n_threads)]
         for t in threads:
@@ -218,8 +218,8 @@ class TestConcurrentMetastore:
 
         # Verify all entries were written
         verify = SQLiteMetastore(db_path)
-        total = len(verify.list(prefix="/", recursive=True))
-        verify.close()
+        total = len(list(verify.metastore_list("/")))
+        pass  # kernel manages redb lifecycle
         assert total == n_threads * n_ops
 
 
@@ -524,7 +524,7 @@ class TestKernelLifecycle:
         from nexus.contracts.metadata import DT_MOUNT
 
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-        metastore.put(_make_mount_entry("/local", backend.name))
+        metastore.metastore_put(_make_mount_entry("/local", backend.name))
 
         _close_fs(kernel)
         _close_fs(kernel)  # should not raise
@@ -559,7 +559,7 @@ class TestKernelLifecycle:
         from nexus.contracts.metadata import DT_MOUNT
 
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-        metastore.put(_make_mount_entry("/local", backend.name))
+        metastore.metastore_put(_make_mount_entry("/local", backend.name))
 
         fs = kernel
         try:

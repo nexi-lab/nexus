@@ -60,7 +60,7 @@ def slim_fs(tmp_path: Path):
     kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
 
     # Create DT_MOUNT entry so stat("/local") works
-    metastore.put(_make_mount_entry("/local", backend.name))
+    metastore.metastore_put(_make_mount_entry("/local", backend.name))
 
     return kernel
 
@@ -115,7 +115,7 @@ def dual_fs(tmp_path: Path):
 
     # Create DT_MOUNT entries
     for mp, be in [("/a", backend_a), ("/b", backend_b)]:
-        metastore.put(_make_mount_entry(mp, be.name))
+        metastore.metastore_put(_make_mount_entry(mp, be.name))
 
     return kernel
 
@@ -456,8 +456,8 @@ class TestSQLiteMetastore:
             version=1,
             zone_id=ROOT_ZONE_ID,
         )
-        meta.put(fm)
-        result = meta.get("/test/file.txt")
+        meta.metastore_put(fm)
+        result = meta.metastore_get("/test/file.txt")
         assert result is not None
         assert result.path == "/test/file.txt"
         assert result.size == 42

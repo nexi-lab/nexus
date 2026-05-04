@@ -60,7 +60,6 @@ async def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permiss
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     os.environ.setdefault("NEXUS_JWT_SECRET", "test-secret-isolation-e2e")
@@ -71,7 +70,7 @@ async def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permiss
     # Use IsolatedBackend wrapping CASLocalBackend — the real deal
     backend = _make_isolated_local_backend(str(storage_dir))
 
-    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+    metadata_store = str(tmp_path / "raft-metadata")
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 

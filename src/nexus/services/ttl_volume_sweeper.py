@@ -24,11 +24,10 @@ import asyncio
 import contextlib
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.transports.blob_pack_local_transport import BlobPackLocalTransport
-    from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -51,18 +50,20 @@ class TTLVolumeSweeper:
         self,
         transport: BlobPackLocalTransport,
         *,
-        metastore: MetastoreABC | None = None,
+        metastore: Any | None = None,
         interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
         self._transport = transport
         self._metastore = metastore
+        self._kernel: Any = metastore
         self._interval = interval
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
-    def set_metastore(self, metastore: MetastoreABC) -> None:
+    def set_metastore(self, metastore: Any) -> None:
         """Deferred injection — metastore may not be available at construction time."""
         self._metastore = metastore
+        self._kernel = metastore
 
     async def start(self) -> None:
         """Start the background sweep loop."""
@@ -134,13 +135,13 @@ class TTLVolumeSweeper:
 
         Returns count of metastore entries deleted.
         """
-        if self._metastore is None:
+        if self._kernel is None:
             return 0
 
         now = time.time()
         expired_paths: list[str] = []
 
-        for meta in self._metastore.list_iter():
+        for meta in self._kernel.metastore_list(""):
             if meta.ttl_seconds > 0 and meta.modified_at is not None:
                 # modified_at is a datetime; convert to epoch for comparison
                 modified_epoch = meta.modified_at.timestamp()
@@ -148,7 +149,8 @@ class TTLVolumeSweeper:
                     expired_paths.append(meta.path)
 
         if expired_paths:
-            self._metastore.delete_batch(expired_paths)
+            for path in expired_paths:
+                self._kernel.metastore_delete(path)
             logger.info("TTL metastore cleanup: deleted %d expired entries", len(expired_paths))
 
         return len(expired_paths)

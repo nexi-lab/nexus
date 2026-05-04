@@ -5,10 +5,9 @@
 //! storage for file metadata (inodes, config, topology).
 //!
 //! The `abc/` directory holds the strict §3 invariant set (3 trait
-//! files, period). Concrete impls (`MemoryMetaStore` reference impl +
-//! `LocalMetaStore` redb impl) live in `crate::core::meta_store`. The
-//! remote / raft impls live in their respective parallel crates
-//! (`raft::meta_store`).
+//! files, period). The concrete impl `LocalMetaStore` (redb-backed)
+//! lives in `crate::core::meta_store`. Remote / raft impls live in
+//! their respective parallel crates (`raft::meta_store`).
 //!
 //! Pure Rust ABI — no PyO3 dependency. PyO3 adapters live in
 //! `generated_kernel_abi_pyo3.rs` (auto-generated).
@@ -17,6 +16,25 @@
 //! `ObjectStore` / `CacheStore`. The Python ABC stays `MetastoreABC`
 //! (sunset path); the cross-language asymmetry is anchored at exactly
 //! one PyO3 boundary in `raft/src/pyo3_bindings.rs`.
+
+// ── Dirent-type constants ────────────────────────────────────────────
+//
+// Values for [`FileMetadata::entry_type`] — mirrors the entry_type
+// field in `proto/nexus/core/metadata.proto`. Pure constants, no
+// logic; live next to `FileMetadata` because every `entry_type` value
+// is one of these. `pub` so external Rust callers (`nexus-cluster`,
+// integration tests, federation crate) can spell the named constants
+// in `Kernel::sys_setattr` arguments instead of carrying integer
+// literals around.
+
+pub const DT_REG: u8 = 0;
+pub const DT_DIR: u8 = 1;
+pub const DT_MOUNT: u8 = 2;
+pub const DT_PIPE: u8 = 3;
+pub const DT_STREAM: u8 = 4;
+#[allow(dead_code)]
+pub const DT_EXTERNAL_STORAGE: u8 = 5;
+pub const DT_LINK: u8 = 6;
 
 /// Metadata record for a single file/directory.
 ///

@@ -200,7 +200,7 @@ class ContentMixin:
                     result = self._kernel.sys_read(path, _rust_ctx)
                     content = result.data or b""
                     if return_metadata:
-                        meta = self.metadata.get(path)
+                        meta = self._kernel.metastore_get(path)
                         results[path] = {
                             "content": content,
                             "content_id": meta.content_id if meta else None,
@@ -255,7 +255,14 @@ class ContentMixin:
         batch_meta: dict[str, FileMetadata | None] | None = None
         if return_metadata:
             meta_start = time.time()
-            batch_meta = self.metadata.get_batch(list(allowed_set))
+            allowed_paths = list(allowed_set)
+            batch_meta = dict(
+                zip(
+                    allowed_paths,
+                    self._kernel.metastore_get_batch(allowed_paths),
+                    strict=True,
+                )
+            )
             meta_elapsed = (time.time() - meta_start) * 1000
             logger.info(
                 f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
@@ -1370,7 +1377,9 @@ class ContentMixin:
     ) -> list[dict[str, Any]]:
         """Inner write_batch body — caller holds _occ_path_lock for every path."""
         # Get existing metadata for pre-hooks and is_new detection
-        existing_metadata = self.metadata.get_batch(paths)
+        existing_metadata = dict(
+            zip(paths, self._kernel.metastore_get_batch(list(paths)), strict=True)
+        )
 
         # PRE-INTERCEPT: pre-write hooks per file in batch
         from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
@@ -1543,7 +1552,17 @@ class ContentMixin:
         allowed_paths: list[str] = [p for p in validated_paths if p in allowed_set]
 
         # Batch metadata fetch — one query for all allowed paths.
-        batch_meta = self.metadata.get_batch(allowed_paths) if allowed_paths else {}
+        batch_meta = (
+            dict(
+                zip(
+                    allowed_paths,
+                    self._kernel.metastore_get_batch(list(allowed_paths)),
+                    strict=True,
+                )
+            )
+            if allowed_paths
+            else {}
+        )
 
         # Finding #3 — DoS guard: reject batches whose declared metadata size exceeds
         # the per-request ceiling.  Uses metadata sizes already fetched, so no extra

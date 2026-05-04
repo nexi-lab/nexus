@@ -166,11 +166,15 @@ async def mount(
         # Clean up any already-created backends and the metastore
         for _, be, _ in backends:
             _close_backend(be)
-        metastore.close()
+        # ``metastore`` is now a bare ``PyKernel`` (post-W3); it manages
+        # its own redb lifecycle, so there's no caller-side close.
+        pass
         raise
 
     if not backends:
-        metastore.close()
+        # ``metastore`` is now a bare ``PyKernel`` (post-W3); it manages
+        # its own redb lifecycle, so there's no caller-side close.
+        pass
         skipped_summary = "; ".join(f"{u}: {e}" for u, e in skipped)
         raise ValueError(
             f"All mounts failed. Run 'nexus-fs doctor' to diagnose.\n{skipped_summary}"
@@ -230,11 +234,15 @@ async def mount(
         # directly to backend.read_content() instead of through the kernel.
         # Mirrors the logic in nexus.bricks.mount.mount_service (mount_service.py:608).
         for mp, backend, spec in backends:
-            metastore.put(_make_mount_entry(mp, backend.name, entry_type=_resolve_entry_type(spec)))
+            metastore.metastore_put(
+                _make_mount_entry(mp, backend.name, entry_type=_resolve_entry_type(spec))
+            )
     except Exception:
         for _, be, _ in backends:
             _close_backend(be)
-        metastore.close()
+        # ``metastore`` is now a bare ``PyKernel`` (post-W3); it manages
+        # its own redb lifecycle, so there's no caller-side close.
+        pass
         raise
 
     return kernel

@@ -23,7 +23,6 @@ from sqlalchemy import create_engine, text
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 pytestmark = pytest.mark.quarantine
@@ -104,7 +103,7 @@ async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     # Create NexusFS with Tiger Cache enabled
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
+        metadata_store=str(tmp_path / "raft-metadata"),
         record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),
         permissions=PermissionConfig(enforce=True, enable_tiger_cache=True),
         is_admin=True,  # Allow admin operations by default
@@ -194,10 +193,9 @@ class TestDirectoryGrantExpansion:
         for path in files:
             nx.write(path, f"content of {path}", context=ctx)
 
-        # Verify files exist
-        listed = nx.metadata.list(
-            prefix="/workspace/project/", recursive=True, zone_id=ROOT_ZONE_ID
-        )
+        # Verify files exist (kernel.metastore_list is single-zone and
+        # ignores recursive — both flags match the proxy semantics)
+        listed = nx._kernel.metastore_list("/workspace/project/")
         assert len(listed) == 3, f"Expected 3 files, got {len(listed)}"
 
         # Grant read permission on the directory

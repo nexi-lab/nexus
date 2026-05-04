@@ -8,11 +8,10 @@ The kernel is now the single source of truth for metastore state, and
 Python-only path no longer exists.
 
 This file preserves the ``SQLiteMetastore`` import path as a thin
-factory **function** — not a class — that returns a
-``RustMetastoreProxy`` wired to a fresh bare ``Kernel`` with its
-redb-backed metastore pointed at ``db_path``. The ``.db`` suffix is
-rewritten to ``.redb`` so an existing sqlite file from a previous run
-is not accidentally overwritten.
+factory **function** — not a class — that returns a ``PyKernel``
+with its redb-backed metastore pointed at ``db_path``. The ``.db``
+suffix is rewritten to ``.redb`` so an existing sqlite file from a
+previous run is not accidentally overwritten.
 """
 
 from __future__ import annotations
@@ -20,8 +19,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar, cast
-
-from nexus.core.metastore import RustMetastoreProxy
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -108,9 +105,7 @@ def _evict_kernel_cache(kernel: Any) -> None:
                 _KERNEL_CACHE.pop(path, None)
 
 
-def SQLiteMetastore(
-    db_path: str | Path, *, _args: Any = None, **_kwargs: Any
-) -> RustMetastoreProxy:  # noqa: N802
+def SQLiteMetastore(db_path: str | Path, *, _args: Any = None, **_kwargs: Any) -> Any:  # noqa: N802
     """Return a kernel-backed metastore compatible with the old API.
 
     Args:
@@ -120,17 +115,11 @@ def SQLiteMetastore(
             left untouched.
 
     Returns:
-        A ``RustMetastoreProxy`` backed by a process-shared kernel
-        keyed by ``db_path`` (redb file). Multiple proxies pointing
-        at the same path share the underlying kernel so redb's
+        A ``PyKernel`` keyed by ``db_path`` (redb file). Multiple calls
+        with the same path share the underlying kernel so redb's
         exclusive-file lock is honoured across threads.
     """
     redb_path = Path(str(db_path)).with_suffix(".redb")
     redb_path.parent.mkdir(parents=True, exist_ok=True)
     redb_str = str(redb_path)
-    kernel = _get_or_open_kernel(redb_str)
-    # ``RustMetastoreProxy`` calls ``kernel.set_metastore_path`` in its
-    # constructor. Passing ``None`` skips that — the path was already
-    # wired in ``_get_or_open_kernel``, so a second call would try to
-    # reopen the redb file and hit the same lock error we're fixing.
-    return RustMetastoreProxy(kernel, None)
+    return _get_or_open_kernel(redb_str)

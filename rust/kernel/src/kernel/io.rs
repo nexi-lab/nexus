@@ -6,12 +6,12 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::dcache::{CachedEntry, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{
     DeleteHookCtx, FileEventType, HookContext, HookIdentity, Permission, ReadHookCtx,
     RenameHookCtx, WriteHookCtx,
 };
 use crate::lock_manager::{LockManager, LockMode};
+use crate::meta_store::{FileMetadata, DT_DIR, DT_MOUNT, DT_PIPE, DT_REG, DT_STREAM};
 
 use super::{
     validate_path_fast, Kernel, KernelError, OperationContext, StatResult, SysCopyResult,
@@ -77,40 +77,37 @@ impl Kernel {
         // External mounts now fall through to the normal backend read path
         // — Rust-registered ObjectStore handles all connectors natively.
 
-        // 3. DCache lookup — on miss, fallback to metastore (cold path)
-        let entry = match self.dcache.get_entry(path) {
-            Some(e) => e,
+        // 3. MetaStore lookup. The metastore impl serves cache hits from
+        // its own internal `DashMap` projection (see
+        // `LocalMetaStore.cache` / `RemoteMetaStore.cache` /
+        // `ZoneMetaStore.cache`), so this is the same hot-path cost as
+        // the legacy `dcache.get_entry` lookup — relocated inside
+        // `MetaStore::get` instead of a kernel-global side cache.
+        let entry: FileMetadata = match self
+            .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+            .flatten()
+        {
+            Some(meta) => meta,
             None => {
-                // MetaStore fallback (per-mount first, then global) — full path
-                match self.with_metastore(&route.mount_point, |ms| ms.get(path)) {
-                    Some(Ok(Some(meta))) => {
-                        // Populate dcache from metastore result
-                        self.dcache.put(path, (&meta).into());
-                        // Re-fetch from dcache (now populated)
-                        self.dcache.get_entry(path).unwrap()
-                    }
-                    Some(Ok(None)) | Some(Err(_)) | None => {
-                        // MetaStore miss → try backend directly (all backend types
-                        // uniformly).  CAS backends return Err for path-based reads
-                        // (hash-addressed).  Path-local/external backends serve the
-                        // file if it exists on disk / via API.  No ABC leak: kernel
-                        // treats every backend the same through ObjectStore trait.
-                        if let Some(data) = self.vfs_router.read_content(
-                            &route.mount_point,
-                            &route.backend_path, // PAS uses as path; CAS rejects (not a hash)
-                            ctx,
-                        ) {
-                            return Ok(SysReadResult {
-                                data: Some(data),
-                                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                                content_id: None,
-                                entry_type: DT_REG,
-                                stream_next_offset: None,
-                            });
-                        }
-                        return Err(not_found());
-                    }
+                // MetaStore miss → try backend directly (all backend types
+                // uniformly).  CAS backends return Err for path-based reads
+                // (hash-addressed).  Path-local/external backends serve the
+                // file if it exists on disk / via API.  No ABC leak: kernel
+                // treats every backend the same through ObjectStore trait.
+                if let Some(data) = self.vfs_router.read_content(
+                    &route.mount_point,
+                    &route.backend_path, // PAS uses as path; CAS rejects (not a hash)
+                    ctx,
+                ) {
+                    return Ok(SysReadResult {
+                        data: Some(data),
+                        post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                        content_id: None,
+                        entry_type: DT_REG,
+                        stream_next_offset: None,
+                    });
                 }
+                return Err(not_found());
             }
         };
 
@@ -293,7 +290,7 @@ impl Kernel {
     fn try_remote_fetch(
         &self,
         path: &str,
-        entry: &CachedEntry,
+        entry: &FileMetadata,
         mount_point: &str,
         ctx: &OperationContext,
     ) -> Result<SysReadResult, KernelError> {
@@ -468,12 +465,9 @@ impl Kernel {
         //    entries normally only land in dcache via the IPC registry
         //    setattr path) but is harmless on the rare cross-call cold
         //    path.
-        let entry = self.dcache.get_entry(path).or_else(|| {
-            self.with_metastore(&route.mount_point, |ms| {
-                ms.get(path).ok().flatten().map(|m| (&m).into())
-            })
-            .flatten()
-        });
+        let entry = self
+            .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+            .flatten();
 
         // 3a. DT_LINK transparent follow (KERNEL-ARCHITECTURE.md §4.5).
         // Recursive call with `max_link_hops=0` rejects chained links via
@@ -574,12 +568,9 @@ impl Kernel {
             // PathLocalBackend ignores content_id when offset>0 (uses the
             // on-disk file instead), so this value is only consulted by
             // CasLocalBackend.
-            let old_entry = self.dcache.get_entry(path).or_else(|| {
-                self.with_metastore(&route.mount_point, |ms| {
-                    ms.get(path).ok().flatten().map(|m| (&m).into())
-                })
-                .flatten()
-            });
+            let old_entry: Option<FileMetadata> = self
+                .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+                .flatten();
             match old_entry {
                 Some(e) => e.content_id.unwrap_or_default(),
                 None => {
@@ -618,12 +609,9 @@ impl Kernel {
                 // DCache → metastore fallback ensures accuracy even on cold
                 // dcache (matches the authority that Python metadata.get()
                 // had before this crossing elimination).
-                let old_entry = self.dcache.get_entry(path).or_else(|| {
-                    self.with_metastore(&route.mount_point, |ms| {
-                        ms.get(path).ok().flatten().map(|m| (&m).into())
-                    })
-                    .flatten()
-                });
+                let old_entry: Option<FileMetadata> = self
+                    .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+                    .flatten();
                 let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                 let old_content_id = old_entry.as_ref().and_then(|e| e.content_id.clone());
                 let new_version = old_version + 1;
@@ -749,54 +737,81 @@ impl Kernel {
         // 3. Route
         let route = self.vfs_router.route(path, zone_id).ok()?;
 
-        // 4. DCache lookup. On miss, fall back to the per-mount metastore
-        //    so federation zones see inodes that haven't been cached yet
-        //    (F2 C5 — matches sys_read's cold path). Full path.
-        //    On double miss, check implicit directory (path has children
-        //    in metastore but no explicit entry — e.g. /docs/ when
+        // 3.5. Mount-point synthesis (federation cross-zone mount).
+        // When ``backend_path`` is empty the routed path IS the mount
+        // point itself. For federation mounts (where the parent zone's
+        // canonical-key prefix differs from the routed ``zone_id`` — i.e.
+        // ``target_zone_id`` was set on the entry), there is no "/" entry
+        // in the target zone's metastore (the DT_MOUNT row lives in the
+        // *parent* zone's metastore, written by ``dlc.mount``). The
+        // VFSRouter is the SSOT for "this path is a mount point", so
+        // synthesise the DT_MOUNT result directly from routing structure
+        // — same pattern ``sys_mkdir`` uses ("the mount IS the
+        // directory"). Avoids a metastore round-trip and removes the
+        // need for federation to seed a dcache row at the mount root.
+        let (parent_zone, _user_mp) =
+            crate::vfs_router::extract_zone_from_canonical(&route.mount_point);
+        if route.backend_path.is_empty() && parent_zone != route.zone_id {
+            return Some(StatResult {
+                path: path.to_string(),
+                size: 4096,
+                content_id: None,
+                mime_type: "inode/directory".to_string(),
+                is_directory: true,
+                entry_type: DT_MOUNT,
+                mode: 0o755,
+                version: 1,
+                zone_id: Some(route.zone_id.clone()),
+                created_at_ms: None,
+                modified_at_ms: None,
+                last_writer_address: None,
+                lock: None,
+                link_target: None,
+            });
+        }
+
+        // 4. MetaStore lookup. The metastore impl serves cache hits from
+        //    its own internal cache (LocalMetaStore.cache /
+        //    RemoteMetaStore.cache / ZoneMetaStore.cache), so this is the
+        //    same hot-path cost as the legacy `dcache.get_entry` lookup
+        //    — relocated inside MetaStore::get instead of a kernel-global
+        //    side cache.
+        //    On miss, check implicit directory (path has children in
+        //    metastore but no explicit entry — e.g. /docs/ when
         //    /docs/readme.md exists). Returns synthetic DT_DIR.
-        let entry = match self.dcache.get_entry(path) {
-            Some(e) => e,
+        let entry: FileMetadata = match self
+            .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+            .flatten()
+        {
+            Some(meta) => meta,
             None => {
-                match self
-                    .with_metastore(&route.mount_point, |ms| ms.get(path).ok().flatten())
-                    .flatten()
-                {
-                    Some(meta) => {
-                        let cached: CachedEntry = (&meta).into();
-                        self.dcache.put(path, cached.clone());
-                        cached
-                    }
-                    None => {
-                        // Implicit directory: children exist under this prefix
-                        // but no explicit entry. Eliminates Python fallback to
-                        // _check_is_directory() (Crossing 3a).
-                        let is_implicit = self
-                            .with_metastore(&route.mount_point, |ms| {
-                                ms.is_implicit_directory(path).unwrap_or(false)
-                            })
-                            .unwrap_or(false);
-                        if is_implicit {
-                            return Some(StatResult {
-                                path: path.to_string(),
-                                size: 4096,
-                                content_id: None,
-                                mime_type: "inode/directory".to_string(),
-                                is_directory: true,
-                                entry_type: DT_DIR,
-                                mode: 0o755,
-                                version: 0,
-                                zone_id: Some(route.zone_id.clone()),
-                                created_at_ms: None,
-                                modified_at_ms: None,
-                                last_writer_address: None,
-                                lock: None,
-                                link_target: None,
-                            });
-                        }
-                        return None;
-                    }
+                // Implicit directory: children exist under this prefix
+                // but no explicit entry. Eliminates Python fallback to
+                // _check_is_directory() (Crossing 3a).
+                let is_implicit = self
+                    .with_metastore_route(&route, |ms| {
+                        ms.is_implicit_directory(path).unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if is_implicit {
+                    return Some(StatResult {
+                        path: path.to_string(),
+                        size: 4096,
+                        content_id: None,
+                        mime_type: "inode/directory".to_string(),
+                        is_directory: true,
+                        entry_type: DT_DIR,
+                        mode: 0o755,
+                        version: 0,
+                        zone_id: Some(route.zone_id.clone()),
+                        created_at_ms: None,
+                        modified_at_ms: None,
+                        last_writer_address: None,
+                        lock: None,
+                        link_target: None,
+                    });
                 }
+                return None;
             }
         };
 
@@ -890,19 +905,41 @@ impl Kernel {
             Err(_) => return miss(0),
         };
 
-        // 3. Get metadata (dcache or metastore — per-mount first, then global)
-        let meta = match self.dcache.get_entry(path) {
-            Some(e) => Some(e),
-            None => self
-                .with_metastore(&route.mount_point, |ms| {
-                    ms.get(path).ok().flatten().map(|m| (&m).into())
-                })
-                .flatten(),
-        };
+        // 2.5. Mount-point synthesis: ``sys_unlink`` on a federation mount
+        // root runs the full unmount lifecycle (``dlc.unmount``). The
+        // DT_MOUNT inode lives in the *parent* zone's metastore, which
+        // routing skips — synthesize a DT_MOUNT entry directly from
+        // routing structure when the path IS the federation mount point
+        // (parent canonical zone differs from the routed target zone).
+        // Mirrors the ``sys_stat`` synthesis above.
+        let (parent_zone, _user_mp) =
+            crate::vfs_router::extract_zone_from_canonical(&route.mount_point);
+        let entry = if route.backend_path.is_empty() && parent_zone != route.zone_id {
+            FileMetadata {
+                path: path.to_string(),
+                size: 0,
+                content_id: None,
+                version: 1,
+                entry_type: DT_MOUNT,
+                zone_id: Some(route.zone_id.clone()),
+                mime_type: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+                last_writer_address: None,
+                target_zone_id: Some(route.zone_id.clone()),
+                link_target: None,
+            }
+        } else {
+            // 3. Get metadata via the routed metastore (per-mount first,
+            //    global fallback — internal cache fast path).
+            let meta: Option<FileMetadata> = self
+                .with_metastore_route(&route, |ms| ms.get(path).ok().flatten())
+                .flatten();
 
-        let entry = match meta {
-            Some(e) => e,
-            None => return miss(0),
+            match meta {
+                Some(e) => e,
+                None => return miss(0),
+            }
         };
 
         // 4. Entry-type dispatch
@@ -1119,21 +1156,19 @@ impl Kernel {
 
         // 4. Existence check: get old metadata — use full VFS paths (R20.3 contract).
         // backend_path is used only for backend I/O and PAS content_id calculation.
+        // The metastore impl serves cache hits from its own internal cache,
+        // so no separate dcache fallback is needed.
         let old_meta = self
-            .with_metastore(&old_route.mount_point, |ms| ms.get(old_path).ok().flatten())
+            .with_metastore_route(&old_route, |ms| ms.get(old_path).ok().flatten())
             .flatten();
 
-        // Also check dcache
-        let old_entry = self.dcache.get_entry(old_path);
-
-        let (is_directory, entry_type) = match (&old_meta, &old_entry) {
-            (Some(m), _) => (m.entry_type == DT_DIR, m.entry_type),
-            (None, Some(e)) => (e.entry_type == DT_DIR, e.entry_type),
-            (None, None) => {
+        let (is_directory, entry_type) = match &old_meta {
+            Some(m) => (m.entry_type == DT_DIR, m.entry_type),
+            None => {
                 // Check for implicit directory: no explicit entry, but has children
                 let child_prefix = format!("{}/", old_path.trim_end_matches('/'));
                 let has_children = self
-                    .with_metastore(&old_route.mount_point, |ms| {
+                    .with_metastore_route(&old_route, |ms| {
                         ms.list(&child_prefix)
                             .map(|v| !v.is_empty())
                             .unwrap_or(false)
@@ -1279,30 +1314,10 @@ impl Kernel {
             }
         }
 
-        // 9. DCache: evict old + put new; evict children prefix for directories.
-        // For PAS backends, content_id is the backend-relative path. After a rename
-        // the disk file is at the new backend path, so we must update content_id in
-        // the cached entry before inserting it at new_path — otherwise sys_read
-        // fetches the stale old-path backend file (which no longer exists).
-        if let Some(mut entry) = self.dcache.get_entry(old_path) {
-            self.dcache.evict(old_path);
-            // PAS only: update content_id to new backend path.
-            // Use the route's authoritative is_cas flag rather than a
-            // string-shape heuristic — a PAS file named like a BLAKE3 hex
-            // digest would otherwise be incorrectly treated as CAS.
-            if !old_route.is_cas {
-                if let Some(ref cid) = entry.content_id.clone() {
-                    if *cid == old_route.backend_path {
-                        entry.content_id = Some(new_route.backend_path.clone());
-                    }
-                }
-            }
-            self.dcache.put(new_path, entry);
-        }
-        if is_directory {
-            let prefix = format!("{}/", old_path.trim_end_matches('/'));
-            self.dcache.evict_prefix(&prefix);
-        }
+        // 9. Each metastore impl owns its own internal cache and
+        // already invalidated old_path / repopulated new_path during
+        // ``rename_path`` above. The kernel side has nothing left to do
+        // — there is no kernel-global metadata cache to keep in sync.
 
         // 10. Release sorted locks
         release_locks(&self.lock_manager, lock1, lock2);
@@ -1329,22 +1344,17 @@ impl Kernel {
         }));
 
         // Extract old metadata fields for Python post-hook dispatch.
-        // Prefer metastore (old_meta) over dcache (old_entry) for accuracy.
+        // Metastore is the SSOT — its internal cache covers what the
+        // legacy dcache used to mirror.
         let (rename_old_etag, rename_old_size, rename_old_version, rename_old_modified_at_ms) =
-            match (&old_meta, &old_entry) {
-                (Some(m), _) => (
+            match &old_meta {
+                Some(m) => (
                     m.content_id.clone(),
                     Some(m.size),
                     Some(m.version),
                     m.modified_at_ms,
                 ),
-                (None, Some(e)) => (
-                    e.content_id.clone(),
-                    Some(e.size),
-                    Some(e.version),
-                    e.modified_at_ms,
-                ),
-                (None, None) => (None, None, None, None),
+                None => (None, None, None, None),
             };
 
         Ok(SysRenameResult {
@@ -1419,20 +1429,14 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 3. Get source metadata (dcache or metastore) — full VFS paths (R20.3 contract)
-        let src_meta = match self.dcache.get_entry(src_path) {
+        // 3. Get source metadata via the routed metastore (internal
+        //    cache fast path) — full VFS paths (R20.3 contract).
+        let src_meta: FileMetadata = match self
+            .with_metastore_route(&src_route, |ms| ms.get(src_path).ok().flatten())
+            .flatten()
+        {
             Some(e) => e,
-            None => {
-                match self
-                    .with_metastore(&src_route.mount_point, |ms| {
-                        ms.get(src_path).ok().flatten().map(|m| (&m).into())
-                    })
-                    .flatten()
-                {
-                    Some(e) => e,
-                    None => return Err(KernelError::FileNotFound(src_path.to_string())),
-                }
-            }
+            None => return Err(KernelError::FileNotFound(src_path.to_string())),
         };
 
         // 3a. DT_LINK transparent follow on src — copy targets the
@@ -1601,8 +1605,8 @@ impl Kernel {
             Some(now_ms),
             Some(now_ms),
         );
-        // 9. Atomic commit — metastore (raft) first, dcache on success.
-        let cache_entry: CachedEntry = (&meta).into();
+        // 9. Atomic commit — metastore is the SSOT; its internal cache
+        // is updated write-through by `put`.
         let put_result = self
             .with_metastore(&dst_route.mount_point, move |ms| ms.put(dst_path, meta))
             .ok_or_else(|| {
@@ -1638,7 +1642,6 @@ impl Kernel {
                 _ => KernelError::IOError(format!("sys_copy: metastore.put: {e:?}")),
             });
         }
-        self.dcache.put(dst_path, cache_entry);
 
         // 10. Release VFS locks
         release_locks(&self.lock_manager, lock1, lock2);
@@ -1658,7 +1661,7 @@ impl Kernel {
         &self,
         src_route: &crate::vfs_router::RustRouteResult,
         dst_route: &crate::vfs_router::RustRouteResult,
-        src_meta: &CachedEntry,
+        src_meta: &FileMetadata,
         ctx: &OperationContext,
     ) -> Result<(String, u64), KernelError> {
         let content_id = match src_meta.content_id.as_deref().filter(|s| !s.is_empty()) {
@@ -1942,13 +1945,11 @@ impl Kernel {
             .vfs_router
             .rmdir(&route.mount_point, &route.backend_path, recursive);
 
-        // 7. Atomic delete — metastore (raft) first, dcache evict on
-        // success. The prefix evict for child entries follows the
-        // delete because the children share fate with the directory's
-        // metadata commit.
+        // 7. Atomic delete — metastore is the SSOT. Per-key cache
+        // invalidation already happened: ``delete_batch`` invalidated
+        // each child's cache row, and ``commit_delete`` → ``ms.delete``
+        // invalidates the parent's. No kernel-global cache to evict.
         self.commit_delete(path, &route.mount_point)?;
-        let prefix = format!("{}/", path.trim_end_matches('/'));
-        self.dcache.evict_prefix(&prefix);
 
         // 9. OBSERVE-phase dispatch (§11 OBSERVE): queue DirDelete.
         // Like sys_mkdir, only the top-level rmdir event fires —
@@ -1967,18 +1968,23 @@ impl Kernel {
 
     // ── Tier 2 convenience methods ────────────────────────────────────
 
-    /// Fast access check: validate + route + dcache existence (~100ns).
+    /// Fast access check: validate + route + metastore existence.
     ///
-    /// Returns true if file exists in dcache and path is routable.
-    /// Does NOT check metastore (dcache authoritative for hot-path).
+    /// Returns true if a metadata entry exists for `path` and the
+    /// path is routable. ``MetaStore::exists`` is a cache-fast check
+    /// when the row is in the impl's internal cache, authoritative
+    /// on a cache miss — no false negatives like the legacy
+    /// dcache-only check produced.
     pub fn access(&self, path: &str, zone_id: &str) -> bool {
         if validate_path_fast(path).is_err() {
             return false;
         }
-        if self.vfs_router.route(path, zone_id).is_err() {
-            return false;
-        }
-        self.dcache.contains(path)
+        let route = match self.vfs_router.route(path, zone_id) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        self.with_metastore_route(&route, |ms| ms.exists(path).unwrap_or(false))
+            .unwrap_or(false)
     }
 
     // ── Internal batch functions (not Tier 1 syscalls) ────────────────
@@ -2083,7 +2089,9 @@ impl Kernel {
 
             match write_result {
                 Some(wr) => {
-                    let batch_old_entry = self.dcache.get_entry(path);
+                    let batch_old_entry: Option<FileMetadata> = self
+                        .with_metastore_route(route, |ms| ms.get(path).ok().flatten())
+                        .flatten();
                     let old_version = batch_old_entry.as_ref().map(|e| e.version).unwrap_or(0);
                     let new_version = old_version + 1;
 
@@ -2167,21 +2175,13 @@ impl Kernel {
                 }
             }
             if !global_items.is_empty() {
-                let dcache_updates: Vec<(String, CachedEntry)> = global_items
-                    .iter()
-                    .map(|(p, m)| (p.clone(), m.into()))
-                    .collect();
                 let put_ok = self
                     .metastore
                     .read()
                     .as_ref()
                     .map(|ms| ms.put_batch(&global_items).is_ok())
                     .unwrap_or(false);
-                if put_ok {
-                    for (p, e) in dcache_updates {
-                        self.dcache.put(&p, e);
-                    }
-                } else {
+                if !put_ok {
                     for idx in global_idx {
                         if let Some(r) = results.get_mut(idx) {
                             r.hit = false;
@@ -2258,7 +2258,7 @@ impl Kernel {
         Ok(results)
     }
 
-    /// List immediate children of a directory path from dcache + metastore.
+    /// List immediate children of a directory path via the routed metastore.
     ///
     /// When `is_admin` is false and `zone_id` is not ROOT_ZONE_ID, entries
     /// are filtered to only include those belonging to the caller's zone or
@@ -2290,7 +2290,6 @@ impl Kernel {
 
         let needs_zone_filter = !is_admin && zone_id != contracts::ROOT_ZONE_ID;
 
-        // Merge dcache children with per-mount metastore list.
         // Track (entry_type, zone_id) so we can zone-filter at the end.
         let mut seen: std::collections::BTreeMap<String, (u8, Option<String>)> =
             std::collections::BTreeMap::new();
@@ -2299,13 +2298,9 @@ impl Kernel {
         } else {
             parent_path.trim_end_matches('/')
         };
-        for (child, etype, entry_zone) in self.dcache.list_children(&global_prefix) {
-            let global = format!("{}/{}", parent_for_join, child);
-            seen.insert(global, (etype, entry_zone));
-        }
 
         if let Some(ms_children) =
-            self.with_metastore(&route.mount_point, |ms| ms.list(&global_prefix).ok())
+            self.with_metastore_route(&route, |ms| ms.list(&global_prefix).ok())
         {
             let parent_depth = global_prefix.matches('/').count();
             for meta in ms_children.into_iter().flatten() {

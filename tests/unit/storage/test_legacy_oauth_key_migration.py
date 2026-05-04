@@ -173,18 +173,23 @@ class TestFreshInstall:
 
 
 class _FakeMetastore:
-    """Lightweight MetastoreABC stand-in that returns preloaded FileMetadata.
+    """Lightweight kernel-handle stand-in that returns preloaded FileMetadata.
 
-    ``MetastoreSettingsStore`` packs settings as JSON ``{"v": <value>}`` in
-    ``FileMetadata.content_id`` (post-PR #3890 schema), so the fake mirrors that
-    shape — otherwise ``get_setting`` reads ``None`` even though the entry
-    is present.
+    Post-W3 ``MetastoreSettingsStore`` reads via
+    ``self._kernel.metastore_get(path)``; the constructor's
+    ``hasattr(metastore, "_rust_kernel")`` guard treats this stub as a
+    bare kernel.
+
+    Settings are packed as JSON ``{"v": <value>}`` in
+    ``FileMetadata.content_id``, so the fake mirrors that shape —
+    otherwise ``get_setting`` reads ``None`` even though the entry is
+    present.
     """
 
     def __init__(self, entries: dict[str, str]) -> None:
         self._entries = entries
 
-    def get(self, path: str) -> Any:
+    def metastore_get(self, path: str) -> Any:
         import json
 
         from nexus.contracts.metadata import FileMetadata

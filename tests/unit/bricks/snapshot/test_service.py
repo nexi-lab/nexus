@@ -69,18 +69,24 @@ class FakeCASStore:
 
 
 class FakeMetadataStore:
-    """Fake metadata store backed by a dict."""
+    """Fake kernel-handle stub backed by a dict.
+
+    Post-W3 ``TransactionalSnapshotService`` reaches the metastore via
+    ``self._kernel.metastore_*`` (the constructor's
+    ``hasattr(_, "_rust_kernel")`` guard treats anything without that
+    attribute as a bare kernel — so this stub is used directly).
+    """
 
     def __init__(self) -> None:
         self.data: dict[str, Any] = {}
 
-    def get(self, path: str) -> Any:
+    def metastore_get(self, path: str) -> Any:
         return self.data.get(path)
 
-    def put(self, meta: Any) -> None:
+    def metastore_put(self, meta: Any) -> None:
         self.data[meta.path] = meta
 
-    def delete(self, path: str) -> None:
+    def metastore_delete(self, path: str) -> None:
         self.data.pop(path, None)
 
 

@@ -27,6 +27,7 @@ from nexus.bricks.parsers.md_structure import (
     slice_content,
 )
 from nexus.contracts.vfs_hooks import WriteHookContext
+from nexus.kernel_helpers import metastore_set_file_metadata
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
@@ -48,6 +49,8 @@ class MarkdownStructureWriteHook:
 
     def __init__(self, metadata: Any = None) -> None:
         self._metadata = metadata
+        # Pull the kernel out of the proxy for direct ``metastore_*`` calls.
+        self._kernel = metadata
 
     # ── Hook spec (duck-typed, matches AutoParseWriteHook pattern) ──
 
@@ -74,7 +77,8 @@ class MarkdownStructureWriteHook:
         try:
             content_id = ctx.content_id or ""
             index = parse_markdown_structure(ctx.content, content_id=content_id)
-            self._metadata.set_file_metadata(
+            metastore_set_file_metadata(
+                self._kernel,
                 ctx.path,
                 MD_STRUCTURE_KEY,
                 json.dumps(index.to_dict()),
@@ -112,7 +116,7 @@ class MarkdownStructureWriteHook:
         if not current_hash and current_content is not None:
             return self._reindex(path, current_content, "")
 
-        raw = self._metadata.get_file_metadata(path, MD_STRUCTURE_KEY)
+        raw = self._kernel.metastore_get_file_metadata(path, MD_STRUCTURE_KEY)
         if raw is not None:
             try:
                 data = json.loads(raw) if isinstance(raw, str) else raw

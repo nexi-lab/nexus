@@ -599,7 +599,7 @@ async def mount_connector(
 
                 from nexus.contracts.metadata import FileMetadata
 
-                meta_store = nx.metadata
+                meta_store = nx._kernel
                 if meta_store:
                     for dir_path in [
                         "/skills",
@@ -915,7 +915,7 @@ async def write_to_connector(
 
             # Load existing metadata so permission hooks can distinguish
             # overwrite (check WRITE on file) vs create (check WRITE on parent).
-            _old_meta = nx.metadata.get(mount_path)
+            _old_meta = nx._kernel.metastore_get(mount_path)
 
             nx.intercept_pre_write(
                 _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)

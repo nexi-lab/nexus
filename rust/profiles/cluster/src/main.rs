@@ -24,8 +24,8 @@ use anyhow::{Context, Result};
 use backends::storage::path_local::PathLocalBackend;
 use clap::{Parser, Subcommand};
 use kernel::abc::object_store::ObjectStore;
-use kernel::core::dcache::DT_MOUNT;
 use kernel::kernel::Kernel;
+use kernel::meta_store::DT_MOUNT;
 
 use nexus_raft::distributed_coordinator::{
     bootstrap_or_join_zone, read_or_mint_node_id, validate_peers_excludes_self,
@@ -198,7 +198,14 @@ async fn main() -> Result<()> {
             root,
             backend_name,
             zone,
-        }) => run_mount(args.common, &path, &driver, root.as_deref(), &backend_name, &zone),
+        }) => run_mount(
+            args.common,
+            &path,
+            &driver,
+            root.as_deref(),
+            &backend_name,
+            &zone,
+        ),
         Some(Cmd::Unmount { path }) => run_unmount(args.common, &path),
     }
 }
@@ -271,7 +278,10 @@ fn open_zone_manager(common: &CommonArgs) -> Result<ZoneManagerBundle> {
     // JoinZone driven by `bootstrap_or_join_zone`).
     let peer_addrs: Vec<NodeAddress> = NodeAddress::parse_peer_list(&common.peers, use_tls)
         .map_err(|e| anyhow::anyhow!("--peers/NEXUS_PEERS parse: {}", e))?;
-    let peers_str: Vec<String> = peer_addrs.iter().map(NodeAddress::to_raft_peer_str).collect();
+    let peers_str: Vec<String> = peer_addrs
+        .iter()
+        .map(NodeAddress::to_raft_peer_str)
+        .collect();
 
     // Advertise address — used as `StepMessage.sender_address` so the
     // peer-map runtime SSOT can learn this node's reachable endpoint.
@@ -373,7 +383,10 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     // `bootstrap_static` — invoked below when federation env vars are
     // set — is `NEXUS_FEDERATION_ZONES`/`_MOUNTS` driven and only
     // meaningful on the founder; mirrors the `init_from_env` guard.
-    let peers_str: Vec<String> = peer_addrs.iter().map(NodeAddress::to_raft_peer_str).collect();
+    let peers_str: Vec<String> = peer_addrs
+        .iter()
+        .map(NodeAddress::to_raft_peer_str)
+        .collect();
 
     // ── Data plane: mount host-fs at "/" via PathLocalBackend ──
     // Cluster binary's compiled-in feature set is exactly
@@ -385,9 +398,8 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     // feature gate.
     let kernel = Arc::new(Kernel::new());
     let root_fs = common.root_fs_path();
-    std::fs::create_dir_all(&root_fs).with_context(|| {
-        format!("create cluster root mount dir {}", root_fs.display())
-    })?;
+    std::fs::create_dir_all(&root_fs)
+        .with_context(|| format!("create cluster root mount dir {}", root_fs.display()))?;
     let backend: Arc<dyn ObjectStore> = Arc::new(
         PathLocalBackend::new(&root_fs, /* fsync */ false)
             .with_context(|| format!("PathLocalBackend init at {}", root_fs.display()))?,
@@ -475,7 +487,10 @@ async fn run_share(
     new_zone_id: &str,
 ) -> Result<()> {
     let ZoneManagerBundle { zm, peer_addrs, .. } = open_zone_manager(&common)?;
-    let peers_str: Vec<String> = peer_addrs.iter().map(NodeAddress::to_raft_peer_str).collect();
+    let peers_str: Vec<String> = peer_addrs
+        .iter()
+        .map(NodeAddress::to_raft_peer_str)
+        .collect();
 
     if zm.get_zone(new_zone_id).is_none() {
         zm.create_zone(new_zone_id, peers_str)
@@ -516,10 +531,7 @@ async fn run_share(
 /// Construct an `ObjectStore` for a driver name + local-root the cluster
 /// binary's compiled-in feature set actually supports.  The match below
 /// will grow as more `driver-*` features land in `Cargo.toml`.
-fn build_local_backend(
-    driver: &str,
-    root: &std::path::Path,
-) -> Result<Arc<dyn ObjectStore>> {
+fn build_local_backend(driver: &str, root: &std::path::Path) -> Result<Arc<dyn ObjectStore>> {
     match driver {
         "path_local" => {
             std::fs::create_dir_all(root)
@@ -548,8 +560,8 @@ fn run_mount(
     // pattern as the `share` / `join` subcommands.
     let _bundle = open_zone_manager(&common)?;
     let kernel = Arc::new(Kernel::new());
-    let root = local_root
-        .ok_or_else(|| anyhow::anyhow!("--root is required for driver `{driver}`"))?;
+    let root =
+        local_root.ok_or_else(|| anyhow::anyhow!("--root is required for driver `{driver}`"))?;
     let backend = build_local_backend(driver, root)?;
     kernel
         .sys_setattr(
@@ -586,17 +598,17 @@ fn run_unmount(common: CommonArgs, mount_point: &str) -> Result<()> {
     let _bundle = open_zone_manager(&common)?;
     let kernel = Arc::new(Kernel::new());
     let ctx = contracts::OperationContext::new(
-        /* user_id */ "operator",
-        /* zone_id */ "root",
-        /* is_admin */ true,
-        /* agent_id */ None,
-        /* is_system */ true,
+        /* user_id */ "operator", /* zone_id */ "root", /* is_admin */ true,
+        /* agent_id */ None, /* is_system */ true,
     );
     let res = kernel
         .sys_unlink(mount_point, &ctx, /* recursive */ false)
         .map_err(|e| anyhow::anyhow!("unmount {mount_point}: {:?}", e))?;
     if res.hit {
-        println!("Unmounted '{}' (entry_type={})", mount_point, res.entry_type);
+        println!(
+            "Unmounted '{}' (entry_type={})",
+            mount_point, res.entry_type
+        );
     } else {
         anyhow::bail!("'{}' is not a mount point on this node", mount_point);
     }

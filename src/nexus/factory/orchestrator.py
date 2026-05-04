@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -18,7 +19,6 @@ if TYPE_CHECKING:
         DistributedConfig,
         PermissionConfig,
     )
-    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.storage.record_store import RecordStoreABC
 
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def create_nexus_services(
     record_store: "RecordStoreABC",
-    metadata_store: "MetastoreABC",
+    metadata_store: "Any",
     backend: "Backend",
     dlc: Any = None,
     *,
@@ -58,7 +58,7 @@ def create_nexus_services(
 
     Args:
         record_store: RecordStoreABC instance (provides engine + session_factory).
-        metadata_store: MetastoreABC instance (for PermissionEnforcer).
+        metadata_store: Any instance (for PermissionEnforcer).
         backend: Backend instance (for WorkspaceManager).
         dlc: DriverLifecycleCoordinator for routing + backend refs.
         permissions: Permission config (defaults from PermissionConfig()).
@@ -197,7 +197,7 @@ def create_nexus_services(
 
 def create_nexus_fs(
     backend: "Backend",
-    metadata_store: "MetastoreABC",
+    metadata_store: "Any | str | Path | None",
     record_store: "RecordStoreABC | None" = None,
     *,
     cache_store: Any = None,
@@ -222,7 +222,11 @@ def create_nexus_fs(
 
     Args:
         backend: Backend instance for file storage.
-        metadata_store: MetastoreABC instance.
+        metadata_store: One of: a pre-built ``RustMetastoreProxy`` (typically
+            ``RustMetastoreProxy`` from ``nexus.open_local_metastore``),
+            a redb file path (``str`` or ``Path``) — NexusFS constructs a
+            fresh ``PyKernel`` + ``RustMetastoreProxy`` against it, or
+            ``None`` for a tempfile-backed throwaway store.
         record_store: Optional RecordStoreABC. When provided, all services
             (ReBAC, Audit, Permissions, etc.) are created and injected.
         cache_store: CacheStoreABC instance for ephemeral cache.
@@ -304,10 +308,15 @@ def create_nexus_fs(
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
     # this branch is skipped — bare kernel with no services.
+    #
+    # Always pass ``nx._kernel`` (the freshly-constructed RustMetastoreProxy)
+    # to services rather than the original ``metadata_store`` argument: when
+    # the caller handed us a path/None, the original is no longer a usable
+    # RustMetastoreProxy. ``nx._kernel`` is the SSOT after NexusFS init.
     if services is None and record_store is not None:
         services = create_nexus_services(
             record_store=record_store,
-            metadata_store=metadata_store,
+            metadata_store=nx._kernel,
             backend=backend,
             dlc=nx._driver_coordinator,
             permissions=permissions,
@@ -389,7 +398,7 @@ def _register_vfs_hooks(
 
         _perm_hook = PermissionCheckHook(
             checker=permission_checker,
-            metadata_store=nx.metadata,
+            metadata_store=nx._kernel,
             default_context=nx._init_cred,
             enforce_permissions=nx._perm_config.enforce,
             permission_enforcer=_ss.get("permission_enforcer"),
@@ -468,7 +477,7 @@ def _register_vfs_hooks(
 
     _provider_reg = nx.service("provider_registry") if hasattr(nx, "service") else None
     ContentParserEngine(
-        metadata=nx.metadata,
+        metadata=nx._kernel,
         provider_registry=_provider_reg,
     )
 
@@ -480,14 +489,14 @@ def _register_vfs_hooks(
         _auto_parse_hook = AutoParseWriteHook(
             get_parser=parser_reg.get_parser,
             parse_fn=parse_fn,
-            metadata=nx.metadata,
+            metadata=nx._kernel,
         )
         _enlist("auto_parse", _auto_parse_hook)
 
     # MarkdownStructureWriteHook (post-write: sync structural index — Issue #3718)
     from nexus.bricks.parsers.md_structure_hook import MarkdownStructureWriteHook
 
-    _md_struct_hook = MarkdownStructureWriteHook(metadata=nx.metadata)
+    _md_struct_hook = MarkdownStructureWriteHook(metadata=nx._kernel)
     _enlist("md_structure", _md_struct_hook)
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
@@ -501,7 +510,9 @@ def _register_vfs_hooks(
             recursive: bool = True,
             zone_id: str = ROOT_ZONE_ID,  # noqa: ARG001
         ) -> Any:
-            return nx.metadata.list(prefix=prefix, recursive=recursive)
+            from nexus.kernel_helpers import metastore_list
+
+            return metastore_list(nx._kernel, prefix=prefix, recursive=recursive)
 
         _tiger_rename_hook = TigerCacheRenameHook(
             tiger_cache=tiger_cache,
@@ -520,7 +531,7 @@ def _register_vfs_hooks(
     from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
 
     _vview_resolver = VirtualViewResolver(
-        metadata=nx.metadata,
+        metadata=nx._kernel,
         dlc=nx._driver_coordinator,
         permission_checker=permission_checker,
         parse_fn=parse_fn,

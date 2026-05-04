@@ -20,7 +20,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 def main() -> int:
@@ -47,7 +46,7 @@ def main() -> int:
     # Initialize NexusFS
     print("Initializing NexusFS...")
     backend = CASLocalBackend(root_path=data_dir)
-    metadata_store = RaftMetadataStore.embedded(str(db_url).replace(".db", ""))
+    metadata_store = str(db_url).replace(".db", "")
     nx = create_nexus_fs(backend=backend, metadata_store=metadata_store)
     print("✓ NexusFS initialized")
     print()

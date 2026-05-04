@@ -834,7 +834,7 @@ class TestFsspecIntegration:
             is_admin=True,
         )
         kernel.sys_setattr("/local", entry_type=DT_MOUNT, backend=backend)
-        metastore.put(_make_mount_entry("/local", backend.name))
+        metastore.metastore_put(_make_mount_entry("/local", backend.name))
 
         fs = NexusFileSystem(nexus_fs=kernel)
         yield fs

@@ -23,17 +23,23 @@ from nexus.contracts.vfs_hooks import WriteHookContext
 
 
 class _StubMetastore:
-    """Minimal metastore stub for testing (mirrors DictMetastore API)."""
+    """Minimal kernel-handle stub for testing.
+
+    Post-W3 the ``MarkdownStructureWriteHook`` reaches the metastore
+    via ``self._kernel.metastore_*`` (the constructor's
+    ``hasattr(metadata, "_rust_kernel")`` guard treats anything without
+    that attribute as a bare kernel — so this stub is used directly).
+    """
 
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Any]] = {}
 
-    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
+    def metastore_set_file_metadata(self, path: str, key: str, value: Any) -> None:
         if path not in self._data:
             self._data[path] = {}
         self._data[path][key] = value
 
-    def get_file_metadata(self, path: str, key: str) -> Any:
+    def metastore_get_file_metadata(self, path: str, key: str) -> Any:
         return self._data.get(path, {}).get(key)
 
 
@@ -94,7 +100,7 @@ class TestWriteHook:
         ctx = _make_write_ctx("/docs/arch.md", SAMPLE_MD)
         hook.on_post_write(ctx)
 
-        raw = meta.get_file_metadata("/docs/arch.md", MD_STRUCTURE_KEY)
+        raw = meta.metastore_get_file_metadata("/docs/arch.md", MD_STRUCTURE_KEY)
         assert raw is not None
         data = json.loads(raw)
         assert data["version"] == 2
@@ -106,7 +112,7 @@ class TestWriteHook:
     ) -> None:
         ctx = _make_write_ctx("/data/file.txt", b"# Heading\nContent")
         hook.on_post_write(ctx)
-        assert meta.get_file_metadata("/data/file.txt", MD_STRUCTURE_KEY) is None
+        assert meta.metastore_get_file_metadata("/data/file.txt", MD_STRUCTURE_KEY) is None
 
     def test_updates_on_rewrite(
         self, hook: MarkdownStructureWriteHook, meta: _StubMetastore
@@ -117,7 +123,7 @@ class TestWriteHook:
         ctx2 = _make_write_ctx("/doc.md", b"# V2\nSecond version.\n## New\n", content_id="v2")
         hook.on_post_write(ctx2)
 
-        data = json.loads(meta.get_file_metadata("/doc.md", MD_STRUCTURE_KEY))
+        data = json.loads(meta.metastore_get_file_metadata("/doc.md", MD_STRUCTURE_KEY))
         assert data["content_id"] == "v2"
         headings = [s["heading"] for s in data["sections"]]
         assert "V2" in headings
@@ -129,7 +135,7 @@ class TestWriteHook:
         ctx = _make_write_ctx("/empty.md", b"")
         hook.on_post_write(ctx)
         # Empty content is skipped to prevent poisoning the cache
-        raw = meta.get_file_metadata("/empty.md", MD_STRUCTURE_KEY)
+        raw = meta.metastore_get_file_metadata("/empty.md", MD_STRUCTURE_KEY)
         assert raw is None
 
     def test_no_metadata_no_crash(self) -> None:
@@ -199,7 +205,7 @@ class TestReadPath:
         self, hook: MarkdownStructureWriteHook, meta: _StubMetastore
     ) -> None:
         """Corrupt JSON in metadata should not crash."""
-        meta.set_file_metadata("/doc.md", MD_STRUCTURE_KEY, "not valid json{{{")
+        meta.metastore_set_file_metadata("/doc.md", MD_STRUCTURE_KEY, "not valid json{{{")
         index = hook.get_index("/doc.md")
         assert index is None
 

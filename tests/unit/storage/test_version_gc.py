@@ -11,7 +11,6 @@ import pytest
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.version_gc import GCStats, VersionGCSettings, VersionHistoryGC
 
@@ -144,13 +143,13 @@ class TestVersionHistoryGC:
     def nx(self, temp_dir, record_store):
         """Create NexusFS instance for testing.
 
-        Uses RaftMetadataStore. TODO: Version history depends on FilePathModel
-        populated by SQLAlchemy, may need adjustment.
+        Version history depends on ``FilePathModel`` populated by
+        SQLAlchemy — see TODO comments in the assertions below.
         """
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
         backend = CASLocalBackend(root_path=data_dir)
-        metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
+        metadata_store = str(data_dir / "raft-metadata")
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
@@ -344,7 +343,7 @@ class TestVersionHistoryGC:
         # Create fresh record store and NexusFS without any files
         rs_empty = SQLAlchemyRecordStore(db_path=str(data_dir / "nexus.db"))
         backend = CASLocalBackend(root_path=data_dir)
-        metadata_store = RaftMetadataStore.embedded(str(data_dir / "metadata"))
+        metadata_store = str(data_dir / "metadata")
         nx_empty = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,

@@ -379,7 +379,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def get_meta():
-            return nx.metadata.get("/test_small.bin")
+            return nx._kernel.metastore_get("/test_small.bin")
 
         result = benchmark(get_meta)
         assert result is not None
@@ -389,7 +389,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def get_meta():
-            return nx.metadata.get("/nonexistent.txt")
+            return nx._kernel.metastore_get("/nonexistent.txt")
 
         result = benchmark(get_meta)
         assert result is None
@@ -399,7 +399,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def list_meta():
-            return nx.metadata.list("/dir_0/")
+            return nx._kernel.metastore_list("/dir_0/")
 
         result = benchmark(list_meta)
         assert result is not None
@@ -409,7 +409,7 @@ class TestMetadataBenchmarks:
         nx = populated_nexus
 
         def list_meta():
-            return nx.metadata.list("/many_files/")
+            return nx._kernel.metastore_list("/many_files/")
 
         benchmark(list_meta)
 
@@ -417,10 +417,10 @@ class TestMetadataBenchmarks:
         """Benchmark cached metadata existence check."""
         nx = populated_nexus
         # Pre-warm cache
-        nx.metadata.get("/test_small.bin")
+        nx._kernel.metastore_get("/test_small.bin")
 
         def exists_meta():
-            return nx.metadata.exists("/test_small.bin")
+            return nx._kernel.metastore_exists("/test_small.bin")
 
         result = benchmark(exists_meta)
         assert result is True
@@ -432,22 +432,22 @@ class TestMetadataBenchmarks:
 
         def set_meta():
             counter[0] += 1
-            nx.metadata.set_file_metadata(
+            nx._kernel.metastore_set_file_metadata(
                 "/test_small.bin", f"key_{counter[0]}", f"value_{counter[0]}"
             )
 
         benchmark(set_meta)
         # Verify the last written value is readable
-        val = nx.metadata.get_file_metadata("/test_small.bin", f"key_{counter[0]}")
+        val = nx._kernel.metastore_get_file_metadata("/test_small.bin", f"key_{counter[0]}")
         assert val == f"value_{counter[0]}"
 
     def test_get_file_metadata(self, benchmark, populated_nexus):
         """Benchmark getting file metadata key-value."""
         nx = populated_nexus
-        nx.metadata.set_file_metadata("/test_small.bin", "bench_key", "bench_value")
+        nx._kernel.metastore_set_file_metadata("/test_small.bin", "bench_key", "bench_value")
 
         def get_meta():
-            return nx.metadata.get_file_metadata("/test_small.bin", "bench_key")
+            return nx._kernel.metastore_get_file_metadata("/test_small.bin", "bench_key")
 
         result = benchmark(get_meta)
         assert result == "bench_value"

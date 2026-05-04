@@ -26,23 +26,12 @@ from tests.testkit.auth import TEST_CONTEXT
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
-# Try to import RaftMetadataStore — skip if native module unavailable
-try:
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-    _raft_available = True
-except Exception:
-    _raft_available = False
-
-
-def _try_create_raft_store(path: str) -> object | None:
-    """Try to create a RaftMetadataStore; return None if native module unavailable."""
-    if not _raft_available:
-        return None
-    try:
-        return RaftMetadataStore.embedded(path)
-    except RuntimeError:
-        return None
+# Kernel-backed metastore (post-RaftMetadataStore-deletion) is always
+# available because the redb engine ships in the nexus_runtime extension.
+def _try_create_raft_store(path: str) -> str:
+    """Return a redb path; ``create_nexus_fs`` opens the kernel-backed proxy."""
+    return path
 
 
 @pytest.fixture
@@ -60,13 +49,7 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 @pytest.fixture
 async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore):
-    raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
-    if raft_store is None:
-        from tests.testkit.metadata import DictMetastore
-
-        metadata_store = DictMetastore()
-    else:
-        metadata_store = raft_store
+    metadata_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
 
     nx = create_nexus_fs(
         backend=CASLocalBackend(str(temp_dir / "data")),
@@ -96,7 +79,7 @@ class TestWriteConsistency:
         result = nx.write("/test.txt", b"hello world")
 
         # Metastore has the file
-        meta = nx.metadata.get("/test.txt")
+        meta = nx._kernel.metastore_get("/test.txt")
         assert meta is not None
         assert meta.content_id == result["content_id"]
         assert meta.size == len(b"hello world")
@@ -122,7 +105,7 @@ class TestWriteConsistency:
         """All overlapping fields should match between Metastore and RecordStore."""
         nx.write("/consistent.txt", b"data")
 
-        meta = nx.metadata.get("/consistent.txt")
+        meta = nx._kernel.metastore_get("/consistent.txt")
         assert meta is not None
 
         with record_store.session_factory() as session:
@@ -150,7 +133,7 @@ class TestWriteConsistency:
         nx.write("/ver.txt", b"v2")
         nx.write("/ver.txt", b"v3")
 
-        meta = nx.metadata.get("/ver.txt")
+        meta = nx._kernel.metastore_get("/ver.txt")
         assert meta is not None
         assert meta.version == 3
 
@@ -193,7 +176,7 @@ class TestDeleteConsistency:
         nx.write("/del.txt", b"content")
         nx.sys_unlink("/del.txt")
 
-        assert nx.metadata.get("/del.txt") is None
+        assert nx._kernel.metastore_get("/del.txt") is None
 
     @pytest.mark.asyncio
     async def test_delete_soft_deletes_in_record_store(
@@ -242,8 +225,8 @@ class TestRenameConsistency:
         nx.write("/old.txt", b"content")
         nx.sys_rename("/old.txt", "/new.txt")
 
-        assert nx.metadata.get("/old.txt") is None
-        meta = nx.metadata.get("/new.txt")
+        assert nx._kernel.metastore_get("/old.txt") is None
+        meta = nx._kernel.metastore_get("/new.txt")
         assert meta is not None
         assert meta.path == "/new.txt"
 
@@ -284,7 +267,7 @@ class TestBatchWriteConsistency:
 
         # All files in Metastore
         for path, content in files:
-            meta = nx.metadata.get(path)
+            meta = nx._kernel.metastore_get(path)
             assert meta is not None, f"{path} missing from Metastore"
             assert meta.size == len(content)
 

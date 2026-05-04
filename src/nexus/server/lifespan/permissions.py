@@ -412,7 +412,7 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     expander = DirectoryGrantExpander(
                         engine=_rebac_engine,
                         tiger_cache=tiger_cache,
-                        metadata_store=svc.nexus_fs.metadata,
+                        metadata_store=svc.nexus_fs._kernel,
                     )
                     app.state.directory_grant_expander = expander
 
@@ -439,27 +439,12 @@ def _startup_backfill(_app: "FastAPI", svc: "LifespanServices") -> list[asyncio.
     """Auto-backfill sparse directory index for system paths (Issue #perf19)."""
     bg_tasks: list[asyncio.Task] = []
 
-    if svc.nexus_fs and hasattr(svc.nexus_fs, "metadata"):
-        try:
-            _nexus_fs = svc.nexus_fs  # Capture for closure
-
-            async def _backfill_system_paths() -> None:
-                for prefix in ["/sessions"]:
-                    try:
-                        created = await asyncio.to_thread(
-                            _nexus_fs.metadata.backfill_directory_index,
-                            prefix=prefix,
-                            zone_id=None,
-                        )
-                        if created > 0:
-                            logger.info("Sparse index backfill: %d entries for %s", created, prefix)
-                    except Exception as e:
-                        logger.debug("Sparse index backfill skipped for %s: %s", prefix, e)
-
-            bg_tasks.append(asyncio.create_task(_backfill_system_paths()))
-            logger.info("Sparse directory index backfill started for system paths")
-        except Exception as e:
-            logger.warning("Sparse index backfill skipped: %s", e)
+    if svc.nexus_fs is not None:
+        # Sparse-index backfill was a Raft-only optimisation that the kernel
+        # metastore doesn't need (it keeps its own DashMap projection). The
+        # background-task slot stays empty so the lifespan wiring above
+        # remains a no-op rather than an exception path.
+        pass
 
     return bg_tasks
 

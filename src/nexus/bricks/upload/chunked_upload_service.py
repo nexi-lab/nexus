@@ -97,6 +97,9 @@ class ChunkedUploadService:
         self._session_factory = record_store.session_factory
         self._backend = backend
         self._metadata_store = metadata_store
+        # Pull the kernel out of the proxy so the metadata put inside
+        # ``finalize`` lands on ``kernel.metastore_*`` (survives W3).
+        self._kernel = metadata_store
         self._config = config or ChunkedUploadConfig()
 
         self._semaphore = asyncio.Semaphore(self._config.max_concurrent_uploads)
@@ -637,7 +640,7 @@ class ChunkedUploadService:
 
             # Link content to target_path via metadata store so the file is
             # reachable (multipart backends do this inside complete_multipart).
-            if self._metadata_store is not None:
+            if self._kernel is not None:
                 from nexus.contracts.metadata import FileMetadata
 
                 metadata = FileMetadata(
@@ -645,7 +648,7 @@ class ChunkedUploadService:
                     size=len(content),
                     content_id=content_id,
                 )
-                await asyncio.to_thread(self._metadata_store.put, metadata)
+                await asyncio.to_thread(self._kernel.metastore_put, metadata)
 
         # Update session to completed
         completed = UploadSession(

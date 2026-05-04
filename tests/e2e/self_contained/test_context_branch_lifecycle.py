@@ -56,7 +56,12 @@ class FakeWorkspaceManager:
     """Simplified WM for integration tests — uses real snapshots + CAS."""
 
     def __init__(self, session_factory, cas: FakeCAS):
-        self.metadata = MagicMock()
+        # Post-W3 the production WorkspaceManager exposes ``_kernel`` (a
+        # PyKernel handle); ``ContextBranchService`` reads
+        # ``self._wm._kernel.metastore_list_iter`` so the fake must
+        # provide the same shape.
+        self._kernel = MagicMock()
+        self._kernel.metastore_list.return_value = []
         self.backend = cas
         self._session_factory = session_factory
         self._cas = cas

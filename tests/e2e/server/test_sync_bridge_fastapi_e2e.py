@@ -33,7 +33,6 @@ async def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     # Set JWT secret required by auth
     os.environ.setdefault("NEXUS_JWT_SECRET", "test-secret-12345")
@@ -44,7 +43,7 @@ async def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     backend = CASLocalBackend(root_path=str(storage_dir))
 
     # Create metadata store (Raft standalone mode — path must be a file, not directory)
-    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+    metadata_store = str(tmp_path / "raft-metadata")
 
     # Create record store for services (ReBAC, audit, etc.)
     db_url = f"sqlite:///{tmp_path / 'records.db'}"

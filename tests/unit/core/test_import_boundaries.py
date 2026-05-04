@@ -172,14 +172,17 @@ class TestFourStoragePillars:
     """Verify all Four Storage Pillars are importable ABCs (Issue #1525).
 
     The NEXUS-LEGO-ARCHITECTURE defines exactly four storage pillars:
-    1. MetastoreABC   — inode/path metadata (Raft, redb)
-    2. Backend         — object/blob storage (ObjectStoreABC: Local, GCS, S3)
-    3. RecordStoreABC — relational data (PostgreSQL, SQLite)
-    4. CacheStoreABC  — ephemeral KV + PubSub (Dragonfly, in-memory)
+    1. MetaStore (Rust) — inode/path metadata, kernel-internal
+    2. Backend           — object/blob storage (ObjectStoreABC: Local, GCS, S3)
+    3. RecordStoreABC    — relational data (PostgreSQL, SQLite)
+    4. CacheStoreABC     — ephemeral KV + PubSub (Dragonfly, in-memory)
     """
 
+    # Python-side Pillar abstract bases. The MetaStore SSOT is in the
+    # Rust kernel — there is no Python ABC for it after W3 deleted
+    # ``MetastoreABC`` and the ``RustMetastoreProxy`` shim. Callers
+    # reach the metastore through ``kernel.metastore_*``.
     PILLARS = [
-        ("nexus.core.metastore", "MetastoreABC"),
         ("nexus.backends.base.backend", "Backend"),
         ("nexus.storage.record_store", "RecordStoreABC"),
         ("nexus.contracts.cache_store", "CacheStoreABC"),
@@ -188,10 +191,10 @@ class TestFourStoragePillars:
     @pytest.mark.parametrize(
         ("module_path", "class_name"),
         PILLARS,
-        ids=["MetastoreABC", "Backend", "RecordStoreABC", "CacheStoreABC"],
+        ids=["Backend", "RecordStoreABC", "CacheStoreABC"],
     )
     def test_pillar_is_importable_abc(self, module_path: str, class_name: str):
-        """Each storage pillar must be importable and be an ABC."""
+        """Each Python storage pillar must be importable and be an ABC."""
         import importlib
         from abc import ABC
 
@@ -200,27 +203,18 @@ class TestFourStoragePillars:
         assert isinstance(cls, type), f"{class_name} is not a class"
         assert issubclass(cls, ABC), f"{class_name} is not an ABC"
 
-    def test_metastore_has_required_abstract_methods(self):
-        """MetastoreABC must declare the required abstract methods.
-
-        Public get/put/delete/exists/list are concrete (dcache layer).
-        Subclasses implement _get_raw/_put_raw/_delete_raw/_exists_raw/_list_raw.
+    def test_metastore_pillar_is_kernel_only(self):
+        """The MetaStore pillar has no Python ABC — its trait lives in
+        ``rust/kernel/src/abc/meta_store.rs`` and the concrete impl is
+        ``LocalMetaStore`` (also Rust). Python reaches the metastore
+        through ``kernel.metastore_*`` PyO3 bindings.
         """
-        from nexus.core.metastore import MetastoreABC
+        from nexus_runtime import PyKernel
 
-        required = {"_get_raw", "_put_raw", "_delete_raw", "_exists_raw", "_list_raw", "close"}
-        abstract = getattr(MetastoreABC, "__abstractmethods__", frozenset())
-        missing = required - abstract
-        assert not missing, f"MetastoreABC missing abstract methods: {missing}"
-
-    def test_metastore_implementations_exist(self):
-        """R20.18.5 renames the in-tree MetastoreABC implementer: the
-        legacy ``RaftMetadataStore`` class became a deprecation shim;
-        ``RustMetastoreProxy`` is the real implementation backing both
-        ``.embedded()`` and every kernel-wired mount."""
-        from nexus.core.metastore import MetastoreABC, RustMetastoreProxy
-
-        assert issubclass(RustMetastoreProxy, MetastoreABC)
+        kernel = PyKernel()
+        assert hasattr(kernel, "metastore_get")
+        assert hasattr(kernel, "metastore_put")
+        assert hasattr(kernel, "metastore_list")
 
     def test_no_old_name_in_codebase(self):
         """FileMetadataProtocol should not appear in src/ (clean rename)."""

@@ -13,14 +13,13 @@ from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.pagination import PaginatedResult
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 @pytest.fixture
 async def nexus_fs(tmp_path, isolated_db):
     """Create a NexusFS instance for testing via factory."""
     backend = CASLocalBackend(str(tmp_path / "data"))
-    metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
+    metadata_store = str(isolated_db).replace(".db", "")
     nx = create_nexus_fs(
         backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
     )
@@ -40,7 +39,7 @@ async def nexus_fs_with_files(nexus_fs):
 async def nexus_fs_large(tmp_path, isolated_db):
     """Create NexusFS with 1000 test files for scale testing."""
     backend = CASLocalBackend(str(tmp_path / "data"))
-    metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
+    metadata_store = str(isolated_db).replace(".db", "")
     nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,

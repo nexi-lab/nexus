@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
-    from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +54,23 @@ class CASGarbageCollector:
     def __init__(
         self,
         engine: CASAddressingEngine,
-        metastore: MetastoreABC | None = None,
+        metastore: Any | None = None,
         *,
         grace_period: float = DEFAULT_GRACE_PERIOD_S,
         scan_interval: float = DEFAULT_SCAN_INTERVAL_S,
     ) -> None:
         self._engine = engine
         self._metastore = metastore
+        self._kernel = metastore
         self._grace_period = grace_period
         self._scan_interval = scan_interval
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
 
-    def set_metastore(self, metastore: MetastoreABC) -> None:
+    def set_metastore(self, metastore: Any) -> None:
         """Deferred injection — metastore may not be available at construction time."""
         self._metastore = metastore
+        self._kernel = metastore
 
     def start(self) -> None:
         """Start GC background task in the current event loop."""
@@ -209,14 +210,14 @@ class CASGarbageCollector:
         blob to add individual chunk hashes to the referenced set.
         """
         engine = self._engine
-        metastore = self._metastore
-        assert metastore is not None
+        kernel = self._kernel
+        assert kernel is not None
 
         # Scan all entries in metastore for content_ids
         try:
-            all_entries = metastore.list(prefix="", recursive=True)
+            all_entries = kernel.metastore_list("")
         except Exception:
-            logger.warning("CAS GC: metastore.list() failed", exc_info=True)
+            logger.warning("CAS GC: kernel.metastore_list() failed", exc_info=True)
             return
 
         for entry in all_entries:

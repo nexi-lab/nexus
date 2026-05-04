@@ -38,6 +38,10 @@ from nexus.contracts.search_types import (
     SearchStrategy,
 )
 from nexus.contracts.types import Permission
+from nexus.kernel_helpers import (
+    metastore_get_searchable_text_bulk,
+    metastore_list_iter,
+)
 from nexus.lib.rpc_decorator import rpc_expose
 
 # List directory traversal thresholds (Issue #901)
@@ -158,7 +162,6 @@ if TYPE_CHECKING:
     from nexus.bricks.search.pipeline_indexer import PipelineIndexer
     from nexus.bricks.search.query_service import QueryService
     from nexus.contracts.types import OperationContext
-    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
 
 
@@ -189,7 +192,7 @@ class SearchService:
 
     def __init__(
         self,
-        metadata_store: "MetastoreABC",
+        metadata_store: "Any",
         permission_enforcer: "PermissionEnforcer | None" = None,
         dlc: Any = None,
         rebac_manager: "ReBACManager | None" = None,
@@ -231,6 +234,9 @@ class SearchService:
                 ``litellm`` are importable.
         """
         self.metadata = metadata_store
+        # Pull the kernel out of the proxy for direct ``metastore_*`` calls
+        # (and survive W3, which deletes the proxy).
+        self._kernel = metadata_store
         self._record_store = record_store
         self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
         # Injected file cache (Issue #690 — replaces global singleton)
@@ -477,7 +483,7 @@ class SearchService:
                 # Derive mount point from first path segments
                 _parts = path.strip("/").split("/")
                 _mp_guess = "/" + "/".join(_parts[:2]) if len(_parts) >= 2 else "/" + _parts[0]
-                _mount_meta = self.metadata.get(_mp_guess) if self.metadata else None
+                _mount_meta = self._kernel.metastore_get(_mp_guess) if self._kernel else None
                 _is_ext = getattr(_mount_meta, "is_external_storage", False)
                 if _is_ext:
                     _bp = path[len(_mp_guess) :].lstrip("/")
@@ -549,15 +555,15 @@ class SearchService:
 
         logger.info(
             f"[LIST-DEBUG] START path={path}, recursive={recursive}, zone={list_zone_id}, "
-            f"details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, "
-            f"has_context={context is not None}"
+            f"details={details}, has_context={context is not None}"
         )
-        if (
-            not recursive
-            and not details
-            and hasattr(self.metadata, "list_directory_entries")
-            and context
-        ):
+        # ``list_directory_entries`` was a Raft-side sparse-index helper that
+        # the kernel doesn't expose; the fast path is permanently disabled.
+        # The block below is kept (gated by a constant ``False``) so a
+        # future kernel-side equivalent can re-enable it without
+        # restructuring the caller.
+        _LIST_FAST_PATH_AVAILABLE = False
+        if _LIST_FAST_PATH_AVAILABLE and not recursive and not details and context:
             all_files, _preapproved_dirs, _use_fast_path, _revision_before = self._list_fast_path(
                 path, list_zone_id, context, _rebac_manager
             )
@@ -607,7 +613,7 @@ class SearchService:
                 for ct_path in cross_zone_paths:
                     if ct_path not in existing_paths:
                         try:
-                            ct_meta = self.metadata.get(ct_path)
+                            ct_meta = self._kernel.metastore_get(ct_path)
                             if ct_meta:
                                 all_files.append(ct_meta)
                         except Exception:
@@ -927,7 +933,7 @@ class SearchService:
         """Build detailed results for dynamic connector paths."""
         results_with_details = []
         for entry_path in all_paths:
-            file_meta = self.metadata.get(entry_path)
+            file_meta = self._kernel.metastore_get(entry_path)
             is_dir = bool(
                 file_meta
                 and (
@@ -992,7 +998,11 @@ class SearchService:
         import time as _time
 
         _idx_start = _time.time()
-        dir_entries = self.metadata.list_directory_entries(path, zone_id=list_zone_id)
+        # ``list_directory_entries`` was a Raft-side sparse-index helper
+        # that the kernel metastore doesn't expose. Returning ``None``
+        # keeps the documented "miss → fall back" branch live; ``path``
+        # and ``list_zone_id`` become unused below the early return.
+        dir_entries = None
         _idx_elapsed = (_time.time() - _idx_start) * 1000
 
         if dir_entries is None:
@@ -1125,14 +1135,12 @@ class SearchService:
         # (standalone/embedded metastore has self._zone_id=None), passing a
         # non-root zone_id raises in RaftMetadataStore._list_raw. In that
         # case we fetch everything and rely on the service-layer zone
-        # post-filter (applied by list()). Pass zone_id through only when
-        # the store is already zone-partitioned.
-        _engine_zone_id: str | None = getattr(self.metadata, "_zone_id", None)
-        _metadata_zone_kwarg = list_zone_id if _engine_zone_id else None
-        all_files = self.metadata.list(
-            list_prefix,
-            zone_id=_metadata_zone_kwarg,
-        )
+        # post-filter (applied by list()). ``kernel.metastore_list`` is
+        # single-zone (zone scoping is handled at the mount-router level
+        # in federation mode), so ``list_zone_id`` is intentionally not
+        # passed to the kernel call here — it's still used by the
+        # zone-revision check below.
+        all_files = self._kernel.metastore_list(list_prefix)
         logger.info(
             f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
             f"{len(all_files)} files"
@@ -1188,10 +1196,7 @@ class SearchService:
                         "[PREDICATE-PUSHDOWN] Revision changed, re-running without filter"
                     )
                     _meta_start = _time.time()
-                    all_files = self.metadata.list(
-                        list_prefix,
-                        zone_id=list_zone_id,
-                    )
+                    all_files = self._kernel.metastore_list(list_prefix)
                     # Fix nexi-lab/nexus#3733 Bug B: same synthetic-entry
                     # guard as the primary list path above.
                     all_files = [f for f in all_files if f.path.startswith("/")]
@@ -1547,7 +1552,7 @@ class SearchService:
             from nexus.core.pagination import paginate_iter
 
             batch = paginate_iter(
-                self.metadata.list_iter(prefix=list_prefix, recursive=recursive),
+                metastore_list_iter(self._kernel, prefix=list_prefix, recursive=recursive),
                 limit=fetch_limit,
                 cursor_path=current_cursor_path,
             )
@@ -1801,7 +1806,7 @@ class SearchService:
         # Sort by mtime (newest first) (Issue #538)
         if matches:
             try:
-                metadata_map = self.metadata.get_file_metadata_bulk(matches, "modified_at")
+                metadata_map = self._kernel.metastore_get_file_metadata_bulk(matches, "modified_at")
                 return sorted(
                     matches,
                     key=lambda p: (-(metadata_map.get(p, 0) or 0), p),
@@ -2065,7 +2070,7 @@ class SearchService:
         needs_python_path = before_context > 0 or after_context > 0 or invert_match
 
         # Phase 2: Bulk fetch searchable text
-        searchable_texts = self.metadata.get_searchable_text_bulk(candidate_files)
+        searchable_texts = metastore_get_searchable_text_bulk(self._kernel, candidate_files)
         cached_text_ratio = len(searchable_texts) / len(candidate_files) if candidate_files else 0.0
         files_needing_raw = [f for f in candidate_files if f not in searchable_texts]
 
@@ -2376,7 +2381,7 @@ class SearchService:
                 continue
 
             # Fetch md_structure metadata for this file.
-            raw = self.metadata.get_file_metadata(file_path, MD_STRUCTURE_KEY)
+            raw = self._kernel.metastore_get_file_metadata(file_path, MD_STRUCTURE_KEY)
             if raw is None:
                 # Issue #3720 (Codex R6): recognized markdown without
                 # metadata → fail closed.

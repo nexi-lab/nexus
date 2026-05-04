@@ -49,6 +49,23 @@ pub struct ZoneMetaStore {
     runtime: tokio::runtime::Handle,
     mount_point: String,
     coherence_id: usize,
+    /// Internal cache projection — same shape as `LocalMetaStore` /
+    /// `RemoteMetaStore`.  Each zone metastore caches its own hot
+    /// entries (keyed by the caller-facing GLOBAL path, mirroring the
+    /// `to_global_path` rewrite done on read so callers see consistent
+    /// keys).  `get` consults the cache first; `put` is write-through;
+    /// `delete` invalidates pre-propose.
+    ///
+    /// Apply-side coherence on follower nodes (and on crosslink
+    /// surfaces of the same zone on the leader): every ZoneMetaStore
+    /// constructed against a consensus self-registers an apply-side
+    /// invalidator on the consensus's invalidate_cb_slot. When the
+    /// state machine commits a SetMetadata / DeleteMetadata, the slot
+    /// fires every registered cb — each one evicts its own cache row
+    /// for the corresponding global path. Wrapped in ``Arc`` so the
+    /// closure can hold a stable handle that survives the
+    /// ZoneMetaStore's call frames.
+    cache: Arc<dashmap::DashMap<String, KernelFileMetadata>>,
 }
 
 impl ZoneMetaStore {
@@ -59,17 +76,43 @@ impl ZoneMetaStore {
     /// The value should be the canonical form
     /// (e.g. ``"/corp"``, ``"/"`` for the root zone) — the same key
     /// ``Kernel::with_metastore`` routes against.
+    ///
+    /// Self-registers an apply-side invalidator on ``node`` so the
+    /// internal cache stays coherent with raft commits — see the
+    /// ``cache`` field docstring for the full coherence story.
     pub fn new(
         node: ZoneConsensus<FullStateMachine>,
         runtime: tokio::runtime::Handle,
         mount_point: String,
     ) -> Self {
         let coherence_id = node.coherence_id();
+        let cache: Arc<dashmap::DashMap<String, KernelFileMetadata>> =
+            Arc::new(dashmap::DashMap::new());
+        // Self-register an apply-side invalidator. The closure receives
+        // zone-relative keys from the state machine; translate back to
+        // the caller-facing global path (the form this metastore caches
+        // under) before evicting. Capturing ``Arc`` clones keeps the
+        // closure self-contained — no back-reference to ZoneMetaStore.
+        {
+            let cache_for_cb = Arc::clone(&cache);
+            let mount_point_for_cb = mount_point.clone();
+            node.register_invalidate_cb(Arc::new(move |zone_key: &str| {
+                let global = if mount_point_for_cb == VFS_ROOT || mount_point_for_cb.is_empty() {
+                    zone_key.to_string()
+                } else if zone_key == VFS_ROOT {
+                    mount_point_for_cb.clone()
+                } else {
+                    format!("{}{}", mount_point_for_cb, zone_key)
+                };
+                cache_for_cb.remove(&global);
+            }));
+        }
         Self {
             node,
             runtime,
             mount_point,
             coherence_id,
+            cache,
         }
     }
 
@@ -193,6 +236,9 @@ pub(crate) fn kernel_to_proto(meta: &KernelFileMetadata) -> Vec<u8> {
 
 impl MetaStore for ZoneMetaStore {
     fn get(&self, path: &str) -> Result<Option<KernelFileMetadata>, MetaStoreError> {
+        if let Some(cached) = self.cache.get(path) {
+            return Ok(Some(cached.clone()));
+        }
         let zone_key = self.to_zone_key(path);
         let key = zone_key.clone();
         let fut = self
@@ -208,6 +254,7 @@ impl MetaStore for ZoneMetaStore {
                 // State machine stores zone-relative; hand callers
                 // the full path they expect.
                 kmeta.path = self.to_global_path(&kmeta.path);
+                self.cache.insert(path.to_string(), kmeta.clone());
                 Ok(Some(kmeta))
             }
             None => Ok(None),
@@ -259,10 +306,18 @@ impl MetaStore for ZoneMetaStore {
             },
             500,
         );
+        // Write-through: cache the caller-facing form (rewrite the
+        // path field back to global so cache reads match the get()
+        // contract).
+        let mut cache_meta = metadata;
+        cache_meta.path = self.to_global_path(&cache_meta.path);
+        self.cache.insert(path.to_string(), cache_meta);
         Ok(())
     }
 
     fn delete(&self, path: &str) -> Result<bool, MetaStoreError> {
+        // Invalidate cache pre-propose (race-safe).
+        self.cache.remove(path);
         let zone_key = self.to_zone_key(path);
         let cmd = Command::DeleteMetadata { key: zone_key };
         let result = self

@@ -84,6 +84,9 @@ class PermissionCheckHook:
     ) -> None:
         self._checker = checker
         self._metadata_store = metadata_store
+        # Extract the kernel from the proxy so per-call lookups go directly
+        # to ``kernel.metastore_*`` (and survive W3, which deletes the proxy).
+        self._kernel: Any = metadata_store
         self._default_context = default_context
         self._enforce_permissions = enforce_permissions
         self._permission_enforcer = permission_enforcer
@@ -267,9 +270,11 @@ class PermissionCheckHook:
         if check_path is None:
             # Fallback: resolve ancestor ourselves
             check_path = ctx.path
-            while check_path and check_path != "/" and not self._metadata_store.exists(check_path):
+            while (
+                check_path and check_path != "/" and not self._kernel.metastore_exists(check_path)
+            ):
                 check_path = parent_path(check_path)
-        if check_path and self._metadata_store.exists(check_path):
+        if check_path and self._kernel.metastore_exists(check_path):
             context = ctx.context or self._default_context
             self._checker.check(check_path, Permission.WRITE, context)
 

@@ -74,14 +74,26 @@ class _FakeMeta:
 
 
 def _build_fs(entries: list[_FakeMeta]) -> NexusFS:
-    """Create a NexusFS with a mocked metadata store returning *entries*."""
-    meta = MagicMock()
-    meta.list.return_value = entries
-    meta.list_iter.return_value = iter(entries)
-    meta.is_implicit_directory.return_value = False
+    """Create a NexusFS with a mocked kernel returning *entries*.
+
+    Post-W3b ``sys_readdir`` reaches the metastore via
+    ``kernel_helpers.metastore_list_iter(self._kernel, …)`` which
+    iterates ``kernel.metastore_list(prefix)``. Mock that path.
+    """
+    kernel = MagicMock()
+    kernel.metastore_list.return_value = list(entries)
+    kernel.metastore_is_implicit_directory.return_value = False
+    # Force the slow-path branch: when ``readdir`` raises, sys_readdir
+    # falls through to ``metastore_list_iter`` which is what these
+    # filter-correctness tests are exercising.
+    kernel.readdir.side_effect = ValueError("mocked: take slow path")
 
     fs = object.__new__(NexusFS)
-    fs.metadata = meta
+    fs._kernel = kernel
+    # NexusFS reads ``self._zone_id`` for zone-scoped listing; default to root.
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    fs._zone_id = ROOT_ZONE_ID
     return fs
 
 

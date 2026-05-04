@@ -86,14 +86,13 @@ async def _create_nexus_fs(
     suffix: str = "",
 ) -> NexusFS:
     """Create a real NexusFS with RaftMetadataStore and optional permission enforcement."""
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     storage_path = tmp_path / f"storage{suffix}"
     storage_path.mkdir(exist_ok=True)
     backend = CASLocalBackend(root_path=storage_path)
 
     raft_dir = str(tmp_path / f"raft-metadata{suffix}")
-    metadata_store = RaftMetadataStore.embedded(raft_dir)
+    metadata_store = raft_dir
 
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / f'records{suffix}.db'}")
 

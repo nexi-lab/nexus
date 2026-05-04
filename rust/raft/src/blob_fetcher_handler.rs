@@ -4,8 +4,9 @@
 //! Lives in the raft crate alongside the `BlobFetcher` trait + the
 //! gRPC server: raft owns the wire-format and dispatch fabric, kernel
 //! owns the data plane (mount backends). This handler bridges the two
-//! by reaching kernel-side state (`VFSRouter`, `DCache`) through the
-//! kernel's runtime API surface.
+//! by reaching kernel-side state (`VFSRouter`) through the kernel's
+//! syscall surface — no ``MetaStore`` Arc leaks across the crate
+//! boundary.
 //!
 //! Store-and-forward: ``content_id`` is opaque. The fetcher resolves
 //! it via the local ``VFSRouter`` — for federation reads ``content_id``
@@ -24,19 +25,28 @@ use std::sync::Arc;
 
 use crate::blob_fetcher::BlobFetcher;
 
-use kernel::core::dcache::DCache;
 use kernel::kernel::OperationContext;
 use kernel::vfs_router::VFSRouter;
 
-/// Kernel-side `BlobFetcher` — backed by the kernel's `VFSRouter`.
+/// Closure type for "look up locally-stored content_id at this path" —
+/// federation builds this from `Kernel::content_id_lookup_fn` so the
+/// fetcher consults the metastore through the kernel's syscall layer
+/// (no ``MetaStore`` symbol crossing the crate boundary).
+type LocalContentIdLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// Kernel-side `BlobFetcher` — backed by the kernel's `VFSRouter` plus
+/// a narrow content-id-lookup closure.
 pub struct KernelBlobFetcher {
     vfs_router: Arc<VFSRouter>,
-    dcache: Arc<DCache>,
+    lookup_local_content_id: LocalContentIdLookup,
 }
 
 impl KernelBlobFetcher {
-    pub fn new(vfs_router: Arc<VFSRouter>, dcache: Arc<DCache>) -> Self {
-        Self { vfs_router, dcache }
+    pub fn new(vfs_router: Arc<VFSRouter>, lookup_local_content_id: LocalContentIdLookup) -> Self {
+        Self {
+            vfs_router,
+            lookup_local_content_id,
+        }
     }
 }
 
@@ -77,11 +87,7 @@ impl BlobFetcher for KernelBlobFetcher {
 
         // Step 1: try path-style routing → local mount read.
         if let Ok(route) = self.vfs_router.route(content_id, contracts::ROOT_ZONE_ID) {
-            let local_content_id = self
-                .dcache
-                .get_entry(content_id)
-                .and_then(|e| e.content_id)
-                .filter(|s| !s.is_empty())
+            let local_content_id = (self.lookup_local_content_id)(content_id)
                 .unwrap_or_else(|| route.backend_path.clone());
             if let Some(bytes) =
                 self.vfs_router
@@ -122,7 +128,7 @@ impl BlobFetcher for KernelBlobFetcher {
 /// Kernel hands back the slot as `Box<dyn Any + Send + Sync>`; this
 /// handler downcasts to the concrete `BlobFetcherSlot` here, which
 /// is fine because the handler lives in raft alongside the type.
-pub fn install(kernel: &kernel::kernel::Kernel) {
+pub fn install(kernel: &Arc<kernel::kernel::Kernel>) {
     let Some(any_slot) = kernel.take_pending_blob_fetcher_slot() else {
         return;
     };
@@ -136,9 +142,7 @@ pub fn install(kernel: &kernel::kernel::Kernel) {
             return;
         }
     };
-    let fetcher = Arc::new(KernelBlobFetcher::new(
-        kernel.vfs_router_arc(),
-        kernel.dcache_arc(),
-    ));
+    let lookup = kernel.content_id_lookup_fn(contracts::ROOT_ZONE_ID);
+    let fetcher = Arc::new(KernelBlobFetcher::new(kernel.vfs_router_arc(), lookup));
     *slot.write() = Some(fetcher as Arc<dyn BlobFetcher>);
 }

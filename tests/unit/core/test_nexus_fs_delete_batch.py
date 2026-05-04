@@ -14,6 +14,31 @@ import pytest
 from tests.conftest import make_test_nexus
 
 
+class _KernelShim:
+    """Test shim allowing monkeypatched kernel methods.
+
+    PyKernel is a Rust-built class with read-only attributes, so
+    ``monkeypatch.setattr(nx._kernel, "metastore_X", fn)`` fails.
+    Wrap the real kernel in this Python shim and monkeypatch through
+    the shim instead — ``__getattr__`` falls through to the real
+    kernel for unmocked methods.
+    """
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def _wrap_kernel(nx, monkeypatch):
+    """Replace ``nx._kernel`` with a Python shim so per-test
+    ``monkeypatch.setattr`` calls against ``nx._kernel`` work."""
+    if not isinstance(nx._kernel, _KernelShim):
+        monkeypatch.setattr(nx, "_kernel", _KernelShim(nx._kernel))
+    return nx._kernel
+
+
 @pytest.fixture()
 def nx(tmp_path):
     return make_test_nexus(tmp_path)
@@ -210,7 +235,7 @@ class TestDeleteBatchExternalRetrySafety:
                 return None
 
         order: list[str] = []
-        original_delete = nx.metadata.delete
+        original_delete = nx._kernel.metastore_delete
 
         def tracking_delete(p):
             order.append("metadata.delete")
@@ -228,7 +253,8 @@ class TestDeleteBatchExternalRetrySafety:
                 return True
 
         monkeypatch.setattr(nx, "_kernel", _ExternalKernel(nx._kernel))
-        monkeypatch.setattr(nx.metadata, "delete", tracking_delete)
+        _wrap_kernel(nx, monkeypatch)
+        monkeypatch.setattr(nx._kernel, "metastore_delete", tracking_delete)
         monkeypatch.setattr(nx, "_driver_coordinator", _TrackingCoordinator(nx._driver_coordinator))
 
         nx.sys_unlink("/external-mount")
@@ -409,7 +435,7 @@ class TestImplicitRecursiveRaceRecheck:
         concurrency."""
         nx.write_batch([("/parent/leaf.txt", b"a")])
 
-        original_get = nx.metadata.get
+        original_get = nx._kernel.metastore_get
         children_drained = {"done": False}
 
         class _FakeMeta:
@@ -429,7 +455,9 @@ class TestImplicitRecursiveRaceRecheck:
                 children_drained["done"] = True
             return result
 
-        monkeypatch.setattr(nx.metadata, "get", post_drain_get)
+        _wrap_kernel(nx, monkeypatch)
+
+        monkeypatch.setattr(nx._kernel, "metastore_get", post_drain_get)
         monkeypatch.setattr(nx, "sys_unlink", tracking_unlink)
 
         result = nx.delete_batch(["/parent"], recursive=True)
@@ -452,7 +480,9 @@ class TestPreDeleteMetadataFailClosed:
                 raise RuntimeError("metastore degraded")
             return None
 
-        monkeypatch.setattr(nx.metadata, "get", flaky_get)
+        _wrap_kernel(nx, monkeypatch)
+
+        monkeypatch.setattr(nx._kernel, "metastore_get", flaky_get)
 
         result = nx.delete_batch(["/tracked.txt"])
 
@@ -497,7 +527,8 @@ class TestMountVerifyFailClosed:
             size=0,
             zone_id="root",
         )
-        monkeypatch.setattr(nx.metadata, "get", lambda _p: meta)
+        _wrap_kernel(nx, monkeypatch)
+        monkeypatch.setattr(nx._kernel, "metastore_get", lambda _p: meta)
         monkeypatch.setattr(nx, "_kernel", _UnverifiableKernel(nx._kernel))
 
         with pytest.raises(BackendError, match="cannot verify mount route teardown"):
@@ -593,7 +624,7 @@ class TestImplicitRecursiveStrictRecheck:
     def test_recheck_metastore_failure_reported_as_failure(self, nx, monkeypatch):
         nx.write_batch([("/parent/leaf.txt", b"a")])
 
-        original_get = nx.metadata.get
+        original_get = nx._kernel.metastore_get
         children_drained = {"done": False}
 
         def flaky_get(p):
@@ -609,7 +640,9 @@ class TestImplicitRecursiveStrictRecheck:
                 children_drained["done"] = True
             return result
 
-        monkeypatch.setattr(nx.metadata, "get", flaky_get)
+        _wrap_kernel(nx, monkeypatch)
+
+        monkeypatch.setattr(nx._kernel, "metastore_get", flaky_get)
         monkeypatch.setattr(nx, "sys_unlink", tracking_unlink)
 
         result = nx.delete_batch(["/parent"], recursive=True)
@@ -721,7 +754,8 @@ class TestStrandedMountRecovery:
             size=0,
             zone_id="tenant-A",
         )
-        monkeypatch.setattr(nx.metadata, "get", lambda _p: tenant_meta)
+        _wrap_kernel(nx, monkeypatch)
+        monkeypatch.setattr(nx._kernel, "metastore_get", lambda _p: tenant_meta)
         monkeypatch.setattr(nx, "_kernel", _ZoneRecordingKernel(nx._kernel))
         monkeypatch.setattr(
             nx, "_driver_coordinator", _ZoneRecordingCoordinator(nx._driver_coordinator)
@@ -877,14 +911,16 @@ class TestDeleteBatchImplicitDirProbeFailure:
     def test_implicit_dir_probe_failure_isolated(self, nx, monkeypatch):
         nx.write_batch([("/keeper.txt", b"x")])
 
-        original_probe = nx.metadata.is_implicit_directory
+        original_probe = nx._kernel.metastore_is_implicit_directory
 
         def flaky_probe(p):
             if p == "/ghost":
                 raise RuntimeError("metastore degraded")
             return original_probe(p)
 
-        monkeypatch.setattr(nx.metadata, "is_implicit_directory", flaky_probe)
+        _wrap_kernel(nx, monkeypatch)
+
+        monkeypatch.setattr(nx._kernel, "metastore_is_implicit_directory", flaky_probe)
 
         # /ghost doesn't exist → sys_unlink raises NexusFileNotFoundError →
         # the probe runs and raises. Must record per-item failure and

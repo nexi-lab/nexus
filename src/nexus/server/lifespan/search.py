@@ -230,7 +230,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         with contextlib.suppress(ImportError, AttributeError):
             from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
 
-            _settings_store = MetastoreSettingsStore(svc.nexus_fs.metadata)
+            _settings_store = MetastoreSettingsStore(svc.nexus_fs._kernel)
 
         # Issue #2188: Create ZoektClient + embedding provider via DI
         _zoekt_client = None

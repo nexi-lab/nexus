@@ -69,7 +69,10 @@ def test_wire_services_passes_enabled_bricks_to_wired_boot(
         cache_store=object(),
         _record_store=object(),
         _cache_config=SimpleNamespace(),
-        metadata=object(),
+        # Post-W3 the proxy ``metadata`` field is gone; services read
+        # ``nx._kernel`` directly. The dummy is enough for the wiring
+        # paths exercised here.
+        _kernel=object(),
         _init_cred=None,
         _perm_config=SimpleNamespace(enforce=True),
         router=SimpleNamespace(),

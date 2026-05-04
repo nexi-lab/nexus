@@ -301,14 +301,16 @@ class TestNexusFSFileReader:
         # scrubbed on the way out or the Postgres write still rolls back.
         # Non-parseable path — fast path is still allowed there.
         nx = MagicMock()
-        nx._kernel.metastore_get_searchable_text = MagicMock(return_value="hello\x00world")
+        nx._kernel.metastore_get_file_metadata = MagicMock(
+            side_effect=lambda p, k: "hello\x00world" if k == "parsed_text" else None
+        )
         reader = _NexusFSFileReader(nx)
 
         assert reader.get_searchable_text("/notes.txt") == "helloworld"
 
     def test_get_searchable_text_passes_through_none(self) -> None:
         nx = MagicMock()
-        nx._kernel.metastore_get_searchable_text = MagicMock(return_value=None)
+        nx._kernel.metastore_get_file_metadata = MagicMock(return_value=None)
         reader = _NexusFSFileReader(nx)
 
         assert reader.get_searchable_text("/missing.txt") is None
@@ -321,14 +323,16 @@ class TestNexusFSFileReader:
         # hash; otherwise a cross-zone collision or pre-reindex rewrite can
         # latch stale markdown against fresh ``indexed_content_id``.
         nx = MagicMock()
-        nx._kernel.metastore_get_searchable_text = MagicMock(return_value="stale cached markdown")
+        nx._kernel.metastore_get_file_metadata = MagicMock(
+            side_effect=lambda p, k: "stale cached markdown" if k == "parsed_text" else None
+        )
         reader = _NexusFSFileReader(nx)
 
         for path in ("/doc.pdf", "/report.docx", "/sheet.xlsx", "/Slides.PPTX"):
             assert reader.get_searchable_text(path) is None, f"expected None for {path}"
         # The metastore should never even be consulted for parseable paths —
         # we short-circuit before it.
-        nx._kernel.metastore_get_searchable_text.assert_not_called()
+        nx._kernel.metastore_get_file_metadata.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_read_text_caches_successful_empty_parse(self) -> None:

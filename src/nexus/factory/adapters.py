@@ -328,7 +328,9 @@ class _NexusFSFileReader:
         # validates the cache against a sha256 of the raw bytes.
         if is_parseable_path(path):
             return None
-        result: str | None = self._nx._kernel.get_searchable_text(path)
+        from nexus.kernel_helpers import metastore_get_searchable_text
+
+        result: str | None = metastore_get_searchable_text(self._nx._kernel, path)
         if result is None:
             return None
         return _sanitize_for_index(result if isinstance(result, str) else str(result))

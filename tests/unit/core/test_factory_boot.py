@@ -404,7 +404,10 @@ class TestBrickServicesFieldCompleteness:
         from nexus_runtime import PyKernel
 
         metadata_store = MagicMock()
-        metadata_store._kernel = PyKernel()
+        # NexusFS reads ``metadata_store._rust_kernel`` to extract the
+        # kernel handle (post-W3); the legacy ``_kernel`` attribute is
+        # ignored, so set the right one.
+        metadata_store._rust_kernel = PyKernel()
 
         backend = MagicMock()
         backend.root_path = "/tmp/test"
@@ -456,7 +459,10 @@ class TestBrickServicesFieldCompleteness:
         from nexus_runtime import PyKernel
 
         metadata_store = MagicMock()
-        metadata_store._kernel = PyKernel()
+        # NexusFS reads ``metadata_store._rust_kernel`` to extract the
+        # kernel handle (post-W3); the legacy ``_kernel`` attribute is
+        # ignored, so set the right one.
+        metadata_store._rust_kernel = PyKernel()
 
         backend = MagicMock()
         backend.root_path = "/tmp/test"

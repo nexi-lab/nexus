@@ -14,6 +14,31 @@ import pytest
 from tests.conftest import make_test_nexus
 
 
+class _KernelShim:
+    """Test shim allowing monkeypatched kernel methods.
+
+    PyKernel is a Rust-built class with read-only attributes, so
+    ``monkeypatch.setattr(nx._kernel, "metastore_X", fn)`` fails.
+    Wrap the real kernel in this Python shim and monkeypatch through
+    the shim instead — ``__getattr__`` falls through to the real
+    kernel for unmocked methods.
+    """
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def _wrap_kernel(nx, monkeypatch):
+    """Replace ``nx._kernel`` with a Python shim so per-test
+    ``monkeypatch.setattr`` calls against ``nx._kernel`` work."""
+    if not isinstance(nx._kernel, _KernelShim):
+        monkeypatch.setattr(nx, "_kernel", _KernelShim(nx._kernel))
+    return nx._kernel
+
+
 @pytest.fixture()
 def nx(tmp_path):
     return make_test_nexus(tmp_path)
@@ -228,6 +253,7 @@ class TestDeleteBatchExternalRetrySafety:
                 return True
 
         monkeypatch.setattr(nx, "_kernel", _ExternalKernel(nx._kernel))
+        _wrap_kernel(nx, monkeypatch)
         monkeypatch.setattr(nx._kernel, "metastore_delete", tracking_delete)
         monkeypatch.setattr(nx, "_driver_coordinator", _TrackingCoordinator(nx._driver_coordinator))
 
@@ -429,6 +455,8 @@ class TestImplicitRecursiveRaceRecheck:
                 children_drained["done"] = True
             return result
 
+        _wrap_kernel(nx, monkeypatch)
+
         monkeypatch.setattr(nx._kernel, "metastore_get", post_drain_get)
         monkeypatch.setattr(nx, "sys_unlink", tracking_unlink)
 
@@ -451,6 +479,8 @@ class TestPreDeleteMetadataFailClosed:
             if p == "/tracked.txt":
                 raise RuntimeError("metastore degraded")
             return None
+
+        _wrap_kernel(nx, monkeypatch)
 
         monkeypatch.setattr(nx._kernel, "metastore_get", flaky_get)
 
@@ -497,6 +527,7 @@ class TestMountVerifyFailClosed:
             size=0,
             zone_id="root",
         )
+        _wrap_kernel(nx, monkeypatch)
         monkeypatch.setattr(nx._kernel, "metastore_get", lambda _p: meta)
         monkeypatch.setattr(nx, "_kernel", _UnverifiableKernel(nx._kernel))
 
@@ -608,6 +639,8 @@ class TestImplicitRecursiveStrictRecheck:
             if p == "/parent/leaf.txt":
                 children_drained["done"] = True
             return result
+
+        _wrap_kernel(nx, monkeypatch)
 
         monkeypatch.setattr(nx._kernel, "metastore_get", flaky_get)
         monkeypatch.setattr(nx, "sys_unlink", tracking_unlink)
@@ -721,6 +754,7 @@ class TestStrandedMountRecovery:
             size=0,
             zone_id="tenant-A",
         )
+        _wrap_kernel(nx, monkeypatch)
         monkeypatch.setattr(nx._kernel, "metastore_get", lambda _p: tenant_meta)
         monkeypatch.setattr(nx, "_kernel", _ZoneRecordingKernel(nx._kernel))
         monkeypatch.setattr(
@@ -883,6 +917,8 @@ class TestDeleteBatchImplicitDirProbeFailure:
             if p == "/ghost":
                 raise RuntimeError("metastore degraded")
             return original_probe(p)
+
+        _wrap_kernel(nx, monkeypatch)
 
         monkeypatch.setattr(nx._kernel, "metastore_is_implicit_directory", flaky_probe)
 

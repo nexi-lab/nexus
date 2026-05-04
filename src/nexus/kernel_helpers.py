@@ -160,12 +160,25 @@ def _warn_parsed_text_unavailable_once() -> None:
         )
 
 
-def metastore_get_searchable_text(kernel: Any, path: str) -> str | None:  # noqa: ARG001
-    """Return ``None`` and emit a one-time warning.
+def metastore_get_searchable_text(kernel: Any, path: str) -> str | None:
+    """Return cached ``parsed_text`` for *path*, or ``None`` if absent.
 
-    Kept as a separate function (rather than inlining ``None`` returns
-    at every call site) so the operator-visible warning fires exactly
-    once per process.
+    The kernel side-car stores ``parsed_text`` via
+    ``metastore_set_file_metadata(path, "parsed_text", text)``; this
+    helper is a thin lookup over ``metastore_get_file_metadata`` so
+    indexer fast-path callers don't have to know the key.
+
+    Returns ``None`` for paths with no cached text (callers fall
+    through to raw ``sys_read``). When the kernel side-car itself is
+    unavailable (legacy boots that haven't wired the file_metadata
+    table yet), emits a one-time warning so an operator looking into
+    a "why is grep slow" incident has something to grep.
     """
-    _warn_parsed_text_unavailable_once()
-    return None
+    try:
+        result = kernel.metastore_get_file_metadata(path, "parsed_text")
+    except AttributeError:
+        _warn_parsed_text_unavailable_once()
+        return None
+    if result is None:
+        return None
+    return result if isinstance(result, str) else str(result)

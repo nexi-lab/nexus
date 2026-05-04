@@ -200,14 +200,16 @@ class TestRemoveMount:
         assert "Mount not found" in result["errors"][0]
 
     def test_remove_mount_cleans_up_directory(self, mount_service, mock_nexus_fs):
-        """Removing a mount deletes metadata entries via delete_batch."""
+        """Removing a mount deletes metadata entries via per-path metastore_delete."""
         mount_service._driver_coordinator.unmount.return_value = True
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
         assert result["removed"] is True
-        # The service calls metadata.list(prefix=...) + metadata.delete_batch(...)
-        mock_nexus_fs._kernel.metastore_delete_batch.assert_called_once()
+        # Post-W2 mount_service iterates metastore_list + per-path
+        # metastore_delete (the kernel exposes no batch-delete primitive
+        # so the bulk wrapper became a loop).
+        mock_nexus_fs._kernel.metastore_delete.assert_called()
 
     def test_remove_mount_handles_cleanup_errors(self, mount_service, mock_nexus_fs):
         """Errors during cleanup are reported but don't fail the removal."""

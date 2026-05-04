@@ -86,6 +86,10 @@ def _build_fs(entries: list[_FakeMeta]) -> NexusFS:
 
     fs = object.__new__(NexusFS)
     fs._kernel = kernel
+    # NexusFS reads ``self._zone_id`` for zone-scoped listing; default to root.
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    fs._zone_id = ROOT_ZONE_ID
     return fs
 
 

@@ -117,7 +117,7 @@ def test_dict_metastore_factory_returns_usable_store(tmp_path: Path) -> None:
         assert hasattr(store, "put")
         assert store.get("/missing") is None
     finally:
-        store.close()
+        pass  # kernel manages redb lifecycle
 
 
 def test_make_test_nexus_export_has_stable_name() -> None:

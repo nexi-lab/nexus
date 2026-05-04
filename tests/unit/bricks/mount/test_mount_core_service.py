@@ -245,7 +245,12 @@ class TestRemoveMountErrorCollection:
         result = service.remove_mount_sync("/mnt/test")
 
         assert result["removed"] is True
-        assert len(result["errors"]) == 4
+        # 3 errors: metadata list, ReBAC tuples, hierarchy manager.
+        # ``delete_directory_entries_recursive`` is now a no-op (W1.5
+        # collapsed it because the kernel metastore keeps its own
+        # DashMap projection — no separate sparse index to clean), so
+        # the historical 4th error site is unreachable.
+        assert len(result["errors"]) == 3
 
     def test_successful_remove_has_no_errors(self) -> None:
         """Clean removal returns zero errors."""

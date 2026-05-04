@@ -610,17 +610,57 @@ async fn run_join(
     local_path: &str,
     parent_zone: &str,
 ) -> Result<()> {
-    let ZoneManagerBundle { zm, .. } = open_zone_manager(&common)?;
-    // Treat the supplied peer as the only known voter; raft will
-    // discover the rest via the remote's ConfState once we propose.
-    let peers = vec![peer_addr.to_string()];
+    let ZoneManagerBundle {
+        zm,
+        node_id,
+        self_address,
+        ..
+    } = open_zone_manager(&common)?;
 
-    if zm.get_zone(remote_zone_id).is_none() {
-        // CLI `join` defaults to full voter; learner promotion is reserved
-        // for the gRPC path (PyZoneManager.join_zone exposes the flag).
-        zm.join_zone(remote_zone_id, peers, false)
-            .map_err(|e| anyhow::anyhow!("join_zone({}): {}", remote_zone_id, e))?;
-    }
+    // Pre-#3996 (and pre-this commit) ``run_join`` only invoked
+    // ``zm.join_zone(remote_zone_id, peers, false)`` — that registers
+    // the zone locally with ``skip_bootstrap=true`` but never tells
+    // the leader on ``peer_addr`` "I want in".  No JoinZone RPC fires,
+    // no AddNode commits, the joiner waits forever after restart.
+    //
+    // Drive the same SSOT machinery ``init_from_env`` and
+    // ``run_daemon`` use for the root zone:
+    // ``bootstrap_or_join_zone`` with ``bootstrap_new=false``.  That
+    // (a) registers the zone locally with ``skip_bootstrap=true`` so
+    // the local gRPC server can serve append-entries from the leader
+    // once AddNode commits, then (b) sends ``JoinZone`` RPC to
+    // ``peer_addr``, then (c) returns once the leader's response
+    // confirms AddNode + the snapshot has installed authoritative
+    // ConfState locally.
+    //
+    // ``max_attempts=Some(15)`` × ``JOIN_ZONE_RETRY_INTERVAL`` (2 s)
+    // ≈ 30 s upper bound on the operator command — long enough to
+    // absorb a leader election round on the remote, short enough that
+    // a stuck command terminates with a clear error rather than
+    // hanging forever like the daemon-boot path does.
+    let use_tls = !common.no_tls;
+    let peer = NodeAddress::parse(peer_addr, use_tls)
+        .map_err(|e| anyhow::anyhow!("--peer-addr parse '{}': {}", peer_addr, e))?;
+    let peer_addrs = vec![peer];
+
+    let zm_for_join = zm.clone();
+    let self_addr_for_join = self_address.clone();
+    let zone_id_for_join = remote_zone_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        nexus_raft::distributed_coordinator::bootstrap_or_join_zone(
+            zm_for_join.as_ref(),
+            &zone_id_for_join,
+            node_id,
+            &self_addr_for_join,
+            &peer_addrs,
+            /* bootstrap_new */ false,
+            /* max_attempts */ Some(15),
+        )
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("join task panicked: {}", e))?
+    .map_err(|e| anyhow::anyhow!("bootstrap_or_join_zone({}): {}", remote_zone_id, e))?;
+
     zm.mount(parent_zone, local_path, remote_zone_id, true)
         .map_err(|e| anyhow::anyhow!("mount: {}", e))?;
 

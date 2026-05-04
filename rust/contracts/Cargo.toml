@@ -13,3 +13,9 @@ crate-type = ["rlib"]
 # raft-rs's bincode pipeline). Kept behind a dep on a tiny subset of serde
 # to avoid pulling the full macro crate into every dependent.
 serde = { version = "1.0", features = ["derive"] }
+# Mutex type used in the ``Locks::shared_state_arc`` trait method. Both
+# kernel and raft already use ``parking_lot::Mutex<LockState>`` to wrap
+# the SSOT; expressing that in the trait signature keeps install-time
+# wiring type-safe (no caller-side mismatch between backend Arc and
+# state Arc).
+parking_lot = "0.12"

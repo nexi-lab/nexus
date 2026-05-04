@@ -15,7 +15,9 @@
 //! advisory locks.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -305,6 +307,17 @@ impl LockState {
     }
 
     // ── Reads ────────────────────────────────────────────────────────
+    //
+    // Reads do not prune expired holders. Apply paths
+    // (``apply_acquire``/``apply_extend``) prune before each
+    // mutation, so any stale entry that survives is by definition
+    // an unmutated path that nobody currently cares about. A
+    // periodic background sweeper (or an explicit ``gc_expired``
+    // call) handles long-term cleanup. Doing an O(N) full-table
+    // sweep on every read was the previous shape and produced both
+    // a perf hit and a SSOT divergence (``LocalLocks::get_lock``
+    // skipped the sweep, the federation-side impl did it on every
+    // call).
 
     pub fn get_lock(&self, path: &str) -> Option<LockInfo> {
         self.locks.get(path).and_then(|entry| {
@@ -338,8 +351,9 @@ impl LockState {
     }
 
     /// Public read-side helper for expiry pruning (used by tests and
-    /// future background reapers). apply_* already inline this on their
-    /// own paths.
+    /// future background reapers). apply_* paths already inline this
+    /// on their own writes; this is the cold-path "compact the map"
+    /// hook for callers who want explicit cleanup.
     pub fn gc_expired(&mut self, now_secs: u64) {
         self.prune_expired(now_secs);
     }
@@ -392,10 +406,26 @@ pub trait Locks: Send + Sync {
     fn extend(&self, path: &str, lock_id: &str, ttl_secs: u32) -> Result<bool, String>;
 
     /// Read the full advisory lock record (or ``None`` if unlocked).
+    /// Implementations should route through ``LockState::get_lock`` so
+    /// expiry pruning is uniform across backends.
     fn get_lock(&self, path: &str) -> Option<LockInfo>;
 
     /// Enumerate locks under ``prefix``, capped at ``limit``.
+    /// Implementations should route through ``LockState::list_locks``
+    /// so expiry pruning is uniform across backends.
     fn list_locks(&self, prefix: &str, limit: usize) -> Vec<LockInfo>;
+
+    /// Return the shared advisory state Arc this backend reads and
+    /// writes against.
+    ///
+    /// ``LockManager::install_locks`` uses this to atomically swap the
+    /// kernel's read-side state Arc together with the backend — the
+    /// two MUST stay paired (every backend's reads/writes target its
+    /// own state Arc). Exposing it on the trait lets the install path
+    /// derive the new state Arc from the backend itself, removing a
+    /// caller-side mismatch foot-gun where the caller would otherwise
+    /// have to remember to pass the matching state Arc separately.
+    fn shared_state_arc(&self) -> Arc<Mutex<LockState>>;
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

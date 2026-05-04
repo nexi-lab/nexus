@@ -212,34 +212,35 @@ impl std::fmt::Display for LockError {
 // LockManager — unified I/O + advisory lock primitive
 // ═══════════════════════════════════════════════════════════════════
 
-/// Unified lock manager: I/O lock + advisory lock + optional Raft.
+/// Unified lock manager: I/O lock + advisory lock + swappable advisory
+/// backend (HAL).
 ///
 /// I/O locks live in a local ``Mutex<IOLockState>`` — they never
-/// replicate. Advisory locks go through an ``Arc<dyn Locks>`` backend
-/// — the kernel's default ``LocalLocks`` mutates a shared
-/// ``Arc<Mutex<LockState>>`` directly; federation DI swaps in
-/// ``nexus_raft::federation::DistributedLocks`` via
-/// ``Kernel::install_locks`` (idempotent, first-wins per process).
-///
-/// The trait boundary here keeps the kernel free of any raft concrete
-/// type — the federation backend lives entirely in `nexus_raft`.
+/// replicate. Advisory locks go through an ``Arc<dyn Locks>`` HAL
+/// backend — the kernel's default ``LocalLocks`` mutates a shared
+/// ``Arc<Mutex<LockState>>`` directly. The distributed-coordinator HAL
+/// can swap in a replicated impl via ``Kernel::install_locks``
+/// (idempotent, first-wins per process). Kernel never names the
+/// concrete replicated impl — the trait boundary is the contract.
 ///
 /// Shared via ``Arc`` between Kernel and VFSLockManager PyO3 wrapper.
 pub struct LockManager {
     io_state: Mutex<IOLockState>,
-    /// Advisory backend (``LocalLocks`` by default; ``DistributedLocks``
-    /// after federation DI). Wrapped in ``RwLock`` so ``install_locks``
-    /// can swap atomically without blocking concurrent readers beyond
-    /// one Arc clone.
+    /// Advisory backend HAL slot (``LocalLocks`` by default; replaced by
+    /// the distributed-coordinator HAL impl when ``install_locks`` runs).
+    /// Wrapped in ``RwLock`` so the install-time swap is atomic without
+    /// blocking concurrent readers beyond one Arc clone.
+    ///
+    /// The shared advisory-state Arc is NOT stored separately — it
+    /// lives inside the backend and is reached via
+    /// ``Locks::shared_state_arc``. The previous ``RwLock<Arc<Mutex
+    /// <LockState>>>`` field was a dual-storage SSOT violation: the
+    /// install path had to update both the backend slot and the state
+    /// slot in the right order, and a caller passing a mismatched
+    /// state Arc to ``install_locks`` would corrupt the read-side.
     locks: RwLock<Arc<dyn Locks>>,
-    /// Shared advisory state Arc. Owned here so the kernel controls
-    /// the mutex discipline and so federation-side migration can pull
-    /// the current holders BEFORE swapping backends (the federation
-    /// path adopts the state machine's Arc and merges into it under
-    /// its own mutex).
-    advisory_state: RwLock<Arc<Mutex<SharedLockState>>>,
-    /// First-wins guard for ``install_locks``. Once the federation
-    /// backend is wired, further installs are no-ops.
+    /// First-wins guard for ``install_locks``. Once the replicated
+    /// HAL backend is wired, further installs are no-ops.
     installed: std::sync::atomic::AtomicBool,
     notify: Condvar,        // for blocking I/O acquire (paired with io_state)
     next_handle: AtomicU64, // for auto-generated I/O lock handles
@@ -255,12 +256,10 @@ pub struct LockManager {
 impl LockManager {
     pub fn new() -> Self {
         let state = Arc::new(Mutex::new(SharedLockState::new()));
-        let default_backend: Arc<dyn Locks> =
-            Arc::new(crate::locks::LocalLocks::new(state.clone()));
+        let default_backend: Arc<dyn Locks> = Arc::new(crate::locks::LocalLocks::new(state));
         Self {
             io_state: Mutex::new(IOLockState::default()),
             locks: RwLock::new(default_backend),
-            advisory_state: RwLock::new(state),
             installed: std::sync::atomic::AtomicBool::new(false),
             notify: Condvar::new(),
             next_handle: AtomicU64::new(0),
@@ -272,43 +271,36 @@ impl LockManager {
         }
     }
 
-    /// Install a new advisory backend (federation DI).
+    /// Install a replicated advisory backend (called by the
+    /// distributed-coordinator HAL during its setup path).
     ///
-    /// Idempotent by caller discipline: federation's ``setup_zone``
-    /// drives exactly one install per process — the ``installed``
-    /// flag guards against a second caller racing in. Mirrors the old
-    /// ``upgrade_to_distributed`` first-wins contract: lock state
-    /// lives in ONE specific zone's state machine (the first
-    /// replicated mount the kernel sees); swapping backends
-    /// mid-flight would orphan raft-committed holders.
+    /// First-wins: the HAL drives exactly one install per process —
+    /// the ``installed`` flag rejects a second install. Replicated
+    /// lock state is anchored to ONE specific consensus group (the
+    /// first replicated mount the kernel sees); swapping HAL backends
+    /// mid-flight would orphan committed holders.
     ///
-    /// ``new_state`` becomes the kernel's new authoritative advisory
-    /// state Arc — callers (federation) are responsible for merging
-    /// any existing local holders into it BEFORE the swap (the
-    /// federation path does this inside ``DistributedLocks::new``).
+    /// The backend's ``shared_state_arc()`` is the new authoritative
+    /// advisory-state Arc — the HAL impl is responsible for merging
+    /// any existing local holders into it BEFORE the swap (the impl
+    /// does this in its own constructor).
     ///
     /// Returns ``true`` if the backend was installed, ``false`` if a
     /// previous backend was already in place.
-    pub fn install_locks(
-        &self,
-        backend: Arc<dyn Locks>,
-        new_state: Arc<Mutex<SharedLockState>>,
-    ) -> bool {
-        let mut slot = self.locks.write();
+    pub fn install_locks(&self, backend: Arc<dyn Locks>) -> bool {
         if self.installed.swap(true, Ordering::AcqRel) {
             return false;
         }
-        let mut state_slot = self.advisory_state.write();
-        *state_slot = new_state;
-        *slot = backend;
+        *self.locks.write() = backend;
         true
     }
 
-    /// Snapshot the current advisory-state Arc (federation setup
-    /// calls this to merge local holders into the state machine's
-    /// map before swapping backends).
+    /// Snapshot the current advisory-state Arc — the distributed-
+    /// coordinator HAL setup path calls this to merge any existing
+    /// local holders into its own (replicated) map before the
+    /// install swap.
     pub fn advisory_state_arc(&self) -> Arc<Mutex<SharedLockState>> {
-        self.advisory_state.read().clone()
+        self.locks.read().shared_state_arc()
     }
 
     /// True once ``install_locks`` has been called. Fast-path gate
@@ -585,10 +577,10 @@ impl LockManager {
     ///
     /// All four mutation methods delegate to the installed ``Locks``
     /// backend — ``LocalLocks`` (default) mutates the shared map
-    /// directly; ``DistributedLocks`` (federation) proposes through
-    /// ``ZoneConsensus`` and apply-path writes into the same shared
-    /// map. Either way, there is one state transition and one mutex
-    /// acquisition observed from outside.
+    /// directly; the replicated HAL backend proposes a state-transition
+    /// through its consensus mechanism and the apply-path writes into
+    /// the same shared map. Either way, there is one state transition
+    /// and one mutex acquisition observed from outside.
     pub fn acquire_lock(
         &self,
         path: &str,
@@ -634,11 +626,11 @@ impl LockManager {
     /// Read the full advisory lock record for a path (or ``None`` if
     /// unlocked).
     ///
-    /// Reads always go through the current backend. Both ``LocalLocks``
-    /// and ``DistributedLocks`` read from the same shared
-    /// ``Arc<Mutex<LockState>>`` — a committed raft write is visible
-    /// here as soon as apply returns, so no ReadIndex round-trip is
-    /// needed.
+    /// Reads always go through the currently installed ``Locks`` HAL
+    /// backend. Both the default and the replicated backend read
+    /// from the same shared ``Arc<Mutex<LockState>>`` — a committed
+    /// replicated write is visible here as soon as apply returns, so
+    /// no read-quorum round-trip is needed.
     pub fn get_lock_info(&self, path: &str) -> Result<Option<KernelLockInfo>, LockError> {
         Ok(self
             .locks_backend()

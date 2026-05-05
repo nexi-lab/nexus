@@ -129,9 +129,18 @@ jobs:
       - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
+          mapfile -t image_tags < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          tag_args=()
+          for tag in "${image_tags[@]}"; do
+            tag_args+=("-t" "$tag")
+          done
+          digest_args=()
+          for digest in *; do
+            digest_args+=("${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:${digest}")
+          done
           docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+            "${tag_args[@]}" \
+            "${digest_args[@]}"
 
       - name: Inspect
         run: |
@@ -232,18 +241,28 @@ jobs:
 
       - name: Initialize and extract credentials
         run: |
-          # Run init inside the container where nexus CLI is available
-          docker exec nexus-e2e sh -c '
-            SKIP_CONFIRM=1 QUIET=1 \
-            NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus \
-            /usr/local/bin/docker-entrypoint.sh nexusd --help >/dev/null 2>&1 || true
-          '
-          # Create admin API key via the REST API
+          # Container startup already runs docker-entrypoint.sh, initializes the
+          # database, and writes /app/data/.admin-api-key. Re-running the
+          # entrypoint via docker exec starts a second long-running server path.
           ADMIN_KEY=$(curl -sf http://localhost:2026/api/admin/bootstrap 2>/dev/null \
             | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || true)
           if [ -z "$ADMIN_KEY" ]; then
-            echo "Bootstrap not available, trying default admin key from container..."
-            ADMIN_KEY=$(docker exec nexus-e2e cat /app/data/.admin-api-key 2>/dev/null || true)
+            echo "Bootstrap not available, reading admin key from container..."
+            ADMIN_KEY=$(timeout 30s docker exec nexus-e2e sh -c "
+              for i in \$(seq 1 30); do
+                if [ -s /app/data/.admin-api-key ]; then
+                  cat /app/data/.admin-api-key
+                  exit 0
+                fi
+                sleep 1
+              done
+              exit 1
+            " 2>/dev/null || true)
+          fi
+          if [ -z "$ADMIN_KEY" ]; then
+            echo "::error::Unable to obtain Nexus admin API key"
+            docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' || true
+            exit 1
           fi
           echo "NEXUS_URL=http://localhost:2026" >> "$GITHUB_ENV"
           echo "NEXUS_API_KEY=${ADMIN_KEY}" >> "$GITHUB_ENV"

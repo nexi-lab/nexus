@@ -21,7 +21,7 @@ writes to existing files in that directory.  This matches the ReBAC
 inheritance model where WRITE on a directory implies WRITE on children.
 
 Integration:
-    - Checked in ``PermissionCheckHook.on_pre_write/read/delete/rmdir()``
+    - Checked in ``RebacPermissionCheckHook.on_pre_write/read/delete/rmdir()``
       (fast path)
     - Stamped after successful ReBAC check (slow path)
     - Invalidated by ``CacheCoordinator.invalidate_for_write()`` via

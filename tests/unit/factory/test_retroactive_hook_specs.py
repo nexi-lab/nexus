@@ -23,9 +23,9 @@ class TestHookSpecConformance:
     """Every VFS hook class exposes hook_spec."""
 
     def test_permission_hook(self) -> None:
-        from nexus.bricks.rebac.permission_hook import PermissionCheckHook
+        from nexus.bricks.rebac.permission_hook import RebacPermissionCheckHook
 
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=MagicMock(),
             metadata_store=MagicMock(),
             default_context=MagicMock(),
@@ -105,9 +105,9 @@ class TestHookSpecDeclarations:
     """Each hook declares the correct HookSpec channels."""
 
     def test_permission_8_channels(self) -> None:
-        from nexus.bricks.rebac.permission_hook import PermissionCheckHook
+        from nexus.bricks.rebac.permission_hook import RebacPermissionCheckHook
 
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=MagicMock(),
             metadata_store=MagicMock(),
             default_context=MagicMock(),

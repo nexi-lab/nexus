@@ -200,7 +200,7 @@ class NexusFS(  # type: ignore[misc]
         self._memory_main_capacity = memory.main_capacity
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
         # _enforce_permissions removed — permission enforcement is fully delegated
-        # to KernelDispatch INTERCEPT hooks. PermissionCheckHook holds the flag
+        # to KernelDispatch INTERCEPT hooks. RebacPermissionCheckHook holds the flag
         # internally. No hook = no check = zero overhead (~20ns set lookup).
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
         self.allow_admin_bypass = permissions.allow_admin_bypass

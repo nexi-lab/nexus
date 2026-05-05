@@ -625,7 +625,7 @@ class MetadataMixin:
     ) -> None:
         """Reject /__sys__/ mutations from non-admin callers.
 
-        Codex Round 10 finding #2: PermissionCheckHook intentionally skips
+        Codex Round 10 finding #2: RebacPermissionCheckHook intentionally skips
         ``/__sys__/`` paths, so mkdir/rename/copy must enforce here.  Any
         path under /__sys__/ — source or destination — requires admin or
         is_system; ``context is None`` is no longer treated as privileged.
@@ -727,7 +727,7 @@ class MetadataMixin:
         # ── /__sys__/ kernel management dispatch ──────────────────────
         # Issue #3786 / Codex Round 8 #1 + Round 9 #4: gate ALL /__sys__/
         # mutations to admin/system, not just service unregister.  The
-        # PermissionCheckHook explicitly skips system paths, so without
+        # RebacPermissionCheckHook explicitly skips system paths, so without
         # this gate any non-admin caller reaching sys_unlink could
         # disrupt internal entries (services, hooks, namespaces, locks,
         # rebac).  Internal kernel callers must pass an explicit system

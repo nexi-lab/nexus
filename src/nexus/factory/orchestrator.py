@@ -389,14 +389,14 @@ def _register_vfs_hooks(
 
         _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
 
-    # ── Permission — PermissionCheckHook as NativeInterceptHook ──
+    # ── Permission — RebacPermissionCheckHook as NativeInterceptHook ──
     if permission_checker is not None:
         from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
-        from nexus.bricks.rebac.permission_hook import PermissionCheckHook
+        from nexus.bricks.rebac.permission_hook import RebacPermissionCheckHook
 
         _lease_table = PermissionLeaseTable() if nx._perm_config.enforce else None
 
-        _perm_hook = PermissionCheckHook(
+        _perm_hook = RebacPermissionCheckHook(
             checker=permission_checker,
             metadata_store=nx._kernel,
             default_context=nx._init_cred,
@@ -528,22 +528,23 @@ def _register_vfs_hooks(
         _enlist("tiger_write", _tiger_write_hook)
 
     # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
-    from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
+    if _on("parsers"):
+        from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
 
-    _vview_resolver = VirtualViewResolver(
-        metadata=nx._kernel,
-        dlc=nx._driver_coordinator,
-        permission_checker=permission_checker,
-        parse_fn=parse_fn,
-        read_tracker_fn=None,
-    )
-    _enlist("virtual_view", _vview_resolver)
+        _vview_resolver = VirtualViewResolver(
+            metadata=nx._kernel,
+            dlc=nx._driver_coordinator,
+            permission_checker=permission_checker,
+            parse_fn=parse_fn,
+            read_tracker_fn=None,
+        )
+        _enlist("virtual_view", _vview_resolver)
 
-    # ── PRE-DISPATCH: ReadmePathResolver (Issue #3827) ───────────────────
-    from nexus.bricks.parsers.readme_resolver import ReadmePathResolver
+        # ── PRE-DISPATCH: ReadmePathResolver (Issue #3827) ───────────────────
+        from nexus.bricks.parsers.readme_resolver import ReadmePathResolver
 
-    _readme_resolver = ReadmePathResolver(nexus_fs=nx)
-    _enlist("readme_resolver", _readme_resolver)
+        _readme_resolver = ReadmePathResolver(nexus_fs=nx)
+        _enlist("readme_resolver", _readme_resolver)
 
     # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──
     _kernel_for_proc = getattr(nx, "_kernel", None)
@@ -623,16 +624,6 @@ def _register_vfs_hooks(
                 SyncPermissionWriteHook(hierarchy_manager=_hier, rebac_manager=_rebac_for_perm),
             )
 
-    # ── Zone writability gate (Issue #1371, #2061) ─────────────────────
-    # Replaces NexusFS._check_zone_writable() — kernel should not know
-    # about zone lifecycle.  PRE hooks on all mutating ops block writes
-    # to zones being deprovisioned.
-    _zl2 = _ss.get("zone_lifecycle")
-    if _zl2 is not None:
-        from nexus.services.lifecycle.zone_writability_hook import ZoneWritabilityHook
-
-        _enlist("zone_writability", ZoneWritabilityHook(_zl2))
-
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # FileWatcher is now Rust kernel-internal (sys_watch + dispatch_observers).
     # No Python FileWatcher registration needed.
@@ -651,10 +642,8 @@ def _register_vfs_hooks(
         except Exception as exc:
             logger.warning("EventBus creation skipped: %s", exc)
 
-    from nexus.services.event_bus.observer import EventBusObserver
-
-    _bus_observer = EventBusObserver(event_bus=_event_bus)
-    _enlist("event_bus_observer", _bus_observer)
+    # EventBusObserver: no longer enlisted — observer dispatch is Rust-native
+    # (Issue #3646).  The event bus service manages its own lifecycle.
 
     # RevisionTrackingObserver deleted (§10 A2): zone revision counter is now
     # a kernel primitive (AtomicU64 per zone). The kernel auto-increments on

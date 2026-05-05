@@ -1,0 +1,17 @@
+{{- if .Values.redis.internal.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-hub.redisName" . }}
+  labels:
+    {{- include "nexus-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+  selector:
+    {{- include "nexus-hub.selectorLabels" (dict "root" . "component" "redis") | nindent 4 }}
+{{- end }}

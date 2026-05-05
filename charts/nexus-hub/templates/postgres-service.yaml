@@ -1,0 +1,17 @@
+{{- if .Values.postgres.internal.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nexus-hub.postgresName" . }}
+  labels:
+    {{- include "nexus-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  selector:
+    {{- include "nexus-hub.selectorLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+{{- end }}

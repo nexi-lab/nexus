@@ -846,10 +846,16 @@ class SearchDaemon:
             self._backend = None
         self._txtai_bootstrapped = False
 
-        # Close database connections (only if we created them)
+        # Close database connections (only if we created them).
+        # Issue #3775: must use aclose() to dispose async engines on this loop;
+        # sync close() now skips async dispose to avoid cross-loop futures.
         if self._owns_engine:
             if self._record_store is not None:
-                self._record_store.close()
+                aclose_fn = getattr(self._record_store, "aclose", None)
+                if aclose_fn is not None:
+                    await aclose_fn()
+                else:
+                    self._record_store.close()
                 self._record_store = None
             elif self._async_engine:
                 await self._async_engine.dispose()

@@ -826,6 +826,14 @@ class NexusFS(  # type: ignore[misc]
 
         Calls kernel lifecycle methods first, then
         delegates to close() for sync resource cleanup.
+
+        Sync rather than async because ``kernel.service_stop_all`` invokes
+        ``asyncio.run()`` for Python BackgroundService coroutines, which
+        cannot run on an already-active loop. The FastAPI lifespan dispatches
+        this via ``run_in_executor`` for that reason. To dispose async DB
+        engines on the lifespan loop (Issue #3775), call
+        :meth:`adispose_async_engines` *before* dispatching ``aclose`` to a
+        worker thread.
         """
         # Issue #3391: drain deferred OBSERVE background tasks before tearing down.
         self.shutdown()
@@ -839,6 +847,36 @@ class NexusFS(  # type: ignore[misc]
                     _unregister_hooks_for_spec(self, spec)
             self._hook_specs.clear()
         self.close()
+
+    async def adispose_async_engines(self) -> None:
+        """Dispose async DB engines on the current loop (Issue #3775).
+
+        Async engines hold asyncpg connections whose pending futures are
+        bound to the loop that created the pool. Disposing via
+        ``sync_engine.dispose()`` from a worker thread (where ``aclose`` runs)
+        await-only's into a different loop, producing
+        ``RuntimeError: Future attached to a different loop`` and leaks
+        connections (asyncpg ``InternalClientError``).
+
+        FastAPI lifespan must await this on its own loop *before* invoking
+        ``aclose`` via ``run_in_executor``. After this returns,
+        ``self._record_store`` is None, so the subsequent sync close() skips
+        the record-store branch.
+        """
+        if self._record_store is None:
+            return
+        aclose_fn = getattr(self._record_store, "aclose", None)
+        if aclose_fn is not None:
+            try:
+                await aclose_fn()
+            except Exception:
+                logger.debug("record_store.aclose failed (best-effort)", exc_info=True)
+        else:
+            try:
+                self._record_store.close()
+            except Exception:
+                logger.debug("record_store.close failed (best-effort)", exc_info=True)
+        self._record_store = None
 
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 

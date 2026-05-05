@@ -351,17 +351,22 @@ class TestRecordStoreAsyncSessionFactory:
 class TestRecordStoreLifecycle:
     """Tests for store lifecycle management."""
 
-    def test_close_disposes_both_engines(self):
-        """close() disposes sync engine and async engine (if initialized)."""
+    def test_close_drops_async_refs_without_dispose(self):
+        """close() drops async engine refs but does NOT dispose them (Issue #3775).
+
+        Disposing async engines from sync ``close()`` is unsafe — it
+        greenlet-awaits asyncpg cleanup on whatever loop is running, which
+        produces cross-loop futures when ``close()`` runs in a worker thread.
+        ``close()`` must drop refs only; callers that own the async engine
+        must use ``aclose()`` from the engine's origin loop.
+        """
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         store = SQLAlchemyRecordStore(create_tables=False)
-        # Access async factory to initialize async engine
         _ = store.async_session_factory
         assert store._async_engine is not None
 
         store.close()
-        # After close, async engine should be cleaned up
         assert store._async_engine is None
         assert store._async_session_factory_instance is None
 
@@ -372,6 +377,35 @@ class TestRecordStoreLifecycle:
         store = SQLAlchemyRecordStore(create_tables=False)
         assert store._async_engine is None
         store.close()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_aclose_disposes_async_engine_on_origin_loop(self):
+        """aclose() disposes async engine on the current loop (Issue #3775).
+
+        Regression: previously ``close()`` invoked
+        ``_async_engine.sync_engine.dispose()`` which await-only'd onto a
+        possibly-different loop, producing
+        ``RuntimeError: Future attached to a different loop`` on shutdown.
+        """
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        # Force async engine creation on this loop.
+        _ = store.async_session_factory
+        assert store._async_engine is not None
+
+        await store.aclose()
+        assert store._async_engine is None
+        assert store._async_session_factory_instance is None
+
+    @pytest.mark.asyncio
+    async def test_aclose_without_async_engine(self):
+        """aclose() is safe when async engine was never initialized."""
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        assert store._async_engine is None
+        await store.aclose()  # Should not raise
 
 
 class TestReadReplicaConfiguration:

@@ -301,6 +301,17 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     if app.state.nexus_fs:
         import inspect
 
+        # Issue #3775: dispose async DB engines on the lifespan loop *before*
+        # dispatching aclose to a worker thread. Async engines hold asyncpg
+        # connections bound to this loop; disposing them from another thread
+        # raises "Future attached to a different loop".
+        adispose = getattr(app.state.nexus_fs, "adispose_async_engines", None)
+        if adispose is not None:
+            try:
+                await adispose()
+            except Exception:
+                logger.debug("adispose_async_engines failed", exc_info=True)
+
         close_fn = getattr(app.state.nexus_fs, "aclose", None)
         if close_fn is None:
             close_fn = getattr(app.state.nexus_fs, "close", None)

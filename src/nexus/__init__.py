@@ -45,6 +45,7 @@ first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 
 import logging
 import os as _os
+import threading as _threading
 from typing import TYPE_CHECKING, Any, cast
 
 __version__ = "0.10.0"  # release version
@@ -87,6 +88,17 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+
+# Codex review R5 (high): module-level lock that serializes
+# ``connect()``'s env-mutation + factory-boot region. ``connect()``
+# briefly writes ``NEXUS_PROFILE`` + ``NEXUS_ENABLE_VECTOR_SEARCH``
+# into ``os.environ`` so ``_wired.py`` can read them, then restores
+# them in ``finally``. Without this lock, two threads can race: thread
+# B observes thread A's synthetic env as "operator-set" and skips its
+# own propagation, or thread A's restore kicks in while thread B is
+# still booting against the wrong values. ``RLock`` so test harnesses
+# that recursively call connect() (rare but possible) don't deadlock.
+_CONNECT_ENV_LOCK = _threading.RLock()
 
 
 # All mutable state (data, metastore, record store, etc.) lives under this directory.
@@ -532,175 +544,229 @@ def connect(
         caps = detect_capabilities()
         warn_if_profile_exceeds_device(resolved_profile, caps)
 
-    # Apply FeaturesConfig overrides (Issue #1389)
-    overrides = cfg.features.to_overrides() if cfg.features else {}
-    enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
+    # Codex review R3+R4 (high): propagate cfg.profile + cfg.enable_
+    # vector_search into env vars so the factory wiring layer
+    # (``_wired.py`` reads env, not cfg) sees the same values the
+    # caller specified. Three constraints, all surfaced by review:
+    #
+    #  1. Detection must be source-agnostic. Use ``cfg.model_fields_set``
+    #     so config files (str/Path), NexusConfig objects, and dicts all
+    #     get the same treatment — not just the dict path (Codex R4 #1).
+    #  2. Env precedence: a pre-existing operator-set env var must win.
+    #  3. Restore in finally so two sequential ``connect()`` calls (or
+    #     subprocesses spawned after connect) do NOT inherit synthetic
+    #     env from a prior boot (Codex R4 #2).
+    # Codex review R5 (high): the env mutation + factory boot must run
+    # under a process-wide lock so two concurrent ``connect()`` calls
+    # cannot see each other's synthetic env as "operator-set". The
+    # lock spans BOTH the propagation block AND the boot it backs;
+    # taking + releasing only around the env writes would still leave
+    # call B reading thread-A's transiently-set env during its own
+    # propagation check.
+    _CONNECT_ENV_LOCK.acquire()
+    _env_to_propagate: dict[str, str] = {}
+    if "NEXUS_PROFILE" not in os.environ:
+        _env_to_propagate["NEXUS_PROFILE"] = str(resolved_profile.value)
+    if (
+        "enable_vector_search" in cfg.model_fields_set
+        and "NEXUS_ENABLE_VECTOR_SEARCH" not in os.environ
+    ):
+        _env_to_propagate["NEXUS_ENABLE_VECTOR_SEARCH"] = (
+            "true" if cfg.enable_vector_search else "false"
+        )
+    _env_saved = {k: os.environ.get(k) for k in _env_to_propagate}
+    for _k, _v in _env_to_propagate.items():
+        os.environ[_k] = _v
 
-    # Create Rust kernel early so the metastore wiring below shares it.
-    # Route through _rust_compat so stale binaries (missing Kernel methods)
-    # are caught here and never reach the factory wiring (Issue #3712).
-    _early_kernel = None
     try:
-        from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
-        from nexus._rust_compat import PyKernel as _Kernel
+        # Apply FeaturesConfig overrides (Issue #1389)
+        overrides = cfg.features.to_overrides() if cfg.features else {}
+        enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
-        if _RUST_AVAILABLE and _Kernel is not None:
-            _early_kernel = _Kernel()
-            try:
-                import nexus_runtime as _nk
+        # Create Rust kernel early so RustMetastoreProxy can use it.
+        # Route through _rust_compat so stale binaries (missing Kernel methods)
+        # are caught here and never passed to RustMetastoreProxy (Issue #3712).
+        _early_kernel = None
+        try:
+            from nexus._rust_compat import RUST_AVAILABLE as _RUST_AVAILABLE
+            from nexus._rust_compat import PyKernel as _Kernel
 
-                # Federation wiring first so init_from_env stashes the
-                # blob-fetcher slot before transport drains it.
-                _nk.install_federation_wiring(_early_kernel)
-                _nk.install_transport_wiring(_early_kernel)
-            except Exception as _wiring_exc:
-                import logging as _logging
+            if _RUST_AVAILABLE and _Kernel is not None:
+                _early_kernel = _Kernel()
+                try:
+                    import nexus_runtime as _nk
 
-                _logging.getLogger(__name__).warning(
-                    "install_transport_wiring/install_federation_wiring "
-                    "failed (federation peer-blob fetch will fall back to "
-                    "Noop): %s",
-                    _wiring_exc,
-                )
-    except Exception as _early_kernel_exc:
-        import logging as _logging
+                    # Federation wiring first so init_from_env stashes the
+                    # blob-fetcher slot before transport drains it.
+                    _nk.install_federation_wiring(_early_kernel)
+                    _nk.install_transport_wiring(_early_kernel)
+                except Exception as _wiring_exc:
+                    import logging as _logging
 
-        _logging.getLogger(__name__).debug(
-            "early kernel construction failed: %s", _early_kernel_exc
+                    _logging.getLogger(__name__).warning(
+                        "install_transport_wiring/install_federation_wiring "
+                        "failed (federation peer-blob fetch will fall back to "
+                        "Noop): %s",
+                        _wiring_exc,
+                    )
+        except Exception as _early_kernel_exc:
+            import logging as _logging
+
+            _logging.getLogger(__name__).debug(
+                "early kernel construction failed: %s", _early_kernel_exc
+            )
+
+        # Create metadata store — kernel owns federation bootstrap since
+        # R20.18.5. When federation env vars are set (NEXUS_HOSTNAME /
+        # NEXUS_PEERS / NEXUS_FEDERATION_ZONES), Kernel::new reads them
+        # in Rust and stands up the raft::ZoneManager internally; the
+        # metadata store wrapper below uses the same kernel so writes
+        # route through MountTable to the per-zone ZoneMetastore. When
+        # those env vars are unset, Kernel::new is a no-op and the
+        # store is backed by LocalMetastore/MemoryMetastore as before.
+        # Develop renamed _open_local_metastore → _open_local_kernel and
+        # deleted MetastoreABC; the alias still works but the typed
+        # annotation is now ``Any`` (kernel-shape) per the W3 SSOT
+        # cleanup.
+        metadata_store: Any = _open_local_kernel(metadata_path, kernel=_early_kernel)
+        # Python no longer owns a FederationService object. `federation=None`
+        # below just drops a dead kwarg into the orchestrator; _lifecycle.py
+        # handles the None path. ``metadata_store`` here is a ``PyKernel`` —
+        # the orchestrator passes it straight through to NexusFS.__init__,
+        # which detects the kernel-shape and stashes it as ``self._kernel``.
+        federation = None
+
+        # Permission defaults: standalone without explicit config → permissive
+        enforce_permissions = cfg.enforce_permissions
+        if config is None or isinstance(config, dict) and "enforce_permissions" not in config:
+            enforce_permissions = False
+
+        # Zone isolation: default enabled for security
+        enforce_zone_isolation = cfg.enforce_zone_isolation
+        if config is None or isinstance(config, dict) and "enforce_zone_isolation" not in config:
+            enforce_zone_isolation = True
+
+        # Tiger Cache
+        enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
+        enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
+
+        # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
+        # NEXUS_DATABASE_URL (both flow into ``cfg`` via env overrides, or via
+        # explicit config keys from callers like nexusd --database-url).
+        # Passing None gives a bare kernel (storage-only) where all service-layer
+        # features (audit log, versioning, ReBAC, Memory API, etc.) are skipped.
+        # The factory handles record_store=None gracefully.
+        _database_url = cfg.database_url
+        if record_store_path:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            record_store = SQLAlchemyRecordStore(db_path=record_store_path)
+        elif _database_url:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            record_store = SQLAlchemyRecordStore(db_url=_database_url)
+        else:
+            record_store = None
+
+        # Build config objects from NexusConfig fields (Issue #1391)
+        from nexus.core.config import (
+            CacheConfig,
+            DistributedConfig,
+            ParseConfig,
+            PermissionConfig,
         )
 
-    # Create metadata store — kernel owns federation bootstrap since
-    # R20.18.5. When federation env vars are set (NEXUS_HOSTNAME /
-    # NEXUS_PEERS / NEXUS_FEDERATION_ZONES), Kernel::new reads them
-    # in Rust and stands up the raft::ZoneManager internally; the
-    # metadata store wrapper below uses the same kernel so writes
-    # route through MountTable to the per-zone ZoneMetastore. When
-    # those env vars are unset, Kernel::new is a no-op and the
-    # store is backed by LocalMetastore/MemoryMetastore as before.
-    metadata_store: Any = _open_local_kernel(metadata_path, kernel=_early_kernel)
-    # Python no longer owns a FederationService object. `federation=None`
-    # below just drops a dead kwarg into the orchestrator; _lifecycle.py
-    # handles the None path. ``metadata_store`` here is a ``PyKernel`` —
-    # the orchestrator passes it straight through to NexusFS.__init__,
-    # which detects the kernel-shape and stashes it as ``self._kernel``.
-    federation = None
+        cache_cfg = CacheConfig(
+            path_size=cfg.cache_path_size,
+            list_size=cfg.cache_list_size,
+            kv_size=cfg.cache_kv_size,
+            exists_size=cfg.cache_exists_size,
+            ttl_seconds=cfg.cache_ttl_seconds,
+        )
 
-    # Permission defaults: standalone without explicit config → permissive
-    enforce_permissions = cfg.enforce_permissions
-    if config is None or isinstance(config, dict) and "enforce_permissions" not in config:
-        enforce_permissions = False
+        perm_cfg = PermissionConfig(
+            enforce=enforce_permissions,
+            allow_admin_bypass=cfg.allow_admin_bypass,
+            enforce_zone_isolation=enforce_zone_isolation,
+            enable_tiger_cache=enable_tiger_cache,
+        )
 
-    # Zone isolation: default enabled for security
-    enforce_zone_isolation = cfg.enforce_zone_isolation
-    if config is None or isinstance(config, dict) and "enforce_zone_isolation" not in config:
-        enforce_zone_isolation = True
+        dist_cfg = DistributedConfig(
+            enable_workflows=cfg.enable_workflows,
+        )
 
-    # Tiger Cache
-    enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
-    enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
+        parse_cfg = ParseConfig(
+            auto_parse=cfg.auto_parse,
+            providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
+        )
 
-    # RecordStore (Four Pillars) — created from NEXUS_RECORD_STORE_PATH or
-    # NEXUS_DATABASE_URL (both flow into ``cfg`` via env overrides, or via
-    # explicit config keys from callers like nexusd --database-url).
-    # Passing None gives a bare kernel (storage-only) where all service-layer
-    # features (audit log, versioning, ReBAC, Memory API, etc.) are skipped.
-    # The factory handles record_store=None gracefully.
-    _database_url = cfg.database_url
-    if record_store_path:
-        from nexus.storage.record_store import SQLAlchemyRecordStore
+        # Audit strict mode: env var override (default True for compliance)
+        from nexus.contracts.types import AuditConfig
 
-        record_store = SQLAlchemyRecordStore(db_path=record_store_path)
-    elif _database_url:
-        from nexus.storage.record_store import SQLAlchemyRecordStore
+        _audit_strict = os.environ.get("NEXUS_AUDIT_STRICT_MODE", "true").lower() not in (
+            "false",
+            "0",
+            "no",
+        )
+        audit_cfg = AuditConfig(strict_mode=_audit_strict)
 
-        record_store = SQLAlchemyRecordStore(db_url=_database_url)
-    else:
-        record_store = None
+        # Create NexusFS via factory
+        from nexus.factory import create_nexus_fs
 
-    # Build config objects from NexusConfig fields (Issue #1391)
-    from nexus.core.config import (
-        CacheConfig,
-        DistributedConfig,
-        ParseConfig,
-        PermissionConfig,
-    )
+        nx_fs = create_nexus_fs(
+            backend=backend,
+            metadata_store=metadata_store,
+            record_store=record_store,
+            is_admin=cfg.is_admin,
+            cache=cache_cfg,
+            permissions=perm_cfg,
+            distributed=dist_cfg,
+            parsing=parse_cfg,
+            enabled_bricks=enabled_bricks,
+            audit=audit_cfg,
+            federation=federation,
+            security=getattr(cfg, "security", None),
+        )
 
-    cache_cfg = CacheConfig(
-        path_size=cfg.cache_path_size,
-        list_size=cfg.cache_list_size,
-        kv_size=cfg.cache_kv_size,
-        exists_size=cfg.cache_exists_size,
-        ttl_seconds=cfg.cache_ttl_seconds,
-    )
+        # Set memory config for Memory API
+        if cfg.zone_id or cfg.user_id or cfg.agent_id:
+            nx_fs._memory_config = {
+                "zone_id": cfg.zone_id,
+                "user_id": cfg.user_id,
+                "agent_id": cfg.agent_id,
+            }
 
-    perm_cfg = PermissionConfig(
-        enforce=enforce_permissions,
-        allow_admin_bypass=cfg.allow_admin_bypass,
-        enforce_zone_isolation=enforce_zone_isolation,
-        enable_tiger_cache=enable_tiger_cache,
-    )
+        # Store config for OAuth factory and other components that need it
+        nx_fs._config = cfg
 
-    dist_cfg = DistributedConfig(
-        enable_workflows=cfg.enable_workflows,
-    )
+        # Register federation content resolver (PRE-DISPATCH, Issue #163)
+        # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
+        # Federation is already enlisted in ServiceRegistry by _wire_services().
+        if federation is not None:
+            _register_federation_resolver(nx_fs, federation, backend)
 
-    parse_cfg = ParseConfig(
-        auto_parse=cfg.auto_parse,
-        providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
-    )
+        # Restore saved mounts (application-layer startup I/O)
+        _restore_mounts(nx_fs)
 
-    # Audit strict mode: env var override (default True for compliance)
-    from nexus.contracts.types import AuditConfig
+        # Start audit hook if federation is active (requires a loaded Raft zone).
+        _init_audit_hook(nx_fs)
 
-    _audit_strict = os.environ.get("NEXUS_AUDIT_STRICT_MODE", "true").lower() not in (
-        "false",
-        "0",
-        "no",
-    )
-    audit_cfg = AuditConfig(strict_mode=_audit_strict)
-
-    # Create NexusFS via factory
-    from nexus.factory import create_nexus_fs
-
-    nx_fs = create_nexus_fs(
-        backend=backend,
-        metadata_store=metadata_store,
-        record_store=record_store,
-        is_admin=cfg.is_admin,
-        cache=cache_cfg,
-        permissions=perm_cfg,
-        distributed=dist_cfg,
-        parsing=parse_cfg,
-        enabled_bricks=enabled_bricks,
-        audit=audit_cfg,
-        federation=federation,
-        security=getattr(cfg, "security", None),
-    )
-
-    # Set memory config for Memory API
-    if cfg.zone_id or cfg.user_id or cfg.agent_id:
-        nx_fs._memory_config = {
-            "zone_id": cfg.zone_id,
-            "user_id": cfg.user_id,
-            "agent_id": cfg.agent_id,
-        }
-
-    # Store config for OAuth factory and other components that need it
-    nx_fs._config = cfg
-
-    # Register federation content resolver (PRE-DISPATCH, Issue #163)
-    # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
-    # Federation is already enlisted in ServiceRegistry by _wire_services().
-    if federation is not None:
-        _register_federation_resolver(nx_fs, federation, backend)
-
-    # Restore saved mounts (application-layer startup I/O)
-    _restore_mounts(nx_fs)
-
-    # Start audit hook if federation is active (requires a loaded Raft zone).
-    _init_audit_hook(nx_fs)
-
-    return nx_fs
+        return nx_fs
+    finally:
+        # Codex review R4 (high): restore env so successive
+        # ``connect()`` calls (and any subprocess spawned later) do
+        # NOT inherit the synthetic NEXUS_PROFILE /
+        # NEXUS_ENABLE_VECTOR_SEARCH this call wrote. Without this,
+        # call N+1 sees call N's value as "operator env" and refuses
+        # to overwrite, leaking sandbox/false through into a later
+        # full/true boot. Always restore in finally so a raised
+        # exception during boot doesn't leave sticky env either.
+        for _k, _prev in _env_saved.items():
+            if _prev is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _prev
+        _CONNECT_ENV_LOCK.release()
 
 
 def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:

@@ -12,7 +12,7 @@ Field-type notes:
 - data_dir, db_path, metastore_path, record_store_path are Optional[str] = None.
 """
 
-from nexus.config import NexusConfig, _apply_sandbox_defaults
+from nexus.config import NexusConfig, _apply_sandbox_defaults, load_config
 
 
 class TestApplySandboxDefaults:
@@ -50,11 +50,15 @@ class TestApplySandboxDefaults:
         result = _apply_sandbox_defaults(cfg)
         assert result.cache_size_mb == 64
 
-    def test_sandbox_vector_search_default_off(self) -> None:
-        # enable_vector_search NOT provided — not in model_fields_set — should get sandbox default
+    def test_sandbox_vector_search_default_on(self) -> None:
+        # PR #4022 + Codex review R3: SANDBOX is now vec-ON by default.
+        # The [sandbox] extra bundles sqlite-vec + fastembed so offline
+        # embeddings work out of the box; the schema default (True) is
+        # the right behavior for SANDBOX too. Users opt out via
+        # enable_vector_search=False (config dict or env).
         cfg = NexusConfig(profile="sandbox")
         result = _apply_sandbox_defaults(cfg)
-        assert result.enable_vector_search is False
+        assert result.enable_vector_search is True
 
     def test_explicit_user_values_win(self) -> None:
         # Use "path_gcs" as an explicit non-default backend override
@@ -154,3 +158,47 @@ class TestLoadFromDictSandbox:
         assert cfg.db_path == "/tmp/custom/override.db"
         assert cfg.metastore_path == "/tmp/custom/override.db"
         assert cfg.record_store_path == "/tmp/custom/override.db"
+
+
+class TestLoadConfigNexusConfigPassthroughNormalizes:
+    """Codex review R5 #3 (medium): ``load_config(NexusConfig(...))`` was
+    a passthrough that skipped ``_apply_sandbox_defaults``. dict/YAML
+    inputs flow through it. The asymmetry meant a SANDBOX-typed
+    NexusConfig instance left ``db_path`` unset, which broke local
+    sqlite-vec wiring (no DB path resolved → vec backend skipped)."""
+
+    def test_nexusconfig_sandbox_passes_through_defaulter(self) -> None:
+        cfg_in = NexusConfig(profile="sandbox")
+        cfg_out = load_config(cfg_in)
+        # The defaulter must have run: backend, data_dir, db paths,
+        # cache_size all populated.
+        assert cfg_out.backend == "path_local"
+        assert cfg_out.data_dir is not None and "sandbox" in cfg_out.data_dir
+        assert cfg_out.db_path is not None and cfg_out.db_path.endswith("nexus.db")
+        assert cfg_out.metastore_path == cfg_out.db_path
+        assert cfg_out.record_store_path == cfg_out.db_path
+        # Vec-on-by-default still applies.
+        assert cfg_out.enable_vector_search is True
+
+    def test_nexusconfig_explicit_user_values_still_win(self) -> None:
+        """Defaulter respects model_fields_set on a NexusConfig too —
+        an explicit ``enable_vector_search=False`` must survive
+        passthrough+normalize."""
+        cfg_in = NexusConfig(
+            profile="sandbox",
+            data_dir="/tmp/explicit",
+            enable_vector_search=False,
+        )
+        cfg_out = load_config(cfg_in)
+        assert cfg_out.data_dir == "/tmp/explicit"
+        assert cfg_out.enable_vector_search is False
+
+    def test_nexusconfig_non_sandbox_unchanged(self) -> None:
+        """Non-sandbox profiles must be left alone by the defaulter
+        even when routed through ``load_config(NexusConfig)``."""
+        cfg_in = NexusConfig(profile="full")
+        cfg_out = load_config(cfg_in)
+        assert cfg_out.profile == "full"
+        # data_dir must NOT be coerced to a sandbox path.
+        if cfg_out.data_dir is not None:
+            assert "sandbox" not in cfg_out.data_dir

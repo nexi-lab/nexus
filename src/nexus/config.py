@@ -531,8 +531,13 @@ def _apply_sandbox_defaults(cfg: "NexusConfig") -> "NexusConfig":
     if "cache_size_mb" not in user_set:
         updates["cache_size_mb"] = 64
 
-    if "enable_vector_search" not in user_set:
-        updates["enable_vector_search"] = False
+    # Codex review R3 (high): SANDBOX vec is now ON by default (PR
+    # #4022) — the [sandbox] extra bundles sqlite-vec + fastembed so
+    # offline embeddings work out of the box. Leaving the schema
+    # default (True) means ``connect(config={"profile":"sandbox"})``
+    # exercises the hybrid path. Users can still opt out via
+    # ``enable_vector_search=False`` (config dict or env).
+    # No override here: the schema default (True) is now what we want.
 
     if not updates:
         return cfg
@@ -559,9 +564,16 @@ def load_config(
         FileNotFoundError: If specified config file doesn't exist
         ValueError: If configuration is invalid
     """
-    # Passthrough if already a NexusConfig
+    # Codex review R5 #3 (medium): NexusConfig instances must go
+    # through ``_apply_sandbox_defaults`` too — dict/YAML inputs do,
+    # so a passthrough here would silently leave SANDBOX-typed
+    # ``NexusConfig(profile="sandbox")`` callers with no
+    # ``db_path``/``record_store_path`` and the local sqlite-vec
+    # backend would skip wiring (no DB path resolved). Source-
+    # agnosticism is the whole point of having a single ``connect()``
+    # entry point. The defaulter is no-op for non-sandbox profiles.
     if isinstance(config, NexusConfig):
-        return config
+        return _apply_sandbox_defaults(config)
 
     # Load from dict
     if isinstance(config, dict):

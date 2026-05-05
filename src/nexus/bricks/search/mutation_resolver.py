@@ -35,7 +35,23 @@ def _strip_null_bytes(value: str) -> str:
 
 @dataclass(frozen=True)
 class ResolvedMutation:
-    """Resolved mutation payload shared across search consumers."""
+    """Resolved mutation payload shared across search consumers.
+
+    Codex review R10 #1 (high): consumers MUST be able to distinguish
+    "the file is genuinely empty/truncated" from "we couldn't read the
+    file (file_reader raised, content_cache miss)". Both used to map
+    to ``content=None``, conflating a destructive-but-correct delete
+    with a transient failure that demanded a retry. The
+    ``content_resolved`` flag below carries that distinction:
+
+      * ``content_resolved=True``  + ``content=""`` → confirmed empty;
+        consumers should treat as a delete-shaped operation.
+      * ``content_resolved=True``  + ``content=text`` → indexable.
+      * ``content_resolved=False``                → unresolved; consumers
+        MUST refuse to checkpoint (raise) so the next batch retries.
+
+    DELETE events are always resolved (they don't need content).
+    """
 
     event: SearchMutationEvent
     zone_id: str
@@ -44,6 +60,7 @@ class ResolvedMutation:
     doc_id: str
     content: str | None = None
     path_id_resolved: bool = True
+    content_resolved: bool = True
 
 
 class MutationResolver:
@@ -125,14 +142,28 @@ class MutationResolver:
             path_id = resolved_path_id if resolved_path_id is not None else virtual_path
             zone_id = event.zone_id
             doc_id = f"{zone_id}:{virtual_path}" if zone_id != ROOT_ZONE_ID else virtual_path
+            # Codex review R10 #1 (high): content_resolved=True only
+            # when the resolver actually obtained content for this
+            # event (an UPSERT whose read failed has no entry in
+            # content_map). DELETEs don't need content and are always
+            # resolved. The flag lets consumers distinguish "truly
+            # empty file" from "couldn't read" so transient failures
+            # don't get checkpointed as deletes.
+            if event.op == SearchMutationOp.DELETE:
+                content_resolved = True
+                content_value: str | None = None
+            else:
+                content_resolved = event.event_id in content_map
+                content_value = content_map.get(event.event_id)
             mutation = ResolvedMutation(
                 event=event,
                 zone_id=zone_id,
                 virtual_path=virtual_path,
                 path_id=path_id,
                 doc_id=doc_id,
-                content=content_map.get(event.event_id),
+                content=content_value,
                 path_id_resolved=path_id_resolved,
+                content_resolved=content_resolved,
             )
             self._cache[event.event_id] = (now, mutation)
             resolved[idx] = mutation
@@ -203,6 +234,14 @@ class MutationResolver:
         events: list[SearchMutationEvent],
         unresolved_indices: list[int],
     ) -> dict[str, str]:
+        """Resolve UPSERT content for each unresolved event.
+
+        Codex review R10 #1 (high): the caller treats absence-from-map
+        as "couldn't resolve" (unresolved → consumer raises). An empty
+        string IS a valid resolution state and MUST be recorded.
+        Previously the ``if content:`` truthy filter dropped empty
+        strings on the floor, conflating them with read failures.
+        """
         content_map: dict[str, str] = {}
         update_events = [
             events[idx] for idx in unresolved_indices if events[idx].op.value == "upsert"
@@ -213,7 +252,8 @@ class MutationResolver:
         missing_events: list[SearchMutationEvent] = []
         for event in update_events:
             content = await self._read_content(event.path, event.virtual_path)
-            if content:
+            if isinstance(content, str):
+                # Resolved (could be empty string).
                 content_map[event.event_id] = _strip_null_bytes(content)
             else:
                 missing_events.append(event)
@@ -225,22 +265,32 @@ class MutationResolver:
             db_content = await self._lookup_content_cache(lookup_candidates)
             for event in missing_events:
                 content = db_content.get(self._path_key(event.zone_id, event.virtual_path))
-                if content:
+                if isinstance(content, str):
                     content_map[event.event_id] = _strip_null_bytes(content)
 
         return content_map
 
     async def _read_content(self, scoped_path: str, virtual_path: str) -> str | None:
+        """Return resolved content (possibly empty) or ``None`` on read failure.
+
+        Codex review R10 #1 (high): an empty file is a valid read
+        outcome (caller distinguishes via isinstance) — only
+        exceptions / non-string returns map to ``None`` so the caller
+        can detect transient failures and retry instead of treating
+        them as truncations.
+        """
         if self._file_reader is None:
             return None
 
         try:
             scoped_content = await self._file_reader.read_text(scoped_path)
-            return scoped_content if isinstance(scoped_content, str) else None
+            if isinstance(scoped_content, str):
+                return scoped_content
         except Exception:
             with contextlib.suppress(OSError, ValueError, Exception):
                 virtual_content = await self._file_reader.read_text(virtual_path)
-                return virtual_content if isinstance(virtual_content, str) else None
+                if isinstance(virtual_content, str):
+                    return virtual_content
         return None
 
     async def _lookup_content_cache(

@@ -91,6 +91,7 @@ class IndexingPipeline:
         max_embedding_concurrency: int = 5,
         cross_doc_batching: bool = True,
         scope_provider: Callable[[], IndexScope | None] | None = None,
+        sqlite_vec_backend: Any | None = None,
     ):
         self._chunker = chunker
         self._embedding_provider = embedding_provider
@@ -107,6 +108,15 @@ class IndexingPipeline:
         # pipeline owning IndexScope state. If None or returning None, the
         # filter is disabled and every document is indexed (legacy behavior).
         self._scope_provider = scope_provider
+        # Codex review R5 (high): SANDBOX-only side-write into the local
+        # ``SqliteVecBackend`` so the hybrid path's vector lane is
+        # actually populated by normal indexing. Without this, the
+        # ``_sqlite_vec_backend`` wired into ``SearchService`` only ever
+        # sees rows that someone manually upserted — production
+        # indexing flows through ``_bulk_insert`` (BM25S/Txtai pillar)
+        # and the vec lane stays empty, silently degrading SANDBOX
+        # hybrid-by-default to keyword-only.
+        self._sqlite_vec_backend = sqlite_vec_backend
 
     # ------------------------------------------------------------------
     # Public API
@@ -130,6 +140,33 @@ class IndexingPipeline:
         """
         results = await self.index_documents([(path, content, path_id)])
         return results[0]
+
+    async def prune_vec_rows(self, path: str) -> None:
+        """Prune sqlite-vec rows for a single ``path``.
+
+        Codex review R9 #4 (high): IndexingService has bypass branches
+        (successful empty parse, parse-error stale-chunk delete) that
+        clear ``document_chunks`` directly without going through this
+        pipeline — so the side-write into the SANDBOX vec lane never
+        runs and stale rows survive. Expose a tiny helper so those
+        branches can pull the vec lane along without each one having
+        to know about the backend wiring.
+
+        Codex review R10 #3 (medium): callers run this INSIDE their
+        SQL CAS transaction so a vec failure rolls back the chunk
+        delete + hash advance, leaving the lanes consistent and the
+        CAS unsatisfied for the next tick to retry. We therefore do
+        NOT swallow exceptions here — let them propagate so the
+        transaction surfaces the failure.
+        """
+        if self._sqlite_vec_backend is None:
+            return
+        zone_id = extract_zone_id(path)
+        canonical = strip_zone_prefix(path) if path.startswith("/zone/") else path
+        keys = [canonical]
+        if path != canonical:
+            keys.append(path)
+        await self._sqlite_vec_backend.delete(keys, zone_id=zone_id)
 
     async def index_documents(
         self,
@@ -171,6 +208,12 @@ class IndexingPipeline:
                 scope = None
             if scope is not None:
                 filtered_documents: list[tuple[str, str, str]] = []
+                # Codex review R7 #3 (high): track out-of-scope paths
+                # so we can prune any sqlite-vec rows they may have
+                # left behind from a prior in-scope index pass. A path
+                # being de-scoped is the same effective state as a
+                # delete from the search lane's perspective.
+                descoped_by_zone: dict[str, list[str]] = {}
                 for path, content, path_id in documents:
                     try:
                         zone_id = extract_zone_id(path)
@@ -179,6 +222,7 @@ class IndexingPipeline:
                             filtered_documents.append((path, content, path_id))
                         else:
                             pre_scope_results[path] = IndexResult(path=path, chunks_indexed=0)
+                            descoped_by_zone.setdefault(zone_id, []).append(path)
                     except ValueError as exc:
                         # Contract violation (empty path, bad shape, etc.)
                         # Surface as an error on that specific path but
@@ -189,6 +233,33 @@ class IndexingPipeline:
                             chunks_indexed=0,
                             error=f"scope check failed: {exc}",
                         )
+                # Best-effort prune of de-scoped paths from the SANDBOX
+                # vec lane. Idempotent: ``delete`` is a no-op when no
+                # rows match, so running it for paths that were never
+                # in scope is harmless. Failures must NOT break
+                # indexing — log and proceed.
+                if self._sqlite_vec_backend is not None and descoped_by_zone:
+                    for zone_id, descoped_paths in descoped_by_zone.items():
+                        try:
+                            # Codex review R9 #3 (high): canonical (unscoped)
+                            # + legacy (scoped) keys so legacy rows from
+                            # pre-R9 builds also get pruned.
+                            keys: list[str] = []
+                            for p in descoped_paths:
+                                canon = strip_zone_prefix(p) if p.startswith("/zone/") else p
+                                if canon not in keys:
+                                    keys.append(canon)
+                                if p != canon and p not in keys:
+                                    keys.append(p)
+                            await self._sqlite_vec_backend.delete(keys, zone_id=zone_id)
+                        except Exception as exc:
+                            logger.warning(
+                                "[IndexingPipeline] sqlite-vec descope-prune failed "
+                                "for zone=%s paths=%s: %s",
+                                zone_id,
+                                descoped_paths,
+                                exc,
+                            )
                 documents = filtered_documents
                 if not documents:
                     # Nothing left to index after scope filter.
@@ -232,14 +303,74 @@ class IndexingPipeline:
         chunked_docs: list[_ChunkedDoc] = []
         results_map: dict[str, IndexResult] = dict(pre_scope_results)
 
+        # Codex review R7 #2 (high): zero-chunk docs (empty file,
+        # parser returned nothing) skip _bulk_insert entirely — but
+        # the caller's intent was a REPLACE, not a no-op. Without
+        # explicit prune, prior vec rows for the same path survive
+        # with stale text. Track the empty-result paths so we can
+        # delete their vec rows below before returning the zero-chunk
+        # IndexResult.
+        empty_replace_by_zone: dict[str, list[str]] = {}
+        # Codex review R8 #3 (high): also need to clear the canonical
+        # ``document_chunks`` rows for zero-chunk replacements. The R7
+        # branch only pruned the vec lane, leaving the BM25/FTS-lane
+        # ChunkStore rows intact — so deleted/truncated docs still
+        # surfaced in keyword search. Capture path_ids so we can
+        # delete via the same ChunkStore the bulk-insert path uses.
+        empty_replace_path_ids: list[str] = []
         for item in phase1:
             if isinstance(item, IndexResult):
                 results_map[item.path] = item
+            elif not item.chunks:
+                results_map[item.path] = IndexResult(path=item.path, chunks_indexed=0)
+                if self._sqlite_vec_backend is not None:
+                    try:
+                        zid = extract_zone_id(item.path)
+                        empty_replace_by_zone.setdefault(zid, []).append(item.path)
+                    except ValueError:
+                        # Bad path shape — already surfaced upstream.
+                        pass
+                if item.path_id:
+                    empty_replace_path_ids.append(item.path_id)
             else:
-                if not item.chunks:
-                    results_map[item.path] = IndexResult(path=item.path, chunks_indexed=0)
-                else:
-                    chunked_docs.append(item)
+                chunked_docs.append(item)
+
+        if self._sqlite_vec_backend is not None and empty_replace_by_zone:
+            for zone_id, empty_paths in empty_replace_by_zone.items():
+                try:
+                    # Codex review R9 #3 (high): dual-key prune.
+                    empty_keys: list[str] = []
+                    for p in empty_paths:
+                        canon = strip_zone_prefix(p) if p.startswith("/zone/") else p
+                        if canon not in empty_keys:
+                            empty_keys.append(canon)
+                        if p != canon and p not in empty_keys:
+                            empty_keys.append(p)
+                    await self._sqlite_vec_backend.delete(empty_keys, zone_id=zone_id)
+                except Exception as exc:
+                    logger.warning(
+                        "[IndexingPipeline] sqlite-vec empty-replace prune failed "
+                        "for zone=%s paths=%s: %s",
+                        zone_id,
+                        empty_paths,
+                        exc,
+                    )
+
+        if empty_replace_path_ids and self._async_session_factory is not None:
+            try:
+                empty_chunk_store = ChunkStore(
+                    async_session_factory=self._async_session_factory,
+                    db_type=self._db_type,
+                )
+                for path_id in empty_replace_path_ids:
+                    await empty_chunk_store.delete_document_chunks(path_id)
+            except Exception as exc:
+                logger.warning(
+                    "[IndexingPipeline] document_chunks empty-replace prune "
+                    "failed for %d path_id(s): %s",
+                    len(empty_replace_path_ids),
+                    exc,
+                )
 
         # Phase 2: Cross-doc embedding + bulk insert
         if chunked_docs and self._embedding_provider:
@@ -414,3 +545,55 @@ class IndexingPipeline:
             for i, chunk in enumerate(doc.chunks)
         ]
         await chunk_store.replace_document_chunks(doc.path_id, records)
+        # Codex review R5+R6 (high): mirror the chunks into the
+        # SANDBOX local sqlite-vec backend so the hybrid path's vector
+        # lane has real data to fuse. ``upsert`` only replaces rows
+        # whose ``(zone_id, path, chunk_index)`` matches an incoming
+        # tuple — so if a document shrinks (5 chunks → 3), chunks 3
+        # and 4 would survive with stale text and corrupt search
+        # results. ``ChunkStore.replace_document_chunks`` (above) has
+        # full-replace semantics; we mirror that contract by deleting
+        # ALL rows for ``(zone_id, path)`` before the upsert. Best-
+        # effort: a backend failure must not abort the primary write.
+        if self._sqlite_vec_backend is not None and doc.chunks:
+            try:
+                zone_id = extract_zone_id(doc.path)
+                # Codex review R9 #3 (high): canonical key = unscoped
+                # virtual_path. Vec rows MUST agree with BM25 keys,
+                # IndexingPipeline writers, and SearchService's
+                # unscoped path_filter — otherwise scoped vs unscoped
+                # doppelgängers leak into hybrid results and break
+                # path-prefix filtering.
+                canonical_path = (
+                    strip_zone_prefix(doc.path) if doc.path.startswith("/zone/") else doc.path
+                )
+                # Full-replace: drop every existing chunk for this
+                # path, then insert the current set. The SqliteVec
+                # ``delete`` API takes "ids" but treats them as paths
+                # and deletes every row for the (zone_id, path) tuple.
+                # Pass BOTH the canonical and the original (possibly
+                # scoped) form so legacy rows are also pruned.
+                delete_keys = [canonical_path]
+                if doc.path != canonical_path:
+                    delete_keys.append(doc.path)
+                await self._sqlite_vec_backend.delete(delete_keys, zone_id=zone_id)
+                items = [
+                    {
+                        "path": canonical_path,
+                        "text": chunk.text,
+                        "chunk_index": i,
+                    }
+                    for i, chunk in enumerate(doc.chunks)
+                ]
+                await self._sqlite_vec_backend.upsert(items, zone_id=zone_id)
+            except Exception as exc:
+                # Vec backend is supplementary — log loudly but don't
+                # break the primary index path. The hybrid lane will
+                # surface ``semantic_degraded=True`` on search if the
+                # vec lane is empty, so users still get a clear signal.
+                logger.warning(
+                    "[IndexingPipeline] sqlite-vec side-write failed for %s "
+                    "(hybrid lane will degrade to keyword-only for this doc): %s",
+                    doc.path,
+                    exc,
+                )

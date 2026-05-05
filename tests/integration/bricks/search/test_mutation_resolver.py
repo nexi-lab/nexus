@@ -412,3 +412,111 @@ async def test_resolver_strips_null_bytes_from_content() -> None:
     assert resolved[0].content is not None
     assert "\x00" not in resolved[0].content
     assert resolved[0].content == "alphabetagamma"
+
+
+@pytest.mark.asyncio
+async def test_resolver_marks_truly_empty_file_as_resolved() -> None:
+    """Codex review R10 #1 (high): when ``file_reader.read_text``
+    returns an empty string (real truncated file), the resolver MUST
+    record ``content_resolved=True`` AND ``content=""`` so consumers
+    can safely treat it as a delete-shaped operation. The pre-R10
+    body's ``if content:`` truthy filter dropped empty strings,
+    making them indistinguishable from read failures."""
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = [""]
+    session_factory = lambda: _SessionCtx(  # noqa: E731
+        [[("root", "/empty.md", "pid-empty")]]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-empty",
+        operation_id="op-empty",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/root/empty.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+    assert resolved[0].content == ""
+    assert resolved[0].content_resolved is True, (
+        "Real empty file MUST be reported as resolved so consumers can "
+        "treat it as a truncation/delete instead of a transient skip"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolver_marks_unread_upsert_as_unresolved() -> None:
+    """Codex review R10 #1 (high): when read_text raises (file
+    missing on disk, FUSE error, etc.) AND content_cache lookup is
+    empty (or fails), the resolver MUST report
+    ``content_resolved=False`` so consumers raise instead of silently
+    skipping. Without this signal the consumer can't tell a transient
+    read failure from a truly-empty file."""
+    file_reader = AsyncMock()
+    # All read_text calls raise (scoped path AND virtual_path).
+    file_reader.read_text.side_effect = [OSError("read failed"), OSError("read failed")]
+    # ``_lookup_path_ids`` runs first, then ``_lookup_content`` runs
+    # ``_lookup_content_cache`` for events whose read_content failed.
+    # Use distinct sessions for each call so the two queries don't
+    # collide on a shared row buffer.
+    sessions = [
+        _SessionCtx([[("root", "/missing.md", "pid-missing")]]),  # path-id lookup
+        _SessionCtx([[]]),  # content-cache lookup → empty
+    ]
+    session_factory = _SequentialSessionFactory(sessions)
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-unread",
+        operation_id="op-unread",
+        op=SearchMutationOp.UPSERT,
+        path="/zone/root/missing.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+    assert resolved[0].content is None
+    assert resolved[0].content_resolved is False, (
+        "Read failure + content_cache miss MUST be reported as "
+        "unresolved so consumers raise instead of silently skipping"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolver_marks_delete_event_as_resolved() -> None:
+    """Codex review R10 #1: DELETE events don't need content; they
+    must always be reported as resolved so consumers can prune
+    without being blocked on absent content."""
+    file_reader = AsyncMock()
+    session_factory = lambda: _SessionCtx(  # noqa: E731
+        [[("root", "/gone.md", "pid-gone")]]
+    )
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    event = SearchMutationEvent(
+        event_id="evt-del",
+        operation_id="op-del",
+        op=SearchMutationOp.DELETE,
+        path="/zone/root/gone.md",
+        zone_id=ROOT_ZONE_ID,
+        timestamp=SimpleNamespace(tzinfo=None),
+        sequence_number=1,
+    )
+
+    resolved = await resolver.resolve_batch([event])
+    assert resolved[0].event.op == SearchMutationOp.DELETE
+    assert resolved[0].content_resolved is True
+    assert resolved[0].content is None
+    # No file_reader.read_text call should happen for DELETE.
+    file_reader.read_text.assert_not_called()

@@ -171,6 +171,12 @@ sandbox = [
     # Remote embeddings via any provider (OpenAI / Cohere / Azure / etc.).
     # BYO API key — picked up from the standard env vars by litellm.
     "litellm>=1.74.0",
+    # Local ONNX embeddings — keeps SANDBOX's "zero external services"
+    # promise when no API key is available. Auto-selected by
+    # SqliteVecBackend when no embedding API key is in the environment;
+    # default model BAAI/bge-small-en-v1.5 (384 dim, ~30 MB ONNX, downloads
+    # on first use). Override via NEXUS_OFFLINE_EMBED=1 / NEXUS_EMBEDDER.
+    "fastembed>=0.4.0",
 ]
 
 sentry = [

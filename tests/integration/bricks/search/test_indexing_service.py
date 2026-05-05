@@ -97,6 +97,7 @@ def _mock_pipeline() -> MagicMock:
     pipeline = MagicMock()
     pipeline.index_document = AsyncMock()
     pipeline.index_documents = AsyncMock()
+    pipeline.prune_vec_rows = AsyncMock(return_value=None)
     return pipeline
 
 
@@ -390,6 +391,12 @@ class TestIndexDocument:
             if "delete" in str(call).lower() or "DELETE" in str(call)
         ]
         assert delete_calls, "expected DELETE on document_chunks during empty-parse replace"
+        # Codex review R9 #4 (high): the empty-parse branch bypasses
+        # IndexingPipeline so the side-write into sqlite-vec never
+        # runs — old vec rows would survive the empty replacement and
+        # zombie back into hybrid retrieval. The fix wires
+        # ``prune_vec_rows(path)`` into this branch.
+        pipeline.prune_vec_rows.assert_awaited_once_with("/blank.pdf")
         file_reader.has_successful_parse.assert_called_once_with(
             "/blank.pdf", "blake3-hash-of-blank-pdf"
         )

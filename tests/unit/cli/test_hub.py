@@ -496,6 +496,79 @@ def test_hub_status_text_unchanged_without_detail(monkeypatch):
     )
 
 
+def test_hub_status_detail_json_includes_token_last_seen_and_zones(monkeypatch):
+    from datetime import datetime
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import APIKeyModel, APIKeyZoneModel, Base, ZoneModel
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+    created = datetime(2026, 5, 5, 13, 0)
+    last_seen = datetime(2026, 5, 5, 14, 20, 10)
+
+    with Session() as s, s.begin():
+        s.add(ZoneModel(zone_id="eng", name="eng", phase="Active"))
+        s.add(ZoneModel(zone_id="ops", name="ops", phase="Active"))
+        s.add(
+            APIKeyModel(
+                key_id="kid_alice",
+                key_hash="hash_alice",
+                user_id="alice",
+                name="alice",
+                is_admin=0,
+                created_at=created,
+                last_used_at=last_seen,
+                revoked=0,
+            )
+        )
+        s.add(APIKeyZoneModel(key_id="kid_alice", zone_id="eng", permissions="rw"))
+        s.add(APIKeyZoneModel(key_id="kid_alice", zone_id="ops", permissions="r"))
+
+    monkeypatch.setattr("nexus.cli.commands.hub.get_session_factory", lambda: Session)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": 0.0, "connections": 0, "redis": "ok"},
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_detail_stats",
+        lambda zone_ids: {
+            "zones": [
+                {"zone_id": zone_id, "clients": None, "qps_5m": None} for zone_id in zone_ids
+            ],
+            "rate_limits": {"window_seconds": 300, "hits_by_tier": {}},
+        },
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._collect_search_detail",
+        lambda zone_ids: {
+            "zones": [{"zone_id": zone_id, "txtai_queue_depth": None} for zone_id in zone_ids]
+        },
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status", "--detail", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert [row["zone_id"] for row in payload["zones"]] == ["eng", "ops"]
+    assert payload["tokens_detail"] == [
+        {
+            "key_id": "kid_alice",
+            "name": "alice",
+            "zones": ["eng", "ops"],
+            "admin": False,
+            "created": created.isoformat(),
+            "last_seen": last_seen.isoformat(),
+            "revoked": False,
+            "revoked_at": None,
+        }
+    ]
+
+
 def test_hub_status_detail_flag_is_accepted(monkeypatch):
     session = MagicMock()
     session.execute.return_value.scalar.side_effect = [0, 0]

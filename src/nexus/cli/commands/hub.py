@@ -549,11 +549,15 @@ def hub_status(as_json: bool, detail: bool) -> None:
     """Show hub health: postgres, redis, tokens, connections, qps."""
     import json as _json
 
-    payload = _base_status_payload()
+    postgres_status = _collect_postgres_status(detail=detail)
+    payload = _base_status_payload(postgres_status)
     if detail:
-        redis_detail = _read_redis_detail_stats([])
+        zone_ids = postgres_status["zone_ids"]
+        redis_detail = _read_redis_detail_stats(zone_ids)
         payload["detail"] = True
-        payload.update(_collect_status_detail([], [], redis_detail))
+        payload.update(
+            _collect_status_detail(zone_ids, postgres_status["tokens_detail"], redis_detail)
+        )
 
     if as_json:
         click.echo(_json.dumps(payload, indent=2))
@@ -576,9 +580,64 @@ def _display_status_value(value: Any) -> str:
     return "n/a" if value is None else str(value)
 
 
-def _collect_postgres_status() -> dict[str, Any]:
+def _iso_or_none(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
+
+
+def _collect_zone_ids(session: Any) -> list[str]:
+    rows = (
+        session.execute(
+            select(ZoneModel.zone_id)
+            .where(ZoneModel.phase == "Active")
+            .where(ZoneModel.deleted_at.is_(None))
+            .order_by(ZoneModel.zone_id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    return [str(zone_id) for zone_id in rows]
+
+
+def _token_zones_by_key(session: Any, key_ids: list[str]) -> dict[str, list[str]]:
+    if not key_ids:
+        return {}
+    rows = session.execute(
+        select(APIKeyZoneModel.key_id, APIKeyZoneModel.zone_id)
+        .where(APIKeyZoneModel.key_id.in_(key_ids))
+        .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
+    ).all()
+    zones_by_key: dict[str, list[str]] = {key_id: [] for key_id in key_ids}
+    for key_id, zone_id in rows:
+        zones_by_key.setdefault(key_id, []).append(zone_id)
+    return zones_by_key
+
+
+def _collect_token_detail(session: Any) -> list[dict[str, Any]]:
+    rows = (
+        session.execute(select(APIKeyModel).order_by(APIKeyModel.created_at.desc())).scalars().all()
+    )
+    key_ids = [row.key_id for row in rows]
+    zones_by_key = _token_zones_by_key(session, key_ids)
+    return [
+        {
+            "key_id": row.key_id,
+            "name": row.name,
+            "zones": zones_by_key.get(row.key_id, []),
+            "admin": bool(row.is_admin),
+            "created": _iso_or_none(row.created_at),
+            "last_seen": _iso_or_none(row.last_used_at),
+            "revoked": bool(row.revoked),
+            "revoked_at": _iso_or_none(row.revoked_at),
+        }
+        for row in rows
+    ]
+
+
+def _collect_postgres_status(detail: bool = False) -> dict[str, Any]:
     pg_state = "ok"
     active = revoked = 0
+    zone_ids: list[str] = []
+    tokens_detail: list[dict[str, Any]] = []
     try:
         factory = get_session_factory()
         with factory() as session:
@@ -594,23 +653,25 @@ def _collect_postgres_status() -> dict[str, Any]:
                 ).scalar()
                 or 0
             )
+            if detail:
+                zone_ids = _collect_zone_ids(session)
+                tokens_detail = _collect_token_detail(session)
     except Exception:  # noqa: BLE001
         pg_state = "err"
     return {
         "postgres": pg_state,
         "tokens": {"active": int(active), "revoked": int(revoked)},
-        "zone_ids": [],
-        "tokens_detail": [],
+        "zone_ids": zone_ids,
+        "tokens_detail": tokens_detail,
     }
 
 
-def _base_status_payload() -> dict[str, Any]:
+def _base_status_payload(postgres_status: dict[str, Any]) -> dict[str, Any]:
     host = os.environ.get("NEXUS_MCP_HOST", "0.0.0.0")
     port = os.environ.get("NEXUS_MCP_PORT", "8081")
     profile = os.environ.get("NEXUS_PROFILE", "full")
     endpoint = f"http://{host}:{port}/mcp"
 
-    postgres_status = _collect_postgres_status()
     redis_stats = _read_redis_stats()
     return {
         "endpoint": endpoint,

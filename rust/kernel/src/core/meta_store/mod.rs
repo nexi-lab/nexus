@@ -527,7 +527,11 @@ impl MetaStore for LocalMetaStore {
         let mut results = Vec::with_capacity(paths.len());
         for path in paths {
             match table.get(path.as_str()) {
-                Ok(Some(guard)) => results.push(Some(deserialize_metadata(guard.value())?)),
+                Ok(Some(guard)) => {
+                    let meta = deserialize_metadata(guard.value())?;
+                    self.cache.insert(path.clone(), meta.clone());
+                    results.push(Some(meta));
+                }
                 Ok(None) => results.push(None),
                 Err(e) => return Err(MetaStoreError::IOError(format!("redb get_batch: {e}"))),
             }

@@ -32,7 +32,6 @@ pub const DT_DIR: u8 = 1;
 pub const DT_MOUNT: u8 = 2;
 pub const DT_PIPE: u8 = 3;
 pub const DT_STREAM: u8 = 4;
-#[allow(dead_code)]
 pub const DT_EXTERNAL_STORAGE: u8 = 5;
 pub const DT_LINK: u8 = 6;
 
@@ -197,8 +196,14 @@ pub trait MetaStore: Send + Sync {
     /// field reflects the state after this call (caller can use the
     /// mismatch case to rebuild a retry).
     ///
-    /// Default impl is racy (get → compare → put). Redb overrides with a
-    /// single write txn; ZoneMetaStore overrides with a raft propose.
+    /// # Atomicity
+    ///
+    /// **Default impl is NOT atomic** (get → compare → put). Concurrent
+    /// writers may interleave causing lost updates. Implementations SHOULD
+    /// override this with a single transaction:
+    /// - `LocalMetaStore`: overrides with a redb write txn (atomic).
+    /// - `ZoneMetaStore`: overrides with a raft propose (linearizable).
+    /// - `RemoteMetaStore`: falls through to this default — **racy**.
     fn put_if_version(
         &self,
         metadata: FileMetadata,
@@ -381,11 +386,13 @@ pub trait MetaStore: Send + Sync {
 
     /// Append a raw byte entry at `key` to the metastore's
     /// stream-entries side table.  Used by `WalStreamCore` /
-    /// `WalPipeCore` (the durable DT_STREAM / DT_PIPE backends) to
+    /// **Optional capability** — only `ZoneMetaStore` implements this.
+    /// Other impls return `Err(NotSupported)` and callers fall back to
+    /// in-memory stream/pipe backends.
+    ///
+    /// Used by `WalPipeCore` (the durable DT_STREAM / DT_PIPE backends) to
     /// persist an entry through whatever replication the metastore
-    /// happens to provide — ``LocalMetaStore`` has no replication and
-    /// returns ``NotSupported`` (callers fall back to the in-memory
-    /// stream/pipe backends), ``ZoneMetaStore`` proposes
+    /// happens to provide — ``ZoneMetaStore`` proposes
     /// ``Command::AppendStreamEntry`` so peers see the entry via
     /// raft commit.
     ///

@@ -1,23 +1,16 @@
-//! Kernel mount table — single SSOT for mount entries (Rust port).
+//! Kernel mount table — SSOT for **runtime routing state**.
 //!
-//! Mirrors Python `nexus.core.vfs_router` (the canonical kernel-namespace
-//! placement for this data type). Each `MountEntry` is the in-memory record
-//! for one mount: storage backend and optional per-mount metastore.
-//! Together they form `VFSRouter`, an LPM-routable container keyed by
-//! zone-canonical paths. Access control lives one layer up (rebac); the
-//! mount table is pure routing.
+//! Each `MountEntry` is the in-memory record for one mount: storage backend
+//! and optional per-mount metastore. Together they form `VFSRouter`, an
+//! LPM-routable container keyed by zone-canonical paths.
 //!
-//! Replaces the older split where:
-//!   - `rust/kernel/src/router.rs::PathRouter` owned a `HashMap<String,
-//!     MountEntry>` of backends-only
-//!   - `rust/kernel/src/kernel.rs::Kernel::mount_metastores` was a *separate*
-//!     `DashMap<String, Arc<dyn MetaStore>>` keyed by the same canonical paths
+//! **SSOT scope**: VFSRouter is authoritative for runtime path→backend
+//! routing. DT_MOUNT *metadata* (the fact that a mount exists, its zone_id,
+//! backend_name) is additionally persisted in the parent zone's metastore
+//! so federation can replicate mount topology via raft. VFSRouter is
+//! populated on boot from those metastore records + DLC.mount() calls.
 //!
-//! Both halves now live in `MountEntry`, so callers no longer have to keep
-//! the two maps consistent. The Python side's `VFSRouter._entries` Python-
-//! ref shadow cache disappears as `_write_content` and friends migrate to
-//! call `kernel.sys_*` directly (no need to hold Python backend/metastore
-//! refs anymore).
+//! Access control lives one layer up (rebac); the mount table is pure routing.
 //!
 //! Concurrency: `DashMap` for lock-free reads on the syscall hot path. Add/
 //! remove are rare (mount-lifecycle events) so the per-shard write lock is
@@ -202,10 +195,6 @@ impl std::fmt::Debug for RouteResult {
     }
 }
 
-/// Legacy alias retained so callers naming `RustRouteResult` keep
-/// compiling. Prefer `RouteResult` in new code.
-pub type RustRouteResult = RouteResult;
-
 // ---------------------------------------------------------------------------
 // VFSRouter — kernel-owned mount registry
 // ---------------------------------------------------------------------------
@@ -334,14 +323,6 @@ impl VFSRouter {
     ) -> Option<dashmap::mapref::one::Ref<'_, String, MountEntry>> {
         let canonical = canonicalize_mount_path(mount_point, zone_id);
         self.entries.get(&canonical)
-    }
-
-    /// Borrow the entry mutably under an exact canonical key.
-    pub fn entries_get_mut(
-        &self,
-        canonical_key: &str,
-    ) -> Option<dashmap::mapref::one::RefMut<'_, String, MountEntry>> {
-        self.entries.get_mut(canonical_key)
     }
 
     /// True if a mount exists under `(mount_point, zone_id)`.
@@ -501,8 +482,7 @@ impl VFSRouter {
             }
         }
         Err(RouteError::NotMounted(format!(
-            "No mount found for path: {}",
-            path
+            "No mount found for path: {path} (zone={zone_id})"
         )))
     }
 

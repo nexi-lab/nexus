@@ -85,6 +85,10 @@ impl MetaStore for RemoteMetaStore {
                 "zone_id": metadata.zone_id,
                 "mime_type": metadata.mime_type,
                 "last_writer_address": metadata.last_writer_address,
+                "created_at_ms": metadata.created_at_ms,
+                "modified_at_ms": metadata.modified_at_ms,
+                "target_zone_id": metadata.target_zone_id,
+                "link_target": metadata.link_target,
             },
         });
         let bytes =

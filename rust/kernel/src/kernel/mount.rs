@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::vfs_router::canonicalize_mount_path as canonicalize;
 
-use super::{Kernel, KernelError, RustRouteResult};
+use super::{Kernel, KernelError, RouteResult};
 
 impl Kernel {
     // ── Mount-table primitives (composed by sys_setattr DT_MOUNT) ──────
@@ -119,7 +119,7 @@ impl Kernel {
     }
 
     /// Zone-canonical LPM routing.
-    pub fn route(&self, path: &str, zone_id: &str) -> Result<RustRouteResult, KernelError> {
+    pub fn route(&self, path: &str, zone_id: &str) -> Result<RouteResult, KernelError> {
         self.vfs_router
             .route(path, zone_id)
             .map_err(KernelError::from)

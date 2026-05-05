@@ -1,11 +1,14 @@
 """Tests for archive verifier."""
 
 import json
+import sys
 import tarfile
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 
 import pytest
 
+from nexus.bricks.archive import verify as archive_verify
 from nexus.bricks.archive.errors import (
     ArchiveError,
     ArchiveSignatureError,
@@ -134,3 +137,12 @@ def test_verify_min_version_rejected(tmp_path):
     )
     with pytest.raises(ArchiveVersionIncompatible):
         verify_archive(bundle, strict=True)
+
+
+def test_current_version_falls_back_to_source_version(monkeypatch):
+    def missing_distribution(_name: str) -> str:
+        raise PackageNotFoundError("nexus-ai-fs")
+
+    monkeypatch.setattr(archive_verify, "version", missing_distribution)
+
+    assert archive_verify._current_nexus_version() == sys.modules["nexus"].__version__

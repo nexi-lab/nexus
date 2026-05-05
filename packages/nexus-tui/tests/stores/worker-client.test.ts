@@ -185,6 +185,25 @@ describe("WorkerFetchClient", () => {
     expect(await p2).toBe("deduped");
   });
 
+  it("same-path GET requests with different headers are not deduplicated", async () => {
+    const p1 = client.get("/api/v2/same", { headers: { "X-Nexus-Zone-ID": "zone-a" } });
+    const p2 = client.get("/api/v2/same", { headers: { "X-Nexus-Zone-ID": "zone-b" } });
+    await tick();
+
+    const requests = worker.sent.filter((m) => m.type === "request");
+    expect(requests.length).toBe(2);
+    const [req1, req2] = requests;
+    if (req1.type !== "request" || req2.type !== "request") return;
+    expect(req1.options?.headers?.["X-Nexus-Zone-ID"]).toBe("zone-a");
+    expect(req2.options?.headers?.["X-Nexus-Zone-ID"]).toBe("zone-b");
+
+    worker.reply({ type: "response", id: req1.id, result: "A" });
+    worker.reply({ type: "response", id: req2.id, result: "B" });
+
+    expect(await p1).toBe("A");
+    expect(await p2).toBe("B");
+  });
+
   it("sequential GET requests (after first resolves) are not deduplicated", async () => {
     const p1 = client.get("/api/v2/same");
     await tick();

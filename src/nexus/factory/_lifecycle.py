@@ -133,6 +133,10 @@ def _wire_services(
     # Canonical name mapping consolidated in service_routing.py.
     enlist_services(nx, _svc)
 
+    _upload_svc = _svc.get("chunked_upload_service")
+    if _upload_svc is not None and hasattr(_upload_svc, "attach_filesystem"):
+        _upload_svc.attach_filesystem(nx)
+
     # R20.18.5: federation is kernel-internal now. The federation
     # parameter is vestigial (always None post-cutover). Kernel::new()
     # reads env vars and bootstraps raft::ZoneManager in Rust. DLC

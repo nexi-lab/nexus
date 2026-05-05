@@ -945,10 +945,14 @@ name = "Bricks must not import from each other (LEGO Principle 3)"
 type = "independence"
 modules = [
     "nexus.bricks.access_manifest",
+    "nexus.bricks.approvals",
+    "nexus.bricks.archive",
     "nexus.bricks.auth",
+    "nexus.bricks.catalog",
     "nexus.bricks.context_manifest",
     "nexus.bricks.delegation",
     "nexus.bricks.discovery",
+    "nexus.bricks.filesystem",
     "nexus.bricks.governance",
     "nexus.bricks.identity",
     "nexus.bricks.mcp",
@@ -959,8 +963,14 @@ modules = [
     "nexus.bricks.rebac",
     "nexus.bricks.sandbox",
     "nexus.bricks.search",
+    "nexus.bricks.secrets",
+    "nexus.bricks.share_link",
     "nexus.bricks.snapshot",
+    "nexus.bricks.task_manager",
+    "nexus.bricks.upload",
+    "nexus.bricks.versioning",
     "nexus.bricks.workflows",
+    "nexus.bricks.workspace",
 ]
 # Known violations — ratchet baseline. Remove entries as fixes land.
 ignore_imports = [
@@ -974,10 +984,6 @@ ignore_imports = [
     # search -> rebac: permission enforcement + entity registry in search_service (moved from services/)
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
-    # search -> gateway (TYPE_CHECKING): NexusFSGateway type hint — transitive to workflows/parsers
-    "nexus.bricks.search.search_service -> nexus.services.gateway",
-    # mount -> permission_utils -> gateway: transitive chain to workflows/parsers
-    "nexus.lib.permission_utils -> nexus.services.gateway",
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
     "nexus.bricks.parsers.validation.runner -> nexus.bricks.sandbox.sandbox_provider",
     "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",
@@ -985,6 +991,27 @@ ignore_imports = [
     "nexus.bricks.portability.export_service -> nexus",
     # mcp -> nexus: server.py imports top-level nexus package — same transitive hub pattern
     "nexus.bricks.mcp.server -> nexus",
+    # Ratchet entries exposed by expanding the module list to all active bricks.
+    "nexus.bricks.approvals.grpc_auth -> nexus.bricks.auth.types",
+    "nexus.bricks.archive.cli_glue -> nexus.cli.utils",
+    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.export_service",
+    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.import_service",
+    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.models",
+    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.signer",
+    "nexus.bricks.archive.cli_glue -> nexus.bricks.portability.trust",
+    "nexus.bricks.archive.orchestrator -> nexus.bricks.portability.models",
+    "nexus.bricks.archive.tests.unit.test_verify -> nexus.bricks.portability.signer",
+    "nexus.bricks.archive.verify -> nexus.bricks.portability.signer",
+    "nexus.bricks.mcp.connection_manager -> nexus.bricks.approvals.policy_gate",
+    "nexus.bricks.mcp.mcp_service -> nexus.bricks.approvals.policy_gate",
+    "nexus.bricks.mcp.mount -> nexus.bricks.approvals.models",
+    "nexus.bricks.mcp.mount -> nexus.bricks.approvals.policy_gate",
+    "nexus.bricks.mcp.server -> nexus.bricks.approvals.policy_gate",
+    "nexus.bricks.portability.import_service -> nexus.bricks.archive.errors",
+    "nexus.bricks.portability.signer -> nexus.bricks.archive.errors",
+    "nexus.bricks.portability.tests.test_import_embedding -> nexus.bricks.archive.errors",
+    "nexus.bricks.portability.tests.test_import_target_guard -> nexus.bricks.archive.errors",
+    "nexus.bricks.portability.tests.test_signer -> nexus.bricks.archive.errors",
 ]
 unmatched_ignore_imports_alerting = "warn"
 

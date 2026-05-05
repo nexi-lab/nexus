@@ -13,7 +13,7 @@ Every endpoint (except OPTIONS) validates the Tus-Resumable header.
 import base64
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
@@ -70,6 +70,21 @@ def _parse_upload_metadata(raw: str | None) -> dict[str, str]:
             value = ""
         result[key] = value
     return result
+
+
+def _authorize_upload_access(session: Any, auth_result: dict[str, Any]) -> Any:
+    """Return request context if caller owns the upload session or is admin."""
+    from nexus.server.dependencies import get_operation_context
+
+    ctx = get_operation_context(auth_result)
+    if getattr(ctx, "is_admin", False):
+        return ctx
+
+    request_zone = ctx.zone_id or ROOT_ZONE_ID
+    request_user = ctx.user_id or "anonymous"
+    if session.zone_id != request_zone or session.user_id != request_user:
+        raise HTTPException(status_code=403, detail="Upload session is not owned by caller")
+    return ctx
 
 
 def create_tus_uploads_router(
@@ -129,7 +144,7 @@ def create_tus_uploads_router(
         auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Create a new upload session (tus creation extension)."""
-        from nexus.contracts.exceptions import ValidationError
+        from nexus.contracts.exceptions import NexusPermissionError, ValidationError
         from nexus.server.dependencies import get_operation_context
 
         service = _get_service()
@@ -161,6 +176,7 @@ def create_tus_uploads_router(
                 metadata=metadata,
                 zone_id=zone_id,
                 user_id=user_id,
+                context=ctx,
             )
         except RuntimeError as e:
             if "Too many concurrent" in str(e):
@@ -168,6 +184,8 @@ def create_tus_uploads_router(
             raise
         except ValidationError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
 
         # Build Location URL
         location = str(request.url).rstrip("/") + f"/{session.upload_id}"
@@ -188,9 +206,11 @@ def create_tus_uploads_router(
         upload_id: str,
         request: Request,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Upload a chunk of data (tus core protocol)."""
         from nexus.contracts.exceptions import (
+            NexusPermissionError,
             UploadChecksumMismatchError,
             UploadExpiredError,
             UploadNotFoundError,
@@ -199,6 +219,14 @@ def create_tus_uploads_router(
         )
 
         service = _get_service()
+
+        try:
+            current = await service.get_upload_status(upload_id)
+            ctx = _authorize_upload_access(current, auth_result)
+        except UploadNotFoundError as e:
+            raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
+        except UploadExpiredError as e:
+            raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
 
         # Validate Content-Type
         content_type = request.headers.get("Content-Type", "")
@@ -232,6 +260,7 @@ def create_tus_uploads_router(
                 offset=offset,
                 chunk_data=chunk_data,
                 checksum_header=checksum_header,
+                context=ctx,
             )
         except UploadNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
@@ -249,6 +278,8 @@ def create_tus_uploads_router(
             ) from e
         except ValidationError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
 
         headers = {
             "Tus-Resumable": TUS_RESUMABLE,
@@ -265,6 +296,7 @@ def create_tus_uploads_router(
     async def tus_get_offset(
         upload_id: str,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Get the current offset of an upload (for resumption)."""
         from nexus.contracts.exceptions import UploadExpiredError, UploadNotFoundError
@@ -273,6 +305,7 @@ def create_tus_uploads_router(
 
         try:
             session = await service.get_upload_status(upload_id)
+            _authorize_upload_access(session, auth_result)
         except UploadNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
         except UploadExpiredError as e:
@@ -295,16 +328,21 @@ def create_tus_uploads_router(
     async def tus_terminate(
         upload_id: str,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Terminate an upload and release resources (tus termination extension)."""
-        from nexus.contracts.exceptions import UploadNotFoundError
+        from nexus.contracts.exceptions import UploadExpiredError, UploadNotFoundError
 
         service = _get_service()
 
         try:
+            session = await service.get_upload_status(upload_id)
+            _authorize_upload_access(session, auth_result)
             await service.terminate_upload(upload_id)
         except UploadNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
+        except UploadExpiredError as e:
+            raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
 
         return Response(
             status_code=204,

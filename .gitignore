@@ -235,8 +235,11 @@ aws-credentials
 CLAUDE.md
 docs/plans/
 
-# Cargo local config (Windows MSVC linker path is dev-machine specific)
-.cargo/
+# Cargo local config (Windows MSVC linker path is dev-machine specific).
+# Keep the project Cargo config tracked for shared build environment defaults.
+.cargo/*
+!.cargo/
+!.cargo/config.toml
 NUL
 NUL
 

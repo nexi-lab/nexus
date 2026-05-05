@@ -304,6 +304,39 @@ class TestMCLReplay:
         replayed = list(recorder.replay_changes(from_sequence=mid_seq))
         assert len(replayed) == 3
 
+    def test_replay_changes_uses_sequence_cursor_not_offset(self, db_session) -> None:
+        from sqlalchemy import event
+
+        recorder = MCLRecorder(db_session)
+        for i in range(5):
+            recorder.record_file_write(
+                entity_urn=f"urn:nexus:file:z1:id{i}",
+                metadata_dict={"path": f"/file{i}"},
+            )
+        db_session.commit()
+
+        statements: list[tuple[str, tuple[object, ...]]] = []
+
+        def collect_sql(_conn, _cursor, statement, _parameters, _context, _executemany) -> None:
+            if "metadata_change_log" in statement and statement.lstrip().upper().startswith(
+                "SELECT"
+            ):
+                statements.append((statement.upper(), tuple(_parameters)))
+
+        event.listen(db_session.bind, "before_cursor_execute", collect_sql)
+        try:
+            replayed = list(recorder.replay_changes(batch_size=2))
+        finally:
+            event.remove(db_session.bind, "before_cursor_execute", collect_sql)
+
+        assert len(replayed) == 5
+        assert statements
+        # SQLite's LIMIT syntax includes an OFFSET placeholder even when SQLAlchemy
+        # does not request an offset; the important regression guard is that the
+        # offset parameter never advances through the log.
+        assert all(parameters[-1] == 0 for _statement, parameters in statements)
+        assert all("SEQUENCE_NUMBER >" in statement for statement, _parameters in statements)
+
 
 class TestURNLocator:
     """Tests for URN locator pattern (Issue #2929 Key Decision #3).

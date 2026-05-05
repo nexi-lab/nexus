@@ -16,15 +16,26 @@ from __future__ import annotations
 
 import json
 import tarfile
+from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-import nexus
 from nexus.bricks.archive.errors import (
     ArchiveError,
     ArchiveSignatureError,
     ArchiveVersionIncompatible,
 )
 from nexus.bricks.portability.signer import ArchiveSigner, canonical_json_bytes
+
+
+def _current_nexus_version() -> str:
+    try:
+        return version("nexus-ai-fs")
+    except PackageNotFoundError:
+        try:
+            return str(import_module("nexus").__version__)
+        except Exception:
+            return "0.0.0"
 
 
 def _parse_semver(s: str) -> tuple[int, int, int]:
@@ -96,7 +107,7 @@ def verify_archive(file: Path, *, strict: bool = False) -> None:
 
         # --- min_nexus_version check ---
         min_required: str = manifest.get("min_nexus_version", "0.0.0")
-        current: str = nexus.__version__
+        current = _current_nexus_version()
         if _parse_semver(min_required) > _parse_semver(current):
             raise ArchiveVersionIncompatible(required=min_required, current=current)
 
@@ -122,4 +133,4 @@ def verify_archive(file: Path, *, strict: bool = False) -> None:
                 )
 
 
-__all__ = ["_parse_semver", "verify_archive"]
+__all__ = ["_current_nexus_version", "_parse_semver", "verify_archive"]

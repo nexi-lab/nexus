@@ -23,7 +23,7 @@
     "@opentui/core": "0.1.96",
     "@opentui/solid": "0.1.96",
     "anser": "^2.3.5",
-    "solid-js": "^1.9.12",
+    "solid-js": "1.9.11",
     "zustand": "^5.0.0"
   },
   "devDependencies": {

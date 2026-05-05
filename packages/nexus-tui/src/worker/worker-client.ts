@@ -52,6 +52,25 @@ function serializeOptions(
   return Object.keys(out).length > 0 ? (out as SerializableRequestOptions) : undefined;
 }
 
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
+}
+
+function dedupKeyFor(
+  path: string,
+  options: SerializableRequestOptions | undefined,
+  signal: AbortSignal | undefined,
+): string | undefined {
+  if (signal) return undefined;
+  return `${path}\0${stableStringify(options ?? {})}`;
+}
+
 // ─── WorkerFetchClient ────────────────────────────────────────────────────────
 
 interface Pending {
@@ -62,7 +81,7 @@ interface Pending {
 export class WorkerFetchClient {
   private worker: Worker;
   private readonly pending = new Map<string, Pending>();
-  /** In-flight GET requests keyed by path — deduplicated (Issue 14A). */
+  /** In-flight GET requests keyed by path and request options. */
   private readonly dedup = new Map<string, Promise<unknown>>();
   /**
    * Resolves when the worker has acknowledged 'init'.
@@ -129,18 +148,22 @@ export class WorkerFetchClient {
     options: RequestOptions | undefined,
     kind: RequestKind,
   ): Promise<T> {
-    // Issue 14A: deduplicate concurrent identical GET requests.
-    // Checked before the readyInternal gate so concurrent same-path GETs
-    // share one in-flight promise immediately.
-    if (kind === "json" && method === "GET") {
-      const existing = this.dedup.get(path);
-      if (existing) return existing as Promise<T>;
-    }
-
     const id = nextId();
     const serializableOpts = serializeOptions(options);
     const timeoutMs = options?.timeout ?? DEFAULT_TIMEOUT_MS;
     const signal = options?.signal;
+    const dedupKey =
+      kind === "json" && method === "GET"
+        ? dedupKeyFor(path, serializableOpts, signal)
+        : undefined;
+
+    // Issue 14A: deduplicate concurrent identical GET requests.
+    // Checked before the readyInternal gate so concurrent same-path GETs
+    // share one in-flight promise immediately.
+    if (dedupKey) {
+      const existing = this.dedup.get(dedupKey);
+      if (existing) return existing as Promise<T>;
+    }
 
     // Issue 16A: already-aborted signal — reject immediately without any setup.
     if (signal?.aborted) {
@@ -222,10 +245,10 @@ export class WorkerFetchClient {
     // Register in dedup map; remove on settle (Issue 14A).
     // `.finally()` propagates rejection to the derived promise, so we must
     // attach `.catch(() => {})` to that derived promise too.
-    if (kind === "json" && method === "GET") {
-      this.dedup.set(path, promise);
+    if (dedupKey) {
+      this.dedup.set(dedupKey, promise);
       void promise.finally(() => {
-        if (this.dedup.get(path) === promise) this.dedup.delete(path);
+        if (this.dedup.get(dedupKey) === promise) this.dedup.delete(dedupKey);
       }).catch(() => {});
     }
 

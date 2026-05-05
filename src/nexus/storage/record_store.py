@@ -731,34 +731,58 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         )
 
     def close(self) -> None:
-        """Close sync engines; drop async engine references (Issue #3775).
+        """Close engines and release connections (Issue #3775).
 
-        Async engines are NOT disposed here — disposing an ``AsyncEngine`` via
-        ``sync_engine.dispose()`` greenlet-awaits ``_terminate_graceful_close``
-        on whatever loop is running, but asyncpg connections bind their pending
-        futures to the loop where the pool was created. When ``close()`` runs
-        on a different loop or thread (FastAPI lifespan dispatches NexusFS
-        ``aclose`` via ``run_in_executor``), the cross-loop await produces
-        ``RuntimeError: Future attached to a different loop`` and orphans
-        connections (asyncpg ``InternalClientError: unknown protocol state``).
+        Async engines disposed best-effort via ``sync_engine.dispose()``. This
+        is correct for sync-only callers (CLI, tests) whose async engine —
+        if ever initialized — was created on a sync thread with no live
+        event loop. It is **not** correct when ``close()`` runs on a worker
+        thread while asyncpg connections are bound to a *different* live loop;
+        that path produces ``RuntimeError: Future attached to a different
+        loop``. Callers who own such an engine must use :meth:`aclose` from
+        the engine's origin loop instead — see ``NexusFS.adispose_async_engines``.
 
-        Callers that own an async engine must use :meth:`aclose` from the
-        engine's origin loop. Sync callers that never accessed the async
-        session factory leave ``_async_engine is None`` and are unaffected;
-        for those, dropping the (None) reference is a no-op.
+        On dispose failure the reference is preserved (not nulled), so the
+        caller can attempt explicit recovery via ``aclose`` rather than
+        silently leaking the pool.
         """
         self._engine.dispose()
-        # Drop async refs without dispose — origin loop required for proper close.
-        self._async_engine = None
-        self._async_session_factory_instance = None
+
+        # Async engines: best-effort sync dispose. Preserve refs on failure
+        # so the caller can recover via aclose() — never null a live engine
+        # we did not actually dispose.
+        if self._async_engine is not None:
+            try:
+                self._async_engine.sync_engine.dispose()
+            except Exception:
+                logger.warning(
+                    "Sync dispose of async engine failed in close(); engine "
+                    "reference preserved. Use aclose() from the engine's "
+                    "origin loop to release connections.",
+                    exc_info=True,
+                )
+            else:
+                self._async_engine = None
+                self._async_session_factory_instance = None
 
         # Dispose read replica engines (Issue #725)
         if self._read_engine is not None:
             self._read_engine.dispose()
             self._read_engine = None
             self._read_session_factory_instance = None
-        self._async_read_engine = None
-        self._async_read_session_factory_instance = None
+        if self._async_read_engine is not None:
+            try:
+                self._async_read_engine.sync_engine.dispose()
+            except Exception:
+                logger.warning(
+                    "Sync dispose of async read engine failed in close(); "
+                    "engine reference preserved. Use aclose() from the "
+                    "engine's origin loop to release connections.",
+                    exc_info=True,
+                )
+            else:
+                self._async_read_engine = None
+                self._async_read_session_factory_instance = None
 
         logger.info("SQLAlchemyRecordStore closed")
 

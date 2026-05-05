@@ -859,23 +859,40 @@ class NexusFS(  # type: ignore[misc]
         connections (asyncpg ``InternalClientError``).
 
         FastAPI lifespan must await this on its own loop *before* invoking
-        ``aclose`` via ``run_in_executor``. After this returns,
-        ``self._record_store`` is None, so the subsequent sync close() skips
-        the record-store branch.
+        ``aclose`` via ``run_in_executor``. On success, ``self._record_store``
+        is cleared so the subsequent sync ``close()`` skips the record-store
+        branch. On failure the reference is **preserved** so ``close()`` can
+        still attempt sync teardown (best-effort dispose with preserved refs)
+        rather than silently orphaning the store.
         """
         if self._record_store is None:
             return
         aclose_fn = getattr(self._record_store, "aclose", None)
-        if aclose_fn is not None:
-            try:
-                await aclose_fn()
-            except Exception:
-                logger.debug("record_store.aclose failed (best-effort)", exc_info=True)
-        else:
+        if aclose_fn is None:
+            # Legacy stores without aclose — fall back to sync close on this
+            # loop. Safe iff async engine is uninitialized; close() preserves
+            # refs on dispose failure so an initialized engine remains
+            # recoverable.
             try:
                 self._record_store.close()
+                self._record_store = None
             except Exception:
-                logger.debug("record_store.close failed (best-effort)", exc_info=True)
+                logger.warning(
+                    "record_store.close failed; store retained for recovery",
+                    exc_info=True,
+                )
+            return
+        try:
+            await aclose_fn()
+        except Exception:
+            # Don't orphan the store: leave self._record_store attached so
+            # the subsequent sync close() in aclose() can attempt cleanup
+            # (best-effort dispose, refs preserved on its own failure).
+            logger.warning(
+                "record_store.aclose failed; store retained for sync close fallback",
+                exc_info=True,
+            )
+            return
         self._record_store = None
 
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────

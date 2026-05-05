@@ -351,15 +351,8 @@ class TestRecordStoreAsyncSessionFactory:
 class TestRecordStoreLifecycle:
     """Tests for store lifecycle management."""
 
-    def test_close_drops_async_refs_without_dispose(self):
-        """close() drops async engine refs but does NOT dispose them (Issue #3775).
-
-        Disposing async engines from sync ``close()`` is unsafe — it
-        greenlet-awaits asyncpg cleanup on whatever loop is running, which
-        produces cross-loop futures when ``close()`` runs in a worker thread.
-        ``close()`` must drop refs only; callers that own the async engine
-        must use ``aclose()`` from the engine's origin loop.
-        """
+    def test_close_disposes_async_engine_when_safe(self):
+        """close() best-effort disposes async engine and nulls ref on success."""
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         store = SQLAlchemyRecordStore(create_tables=False)
@@ -367,8 +360,36 @@ class TestRecordStoreLifecycle:
         assert store._async_engine is not None
 
         store.close()
+        # SQLite + aiosqlite with no live loop: sync dispose succeeds, ref nulled.
         assert store._async_engine is None
         assert store._async_session_factory_instance is None
+
+    def test_close_preserves_ref_on_dispose_failure(self):
+        """Issue #3775: a failed sync dispose must NOT null the async engine ref.
+
+        Regression: previously ``close()`` nulled refs unconditionally, losing
+        the only handle to a live async pool. Callers can then never recover
+        via ``aclose()``. With preserved refs, the caller can retry.
+        """
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        _ = store.async_session_factory
+        assert store._async_engine is not None
+
+        # Force sync dispose to fail.
+        original_engine = store._async_engine
+        original_factory = store._async_session_factory_instance
+
+        def _boom():
+            raise RuntimeError("simulated cross-loop dispose failure")
+
+        with patch.object(original_engine.sync_engine, "dispose", side_effect=_boom):
+            store.close()  # Must not raise
+
+        # Ref must remain — caller needs to recover via aclose().
+        assert store._async_engine is original_engine
+        assert store._async_session_factory_instance is original_factory
 
     def test_close_without_async_engine(self):
         """close() works even when async engine was never initialized."""

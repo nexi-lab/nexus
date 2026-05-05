@@ -43,6 +43,8 @@ spec:
             - --port
             - {{ .Values.service.mcpPort | quote }}
           env:
+            - name: NEXUS_PROFILE
+              value: {{ .Values.nexus.profile | quote }}
             - name: NEXUS_URL
               value: "http://{{ include "nexus-hub.nexusName" . }}:{{ .Values.service.nexusHttpPort }}"
             - name: NEXUS_REDIS_URL

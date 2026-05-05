@@ -45,6 +45,8 @@ spec:
             - "--database-url"
             - "$(NEXUS_DATABASE_URL)"
           env:
+            - name: NEXUS_PROFILE
+              value: {{ .Values.nexus.profile | quote }}
             - name: NEXUS_DATA_DIR
               value: /data
             - name: POSTGRES_PASSWORD

@@ -787,11 +787,18 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         logger.info("SQLAlchemyRecordStore closed")
 
     async def aclose(self) -> None:
-        """Async close — disposes async engines on the current loop (Issue #3775).
+        """Dispose async engines on the current loop (Issue #3775).
+
+        Disposes only the async engines — leaves sync engines and the store
+        usable so that close-callback flush paths (e.g. write observer
+        ``flush_sync`` registered via ``NexusFS._close_callbacks``) can still
+        write through the sync ``session_factory`` after this returns. The
+        caller must subsequently invoke :meth:`close` to dispose sync engines
+        once those callbacks have run.
 
         Must be awaited from the same loop that created the async engine
-        (typically the loop that first accessed ``async_session_factory``).
-        Calling from a different loop reproduces the original cross-loop bug.
+        (typically the loop that first accessed ``async_session_factory``);
+        calling from a different loop reproduces the original cross-loop bug.
         """
         if self._async_engine is not None:
             await self._async_engine.dispose()
@@ -802,11 +809,4 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             self._async_read_engine = None
             self._async_read_session_factory_instance = None
 
-        # Sync engines are safe to dispose from any context.
-        self._engine.dispose()
-        if self._read_engine is not None:
-            self._read_engine.dispose()
-            self._read_engine = None
-            self._read_session_factory_instance = None
-
-        logger.info("SQLAlchemyRecordStore closed (async)")
+        logger.info("SQLAlchemyRecordStore async engines disposed")

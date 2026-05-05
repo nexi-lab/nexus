@@ -20,8 +20,14 @@ def _make_stub_nexus_fs(record_store):
 
 
 @pytest.mark.asyncio
-async def test_adispose_clears_record_store_on_success():
-    """Successful aclose clears self._record_store so close() skips it."""
+async def test_adispose_keeps_record_store_attached_on_success():
+    """Issue #3775: adispose disposes only async engines; the store stays attached.
+
+    ``NexusFS.close()`` runs close-callbacks (e.g. write-observer
+    ``flush_sync``) that use the sync ``session_factory``. If the record
+    store were detached or its sync engine disposed here, those callbacks
+    would either fail or reopen a fresh pool that nothing later disposes.
+    """
     rs = MagicMock()
     rs.aclose = AsyncMock()
     nx = _make_stub_nexus_fs(rs)
@@ -29,52 +35,36 @@ async def test_adispose_clears_record_store_on_success():
     await nx.adispose_async_engines()
 
     rs.aclose.assert_awaited_once()
-    assert nx._record_store is None
+    # Store must remain attached so close() runs sync dispose AFTER callbacks.
+    assert nx._record_store is rs
+    # Sync close() must NOT have run here.
+    rs.close.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_adispose_preserves_record_store_on_aclose_failure():
-    """Issue #3775: aclose failure must NOT orphan the record store.
-
-    Previously a failure was caught at debug level and ``self._record_store``
-    was set to ``None`` regardless. That hid disposal failures and made the
-    sync ``close()`` skip the store entirely, leaking both async and sync
-    resources with no recovery handle.
-    """
+async def test_adispose_keeps_record_store_attached_on_aclose_failure():
+    """aclose failure must not orphan the store; close() will attempt fallback."""
     rs = MagicMock()
     rs.aclose = AsyncMock(side_effect=RuntimeError("simulated dispose failure"))
     nx = _make_stub_nexus_fs(rs)
 
     await nx.adispose_async_engines()  # must not raise
 
-    # Store must remain attached — caller (NexusFS.close) needs the handle
-    # to attempt sync teardown and surface the failure.
     assert nx._record_store is rs
     rs.aclose.assert_awaited_once()
+    rs.close.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_adispose_falls_back_to_sync_close_when_aclose_missing():
-    """Legacy stores without aclose() get sync close on success."""
+async def test_adispose_noop_for_legacy_store_without_aclose():
+    """Legacy stores without aclose() are left to close() entirely."""
     rs = MagicMock(spec=["close"])
     rs.close = MagicMock()
     nx = _make_stub_nexus_fs(rs)
 
-    await nx.adispose_async_engines()
-
-    rs.close.assert_called_once()
-    assert nx._record_store is None
-
-
-@pytest.mark.asyncio
-async def test_adispose_preserves_record_store_when_legacy_close_fails():
-    """Legacy fallback failure also preserves the store for recovery."""
-    rs = MagicMock(spec=["close"])
-    rs.close = MagicMock(side_effect=RuntimeError("simulated close failure"))
-    nx = _make_stub_nexus_fs(rs)
-
     await nx.adispose_async_engines()  # must not raise
 
+    rs.close.assert_not_called()  # close() runs later in NexusFS.close
     assert nx._record_store is rs
 
 

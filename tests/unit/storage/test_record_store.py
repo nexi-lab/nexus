@@ -420,6 +420,34 @@ class TestRecordStoreLifecycle:
         assert store._async_session_factory_instance is None
 
     @pytest.mark.asyncio
+    async def test_aclose_leaves_sync_engine_usable(self):
+        """Issue #3775 ordering: aclose must not dispose the sync engine.
+
+        ``NexusFS`` close-callbacks (write-observer ``flush_sync``, etc.)
+        run after ``adispose_async_engines()`` and use the sync
+        ``session_factory`` to flush pending DB writes. If ``aclose`` also
+        disposed the sync engine, those callbacks would fail or silently
+        reopen a fresh pool that nothing later disposes.
+        """
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        _ = store.async_session_factory  # force async engine creation
+        assert store._async_engine is not None
+
+        await store.aclose()
+
+        # Sync engine + session factory still usable after aclose.
+        assert store._engine is not None
+        with store.session_factory() as sess:
+            from sqlalchemy import text
+
+            assert sess.execute(text("SELECT 1")).scalar() == 1
+
+        # Final sync close disposes the sync engine.
+        store.close()
+
+    @pytest.mark.asyncio
     async def test_aclose_without_async_engine(self):
         """aclose() is safe when async engine was never initialized."""
         from nexus.storage.record_store import SQLAlchemyRecordStore

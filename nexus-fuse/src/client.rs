@@ -136,7 +136,7 @@ impl NexusClient {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         if let Some(ref agent_id) = self.agent_id {
             if let Ok(agent_value) = HeaderValue::from_str(agent_id) {
-                headers.insert("X-Nexus-Agent-Id", agent_value);
+                headers.insert("X-Agent-ID", agent_value);
             }
         }
         headers

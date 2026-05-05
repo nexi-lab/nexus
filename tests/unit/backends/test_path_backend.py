@@ -90,6 +90,13 @@ class InMemoryTransport:
             yield data[i : i + chunk_size]
 
 
+class FailingFetchTransport(InMemoryTransport):
+    """Transport that simulates a storage failure during fetch."""
+
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+        raise BackendError("storage unavailable", backend="memory", path=key)
+
+
 # === Helpers ===
 
 
@@ -161,6 +168,17 @@ class TestPathAddressingEngineWriteContent:
 
         expected = hash_content(content)
         assert result.content_id == expected
+
+    def test_offset_write_propagates_fetch_failures(self):
+        transport = FailingFetchTransport()
+        backend = PathAddressingEngine(
+            transport, backend_name="test-path", bucket_name="test-bucket"
+        )
+
+        with pytest.raises(BackendError, match="storage unavailable"):
+            backend.write_content(b"patch", offset=2, context=_make_context("file.txt"))
+
+        assert transport.files == {}
 
 
 class TestPathAddressingEngineReadContent:

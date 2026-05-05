@@ -41,7 +41,7 @@ dependencies = [
     "rich>=13.7.0",
     "tqdm>=4.66.0", # Progress bars for sync operations
     # Configuration
-    "pydantic>=2.5.0",
+    "pydantic[email]>=2.5.0",
     "pyyaml>=6.0.1",
     # HTTP client (for remote mode)
     "httpx[http2]>=0.28.1",

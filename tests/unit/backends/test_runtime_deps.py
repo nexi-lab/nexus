@@ -145,15 +145,26 @@ class TestCheckRuntimeDeps:
         assert "brew install xyz" in reason
 
     def test_service_dep_satisfied_when_server_available(self) -> None:
-        missing = check_runtime_deps((ServiceDep("token_manager"),), server_available=True)
+        missing = check_runtime_deps((ServiceDep("kernel"),), server_available=True)
         assert missing == []
 
     def test_service_dep_missing_when_slim(self) -> None:
-        missing = check_runtime_deps((ServiceDep("token_manager"),), server_available=False)
+        missing = check_runtime_deps((ServiceDep("kernel"),), server_available=False)
         assert len(missing) == 1
         _, reason = missing[0]
-        assert "service 'token_manager'" in reason
+        assert "service 'kernel'" in reason
         assert "full nexus install" in reason
+
+    def test_token_manager_not_in_service_map(self) -> None:
+        """``token_manager`` must not be a registered service: the auth/oauth
+        bricks are force-included in the slim wheel, so OAuth connectors
+        rely on the shipped module rather than a server-side service probe
+        (Issue #3947).  Re-introducing the entry would smuggle a
+        ``nexus.bricks`` dependency back into the slim runtime-dep path.
+        """
+        from nexus.backends.base.runtime_deps import _SERVICE_MODULES
+
+        assert "token_manager" not in _SERVICE_MODULES
 
     def test_aggregates_all_missing(self) -> None:
         deps: tuple[RuntimeDep, ...] = (

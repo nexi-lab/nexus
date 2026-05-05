@@ -188,3 +188,86 @@ def test_slim_connector_imports(slim_venv: Path, connector_module: str) -> None:
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
     assert "OK" in result.stdout
+
+
+def test_slim_oauth_extras_independent_of_bricks(slim_venv: Path) -> None:
+    """Issue #3947: each advertised OAuth/API extra must import and pass
+    runtime-dep checks without ``nexus.bricks`` being importable.
+
+    The slim wheel ships the auth/oauth bricks subtree so OAuth connectors
+    work end-to-end; the runtime-dep contract is the *advertised* gate
+    users hit when a mount fails.  Encoding a ``nexus.bricks`` dependency
+    in that gate would falsely advertise "requires a full nexus install"
+    even though the slim wheel + OAuth extras already ship everything the
+    connector needs.
+
+    This test installs the ``meta_path`` blocker before any backend module
+    has been touched, then verifies:
+
+    1. The connector module itself imports (top-level imports must not
+       reach into ``nexus.bricks``).
+    2. The manifest entry carries no ``ServiceDep`` (token_manager service
+       gate would smuggle a bricks probe back in).
+    3. ``check_runtime_deps`` for the entry returns no missing deps —
+       so the only failure modes left are real external creds / packages.
+    """
+    script = '''
+import sys
+
+class _BlockBricks:
+    """Reject any import of nexus.bricks.* — proves the runtime-dep
+    check does not transitively need the bricks tree."""
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "nexus.bricks" or name.startswith("nexus.bricks."):
+            raise ModuleNotFoundError(f"blocked by test: {name}")
+        return None
+
+sys.meta_path.insert(0, _BlockBricks())
+
+# Manifest must import without touching bricks.
+from nexus.backends._manifest import CONNECTOR_MANIFEST
+from nexus.backends.base.runtime_deps import (
+    PythonDep,
+    ServiceDep,
+    check_runtime_deps,
+)
+
+oauth_names = {
+    "gdrive_connector",
+    "gmail_connector",
+    "calendar_connector",
+    "gcalendar_connector",
+    "x_connector",
+    "slack_connector",
+}
+seen = set()
+for entry in CONNECTOR_MANIFEST:
+    if entry.name not in oauth_names:
+        continue
+    seen.add(entry.name)
+    for dep in entry.runtime_deps:
+        assert not isinstance(dep, ServiceDep), (
+            f"{entry.name} carries ServiceDep({dep.name!r}); the OAuth "
+            "extras must not gate on a server-side service probe."
+        )
+        if isinstance(dep, PythonDep):
+            assert "nexus.bricks" not in dep.module, (
+                f"{entry.name} declares PythonDep({dep.module!r}); runtime-dep "
+                "checks must not target the bricks tree."
+            )
+    missing = check_runtime_deps(entry.runtime_deps)
+    assert not missing, (
+        f"{entry.name} reports missing runtime deps even with the matching "
+        f"extra installed: {missing}"
+    )
+
+assert seen == oauth_names, f"manifest is missing OAuth entries: {oauth_names - seen}"
+print("OAUTH-DEPS-OK")
+'''
+    result = run_in_slim_venv(slim_venv, script)
+    assert result.returncode == 0, (
+        f"OAuth extras manifest dep audit failed:\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "OAUTH-DEPS-OK" in result.stdout

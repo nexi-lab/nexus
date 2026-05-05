@@ -86,14 +86,20 @@ def _server_available() -> bool:
 # Per-service probe mapping. Each entry maps a ``ServiceDep.name`` to the
 # dotted module path that implements the service. When ``check_runtime_deps``
 # evaluates a ``ServiceDep``, it tests the specific module rather than
-# ``nexus.server`` as a whole — so a connector that only needs
-# ``token_manager`` doesn't get falsely gated out when the server package
-# is present but the auth module isn't (or vice versa).
+# ``nexus.server`` as a whole — so a connector that only needs e.g.
+# ``record_store`` doesn't get falsely gated out when the server package
+# is present but the storage module isn't (or vice versa).
 #
 # Services without an entry here fall back to ``_server_available()``, the
 # coarser "full install present" check.
+#
+# ``token_manager`` intentionally has no entry: the auth/oauth bricks are
+# force-included into the slim wheel (see packages/nexus-fs/pyproject.toml),
+# so the OAuth connectors mount fine on slim and don't need a service gate
+# (Issue #3947).  Restoring it here would re-introduce an implicit
+# dependency on ``nexus.bricks`` from runtime dep checks, which slim is
+# explicitly trying to avoid.
 _SERVICE_MODULES: dict[str, str] = {
-    "token_manager": "nexus.bricks.auth.oauth.token_manager",
     "kernel": "nexus.core.kernel",
     "record_store": "nexus.storage.record_store",
     "metastore": "nexus.storage",

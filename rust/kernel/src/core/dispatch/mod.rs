@@ -537,6 +537,37 @@ pub enum HookOutcome {
 /// [`Kernel::register_native_hook`]. Same in-tree Rust API model as
 /// Linux LSM's `security_add_hooks` — a kernel API surface for
 /// in-tree kernel modules.
+///
+/// ## Contract — `/__sys__/` self-exclusion
+///
+/// `register_native_hook` is global (LSM-style — no path filter at
+/// registration time), so every implementor's `on_pre` / `on_post`
+/// receives every path the kernel sees. Hooks whose body does any
+/// `sys_read` / `sys_write` (e.g. AuditHook writing to its audit
+/// stream, PermissionHook reloading its ReBAC namespace) MUST
+/// short-circuit at the top of `on_pre` / `on_post` for paths under
+/// [`contracts::SYSTEM_PATH_PREFIX`] (`/__sys__/`):
+///
+/// ```ignore
+/// fn on_pre(&self, ctx: &HookContext) -> Result<HookOutcome, String> {
+///     if contracts::is_system_path(ctx.path()) {
+///         return Ok(HookOutcome::Pass);
+///     }
+///     // ... real hook logic
+/// }
+/// ```
+///
+/// Mirrors the Python `PermissionHook._is_system_path()` contract
+/// (10+ callsites, introduced after the PR #3890 CI hang
+/// investigation). Without the guard, a hook reading its own
+/// `/__sys__/...` config inside `on_pre` re-enters the same hook,
+/// re-reads, re-enters … unbounded recursion.
+///
+/// Path-pattern-bound hooks that don't touch `/__sys__/` paths
+/// logic-wise (e.g. `MailboxStampingHook` keying off
+/// `/chat-with-me`, `WorkspaceBoundaryHook` keying off
+/// `/proc/{pid}/workspace/`) still add the explicit check —
+/// defense-in-depth and uniform contract enforcement.
 #[allow(dead_code)]
 pub trait NativeInterceptHook: Send + Sync {
     fn name(&self) -> &str;

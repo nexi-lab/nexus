@@ -98,7 +98,7 @@ class ToolNamespaceMiddleware(Middleware):
         call_next: "CallNext[mt.ListToolsRequest, Sequence[Tool]]",
     ) -> Sequence[Tool]:
         """Filter tools/list response to only include visible tools."""
-        all_tools = await call_next(context)
+        all_tools: Sequence[Tool] = await call_next(context)
 
         if not self._enabled:
             return all_tools

@@ -35,7 +35,9 @@ use crate::matrix_adapter::router::AdapterState;
 /// chat surface without forcing a streaming upload path on D3.
 const MAX_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
 
-fn require_kernel(state: &AdapterState) -> Result<&Arc<kernel::kernel::Kernel>, AdapterError> {
+fn require_kernel<K: kernel::abi::KernelAbi>(
+    state: &AdapterState<K>,
+) -> Result<&Arc<K>, AdapterError> {
     state
         .kernel
         .as_ref()
@@ -46,8 +48,8 @@ fn require_kernel(state: &AdapterState) -> Result<&Arc<kernel::kernel::Kernel>, 
 /// `/media/{media_id}` and return the resulting `mxc://` URI. The
 /// caller's `Content-Type` (best-effort) is stamped onto the
 /// metastore entry so `/download` can echo it back.
-pub async fn upload(
-    State(state): State<AdapterState>,
+pub async fn upload<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(_session): Extension<AuthSession>,
     headers: HeaderMap,
     body: Bytes,
@@ -97,6 +99,7 @@ pub async fn upload(
             subject_id: None,
             request_id,
             context_zone_id: None,
+            zone_perms: vec![],
         };
         // Plant a DT_STREAM at the media path big enough to hold the
         // upload, then push the bytes as a single entry. DT_STREAM is
@@ -109,21 +112,21 @@ pub async fn upload(
             .sys_setattr(
                 &media_path_for_write,
                 DT_STREAM,
-                "",
-                None,
-                None,
-                None,
-                "memory",
-                "root",
-                false,
+                /* backend_name */ "",
+                /* backend */ None,
+                /* metastore */ None,
+                /* raft_backend */ None,
+                /* io_profile */ "memory",
+                /* zone_id */ "root",
+                /* is_external */ false,
                 capacity,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                /* read_fd */ None,
+                /* write_fd */ None,
+                /* mime_type */ None,
+                /* modified_at_ms */ None,
+                /* link_target */ None,
+                /* source */ None,
+                /* remote_metastore */ None,
             )
             .map_err(|e| {
                 AdapterError::Internal(format!("sys_setattr DT_STREAM({media_path_for_write}): {e:?}"))
@@ -139,21 +142,21 @@ pub async fn upload(
             .sys_setattr(
                 &media_path_for_write,
                 /* entry_type */ 0,
-                "",
-                None,
-                None,
-                None,
-                "memory",
-                "root",
-                false,
-                0,
-                None,
-                None,
-                Some(&mime_for_write),
-                None,
-                None,
-                None,
-                None,
+                /* backend_name */ "",
+                /* backend */ None,
+                /* metastore */ None,
+                /* raft_backend */ None,
+                /* io_profile */ "memory",
+                /* zone_id */ "root",
+                /* is_external */ false,
+                /* capacity */ 0,
+                /* read_fd */ None,
+                /* write_fd */ None,
+                /* mime_type */ Some(&mime_for_write),
+                /* modified_at_ms */ None,
+                /* link_target */ None,
+                /* source */ None,
+                /* remote_metastore */ None,
             )
             .map_err(|e| {
                 AdapterError::Internal(format!(
@@ -175,8 +178,8 @@ pub async fn upload(
 /// `server_name`; D3 only serves the local one and returns
 /// `M_BAD_JSON` for cross-server requests (federation media is a
 /// future concern).
-pub async fn download(
-    State(state): State<AdapterState>,
+pub async fn download<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(_session): Extension<AuthSession>,
     Path((server, media_id)): Path<(String, String)>,
 ) -> Result<Response, AdapterError> {
@@ -204,6 +207,7 @@ pub async fn download(
                 subject_id: None,
                 request_id: "download".into(),
                 context_zone_id: None,
+                zone_perms: vec![],
             };
             let read_result = kernel_for_read.sys_read(
                 &media_path_for_read,
@@ -227,12 +231,13 @@ pub async fn download(
             let bytes = read.data.ok_or_else(|| {
                 AdapterError::Forbidden(format!("media {media_path_for_read} not found"))
             })?;
-            // Mime type lives on the metastore entry; pull it back.
+            // Mime type lives on the metastore entry; pull it back via
+            // sys_stat. StatResult.mime_type is `String` (empty when
+            // unset), so fall back to the standard binary default.
             let mime = kernel_for_read
-                .metastore_get(&media_path_for_read)
-                .ok()
-                .flatten()
-                .and_then(|e| e.mime_type)
+                .sys_stat(&media_path_for_read, /* zone_id */ "root")
+                .map(|s| s.mime_type)
+                .filter(|m| !m.is_empty())
                 .unwrap_or_else(|| "application/octet-stream".to_string());
             Ok((bytes, mime))
         },
@@ -252,8 +257,8 @@ pub async fn download(
 /// `GET /_matrix/media/v3/thumbnail/{server}/{media_id}` — D3 returns
 /// the original asset. Matrix spec permits this when the homeserver
 /// does not generate thumbnails.
-pub async fn thumbnail(
-    state: State<AdapterState>,
+pub async fn thumbnail<K: kernel::abi::KernelAbi>(
+    state: State<AdapterState<K>>,
     session: Extension<AuthSession>,
     path: Path<(String, String)>,
 ) -> Result<Response, AdapterError> {

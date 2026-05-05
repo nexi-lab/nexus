@@ -46,6 +46,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use kernel::abi::KernelAbi;
 use kernel::core::agents::registry::{
     AgentDescriptor, AgentKind, AgentRegistry, AgentState, RepoMount,
 };
@@ -58,6 +59,30 @@ pub(crate) mod session;
 pub(crate) mod workspace_boundary_hook;
 
 use proc_entry::{register_proc_entry, unregister_proc_entry};
+
+/// Install ManagedAgentService on `kernel` with an injected
+/// [`SpawnTask`] provider. This is the entry the binary edge
+/// (`nexus-cdylib`'s pyo3 wrapper for the Python wheel,
+/// `profiles/cluster` for the cluster binary) calls with a
+/// concrete adapter that wraps a runtime crate (e.g.
+/// `sudocode_runtime::spawn_task`).
+///
+/// Pure-Rust slim builds without a runtime body call
+/// [`install_managed_agent`] (no spawn provider) instead.
+pub fn install_managed_agent_with_spawn(
+    kernel: &Arc<kernel::kernel::Kernel>,
+    spawn_provider: Arc<dyn SpawnTask<kernel::kernel::Kernel>>,
+) -> Result<(), String> {
+    ManagedAgentService::<kernel::kernel::Kernel>::install_with_spawn(kernel, spawn_provider)
+}
+
+/// Install ManagedAgentService on `kernel` without a runtime body
+/// (procfs + AgentRegistry only). Mirrors the existing pyo3 path
+/// `services::python::nx_managed_agent_install` for callers that
+/// don't ship a runtime.
+pub fn install_managed_agent(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
+    ManagedAgentService::<kernel::kernel::Kernel>::install(kernel)
+}
 
 /// Label key used to stash the LLM model id on the descriptor so
 /// `get_session` can echo it back without a sidecar table.  Read by
@@ -151,108 +176,106 @@ impl std::fmt::Display for ManagedAgentError {
 
 impl std::error::Error for ManagedAgentError {}
 
-// ── Service ─────────────────────────────────────────────────────────────
+// ── Spawn-task DI surface ──────────────────────────────────────────────
+//
+// Services rlib does NOT depend on the sudocode crate (cross-repo
+// git-deps would couple services' build to a specific sudocode rev,
+// which is the wrong layer for cross-repo coupling — same reason
+// `KernelAbi` lives at the trait boundary). Instead, services
+// declares a small DI trait that nexus's binary edge
+// (`profiles/cluster` for cluster builds, `nexus-cdylib` for the
+// Python wheel) implements by wrapping `sudocode_runtime::spawn_task`.
+// The trait method is `dyn`-dispatched but only fires once per
+// `start_session` call (out of the hot path); the spawn body itself
+// is fully monomorphised over `K: KernelAbi` inside the concrete
+// impl, so there's no per-`sys_read` vtable cost.
 
-pub(crate) struct ManagedAgentService {
-    /// Shared kernel handle for `start_session` to stamp the per-pid
-    /// procfs subtree (`/proc/{pid}/`, `/proc/{pid}/workspace/`,
-    /// workspace shortcut DT_LINK, per-repo alias DT_LINKs) and for the
-    /// on_terminate observer to tear it down.  `Option` so the existing
-    /// test fixtures that build `ManagedAgentService::new` without a
-    /// real kernel keep compiling; production callers construct via
-    /// [`Self::install`] which always provides the kernel.
-    kernel: Option<Arc<kernel::kernel::Kernel>>,
-    agent_registry: Arc<AgentRegistry>,
+/// Per-pid spawn handle returned by [`SpawnTask::spawn`]. Concrete
+/// impls (e.g. the sudocode-runtime adapter) hold whatever
+/// in-process state the spawn body needs (worker thread join handle,
+/// abort signal, future tokio task handle). The services-tier sees
+/// only the abort capability — that's what the on_terminate observer
+/// needs to tear the loop down on session termination.
+pub trait SpawnHandle: Send + Sync {
+    /// Signal the spawn body to stop. Implementations MUST be
+    /// idempotent — the on_terminate observer can fire concurrently
+    /// with an in-progress `cancel(Session)`.
+    fn abort(&self);
 }
 
-impl ManagedAgentService {
+/// Spawn-task provider. `start_session` calls
+/// [`Self::spawn`] after `register_proc_entry` succeeds to kick off
+/// the per-pid runtime body. The concrete impl wraps whatever
+/// runtime crate the deployment chose (today: sudocode); generic K
+/// keeps the spawn body monomorphised against the same kernel
+/// concrete that the service holds.
+pub trait SpawnTask<K: KernelAbi>: Send + Sync + 'static {
+    /// Spawn the per-pid runtime body. Returns an opaque handle the
+    /// service stores in its `spawn_handles` sidecar; the
+    /// on_terminate observer aborts via the handle on session
+    /// termination.
+    fn spawn(&self, kernel: Arc<K>, desc: AgentDescriptor) -> Box<dyn SpawnHandle>;
+}
+
+// ── Service ─────────────────────────────────────────────────────────────
+
+pub(crate) struct ManagedAgentService<K: KernelAbi> {
+    /// Shared kernel handle for `start_session` to stamp the per-pid
+    /// procfs subtree (`/proc/{pid}/`, `/proc/{pid}/workspace/`,
+    /// workspace shortcut DT_LINK, per-repo alias DT_LINKs) and for
+    /// the on_terminate observer to tear it down.
+    kernel: Arc<K>,
+    agent_registry: Arc<AgentRegistry>,
+    /// Optional per-pid spawn provider. `None` for slim deployments
+    /// that ship managed-agent without a runtime body (procfs +
+    /// AgentRegistry only); `Some` when `install_with_spawn` injects
+    /// a concrete provider (production: the binary edge wraps
+    /// `sudocode_runtime::spawn_task`). `start_session` calls
+    /// `provider.spawn(...)` after `register_proc_entry` and stores
+    /// the returned handle in [`Self::spawn_handles`].
+    spawn_provider: Option<Arc<dyn SpawnTask<K>>>,
+    /// Per-pid spawn handles populated by `start_session` when a
+    /// provider is wired. The on_terminate observer (registered in
+    /// `install_returning`) removes and aborts the handle on session
+    /// termination so the worker thread leaves cleanly.
+    spawn_handles: Arc<dashmap::DashMap<String, Box<dyn SpawnHandle>>>,
+}
+
+impl<K: KernelAbi> ManagedAgentService<K> {
     pub(crate) const NAME: &'static str = "managed_agent";
 
-    /// Test-only constructor — leaves the kernel handle empty so unit
-    /// tests can exercise lifecycle bookkeeping (start_session /
-    /// cancel / get_session) without a real kernel.  The procfs
-    /// entries are skipped when `kernel` is `None`.
-    pub(crate) fn new(agent_registry: Arc<AgentRegistry>) -> Self {
+    /// Service constructor.  Production callers reach this through
+    /// [`ManagedAgentService::<Kernel>::install`] which wraps the
+    /// cdylib's freshly-built `Kernel`; tests instantiate directly
+    /// with a `Kernel::new()` (cheap in-memory construction) so the
+    /// per-pid procfs entries land in the same metastore the
+    /// assertion helpers read back.
+    pub(crate) fn new(kernel: Arc<K>, agent_registry: Arc<AgentRegistry>) -> Self {
         Self {
-            kernel: None,
+            kernel,
             agent_registry,
+            spawn_provider: None,
+            spawn_handles: Arc::new(dashmap::DashMap::new()),
         }
     }
 
-    /// Production constructor used by [`Self::install`] — passes the
-    /// kernel handle through so the per-pid procfs entries can be
-    /// stamped inside `start_session`.
-    pub(crate) fn with_kernel(
-        kernel: Arc<kernel::kernel::Kernel>,
+    /// Constructor variant that injects a [`SpawnTask`] provider.
+    /// The binary edge (`profiles/cluster` / `nexus-cdylib`) calls
+    /// this with a concrete adapter (e.g. sudocode-runtime
+    /// `spawn_task` wrapper) so `start_session` actually kicks off a
+    /// runtime body. Pure-Rust slim builds without a runtime body
+    /// use [`Self::new`] which leaves the provider unset.
+    pub(crate) fn with_spawn(
+        kernel: Arc<K>,
         agent_registry: Arc<AgentRegistry>,
+        spawn_provider: Arc<dyn SpawnTask<K>>,
     ) -> Self {
         Self {
-            kernel: Some(kernel),
+            kernel,
             agent_registry,
+            spawn_provider: Some(spawn_provider),
+            spawn_handles: Arc::new(dashmap::DashMap::new()),
         }
-    }
-
-    /// Install the service into a freshly-constructed kernel:
-    ///
-    ///   1. Register the chat-with-me + workspace-boundary hooks into
-    ///      the kernel's `KernelDispatch`.
-    ///   2. Enlist the service into `ServiceRegistry` so future tonic
-    ///      gRPC handlers + Python factory wiring can resolve it via
-    ///      `service_registry.lookup_rust(NAME)`.
-    ///
-    /// Called from `Kernel::new()`. The service holds an `Arc<AgentRegistry>`
-    /// — the same `Arc` `Kernel` keeps for `AgentStatusResolver` reads —
-    /// so `start_session` mutates the same SSOT every other agent
-    /// surface reads from.
-    pub(crate) fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
-        Self::install_returning(kernel).map(|_| ())
-    }
-
-    /// Install variant that returns the wired service handle so tests
-    /// can assert the on_terminate observer behaves correctly without
-    /// having to fish the service back out of the kernel registry.
-    pub(crate) fn install_returning(
-        kernel: &Arc<kernel::kernel::Kernel>,
-    ) -> Result<Arc<Self>, String> {
-        kernel.register_native_hook(Box::new(
-            workspace_boundary_hook::WorkspaceBoundaryHook::new(),
-        ));
-        kernel.register_native_hook(Box::new(mailbox_stamping_hook::MailboxStampingHook::new()));
-
-        // Holding `Arc<Kernel>` inside the service does create a
-        // Kernel ↔ Service Arc cycle, but services live for process
-        // lifetime — same convention AcpService follows.  The procfs
-        // dirent stamp in `start_session` and the on_terminate
-        // teardown both need the owned Arc.
-        let svc = Arc::new(Self::with_kernel(
-            Arc::clone(kernel),
-            Arc::clone(kernel.agent_registry()),
-        ));
-
-        // Tear down the per-pid procfs subtree on out-of-band
-        // termination — SIGKILL, orphan auto-reap, any path that flips
-        // an agent to Terminated without going through
-        // `cancel_session(Session)`.  `fire_on_terminate` runs before
-        // `AgentRegistry::reap` on the orphan path, so the descriptor
-        // is still reachable here and we can use its `repos` to drop
-        // the per-alias DT_LINK rows alongside the dirents.  The
-        // descriptor itself is reaped by AgentRegistry after the
-        // observer returns, so subsequent `get_session` returns
-        // `UnknownSession`.
-        let kernel_for_cb = Arc::clone(kernel);
-        let registry_for_cb = Arc::clone(kernel.agent_registry());
-        kernel.agent_registry().register_on_terminate(
-            Self::NAME,
-            Arc::new(move |pid: &str| {
-                if let Some(desc) = registry_for_cb.get(pid) {
-                    unregister_proc_entry(&kernel_for_cb, &desc);
-                }
-            }),
-        );
-
-        let svc_for_return = Arc::clone(&svc);
-        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())?;
-        Ok(svc_for_return)
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────
@@ -342,11 +365,26 @@ impl ManagedAgentService {
         // failed stamp is logged but doesn't abort the session — the
         // AgentRegistry record is already planted and a future
         // re-stamp closes the gap.
-        if let Some(kernel) = self.kernel.as_ref() {
-            if let Some(desc) = self.agent_registry.get(&pid) {
-                if let Err(e) = register_proc_entry(kernel, &desc) {
-                    tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
-                }
+        if let Some(desc) = self.agent_registry.get(&pid) {
+            if let Err(e) = register_proc_entry(self.kernel.as_ref(), &desc) {
+                tracing::warn!(pid=%pid, error=%e, "register_proc_entry failed");
+            }
+            // Spawn the per-pid runtime body right after procfs is
+            // ready so the worker sees a routable
+            // `/proc/{pid}/chat-with-me` on its first sys_read.
+            //
+            // The DI trait `SpawnTask<K>` (defined above) keeps
+            // services rlib free of a hard dep on any specific
+            // runtime crate (sudocode today, future runtimes
+            // tomorrow); the concrete adapter lives at the binary
+            // edge (`profiles/cluster` / `nexus-cdylib`) and
+            // monomorphises `spawn_task::<K>` internally — no
+            // per-`sys_read` vtable cost. Slim builds without a
+            // provider (`spawn_provider: None`) skip the spawn and
+            // run procfs-only.
+            if let Some(provider) = self.spawn_provider.as_ref() {
+                let handle = provider.spawn(Arc::clone(&self.kernel), desc);
+                self.spawn_handles.insert(pid.clone(), handle);
             }
         }
 
@@ -427,6 +465,121 @@ impl ManagedAgentService {
     }
 }
 
+// Production install path stays specific to the concrete `Kernel`
+// because `register_on_terminate` is an inherent accessor on
+// `AgentRegistry` reached through `kernel.agent_registry()` — that
+// accessor is deliberately *not* on the `KernelAbi` trait (the v2
+// audit pulled kernel-internal struct accessors out of the
+// service-facing surface). Lifecycle methods stay generic above so
+// non-Kernel `K: KernelAbi` test fixtures and future runtime targets
+// (sudo-code in-process spawn) compile without `Kernel`.
+impl ManagedAgentService<kernel::kernel::Kernel> {
+    /// Install the service into a freshly-constructed kernel:
+    ///
+    ///   1. Register the chat-with-me + workspace-boundary hooks into
+    ///      the kernel's `KernelDispatch`.
+    ///   2. Enlist the service into `ServiceRegistry` so future tonic
+    ///      gRPC handlers + Python factory wiring can resolve it via
+    ///      `service_registry.lookup_rust(NAME)`.
+    ///
+    /// Called from `Kernel::new()`. The service holds an
+    /// `Arc<AgentRegistry>` — the same `Arc` `Kernel` keeps for
+    /// `AgentStatusResolver` reads — so `start_session` mutates the
+    /// same SSOT every other agent surface reads from.
+    pub(crate) fn install(kernel: &Arc<kernel::kernel::Kernel>) -> Result<(), String> {
+        Self::install_returning(kernel, None).map(|_| ())
+    }
+
+    /// Install variant that injects a [`SpawnTask`] provider. Used
+    /// by the binary edge (`profiles/cluster` / `nexus-cdylib`) to
+    /// wire the sudocode-runtime adapter — the actual managed-agent
+    /// runtime body. Slim builds without a runtime body call
+    /// [`Self::install`] which leaves `spawn_provider = None` and
+    /// ships procfs + AgentRegistry only.
+    pub(crate) fn install_with_spawn(
+        kernel: &Arc<kernel::kernel::Kernel>,
+        spawn_provider: Arc<dyn SpawnTask<kernel::kernel::Kernel>>,
+    ) -> Result<(), String> {
+        Self::install_returning(kernel, Some(spawn_provider)).map(|_| ())
+    }
+
+    /// Install variant that returns the wired service handle so tests
+    /// can assert the on_terminate observer behaves correctly without
+    /// having to fish the service back out of the kernel registry.
+    pub(crate) fn install_returning(
+        kernel: &Arc<kernel::kernel::Kernel>,
+        spawn_provider: Option<Arc<dyn SpawnTask<kernel::kernel::Kernel>>>,
+    ) -> Result<Arc<Self>, String> {
+        // Mount the /proc namespace this service stamps into. VFSRouter
+        // routes by mount-point lookup, so `sys_unlink` on
+        // `/proc/{pid}/...` paths needs the mount entry to exist
+        // (`route()` returns NotMounted otherwise and unlink no-ops).
+        // No backing store / per-mount metastore — `metastore=None`
+        // means dirent reads/writes fall through to the global
+        // metastore (matches the procfs-virtualised semantics this
+        // mount represents). Idempotent re-call: VFSRouter::add_mount
+        // ignores duplicates.
+        kernel
+            .vfs_router_arc()
+            .add_mount("/proc", "root", None, false);
+        kernel.register_native_hook(Box::new(
+            workspace_boundary_hook::WorkspaceBoundaryHook::new(),
+        ));
+        kernel.register_native_hook(Box::new(mailbox_stamping_hook::MailboxStampingHook::new()));
+
+        // Holding `Arc<Kernel>` inside the service does create a
+        // Kernel ↔ Service Arc cycle, but services live for process
+        // lifetime — same convention AcpService follows. The procfs
+        // dirent stamp in `start_session` and the on_terminate
+        // teardown both need the owned Arc.
+        let svc = Arc::new(match spawn_provider {
+            Some(provider) => Self::with_spawn(
+                Arc::clone(kernel),
+                Arc::clone(kernel.agent_registry()),
+                provider,
+            ),
+            None => Self::new(Arc::clone(kernel), Arc::clone(kernel.agent_registry())),
+        });
+
+        // Tear down the per-pid procfs subtree on out-of-band
+        // termination — SIGKILL, orphan auto-reap, any path that flips
+        // an agent to Terminated without going through
+        // `cancel_session(Session)`. `fire_on_terminate` runs before
+        // `AgentRegistry::reap` on the orphan path, so the descriptor
+        // is still reachable here and we can use its `repos` to drop
+        // the per-alias DT_LINK rows alongside the dirents. The
+        // descriptor itself is reaped by AgentRegistry after the
+        // observer returns, so subsequent `get_session` returns
+        // `UnknownSession`.
+        //
+        // The spawn-handles sidecar lives on the service itself, so
+        // the observer captures `Arc::clone(&svc.spawn_handles)`.
+        // Removing the handle and aborting it is best-effort — the
+        // worker thread also exits naturally when its sys_read on
+        // the now-missing chat-with-me path returns FileNotFound,
+        // but the explicit abort gives a clean exit without an
+        // error-path walk.
+        let kernel_for_cb = Arc::clone(kernel);
+        let registry_for_cb = Arc::clone(kernel.agent_registry());
+        let spawn_handles_for_cb = Arc::clone(&svc.spawn_handles);
+        kernel.agent_registry().register_on_terminate(
+            Self::NAME,
+            Arc::new(move |pid: &str| {
+                if let Some((_, handle)) = spawn_handles_for_cb.remove(pid) {
+                    handle.abort();
+                }
+                if let Some(desc) = registry_for_cb.get(pid) {
+                    unregister_proc_entry(kernel_for_cb.as_ref(), &desc);
+                }
+            }),
+        );
+
+        let svc_for_return = Arc::clone(&svc);
+        kernel.register_rust_service(Self::NAME, svc as Arc<dyn RustService>, Vec::new())?;
+        Ok(svc_for_return)
+    }
+}
+
 impl From<ManagedAgentError> for RustCallError {
     fn from(e: ManagedAgentError) -> Self {
         match e {
@@ -439,7 +592,7 @@ impl From<ManagedAgentError> for RustCallError {
     }
 }
 
-impl RustService for ManagedAgentService {
+impl<K: KernelAbi> RustService for ManagedAgentService<K> {
     fn name(&self) -> &str {
         Self::NAME
     }
@@ -487,8 +640,17 @@ impl RustService for ManagedAgentService {
 mod tests {
     use super::*;
 
-    fn fresh_service() -> ManagedAgentService {
-        ManagedAgentService::new(Arc::new(AgentRegistry::new()))
+    use kernel::kernel::Kernel;
+
+    /// Build a `ManagedAgentService` with a real `Kernel::new()`.  The
+    /// returned tuple shares the AgentRegistry between caller and
+    /// service so tests can read the descriptor table without going
+    /// through the service's read accessors.
+    fn fresh_service() -> (Arc<Kernel>, Arc<AgentRegistry>, ManagedAgentService<Kernel>) {
+        let kernel = Arc::new(Kernel::new());
+        let registry = Arc::clone(kernel.agent_registry());
+        let svc = ManagedAgentService::<Kernel>::new(Arc::clone(&kernel), Arc::clone(&registry));
+        (kernel, registry, svc)
     }
 
     fn req(agent_id: &str) -> StartSessionRequest {
@@ -503,22 +665,21 @@ mod tests {
 
     #[test]
     fn service_has_canonical_name() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         assert_eq!(svc.name(), "managed_agent");
-        assert_eq!(ManagedAgentService::NAME, "managed_agent");
+        assert_eq!(ManagedAgentService::<Kernel>::NAME, "managed_agent");
     }
 
     #[test]
     fn lifecycle_methods_succeed_on_empty_service() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         svc.start().unwrap();
         svc.stop().unwrap();
     }
 
     #[test]
     fn start_session_returns_identity_tuple_and_plants_agent_registry_record() {
-        let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::new(Arc::clone(&table));
+        let (_kernel, table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
 
         // session_id IS the pid — no second identifier.
@@ -546,14 +707,14 @@ mod tests {
 
     #[test]
     fn start_session_rejects_empty_agent_name() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let err = svc.start_session(req("")).unwrap_err();
         assert!(matches!(err, ManagedAgentError::InvalidArgument(_)));
     }
 
     #[test]
     fn start_session_defaults_owner_and_zone() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let r = StartSessionRequest {
             agent_id: "scode-standard".to_string(),
             ..Default::default()
@@ -566,8 +727,7 @@ mod tests {
 
     #[test]
     fn cancel_session_terminates_pid_and_reaps_descriptor() {
-        let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::new(Arc::clone(&table));
+        let (_kernel, table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let pid = resp.session_id.clone();
 
@@ -586,8 +746,7 @@ mod tests {
 
     #[test]
     fn cancel_turn_keeps_pid_alive() {
-        let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::new(Arc::clone(&table));
+        let (_kernel, table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let pid = resp.session_id.clone();
 
@@ -602,14 +761,14 @@ mod tests {
 
     #[test]
     fn cancel_unknown_session_errors() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let err = svc.cancel("pid-bogus", CancelMode::Session).unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
 
     #[test]
     fn get_session_returns_state_from_agent_registry() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         let snap = svc.get_session(&resp.session_id).unwrap();
         assert_eq!(snap.session_id, resp.session_id);
@@ -627,8 +786,7 @@ mod tests {
         // state="terminated".  Post-collapse the descriptor IS the
         // SSOT: once it's reaped, get_session must surface
         // UnknownSession.
-        let table = Arc::new(AgentRegistry::new());
-        let svc = ManagedAgentService::new(Arc::clone(&table));
+        let (_kernel, table, svc) = fresh_service();
         let resp = svc.start_session(req("scode-standard")).unwrap();
         table.unregister(&resp.session_id);
         let err = svc.get_session(&resp.session_id).unwrap_err();
@@ -637,7 +795,7 @@ mod tests {
 
     #[test]
     fn get_session_unknown_session_errors() {
-        let svc = fresh_service();
+        let (_kernel, _table, svc) = fresh_service();
         let err = svc.get_session("pid-bogus").unwrap_err();
         assert!(matches!(err, ManagedAgentError::UnknownSession(_)));
     }
@@ -650,7 +808,7 @@ mod tests {
 
         #[test]
         fn start_session_v1_round_trip() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let payload = json!({
                 "agent_id": "scode-standard",
                 "model": "claude-sonnet-4-6",
@@ -672,7 +830,7 @@ mod tests {
 
         #[test]
         fn start_session_v1_defaults_optional_fields() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let payload = json!({"agent_id": "scode-standard"}).to_string();
             let bytes = svc
                 .dispatch("start_session_v1", payload.as_bytes())
@@ -683,7 +841,7 @@ mod tests {
 
         #[test]
         fn cancel_v1_session_round_trip() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let resp = svc.start_session(req("scode-standard")).unwrap();
             let payload = json!({"session_id": resp.session_id, "mode": "session"}).to_string();
             let bytes = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap();
@@ -693,7 +851,7 @@ mod tests {
 
         #[test]
         fn cancel_v1_turn_round_trip() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let resp = svc.start_session(req("scode-standard")).unwrap();
             let payload = json!({"session_id": resp.session_id, "mode": "turn"}).to_string();
             let bytes = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap();
@@ -703,7 +861,7 @@ mod tests {
 
         #[test]
         fn cancel_v1_unknown_session_surfaces_invalid_argument() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let payload = json!({"session_id": "pid-bogus", "mode": "session"}).to_string();
             let err = svc.dispatch("cancel_v1", payload.as_bytes()).unwrap_err();
             assert!(matches!(err, RustCallError::InvalidArgument(_)));
@@ -711,7 +869,7 @@ mod tests {
 
         #[test]
         fn get_session_v1_round_trip() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let resp = svc.start_session(req("scode-standard")).unwrap();
             let payload = json!({"session_id": resp.session_id}).to_string();
             let bytes = svc.dispatch("get_session_v1", payload.as_bytes()).unwrap();
@@ -722,14 +880,14 @@ mod tests {
 
         #[test]
         fn unknown_method_returns_not_found() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let err = svc.dispatch("does_not_exist", b"{}").unwrap_err();
             assert!(matches!(err, RustCallError::NotFound));
         }
 
         #[test]
         fn malformed_payload_surfaces_invalid_argument() {
-            let svc = fresh_service();
+            let (_kernel, _table, svc) = fresh_service();
             let err = svc
                 .dispatch("start_session_v1", b"this is not json")
                 .unwrap_err();
@@ -779,15 +937,14 @@ mod tests {
 
         /// Build a `ManagedAgentService` with a real Kernel inside —
         /// the only setup needed is `Kernel::new` (no PyO3 boot).
-        fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService) {
+        fn svc_with_kernel() -> (Arc<Kernel>, ManagedAgentService<Kernel>) {
             let k = Arc::new(Kernel::new());
-            let svc =
-                ManagedAgentService::with_kernel(Arc::clone(&k), Arc::clone(k.agent_registry()));
+            let svc = ManagedAgentService::new(Arc::clone(&k), Arc::clone(k.agent_registry()));
             (k, svc)
         }
 
-        fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService> {
-            ManagedAgentService::install_returning(kernel).expect("install ManagedAgentService")
+        fn install_managed_agent(kernel: &Arc<Kernel>) -> Arc<ManagedAgentService<Kernel>> {
+            ManagedAgentService::install_returning(kernel, None).expect("install ManagedAgentService")
         }
 
         #[test]

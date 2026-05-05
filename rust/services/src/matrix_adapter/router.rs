@@ -33,8 +33,7 @@ pub type JoinedRooms = Arc<parking_lot::RwLock<HashMap<String, HashSet<String>>>
 
 /// Shared adapter state — composed once at boot and cloned into each
 /// handler. Cheap to clone (`Arc` and `String`).
-#[derive(Clone)]
-pub struct AdapterState {
+pub struct AdapterState<K: kernel::abi::KernelAbi> {
     pub auth: AuthBackendRef,
     /// Matrix server-name suffix for the homeserver. Used in
     /// `LoginResponse.home_server` and the room-id ↔ stream-path
@@ -43,20 +42,16 @@ pub struct AdapterState {
     /// Kernel handle the room read/write endpoints route through.
     /// Optional so the auth-only configuration (D1 surface tests)
     /// keeps building without a kernel dep.
-    pub kernel: Option<Arc<kernel::kernel::Kernel>>,
+    pub kernel: Option<Arc<K>>,
     /// Per-user joined-room set; see [`JoinedRooms`].
     pub joined_rooms: JoinedRooms,
 }
 
-impl AdapterState {
+impl<K: kernel::abi::KernelAbi> AdapterState<K> {
     /// Convenience constructor with an empty joined-rooms set.
     /// Production builds compose state by hand because they wire
     /// extra config; tests use this constructor.
-    pub fn new(
-        auth: AuthBackendRef,
-        server_name: Arc<str>,
-        kernel: Option<Arc<kernel::kernel::Kernel>>,
-    ) -> Self {
+    pub fn new(auth: AuthBackendRef, server_name: Arc<str>, kernel: Option<Arc<K>>) -> Self {
         Self {
             auth,
             server_name,
@@ -66,13 +61,27 @@ impl AdapterState {
     }
 }
 
+// Hand-written `Clone` because `#[derive(Clone)]` would require
+// `K: Clone`, but we hold an `Arc<K>` which is `Clone` regardless of
+// `K`'s own clone-ability.
+impl<K: kernel::abi::KernelAbi> Clone for AdapterState<K> {
+    fn clone(&self) -> Self {
+        Self {
+            auth: self.auth.clone(),
+            server_name: self.server_name.clone(),
+            kernel: self.kernel.clone(),
+            joined_rooms: self.joined_rooms.clone(),
+        }
+    }
+}
+
 /// Build the adapter's Matrix C-S router. Composes the public auth
 /// endpoints with the token-protected ones; downstream PRs (D2/D3)
 /// add room read/write + sync routes underneath the same shared
 /// state without restructuring the boot wire-up.
-pub fn build_router(state: AdapterState) -> Router {
+pub fn build_router<K: kernel::abi::KernelAbi>(state: AdapterState<K>) -> Router {
     // Public — no token middleware. `login` is the only way to get one.
-    let public = Router::new().route("/_matrix/client/v3/login", post(login));
+    let public = Router::new().route("/_matrix/client/v3/login", post(login::<K>));
 
     // Token-protected. `whoami` is the canonical "is my token still
     // valid?" probe; `logout` invalidates the token in the backend;
@@ -80,49 +89,58 @@ pub fn build_router(state: AdapterState) -> Router {
     // the kernel.
     let protected = Router::new()
         .route("/_matrix/client/v3/account/whoami", get(whoami))
-        .route("/_matrix/client/v3/logout", post(logout))
-        .route("/_matrix/client/v3/createRoom", post(create_room))
-        .route("/_matrix/client/v3/rooms/:room_id/state", get(room_state))
+        .route("/_matrix/client/v3/logout", post(logout::<K>))
+        .route("/_matrix/client/v3/createRoom", post(create_room::<K>))
+        .route(
+            "/_matrix/client/v3/rooms/:room_id/state",
+            get(room_state::<K>),
+        )
         .route(
             "/_matrix/client/v3/rooms/:room_id/state/:event_type/:state_key",
-            get(room_state_event),
+            get(room_state_event::<K>),
         )
         .route(
             "/_matrix/client/v3/rooms/:room_id/messages",
-            get(room_messages),
+            get(room_messages::<K>),
         )
         .route(
             "/_matrix/client/v3/rooms/:room_id/joined_members",
-            get(joined_members),
+            get(joined_members::<K>),
         )
         .route(
             "/_matrix/client/v3/rooms/:room_id/send/:event_type/:txn_id",
-            axum::routing::put(room_send),
+            axum::routing::put(room_send::<K>),
         )
-        .route("/_matrix/client/v3/rooms/:room_id/join", post(room_join))
-        .route("/_matrix/client/v3/rooms/:room_id/leave", post(room_leave))
-        .route("/_matrix/client/v3/sync", get(sync))
         .route(
-            "/_matrix/media/v3/upload",
-            post(media::upload),
+            "/_matrix/client/v3/rooms/:room_id/join",
+            post(room_join::<K>),
         )
+        .route(
+            "/_matrix/client/v3/rooms/:room_id/leave",
+            post(room_leave::<K>),
+        )
+        .route("/_matrix/client/v3/sync", get(sync::<K>))
+        .route("/_matrix/media/v3/upload", post(media::upload::<K>))
         .route(
             "/_matrix/media/v3/download/:server/:media_id",
-            get(media::download),
+            get(media::download::<K>),
         )
         .route(
             "/_matrix/media/v3/thumbnail/:server/:media_id",
-            get(media::thumbnail),
+            get(media::thumbnail::<K>),
         )
         .route("/_matrix/client/v3/pushrules", get(push::pushrules))
         .route("/_matrix/client/v3/pushers", get(push::pushers))
-        .route_layer(from_fn_with_state(state.clone(), require_access_token));
+        .route_layer(from_fn_with_state(
+            state.clone(),
+            require_access_token::<K>,
+        ));
 
     public.merge(protected).with_state(state)
 }
 
-async fn login(
-    State(state): State<AdapterState>,
+async fn login<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AdapterError> {
     if req.login_type != "m.login.password" {
@@ -159,8 +177,8 @@ async fn login(
     }))
 }
 
-async fn logout(
-    State(state): State<AdapterState>,
+async fn logout<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
 ) -> Result<Json<EmptyResponse>, AdapterError> {
     state
@@ -213,7 +231,11 @@ mod tests {
         for (user, pw) in seed_users {
             backend.add_user(user, pw);
         }
-        let state = AdapterState::new(backend, Arc::from(SERVER_NAME), None);
+        let state = AdapterState::<kernel::kernel::Kernel>::new(
+            backend,
+            Arc::from(SERVER_NAME),
+            None,
+        );
         build_router(state)
     }
 

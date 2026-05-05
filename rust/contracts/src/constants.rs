@@ -31,6 +31,31 @@ pub const VFS_ROOT: &str = "/";
 /// ``nexus.core.hash_utils.BLAKE3_EMPTY`` constant.
 pub const BLAKE3_EMPTY: &str = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262";
 
+/// Kernel-reserved path prefix for internal system entries
+/// (mount table, ReBAC namespace store, ReBAC version store, zone
+/// revisions, …).
+///
+/// Mirrors `nexus.contracts.constants.SYSTEM_PATH_PREFIX` on the
+/// Python side. Stored in MetastoreABC like any other entry, but
+/// filtered from user-visible operations and **must be skipped by
+/// every dispatch hook**. Without that hook self-exclusion,
+/// `sys_read` on a hook's own `/__sys__/...` config (e.g. ReBAC
+/// namespace reload) re-enters the same hook, which re-reads the
+/// config, which re-enters … unbounded recursion (PR #3890 CI
+/// hang). Use [`is_system_path`] at every `on_pre` / `on_post`
+/// entry that does not specifically target the system namespace.
+pub const SYSTEM_PATH_PREFIX: &str = "/__sys__/";
+
+/// `true` when `path` falls under the kernel-internal system
+/// namespace [`SYSTEM_PATH_PREFIX`]. Hook implementations call this
+/// at the top of their `on_pre` / `on_post` and short-circuit
+/// (`Pass` / no-op) so kernel-internal sys_read/sys_write inside
+/// hook bodies cannot recurse.
+#[inline]
+pub fn is_system_path(path: &str) -> bool {
+    path.starts_with(SYSTEM_PATH_PREFIX)
+}
+
 /// Path prefix used in the root zone's state machine to hold the
 /// federation share registry (SSOT for `origin_path → zone_id`).
 ///

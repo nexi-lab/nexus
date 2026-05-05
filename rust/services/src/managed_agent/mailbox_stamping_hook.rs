@@ -11,6 +11,7 @@
 //! (envelope schema, identity guarantee).
 
 use super::mailbox_stamping_policy;
+use contracts::is_system_path;
 use kernel::core::dispatch::{HookContext, HookOutcome, NativeInterceptHook};
 
 /// Path suffix the dispatcher consults to decide when to clone write
@@ -39,6 +40,16 @@ impl NativeInterceptHook for MailboxStampingHook {
     }
 
     fn on_pre(&self, ctx: &HookContext) -> Result<HookOutcome, String> {
+        // Native (unnamed) hook contract — short-circuit kernel-internal
+        // paths so any future sys_read/sys_write inside this hook body
+        // cannot recurse. Mirrors PermissionHook._is_system_path() in
+        // Python (see `contracts::SYSTEM_PATH_PREFIX`). Today the
+        // mailbox stamping logic is content-only and `/__sys__/` paths
+        // naturally pass through, but the explicit check is the
+        // contract every native hook follows.
+        if is_system_path(ctx.path()) {
+            return Ok(HookOutcome::Pass);
+        }
         let HookContext::Write(c) = ctx else {
             // Non-write contexts never carry mailbox content; ignore.
             return Ok(HookOutcome::Pass);

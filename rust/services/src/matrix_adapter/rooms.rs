@@ -52,6 +52,7 @@ pub(super) fn ctx_from_session(session: &AuthSession) -> kernel::kernel::Operati
         subject_id: None,
         request_id: format!("matrix-{}", session.access_token),
         context_zone_id: None,
+        zone_perms: vec![],
     }
 }
 
@@ -62,7 +63,9 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn require_kernel(state: &AdapterState) -> Result<&Arc<kernel::kernel::Kernel>, AdapterError> {
+fn require_kernel<K: kernel::abi::KernelAbi>(
+    state: &AdapterState<K>,
+) -> Result<&Arc<K>, AdapterError> {
     state
         .kernel
         .as_ref()
@@ -76,8 +79,8 @@ fn require_kernel(state: &AdapterState) -> Result<&Arc<kernel::kernel::Kernel>, 
 /// we synthesise a minimal `m.room.create` + `m.room.member` set so
 /// stock clients see a sensible room. ReBAC-derived membership is a
 /// D3 follow-up; today the requesting user is reported as joined.
-pub async fn room_state(
-    State(state): State<AdapterState>,
+pub async fn room_state<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
 ) -> Result<Json<Value>, AdapterError> {
@@ -89,8 +92,8 @@ pub async fn room_state(
 /// `GET /_matrix/client/v3/rooms/{rid}/state/{event_type}/{state_key}`
 /// — single state event. Same synthesis as `room_state`, filtered by
 /// `event_type` + `state_key`.
-pub async fn room_state_event(
-    State(state): State<AdapterState>,
+pub async fn room_state_event<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path((room_id, event_type, state_key)): Path<(String, String, String)>,
 ) -> Result<Json<Value>, AdapterError> {
@@ -135,8 +138,8 @@ fn default_dir() -> String {
 /// chunk so the client sees newest-first. Real backwards seek lands
 /// in D3 alongside `/sync` once the stream offsets surface a "tail"
 /// query.
-pub async fn room_messages(
-    State(state): State<AdapterState>,
+pub async fn room_messages<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
     Query(query): Query<MessagesQuery>,
@@ -206,8 +209,8 @@ pub async fn room_messages(
 
 /// `GET /_matrix/client/v3/rooms/{rid}/joined_members` — D2 returns
 /// the requesting user only. D3 derives this from ReBAC.
-pub async fn joined_members(
-    State(state): State<AdapterState>,
+pub async fn joined_members<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
 ) -> Result<Json<Value>, AdapterError> {
@@ -229,8 +232,8 @@ pub async fn joined_members(
 /// MailboxStampingHook rewrites `from` from OperationContext, so the
 /// adapter cannot forge sender even if the client's PDU body claims
 /// otherwise.
-pub async fn room_send(
-    State(state): State<AdapterState>,
+pub async fn room_send<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path((room_id, _event_type, _txn_id)): Path<(String, String, String)>,
     Json(content): Json<Value>,
@@ -287,8 +290,8 @@ pub struct CreateRoomRequest {
 /// `/agents/{name}/chat-with-me` DT_STREAM. The Matrix client sees a
 /// fresh room_id; subsequent `/send` writes round-trip through the
 /// path-based codec.
-pub async fn create_room(
-    State(state): State<AdapterState>,
+pub async fn create_room<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(_session): Extension<AuthSession>,
     Json(req): Json<CreateRoomRequest>,
 ) -> Result<Json<Value>, AdapterError> {
@@ -321,8 +324,8 @@ pub async fn create_room(
 /// stream path to the user's joined-rooms set so `/sync` pumps it.
 /// ReBAC-backed authorisation is a follow-up; today the join is
 /// admitted unconditionally for any caller with a valid token.
-pub async fn room_join(
-    State(state): State<AdapterState>,
+pub async fn room_join<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
 ) -> Result<Json<Value>, AdapterError> {
@@ -338,8 +341,8 @@ pub async fn room_join(
 
 /// `POST /_matrix/client/v3/rooms/{rid}/leave` — removes the room
 /// from the user's joined-rooms set.
-pub async fn room_leave(
-    State(state): State<AdapterState>,
+pub async fn room_leave<K: kernel::abi::KernelAbi>(
+    State(state): State<AdapterState<K>>,
     Extension(session): Extension<AuthSession>,
     Path(room_id): Path<String>,
 ) -> Result<Json<Value>, AdapterError> {
@@ -390,8 +393,8 @@ fn synth_state_events(stream_path: &str, server_name: &str, user_id: &str) -> Ve
 /// `services::managed_agent::proc_entry::create_dt_stream` — the two
 /// callers (managed-agent spawn vs Matrix createRoom) share the same
 /// DT_STREAM contract, just at different paths.
-fn create_chat_stream(
-    kernel: &std::sync::Arc<kernel::kernel::Kernel>,
+fn create_chat_stream<K: kernel::abi::KernelAbi>(
+    kernel: &std::sync::Arc<K>,
     path: &str,
 ) -> Result<(), AdapterError> {
     const DT_STREAM: i32 = 4;
@@ -400,21 +403,21 @@ fn create_chat_stream(
         .sys_setattr(
             path,
             DT_STREAM,
-            "",
-            None,
-            None,
-            None,
-            "memory",
-            "root",
-            false,
+            /* backend_name */ "",
+            /* backend */ None,
+            /* metastore */ None,
+            /* raft_backend */ None,
+            /* io_profile */ "memory",
+            /* zone_id */ "root",
+            /* is_external */ false,
             CAPACITY,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            /* read_fd */ None,
+            /* write_fd */ None,
+            /* mime_type */ None,
+            /* modified_at_ms */ None,
+            /* link_target */ None,
+            /* source */ None,
+            /* remote_metastore */ None,
         )
         .map(|_| ())
         .map_err(|e| AdapterError::Internal(format!("createRoom sys_setattr({path}): {e:?}")))

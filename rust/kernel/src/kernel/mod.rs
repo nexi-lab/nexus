@@ -1971,6 +1971,16 @@ impl Kernel {
             updated_fields.push("modified_at_ms".to_string());
         }
 
+        // metastore_put owns dcache coherence after PR #4027 collapsed
+        // commit_metadata/commit_delete into the metastore layer: the
+        // put() write atomically invalidates the dcache so a
+        // follow-up sys_stat sees the new mime_type/modified_at_ms
+        // instead of the stale cached entry. Earlier this method
+        // wrote via metastore_put without the dcache update; service-
+        // tier readers using metastore_get (dcache-bypassing) papered
+        // over the bug. Since v2 services route through sys_stat
+        // (which consults dcache first), the post-#4027 metastore_put
+        // is the right SSOT.
         self.metastore_put(path, new_meta)?;
 
         Ok(SysSetAttrResult {
@@ -3623,6 +3633,274 @@ mod tests {
                 Err(other) => panic!("expected PermissionDenied(chain rejected), got {other:?}"),
                 Ok(_) => panic!("expected PermissionDenied, got Ok (chain silently followed)"),
             }
+        }
+    }
+
+    // ── Federation `io_profile=wal` selection (PR-A follow-up) ───────────
+    //
+    // The wal-backed DT_STREAM path in `setattr_stream` calls
+    // `distributed_coordinator().metastore_for_zone(self, "root")` to
+    // get the federation-state-machine-backed `Arc<dyn MetaStore>`,
+    // then composes a `WalStreamCore` over it. Until this commit,
+    // no test exercised that path — every existing
+    // `register_proc_entry` test runs against a `Kernel::new()` whose
+    // default `NoopDistributedCoordinator` reports
+    // `is_initialized() = false`, so `chat_stream_profile` always
+    // picks `"memory"`.
+    //
+    // These tests install a minimal `TestFederationCoordinator` whose
+    // `is_initialized` returns `true` and whose `metastore_for_zone`
+    // returns an in-memory `MemoryMetaStore`. With that wired:
+    //
+    //   1. `Kernel::is_federation_initialized()` returns `true` (so
+    //      service-tier `chat_stream_profile()` picks `"wal"`).
+    //   2. `kernel.sys_setattr(path, DT_STREAM, …, "wal", "root", …)`
+    //      composes a `WalStreamCore` over the test metastore + writes
+    //      the inode + registers the stream — same code path
+    //      production runs through.
+    //   3. `kernel.sys_write(path, …)` and `kernel.sys_read(path, …)`
+    //      round-trip bytes through the wal stream, validating the
+    //      stream is actually wal-backed (memory streams use a
+    //      different backend type, so a memory-vs-wal mistake would
+    //      surface here).
+    mod federation_wal_e2e {
+        use super::*;
+        use crate::abc::meta_store::MetaStore;
+        use crate::hal::distributed_coordinator::{
+            ClusterInfo, CoordinatorResult, DistributedCoordinator, ShareInfo,
+        };
+        use crate::meta_store::LocalMetaStore;
+        use tempfile::TempDir;
+
+        /// Minimal `DistributedCoordinator` impl that reports
+        /// `is_initialized=true` and hands back a tempdir-backed
+        /// `LocalMetaStore` from `metastore_for_zone`. Every other
+        /// trait method is a stub — the wal-stream path under test
+        /// never calls them. `TempDir` is held on the coordinator
+        /// so the redb file lives as long as the metastore.
+        struct TestFederationCoordinator {
+            metastore: Arc<dyn MetaStore>,
+            _tempdir: TempDir,
+        }
+
+        impl TestFederationCoordinator {
+            fn new() -> Self {
+                let tempdir = TempDir::new().expect("tempdir for fed-wal test");
+                let path = tempdir.path().join("fed-wal-metastore.redb");
+                let metastore: Arc<dyn MetaStore> =
+                    Arc::new(LocalMetaStore::open(&path).expect("open LocalMetaStore"));
+                Self {
+                    metastore,
+                    _tempdir: tempdir,
+                }
+            }
+        }
+
+        impl DistributedCoordinator for TestFederationCoordinator {
+            fn list_zones(&self, _kernel: &Kernel) -> Vec<String> {
+                vec!["root".to_string()]
+            }
+
+            fn is_initialized(&self, _kernel: &Kernel) -> bool {
+                true
+            }
+
+            fn cluster_info(&self, _: &Kernel, _: &str) -> CoordinatorResult<ClusterInfo> {
+                Err("test coordinator: cluster_info unused".into())
+            }
+
+            fn create_zone(&self, _: &Kernel, _: &str) -> CoordinatorResult<()> {
+                Err("test coordinator: create_zone unused".into())
+            }
+
+            fn remove_zone(&self, _: &Kernel, _: &str, _: bool) -> CoordinatorResult<()> {
+                Err("test coordinator: remove_zone unused".into())
+            }
+
+            fn join_zone(&self, _: &Kernel, _: &str, _: bool) -> CoordinatorResult<()> {
+                Err("test coordinator: join_zone unused".into())
+            }
+
+            fn wire_mount(&self, _: &Kernel, _: &str, _: &str, _: &str) -> CoordinatorResult<()> {
+                Err("test coordinator: wire_mount unused".into())
+            }
+
+            fn unwire_mount(&self, _: &Kernel, _: &str, _: &str) -> CoordinatorResult<()> {
+                Err("test coordinator: unwire_mount unused".into())
+            }
+
+            fn share_zone(&self, _: &Kernel, _: &str, _: &str) -> CoordinatorResult<ShareInfo> {
+                Err("test coordinator: share_zone unused".into())
+            }
+
+            fn lookup_share(&self, _: &Kernel, _: &str) -> CoordinatorResult<Option<ShareInfo>> {
+                Ok(None)
+            }
+
+            fn metastore_for_zone(
+                &self,
+                _: &Kernel,
+                _: &str,
+            ) -> CoordinatorResult<Arc<dyn MetaStore>> {
+                Ok(Arc::clone(&self.metastore))
+            }
+
+            fn locks_for_zone(
+                &self,
+                _: &Kernel,
+                _: &str,
+            ) -> CoordinatorResult<Arc<dyn contracts::lock_state::Locks>> {
+                Err("test coordinator: locks_for_zone unused".into())
+            }
+        }
+
+        fn fresh_federated_kernel() -> Arc<Kernel> {
+            let kernel = Arc::new(Kernel::new());
+            kernel.set_distributed_coordinator(
+                Arc::new(TestFederationCoordinator::new()) as Arc<dyn DistributedCoordinator>
+            );
+            // Mount /proc so sys_stat / sys_read / sys_write can
+            // route to /proc/{pid}/chat-with-me. Production
+            // services::managed_agent::install_returning does the
+            // same; the e2e test mirrors that fixture so the wal
+            // stream the test writes to is reachable by readers.
+            kernel
+                .vfs_router
+                .add_mount("/proc", contracts::ROOT_ZONE_ID, None, false);
+            kernel
+        }
+
+        #[test]
+        fn is_federation_initialized_reports_true_with_test_coordinator() {
+            // Probe the readiness signal `chat_stream_profile()` keys
+            // off. `Kernel::new()` alone reports `false` (Noop
+            // coordinator); installing the test coordinator flips it
+            // to `true`, which is what services::managed_agent::
+            // proc_entry::register_proc_entry checks before passing
+            // io_profile="wal" to sys_setattr.
+            use crate::abi::KernelAbi;
+            let bare = Kernel::new();
+            assert!(
+                !KernelAbi::is_federation_initialized(&bare),
+                "bare Kernel::new() must not advertise federation",
+            );
+            let kernel = fresh_federated_kernel();
+            assert!(
+                KernelAbi::is_federation_initialized(kernel.as_ref()),
+                "kernel with test coordinator installed must advertise federation",
+            );
+        }
+
+        #[test]
+        fn sys_setattr_wal_stream_creates_inode_and_round_trips() {
+            // End-to-end: sys_setattr DT_STREAM io_profile="wal" goes
+            // through the wal branch of `setattr_stream`, composes a
+            // `WalStreamCore` over the test coordinator's metastore,
+            // and registers the stream so subsequent sys_write +
+            // sys_read round-trip bytes through it.
+            //
+            // This is the path service-tier callers (
+            // managed_agent::proc_entry::register_proc_entry,
+            // matrix_adapter::rooms::create_chat_stream) take when
+            // `is_federation_initialized()` returns true. A
+            // memory-vs-wal mistake (e.g. service code accidentally
+            // hardcoding "memory" or kernel taking the wrong branch
+            // of setattr_stream) would surface here as a missing
+            // metastore wire-up or wrong stream-backend type.
+            let kernel = fresh_federated_kernel();
+            let path = "/proc/p-fed/chat-with-me";
+
+            kernel
+                .sys_setattr(
+                    path,
+                    DT_STREAM as i32,
+                    /* backend_name */ "",
+                    /* backend */ None,
+                    /* metastore */ None,
+                    /* raft_backend */ None,
+                    /* io_profile */ "wal",
+                    /* zone_id */ "root",
+                    /* is_external */ false,
+                    /* capacity */ 65_536,
+                    /* read_fd */ None,
+                    /* write_fd */ None,
+                    /* mime_type */ None,
+                    /* modified_at_ms */ None,
+                    /* link_target */ None,
+                    /* source */ None,
+                    /* remote_metastore */ None,
+                )
+                .expect("sys_setattr DT_STREAM io_profile=wal");
+
+            // Stream entry was written to the test coordinator's
+            // metastore via `write_stream_inode` — sys_stat sees it.
+            let stat = kernel
+                .sys_stat(path, "root")
+                .expect("sys_stat after sys_setattr DT_STREAM");
+            assert_eq!(stat.entry_type, DT_STREAM, "entry must be DT_STREAM");
+
+            // Round-trip a write + read — the stream_manager has the
+            // wal backend registered and the bytes flow through it.
+            let ctx = OperationContext::new("test", "root", true, None, true);
+            kernel
+                .sys_write(path, &ctx, b"federation hello", 0)
+                .expect("sys_write to wal stream");
+            let read = kernel
+                .sys_read(path, &ctx, /* timeout_ms */ 0, 0)
+                .expect("sys_read from wal stream");
+            let bytes = read
+                .data
+                .expect("wal stream returns the just-written bytes");
+            assert_eq!(bytes.as_slice(), b"federation hello");
+        }
+
+        #[test]
+        fn sys_setattr_wal_stream_idempotent_reopen() {
+            // Repeat sys_setattr on the same path is a no-op reopen
+            // — the wal stream stays registered + bytes from earlier
+            // writes survive the second setattr call. Mirrors the
+            // production restart flow where register_proc_entry runs
+            // again against an existing pid (our spawn_task tests
+            // exercise this on the memory branch; this test covers
+            // the wal branch).
+            let kernel = fresh_federated_kernel();
+            let path = "/proc/p-fed-2/chat-with-me";
+            let ctx = OperationContext::new("test", "root", true, None, true);
+
+            for _ in 0..2 {
+                kernel
+                    .sys_setattr(
+                        path,
+                        DT_STREAM as i32,
+                        "",
+                        None,
+                        None,
+                        None,
+                        "wal",
+                        "root",
+                        false,
+                        65_536,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .expect("idempotent wal sys_setattr");
+            }
+            kernel
+                .sys_write(path, &ctx, b"survives reopen", 0)
+                .expect("write to reopened wal stream");
+            let read = kernel
+                .sys_read(path, &ctx, 0, 0)
+                .expect("read after idempotent reopen");
+            assert_eq!(
+                read.data.unwrap().as_slice(),
+                b"survives reopen",
+                "wal stream contents must survive a no-op reopen",
+            );
         }
     }
 }

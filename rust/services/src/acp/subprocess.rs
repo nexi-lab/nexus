@@ -38,7 +38,8 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 use super::agent_config::AgentConfig;
 use super::paths;
-use kernel::kernel::{Kernel, KernelError, OperationContext};
+use kernel::abi::KernelAbi;
+use kernel::kernel::{KernelError, OperationContext};
 
 const PIPE_CAPACITY: usize = 1 << 20;
 
@@ -143,10 +144,10 @@ impl AcpSubprocess {
     ///   * register fails partway through — already-registered pipes
     ///     are unlinked before returning so we don't leak DT_PIPE
     ///     entries on the failure path.
-    pub(crate) async fn spawn(
+    pub(crate) async fn spawn<K: KernelAbi>(
         cfg: &AgentConfig,
         cwd: &Path,
-        kernel: &Kernel,
+        kernel: &K,
         zone: &str,
         pid: &str,
     ) -> Result<Self, SubprocessError> {
@@ -262,7 +263,7 @@ impl AcpSubprocess {
     /// ownership via `take_stdio_for_connection` has also dropped.
     ///
     /// Idempotent: subsequent calls are no-ops.
-    pub(crate) fn unregister_pipes(&mut self, kernel: &Kernel) {
+    pub(crate) fn unregister_pipes<K: KernelAbi>(&mut self, kernel: &K) {
         let _ = unlink_quiet(kernel, &self.stdin_path);
         let _ = unlink_quiet(kernel, &self.stdout_path);
         let _ = unlink_quiet(kernel, &self.stderr_path);
@@ -308,8 +309,8 @@ fn dup_raw(raw: i32) -> Result<i32, SubprocessError> {
     Ok(dup)
 }
 
-fn register_stdio_pipe(
-    kernel: &Kernel,
+fn register_stdio_pipe<K: KernelAbi>(
+    kernel: &K,
     path: &str,
     read_fd: i32,
     write_fd: i32,
@@ -327,7 +328,7 @@ fn register_stdio_pipe(
         .map_err(|e: KernelError| format!("{e:?}"))
 }
 
-fn unlink_quiet(kernel: &Kernel, path: &str) -> Result<(), KernelError> {
+fn unlink_quiet<K: KernelAbi>(kernel: &K, path: &str) -> Result<(), KernelError> {
     let ctx = OperationContext::new(
         /* user_id */ "system", /* zone_id */ "root", /* is_admin */ true,
         /* agent_id */ None, /* is_system */ true,

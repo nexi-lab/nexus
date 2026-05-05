@@ -614,7 +614,11 @@ def _token_zones_by_key(session: Any, key_ids: list[str]) -> dict[str, list[str]
 
 def _collect_token_detail(session: Any) -> list[dict[str, Any]]:
     rows = (
-        session.execute(select(APIKeyModel).order_by(APIKeyModel.created_at.desc())).scalars().all()
+        session.execute(
+            select(APIKeyModel).order_by(APIKeyModel.created_at.desc(), APIKeyModel.key_id.asc())
+        )
+        .scalars()
+        .all()
     )
     key_ids = [row.key_id for row in rows]
     zones_by_key = _token_zones_by_key(session, key_ids)

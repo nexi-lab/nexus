@@ -525,6 +525,19 @@ def test_hub_status_detail_json_includes_token_last_seen_and_zones(monkeypatch):
                 revoked=0,
             )
         )
+        s.add(
+            APIKeyModel(
+                key_id="kid_aaron",
+                key_hash="hash_aaron",
+                user_id="aaron",
+                name="aaron",
+                is_admin=0,
+                created_at=created,
+                last_used_at=None,
+                revoked=0,
+            )
+        )
+        s.add(APIKeyZoneModel(key_id="kid_aaron", zone_id="ops", permissions="r"))
         s.add(APIKeyZoneModel(key_id="kid_alice", zone_id="eng", permissions="rw"))
         s.add(APIKeyZoneModel(key_id="kid_alice", zone_id="ops", permissions="r"))
 
@@ -557,6 +570,16 @@ def test_hub_status_detail_json_includes_token_last_seen_and_zones(monkeypatch):
     assert [row["zone_id"] for row in payload["zones"]] == ["eng", "ops"]
     assert payload["tokens_detail"] == [
         {
+            "key_id": "kid_aaron",
+            "name": "aaron",
+            "zones": ["ops"],
+            "admin": False,
+            "created": created.isoformat(),
+            "last_seen": None,
+            "revoked": False,
+            "revoked_at": None,
+        },
+        {
             "key_id": "kid_alice",
             "name": "alice",
             "zones": ["eng", "ops"],
@@ -565,7 +588,7 @@ def test_hub_status_detail_json_includes_token_last_seen_and_zones(monkeypatch):
             "last_seen": last_seen.isoformat(),
             "revoked": False,
             "revoked_at": None,
-        }
+        },
     ]
 
 

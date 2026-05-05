@@ -21,7 +21,7 @@ import pytest
 pytest.importorskip("pyroaring")
 
 from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
-from nexus.bricks.rebac.permission_hook import PermissionCheckHook
+from nexus.bricks.rebac.permission_hook import RebacPermissionCheckHook
 from nexus.contracts.vfs_hooks import DeleteHookContext, ReadHookContext, WriteHookContext
 
 
@@ -95,7 +95,7 @@ class TestPermissionLeaseBenchmark:
         old_meta = MagicMock()
 
         # --- WITHOUT lease table ---
-        hook_no_lease = PermissionCheckHook(
+        hook_no_lease = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=default_ctx,
@@ -108,7 +108,7 @@ class TestPermissionLeaseBenchmark:
 
         # --- WITH lease table ---
         lease_table = PermissionLeaseTable()
-        hook_with_lease = PermissionCheckHook(
+        hook_with_lease = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=default_ctx,
@@ -133,7 +133,7 @@ class TestPermissionLeaseBenchmark:
         metadata_store = MagicMock()
         default_ctx = _make_context()
 
-        hook_no_lease = PermissionCheckHook(
+        hook_no_lease = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=default_ctx,
@@ -145,7 +145,7 @@ class TestPermissionLeaseBenchmark:
         checker.check.reset_mock()
 
         lease_table = PermissionLeaseTable()
-        hook_with_lease = PermissionCheckHook(
+        hook_with_lease = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=default_ctx,
@@ -167,7 +167,7 @@ class TestPermissionLeaseBenchmark:
         metadata_store = MagicMock()
         default_ctx = _make_context()
 
-        hook_no_lease = PermissionCheckHook(
+        hook_no_lease = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=default_ctx,
@@ -179,7 +179,7 @@ class TestPermissionLeaseBenchmark:
         checker.check.reset_mock()
 
         lease_table = PermissionLeaseTable()
-        hook_with_lease = PermissionCheckHook(
+        hook_with_lease = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=default_ctx,
@@ -202,7 +202,7 @@ class TestPermissionLeaseBenchmark:
         default_ctx = _make_context()
 
         lease_table = PermissionLeaseTable()
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=default_ctx,
@@ -246,7 +246,7 @@ class TestPermissionLeaseBenchmark:
         """Correctness: after invalidation, writes are re-checked."""
         checker = MagicMock()
         lease_table = PermissionLeaseTable()
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=MagicMock(),
             default_context=_make_context(),

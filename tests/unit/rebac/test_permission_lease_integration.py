@@ -1,7 +1,7 @@
 """Integration tests for permission leases (Issue #3394, #3398).
 
 Tests the full composition:
-- PermissionCheckHook with PermissionLeaseTable (fast path + slow path)
+- RebacPermissionCheckHook with PermissionLeaseTable (fast path + slow path)
 - CacheCoordinator with lease invalidation callback (path-targeted + zone-wide)
 - Security regression: permission revocation & agent termination
 - Delete/rmdir lease fast path (Issue #3398 decision 5A)
@@ -30,7 +30,7 @@ pytest.importorskip("pyroaring")
 
 from nexus.bricks.rebac.cache.coordinator import CacheCoordinator
 from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
-from nexus.bricks.rebac.permission_hook import PermissionCheckHook
+from nexus.bricks.rebac.permission_hook import RebacPermissionCheckHook
 from nexus.contracts.vfs_hooks import (
     DeleteHookContext,
     ReadHookContext,
@@ -139,9 +139,9 @@ def hook(
     checker: MagicMock,
     metadata_store: MagicMock,
     lease_table: PermissionLeaseTable,
-) -> PermissionCheckHook:
-    """PermissionCheckHook wired with a PermissionLeaseTable."""
-    return PermissionCheckHook(
+) -> RebacPermissionCheckHook:
+    """RebacPermissionCheckHook wired with a PermissionLeaseTable."""
+    return RebacPermissionCheckHook(
         checker=checker,
         metadata_store=metadata_store,
         default_context=_make_context(),
@@ -159,7 +159,7 @@ class TestPermissionLeaseHookIntegration:
     """Tests for the lease-aware on_pre_write fast path."""
 
     def test_first_write_does_full_check_and_stamps_lease(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """First write to a path: full ReBAC check + lease stamp."""
         ctx = _make_write_ctx(old_metadata=MagicMock())
@@ -170,7 +170,7 @@ class TestPermissionLeaseHookIntegration:
         assert lease_table.stats()["lease_misses"] == 1
 
     def test_second_write_uses_lease_fast_path(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Second write to same (path, agent): lease hit, skip ReBAC check."""
         ctx = _make_write_ctx(old_metadata=MagicMock())
@@ -183,7 +183,7 @@ class TestPermissionLeaseHookIntegration:
         assert lease_table.stats()["lease_hits"] == 1
 
     def test_new_file_leases_on_parent_directory(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """New file: check WRITE on parent, stamp lease on parent path."""
         ctx1 = _make_write_ctx(path="/workspace/src/file1.py", old_metadata=None)
@@ -198,7 +198,7 @@ class TestPermissionLeaseHookIntegration:
         assert lease_table.stats()["lease_hits"] == 1
 
     def test_different_agents_have_independent_leases(
-        self, hook: PermissionCheckHook, checker: MagicMock
+        self, hook: RebacPermissionCheckHook, checker: MagicMock
     ) -> None:
         """Different agents' leases don't interfere."""
         ctx_a = _make_write_ctx(context=_make_context(agent_id="agent-A"), old_metadata=MagicMock())
@@ -211,7 +211,7 @@ class TestPermissionLeaseHookIntegration:
         checker.check.assert_called_once()
 
     def test_permission_denied_does_not_stamp_lease(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """If ReBAC check raises PermissionError, no lease is stamped."""
         checker.check.side_effect = PermissionError("Access denied")
@@ -226,7 +226,7 @@ class TestPermissionLeaseHookIntegration:
         self, checker: MagicMock, metadata_store: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """With enforce_permissions=False, no lease check or ReBAC check."""
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=_make_context(),
@@ -250,7 +250,7 @@ class TestPermissionLeaseDeleteRmdir:
     """Lease fast path for on_pre_delete and on_pre_rmdir."""
 
     def test_delete_first_call_does_full_check(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """First delete: full ReBAC check + lease stamp."""
         ctx = _make_delete_ctx()
@@ -259,7 +259,7 @@ class TestPermissionLeaseDeleteRmdir:
         assert lease_table.stats()["lease_stamps"] == 1
 
     def test_delete_second_call_uses_lease(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Second delete to same path: lease hit, skip ReBAC check."""
         ctx = _make_delete_ctx()
@@ -271,7 +271,7 @@ class TestPermissionLeaseDeleteRmdir:
         assert lease_table.stats()["lease_hits"] == 1
 
     def test_write_lease_covers_subsequent_delete(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Lease stamped by write covers delete on same path."""
         write_ctx = _make_write_ctx(old_metadata=MagicMock())
@@ -283,7 +283,7 @@ class TestPermissionLeaseDeleteRmdir:
         checker.check.assert_not_called()
 
     def test_delete_permission_denied_no_stamp(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """If delete permission check fails, no lease is stamped."""
         checker.check.side_effect = PermissionError("denied")
@@ -292,7 +292,7 @@ class TestPermissionLeaseDeleteRmdir:
         assert lease_table.stats()["lease_stamps"] == 0
 
     def test_rmdir_first_call_does_full_check(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """First rmdir: full ReBAC check + lease stamp."""
         ctx = _make_rmdir_ctx()
@@ -301,7 +301,7 @@ class TestPermissionLeaseDeleteRmdir:
         assert lease_table.stats()["lease_stamps"] == 1
 
     def test_rmdir_second_call_uses_lease(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Second rmdir to same path: lease hit."""
         ctx = _make_rmdir_ctx()
@@ -312,7 +312,7 @@ class TestPermissionLeaseDeleteRmdir:
         checker.check.assert_not_called()
 
     def test_agent_invalidation_clears_delete_rmdir_leases(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Agent invalidation forces re-check for delete/rmdir too."""
         hook.on_pre_delete(_make_delete_ctx(path="/file1"))
@@ -335,7 +335,7 @@ class TestPermissionLeaseRead:
     """Lease fast path for on_pre_read."""
 
     def test_read_first_call_does_full_check(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """First read: full ReBAC check + lease stamp."""
         ctx = _make_read_ctx()
@@ -344,7 +344,7 @@ class TestPermissionLeaseRead:
         assert lease_table.stats()["lease_stamps"] == 1
 
     def test_read_second_call_uses_lease(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Second read: lease hit, skip ReBAC check."""
         ctx = _make_read_ctx()
@@ -356,7 +356,7 @@ class TestPermissionLeaseRead:
         assert lease_table.stats()["lease_hits"] == 1
 
     def test_read_and_write_share_lease(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Read lease and write lease share the same table."""
         read_ctx = _make_read_ctx()
@@ -372,7 +372,7 @@ class TestPermissionLeaseRead:
         checker.check.assert_not_called()
 
     def test_read_lease_implicit_directory_no_lease(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Implicit directory reads use TRAVERSE, not lease fast path."""
         ctx = ReadHookContext(
@@ -395,7 +395,7 @@ class TestPermissionLeaseAgentIdEdgeCases:
     """Edge cases for agent_id extraction from context."""
 
     def test_none_agent_id_skips_lease(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """agent_id=None: no lease stamped, always does full check."""
         ctx = _make_write_ctx(context=_make_context(agent_id=None), old_metadata=MagicMock())
@@ -413,7 +413,7 @@ class TestPermissionLeaseAgentIdEdgeCases:
     ) -> None:
         """context=None: uses default_context for both check and lease."""
         default_ctx = _make_context(agent_id="default-agent")
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=default_ctx,
@@ -431,7 +431,7 @@ class TestPermissionLeaseAgentIdEdgeCases:
     ) -> None:
         """If context object doesn't have agent_id attribute, skip lease."""
         bare_context = MagicMock(spec=[])  # no attributes
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=bare_context,
@@ -455,7 +455,7 @@ class TestPermissionLeaseInheritanceHook:
     """Ancestor walk through the hook: parent stamp covers child writes."""
 
     def test_new_file_stamp_covers_subsequent_existing_file_writes(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """New-file write stamps parent dir; existing-file write in same dir hits via ancestor."""
         # 1. New file → checks parent /workspace, stamps /workspace
@@ -470,7 +470,7 @@ class TestPermissionLeaseInheritanceHook:
         checker.check.assert_not_called()  # lease hit via ancestor walk
 
     def test_new_file_stamp_does_not_cover_different_directory(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Parent stamp on /workspace does NOT cover /other."""
         new_ctx = _make_write_ctx(path="/workspace/file1.py", old_metadata=None)
@@ -491,7 +491,7 @@ class TestPermissionLeaseAgentInvalidation:
     """invalidate_agent() clears leases for a terminated/changed agent."""
 
     def test_agent_invalidation_forces_recheck(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """After invalidating an agent, their writes require full checks."""
         ctx = _make_write_ctx(old_metadata=MagicMock())
@@ -504,7 +504,7 @@ class TestPermissionLeaseAgentInvalidation:
         checker.check.assert_called_once()
 
     def test_agent_invalidation_does_not_affect_other_agents(
-        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+        self, hook: RebacPermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
     ) -> None:
         """Invalidating agent-A leaves agent-B's leases intact."""
         ctx_a = _make_write_ctx(context=_make_context(agent_id="agent-A"), old_metadata=MagicMock())
@@ -529,7 +529,7 @@ class TestPermissionLeaseBackwardsCompat:
 
     def test_hook_without_lease_table(self, checker: MagicMock, metadata_store: MagicMock) -> None:
         """Hook with lease_table=None works exactly like before #3394."""
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=metadata_store,
             default_context=_make_context(),
@@ -817,7 +817,7 @@ class TestSecurityRegressionPermissionRevocation:
         clock = ManualClock(0.0)
         lease_table = PermissionLeaseTable(clock=clock, ttl=30.0)
         checker = MagicMock()  # check() returns normally = grant
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=MagicMock(),
             default_context=_make_context(),
@@ -878,7 +878,7 @@ class TestSecurityRegressionPermissionRevocation:
         clock = ManualClock(0.0)
         lease_table = PermissionLeaseTable(clock=clock, ttl=30.0)
         checker = MagicMock()
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=MagicMock(),
             default_context=_make_context(),
@@ -907,7 +907,7 @@ class TestSecurityRegressionPermissionRevocation:
         clock = ManualClock(0.0)
         lease_table = PermissionLeaseTable(clock=clock, ttl=30.0)
         checker = MagicMock()
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=MagicMock(),
             default_context=_make_context(),
@@ -962,7 +962,7 @@ class TestSecurityAgentTermination:
         clock = ManualClock(0.0)
         lease_table = PermissionLeaseTable(clock=clock, ttl=30.0)
         checker = MagicMock()
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=MagicMock(),
             default_context=_make_context(),
@@ -991,7 +991,7 @@ class TestSecurityAgentTermination:
         clock = ManualClock(0.0)
         lease_table = PermissionLeaseTable(clock=clock, ttl=30.0)
         checker = MagicMock()
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=MagicMock(),
             default_context=_make_context(),
@@ -1018,7 +1018,7 @@ class TestSecurityAgentTermination:
         clock = ManualClock(0.0)
         lease_table = PermissionLeaseTable(clock=clock, ttl=30.0)
         checker = MagicMock()
-        hook = PermissionCheckHook(
+        hook = RebacPermissionCheckHook(
             checker=checker,
             metadata_store=MagicMock(),
             default_context=_make_context(),

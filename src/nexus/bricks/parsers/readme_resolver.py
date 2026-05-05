@@ -83,7 +83,7 @@ class ReadmePathResolver:
 
         ``NexusFS.access`` only proves the path exists — the Rust kernel's
         ``sys_stat`` does not run the ReBAC chain. We instead dispatch the
-        ``read`` pre-hook directly so the registered ``PermissionCheckHook``
+        ``read`` pre-hook directly so the registered ``RebacPermissionCheckHook``
         runs the full READ check (Issue #3827 round-3 review). When
         ``self._nx`` is unwired (unit-test fixtures), we fall open.
         """

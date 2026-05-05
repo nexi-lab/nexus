@@ -1,4 +1,4 @@
-"""PermissionCheckHook — VFS pre-intercept hook for permission enforcement.
+"""RebacPermissionCheckHook — VFS pre-intercept hook for permission enforcement.
 
 Registered by factory on all KernelDispatch hook lists (read, write,
 delete, rename, mkdir, rmdir).  Implements ``on_pre_*`` methods that
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PermissionCheckHook:
+class RebacPermissionCheckHook:
     """VFS pre-intercept permission gate (Issue #899).
 
     Wraps ``PermissionChecker`` and provides ``on_pre_*`` / ``on_post_*``
@@ -52,7 +52,7 @@ class PermissionCheckHook:
     ``dispatch_post_hooks`` which calls ``on_post_*`` directly).
     """
 
-    name = "permission_check"
+    name = "rebac_permission_check"
 
     # ── Hook spec (duck-typed) (Issue #1610) ──────────────────────────
 

@@ -17,6 +17,7 @@ silently unsafe deployment.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import click
@@ -26,6 +27,7 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
+from nexus.bricks.mcp.metrics import CONTENT_TYPE_LATEST, install_metrics_route
 from nexus.cli.commands.mcp import _APIKeyMiddleware, _reject_embedded_hub_mode
 
 
@@ -148,12 +150,32 @@ async def _health(_request: Any) -> Any:
     return PlainTextResponse("healthy")
 
 
+async def _metrics(_request: Any) -> Any:
+    return PlainTextResponse("metrics")
+
+
 def _client() -> TestClient:
     app = Starlette(
-        routes=[Route("/mcp", _ok, methods=["POST"]), Route("/health", _health)],
+        routes=[
+            Route("/mcp", _ok, methods=["POST"]),
+            Route("/health", _health),
+            Route("/metrics", _metrics),
+        ],
     )
     app.add_middleware(_APIKeyMiddleware)
     return TestClient(app)
+
+
+class _FakeMCPServer:
+    def __init__(self) -> None:
+        self.routes: dict[tuple[str, tuple[str, ...]], Any] = {}
+
+    def custom_route(self, path: str, methods: list[str]) -> Any:
+        def _decorator(func: Any) -> Any:
+            self.routes[(path, tuple(methods))] = func
+            return func
+
+        return _decorator
 
 
 class TestResolvedRemoteUrlPropagation:
@@ -424,8 +446,35 @@ class TestRequireBearerGate:
         resp = _client().get("/health")
         assert resp.status_code == 200
 
+    def test_metrics_always_passes_without_bearer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Prometheus scrapes must not need a hub bearer token."""
+        monkeypatch.setenv("NEXUS_MCP_REQUIRE_BEARER", "true")
+        resp = _client().get("/metrics")
+        assert resp.status_code == 200
+
     def test_false_values_disable_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for val in ("false", "0", "no", "", "off"):
             monkeypatch.setenv("NEXUS_MCP_REQUIRE_BEARER", val)
             resp = _client().post("/mcp")
             assert resp.status_code == 200, f"val={val!r} should not gate"
+
+
+class TestMCPMetricsRoute:
+    def test_metrics_route_is_not_added_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NEXUS_MCP_METRICS_ENABLED", raising=False)
+        server = _FakeMCPServer()
+
+        assert install_metrics_route(server) is False
+        assert server.routes == {}
+
+    def test_metrics_route_is_added_when_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NEXUS_MCP_METRICS_ENABLED", "1")
+        server = _FakeMCPServer()
+
+        assert install_metrics_route(server) is True
+        endpoint = server.routes[("/metrics", ("GET",))]
+        response = asyncio.run(endpoint(None))
+
+        assert response.status_code == 200
+        assert response.media_type == CONTENT_TYPE_LATEST
+        assert b"# HELP" in response.body

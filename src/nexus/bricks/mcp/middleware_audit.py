@@ -47,13 +47,24 @@ async def _publish_record(record: dict[str, Any]) -> None:
 
 
 async def _record_metrics(record: dict[str, Any]) -> None:
-    """Write lightweight Redis counters used by `nexus hub status` (#3784).
+    """Record MCP hub metrics for Prometheus and the Redis CLI fallback.
+
+    Prometheus metrics back the MCP ``/metrics`` endpoint (#3873).
+    Redis counters remain as the compatibility path for
+    ``nexus hub status`` (#3784).
 
     - ``nexus:hub:qps:<epoch-minute>``: INCR per audited request (10 min TTL).
     - ``nexus:hub:active:<epoch-minute>``: SADD subject_id (10 min TTL).
 
     Fire-and-forget: errors are swallowed so audit stays on the happy path.
     """
+    try:
+        from nexus.bricks.mcp.metrics import record_request_metrics
+
+        record_request_metrics(record)
+    except Exception:  # noqa: BLE001 — metrics must never break audit
+        logger.warning("mcp prometheus metrics failed", exc_info=True)
+
     try:
         import redis.asyncio as redis  # local import — optional
     except ImportError:

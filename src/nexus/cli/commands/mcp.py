@@ -72,7 +72,8 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
     / profile credentials. This prevents unauthenticated requests from
     executing as the frontend's ambient identity on two-service hub
     deployments. ``/health`` is always allowed through so container
-    healthchecks keep working.
+    healthchecks keep working. ``/metrics`` is also allowed through so
+    Prometheus can scrape the opt-in hub metrics endpoint (#3873).
     """
 
     async def dispatch(self, request: "Request", call_next: Any) -> "Response":
@@ -88,7 +89,7 @@ class _APIKeyMiddleware(BaseHTTPMiddleware):
             "true",
             "yes",
         )
-        if require_bearer and not api_key and request.url.path != "/health":
+        if require_bearer and not api_key and request.url.path not in {"/health", "/metrics"}:
             from starlette.responses import JSONResponse
 
             return cast(
@@ -552,6 +553,13 @@ async def _async_serve(
         # Starlette instance per call, so post-hoc add_middleware is lost.
         if transport in ["http", "sse"]:
             _add_health_check_route(mcp_server)
+            try:
+                from nexus.bricks.mcp.metrics import install_metrics_route
+
+                if install_metrics_route(mcp_server):
+                    log_msg("  Metrics: /metrics enabled")
+            except Exception as e:
+                log_msg(f"Warning: Failed to add metrics route: {e}")
 
         return mcp_server
 

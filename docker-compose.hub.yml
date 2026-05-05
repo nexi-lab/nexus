@@ -105,6 +105,8 @@ services:
       # Intentionally DO NOT set NEXUS_API_KEY here — we want
       # unauthenticated requests (no bearer) to fail at the RPC layer
       # rather than fall through to an ambient "frontend" identity.
+      # Expose Prometheus-format hub frontend metrics at GET /metrics.
+      NEXUS_MCP_METRICS_ENABLED: "true"
     ports:
       - "8081:8081"
     depends_on:

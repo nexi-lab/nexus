@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 import redis.asyncio as _redis_async
 
+from nexus.bricks.mcp import metrics as hub_metrics
 from nexus.bricks.mcp import middleware_audit as mw
 
 
@@ -85,3 +86,50 @@ async def test_record_metrics_swallows_redis_errors(monkeypatch):
 
     # Must not raise — audit is fire-and-forget.
     await mw._record_metrics({"subject_id": "kid_abc"})
+
+
+@pytest.mark.asyncio
+async def test_record_metrics_updates_prometheus_without_redis(monkeypatch):
+    monkeypatch.delenv("NEXUS_REDIS_URL", raising=False)
+    monkeypatch.delenv("DRAGONFLY_URL", raising=False)
+    hub_metrics._reset_for_tests()
+
+    await mw._record_metrics(
+        {
+            "subject_id": "kid_abc",
+            "token_hash": "deadbeef",
+            "rpc_method": "tools/call",
+            "tool_name": "nexus_grep",
+            "status_code": 200,
+            "latency_ms": 125,
+        }
+    )
+
+    body = hub_metrics.render_metrics().decode()
+    assert "nexus_mcp_requests_total" in body
+    assert "nexus_mcp_request_latency_seconds_bucket" in body
+    assert 'rpc_method="tools/call"' in body
+    assert 'tool_name="nexus_grep"' in body
+    assert 'status="2xx"' in body
+    assert "nexus_mcp_active_clients 1.0" in body
+
+
+@pytest.mark.asyncio
+async def test_record_metrics_updates_prometheus_error_counter(monkeypatch):
+    monkeypatch.delenv("NEXUS_REDIS_URL", raising=False)
+    monkeypatch.delenv("DRAGONFLY_URL", raising=False)
+    hub_metrics._reset_for_tests()
+
+    await mw._record_metrics(
+        {
+            "subject_id": "kid_abc",
+            "rpc_method": "tools/call",
+            "tool_name": "nexus_write_file",
+            "status_code": 500,
+            "latency_ms": 7,
+        }
+    )
+
+    body = hub_metrics.render_metrics().decode()
+    assert "nexus_mcp_errors_total" in body
+    assert 'status="5xx"' in body

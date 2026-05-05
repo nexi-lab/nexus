@@ -56,7 +56,7 @@ def metastore_set_file_metadata(kernel: Any, path: str, key: str, value: Any) ->
         import json
 
         value = json.dumps(value)
-    kernel.metastore_set_file_metadata(path, key, value)
+    kernel.set_xattr(path, key, value)
 
 
 def metastore_get_searchable_text_bulk(
@@ -71,7 +71,7 @@ def metastore_get_searchable_text_bulk(
     cached text so search_service grep / pipeline_indexer fall through
     to the raw-content path for un-parsed files.
     """
-    bulk = kernel.metastore_get_file_metadata_bulk(list(paths), "parsed_text")
+    bulk = kernel.get_xattr_bulk(list(paths), "parsed_text")
     return {p: v for p, v in bulk.items() if v is not None}
 
 
@@ -175,7 +175,7 @@ def metastore_get_searchable_text(kernel: Any, path: str) -> str | None:
     a "why is grep slow" incident has something to grep.
     """
     try:
-        result = kernel.metastore_get_file_metadata(path, "parsed_text")
+        result = kernel.get_xattr(path, "parsed_text")
     except AttributeError:
         _warn_parsed_text_unavailable_once()
         return None

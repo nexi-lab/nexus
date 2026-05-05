@@ -2391,7 +2391,7 @@ class SearchService:
                 continue
 
             # Fetch md_structure metadata for this file.
-            raw = self._kernel.metastore_get_file_metadata(file_path, MD_STRUCTURE_KEY)
+            raw = self._kernel.get_xattr(file_path, MD_STRUCTURE_KEY)
             if raw is None:
                 # Issue #3720 (Codex R6): recognized markdown without
                 # metadata → fail closed.

@@ -144,11 +144,11 @@ class FailingMetastore:
             import json
 
             value = json.dumps(value)
-        self._inner.metastore_set_file_metadata(path, key, value)
+        self._inner.set_xattr(path, key, value)
 
     def get_file_metadata(self, path: str, key: str) -> Any:
         self._maybe_fail("get_file_metadata")
-        return self._inner.metastore_get_file_metadata(path, key)
+        return self._inner.get_xattr(path, key)
 
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         self._maybe_fail("get_batch")

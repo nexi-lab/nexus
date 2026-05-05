@@ -48,13 +48,11 @@ class ContentParserEngine:
         parse_info: dict[str, Any] = {"parsed": False, "provider": None, "cached": False}
 
         try:
-            cached_text = self._kernel.metastore_get_file_metadata(path, "parsed_text")
+            cached_text = self._kernel.get_xattr(path, "parsed_text")
             if cached_text:
                 parse_info["parsed"] = True
                 parse_info["cached"] = True
-                parse_info["provider"] = self._kernel.metastore_get_file_metadata(
-                    path, "parser_name"
-                )
+                parse_info["provider"] = self._kernel.get_xattr(path, "parser_name")
                 logger.debug(f"Using cached parsed_text for {path}")
                 return (
                     cached_text.encode("utf-8") if isinstance(cached_text, str) else cached_text,

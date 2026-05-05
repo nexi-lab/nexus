@@ -116,7 +116,7 @@ class MarkdownStructureWriteHook:
         if not current_hash and current_content is not None:
             return self._reindex(path, current_content, "")
 
-        raw = self._kernel.metastore_get_file_metadata(path, MD_STRUCTURE_KEY)
+        raw = self._kernel.get_xattr(path, MD_STRUCTURE_KEY)
         if raw is not None:
             try:
                 data = json.loads(raw) if isinstance(raw, str) else raw

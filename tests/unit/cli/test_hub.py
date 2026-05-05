@@ -466,6 +466,73 @@ def test_hub_status_json_includes_expected_fields(monkeypatch):
     assert payload["postgres"] == "ok"
 
 
+def test_hub_status_text_unchanged_without_detail(monkeypatch):
+    monkeypatch.setenv("NEXUS_MCP_HOST", "0.0.0.0")
+    monkeypatch.setenv("NEXUS_MCP_PORT", "8081")
+    monkeypatch.setenv("NEXUS_PROFILE", "full")
+
+    session = MagicMock()
+    session.execute.return_value.scalar.side_effect = [5, 2]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": 3.5, "connections": 4, "redis": "ok"},
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status"])
+    assert result.exit_code == 0, result.output
+    assert result.output == (
+        "endpoint:    http://0.0.0.0:8081/mcp\n"
+        "profile:     full\n"
+        "postgres:    ok\n"
+        "redis:       ok\n"
+        "tokens:      5 active, 2 revoked\n"
+        "connections: 4\n"
+        "qps (5m):    3.5\n"
+    )
+
+
+def test_hub_status_detail_flag_is_accepted(monkeypatch):
+    session = MagicMock()
+    session.execute.return_value.scalar.side_effect = [0, 0]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": None, "connections": None, "redis": "n/a"},
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._collect_status_detail",
+        lambda _zone_ids, _tokens_detail, _redis_detail: {
+            "zones": [],
+            "tokens_detail": [],
+            "rate_limits": {"window_seconds": 300, "hits_by_tier": {}},
+            "search": {"zones": []},
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_detail_stats",
+        lambda _zone_ids: {
+            "zones": [],
+            "rate_limits": {"window_seconds": 300, "hits_by_tier": {}},
+        },
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status", "--detail", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["detail"] is True
+
+
 def test_hub_status_postgres_unreachable_marks_err(monkeypatch):
     """Broken auth DB must exit non-zero so shell-style health guards fail
     closed. JSON payload still emits `postgres: err` for parseable consumers."""

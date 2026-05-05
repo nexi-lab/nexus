@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock
 
 from click.testing import CliRunner
@@ -640,6 +641,40 @@ def test_read_redis_detail_stats_aggregates_zone_and_rate_limit_counts(monkeypat
         "hits_by_tier": {"anonymous": 2, "authenticated": 4, "premium": 0},
     }
     assert fake.closed is True
+
+
+def test_collect_search_detail_reports_zoekt_size_and_latest_mtime(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    import nexus.cli.commands.hub as hub_module
+
+    base = tmp_path / "zoekt"
+    eng = base / "eng"
+    eng.mkdir(parents=True)
+    one = eng / "one.idx"
+    two = eng / "two.idx"
+    one.write_bytes(b"1" * 10)
+    two.write_bytes(b"2" * 20)
+
+    one_ts = datetime(2026, 5, 5, 14, 17, tzinfo=UTC).timestamp()
+    two_dt = datetime(2026, 5, 5, 14, 18, tzinfo=UTC)
+    two_ts = two_dt.timestamp()
+    os.utime(one, (one_ts, one_ts))
+    os.utime(two, (two_ts, two_ts))
+    monkeypatch.setenv("NEXUS_ZOEKT_INDEX_DIR", str(base))
+
+    detail = hub_module._collect_search_detail(["eng", "ops"])
+
+    assert detail["zones"][0] == {
+        "zone_id": "eng",
+        "zoekt_index_size_bytes": 30,
+        "zoekt_index_size_display": "30 B",
+        "zoekt_last_indexed": two_dt.isoformat(),
+        "txtai_queue_depth": None,
+        "last_indexed": two_dt.isoformat(),
+    }
+    assert detail["zones"][1]["zone_id"] == "ops"
+    assert detail["zones"][1]["zoekt_index_size_bytes"] is None
 
 
 def test_hub_status_detail_flag_is_accepted(monkeypatch):

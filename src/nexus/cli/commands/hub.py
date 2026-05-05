@@ -11,6 +11,7 @@ import os
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import click
@@ -777,20 +778,83 @@ def _collect_status_detail(
     }
 
 
+def _format_bytes(num_bytes: int | None) -> str | None:
+    if num_bytes is None:
+        return None
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    value = float(num_bytes)
+    for unit in ("KiB", "MiB", "GiB"):
+        value /= 1024.0
+        if value < 1024.0 or unit == "GiB":
+            return f"{value:.1f} {unit}"
+    return None
+
+
+def _zone_index_path(base: Path, zone_id: str) -> Path | None:
+    direct = base / zone_id
+    try:
+        if direct.exists():
+            return direct
+        if not base.is_dir():
+            return None
+        matches = [
+            child
+            for child in base.iterdir()
+            if child.name.startswith(f"{zone_id}.") or child.name.startswith(f"{zone_id}-")
+        ]
+    except OSError:
+        return None
+    return matches[0] if len(matches) == 1 else None
+
+
+def _index_path_stats(path: Path) -> tuple[int | None, str | None]:
+    try:
+        if path.is_file():
+            stat = path.stat()
+            return stat.st_size, datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+
+        total_size = 0
+        latest_mtime: float | None = None
+        for child in path.rglob("*"):
+            if not child.is_file():
+                continue
+            stat = child.stat()
+            total_size += stat.st_size
+            latest_mtime = (
+                stat.st_mtime if latest_mtime is None else max(latest_mtime, stat.st_mtime)
+            )
+    except OSError:
+        return None, None
+
+    last_indexed = (
+        datetime.fromtimestamp(latest_mtime, tz=UTC).isoformat()
+        if latest_mtime is not None
+        else None
+    )
+    return total_size, last_indexed
+
+
 def _collect_search_detail(zone_ids: list[str]) -> dict[str, Any]:
-    return {
-        "zones": [
+    base = Path(os.environ.get("NEXUS_ZOEKT_INDEX_DIR", "/app/data/.zoekt-index"))
+    zones = []
+    for zone_id in zone_ids:
+        index_path = _zone_index_path(base, zone_id)
+        size_bytes: int | None = None
+        last_indexed: str | None = None
+        if index_path is not None:
+            size_bytes, last_indexed = _index_path_stats(index_path)
+        zones.append(
             {
                 "zone_id": zone_id,
-                "zoekt_index_size_bytes": None,
-                "zoekt_index_size_display": None,
-                "zoekt_last_indexed": None,
+                "zoekt_index_size_bytes": size_bytes,
+                "zoekt_index_size_display": _format_bytes(size_bytes),
+                "zoekt_last_indexed": last_indexed,
                 "txtai_queue_depth": None,
-                "last_indexed": None,
+                "last_indexed": last_indexed,
             }
-            for zone_id in zone_ids
-        ]
-    }
+        )
+    return {"zones": zones}
 
 
 def _emit_detail_status_text(payload: dict[str, Any]) -> None:

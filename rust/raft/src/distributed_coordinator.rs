@@ -560,27 +560,29 @@ pub fn bootstrap_or_join_zone(
         return Ok(());
     }
 
-    // Branch 2: empty peers — single-node default creates own root.
+    // Branch 2: founder — either operator explicit (`bootstrap_new`)
+    // or implicit (empty peers = single-node alone).
     //
-    // The operator's bootstrap intent collapses to "no peers means
-    // I'm alone": both `NEXUS_BOOTSTRAP_NEW=1` (explicit founder
-    // declaration) and "just no peers configured" land here.  Every
-    // raft cluster starts as a 1-voter cluster anyway; the join path
-    // only kicks in when the operator points the daemon at peers.
+    // Every raft cluster starts as a 1-voter group; whether the
+    // operator declares founder intent via the flag or by simply
+    // not configuring peers, the next step is the same: create the
+    // zone with self as the only voter.  Other nodes will JoinZone
+    // here later.
     //
-    // `NEXUS_BOOTSTRAP_NEW` is now a documented-but-redundant alias
-    // for the empty-peers default — kept for explicit-intent UX
-    // (operators who paste the flag have not done anything wrong)
-    // and for the static-bootstrap validator's fail-loud rules
-    // around restarts and dynamic-mode mixing.
-    if peer_addrs.is_empty() {
+    //   * `bootstrap_new=true`  → explicit founder declaration.
+    //     Required for multi-node deployments where the founder
+    //     does list peer addresses (so it can dial them once they
+    //     come up) but is the one originating the cluster.
+    //   * `peer_addrs.is_empty()` → no peers configured = alone.
+    //     Single-node default — create own root.
+    if bootstrap_new || peer_addrs.is_empty() {
         tracing::info!(
             node_id,
             zone = %zone_id,
             self_address = %self_address,
             bootstrap_new,
-            "no peers configured — creating 1-voter zone (single-node default). \
-             Other nodes JoinZone here.",
+            peers_empty = peer_addrs.is_empty(),
+            "founder path — creating 1-voter zone. Other nodes JoinZone here.",
         );
         let self_peer = format!("{node_id}@{self_address}");
         zm.create_zone(zone_id, vec![self_peer])
@@ -588,14 +590,14 @@ pub fn bootstrap_or_join_zone(
         return Ok(());
     }
 
-    // Branch 3: peers configured but storage empty — joiner. Loop on
-    // JoinZone RPC until a leader accepts.
+    // Branch 3: peers configured, no flag, storage empty — joiner.
+    // Loop on JoinZone RPC until a leader accepts.
     tracing::info!(
         node_id,
         zone = %zone_id,
         peer_count = peer_addrs.len(),
         max_attempts = ?max_attempts,
-        "empty storage with peers — retrying JoinZone",
+        "empty storage with peers, no bootstrap flag — retrying JoinZone",
     );
 
     // Spin a small temporary multi-thread runtime for the JoinZone

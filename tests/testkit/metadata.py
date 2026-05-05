@@ -136,10 +136,6 @@ class FailingMetastore:
         self._maybe_fail("is_implicit_directory")
         return bool(self._inner.metastore_is_implicit_directory(path))
 
-    def rename_path(self, old_path: str, new_path: str) -> None:
-        self._maybe_fail("rename_path")
-        self._inner.metastore_rename_path(old_path, new_path)
-
     def set_file_metadata(self, path: str, key: str, value: Any) -> None:
         self._maybe_fail("set_file_metadata")
         if value is None:
@@ -158,15 +154,6 @@ class FailingMetastore:
         self._maybe_fail("get_batch")
         plist = list(paths)
         return dict(zip(plist, self._inner.metastore_get_batch(plist), strict=True))
-
-    def put_batch(
-        self,
-        metadata_list: Sequence[FileMetadata],
-        *,
-        skip_snapshot: bool = False,  # noqa: ARG002
-    ) -> None:
-        self._maybe_fail("put_batch")
-        self._inner.metastore_put_batch(list(metadata_list))
 
     def delete_batch(self, paths: Sequence[str]) -> None:
         self._maybe_fail("delete_batch")

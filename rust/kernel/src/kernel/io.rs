@@ -45,6 +45,12 @@ impl Kernel {
         // 1. Validate
         validate_path_fast(path)?;
 
+        // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
+        // Short-circuits to metastore get_file_metadata without hooks/routing.
+        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
+            return self.handle_xattr_read(rest);
+        }
+
         // 1b. Trie-resolved virtual paths (§11 trie resolution) — Python's resolve_read
         // should have handled these before reaching us; treat as missing.
         if self.trie.lookup(path).is_some() {
@@ -420,6 +426,12 @@ impl Kernel {
 
         // 1. Validate
         validate_path_fast(path)?;
+
+        // 1a. Xattr virtual path interception: /__xattr__/{key}/{path}
+        // Short-circuits to metastore set_file_metadata without hooks/routing.
+        if let Some(rest) = path.strip_prefix(contracts::XATTR_PATH_PREFIX) {
+            return self.handle_xattr_write(rest, content);
+        }
 
         // 1b. Trie-resolved virtual paths (§11 trie resolution)
         if self.trie.lookup(path).is_some() {
@@ -2421,5 +2433,181 @@ impl Kernel {
                 .map(|(path, (etype, _))| (path, etype))
                 .collect()
         }
+    }
+
+    /// Paginated readdir: returns a page of children with cursor-based
+    /// pagination. `limit=0` returns all (backward compat). Cursor is
+    /// the last path from the previous page.
+    ///
+    /// Intercepts `/__sys__/locks` prefix → `lock_manager.list_locks`.
+    pub fn readdir_paged(
+        &self,
+        parent_path: &str,
+        zone_id: &str,
+        is_admin: bool,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> super::ReadDirResult {
+        // /__sys__/locks intercept — admin-only lock enumeration.
+        if parent_path == contracts::LOCKS_PATH_PREFIX
+            || parent_path.starts_with(&format!("{}/", contracts::LOCKS_PATH_PREFIX))
+        {
+            if !is_admin {
+                return super::ReadDirResult {
+                    items: Vec::new(),
+                    next_cursor: None,
+                    has_more: false,
+                };
+            }
+            let prefix = if parent_path == contracts::LOCKS_PATH_PREFIX {
+                ""
+            } else {
+                parent_path
+                    .strip_prefix(&format!("{}/", contracts::LOCKS_PATH_PREFIX))
+                    .unwrap_or("")
+            };
+            let effective_limit = if limit == 0 { 10000 } else { limit };
+            match self.lock_manager.list_locks(prefix, effective_limit + 1) {
+                Ok(locks) => {
+                    let has_more = locks.len() > effective_limit;
+                    let items: Vec<(String, u8)> = locks
+                        .into_iter()
+                        .take(effective_limit)
+                        .map(|l| (l.path.clone(), DT_REG))
+                        .collect();
+                    let next_cursor = if has_more {
+                        items.last().map(|(p, _)| p.clone())
+                    } else {
+                        None
+                    };
+                    return super::ReadDirResult {
+                        items,
+                        next_cursor,
+                        has_more,
+                    };
+                }
+                Err(_) => {
+                    return super::ReadDirResult {
+                        items: Vec::new(),
+                        next_cursor: None,
+                        has_more: false,
+                    };
+                }
+            }
+        }
+
+        // Normal readdir with optional pagination.
+        let all = self.readdir(parent_path, zone_id, is_admin);
+
+        if limit == 0 {
+            return super::ReadDirResult {
+                items: all,
+                next_cursor: None,
+                has_more: false,
+            };
+        }
+
+        // Apply cursor: skip entries up to and including the cursor path.
+        let start_idx = if let Some(c) = cursor {
+            all.iter()
+                .position(|(p, _)| p.as_str() > c)
+                .unwrap_or(all.len())
+        } else {
+            0
+        };
+
+        let end_idx = (start_idx + limit).min(all.len());
+        let items: Vec<(String, u8)> = all[start_idx..end_idx].to_vec();
+        let has_more = end_idx < all.len();
+        let next_cursor = if has_more {
+            items.last().map(|(p, _)| p.clone())
+        } else {
+            None
+        };
+
+        super::ReadDirResult {
+            items,
+            next_cursor,
+            has_more,
+        }
+    }
+
+    // ── Xattr virtual path handlers ──────────────────────────────────
+
+    /// Parse `rest` = `"{key}/{actual_path}"` from an `/__xattr__/` read,
+    /// route to the correct per-mount metastore, and return the value.
+    fn handle_xattr_read(&self, rest: &str) -> Result<SysReadResult, KernelError> {
+        let (key, actual_path) = Self::parse_xattr_rest(rest)?;
+        let route = self
+            .vfs_router
+            .route(actual_path, contracts::ROOT_ZONE_ID)
+            .map_err(|_| KernelError::FileNotFound(actual_path.to_string()))?;
+        let value = self
+            .with_metastore_route(&route, |ms| ms.get_file_metadata(actual_path, key))
+            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))?
+            .map_err(|e| {
+                KernelError::IOError(format!("xattr read({actual_path}, {key}): {e:?}"))
+            })?;
+        match value {
+            Some(v) => Ok(SysReadResult {
+                data: Some(v.into_bytes()),
+                post_hook_needed: false,
+                content_id: None,
+                entry_type: DT_REG,
+                stream_next_offset: None,
+            }),
+            None => Err(KernelError::FileNotFound(format!(
+                "xattr {key} not found on {actual_path}"
+            ))),
+        }
+    }
+
+    /// Parse `rest` = `"{key}/{actual_path}"` from an `/__xattr__/` write,
+    /// route to the correct per-mount metastore, and set the value.
+    fn handle_xattr_write(
+        &self,
+        rest: &str,
+        content: &[u8],
+    ) -> Result<SysWriteResult, KernelError> {
+        let (key, actual_path) = Self::parse_xattr_rest(rest)?;
+        let value = std::str::from_utf8(content)
+            .map_err(|e| KernelError::IOError(format!("xattr value not utf-8: {e}")))?
+            .to_string();
+        let route = self
+            .vfs_router
+            .route(actual_path, contracts::ROOT_ZONE_ID)
+            .map_err(|_| KernelError::FileNotFound(actual_path.to_string()))?;
+        self.with_metastore_route(&route, |ms| ms.set_file_metadata(actual_path, key, value))
+            .ok_or_else(|| KernelError::IOError("no metastore wired".into()))?
+            .map_err(|e| {
+                KernelError::IOError(format!("xattr write({actual_path}, {key}): {e:?}"))
+            })?;
+        Ok(SysWriteResult {
+            hit: true,
+            content_id: None,
+            post_hook_needed: false,
+            version: 0,
+            size: content.len() as u64,
+            is_new: false,
+            old_content_id: None,
+            old_size: None,
+            old_version: None,
+            old_modified_at_ms: None,
+        })
+    }
+
+    /// Split `"key/rest/of/path"` into `("key", "/rest/of/path")`.
+    fn parse_xattr_rest(rest: &str) -> Result<(&str, &str), KernelError> {
+        let idx = rest.find('/').ok_or_else(|| {
+            KernelError::InvalidPath("xattr path must be /__xattr__/{key}/{path}".into())
+        })?;
+        let key = &rest[..idx];
+        let actual_path = &rest[idx..]; // includes leading '/'
+        if key.is_empty() || actual_path.len() < 2 {
+            return Err(KernelError::InvalidPath(
+                "xattr path must be /__xattr__/{key}/{path}".into(),
+            ));
+        }
+        Ok((key, actual_path))
     }
 }

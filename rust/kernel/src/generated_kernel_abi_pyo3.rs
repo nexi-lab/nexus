@@ -1168,44 +1168,6 @@ impl PyKernel {
         Ok(result)
     }
 
-    fn metastore_put_batch(&self, py: Python<'_>, items: &Bound<'_, PyList>) -> PyResult<()> {
-        let mut batch = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            let meta = extract_metadata(py, &item)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
-            let path = meta.path.clone();
-            batch.push((path, meta));
-        }
-        self.inner.metastore_put_batch(&batch).map_err(Into::into)
-    }
-
-    /// Optimistic-concurrency put. Returns a ``dict`` with ``success``
-    /// and ``current_version`` keys so Python callers can branch on
-    /// conflict without another round-trip.
-    fn metastore_put_if_version(
-        &self,
-        py: Python<'_>,
-        metadata: &Bound<'_, PyAny>,
-        expected_version: u32,
-    ) -> PyResult<Py<PyAny>> {
-        let meta = extract_metadata(py, metadata)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
-        let result = self
-            .inner
-            .metastore_put_if_version(meta, expected_version)
-            .map_err::<PyErr, _>(Into::into)?;
-        let dict = PyDict::new(py);
-        dict.set_item("success", result.success)?;
-        dict.set_item("current_version", result.current_version)?;
-        Ok(dict.into())
-    }
-
-    fn metastore_rename_path(&self, old_path: &str, new_path: &str) -> PyResult<()> {
-        self.inner
-            .metastore_rename_path(old_path, new_path)
-            .map_err(Into::into)
-    }
-
     /// Auxiliary per-path metadata storage (e.g. ``parsed_text``,
     /// ``parser_name``). Values are UTF-8 strings; callers that want
     /// to store structured data JSON-encode at this boundary — no
@@ -1275,22 +1237,6 @@ impl PyKernel {
         dict.set_item("next_cursor", page.next_cursor)?;
         dict.set_item("has_more", page.has_more)?;
         dict.set_item("total_count", page.total_count)?;
-        Ok(dict.into())
-    }
-
-    fn metastore_batch_get_content_ids(
-        &self,
-        py: Python<'_>,
-        paths: Vec<String>,
-    ) -> PyResult<Py<PyAny>> {
-        let pairs = self
-            .inner
-            .metastore_batch_get_content_ids(&paths)
-            .map_err::<PyErr, _>(Into::into)?;
-        let dict = PyDict::new(py);
-        for (path, content_id) in pairs {
-            dict.set_item(path, content_id)?;
-        }
         Ok(dict.into())
     }
 

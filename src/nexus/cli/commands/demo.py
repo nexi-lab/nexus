@@ -318,15 +318,18 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
         # which populate the PostgreSQL file_paths table (required for semantic
         # search indexing). gRPC writes go to the Rust kernel natively and
         # bypass Python observers, so HERB files end up in Redb only.
-        # Probe an authenticated endpoint so a bad API key fails fast instead of
-        # silently producing a partial seed.
+        # Probe a lightweight authenticated endpoint so a bad API key fails
+        # fast without exercising root VFS metadata.  On edge containers under
+        # startup load, ``/api/v2/files/metadata?path=/`` can block long enough
+        # to trip the CLI timeout even while the HTTP service is otherwise
+        # ready; actual file writes below still validate the file API path.
         try:
             import httpx as _httpx
 
             from nexus.cli.api_client import NexusApiClient
 
             test_client = NexusApiClient(url=url, api_key=api_key)
-            test_client.get("/api/v2/files/metadata", params={"path": "/"})
+            test_client.get("/api/v2/connectors")
             logger.info("demo preset: server reachable at %s — using REST API for seeding", url)
             return _RestApiNexusClient(url, api_key)
         except _httpx.HTTPStatusError:

@@ -613,8 +613,8 @@ def test_read_redis_detail_stats_aggregates_zone_and_rate_limit_counts(monkeypat
                 "nexus:hub:qps:zone:eng:100": b"120",
                 "nexus:hub:qps:zone:eng:99": b"30",
                 "nexus:hub:qps:zone:ops:100": b"60",
-                "nexus:hub:rate_limit:anonymous:100": b"2",
-                "nexus:hub:rate_limit:authenticated:100": b"4",
+                "nexus:hub:ratelimit:tier:anonymous:100": b"2",
+                "nexus:hub:ratelimit:tier:authenticated:100": b"4",
             }
             return [values.get(key) for key in keys]
 

@@ -749,7 +749,7 @@ def _read_redis_detail_stats(zone_ids: list[str]) -> dict[str, Any]:
 
         hits_by_tier: dict[str, int] = {}
         for tier in _RATE_LIMIT_TIERS:
-            minute_keys = [f"nexus:hub:rate_limit:{tier}:{now_min - i}" for i in range(5)]
+            minute_keys = [f"nexus:hub:ratelimit:tier:{tier}:{now_min - i}" for i in range(5)]
             hits_by_tier[tier] = sum(_decode_int(v) for v in client.mget(minute_keys))
 
         return {

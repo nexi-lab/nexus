@@ -143,7 +143,7 @@ async def _record_rate_limit_hit(tier: str) -> None:
     try:
         client = redis.from_url(url)
         epoch_min = int(time.time()) // 60
-        key = f"nexus:hub:rate_limit:{tier}:{epoch_min}"
+        key = f"nexus:hub:ratelimit:tier:{tier}:{epoch_min}"
         await client.incr(key)
         await client.expire(key, 600)
     except Exception:  # noqa: BLE001

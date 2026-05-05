@@ -52,22 +52,32 @@ def test_429_response_shape(app: Starlette) -> None:
 
 
 def test_429_records_rate_limit_hit_tier(monkeypatch, app: Starlette) -> None:
-    hits: list[str] = []
+    redis = pytest.importorskip("redis.asyncio")
+    calls: list[tuple[str, object, object | None]] = []
 
-    async def fake_record(tier: str) -> None:
-        hits.append(tier)
+    class FakeRedisClient:
+        async def incr(self, key: str) -> None:
+            calls.append(("incr", key, None))
 
-    monkeypatch.setattr(
-        "nexus.bricks.mcp.middleware_ratelimit._record_rate_limit_hit",
-        fake_record,
-        raising=False,
-    )
+        async def expire(self, key: str, ttl: int) -> None:
+            calls.append(("expire", key, ttl))
+
+        async def close(self) -> None:
+            calls.append(("close", None, None))
+
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(redis, "from_url", lambda _url: FakeRedisClient())
+    monkeypatch.setattr(middleware_ratelimit.time, "time", lambda: 123 * 60)
 
     client = TestClient(app)
     for _ in range(3):
         assert client.post("/mcp").status_code == 200
     assert client.post("/mcp").status_code == 429
-    assert hits == ["anonymous"]
+    assert calls == [
+        ("incr", "nexus:hub:ratelimit:tier:anonymous:123", None),
+        ("expire", "nexus:hub:ratelimit:tier:anonymous:123", 600),
+        ("close", None, None),
+    ]
 
 
 def test_record_rate_limit_hit_swallows_redis_client_creation_errors(monkeypatch) -> None:
@@ -99,6 +109,35 @@ def test_record_rate_limit_hit_swallows_redis_close_errors(monkeypatch) -> None:
     monkeypatch.setattr(redis, "from_url", lambda _url: CloseFailingClient())
 
     asyncio.run(middleware_ratelimit._record_rate_limit_hit("anonymous"))
+
+
+@pytest.mark.parametrize("failing_method", ["incr", "expire"])
+def test_record_rate_limit_hit_swallows_redis_write_errors(
+    monkeypatch, failing_method: str
+) -> None:
+    redis = pytest.importorskip("redis.asyncio")
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
+    calls: list[str] = []
+
+    class WriteFailingClient:
+        async def incr(self, _key: str) -> None:
+            calls.append("incr")
+            if failing_method == "incr":
+                raise RuntimeError("redis incr failed")
+
+        async def expire(self, _key: str, _ttl: int) -> None:
+            calls.append("expire")
+            if failing_method == "expire":
+                raise RuntimeError("redis expire failed")
+
+        async def close(self) -> None:
+            calls.append("close")
+
+    monkeypatch.setattr(redis, "from_url", lambda _url: WriteFailingClient())
+
+    asyncio.run(middleware_ratelimit._record_rate_limit_hit("anonymous"))
+
+    assert "close" in calls
 
 
 def test_different_tokens_limited_independently(app: Starlette) -> None:

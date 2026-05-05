@@ -77,6 +77,37 @@ jobs:
           echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
           "$HOME/protoc/bin/protoc" --version
 
+      - name: Install protoc (Windows)
+        # `.cargo/config.toml`'s PROTOC override points at
+        # `scripts/protoc-compat.py` (a shebang-based python script).
+        # Linux/macOS runners honour shebangs; Windows does not — it
+        # tries to invoke the .py file as a Win32 binary and fails
+        # with `os error 193`.  Install a real protoc and override
+        # the PROTOC env var so cargo's [env] section's
+        # `default = false` lets the workflow value win.
+        # Pin to 3.20.2 to match the macOS step (protobuf-build 0.14
+        # rejects 4.x/calendar-version protoc versions).
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '3.20.2'
+          $protocDir = Join-Path $env:USERPROFILE 'protoc'
+          New-Item -ItemType Directory -Force -Path $protocDir | Out-Null
+          $zipPath = Join-Path $env:RUNNER_TEMP 'protoc.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri `
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${protocVersion}/protoc-${protocVersion}-win64.zip" `
+            -OutFile $zipPath
+          Expand-Archive -Force -Path $zipPath -DestinationPath $protocDir
+          $protocBinDir = Join-Path $protocDir 'bin'
+          $protocExe = Join-Path $protocBinDir 'protoc.exe'
+          # Native Windows paths into GITHUB_ENV / GITHUB_PATH so
+          # cargo + prost-build see real `C:\…\protoc.exe` rather
+          # than bash's `/c/Users/…` POSIX form.
+          Add-Content -Path $env:GITHUB_PATH -Value $protocBinDir
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocExe"
+          & $protocExe --version
+
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 

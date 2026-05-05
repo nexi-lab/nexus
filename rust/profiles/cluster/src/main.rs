@@ -349,33 +349,26 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
     // bootstrap".  Cheap filesystem stat.
     let data_dir_has_root = common.data_dir.join("root").join("raft").exists();
 
-    // Operator MUST declare bootstrap intent when federation is in
-    // play — `BootstrapMode` doc has the contract.  "Federation in
-    // play" = any of: data dir already holds a root zone (restart),
-    // `--bootstrap-new` (static founder), or non-empty `--peers`
-    // (static joiner).  CLI invocations with none of those signals
-    // skip the validator (no federation intent yet).
-    let federation_in_play = data_dir_has_root || bootstrap_new || peers_non_empty;
-    if federation_in_play {
-        let mode_str = common.bootstrap_mode.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "--bootstrap-mode (or NEXUS_BOOTSTRAP_MODE) is required when bootstrapping \
-                 federation (data dir holds root, --bootstrap-new set, or --peers \
-                 non-empty).  Pass one of: static, dynamic, restart.  \
-                 See BootstrapMode docs in nexus_raft.",
-            )
-        })?;
-        let mode = BootstrapMode::parse(mode_str).map_err(|e| anyhow::anyhow!("{}", e))?;
-        validate_bootstrap_mode(mode, data_dir_has_root, bootstrap_new, peers_non_empty)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-        tracing::info!(
-            mode = mode.as_str(),
-            bootstrap_new,
-            peers_non_empty,
-            data_dir_has_root,
-            "bootstrap mode validated",
-        );
-    }
+    // Operator MUST declare bootstrap intent.  No implicit dispatch:
+    // explicit mode declaration is the SSOT for what kind of boot
+    // this is (static = env-driven cluster formation, dynamic =
+    // rootless + runtime API, restart = resume from disk).
+    let mode_str = common.bootstrap_mode.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "--bootstrap-mode (or NEXUS_BOOTSTRAP_MODE) is required.  Pass one of: \
+             static, dynamic, restart.  See BootstrapMode docs in nexus_raft.",
+        )
+    })?;
+    let mode = BootstrapMode::parse(mode_str).map_err(|e| anyhow::anyhow!("{}", e))?;
+    validate_bootstrap_mode(mode, data_dir_has_root, bootstrap_new, peers_non_empty)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    tracing::info!(
+        mode = mode.as_str(),
+        bootstrap_new,
+        peers_non_empty,
+        data_dir_has_root,
+        "bootstrap mode validated",
+    );
 
     let ZoneManagerBundle {
         zm,
@@ -384,49 +377,46 @@ async fn run_daemon(common: CommonArgs) -> Result<()> {
         peer_addrs,
     } = open_zone_manager(&common)?;
 
-    // Bring root zone online via `bootstrap_or_join_zone` — the SSOT
-    // dispatch Python `nexusd::init_from_env` and this binary share.
-    // Three branches by storage state:
+    // Bring root zone online based on declared mode.
     //
-    //   1. restart — persisted ConfState resumes;
-    //   2. fresh create — `NEXUS_BOOTSTRAP_NEW=1` honored, 1-voter
-    //      cluster of `node_id`;
-    //   3. wait-and-join — empty storage + flag unset + non-empty
-    //      peer list = retry JoinZone forever (no deadline).
+    //   * Static: dispatch through `bootstrap_or_join_zone` — empty
+    //     peers → 1-voter single-node default; non-empty peers →
+    //     joiner retry loop.
+    //   * Restart: dispatch through `bootstrap_or_join_zone` —
+    //     persisted ConfState resumes (branch 1).
+    //   * Dynamic: SKIP root bootstrap entirely; daemon comes up
+    //     rootless, operator drives `create_zone` via runtime API.
     //
-    // BootstrapMode validation above already gates which of these
-    // branches is reachable for the declared mode, so no in-helper
-    // fall-through happens silently.
-
-    // `bootstrap_or_join_zone` is a sync helper that, in branch 3
-    // (wait-and-join), spins a nested `tokio::runtime` to drive the
-    // JoinZone retry loop's RPCs.  Python `nexusd::init_from_env`
-    // calls it from a sync PyO3 entry point — no outer runtime — so
-    // the nested-runtime build is allowed.  `nexusd-cluster::main` is
-    // `#[tokio::main]`, so calling the sync helper from this `async`
-    // function would build the nested runtime *inside* the outer
-    // worker pool and trip tokio's "Cannot start a runtime from
-    // within a runtime" panic.  Move the call to `spawn_blocking`:
-    // the blocking thread is outside the worker pool, so nested
-    // runtime creation is allowed (and the worker pool is not held
-    // while branch 3 retries indefinitely).
-    let zm_for_bootstrap = zm.clone();
-    let self_addr_for_bootstrap = self_address.clone();
-    let peer_addrs_for_bootstrap = peer_addrs.clone();
-    tokio::task::spawn_blocking(move || {
-        bootstrap_or_join_zone(
-            zm_for_bootstrap.as_ref(),
-            "root",
-            node_id,
-            &self_addr_for_bootstrap,
-            &peer_addrs_for_bootstrap,
-            bootstrap_new,
-            /* max_attempts */ None, // daemon boot — retry forever
-        )
-    })
-    .await
-    .map_err(|e| anyhow::anyhow!("bootstrap join task panicked: {}", e))?
-    .map_err(|e| anyhow::anyhow!("bootstrap_or_join_zone: {}", e))?;
+    // `bootstrap_or_join_zone` is a sync helper that may spin a
+    // nested `tokio::runtime` for its JoinZone RPCs (joiner branch),
+    // which would panic with "Cannot start a runtime from within a
+    // runtime" on a worker thread of the outer `#[tokio::main]`.
+    // `spawn_blocking` moves it onto the blocking pool where nested
+    // runtime creation is allowed.
+    if matches!(mode, BootstrapMode::Static | BootstrapMode::Restart) {
+        let zm_for_bootstrap = zm.clone();
+        let self_addr_for_bootstrap = self_address.clone();
+        let peer_addrs_for_bootstrap = peer_addrs.clone();
+        tokio::task::spawn_blocking(move || {
+            bootstrap_or_join_zone(
+                zm_for_bootstrap.as_ref(),
+                "root",
+                node_id,
+                &self_addr_for_bootstrap,
+                &peer_addrs_for_bootstrap,
+                bootstrap_new,
+                /* max_attempts */ None, // daemon boot — retry forever
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("bootstrap join task panicked: {}", e))?
+        .map_err(|e| anyhow::anyhow!("bootstrap_or_join_zone: {}", e))?;
+    } else {
+        tracing::info!(
+            "bootstrap mode = dynamic; daemon up rootless — operator drives \
+             create_zone via runtime API",
+        );
+    }
 
     // `bootstrap_static` — invoked below when federation env vars are
     // set — is `NEXUS_FEDERATION_ZONES`/`_MOUNTS` driven and only

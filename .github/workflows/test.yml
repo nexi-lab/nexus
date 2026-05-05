@@ -633,8 +633,12 @@ jobs:
       - name: Boot smoke test
         run: |
           DATA_DIR=$(mktemp -d)
+          # Smoke uses static + empty peers → single-node default
+          # (creates own root 1-voter zone).  --bootstrap-mode is
+          # required since BootstrapMode validator landed.
           RUST_LOG=info ./target/release/nexusd-cluster \
-            --no-tls --data-dir "$DATA_DIR" &
+            --no-tls --data-dir "$DATA_DIR" \
+            --bootstrap-mode static &
           PID=$!
           echo "Started nexusd-cluster (PID=$PID), waiting 5s for boot…"
 

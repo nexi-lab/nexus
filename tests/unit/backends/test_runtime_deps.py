@@ -145,26 +145,232 @@ class TestCheckRuntimeDeps:
         assert "brew install xyz" in reason
 
     def test_service_dep_satisfied_when_server_available(self) -> None:
-        missing = check_runtime_deps((ServiceDep("kernel"),), server_available=True)
+        missing = check_runtime_deps((ServiceDep("token_manager"),), server_available=True)
         assert missing == []
 
     def test_service_dep_missing_when_slim(self) -> None:
-        missing = check_runtime_deps((ServiceDep("kernel"),), server_available=False)
+        missing = check_runtime_deps((ServiceDep("token_manager"),), server_available=False)
         assert len(missing) == 1
         _, reason = missing[0]
-        assert "service 'kernel'" in reason
+        assert "service 'token_manager'" in reason
         assert "full nexus install" in reason
 
-    def test_token_manager_not_in_service_map(self) -> None:
-        """``token_manager`` must not be a registered service: the auth/oauth
-        bricks are force-included in the slim wheel, so OAuth connectors
-        rely on the shipped module rather than a server-side service probe
-        (Issue #3947).  Re-introducing the entry would smuggle a
-        ``nexus.bricks`` dependency back into the slim runtime-dep path.
+    def test_token_manager_service_probe_includes_sqlalchemy(self) -> None:
+        """``token_manager`` keeps a per-module probe so legacy / third-party
+        manifests that still declare ``ServiceDep("token_manager")`` resolve
+        against the actually-shipped module rather than falling through to
+        ``_server_available()``, which would falsely report missing on slim
+        even though the auth/oauth bricks are force-included (Issue #3947).
+
+        The probe tuple lists ``sqlalchemy`` alongside the bricks module
+        because token_manager imports sqlalchemy at top level: a base slim
+        install ships the bricks file but not sqlalchemy, so a
+        presence-only probe would mark the service satisfied and the
+        consumer would hit a raw ``ModuleNotFoundError`` later.
         """
         from nexus.backends.base.runtime_deps import _SERVICE_MODULES
 
-        assert "token_manager" not in _SERVICE_MODULES
+        modules = _SERVICE_MODULES["token_manager"]
+        assert "nexus.bricks.auth.oauth.token_manager" in modules
+        assert "sqlalchemy" in modules
+
+    def test_service_dep_unsatisfied_when_partial_modules_missing(self) -> None:
+        """A multi-module service must fail when *any* module is missing —
+        otherwise consumers see a false-positive availability and crash at
+        import time on a real-world dep gap (Issue #3947).
+        """
+        from unittest.mock import patch
+
+        from nexus.backends.base.runtime_deps import _service_available
+
+        def _fake_find_spec(name: str) -> object | None:
+            # Pretend the bricks module is shipped but sqlalchemy is not —
+            # this is exactly the base-slim shape.
+            if name == "nexus.bricks.auth.oauth.token_manager":
+                return object()
+            if name == "sqlalchemy":
+                return None
+            return object()
+
+        with patch(
+            "nexus.backends.base.runtime_deps.importlib.util.find_spec",
+            side_effect=_fake_find_spec,
+        ):
+            assert not _service_available("token_manager")
+
+    def test_service_dep_reevaluates_after_install(self) -> None:
+        """Retry-after-install must work: a process that hits a missing
+        ``sqlalchemy`` once, then has it installed mid-run, must see the
+        next ``check_runtime_deps`` call report the service satisfied
+        (Issue #3947). A cached negative would freeze the bad answer.
+        """
+        from unittest.mock import patch
+
+        # Phase 1: sqlalchemy not yet installed.
+        def _missing(name: str) -> object | None:
+            if name == "sqlalchemy":
+                return None
+            return object()
+
+        with patch(
+            "nexus.backends.base.runtime_deps.importlib.util.find_spec",
+            side_effect=_missing,
+        ):
+            phase1 = check_runtime_deps((ServiceDep("token_manager"),))
+        assert phase1, "expected ServiceDep('token_manager') to be missing pre-install"
+
+        # Phase 2: same process, sqlalchemy now resolves.
+        def _present(name: str) -> object | None:
+            return object()
+
+        with patch(
+            "nexus.backends.base.runtime_deps.importlib.util.find_spec",
+            side_effect=_present,
+        ):
+            phase2 = check_runtime_deps((ServiceDep("token_manager"),))
+        assert not phase2, f"ServiceDep('token_manager') still missing after install: {phase2}"
+
+    def test_service_dep_rejects_old_sqlalchemy(self) -> None:
+        """A SQLAlchemy 1.x install is importable but missing 2.x APIs that
+        ``token_manager`` (via ``nexus.storage.models``) needs. The probe
+        must report the service missing rather than passing on presence
+        alone (Issue #3947).
+        """
+        from unittest.mock import patch
+
+        with (
+            patch(
+                "nexus.backends.base.runtime_deps.importlib.util.find_spec",
+                side_effect=lambda _name: object(),
+            ),
+            patch(
+                "nexus.backends.base.runtime_deps.importlib.metadata.version",
+                lambda dist: "1.4.49" if dist == "sqlalchemy" else "0.0",
+            ),
+        ):
+            missing = check_runtime_deps((ServiceDep("token_manager"),))
+        assert len(missing) == 1
+        _, reason = missing[0]
+        assert "sqlalchemy" in reason
+        assert ">= 2.0" in reason
+        assert "pip install 'sqlalchemy>=2.0'" in reason
+
+    def test_service_dep_accepts_sqlalchemy_2x_and_newer(self) -> None:
+        """Pinning a minimum must not lock out forward-compatible majors.
+        Both ``2.0.30`` and ``2.5.0`` should satisfy ``>= 2.0``.
+        """
+        from unittest.mock import patch
+
+        for installed in ("2.0.30", "2.5.0"):
+            with (
+                patch(
+                    "nexus.backends.base.runtime_deps.importlib.util.find_spec",
+                    side_effect=lambda _name: object(),
+                ),
+                patch(
+                    "nexus.backends.base.runtime_deps.importlib.metadata.version",
+                    lambda dist, _v=installed: _v if dist == "sqlalchemy" else "0.0",
+                ),
+            ):
+                missing = check_runtime_deps((ServiceDep("token_manager"),))
+            assert not missing, f"sqlalchemy {installed} should satisfy: {missing}"
+
+    def test_parse_version_prefix_handles_pre_release(self) -> None:
+        """Version-prefix parser must tolerate PEP 440 suffixes (rc, post,
+        dev, etc.) without failing the comparison."""
+        from nexus.backends.base.runtime_deps import _parse_version_prefix
+
+        assert _parse_version_prefix("2.0.0rc3") == (2, 0, 0)
+        assert _parse_version_prefix("2.1.dev0") == (2, 1)
+        assert _parse_version_prefix("2.0.30") == (2, 0, 30)
+        assert _parse_version_prefix("not-a-version") == ()
+
+    def test_is_prerelease_classifies_pep440_suffixes(self) -> None:
+        """PEP 440 prerelease / dev suffixes must be recognized so the
+        version probe can reject them when their numeric prefix equals
+        the required final release (Issue #3947)."""
+        from nexus.backends.base.runtime_deps import _is_prerelease
+
+        assert _is_prerelease("2.0.0rc1")
+        assert _is_prerelease("2.0.0a1")
+        assert _is_prerelease("2.0.0b1")
+        assert _is_prerelease("2.0.0.dev0")
+        assert _is_prerelease("2.0.0alpha1")
+        assert _is_prerelease("2.0.0beta1")
+        # Post-releases and local versions count as final.
+        assert not _is_prerelease("2.0.0")
+        assert not _is_prerelease("2.0.0.post1")
+        assert not _is_prerelease("2.0.0+local")
+
+    def test_service_dep_rejects_prerelease_at_minimum(self) -> None:
+        """A prerelease whose numeric prefix matches the minimum sorts
+        strictly below the final release — token_manager must reject it
+        because it might be missing 2.0 final APIs (Issue #3947).
+        """
+        from unittest.mock import patch
+
+        for prerelease in ("2.0.0rc1", "2.0.0a1", "2.0.0b1", "2.0.0.dev0"):
+            with (
+                patch(
+                    "nexus.backends.base.runtime_deps.importlib.util.find_spec",
+                    side_effect=lambda _name: object(),
+                ),
+                patch(
+                    "nexus.backends.base.runtime_deps.importlib.metadata.version",
+                    lambda dist, _v=prerelease: _v if dist == "sqlalchemy" else "0.0",
+                ),
+            ):
+                missing = check_runtime_deps((ServiceDep("token_manager"),))
+            assert missing, f"prerelease {prerelease} must not satisfy >= 2.0"
+            _, reason = missing[0]
+            assert ">= 2.0" in reason
+
+    def test_service_dep_accepts_prerelease_above_minimum(self) -> None:
+        """A prerelease whose numeric position is strictly above the
+        minimum may legitimately ship the required APIs — the probe must
+        accept it. ``2.5.0rc1`` covers next-minor; ``2.0.1rc1`` and
+        ``2.0.30rc1`` cover same-minor patch prereleases that PEP 440
+        sorts above ``2.0.0`` final (Issue #3947).
+        """
+        from unittest.mock import patch
+
+        for prerelease in ("2.5.0rc1", "2.0.1rc1", "2.0.30rc1"):
+            with (
+                patch(
+                    "nexus.backends.base.runtime_deps.importlib.util.find_spec",
+                    side_effect=lambda _name: object(),
+                ),
+                patch(
+                    "nexus.backends.base.runtime_deps.importlib.metadata.version",
+                    lambda dist, _v=prerelease: _v if dist == "sqlalchemy" else "0.0",
+                ),
+            ):
+                missing = check_runtime_deps((ServiceDep("token_manager"),))
+            assert not missing, f"prerelease {prerelease} should satisfy >= 2.0: {missing}"
+
+    def test_service_dep_reason_points_at_missing_python_dep(self) -> None:
+        """When a service probe fails because of an installable third-party
+        module (e.g. ``sqlalchemy``), the reason text must point users at
+        ``pip install <pkg>`` rather than the misleading "full nexus
+        install" message (Issue #3947).
+        """
+        from unittest.mock import patch
+
+        def _bricks_present_sqlalchemy_missing(name: str) -> object | None:
+            if name == "sqlalchemy":
+                return None
+            return object()
+
+        with patch(
+            "nexus.backends.base.runtime_deps.importlib.util.find_spec",
+            side_effect=_bricks_present_sqlalchemy_missing,
+        ):
+            missing = check_runtime_deps((ServiceDep("token_manager"),))
+        assert len(missing) == 1
+        _, reason = missing[0]
+        assert "sqlalchemy" in reason
+        assert "pip install sqlalchemy" in reason
+        assert "full nexus install" not in reason
 
     def test_aggregates_all_missing(self) -> None:
         deps: tuple[RuntimeDep, ...] = (

@@ -84,26 +84,131 @@ def _server_available() -> bool:
 
 
 # Per-service probe mapping. Each entry maps a ``ServiceDep.name`` to the
-# dotted module path that implements the service. When ``check_runtime_deps``
-# evaluates a ``ServiceDep``, it tests the specific module rather than
-# ``nexus.server`` as a whole — so a connector that only needs e.g.
-# ``record_store`` doesn't get falsely gated out when the server package
-# is present but the storage module isn't (or vice versa).
+# tuple of dotted module paths that must all resolve before the service is
+# usable. When ``check_runtime_deps`` evaluates a ``ServiceDep``, it probes
+# every module in the tuple instead of ``nexus.server`` as a whole — so a
+# connector that only needs e.g. ``token_manager`` doesn't get falsely
+# gated out when the server package is present but the auth module isn't
+# (or vice versa).
 #
 # Services without an entry here fall back to ``_server_available()``, the
 # coarser "full install present" check.
 #
-# ``token_manager`` intentionally has no entry: the auth/oauth bricks are
-# force-included into the slim wheel (see packages/nexus-fs/pyproject.toml),
-# so the OAuth connectors mount fine on slim and don't need a service gate
-# (Issue #3947).  Restoring it here would re-introduce an implicit
-# dependency on ``nexus.bricks`` from runtime dep checks, which slim is
-# explicitly trying to avoid.
-_SERVICE_MODULES: dict[str, str] = {
-    "kernel": "nexus.core.kernel",
-    "record_store": "nexus.storage.record_store",
-    "metastore": "nexus.storage",
+# ``token_manager`` keeps a per-module probe so that any external or
+# legacy connector / extension manifest that still declares
+# ``ServiceDep("token_manager")`` resolves against the auth/oauth bricks
+# that the slim wheel force-includes (see packages/nexus-fs/pyproject.toml)
+# — the probe must not fall through to the coarser server-runtime check
+# (Issue #3947). The probe tuple also lists ``sqlalchemy`` because the
+# token_manager module imports it at top level: a base slim install ships
+# the bricks file but not sqlalchemy (it lives in the OAuth connector
+# extras), so a presence-only probe would falsely report the service
+# satisfied and the consumer would hit a raw ``ModuleNotFoundError`` at
+# instantiation time. Built-in OAuth manifest entries no longer carry this
+# ServiceDep — their PythonDep gates already cover what slim users see —
+# but the mapping stays so third-party plugins keep working.
+_SERVICE_MODULES: dict[str, tuple[str, ...]] = {
+    "token_manager": ("nexus.bricks.auth.oauth.token_manager", "sqlalchemy"),
+    "kernel": ("nexus.core.kernel",),
+    "record_store": ("nexus.storage.record_store",),
+    "metastore": ("nexus.storage",),
 }
+
+
+# Minimum installed-distribution versions per service. Each entry maps
+# ``ServiceDep.name`` → ``{distribution_name: (major, minor, ...)}``. A
+# service that lists a distribution here is satisfied only when the
+# matching entry from ``importlib.metadata.version`` parses to a tuple
+# ``>= min_version``. ``find_spec`` alone cannot distinguish SQLAlchemy
+# 1.x (compatible API gone) from 2.x — token_manager imports
+# ``nexus.storage.models`` which uses ``sqlalchemy.orm.mapped_column``
+# and other 2.x-only symbols, so a SQLAlchemy 1.x install would pass the
+# presence probe and crash at import time. Pinning the minimum here
+# turns that into a clean ``MissingDependencyError`` (Issue #3947).
+_SERVICE_MIN_VERSIONS: dict[str, dict[str, tuple[int, ...]]] = {
+    "token_manager": {"sqlalchemy": (2, 0)},
+}
+
+
+def _parse_version_prefix(text: str) -> tuple[int, ...]:
+    """Parse a leading dotted-int prefix from a PEP 440 version string.
+
+    Returns ``(major, minor, patch, ...)`` for whatever leading
+    integer-only segments exist (``"2.0.30"`` → ``(2, 0, 30)``,
+    ``"2.0.0rc3"`` → ``(2, 0, 0)``). Non-integer / pre-release / post-
+    release suffixes stop parsing — we only need the comparable numeric
+    head for our minimum-version probes, and pulling in ``packaging`` as
+    a slim base dep would inflate the wheel for one comparison.
+    """
+    parts: list[int] = []
+    for chunk in text.split("."):
+        digits = ""
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def _is_prerelease(text: str) -> bool:
+    """Return True for PEP 440 prerelease / dev versions.
+
+    Per PEP 440, ``X.Y.Z<marker>`` (e.g. ``2.0.0rc1``, ``2.0.0a3``,
+    ``2.0.0.dev0``) sorts strictly **before** the corresponding final
+    release ``X.Y.Z``. Post-releases (``X.Y.Z.postN``) and local
+    versions (``X.Y.Z+local``) sort at-or-after the final, so they are
+    not flagged here. We avoid pulling in ``packaging`` to keep the
+    slim wheel's base dependency list thin.
+    """
+    i = 0
+    while i < len(text) and (text[i].isdigit() or text[i] == "."):
+        i += 1
+    suffix = text[i:].lower()
+    if not suffix:
+        return False
+    if suffix.startswith("+"):
+        return False
+    if suffix.startswith("post"):
+        return False
+    if suffix.startswith("dev"):
+        return True
+    return suffix[0].isalpha()
+
+
+def _meets_min_version(distribution: str, minimum: tuple[int, ...]) -> bool:
+    """Return True when ``distribution`` reports a version ≥ ``minimum``.
+
+    Returns False on lookup / parse failure so the service is reported
+    missing rather than silently passing an unverifiable install.
+    Prereleases of the minimum (e.g. ``2.0.0rc1`` against minimum
+    ``(2, 0)``) are rejected — they sort strictly below the final
+    release and may lack the APIs the consumer expects (Issue #3947).
+    """
+    try:
+        installed_text = importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    installed = _parse_version_prefix(installed_text)
+    if not installed:
+        return False
+    # Normalize both sides with trailing zeros so PEP 440 implicit-zero
+    # padding lines up: minimum ``(2, 0)`` means the same release as
+    # ``2.0.0``, so an installed ``(2, 0, 0)`` must compare equal to it.
+    width = max(len(installed), len(minimum))
+    installed_padded = installed + (0,) * (width - len(installed))
+    minimum_padded = minimum + (0,) * (width - len(minimum))
+    if _is_prerelease(installed_text):
+        # Prerelease X.Y.Z<marker> sorts strictly below X.Y.Z final, so
+        # require strict greater-than the minimum:
+        #   * 2.0.0rc1  → (2, 0, 0) ≯ (2, 0, 0) → reject
+        #   * 2.0.1rc1  → (2, 0, 1) >  (2, 0, 0) → accept (already past 2.0.0)
+        #   * 2.5.0rc1  → (2, 5, 0) >  (2, 0, 0) → accept
+        return installed_padded > minimum_padded
+    return installed_padded >= minimum_padded
 
 
 @functools.cache
@@ -129,16 +234,37 @@ def _nexus_fs_extras_available() -> bool:
     return dist_set == {"nexus-fs"}
 
 
-@functools.cache
 def _service_available(name: str) -> bool:
-    """Return True when the named service's implementing module is importable."""
-    module_path = _SERVICE_MODULES.get(name)
-    if module_path is None:
+    """Return True when the named service's implementing modules are importable.
+
+    Every module listed in ``_SERVICE_MODULES[name]`` must resolve **and**
+    every distribution in ``_SERVICE_MIN_VERSIONS[name]`` must report a
+    version ≥ its minimum for the service to count as available. Services
+    without an entry fall back to ``_server_available()``, the coarser
+    "full install present" check.
+
+    The result is intentionally **not** cached: a service probe may include
+    an installable third-party dep (e.g. ``sqlalchemy`` for the token
+    manager) which can appear mid-process when users ``pip install`` an
+    OAuth extra. Caching would freeze the negative answer and break the
+    retry-after-install path. The fallback ``_server_available`` is still
+    cached because ``nexus.server`` cannot appear without a process
+    restart (Issue #3947).
+    """
+    module_paths = _SERVICE_MODULES.get(name)
+    if module_paths is None:
         return _server_available()
-    try:
-        return importlib.util.find_spec(module_path) is not None
-    except (ImportError, ModuleNotFoundError, ValueError):
-        return False
+    for module_path in module_paths:
+        try:
+            spec = importlib.util.find_spec(module_path)
+        except (ImportError, ModuleNotFoundError, ValueError):
+            return False
+        if spec is None:
+            return False
+    for distribution, minimum in _SERVICE_MIN_VERSIONS.get(name, {}).items():
+        if not _meets_min_version(distribution, minimum):
+            return False
+    return True
 
 
 def check_runtime_deps(
@@ -190,14 +316,49 @@ def check_runtime_deps(
                     server_available if server_available is not None else _service_available(name)
                 )
                 if not available:
-                    missing.append(
-                        (
-                            dep,
-                            f"service '{name}': requires a full nexus install "
-                            f"(slim wheel has no server runtime)",
-                        )
-                    )
+                    missing.append((dep, _service_dep_reason(name, server_available)))
     return missing
+
+
+def _service_dep_reason(name: str, server_available_override: bool | None) -> str:
+    """Build a human-readable reason for a missing ``ServiceDep``.
+
+    When the override forces unavailability, the failure is by definition
+    "no server runtime" so the legacy message stands. Otherwise, identify
+    the specific module that didn't resolve. If it looks like an
+    installable third-party package (no ``nexus.`` prefix), point the user
+    at ``pip install <pkg>``; otherwise fall back to the "requires a full
+    nexus install" message that matches the existing semantics for
+    server-only services (Issue #3947).
+    """
+    if server_available_override is False:
+        return f"service '{name}': requires a full nexus install (slim wheel has no server runtime)"
+    module_paths = _SERVICE_MODULES.get(name)
+    if module_paths:
+        for module_path in module_paths:
+            try:
+                spec = importlib.util.find_spec(module_path)
+            except (ImportError, ModuleNotFoundError, ValueError):
+                spec = None
+            if spec is None:
+                if not module_path.startswith("nexus."):
+                    return (
+                        f"service '{name}': missing python '{module_path}' — "
+                        f"install with: pip install {module_path}"
+                    )
+                return (
+                    f"service '{name}': missing module '{module_path}' "
+                    f"(requires a full nexus install)"
+                )
+        for distribution, minimum in _SERVICE_MIN_VERSIONS.get(name, {}).items():
+            if not _meets_min_version(distribution, minimum):
+                spec_str = ".".join(str(part) for part in minimum)
+                return (
+                    f"service '{name}': '{distribution}' version too old "
+                    f"(need >= {spec_str}) — "
+                    f"install with: pip install '{distribution}>={spec_str}'"
+                )
+    return f"service '{name}': requires a full nexus install (slim wheel has no server runtime)"
 
 
 __all__ = [

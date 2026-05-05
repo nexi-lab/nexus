@@ -2813,6 +2813,18 @@ class SearchDaemon:
                 continue
             if await self._reconciliation_completed(name):
                 continue
+            # Codex round-2: gate marker on the consumer's backend being
+            # live. If the backend hasn't initialized yet (transient
+            # startup failure), the handler would early-return without
+            # work — marking it reconciled would permanently close the
+            # recovery path on next restart.
+            if not self._consumer_backend_ready(name):
+                logger.info(
+                    "Startup reconciliation: backend for %s not ready, "
+                    "deferring — marker will not be set",
+                    name,
+                )
+                continue
             pending.append((name, handler))
 
         if not pending:
@@ -2847,6 +2859,24 @@ class SearchDaemon:
                 )
                 continue
             await self._mark_reconciliation_completed(name)
+
+    def _consumer_backend_ready(self, consumer_name: str) -> bool:
+        """Whether ``consumer_name``'s backend is live enough to do real work.
+
+        Mirrors the early-return guards in each ``_consume_*_mutations``
+        handler. Needed by ``_reconcile_unindexed_paths_at_startup`` so
+        we don't write a reconciliation marker for a consumer whose
+        handler would silently no-op (Codex round-2).
+        """
+        if consumer_name == "bm25":
+            return self._bm25s_index is not None
+        if consumer_name == "fts":
+            return self._chunk_store is not None
+        if consumer_name == "embedding":
+            return self._indexing_pipeline is not None and self._embedding_provider is not None
+        if consumer_name == "txtai":
+            return self._backend is not None
+        return False
 
     async def _fetch_unindexed_path_events(self) -> list[SearchMutationEvent]:
         """Synthesize UPSERT events for live ``file_paths`` rows missing/stale chunks."""

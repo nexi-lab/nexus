@@ -439,6 +439,20 @@ def _set_all_reconciled(settings_store: _SettingsStore, names: tuple[str, ...]) 
         settings_store.set_setting(f"search_mutation_reconciled_v1:{name}", "1")
 
 
+def _enable_all_backends(daemon: SearchDaemon) -> None:
+    """Make every consumer's backend live so reconciliation pre-checks pass.
+
+    Codex round-2: ``_consumer_backend_ready`` gates marker writes on
+    backend presence. Tests covering the success path need the backends
+    set, otherwise reconciliation skips the consumer and no handler runs.
+    """
+    daemon._bm25s_index = AsyncMock()
+    daemon._chunk_store = AsyncMock()
+    daemon._indexing_pipeline = AsyncMock()
+    daemon._embedding_provider = object()
+    daemon._backend = AsyncMock()
+
+
 def _make_session_factory(rows: list[tuple[str, str, str]]):
     class _FakeSession:
         async def __aenter__(self):
@@ -488,6 +502,7 @@ async def test_reconcile_unindexed_paths_runs_handlers_with_synthesized_events()
     settings_store = _SettingsStore()
     daemon = SearchDaemon(settings_store=settings_store)
     daemon._consumer_names = ("bm25", "fts", "embedding", "txtai")
+    _enable_all_backends(daemon)
     daemon._async_session = _make_session_factory(
         [("root", "/foo.md", "pid-1"), ("zone-b", "/bar.md", "pid-2")]
     )
@@ -528,6 +543,7 @@ async def test_reconcile_runs_when_marker_unset_even_with_existing_checkpoint() 
 
     daemon = SearchDaemon(settings_store=settings_store)
     daemon._consumer_names = ("bm25", "fts", "embedding", "txtai")
+    _enable_all_backends(daemon)
     daemon._async_session = _make_session_factory([("root", "/foo.md", "pid-1")])
     daemon._consume_bm25_mutations = AsyncMock()
     daemon._consume_fts_mutations = AsyncMock()
@@ -549,6 +565,7 @@ async def test_reconcile_skips_marker_when_handler_fails() -> None:
     settings_store = _SettingsStore()
     daemon = SearchDaemon(settings_store=settings_store)
     daemon._consumer_names = ("bm25", "fts", "embedding", "txtai")
+    _enable_all_backends(daemon)
     daemon._async_session = _make_session_factory([("root", "/foo.md", "pid-1")])
     daemon._consume_bm25_mutations = AsyncMock(side_effect=RuntimeError("bm25 down"))
     daemon._consume_fts_mutations = AsyncMock()
@@ -565,11 +582,46 @@ async def test_reconcile_skips_marker_when_handler_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_skips_marker_when_backend_not_ready() -> None:
+    """Codex round-2 finding: a consumer whose backend is None must NOT
+    get its marker set. Otherwise a transient backend init failure on
+    first start permanently closes the recovery path on next restart."""
+    settings_store = _SettingsStore()
+    daemon = SearchDaemon(settings_store=settings_store)
+    daemon._consumer_names = ("bm25", "fts", "embedding", "txtai")
+    # Backends start unset on a fresh SearchDaemon; only enable some.
+    daemon._chunk_store = AsyncMock()  # fts ready
+    daemon._backend = AsyncMock()  # txtai ready
+    # bm25 (_bm25s_index) and embedding (_indexing_pipeline /
+    # _embedding_provider) remain None → not ready.
+    daemon._async_session = _make_session_factory([("root", "/foo.md", "pid-1")])
+    daemon._consume_bm25_mutations = AsyncMock()
+    daemon._consume_fts_mutations = AsyncMock()
+    daemon._consume_embedding_mutations = AsyncMock()
+    daemon._consume_txtai_mutations = AsyncMock()
+
+    await daemon._reconcile_unindexed_paths_at_startup()
+
+    # Ready backends ran AND got their markers.
+    daemon._consume_fts_mutations.assert_awaited_once()
+    daemon._consume_txtai_mutations.assert_awaited_once()
+    assert settings_store.get_setting("search_mutation_reconciled_v1:fts") is not None
+    assert settings_store.get_setting("search_mutation_reconciled_v1:txtai") is not None
+    # Unready backends: handler NOT invoked AND no marker set, so a
+    # later restart with the backend up will recover the unindexed files.
+    daemon._consume_bm25_mutations.assert_not_awaited()
+    daemon._consume_embedding_mutations.assert_not_awaited()
+    assert settings_store.get_setting("search_mutation_reconciled_v1:bm25") is None
+    assert settings_store.get_setting("search_mutation_reconciled_v1:embedding") is None
+
+
+@pytest.mark.asyncio
 async def test_reconcile_marks_consumers_when_no_unindexed_rows() -> None:
     """Empty result set still records markers, so warm starts skip the SQL scan."""
     settings_store = _SettingsStore()
     daemon = SearchDaemon(settings_store=settings_store)
     daemon._consumer_names = ("bm25", "fts", "embedding", "txtai")
+    _enable_all_backends(daemon)
     daemon._async_session = _make_session_factory([])
     daemon._consume_bm25_mutations = AsyncMock()
     daemon._consume_fts_mutations = AsyncMock()

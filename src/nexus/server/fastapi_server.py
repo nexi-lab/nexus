@@ -71,6 +71,12 @@ logger = logging.getLogger(__name__)
 # Module-level limiter instance; initialized in create_app().
 limiter: Limiter
 
+
+def _rate_limit_enabled_from_env() -> bool:
+    """Return whether HTTP rate limiting was explicitly enabled."""
+    return os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in ("1", "true", "yes")
+
+
 # ============================================================================
 # Thread Pool Utilities (Issue #932)
 # ============================================================================
@@ -580,11 +586,7 @@ def create_app(
     import nexus.server.rate_limiting as _rate_limiting_mod
 
     global limiter
-    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "true").lower() not in (
-        "false",
-        "0",
-        "no",
-    )
+    rate_limit_enabled = _rate_limit_enabled_from_env()
     from nexus.lib.env import get_dragonfly_url, get_redis_url
 
     redis_url = get_redis_url() or get_dragonfly_url()

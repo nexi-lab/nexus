@@ -41,12 +41,43 @@ def check_api_key(database_url: str, api_key: str) -> str:
         key_hash = DatabaseAPIKeyAuth._hash_key(api_key)
 
         with SessionFactory() as session:
-            result = session.execute(
-                text("SELECT 1 FROM api_keys WHERE key_hash = :hash"),
+            row = session.execute(
+                text(
+                    """
+                    SELECT key_id, zone_id, is_admin, revoked
+                    FROM api_keys
+                    WHERE key_hash = :hash
+                    """
+                ),
                 {"hash": key_hash},
             ).fetchone()
 
-            return "EXISTS" if result else "MISSING"
+            if not row or int(row.revoked or 0) != 0:
+                return "MISSING"
+
+            if row.zone_id is not None:
+                matching_zone = session.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM api_key_zones
+                        WHERE key_id = :key_id AND zone_id = :zone_id
+                        """
+                    ),
+                    {"key_id": row.key_id, "zone_id": row.zone_id},
+                ).fetchone()
+                if not matching_zone:
+                    return "MISSING"
+
+            if int(row.is_admin or 0) == 0:
+                any_zone = session.execute(
+                    text("SELECT 1 FROM api_key_zones WHERE key_id = :key_id"),
+                    {"key_id": row.key_id},
+                ).fetchone()
+                if not any_zone:
+                    return "MISSING"
+
+            return "EXISTS"
     except Exception:
         return "MISSING"
 

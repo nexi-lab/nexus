@@ -80,8 +80,8 @@ services:
       NEXUS_PORT: "2026"
       NEXUS_DATA_DIR: /app/data
       NEXUS_MODE: standalone
-      # Rate limiting uses Dragonfly — disable if connection issues cause 500s
-      NEXUS_RATE_LIMIT_ENABLED: ${NEXUS_RATE_LIMIT_ENABLED:-true}
+      # Rate limiting uses Dragonfly when explicitly enabled.
+      NEXUS_RATE_LIMIT_ENABLED: ${NEXUS_RATE_LIMIT_ENABLED:-false}
       # Database
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}

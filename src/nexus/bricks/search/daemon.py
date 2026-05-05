@@ -2730,8 +2730,49 @@ class SearchDaemon:
         await self._save_consumer_checkpoint(consumer_name, max_sequence)
         return max_sequence
 
+    def _reconciliation_marker_key(self, consumer_name: str) -> str:
+        """Distinct namespace from ``_checkpoint_key`` so a snapped checkpoint
+        on its own does NOT imply reconciliation has run (Codex round-1)."""
+        return f"search_mutation_reconciled_v1:{consumer_name}"
+
+    async def _reconciliation_completed(self, consumer_name: str) -> bool:
+        if self._settings_store is not None:
+            try:
+                setting = self._settings_store.get_setting(
+                    self._reconciliation_marker_key(consumer_name)
+                )
+                if setting is not None:
+                    return True
+            except Exception as exc:
+                logger.warning(
+                    "Reconciliation marker read falling back to file storage: %s",
+                    exc,
+                )
+        async with self._checkpoint_lock:
+            checkpoints = await self._load_checkpoint_file()
+        return self._reconciliation_marker_key(consumer_name) in checkpoints
+
+    async def _mark_reconciliation_completed(self, consumer_name: str) -> None:
+        if self._settings_store is not None:
+            try:
+                self._settings_store.set_setting(
+                    self._reconciliation_marker_key(consumer_name),
+                    "1",
+                    description=f"Search reconciliation completed for {consumer_name}",
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Reconciliation marker write falling back to file storage: %s",
+                    exc,
+                )
+        async with self._checkpoint_lock:
+            checkpoints = await self._load_checkpoint_file()
+            checkpoints[self._reconciliation_marker_key(consumer_name)] = 1
+            await self._write_checkpoint_file(checkpoints)
+
     async def _reconcile_unindexed_paths_at_startup(self) -> None:
-        """Index live files that pre-date the daemon's first start (#4016).
+        """Index live files that pre-date the daemon's first reconciliation (#4016).
 
         On first start, ``_initialize_consumer_checkpoint`` skips past every
         historical write by capturing ``MAX(operation_log.sequence_number)``.
@@ -2740,9 +2781,17 @@ class SearchDaemon:
         else touches them (a manual ``semantic_search_index`` call, a fresh
         write to the same path, or a mount-content scan).
 
-        Skipped on warm starts: if ANY consumer has a persisted checkpoint,
-        historical writes have already been processed (or explicitly
-        skipped) and re-running reconciliation would duplicate work.
+        Idempotent and per-consumer (Codex round-1):
+        - Each consumer carries a ``search_mutation_reconciled_v1:<name>``
+          marker, separate from its mutation checkpoint. Reconciliation
+          runs whenever any consumer is missing the marker — even if its
+          mutation checkpoint has already snapped to MAX. This is critical
+          for the upgrade path: deployments running a prior version
+          already have checkpoints from the buggy MAX-snap, but no marker,
+          so they STILL recover their unindexed live files on the first
+          start with this fix.
+        - A handler that raises does NOT set its marker. The next daemon
+          start retries the same set of unindexed paths for that consumer.
 
         Replay-from-zero is intentionally rejected — the issue (#4016) calls
         out the rename/delete churn and historical-replay cost. Synthesizing
@@ -2751,34 +2800,53 @@ class SearchDaemon:
         if self._async_session is None or not self._consumer_names:
             return
 
+        handlers_by_name: dict[str, Any] = {
+            "bm25": self._consume_bm25_mutations,
+            "fts": self._consume_fts_mutations,
+            "embedding": self._consume_embedding_mutations,
+            "txtai": self._consume_txtai_mutations,
+        }
+        pending: list[tuple[str, Any]] = []
         for name in self._consumer_names:
-            if await self._read_persisted_checkpoint(name) is not None:
-                return
+            handler = handlers_by_name.get(name)
+            if handler is None:
+                continue
+            if await self._reconciliation_completed(name):
+                continue
+            pending.append((name, handler))
+
+        if not pending:
+            return
 
         events = await self._fetch_unindexed_path_events()
         if not events:
+            # No unindexed live files — nothing to recover. Mark all
+            # pending consumers reconciled so we don't re-scan on every
+            # warm start.
+            for name, _ in pending:
+                await self._mark_reconciliation_completed(name)
             return
 
         logger.info(
-            "Search startup reconciliation: replaying %d unindexed live file(s).",
+            "Search startup reconciliation: replaying %d unindexed live "
+            "file(s) for %d consumer(s) (%s).",
             len(events),
+            len(pending),
+            ",".join(name for name, _ in pending),
         )
 
-        handlers = (
-            self._consume_bm25_mutations,
-            self._consume_fts_mutations,
-            self._consume_embedding_mutations,
-            self._consume_txtai_mutations,
-        )
-        for handler in handlers:
+        for name, handler in pending:
             try:
                 await handler(events)
             except Exception as exc:
                 logger.warning(
-                    "Startup reconciliation handler %s failed: %s",
-                    handler.__name__,
+                    "Startup reconciliation handler %s failed: %s — "
+                    "marker not set, will retry on next daemon start",
+                    name,
                     exc,
                 )
+                continue
+            await self._mark_reconciliation_completed(name)
 
     async def _fetch_unindexed_path_events(self) -> list[SearchMutationEvent]:
         """Synthesize UPSERT events for live ``file_paths`` rows missing/stale chunks."""

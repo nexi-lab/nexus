@@ -846,13 +846,43 @@ class SearchDaemon:
             self._backend = None
         self._txtai_bootstrapped = False
 
-        # Close database connections (only if we created them)
+        # Close database connections (only if we created them).
+        # Issue #3775: aclose() disposes async engines on this loop (their
+        # origin); close() then disposes the sync engine. Daemon owns no
+        # close-callback chain so the two can run back-to-back. Wrap aclose
+        # in try/finally so a dispose failure does not abort the rest of
+        # teardown (sync close, daemon state clear, path-context cleanup) —
+        # otherwise _shutting_down stays set and a retry early-exits, making
+        # this a persistent leak.
         if self._owns_engine:
             if self._record_store is not None:
-                self._record_store.close()
-                self._record_store = None
+                aclose_fn = getattr(self._record_store, "aclose", None)
+                try:
+                    if aclose_fn is not None:
+                        await aclose_fn()
+                except Exception:
+                    logger.warning(
+                        "record_store.aclose failed during daemon shutdown; "
+                        "continuing with sync close",
+                        exc_info=True,
+                    )
+                finally:
+                    try:
+                        self._record_store.close()
+                    except Exception:
+                        logger.warning(
+                            "record_store.close failed during daemon shutdown",
+                            exc_info=True,
+                        )
+                    self._record_store = None
             elif self._async_engine:
-                await self._async_engine.dispose()
+                try:
+                    await self._async_engine.dispose()
+                except Exception:
+                    logger.warning(
+                        "async_engine.dispose failed during daemon shutdown",
+                        exc_info=True,
+                    )
         self._async_engine = None
         self._async_session = None
 

@@ -826,6 +826,14 @@ class NexusFS(  # type: ignore[misc]
 
         Calls kernel lifecycle methods first, then
         delegates to close() for sync resource cleanup.
+
+        Sync rather than async because ``kernel.service_stop_all`` invokes
+        ``asyncio.run()`` for Python BackgroundService coroutines, which
+        cannot run on an already-active loop. The FastAPI lifespan dispatches
+        this via ``run_in_executor`` for that reason. To dispose async DB
+        engines on the lifespan loop (Issue #3775), call
+        :meth:`adispose_async_engines` *before* dispatching ``aclose`` to a
+        worker thread.
         """
         # Issue #3391: drain deferred OBSERVE background tasks before tearing down.
         self.shutdown()
@@ -839,6 +847,41 @@ class NexusFS(  # type: ignore[misc]
                     _unregister_hooks_for_spec(self, spec)
             self._hook_specs.clear()
         self.close()
+
+    async def adispose_async_engines(self) -> None:
+        """Dispose record store's async DB engines on the current loop (Issue #3775).
+
+        Async engines hold asyncpg connections whose pending futures are
+        bound to the loop that created the pool. Disposing via
+        ``sync_engine.dispose()`` from a worker thread (where ``close()`` runs)
+        await-only's into a different loop, producing
+        ``RuntimeError: Future attached to a different loop`` and leaks
+        connections (asyncpg ``InternalClientError``).
+
+        Disposes **only** the async engines. The record store stays attached
+        and its sync engine usable so that ``NexusFS.close()`` callbacks
+        (e.g. write observer ``flush_sync``) can still write through the sync
+        ``session_factory``. Sync engine teardown happens later in
+        ``record_store.close()`` *after* those callbacks have run.
+
+        FastAPI lifespan must await this on its own loop before dispatching
+        ``aclose`` to a worker thread. Failure preserves the store and is
+        logged at warning level; the subsequent sync ``close()`` will still
+        run callbacks and attempt best-effort sync dispose of the (still
+        live) async engine — better than silently orphaning the store.
+        """
+        if self._record_store is None:
+            return
+        aclose_fn = getattr(self._record_store, "aclose", None)
+        if aclose_fn is None:
+            return  # legacy store without aclose — close() will handle sync dispose
+        try:
+            await aclose_fn()
+        except Exception:
+            logger.warning(
+                "record_store.aclose failed; sync close() will attempt fallback",
+                exc_info=True,
+            )
 
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 

@@ -304,6 +304,11 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         self._async_engine: Any = None
         self._async_session_factory_instance: Any = None
         self._async_init_lock = threading.Lock()
+        # Issue #3775: set after aclose() to block lazy re-creation of async
+        # engines via the factory property — otherwise a stale consumer
+        # holding ``record_store.async_session_factory`` would silently
+        # rebuild a fresh asyncpg pool that nothing later disposes.
+        self._async_closed: bool = False
 
         # Read replica engine/session (Issue #725)
         self._read_engine: Any = None
@@ -546,6 +551,14 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             with self._async_init_lock:
                 # Double-check after acquiring lock
                 if self._async_session_factory_instance is None:
+                    if self._async_closed:
+                        # Issue #3775: post-aclose, refuse to rebuild a pool
+                        # that no shutdown path will dispose.
+                        raise RuntimeError(
+                            "SQLAlchemyRecordStore.async_session_factory accessed "
+                            "after aclose(); the async engine has been disposed. "
+                            "Construct a new RecordStore for further async use."
+                        )
                     from sqlalchemy.ext.asyncio import (
                         AsyncSession,
                         async_sessionmaker,
@@ -650,6 +663,14 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             with self._async_read_init_lock:
                 # Double-check after acquiring lock
                 if self._async_read_session_factory_instance is None:
+                    if self._async_closed:
+                        # Issue #3775: post-aclose, refuse to rebuild a pool
+                        # that no shutdown path will dispose.
+                        raise RuntimeError(
+                            "SQLAlchemyRecordStore.async_read_session_factory accessed "
+                            "after aclose(); the async read engine has been disposed. "
+                            "Construct a new RecordStore for further async use."
+                        )
                     from sqlalchemy.ext.asyncio import (
                         AsyncSession,
                         async_sessionmaker,
@@ -796,17 +817,29 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         caller must subsequently invoke :meth:`close` to dispose sync engines
         once those callbacks have run.
 
+        Sets ``_async_closed = True`` so subsequent property access raises
+        rather than silently rebuilding a pool that nothing will dispose.
+        SQLAlchemy ``Engine.dispose()`` only clears the pool — the engine
+        remains usable and would lazily build a fresh pool on next checkout.
+
+        The async engine references are **retained** (not nulled) after
+        dispose so that ``close()`` can re-dispose them if any retained
+        ``async_sessionmaker`` reference checked out a connection between
+        ``aclose`` and the final ``close``. (External consumers that cached
+        the factory from before aclose can still call into the engine; the
+        sentinel only protects fresh property accesses.)
+
         Must be awaited from the same loop that created the async engine
         (typically the loop that first accessed ``async_session_factory``);
         calling from a different loop reproduces the original cross-loop bug.
         """
+        # Set the sentinel first so that even a dispose failure leaves the
+        # store unable to silently re-create a new pool via the property.
+        self._async_closed = True
         if self._async_engine is not None:
             await self._async_engine.dispose()
-            self._async_engine = None
-            self._async_session_factory_instance = None
+            # Retain ref — close() will re-dispose to catch reopened pools.
         if self._async_read_engine is not None:
             await self._async_read_engine.dispose()
-            self._async_read_engine = None
-            self._async_read_session_factory_instance = None
 
         logger.info("SQLAlchemyRecordStore async engines disposed")

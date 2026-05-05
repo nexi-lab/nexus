@@ -407,7 +407,13 @@ class TestRecordStoreLifecycle:
         ``_async_engine.sync_engine.dispose()`` which await-only'd onto a
         possibly-different loop, producing
         ``RuntimeError: Future attached to a different loop`` on shutdown.
+
+        The engine reference is retained (not nulled) so a subsequent
+        ``close()`` can re-dispose any pool that consumers with a cached
+        ``async_sessionmaker`` reopened between aclose and close.
         """
+        from sqlalchemy.ext.asyncio import AsyncEngine
+
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         store = SQLAlchemyRecordStore(create_tables=False)
@@ -416,8 +422,30 @@ class TestRecordStoreLifecycle:
         assert store._async_engine is not None
 
         await store.aclose()
-        assert store._async_engine is None
-        assert store._async_session_factory_instance is None
+        # Sentinel is set; engine ref retained for re-dispose in close().
+        assert store._async_closed is True
+        assert isinstance(store._async_engine, AsyncEngine)
+
+    @pytest.mark.asyncio
+    async def test_async_session_factory_raises_after_aclose(self):
+        """Property must raise after aclose so callers cannot rebuild a pool.
+
+        SQLAlchemy ``Engine.dispose()`` does not render an engine unusable —
+        the next checkout silently builds a fresh pool. Without this guard,
+        a stale consumer holding ``record_store.async_session_factory``
+        would create connections nothing later disposes (Issue #3775).
+        """
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        store = SQLAlchemyRecordStore(create_tables=False)
+        _ = store.async_session_factory  # warm
+        await store.aclose()
+
+        # The cached factory ref still exists, but fresh property access raises.
+        # First clear the cache to simulate a consumer that lost its handle.
+        store._async_session_factory_instance = None
+        with pytest.raises(RuntimeError, match="after aclose"):
+            _ = store.async_session_factory
 
     @pytest.mark.asyncio
     async def test_aclose_leaves_sync_engine_usable(self):

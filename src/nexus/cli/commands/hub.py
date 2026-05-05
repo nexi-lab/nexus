@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -728,6 +729,7 @@ def _read_redis_detail_stats(zone_ids: list[str]) -> dict[str, Any]:
     except ImportError:
         return empty
 
+    client = None
     try:
         client = redis.from_url(url, socket_timeout=2)
         client.ping()
@@ -756,6 +758,10 @@ def _read_redis_detail_stats(zone_ids: list[str]) -> dict[str, Any]:
         }
     except Exception:  # noqa: BLE001
         return empty
+    finally:
+        if client is not None:
+            with suppress(Exception):
+                client.close()
 
 
 def _collect_status_detail(

@@ -599,9 +599,13 @@ def test_read_redis_detail_stats_aggregates_zone_and_rate_limit_counts(monkeypat
         def __init__(self):
             self.mget_calls = []
             self.scard_calls = []
+            self.closed = False
 
         def ping(self):
             return True
+
+        def close(self):
+            self.closed = True
 
         def mget(self, keys):
             self.mget_calls.append(keys)
@@ -635,6 +639,7 @@ def test_read_redis_detail_stats_aggregates_zone_and_rate_limit_counts(monkeypat
         "window_seconds": 300,
         "hits_by_tier": {"anonymous": 2, "authenticated": 4, "premium": 0},
     }
+    assert fake.closed is True
 
 
 def test_hub_status_detail_flag_is_accepted(monkeypatch):

@@ -454,6 +454,7 @@ impl NexusFs {
             cache.invalidate(path);
         }
 
+        // Invalidate open-handle content caches for this path.
         self.open_file_cache.lock().unwrap().invalidate_path(path);
     }
 
@@ -1468,5 +1469,40 @@ mod tests {
         assert_eq!(removed, Some(inode));
         assert_eq!(table.peek_inode("/to-delete"), None);
         assert_eq!(table.get_path(inode), None);
+    }
+
+    #[test]
+    fn test_open_file_cache_rejects_file_over_byte_budget() {
+        let mut cache = OpenFileCache::new(NonZeroUsize::new(4).unwrap(), 8);
+        cache.put(1, "/big.bin".to_string(), vec![0; 9]);
+
+        assert!(cache.get(&1).is_none());
+        assert_eq!(cache.total_bytes, 0);
+    }
+
+    #[test]
+    fn test_open_file_cache_evicts_to_byte_budget() {
+        let mut cache = OpenFileCache::new(NonZeroUsize::new(4).unwrap(), 8);
+        cache.put(1, "/a.bin".to_string(), vec![0; 4]);
+        cache.put(2, "/b.bin".to_string(), vec![0; 4]);
+        cache.put(3, "/c.bin".to_string(), vec![0; 4]);
+
+        assert!(cache.get(&1).is_none());
+        assert!(cache.get(&2).is_some());
+        assert!(cache.get(&3).is_some());
+        assert_eq!(cache.total_bytes, 8);
+    }
+
+    #[test]
+    fn test_open_file_cache_remove_updates_byte_count() {
+        let mut cache = OpenFileCache::new(NonZeroUsize::new(4).unwrap(), 16);
+        cache.put(1, "/a.bin".to_string(), vec![0; 4]);
+        cache.put(2, "/b.bin".to_string(), vec![0; 6]);
+
+        cache.remove(1);
+
+        assert!(cache.get(&1).is_none());
+        assert!(cache.get(&2).is_some());
+        assert_eq!(cache.total_bytes, 6);
     }
 }

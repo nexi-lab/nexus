@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nexus-hub.mcpFrontendName" . }}
+  labels:
+    {{- include "nexus-hub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-frontend
+spec:
+  replicas: {{ .Values.mcpFrontend.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "nexus-hub.selectorLabels" (dict "root" . "component" "mcp-frontend") | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.mcpFrontend.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "nexus-hub.selectorLabels" (dict "root" . "component" "mcp-frontend") | nindent 8 }}
+        {{- with .Values.mcpFrontend.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: mcp-frontend
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - nexus
+            - mcp
+            - serve
+            - --transport
+            - http
+            - --host
+            - 0.0.0.0
+            - --port
+            - {{ .Values.service.mcpPort | quote }}
+          env:
+            - name: NEXUS_URL
+              value: "http://{{ include "nexus-hub.nexusName" . }}:{{ .Values.service.nexusHttpPort }}"
+            - name: NEXUS_REDIS_URL
+{{ if and (not .Values.redis.internal.enabled) .Values.redis.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.external.existingSecret }}
+                  key: {{ .Values.redis.external.existingSecretUrlKey }}
+{{ else }}
+              value: {{ include "nexus-hub.redisUrl" . | quote }}
+{{ end }}
+            - name: NEXUS_GRPC_ALLOW_INSECURE
+              value: "true"
+            - name: NEXUS_MCP_REQUIRE_BEARER
+              value: "true"
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.mcpPort }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.mcpFrontend.resources | nindent 12 }}
+      {{- with .Values.mcpFrontend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mcpFrontend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mcpFrontend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -224,6 +224,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "notify",  # Internal - OBSERVE dispatch
         "has_hooks",  # Internal - hook existence check
         "shutdown",  # Internal - background task drain
+        "adispose_async_engines",  # Internal - lifespan async DB engine dispose (Issue #3775)
         # ABC compliance stubs (Issue #2033 LEGO decomposition)
         # These delegate to extracted services which already have @rpc_expose.
         # NexusFS defines them only to satisfy NexusFS ABC requirements.

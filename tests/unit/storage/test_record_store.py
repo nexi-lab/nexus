@@ -428,21 +428,27 @@ class TestRecordStoreLifecycle:
 
     @pytest.mark.asyncio
     async def test_async_session_factory_raises_after_aclose(self):
-        """Property must raise after aclose so callers cannot rebuild a pool.
+        """Property must raise after aclose even on the cache-hit path (Issue #3775).
 
         SQLAlchemy ``Engine.dispose()`` does not render an engine unusable —
-        the next checkout silently builds a fresh pool. Without this guard,
-        a stale consumer holding ``record_store.async_session_factory``
-        would create connections nothing later disposes (Issue #3775).
+        the next checkout silently builds a fresh pool. The cached
+        ``async_sessionmaker`` references the engine; if the property
+        returned it post-aclose, a stale consumer could create connections
+        nothing later disposes. The sentinel must fire on both
+        cold (cache empty) and warm (cache populated) accesses.
         """
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
         store = SQLAlchemyRecordStore(create_tables=False)
-        _ = store.async_session_factory  # warm
+        _ = store.async_session_factory  # warm — cached factory present
+        assert store._async_session_factory_instance is not None
         await store.aclose()
 
-        # The cached factory ref still exists, but fresh property access raises.
-        # First clear the cache to simulate a consumer that lost its handle.
+        # Warm cache present — sentinel must still fire.
+        with pytest.raises(RuntimeError, match="after aclose"):
+            _ = store.async_session_factory
+
+        # Cold cache (consumer cleared its handle) — must also fire.
         store._async_session_factory_instance = None
         with pytest.raises(RuntimeError, match="after aclose"):
             _ = store.async_session_factory

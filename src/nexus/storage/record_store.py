@@ -547,13 +547,20 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         to ``create_async_engine`` so that connection creation goes through the
         custom factory (e.g. Cloud SQL Python Connector).
         """
+        # Issue #3775: enforce sentinel even on the cache-hit path. After
+        # aclose() the cached factory still references the disposed engine,
+        # which would lazily rebuild a fresh pool on next checkout.
+        if self._async_closed:
+            raise RuntimeError(
+                "SQLAlchemyRecordStore.async_session_factory accessed "
+                "after aclose(); the async engine has been disposed. "
+                "Construct a new RecordStore for further async use."
+            )
         if self._async_session_factory_instance is None:
             with self._async_init_lock:
                 # Double-check after acquiring lock
                 if self._async_session_factory_instance is None:
                     if self._async_closed:
-                        # Issue #3775: post-aclose, refuse to rebuild a pool
-                        # that no shutdown path will dispose.
                         raise RuntimeError(
                             "SQLAlchemyRecordStore.async_session_factory accessed "
                             "after aclose(); the async engine has been disposed. "
@@ -659,13 +666,19 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         if not self._has_read_replica:
             return self.async_session_factory
 
+        # Issue #3775: enforce sentinel even on the cache-hit path. After
+        # aclose() the cached factory still references the disposed engine.
+        if self._async_closed:
+            raise RuntimeError(
+                "SQLAlchemyRecordStore.async_read_session_factory accessed "
+                "after aclose(); the async read engine has been disposed. "
+                "Construct a new RecordStore for further async use."
+            )
         if self._async_read_session_factory_instance is None:
             with self._async_read_init_lock:
                 # Double-check after acquiring lock
                 if self._async_read_session_factory_instance is None:
                     if self._async_closed:
-                        # Issue #3775: post-aclose, refuse to rebuild a pool
-                        # that no shutdown path will dispose.
                         raise RuntimeError(
                             "SQLAlchemyRecordStore.async_read_session_factory accessed "
                             "after aclose(); the async read engine has been disposed. "

@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from nexus.hub import admin_ops
-from nexus.server.rpc.handlers.admin import require_admin, require_database_auth
+from nexus.server.rpc.handlers.admin import require_admin
 
 
 def _session_factory(auth_provider: Any) -> Any:
-    require_database_auth(auth_provider)
-    return auth_provider.session_factory
+    factory = getattr(auth_provider, "session_factory", None)
+    if callable(factory):
+        return factory
+    return admin_ops.get_env_session_factory()
 
 
 def handle_hub_admin_token_create(

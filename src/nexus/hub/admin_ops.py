@@ -6,9 +6,11 @@ import fnmatch
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.cli.commands._hub_common import parse_duration
 from nexus.storage.api_key_ops import (
@@ -33,6 +35,33 @@ class HubAdminAmbiguousTargetError(HubAdminError):
         self.matches = matches
         names = ", ".join(f"{name} ({key_id})" for name, key_id in matches)
         super().__init__(f"ambiguous: {len(matches)} tokens match {identifier!r} - {names}")
+
+
+def get_env_session_factory() -> Callable[[], Session]:
+    """Build a hub DB session factory from the server environment."""
+    db_url = (
+        os.environ.get("NEXUS_DATABASE_URL")
+        or os.environ.get("POSTGRES_URL")
+        or os.environ.get("DATABASE_URL")
+    )
+    if not db_url:
+        from nexus.contracts.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            "Hub admin operations require a database-backed auth provider or "
+            "NEXUS_DATABASE_URL/POSTGRES_URL/DATABASE_URL to be set"
+        )
+    return _build_env_session_factory(_sync_database_url(db_url))
+
+
+@lru_cache(maxsize=4)
+def _build_env_session_factory(db_url: str) -> Callable[[], Session]:
+    engine = create_engine(db_url, future=True)
+    return sessionmaker(bind=engine, future=True, expire_on_commit=False)
+
+
+def _sync_database_url(db_url: str) -> str:
+    return db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
 def parse_zones_csv(raw: str) -> list[str | tuple[str, str]]:

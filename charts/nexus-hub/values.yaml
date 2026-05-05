@@ -9,6 +9,8 @@ fullnameOverride: ""
 
 nexus:
   profile: full
+  # Keep this at 1 when nexus.persistence.enabled=true. Multiple persistent
+  # Nexus pods would otherwise mount the same writable data PVC.
   replicaCount: 1
   podAnnotations: {}
   podLabels: {}

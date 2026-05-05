@@ -134,6 +134,11 @@ editing rendered manifests.
 The Nexus pod also waits for the configured Postgres host and port before
 starting `nexusd`, so first boot does not race an in-cluster Postgres pod.
 
+Keep `nexus.replicaCount` at `1` when `nexus.persistence.enabled=true`.
+Scale the MCP frontend independently with `mcpFrontend.replicaCount`. To run
+multiple Nexus pods for evaluation, disable Nexus persistence so each pod gets
+its own `emptyDir` data directory.
+
 ## Upgrade Path
 
 Back up Postgres before upgrades. For the in-cluster reference Postgres:

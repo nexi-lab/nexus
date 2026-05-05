@@ -1,3 +1,6 @@
+{{- if and .Values.nexus.persistence.enabled (gt (int .Values.nexus.replicaCount) 1) }}
+{{- fail "nexus.replicaCount must be 1 when nexus.persistence.enabled=true because Nexus pods would share one writable data PVC; disable nexus.persistence.enabled to use multiple Nexus replicas." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

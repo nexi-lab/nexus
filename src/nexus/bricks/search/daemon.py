@@ -2340,6 +2340,10 @@ class SearchDaemon:
             "txtai": self._consume_txtai_mutations,
         }
         self._consumer_names = tuple(consumer_specs.keys())
+        # #4016: reconcile pre-existing unindexed files BEFORE consumers
+        # snap their checkpoints to MAX(sequence_number). Skipped on warm
+        # restarts (any consumer already has a persisted checkpoint).
+        await self._reconcile_unindexed_paths_at_startup()
         for consumer_name in self._consumer_names:
             if consumer_name not in self._consumer_last_sequence:
                 self._consumer_last_sequence[
@@ -2725,6 +2729,195 @@ class SearchDaemon:
                 max_sequence = int(row[0]) if row and row[0] is not None else 0
         await self._save_consumer_checkpoint(consumer_name, max_sequence)
         return max_sequence
+
+    def _reconciliation_marker_key(self, consumer_name: str) -> str:
+        """Distinct namespace from ``_checkpoint_key`` so a snapped checkpoint
+        on its own does NOT imply reconciliation has run (Codex round-1)."""
+        return f"search_mutation_reconciled_v1:{consumer_name}"
+
+    async def _reconciliation_completed(self, consumer_name: str) -> bool:
+        if self._settings_store is not None:
+            try:
+                setting = self._settings_store.get_setting(
+                    self._reconciliation_marker_key(consumer_name)
+                )
+                if setting is not None:
+                    return True
+            except Exception as exc:
+                logger.warning(
+                    "Reconciliation marker read falling back to file storage: %s",
+                    exc,
+                )
+        async with self._checkpoint_lock:
+            checkpoints = await self._load_checkpoint_file()
+        return self._reconciliation_marker_key(consumer_name) in checkpoints
+
+    async def _mark_reconciliation_completed(self, consumer_name: str) -> None:
+        if self._settings_store is not None:
+            try:
+                self._settings_store.set_setting(
+                    self._reconciliation_marker_key(consumer_name),
+                    "1",
+                    description=f"Search reconciliation completed for {consumer_name}",
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Reconciliation marker write falling back to file storage: %s",
+                    exc,
+                )
+        async with self._checkpoint_lock:
+            checkpoints = await self._load_checkpoint_file()
+            checkpoints[self._reconciliation_marker_key(consumer_name)] = 1
+            await self._write_checkpoint_file(checkpoints)
+
+    async def _reconcile_unindexed_paths_at_startup(self) -> None:
+        """Index live files that pre-date the daemon's first reconciliation (#4016).
+
+        On first start, ``_initialize_consumer_checkpoint`` skips past every
+        historical write by capturing ``MAX(operation_log.sequence_number)``.
+        Files written before the daemon ever ran have no ``document_chunks``
+        row — without this method, they'd stay unindexed until something
+        else touches them (a manual ``semantic_search_index`` call, a fresh
+        write to the same path, or a mount-content scan).
+
+        Idempotent and per-consumer (Codex round-1):
+        - Each consumer carries a ``search_mutation_reconciled_v1:<name>``
+          marker, separate from its mutation checkpoint. Reconciliation
+          runs whenever any consumer is missing the marker — even if its
+          mutation checkpoint has already snapped to MAX. This is critical
+          for the upgrade path: deployments running a prior version
+          already have checkpoints from the buggy MAX-snap, but no marker,
+          so they STILL recover their unindexed live files on the first
+          start with this fix.
+        - A handler that raises does NOT set its marker. The next daemon
+          start retries the same set of unindexed paths for that consumer.
+
+        Replay-from-zero is intentionally rejected — the issue (#4016) calls
+        out the rename/delete churn and historical-replay cost. Synthesizing
+        events from current ``file_paths`` state stays bounded by live data.
+        """
+        if self._async_session is None or not self._consumer_names:
+            return
+
+        handlers_by_name: dict[str, Any] = {
+            "bm25": self._consume_bm25_mutations,
+            "fts": self._consume_fts_mutations,
+            "embedding": self._consume_embedding_mutations,
+            "txtai": self._consume_txtai_mutations,
+        }
+        pending: list[tuple[str, Any]] = []
+        for name in self._consumer_names:
+            handler = handlers_by_name.get(name)
+            if handler is None:
+                continue
+            if await self._reconciliation_completed(name):
+                continue
+            # Codex round-2: gate marker on the consumer's backend being
+            # live. If the backend hasn't initialized yet (transient
+            # startup failure), the handler would early-return without
+            # work — marking it reconciled would permanently close the
+            # recovery path on next restart.
+            if not self._consumer_backend_ready(name):
+                logger.info(
+                    "Startup reconciliation: backend for %s not ready, "
+                    "deferring — marker will not be set",
+                    name,
+                )
+                continue
+            pending.append((name, handler))
+
+        if not pending:
+            return
+
+        events = await self._fetch_unindexed_path_events()
+        if not events:
+            # No unindexed live files — nothing to recover. Mark all
+            # pending consumers reconciled so we don't re-scan on every
+            # warm start.
+            for name, _ in pending:
+                await self._mark_reconciliation_completed(name)
+            return
+
+        logger.info(
+            "Search startup reconciliation: replaying %d unindexed live "
+            "file(s) for %d consumer(s) (%s).",
+            len(events),
+            len(pending),
+            ",".join(name for name, _ in pending),
+        )
+
+        for name, handler in pending:
+            try:
+                await handler(events)
+            except Exception as exc:
+                logger.warning(
+                    "Startup reconciliation handler %s failed: %s — "
+                    "marker not set, will retry on next daemon start",
+                    name,
+                    exc,
+                )
+                continue
+            await self._mark_reconciliation_completed(name)
+
+    def _consumer_backend_ready(self, consumer_name: str) -> bool:
+        """Whether ``consumer_name``'s backend is live enough to do real work.
+
+        Mirrors the early-return guards in each ``_consume_*_mutations``
+        handler. Needed by ``_reconcile_unindexed_paths_at_startup`` so
+        we don't write a reconciliation marker for a consumer whose
+        handler would silently no-op (Codex round-2).
+        """
+        if consumer_name == "bm25":
+            return self._bm25s_index is not None
+        if consumer_name == "fts":
+            return self._chunk_store is not None
+        if consumer_name == "embedding":
+            return self._indexing_pipeline is not None and self._embedding_provider is not None
+        if consumer_name == "txtai":
+            return self._backend is not None
+        return False
+
+    async def _fetch_unindexed_path_events(self) -> list[SearchMutationEvent]:
+        """Synthesize UPSERT events for live ``file_paths`` rows missing/stale chunks."""
+        if self._async_session is None:
+            return []
+
+        async with self._async_session() as session:
+            result = await session.execute(
+                sa_text(
+                    "SELECT zone_id, virtual_path, path_id "
+                    "FROM file_paths "
+                    "WHERE deleted_at IS NULL "
+                    "AND (indexed_content_id IS NULL "
+                    "OR indexed_content_id != content_id)"
+                )
+            )
+            rows = result.fetchall()
+
+        events: list[SearchMutationEvent] = []
+        now = datetime.now(UTC).replace(tzinfo=None)
+        for row in rows:
+            zone_id = str(row[0])
+            virtual_path = str(row[1])
+            path_id = str(row[2])
+            scoped_path = (
+                virtual_path
+                if virtual_path.startswith("/zone/")
+                else f"/zone/{zone_id}{virtual_path}"
+            )
+            events.append(
+                SearchMutationEvent(
+                    event_id=f"reconcile:{path_id}",
+                    operation_id=f"reconcile:{path_id}",
+                    op=SearchMutationOp.UPSERT,
+                    path=scoped_path,
+                    zone_id=zone_id,
+                    timestamp=now,
+                    sequence_number=0,
+                )
+            )
+        return events
 
     async def _save_consumer_checkpoint(self, consumer_name: str, sequence_number: int) -> None:
         self._consumer_last_sequence[consumer_name] = sequence_number

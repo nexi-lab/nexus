@@ -2340,6 +2340,10 @@ class SearchDaemon:
             "txtai": self._consume_txtai_mutations,
         }
         self._consumer_names = tuple(consumer_specs.keys())
+        # #4016: reconcile pre-existing unindexed files BEFORE consumers
+        # snap their checkpoints to MAX(sequence_number). Skipped on warm
+        # restarts (any consumer already has a persisted checkpoint).
+        await self._reconcile_unindexed_paths_at_startup()
         for consumer_name in self._consumer_names:
             if consumer_name not in self._consumer_last_sequence:
                 self._consumer_last_sequence[
@@ -2725,6 +2729,97 @@ class SearchDaemon:
                 max_sequence = int(row[0]) if row and row[0] is not None else 0
         await self._save_consumer_checkpoint(consumer_name, max_sequence)
         return max_sequence
+
+    async def _reconcile_unindexed_paths_at_startup(self) -> None:
+        """Index live files that pre-date the daemon's first start (#4016).
+
+        On first start, ``_initialize_consumer_checkpoint`` skips past every
+        historical write by capturing ``MAX(operation_log.sequence_number)``.
+        Files written before the daemon ever ran have no ``document_chunks``
+        row — without this method, they'd stay unindexed until something
+        else touches them (a manual ``semantic_search_index`` call, a fresh
+        write to the same path, or a mount-content scan).
+
+        Skipped on warm starts: if ANY consumer has a persisted checkpoint,
+        historical writes have already been processed (or explicitly
+        skipped) and re-running reconciliation would duplicate work.
+
+        Replay-from-zero is intentionally rejected — the issue (#4016) calls
+        out the rename/delete churn and historical-replay cost. Synthesizing
+        events from current ``file_paths`` state stays bounded by live data.
+        """
+        if self._async_session is None or not self._consumer_names:
+            return
+
+        for name in self._consumer_names:
+            if await self._read_persisted_checkpoint(name) is not None:
+                return
+
+        events = await self._fetch_unindexed_path_events()
+        if not events:
+            return
+
+        logger.info(
+            "Search startup reconciliation: replaying %d unindexed live file(s).",
+            len(events),
+        )
+
+        handlers = (
+            self._consume_bm25_mutations,
+            self._consume_fts_mutations,
+            self._consume_embedding_mutations,
+            self._consume_txtai_mutations,
+        )
+        for handler in handlers:
+            try:
+                await handler(events)
+            except Exception as exc:
+                logger.warning(
+                    "Startup reconciliation handler %s failed: %s",
+                    handler.__name__,
+                    exc,
+                )
+
+    async def _fetch_unindexed_path_events(self) -> list[SearchMutationEvent]:
+        """Synthesize UPSERT events for live ``file_paths`` rows missing/stale chunks."""
+        if self._async_session is None:
+            return []
+
+        async with self._async_session() as session:
+            result = await session.execute(
+                sa_text(
+                    "SELECT zone_id, virtual_path, path_id "
+                    "FROM file_paths "
+                    "WHERE deleted_at IS NULL "
+                    "AND (indexed_content_id IS NULL "
+                    "OR indexed_content_id != content_id)"
+                )
+            )
+            rows = result.fetchall()
+
+        events: list[SearchMutationEvent] = []
+        now = datetime.now(UTC).replace(tzinfo=None)
+        for row in rows:
+            zone_id = str(row[0])
+            virtual_path = str(row[1])
+            path_id = str(row[2])
+            scoped_path = (
+                virtual_path
+                if virtual_path.startswith("/zone/")
+                else f"/zone/{zone_id}{virtual_path}"
+            )
+            events.append(
+                SearchMutationEvent(
+                    event_id=f"reconcile:{path_id}",
+                    operation_id=f"reconcile:{path_id}",
+                    op=SearchMutationOp.UPSERT,
+                    path=scoped_path,
+                    zone_id=zone_id,
+                    timestamp=now,
+                    sequence_number=0,
+                )
+            )
+        return events
 
     async def _save_consumer_checkpoint(self, consumer_name: str, sequence_number: int) -> None:
         self._consumer_last_sequence[consumer_name] = sequence_number

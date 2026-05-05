@@ -24,7 +24,7 @@ use crate::meta_store::LocalMetaStore;
 use crate::meta_store::DT_REG;
 use crate::meta_store::{DT_DIR, DT_LINK, DT_MOUNT, DT_PIPE, DT_STREAM};
 use crate::vfs_router::{
-    canonicalize_mount_path as canonicalize, RouteError, RustRouteResult, VFSRouter,
+    canonicalize_mount_path as canonicalize, RouteError, RouteResult, VFSRouter,
 };
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex, RwLock, RwLockReadGuard};

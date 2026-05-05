@@ -1723,8 +1723,8 @@ impl Kernel {
     /// Internal: copy content via read_content + write_content (cross-mount or fallback).
     fn copy_via_read_write(
         &self,
-        src_route: &crate::vfs_router::RustRouteResult,
-        dst_route: &crate::vfs_router::RustRouteResult,
+        src_route: &crate::vfs_router::RouteResult,
+        dst_route: &crate::vfs_router::RouteResult,
         src_meta: &FileMetadata,
         ctx: &OperationContext,
     ) -> Result<(String, u64), KernelError> {

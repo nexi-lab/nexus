@@ -171,6 +171,31 @@ class RunningNexus:
     project_dir: Path
 
 
+def _running_nexus_uses_prebuilt_image() -> bool:
+    return os.environ.get("NEXUS_E2E_SKIP_BUILD") == "1"
+
+
+def _normalize_running_nexus_config(config: dict, admin_api_key: str) -> dict:
+    normalized = dict(config)
+    normalized["api_key"] = admin_api_key
+    normalized["services"] = ["nexus", "postgres", "dragonfly"]
+    normalized["compose_profiles"] = ["core", "cache"]
+    if _running_nexus_uses_prebuilt_image():
+        normalized["image_ref"] = "nexus-server:latest"
+        normalized["image_pin"] = "tag"
+        normalized.pop("image_channel", None)
+    return normalized
+
+
+def _running_nexus_up_cmd(nexus_bin: str) -> list[str]:
+    up_cmd = [nexus_bin, "up"]
+    if _running_nexus_uses_prebuilt_image():
+        up_cmd.append("--no-build")
+    else:
+        up_cmd.append("--build")
+    return up_cmd
+
+
 @pytest.fixture(scope="class")
 def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningNexus]:
     """Start a full nexus stack via ``nexus up --build`` and tear down.
@@ -279,9 +304,7 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
 
     with open(config_path) as _cf:
         _cfg = _yaml.safe_load(_cf) or {}
-    _cfg["api_key"] = admin_api_key
-    _cfg["services"] = ["nexus", "postgres", "dragonfly"]
-    _cfg["compose_profiles"] = ["core", "cache"]
+    _cfg = _normalize_running_nexus_config(_cfg, admin_api_key)
     with open(config_path, "w") as _cf:
         _yaml.safe_dump(_cfg, _cf, sort_keys=False)
 
@@ -297,14 +320,12 @@ def running_nexus(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningN
     up_env["NEXUS_API_KEY"] = admin_api_key
 
     # CI pre-builds the nexus-server image once per job with buildx + GHA
-    # cache (see ``e2e-self-contained`` in test.yml) and exports
-    # ``NEXUS_E2E_SKIP_BUILD=1`` so each fixture invocation reuses the cached
-    # layers instead of paying ~5-10 min for ``docker compose build`` per
-    # test class. Local dev keeps ``--build`` so an out-of-date checkout
-    # still rebuilds before the stack comes up.
-    up_cmd = [nexus_bin, "up"]
-    if os.environ.get("NEXUS_E2E_SKIP_BUILD") != "1":
-        up_cmd.append("--build")
+    # cache (see ``e2e-self-contained`` in test.yml). Use ``--no-build`` and
+    # pin nexus.yaml to the locally loaded tag so the CLI does not fall back
+    # to repo-checkout auto-build or mutable-channel pulls. Local dev keeps
+    # ``--build`` so an out-of-date checkout still rebuilds before the stack
+    # comes up.
+    up_cmd = _running_nexus_up_cmd(nexus_bin)
     up_result = subprocess.run(
         up_cmd,
         capture_output=True,

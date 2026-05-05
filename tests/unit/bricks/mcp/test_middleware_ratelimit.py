@@ -51,6 +51,32 @@ def test_429_response_shape(app: Starlette) -> None:
     assert "retry_after" in body
 
 
+def test_allowed_request_does_not_record_rate_limit_hit(monkeypatch, app: Starlette) -> None:
+    redis = pytest.importorskip("redis.asyncio")
+    calls: list[str] = []
+
+    class FakeRedisClient:
+        async def incr(self, _key: str) -> None:
+            calls.append("incr")
+
+        async def expire(self, _key: str, _ttl: int) -> None:
+            calls.append("expire")
+
+        async def close(self) -> None:
+            calls.append("close")
+
+    def from_url(_url: str) -> FakeRedisClient:
+        calls.append("from_url")
+        return FakeRedisClient()
+
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setattr(redis, "from_url", from_url)
+
+    client = TestClient(app)
+    assert client.post("/mcp").status_code == 200
+    assert calls == []
+
+
 def test_429_records_rate_limit_hit_tier(monkeypatch, app: Starlette) -> None:
     redis = pytest.importorskip("redis.asyncio")
     calls: list[tuple[str, object, object | None]] = []

@@ -131,6 +131,9 @@ The Nexus workload uses `/healthz/startup`, `/healthz/ready`, and
 long cold-start health latency, tune `nexus.probes.*` in values instead of
 editing rendered manifests.
 
+The Nexus pod also waits for the configured Postgres host and port before
+starting `nexusd`, so first boot does not race an in-cluster Postgres pod.
+
 ## Upgrade Path
 
 Back up Postgres before upgrades. For the in-cluster reference Postgres:

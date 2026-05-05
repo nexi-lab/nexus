@@ -28,6 +28,26 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.securityContext | nindent 8 }}
+      initContainers:
+        - name: wait-for-postgres
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - sh
+            - -ec
+          args:
+            - |
+              until nc -z "$POSTGRES_HOST" "$POSTGRES_PORT"; do
+                echo "waiting for postgres at ${POSTGRES_HOST}:${POSTGRES_PORT}"
+                sleep 2
+              done
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "nexus-hub.postgresHost" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ include "nexus-hub.postgresPort" . | quote }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
       containers:
         - name: nexus
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

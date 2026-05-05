@@ -64,7 +64,7 @@ ingress:
 | `image.tag` | `latest` | Nexus image tag |
 | `nexus.profile` | `full` | Runtime profile passed to `nexusd` |
 | `nexus.replicaCount` | `1` | Nexus RPC replicas |
-| `nexus.probes.*` | Kubernetes `/healthz/*` probes | Startup, readiness, liveness paths and timings |
+| `nexus.probes.*` | Kubernetes `/healthz/*` probes | Startup, readiness, liveness paths and timings. Defaults allow slow cold-start health responses observed in local Kubernetes. |
 | `mcpFrontend.replicaCount` | `1` | MCP frontend replicas |
 | `postgres.internal.enabled` | `true` | Deploy in-cluster Postgres |
 | `redis.internal.enabled` | `true` | Deploy in-cluster Redis |

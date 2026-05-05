@@ -27,19 +27,19 @@ nexus:
       path: /healthz/startup
       initialDelaySeconds: 10
       periodSeconds: 10
-      timeoutSeconds: 45
+      timeoutSeconds: 90
       failureThreshold: 30
     readiness:
       path: /healthz/ready
       initialDelaySeconds: 10
       periodSeconds: 30
-      timeoutSeconds: 45
+      timeoutSeconds: 90
       failureThreshold: 3
     liveness:
       path: /healthz/live
       initialDelaySeconds: 60
       periodSeconds: 30
-      timeoutSeconds: 45
+      timeoutSeconds: 90
       failureThreshold: 6
 
 mcpFrontend:

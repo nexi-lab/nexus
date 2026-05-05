@@ -126,6 +126,11 @@ Install:
 helm install nexus-hub charts/nexus-hub -f values.prod.yaml
 ```
 
+The Nexus workload uses `/healthz/startup`, `/healthz/ready`, and
+`/healthz/live` for Kubernetes probes. If your cluster or image profile has
+long cold-start health latency, tune `nexus.probes.*` in values instead of
+editing rendered manifests.
+
 ## Upgrade Path
 
 Back up Postgres before upgrades. For the in-cluster reference Postgres:

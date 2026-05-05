@@ -22,6 +22,25 @@ nexus:
     storageClass: ""
     accessModes:
       - ReadWriteOnce
+  probes:
+    startup:
+      path: /healthz/startup
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 45
+      failureThreshold: 30
+    readiness:
+      path: /healthz/ready
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 45
+      failureThreshold: 3
+    liveness:
+      path: /healthz/live
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 45
+      failureThreshold: 6
 
 mcpFrontend:
   replicaCount: 1

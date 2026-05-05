@@ -76,22 +76,30 @@ spec:
               containerPort: {{ .Values.service.nexusHttpPort }}
             - name: grpc
               containerPort: {{ .Values.service.nexusGrpcPort }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.nexus.probes.startup.path | quote }}
+              port: http
+            initialDelaySeconds: {{ .Values.nexus.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nexus.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.nexus.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.nexus.probes.startup.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.nexus.probes.readiness.path | quote }}
               port: http
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 30
+            initialDelaySeconds: {{ .Values.nexus.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nexus.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.nexus.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.nexus.probes.readiness.failureThreshold }}
           livenessProbe:
             httpGet:
-              path: /health
+              path: {{ .Values.nexus.probes.liveness.path | quote }}
               port: http
-            initialDelaySeconds: 60
-            periodSeconds: 20
-            timeoutSeconds: 5
-            failureThreshold: 6
+            initialDelaySeconds: {{ .Values.nexus.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.nexus.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.nexus.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.nexus.probes.liveness.failureThreshold }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           resources:

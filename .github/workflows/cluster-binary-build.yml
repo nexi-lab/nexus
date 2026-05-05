@@ -88,16 +88,25 @@ jobs:
         # Pin to 3.20.2 to match the macOS step (protobuf-build 0.14
         # rejects 4.x/calendar-version protoc versions).
         if: runner.os == 'Windows'
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          PROTOC_VERSION=3.20.2
-          curl -fsSL -o protoc.zip \
-            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-win64.zip"
-          unzip -o protoc.zip -d "$HOME/protoc"
-          echo "$HOME/protoc/bin" >> "$GITHUB_PATH"
-          echo "PROTOC=$HOME/protoc/bin/protoc.exe" >> "$GITHUB_ENV"
-          "$HOME/protoc/bin/protoc.exe" --version
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '3.20.2'
+          $protocDir = Join-Path $env:USERPROFILE 'protoc'
+          New-Item -ItemType Directory -Force -Path $protocDir | Out-Null
+          $zipPath = Join-Path $env:RUNNER_TEMP 'protoc.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri `
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${protocVersion}/protoc-${protocVersion}-win64.zip" `
+            -OutFile $zipPath
+          Expand-Archive -Force -Path $zipPath -DestinationPath $protocDir
+          $protocBinDir = Join-Path $protocDir 'bin'
+          $protocExe = Join-Path $protocBinDir 'protoc.exe'
+          # Native Windows paths into GITHUB_ENV / GITHUB_PATH so
+          # cargo + prost-build see real `C:\…\protoc.exe` rather
+          # than bash's `/c/Users/…` POSIX form.
+          Add-Content -Path $env:GITHUB_PATH -Value $protocBinDir
+          Add-Content -Path $env:GITHUB_ENV -Value "PROTOC=$protocExe"
+          & $protocExe --version
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1

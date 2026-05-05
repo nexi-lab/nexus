@@ -592,6 +592,51 @@ def test_hub_status_detail_json_includes_token_last_seen_and_zones(monkeypatch):
     ]
 
 
+def test_read_redis_detail_stats_aggregates_zone_and_rate_limit_counts(monkeypatch):
+    import nexus.cli.commands.hub as hub_module
+
+    class FakeRedis:
+        def __init__(self):
+            self.mget_calls = []
+            self.scard_calls = []
+
+        def ping(self):
+            return True
+
+        def mget(self, keys):
+            self.mget_calls.append(keys)
+            values = {
+                "nexus:hub:qps:zone:eng:100": b"120",
+                "nexus:hub:qps:zone:eng:99": b"30",
+                "nexus:hub:qps:zone:ops:100": b"60",
+                "nexus:hub:rate_limit:anonymous:100": b"2",
+                "nexus:hub:rate_limit:authenticated:100": b"4",
+            }
+            return [values.get(key) for key in keys]
+
+        def scard(self, key):
+            self.scard_calls.append(key)
+            return {"nexus:hub:active:zone:eng:100": 3, "nexus:hub:active:zone:ops:100": 1}.get(
+                key, 0
+            )
+
+    fake = FakeRedis()
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379")
+    monkeypatch.setattr("redis.from_url", lambda *_args, **_kwargs: fake)
+    monkeypatch.setattr(hub_module.time, "time", lambda: 100 * 60)
+
+    detail = hub_module._read_redis_detail_stats(["eng", "ops"])
+
+    assert detail["zones"] == [
+        {"zone_id": "eng", "clients": 3, "qps_5m": 0.5},
+        {"zone_id": "ops", "clients": 1, "qps_5m": 0.2},
+    ]
+    assert detail["rate_limits"] == {
+        "window_seconds": 300,
+        "hits_by_tier": {"anonymous": 2, "authenticated": 4, "premium": 0},
+    }
+
+
 def test_hub_status_detail_flag_is_accepted(monkeypatch):
     session = MagicMock()
     session.execute.return_value.scalar.side_effect = [0, 0]

@@ -8,6 +8,7 @@ Remote admin is tracked as a follow-up to issue #3784.
 from __future__ import annotations
 
 import os
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -510,8 +511,6 @@ def _read_redis_stats() -> dict[str, Any]:
 
     Returns a dict with `qps_5m`, `connections`, `redis` ∈ {"ok", "n/a"}.
     """
-    import time
-
     url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
     if not url:
         return {"qps_5m": None, "connections": None, "redis": "n/a"}
@@ -700,11 +699,63 @@ def _emit_base_status_text(payload: dict[str, Any]) -> None:
     click.echo(f"qps (5m):    {_display_status_value(payload['qps_5m'])}")
 
 
+_RATE_LIMIT_TIERS = ("anonymous", "authenticated", "premium")
+
+
+def _decode_int(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _read_redis_detail_stats(zone_ids: list[str]) -> dict[str, Any]:
-    return {
-        "zones": [{"zone_id": zone_id, "clients": None, "qps_5m": None} for zone_id in zone_ids],
-        "rate_limits": {"window_seconds": 300, "hits_by_tier": {}},
+    url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+    empty_zones = [{"zone_id": zone_id, "clients": None, "qps_5m": None} for zone_id in zone_ids]
+    empty = {
+        "zones": empty_zones,
+        "rate_limits": {
+            "window_seconds": 300,
+            "hits_by_tier": dict.fromkeys(_RATE_LIMIT_TIERS),
+        },
     }
+    if not url:
+        return empty
+    try:
+        import redis
+    except ImportError:
+        return empty
+
+    try:
+        client = redis.from_url(url, socket_timeout=2)
+        client.ping()
+        now_min = int(time.time()) // 60
+        zones: list[dict[str, Any]] = []
+        for zone_id in zone_ids:
+            minute_keys = [f"nexus:hub:qps:zone:{zone_id}:{now_min - i}" for i in range(5)]
+            total = sum(_decode_int(v) for v in client.mget(minute_keys))
+            active = client.scard(f"nexus:hub:active:zone:{zone_id}:{now_min}")
+            zones.append(
+                {
+                    "zone_id": zone_id,
+                    "clients": int(active),
+                    "qps_5m": round(total / 300.0, 2),
+                }
+            )
+
+        hits_by_tier: dict[str, int] = {}
+        for tier in _RATE_LIMIT_TIERS:
+            minute_keys = [f"nexus:hub:rate_limit:{tier}:{now_min - i}" for i in range(5)]
+            hits_by_tier[tier] = sum(_decode_int(v) for v in client.mget(minute_keys))
+
+        return {
+            "zones": zones,
+            "rate_limits": {"window_seconds": 300, "hits_by_tier": hits_by_tier},
+        }
+    except Exception:  # noqa: BLE001
+        return empty
 
 
 def _collect_status_detail(

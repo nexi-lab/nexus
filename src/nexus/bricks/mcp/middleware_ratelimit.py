@@ -22,6 +22,7 @@ wrapper.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -128,6 +129,14 @@ def _dynamic_limit(request: Request) -> str:
 # Custom middleware
 # ---------------------------------------------------------------------------
 
+_RATE_LIMIT_METRIC_TTL_SECONDS = 600
+_RATE_LIMIT_METRIC_TIMEOUT_SECONDS = 2
+
+
+async def _write_rate_limit_hit(client: Any, key: str) -> None:
+    await client.incr(key)
+    await client.expire(key, _RATE_LIMIT_METRIC_TTL_SECONDS)
+
 
 async def _record_rate_limit_hit(tier: str) -> None:
     """Best-effort Redis counter for `nexus hub status --detail`."""
@@ -141,11 +150,17 @@ async def _record_rate_limit_hit(tier: str) -> None:
 
     client = None
     try:
-        client = redis.from_url(url)
+        client = redis.from_url(
+            url,
+            socket_connect_timeout=_RATE_LIMIT_METRIC_TIMEOUT_SECONDS,
+            socket_timeout=_RATE_LIMIT_METRIC_TIMEOUT_SECONDS,
+        )
         epoch_min = int(time.time()) // 60
         key = f"nexus:hub:ratelimit:tier:{tier}:{epoch_min}"
-        await client.incr(key)
-        await client.expire(key, 600)
+        await asyncio.wait_for(
+            _write_rate_limit_hit(client, key),
+            timeout=_RATE_LIMIT_METRIC_TIMEOUT_SECONDS,
+        )
     except Exception:  # noqa: BLE001
         return
     finally:

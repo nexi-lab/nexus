@@ -92,7 +92,11 @@ def test_429_records_rate_limit_hit_tier(monkeypatch, app: Starlette) -> None:
             calls.append(("close", None, None))
 
     monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
-    monkeypatch.setattr(redis, "from_url", lambda _url: FakeRedisClient())
+
+    def from_url(_url: str, **_kwargs: object) -> FakeRedisClient:
+        return FakeRedisClient()
+
+    monkeypatch.setattr(redis, "from_url", from_url)
     monkeypatch.setattr(middleware_ratelimit.time, "time", lambda: 123 * 60)
 
     client = TestClient(app)
@@ -101,16 +105,61 @@ def test_429_records_rate_limit_hit_tier(monkeypatch, app: Starlette) -> None:
     assert client.post("/mcp").status_code == 429
     assert calls == [
         ("incr", "nexus:hub:ratelimit:tier:anonymous:123", None),
-        ("expire", "nexus:hub:ratelimit:tier:anonymous:123", 600),
+        (
+            "expire",
+            "nexus:hub:ratelimit:tier:anonymous:123",
+            middleware_ratelimit._RATE_LIMIT_METRIC_TTL_SECONDS,
+        ),
         ("close", None, None),
     ]
+
+
+def test_record_rate_limit_hit_uses_bounded_redis_write(monkeypatch) -> None:
+    redis = pytest.importorskip("redis.asyncio")
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
+    from_url_calls: list[tuple[str, dict[str, object]]] = []
+    wait_for_timeouts: list[float] = []
+
+    class FakeRedisClient:
+        async def incr(self, _key: str) -> None:
+            return None
+
+        async def expire(self, _key: str, _ttl: int) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    def from_url(url: str, **kwargs: object) -> FakeRedisClient:
+        from_url_calls.append((url, kwargs))
+        return FakeRedisClient()
+
+    async def fake_wait_for(awaitable, timeout: float):
+        wait_for_timeouts.append(timeout)
+        return await awaitable
+
+    monkeypatch.setattr(redis, "from_url", from_url)
+    monkeypatch.setattr(middleware_ratelimit.asyncio, "wait_for", fake_wait_for)
+
+    asyncio.run(middleware_ratelimit._record_rate_limit_hit("anonymous"))
+
+    assert from_url_calls == [
+        (
+            "redis://localhost:6379/0",
+            {
+                "socket_connect_timeout": middleware_ratelimit._RATE_LIMIT_METRIC_TIMEOUT_SECONDS,
+                "socket_timeout": middleware_ratelimit._RATE_LIMIT_METRIC_TIMEOUT_SECONDS,
+            },
+        )
+    ]
+    assert wait_for_timeouts == [middleware_ratelimit._RATE_LIMIT_METRIC_TIMEOUT_SECONDS]
 
 
 def test_record_rate_limit_hit_swallows_redis_client_creation_errors(monkeypatch) -> None:
     redis = pytest.importorskip("redis.asyncio")
     monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
 
-    def raise_from_url(_url: str):
+    def raise_from_url(_url: str, **_kwargs: object):
         raise RuntimeError("redis client creation failed")
 
     monkeypatch.setattr(redis, "from_url", raise_from_url)
@@ -132,7 +181,7 @@ def test_record_rate_limit_hit_swallows_redis_close_errors(monkeypatch) -> None:
         async def close(self) -> None:
             raise RuntimeError("redis close failed")
 
-    monkeypatch.setattr(redis, "from_url", lambda _url: CloseFailingClient())
+    monkeypatch.setattr(redis, "from_url", lambda _url, **_kwargs: CloseFailingClient())
 
     asyncio.run(middleware_ratelimit._record_rate_limit_hit("anonymous"))
 
@@ -159,7 +208,7 @@ def test_record_rate_limit_hit_swallows_redis_write_errors(
         async def close(self) -> None:
             calls.append("close")
 
-    monkeypatch.setattr(redis, "from_url", lambda _url: WriteFailingClient())
+    monkeypatch.setattr(redis, "from_url", lambda _url, **_kwargs: WriteFailingClient())
 
     asyncio.run(middleware_ratelimit._record_rate_limit_hit("anonymous"))
 

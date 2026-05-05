@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -9,6 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
+from nexus.bricks.mcp import middleware_ratelimit
 from nexus.bricks.mcp.middleware_ratelimit import install_rate_limit
 
 
@@ -65,6 +68,37 @@ def test_429_records_rate_limit_hit_tier(monkeypatch, app: Starlette) -> None:
         assert client.post("/mcp").status_code == 200
     assert client.post("/mcp").status_code == 429
     assert hits == ["anonymous"]
+
+
+def test_record_rate_limit_hit_swallows_redis_client_creation_errors(monkeypatch) -> None:
+    redis = pytest.importorskip("redis.asyncio")
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
+
+    def raise_from_url(_url: str):
+        raise RuntimeError("redis client creation failed")
+
+    monkeypatch.setattr(redis, "from_url", raise_from_url)
+
+    asyncio.run(middleware_ratelimit._record_rate_limit_hit("anonymous"))
+
+
+def test_record_rate_limit_hit_swallows_redis_close_errors(monkeypatch) -> None:
+    redis = pytest.importorskip("redis.asyncio")
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379/0")
+
+    class CloseFailingClient:
+        async def incr(self, _key: str) -> None:
+            return None
+
+        async def expire(self, _key: str, _ttl: int) -> None:
+            return None
+
+        async def close(self) -> None:
+            raise RuntimeError("redis close failed")
+
+    monkeypatch.setattr(redis, "from_url", lambda _url: CloseFailingClient())
+
+    asyncio.run(middleware_ratelimit._record_rate_limit_hit("anonymous"))
 
 
 def test_different_tokens_limited_independently(app: Starlette) -> None:

@@ -26,6 +26,7 @@ import hashlib
 import logging
 import os
 import time
+from contextlib import suppress
 from functools import lru_cache
 from typing import Any
 
@@ -138,8 +139,9 @@ async def _record_rate_limit_hit(tier: str) -> None:
     except ImportError:
         return
 
-    client = redis.from_url(url)
+    client = None
     try:
+        client = redis.from_url(url)
         epoch_min = int(time.time()) // 60
         key = f"nexus:hub:rate_limit:{tier}:{epoch_min}"
         await client.incr(key)
@@ -147,7 +149,9 @@ async def _record_rate_limit_hit(tier: str) -> None:
     except Exception:  # noqa: BLE001
         return
     finally:
-        await client.close()
+        if client is not None:
+            with suppress(Exception):
+                await client.close()
 
 
 class _MCPRateLimitMiddleware(BaseHTTPMiddleware):

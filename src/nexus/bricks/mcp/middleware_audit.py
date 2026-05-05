@@ -73,6 +73,16 @@ async def _record_metrics(record: dict[str, Any]) -> None:
         if not isinstance(_sadd_r, int):
             await _sadd_r
         await client.expire(active_key, 600)
+        zone_id = record.get("zone_id")
+        if isinstance(zone_id, str) and zone_id:
+            zone_qps_key = f"nexus:hub:qps:zone:{zone_id}:{epoch_min}"
+            zone_active_key = f"nexus:hub:active:zone:{zone_id}:{epoch_min}"
+            await client.incr(zone_qps_key)
+            await client.expire(zone_qps_key, 600)
+            _zone_sadd_r = client.sadd(zone_active_key, member)
+            if not isinstance(_zone_sadd_r, int):
+                await _zone_sadd_r
+            await client.expire(zone_active_key, 600)
     except Exception:  # noqa: BLE001 — fire-and-forget
         return
     finally:

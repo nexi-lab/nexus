@@ -230,14 +230,18 @@ impl Default for RaftDistributedCoordinator {
 ///
 /// Now operator must declare intent up front:
 ///
-///   * `Static` — env-driven cluster formation. `NEXUS_PEERS` /
-///     `--peers` and `NEXUS_BOOTSTRAP_NEW` / `--bootstrap-new` are
-///     consumed at startup. Data dir MUST be empty.
+///   * `Static` — env-driven cluster formation. Data dir MUST be
+///     empty.  Empty `--peers` = single-node founder by default
+///     (every cluster starts as a 1-voter); non-empty `--peers` =
+///     joiner.  `NEXUS_BOOTSTRAP_NEW` / `--bootstrap-new` is an
+///     explicit-intent alias for the empty-peers default — kept for
+///     UX, not required.
 ///   * `Dynamic` — daemon comes up rootless; operator drives zone
 ///     formation via runtime API (`nexusd-cluster share` / `join`,
 ///     or Python `nexusd federation_create_zone`). Env vars and
 ///     `--peers` related to bootstrap are REJECTED. Data dir MUST be
-///     empty.
+///     empty.  No root zone is created at boot; the daemon serves
+///     the gRPC surface and waits for runtime zone-management calls.
 ///   * `Restart` — data dir holds persisted ConfState from a prior
 ///     boot; resume from it. Bootstrap-related env vars / flags are
 ///     REJECTED (state on disk is the SSOT).
@@ -292,9 +296,11 @@ impl BootstrapMode {
 ///     `validate_peers_excludes_self`).
 ///
 /// Rules:
-///   * `Static`: data dir MUST be empty (would-be restart);
-///     `bootstrap_new_set` OR `peers_non_empty` MUST hold (otherwise
-///     nothing tells the daemon which way to bootstrap).
+///   * `Static`: data dir MUST be empty (would-be restart).  Both
+///     `bootstrap_new_set` and `peers_non_empty` are OPTIONAL —
+///     empty/empty is the single-node founder default
+///     (`bootstrap_or_join_zone` creates a 1-voter zone alone), and
+///     non-empty peers triggers the joiner retry loop.
 ///   * `Dynamic`: data dir MUST be empty (no persisted state);
 ///     `bootstrap_new_set` and `peers_non_empty` MUST both be false
 ///     (runtime API drives, not env).
@@ -317,13 +323,11 @@ pub fn validate_bootstrap_mode(
                         .to_string(),
                 );
             }
-            if !bootstrap_new_set && !peers_non_empty {
-                return Err(
-                    "bootstrap mode = static requires either NEXUS_BOOTSTRAP_NEW=1 (founder) \
-                     or NEXUS_PEERS/--peers (joiner).  Neither is set."
-                        .to_string(),
-                );
-            }
+            // Empty `bootstrap_new_set` AND empty `peers_non_empty`
+            // is the single-node founder default — every cluster
+            // starts as a 1-voter group.  Non-empty peers triggers
+            // the joiner retry loop.  Both can coexist (explicit
+            // founder declaration with hostname-only peers list).
             Ok(())
         }
         BootstrapMode::Dynamic => {
@@ -556,14 +560,27 @@ pub fn bootstrap_or_join_zone(
         return Ok(());
     }
 
-    // Branch 2: operator authorized fresh 1-voter create.
-    if bootstrap_new {
-        tracing::warn!(
+    // Branch 2: empty peers — single-node default creates own root.
+    //
+    // The operator's bootstrap intent collapses to "no peers means
+    // I'm alone": both `NEXUS_BOOTSTRAP_NEW=1` (explicit founder
+    // declaration) and "just no peers configured" land here.  Every
+    // raft cluster starts as a 1-voter cluster anyway; the join path
+    // only kicks in when the operator points the daemon at peers.
+    //
+    // `NEXUS_BOOTSTRAP_NEW` is now a documented-but-redundant alias
+    // for the empty-peers default — kept for explicit-intent UX
+    // (operators who paste the flag have not done anything wrong)
+    // and for the static-bootstrap validator's fail-loud rules
+    // around restarts and dynamic-mode mixing.
+    if peer_addrs.is_empty() {
+        tracing::info!(
             node_id,
             zone = %zone_id,
             self_address = %self_address,
-            "NEXUS_BOOTSTRAP_NEW honored; creating 1-voter zone. \
-             Other nodes must JoinZone."
+            bootstrap_new,
+            "no peers configured — creating 1-voter zone (single-node default). \
+             Other nodes JoinZone here.",
         );
         let self_peer = format!("{node_id}@{self_address}");
         zm.create_zone(zone_id, vec![self_peer])
@@ -571,31 +588,14 @@ pub fn bootstrap_or_join_zone(
         return Ok(());
     }
 
-    // Branch 3: empty storage, no flag — wait for an existing cluster.
-    //
-    // Empty peer_addrs (no NEXUS_PEERS) + flag unset = "no cluster
-    // intent yet" — daemon comes up federation-active but zoneless.
-    // An operator can later set NEXUS_BOOTSTRAP_NEW=1 + restart, or
-    // call `coordinator.create_zone(zone_id)` via RPC under the
-    // dynamic-bootstrap mode.  Without this early return, branch 3
-    // loops forever with no targets — a hang for any test or
-    // single-node deployment that constructs a kernel without
-    // declaring federation intent.
-    if peer_addrs.is_empty() {
-        tracing::info!(
-            node_id,
-            zone = %zone_id,
-            "empty storage, no peers, no NEXUS_BOOTSTRAP_NEW — \
-             federation up but zoneless; operator drives create_zone later",
-        );
-        return Ok(());
-    }
+    // Branch 3: peers configured but storage empty — joiner. Loop on
+    // JoinZone RPC until a leader accepts.
     tracing::info!(
         node_id,
         zone = %zone_id,
         peer_count = peer_addrs.len(),
         max_attempts = ?max_attempts,
-        "empty storage and NEXUS_BOOTSTRAP_NEW unset — retrying JoinZone",
+        "empty storage with peers — retrying JoinZone",
     );
 
     // Spin a small temporary multi-thread runtime for the JoinZone
@@ -824,21 +824,16 @@ impl RaftDistributedCoordinator {
         // `validate_peers_excludes_self` for the full rationale.
         validate_peers_excludes_self(&peer_addrs, &self_addr)?;
 
-        // Operator MUST declare bootstrap intent when federation is in
-        // play — `BootstrapMode` doc has the contract.  Implicit
-        // dispatch (state-driven) was the source of the silent
-        // mode-mixing that surfaced in cross-machine smoke; explicit
-        // declaration kills that footgun.
-        //
-        // "Federation in play" = any of: data dir already holds a
-        // root zone (restart), `NEXUS_BOOTSTRAP_NEW=1` (static
-        // founder), or non-empty peers (static joiner).  Tests /
-        // single-node dev workflows that touch none of those signals
-        // skip the validator entirely — no federation intent, nothing
-        // to validate.
+        // Operator declares bootstrap intent up front when federation
+        // is in play.  "In play" = any of: data dir already holds a
+        // root zone (restart), `NEXUS_BOOTSTRAP_NEW=1` (explicit
+        // founder), or non-empty peers (joiner).  Tests / single-
+        // node dev workflows that touch none of those signals skip
+        // federation entirely — `bootstrap_mode` stays `None` and
+        // `bootstrap_or_join_zone` is not called below.
         let data_dir_has_root = Path::new(&zones_dir).join("root").join("raft").exists();
         let federation_in_play = data_dir_has_root || bootstrap_new || !peer_addrs.is_empty();
-        if federation_in_play {
+        let bootstrap_mode: Option<BootstrapMode> = if federation_in_play {
             let mode_str = std::env::var("NEXUS_BOOTSTRAP_MODE").map_err(|_| {
                 "NEXUS_BOOTSTRAP_MODE is required when bootstrapping federation \
                  (NEXUS_PEERS, NEXUS_BOOTSTRAP_NEW, or persisted root zone state \
@@ -860,7 +855,10 @@ impl RaftDistributedCoordinator {
                 data_dir_has_root,
                 "bootstrap mode validated",
             );
-        }
+            Some(mode)
+        } else {
+            None
+        };
 
         let tls = if tls_disabled {
             None
@@ -924,21 +922,47 @@ impl RaftDistributedCoordinator {
         // `install_transport_wiring` can drain it.
         kernel.stash_blob_fetcher_slot(Box::new(blob_slot));
 
-        // Bring root zone online — restart-from-disk, fresh-create, or
-        // wait-and-join, depending on storage state and the operator
-        // flag.  `max_attempts=None` blocks indefinitely under the join
-        // branch (no deadline) so misconfig surfaces as "daemon stays
-        // up retrying" rather than "daemon exits after timeout".
-        // See `bootstrap_or_join_zone`.
-        bootstrap_or_join_zone(
-            zm.as_ref(),
-            "root",
-            node_id,
-            &self_addr,
-            &peer_addrs,
-            bootstrap_new,
-            /* max_attempts */ None,
-        )?;
+        // Bring root zone online based on the declared mode.
+        //
+        //   * Static / Restart: `bootstrap_or_join_zone` dispatches —
+        //     empty peers + empty storage → 1-voter single-node
+        //     default; non-empty peers → joiner retry loop;
+        //     persisted state → resume.
+        //   * Dynamic: skip — daemon comes up rootless, operator
+        //     drives `create_zone` via runtime API.
+        //   * `None` (no federation in play): skip — caller did not
+        //     ask for federation init (typical for tests / single-
+        //     node dev workflows that strip env vars).
+        //
+        // `max_attempts=None` blocks indefinitely under the joiner
+        // branch (no deadline) so misconfig surfaces as "daemon
+        // stays up retrying" rather than "daemon exits after timeout".
+        match bootstrap_mode {
+            Some(BootstrapMode::Static) | Some(BootstrapMode::Restart) => {
+                bootstrap_or_join_zone(
+                    zm.as_ref(),
+                    "root",
+                    node_id,
+                    &self_addr,
+                    &peer_addrs,
+                    bootstrap_new,
+                    /* max_attempts */ None,
+                )?;
+            }
+            Some(BootstrapMode::Dynamic) => {
+                tracing::info!(
+                    node_id,
+                    "bootstrap mode = dynamic; daemon up rootless — operator drives \
+                     create_zone via runtime API",
+                );
+            }
+            None => {
+                tracing::debug!(
+                    node_id,
+                    "no federation intent declared — skipping root zone bootstrap",
+                );
+            }
+        }
 
         // Federation zones listed in `NEXUS_FEDERATION_ZONES` are
         // brought up only when this node bootstrapped root (1-voter
@@ -1882,7 +1906,12 @@ mod tests {
 
     #[test]
     fn validate_static_happy_paths() {
-        // Founder: BOOTSTRAP_NEW set, peers may be empty, data dir empty.
+        // Single-node default: empty/empty — every cluster starts as
+        // a 1-voter group, so this is the natural single-node UX.
+        validate_bootstrap_mode(BootstrapMode::Static, false, false, false)
+            .expect("single-node default ok");
+        // Founder with explicit BOOTSTRAP_NEW (redundant under
+        // empty peers but a legal documented alias).
         validate_bootstrap_mode(BootstrapMode::Static, false, true, false).expect("founder ok");
         // Joiner: peers non-empty, BOOTSTRAP_NEW unset, data dir empty.
         validate_bootstrap_mode(BootstrapMode::Static, false, false, true).expect("joiner ok");
@@ -1895,14 +1924,6 @@ mod tests {
         let err = validate_bootstrap_mode(BootstrapMode::Static, true, true, false)
             .expect_err("existing state under static is restart-in-disguise");
         assert!(err.contains("restart"));
-    }
-
-    #[test]
-    fn validate_static_rejects_empty_intent() {
-        // No flag, no peers — daemon has no signal which way to go.
-        let err = validate_bootstrap_mode(BootstrapMode::Static, false, false, false)
-            .expect_err("static without flag or peers must be rejected");
-        assert!(err.contains("BOOTSTRAP_NEW") && err.contains("PEERS"));
     }
 
     #[test]

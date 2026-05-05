@@ -677,6 +677,43 @@ def test_collect_search_detail_reports_zoekt_size_and_latest_mtime(tmp_path, mon
     assert detail["zones"][1]["zoekt_index_size_bytes"] is None
 
 
+def test_collect_search_detail_reports_aggregate_zoekt_index(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    import nexus.cli.commands.hub as hub_module
+
+    base = tmp_path / "zoekt"
+    base.mkdir()
+    index_file = base / "index.zoekt"
+    index_file.write_bytes(b"x" * 12)
+    indexed_at = datetime(2026, 5, 5, 14, 22, tzinfo=UTC)
+    indexed_ts = indexed_at.timestamp()
+    os.utime(index_file, (indexed_ts, indexed_ts))
+    monkeypatch.delenv("NEXUS_ZOEKT_INDEX_DIR", raising=False)
+    monkeypatch.setenv("ZOEKT_INDEX_DIR", str(base))
+
+    detail = hub_module._collect_search_detail(["eng"])
+
+    assert detail["zones"] == [
+        {
+            "zone_id": "eng",
+            "zoekt_index_size_bytes": None,
+            "zoekt_index_size_display": None,
+            "zoekt_last_indexed": None,
+            "txtai_queue_depth": None,
+            "last_indexed": None,
+        },
+        {
+            "zone_id": "all",
+            "zoekt_index_size_bytes": 12,
+            "zoekt_index_size_display": "12 B",
+            "zoekt_last_indexed": indexed_at.isoformat(),
+            "txtai_queue_depth": None,
+            "last_indexed": indexed_at.isoformat(),
+        },
+    ]
+
+
 def test_hub_status_detail_flag_is_accepted(monkeypatch):
     session = MagicMock()
     session.execute.return_value.scalar.side_effect = [0, 0]

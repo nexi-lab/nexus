@@ -835,25 +835,46 @@ def _index_path_stats(path: Path) -> tuple[int | None, str | None]:
     return total_size, last_indexed
 
 
+def _zoekt_index_base() -> Path:
+    raw = (
+        os.environ.get("NEXUS_ZOEKT_INDEX_DIR")
+        or os.environ.get("ZOEKT_INDEX_DIR")
+        or "/app/data/.zoekt-index"
+    )
+    return Path(raw)
+
+
+def _search_detail_row(
+    zone_id: str,
+    size_bytes: int | None,
+    last_indexed: str | None,
+) -> dict[str, Any]:
+    return {
+        "zone_id": zone_id,
+        "zoekt_index_size_bytes": size_bytes,
+        "zoekt_index_size_display": _format_bytes(size_bytes),
+        "zoekt_last_indexed": last_indexed,
+        "txtai_queue_depth": None,
+        "last_indexed": last_indexed,
+    }
+
+
 def _collect_search_detail(zone_ids: list[str]) -> dict[str, Any]:
-    base = Path(os.environ.get("NEXUS_ZOEKT_INDEX_DIR", "/app/data/.zoekt-index"))
+    base = _zoekt_index_base()
     zones = []
+    matched_zone_index = False
     for zone_id in zone_ids:
         index_path = _zone_index_path(base, zone_id)
         size_bytes: int | None = None
         last_indexed: str | None = None
         if index_path is not None:
+            matched_zone_index = True
             size_bytes, last_indexed = _index_path_stats(index_path)
-        zones.append(
-            {
-                "zone_id": zone_id,
-                "zoekt_index_size_bytes": size_bytes,
-                "zoekt_index_size_display": _format_bytes(size_bytes),
-                "zoekt_last_indexed": last_indexed,
-                "txtai_queue_depth": None,
-                "last_indexed": last_indexed,
-            }
-        )
+        zones.append(_search_detail_row(zone_id, size_bytes, last_indexed))
+    if not matched_zone_index and base.exists():
+        size_bytes, last_indexed = _index_path_stats(base)
+        if size_bytes is not None:
+            zones.append(_search_detail_row("all", size_bytes, last_indexed))
     return {"zones": zones}
 
 

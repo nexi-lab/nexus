@@ -48,6 +48,25 @@ def test_429_response_shape(app: Starlette) -> None:
     assert "retry_after" in body
 
 
+def test_429_records_rate_limit_hit_tier(monkeypatch, app: Starlette) -> None:
+    hits: list[str] = []
+
+    async def fake_record(tier: str) -> None:
+        hits.append(tier)
+
+    monkeypatch.setattr(
+        "nexus.bricks.mcp.middleware_ratelimit._record_rate_limit_hit",
+        fake_record,
+        raising=False,
+    )
+
+    client = TestClient(app)
+    for _ in range(3):
+        assert client.post("/mcp").status_code == 200
+    assert client.post("/mcp").status_code == 429
+    assert hits == ["anonymous"]
+
+
 def test_different_tokens_limited_independently(app: Starlette) -> None:
     # sk-z_u1_k_a → zone="z", user="u1" → bucket "user:z:u1"
     # sk-z_u2_k_b → zone="z", user="u2" → bucket "user:z:u2"

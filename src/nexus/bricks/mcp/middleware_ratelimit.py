@@ -128,6 +128,28 @@ def _dynamic_limit(request: Request) -> str:
 # ---------------------------------------------------------------------------
 
 
+async def _record_rate_limit_hit(tier: str) -> None:
+    """Best-effort Redis counter for `nexus hub status --detail`."""
+    url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+    if not url or url == "memory://":
+        return
+    try:
+        import redis.asyncio as redis
+    except ImportError:
+        return
+
+    client = redis.from_url(url)
+    try:
+        epoch_min = int(time.time()) // 60
+        key = f"nexus:hub:rate_limit:{tier}:{epoch_min}"
+        await client.incr(key)
+        await client.expire(key, 600)
+    except Exception:  # noqa: BLE001
+        return
+    finally:
+        await client.close()
+
+
 class _MCPRateLimitMiddleware(BaseHTTPMiddleware):
     """ASGI rate-limit middleware driven directly by the ``limits`` library.
 
@@ -164,6 +186,7 @@ class _MCPRateLimitMiddleware(BaseHTTPMiddleware):
         if not allowed:
             stats = self._strategy.get_window_stats(limit_item, key)
             retry_after = max(0, int(stats.reset_time - time.time()))
+            await _record_rate_limit_hit(tier)
             return JSONResponse(
                 status_code=429,
                 content={

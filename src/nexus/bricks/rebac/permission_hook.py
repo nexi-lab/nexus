@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.constants import SYSTEM_PATH_PREFIX
+from nexus.contracts.constants import ROOT_ZONE_ID, SYSTEM_PATH_PREFIX
 from nexus.contracts.types import Permission
 from nexus.core.path_utils import parent_path
 
@@ -271,10 +271,12 @@ class RebacPermissionCheckHook:
             # Fallback: resolve ancestor ourselves
             check_path = ctx.path
             while (
-                check_path and check_path != "/" and not self._kernel.metastore_exists(check_path)
+                check_path
+                and check_path != "/"
+                and not self._kernel.access(check_path, ROOT_ZONE_ID)
             ):
                 check_path = parent_path(check_path)
-        if check_path and self._kernel.metastore_exists(check_path):
+        if check_path and self._kernel.access(check_path, ROOT_ZONE_ID):
             context = ctx.context or self._default_context
             self._checker.check(check_path, Permission.WRITE, context)
 

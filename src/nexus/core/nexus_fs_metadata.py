@@ -210,7 +210,7 @@ class MetadataMixin:
         parents_to_create: list[str] = []
 
         while parent_path and parent_path != "/":
-            if not self._kernel.metastore_exists(parent_path):
+            if not self._kernel.access(parent_path, ROOT_ZONE_ID):
                 parents_to_create.append(parent_path)
             else:
                 break
@@ -245,7 +245,8 @@ class MetadataMixin:
                     _meta.is_dir or _meta.is_mount or _meta.is_external_storage
                 ):
                     return True
-                return self._kernel.metastore_is_implicit_directory(path)
+                _stat = self._kernel.sys_stat(path, ROOT_ZONE_ID)
+                return _stat is not None and _stat.get("is_directory", False)
             # Single Rust round-trip: dcache → metastore → implicit directory
             stat = self.sys_stat(path, context=context)
             return stat is not None and stat.get("is_directory", False)
@@ -1551,7 +1552,8 @@ class MetadataMixin:
                 # enumeration in a per-path try so a degraded metastore
                 # doesn't abort the whole batch (round 3 finding).
                 try:
-                    is_implicit = self._kernel.metastore_is_implicit_directory(normalized)
+                    _imp_stat = self._kernel.sys_stat(normalized, ROOT_ZONE_ID)
+                    is_implicit = _imp_stat is not None and _imp_stat.get("is_directory", False)
                 except Exception as e:
                     results[path] = {"success": False, "error": str(e)}
                     continue
@@ -1726,19 +1728,20 @@ class MetadataMixin:
         Promotes entry_type=0 (DT_REG) to 1 (DT_DIR) for implicit directories
         in non-recursive listings, matching ls -l semantics.
         """
-        entry_type = entry.entry_type
-        if not recursive and entry.entry_type == 0:
-            if implicit_dirs is None:
-                is_implicit_dir = self._kernel.metastore_is_implicit_directory(entry.path)
-            else:
+        et = entry.entry_type
+        if not recursive and et == 0:
+            if implicit_dirs is not None:
                 is_implicit_dir = entry.path.rstrip("/") in implicit_dirs
+            else:
+                _s = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                is_implicit_dir = _s is not None and _s.get("is_directory", False)
             if is_implicit_dir:
-                entry_type = DT_DIR
+                et = DT_DIR
         return {
             "path": entry.path,
             "size": entry.size,
             "content_id": entry.content_id,
-            "entry_type": entry_type,
+            "entry_type": et,
             "zone_id": entry.zone_id,
             "owner_id": entry.owner_id,
             "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,

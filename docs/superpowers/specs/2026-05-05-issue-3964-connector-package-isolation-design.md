@@ -55,8 +55,8 @@ Each package exposes a manifest entry point:
 
 ```toml
 [project.entry-points."nexus.connectors"]
-s3 = "nexus_connector_s3._manifest:MANIFEST"
-slack = "nexus_connector_slack._manifest:MANIFEST"
+path_s3 = "nexus_connector_s3._manifest"
+slack_connector = "nexus_connector_slack._manifest"
 ```
 
 The manifest module imports only `nexus.extensions.manifest`, `nexus.extensions.types`, and standard-library modules. It must not import `boto3`, `slack_sdk`, or the connector implementation module. The runtime module owns the connector class import/registration when the connector is actually mounted.

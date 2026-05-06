@@ -22,9 +22,10 @@ import os
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from nexus.bricks.search.pg_fts_backend import PgFtsBackend
+from nexus.bricks.search.pg_fts_backend import PgFtsBackend, _native_fts_query
 from nexus.bricks.search.protocols import SearchBackend
 
 # ---------------------------------------------------------------------------
@@ -178,6 +179,251 @@ def test_satisfies_protocol():
     mock_engine = MagicMock(spec=AsyncEngine)
     b = PgFtsBackend(engine=mock_engine)
     assert isinstance(b, SearchBackend)
+
+
+class _FakeMappingResult:
+    def __init__(self, rows: list[dict] | None = None, scalar_value: bool | None = None):
+        self._rows = rows or []
+        self._scalar_value = scalar_value
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+    def scalar(self):
+        return self._scalar_value
+
+
+class _FakeConn:
+    def __init__(self, *, bm25_error: Exception | None = None, has_bm25: bool = False):
+        self.bm25_error = bm25_error
+        self.has_bm25 = has_bm25
+        self.calls: list[str] = []
+        self.params: list[dict] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def execute(self, statement, params=None):
+        sql = str(statement)
+        self.calls.append(sql)
+        self.params.append(params or {})
+        if "FROM pg_am" in sql:
+            return _FakeMappingResult(scalar_value=self.has_bm25)
+        if "paradedb.score" in sql:
+            if self.bm25_error is not None:
+                raise self.bm25_error
+            return _FakeMappingResult(
+                [
+                    {
+                        "path": "/workspace/demo/herb/products/prod-001.md",
+                        "chunk_text": "Nexus Core pricing is usage-based",
+                        "score": 10.0,
+                        "chunk_index": 0,
+                    }
+                ]
+            )
+        if "string_agg" in sql:
+            return _FakeMappingResult(
+                [
+                    {
+                        "path": "/workspace/demo/herb/products/prod-001.md",
+                        "page_text": "Nexus Core pricing is usage-based",
+                        "score": 0.75,
+                    }
+                ]
+            )
+        return _FakeMappingResult(
+            [
+                {
+                    "path": "/workspace/demo/herb/products/prod-001.md",
+                    "chunk_text": "Nexus Core pricing is usage-based",
+                    "score": 0.75,
+                    "chunk_index": 0,
+                }
+            ]
+        )
+
+
+class _FakeEngine:
+    def __init__(self, conn: _FakeConn):
+        self.conn = conn
+
+    def connect(self):
+        return self.conn
+
+
+def test_native_fts_query_uses_or_terms_for_question_recall():
+    assert (
+        _native_fts_query("Who is the staff engineer working on semantic search quality?")
+        == "staff | engineer | working | semantic | search | quality"
+    )
+
+
+@pytest.mark.asyncio
+async def test_startup_disables_bm25_when_pg_extension_is_absent():
+    conn = _FakeConn(has_bm25=False)
+    backend = PgFtsBackend(engine=_FakeEngine(conn))
+
+    await backend.startup()
+    hits = await backend.keyword_search("Nexus Core", "/workspace/demo/herb", k=5, zone_id="root")
+
+    assert backend._bm25_available is False
+    assert [h.path for h in hits] == ["/workspace/demo/herb/products/prod-001.md"]
+    assert not any("paradedb.score" in sql for sql in conn.calls)
+    assert any("to_tsquery('english', :fts_query)" in sql for sql in conn.calls)
+    assert conn.params[-1]["fts_query"] == "nexus | core"
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_falls_back_to_native_fts_when_bm25_query_fails():
+    bm25_error = ProgrammingError(
+        "SELECT paradedb.score(chunk_id)",
+        {},
+        Exception('schema "paradedb" does not exist'),
+    )
+    conn = _FakeConn(bm25_error=bm25_error)
+    backend = PgFtsBackend(engine=_FakeEngine(conn))
+
+    hits = await backend.keyword_search("Nexus Core", "/workspace/demo/herb", k=5, zone_id="root")
+    second_hits = await backend.keyword_search(
+        "Nexus Core", "/workspace/demo/herb", k=5, zone_id="root"
+    )
+
+    assert [h.path for h in hits] == ["/workspace/demo/herb/products/prod-001.md"]
+    assert [h.path for h in second_hits] == ["/workspace/demo/herb/products/prod-001.md"]
+    assert backend._bm25_available is False
+    assert sum("paradedb.score" in sql for sql in conn.calls) == 1
+    assert sum("to_tsquery('english', :fts_query)" in sql for sql in conn.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_keeps_unrelated_dbapi_errors_visible():
+    db_error = ProgrammingError(
+        "SELECT paradedb.score(chunk_id)",
+        {},
+        Exception("connection lost while executing query"),
+    )
+    conn = _FakeConn(bm25_error=db_error)
+    backend = PgFtsBackend(engine=_FakeEngine(conn))
+
+    with pytest.raises(ProgrammingError):
+        await backend.keyword_search("Nexus Core", "/workspace/demo/herb", k=5, zone_id="root")
+
+
+@pytest.mark.asyncio
+async def test_keyword_search_pages_uses_native_page_search_without_bm25():
+    conn = _FakeConn(has_bm25=False)
+    backend = PgFtsBackend(engine=_FakeEngine(conn))
+    await backend.startup()
+
+    hits = await backend.keyword_search_pages(
+        "What is the pricing model for Nexus Core?",
+        "/workspace/demo/herb",
+        k=5,
+        zone_id="root",
+    )
+
+    assert [h.path for h in hits] == ["/workspace/demo/herb/products/prod-001.md"]
+    assert hits[0].chunk_text == "Nexus Core pricing is usage-based"
+    assert not any("paradedb.score" in sql for sql in conn.calls)
+    assert any("string_agg" in sql and "ts_rank_cd" in sql for sql in conn.calls)
+
+
+@pytest.mark.asyncio
+async def test_native_fts_live_postgres_herb_quality_without_bm25():
+    """Live plain-Postgres regression for the Docker Publish smoke gate."""
+    url = _get_pg_url()
+    if not url:
+        pytest.skip(
+            "No Postgres URL configured. Set NEXUS_TEST_DATABASE_URL to run live native FTS test."
+        )
+
+    from nexus.cli.commands.demo_data import HERB_CORPUS, HERB_QA_SET
+
+    engine = create_async_engine(url, echo=False)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS document_chunks"))
+            await conn.execute(text("DROP TABLE IF EXISTS file_paths"))
+            await conn.execute(
+                text("""
+                CREATE TABLE file_paths (
+                    path_id     TEXT PRIMARY KEY,
+                    zone_id     TEXT NOT NULL,
+                    virtual_path TEXT NOT NULL,
+                    deleted_at  TIMESTAMPTZ,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """)
+            )
+            await conn.execute(
+                text("""
+                CREATE TABLE document_chunks (
+                    chunk_id     TEXT PRIMARY KEY,
+                    path_id      TEXT NOT NULL REFERENCES file_paths(path_id) ON DELETE CASCADE,
+                    chunk_index  INTEGER NOT NULL,
+                    chunk_text   TEXT NOT NULL,
+                    chunk_tokens INTEGER NOT NULL,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """)
+            )
+            for idx, (path, content, _description) in enumerate(HERB_CORPUS):
+                path_id = f"path-{idx}"
+                await conn.execute(
+                    text("""
+                    INSERT INTO file_paths (path_id, zone_id, virtual_path, deleted_at)
+                    VALUES (:path_id, 'root', :path, NULL)
+                    """),
+                    {"path_id": path_id, "path": path},
+                )
+                await conn.execute(
+                    text("""
+                    INSERT INTO document_chunks
+                        (chunk_id, path_id, chunk_index, chunk_text, chunk_tokens)
+                    VALUES (:chunk_id, :path_id, 0, :content, :tokens)
+                    """),
+                    {
+                        "chunk_id": f"chunk-{idx}",
+                        "path_id": path_id,
+                        "content": content,
+                        "tokens": len(content.split()),
+                    },
+                )
+
+        backend = PgFtsBackend(engine)
+        await backend.startup()
+        backend._bm25_available = False
+
+        readiness = await backend.keyword_search_pages(
+            "Nexus Core",
+            "/workspace/demo/herb",
+            k=1,
+            zone_id="root",
+        )
+        assert [result.path for result in readiness] == [
+            "/workspace/demo/herb/products/prod-001.md"
+        ]
+
+        hits = 0
+        for qa in HERB_QA_SET:
+            results = await backend.keyword_search_pages(
+                qa["question"],
+                "/workspace/demo/herb",
+                k=5,
+                zone_id="root",
+            )
+            hits += int(qa["expected_file"] in {result.path for result in results})
+
+        assert hits >= 7
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,10 @@
-"""Postgres BM25 backend (Issue #3699).
+"""Postgres full-text search backend (Issue #3699).
 
 Wraps the existing idx_chunks_bm25 pg_textsearch index (true k1+b BM25)
-on document_chunks.chunk_text. Replaces the BM25 leg of txtai_backend
-+ bm25s_search.py for Postgres deployments.
+on document_chunks.chunk_text when the pg_search / pg_textsearch extension is
+available. When the extension is absent, the backend falls back to PostgreSQL's
+built-in ``to_tsvector`` / ``ts_rank_cd`` search so plain pgvector Postgres
+deployments still return keyword and hybrid results.
 
 Two BM25 modes:
   * keyword_search()         — chunk-level (one row per chunk)
@@ -32,6 +34,7 @@ Page-BM25 approach (keyword_search_pages):
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -60,6 +63,85 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _BM25_MATCH_OP: str = "@@@"
 _BM25_SCORE_FN: str = "paradedb.score"
+_NATIVE_FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+_NATIVE_FTS_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "being",
+    "by",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
+
+
+def _native_fts_query(query: str) -> str:
+    """Build a broad native Postgres tsquery string for fallback search.
+
+    ``plainto_tsquery`` combines normal text with AND, which is too strict for
+    natural-language questions. A safe OR tsquery keeps fallback recall close
+    to BM25 while PostgreSQL still handles stemming through ``to_tsquery``.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for match in _NATIVE_FTS_TOKEN_RE.finditer(query.lower()):
+        term = match.group(0)
+        if len(term) < 2 or term in _NATIVE_FTS_STOPWORDS or term in seen:
+            continue
+        seen.add(term)
+        terms.append(term)
+    return " | ".join(terms)
+
+
+def _native_like_patterns(query: str) -> dict[str, str]:
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return {
+        "phrase_pattern": f"%{escaped}%",
+        "heading_pattern": f"#%: {escaped}%",
+    }
+
+
+def _is_missing_bm25_error(exc: BaseException) -> bool:
+    """Return True for pg_search / pg_textsearch not-installed query failures."""
+    orig = getattr(exc, "orig", None)
+    message = str(orig if orig is not None else exc).lower()
+    return (
+        'schema "paradedb" does not exist' in message
+        or "schema paradedb does not exist" in message
+        or "function paradedb.score" in message
+        or ("operator does not exist" in message and "@@@" in message)
+        or 'access method "bm25" does not exist' in message
+    )
 
 
 class PgFtsBackend:
@@ -85,13 +167,33 @@ class PgFtsBackend:
         # aggregation. Keeps us from try/except on every query once we
         # know which path the installed pg_textsearch build supports.
         self._page_cte_supported: bool | None = None
+        # ``None`` = not checked yet, ``True`` = pg_search/pg_textsearch BM25
+        # works, ``False`` = use built-in PostgreSQL FTS fallback.
+        self._bm25_available: bool | None = None
 
     # -------------------------------------------------------------------------
     # Lifecycle
     # -------------------------------------------------------------------------
 
     async def startup(self) -> None:
-        """No-op: pg_textsearch index is maintained by Postgres automatically."""
+        """Detect whether pg_search / pg_textsearch BM25 is available."""
+        try:
+            async with self._engine.connect() as conn:
+                result = await conn.execute(
+                    text("""
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_am
+                        WHERE amname = 'bm25'
+                    ) AS has_bm25
+                    """)
+                )
+                self._bm25_available = bool(result.scalar())
+        except Exception as exc:
+            logger.debug("PgFtsBackend.startup: BM25 capability probe failed: %s", exc)
+            self._bm25_available = None
+        if self._bm25_available is False:
+            self._page_cte_supported = False
         return None
 
     async def shutdown(self) -> None:
@@ -152,6 +254,32 @@ class PgFtsBackend:
         Returns:
             List of BaseSearchResult ordered by score descending.
         """
+        if self._bm25_available is False:
+            return await self._keyword_search_native(query, path, k, zone_id)
+
+        try:
+            return await self._keyword_search_bm25(query, path, k, zone_id)
+        except (ProgrammingError, DBAPIError) as exc:
+            if not _is_missing_bm25_error(exc):
+                raise
+            logger.warning(
+                "PgFtsBackend.keyword_search: BM25 query failed because "
+                "pg_search/pg_textsearch is unavailable (%s: %s). Falling back "
+                "to built-in PostgreSQL FTS for this process.",
+                type(exc).__name__,
+                exc,
+            )
+            self._bm25_available = False
+            self._page_cte_supported = False
+            return await self._keyword_search_native(query, path, k, zone_id)
+
+    async def _keyword_search_bm25(
+        self,
+        query: str,
+        path: str,
+        k: int,
+        zone_id: str,
+    ) -> list[BaseSearchResult]:
         # NOTE: _BM25_MATCH_OP and _BM25_SCORE_FN are module-level string
         # constants, not user input, so the f-string here does NOT open an
         # SQL-injection surface. The runtime values (query, path, zone_id, k)
@@ -185,6 +313,71 @@ class PgFtsBackend:
                 .all()
             )
 
+        return self._rows_to_results(rows, zone_id=zone_id)
+
+    async def _keyword_search_native(
+        self,
+        query: str,
+        path: str,
+        k: int,
+        zone_id: str,
+    ) -> list[BaseSearchResult]:
+        fts_query = _native_fts_query(query)
+        if not fts_query:
+            return []
+        like_patterns = _native_like_patterns(query)
+
+        sql = text("""
+            WITH q AS (
+              SELECT to_tsquery('english', :fts_query) AS query
+            )
+            SELECT c.chunk_id,
+                   fp.virtual_path AS path,
+                   c.chunk_text,
+                   c.chunk_index,
+                   (
+                     ts_rank_cd(to_tsvector('english', c.chunk_text), q.query)
+                     + CASE
+                         WHEN c.chunk_text ILIKE :heading_pattern ESCAPE '\\' THEN 10.0
+                         ELSE 0.0
+                       END
+                     + CASE
+                         WHEN c.chunk_text ILIKE :phrase_pattern ESCAPE '\\' THEN 1.0
+                         ELSE 0.0
+                       END
+                   ) AS score
+            FROM document_chunks c
+            JOIN file_paths fp ON c.path_id = fp.path_id
+            CROSS JOIN q
+            WHERE to_tsvector('english', c.chunk_text) @@ q.query
+              AND fp.zone_id = :zone_id
+              AND fp.virtual_path LIKE :prefix || '%'
+              AND fp.deleted_at IS NULL
+            ORDER BY score DESC
+            LIMIT :k
+        """)
+        async with self._engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        sql,
+                        {
+                            "fts_query": fts_query,
+                            **like_patterns,
+                            "prefix": path,
+                            "zone_id": zone_id,
+                            "k": k,
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+        return self._rows_to_results(rows, zone_id=zone_id)
+
+    @staticmethod
+    def _rows_to_results(rows: Sequence[Any], *, zone_id: str) -> list[BaseSearchResult]:
         return [
             BaseSearchResult(
                 path=r["path"],
@@ -235,6 +428,9 @@ class PgFtsBackend:
         Returns:
             List of BaseSearchResult (one per path) ordered by score desc.
         """
+        if self._bm25_available is False:
+            return await self._keyword_search_pages_native(query, path, k, zone_id)
+
         if self._page_cte_supported is False:
             # Cached: previous attempt failed — go straight to fallback.
             return await self._keyword_search_pages_fallback(query, path, k, zone_id)
@@ -246,6 +442,18 @@ class PgFtsBackend:
             # in psycopg / asyncpg; DBAPIError is the broader catch for builds
             # that surface the same condition under a different SQLSTATE.
             # Anything else (timeouts, IntegrityError) we re-raise.
+            if _is_missing_bm25_error(exc):
+                logger.warning(
+                    "PgFtsBackend.keyword_search_pages: BM25 query failed "
+                    "because pg_search/pg_textsearch is unavailable (%s: %s). "
+                    "Falling back to built-in PostgreSQL FTS for this process.",
+                    type(exc).__name__,
+                    exc,
+                )
+                self._bm25_available = False
+                self._page_cte_supported = False
+                return await self._keyword_search_pages_native(query, path, k, zone_id)
+
             if self._page_cte_supported is None:
                 logger.warning(
                     "PgFtsBackend.keyword_search_pages: CTE-aggregated BM25 "
@@ -313,6 +521,83 @@ class PgFtsBackend:
                 chunk_text=r["page_text"],
                 score=float(r["score"]),
                 chunk_index=0,  # page-level result has no single chunk_index
+                keyword_score=float(r["score"]),
+                zone_id=zone_id,
+            )
+            for r in rows
+        ]
+
+    async def _keyword_search_pages_native(
+        self,
+        query: str,
+        path: str,
+        k: int,
+        zone_id: str,
+    ) -> list[BaseSearchResult]:
+        fts_query = _native_fts_query(query)
+        if not fts_query:
+            return []
+        like_patterns = _native_like_patterns(query)
+
+        sql = text("""
+            WITH q AS (
+              SELECT to_tsquery('english', :fts_query) AS query
+            ),
+            pages AS (
+              SELECT fp.path_id,
+                     fp.virtual_path,
+                     string_agg(c.chunk_text, ' ' ORDER BY c.chunk_index) AS page_text
+              FROM document_chunks c
+              JOIN file_paths fp ON c.path_id = fp.path_id
+              WHERE fp.zone_id = :zone_id
+                AND fp.virtual_path LIKE :prefix || '%'
+                AND fp.deleted_at IS NULL
+              GROUP BY fp.path_id, fp.virtual_path
+            )
+            SELECT path_id,
+                   virtual_path AS path,
+                   page_text,
+                   (
+                     ts_rank_cd(to_tsvector('english', page_text), q.query)
+                     + CASE
+                         WHEN page_text ILIKE :heading_pattern ESCAPE '\\' THEN 10.0
+                         ELSE 0.0
+                       END
+                     + CASE
+                         WHEN page_text ILIKE :phrase_pattern ESCAPE '\\' THEN 1.0
+                         ELSE 0.0
+                       END
+                   ) AS score
+            FROM pages
+            CROSS JOIN q
+            WHERE to_tsvector('english', page_text) @@ q.query
+            ORDER BY score DESC
+            LIMIT :k
+        """)
+        async with self._engine.connect() as conn:
+            rows = (
+                (
+                    await conn.execute(
+                        sql,
+                        {
+                            "fts_query": fts_query,
+                            **like_patterns,
+                            "prefix": path,
+                            "zone_id": zone_id,
+                            "k": k,
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+        return [
+            BaseSearchResult(
+                path=r["path"],
+                chunk_text=r["page_text"],
+                score=float(r["score"]),
+                chunk_index=0,
                 keyword_score=float(r["score"]),
                 zone_id=zone_id,
             )

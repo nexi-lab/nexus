@@ -673,9 +673,11 @@ def search_index(
             stats: dict[str, Any] = search_svc.semantic_search_stats()
             console.print("\n[bold nexus.value]Index Statistics:[/bold nexus.value]")
             console.print(
-                f"  Total indexed files: [nexus.success]{stats['indexed_files']}[/nexus.success]"
+                f"  Total indexed files: [nexus.success]{stats.get('total_files', stats.get('indexed_files', 0))}[/nexus.success]"
             )
-            console.print(f"  Total chunks: [nexus.success]{stats['total_chunks']}[/nexus.success]")
+            console.print(
+                f"  Total chunks: [nexus.success]{stats.get('total_chunks', 0)}[/nexus.success]"
+            )
 
             nx.close()
         except Exception as e:

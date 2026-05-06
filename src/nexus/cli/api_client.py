@@ -19,6 +19,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -26,6 +27,26 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://localhost:2026"
 DEFAULT_TIMEOUT = 30.0
+
+
+def _normalize_loopback_url(url: str) -> str:
+    """Prefer IPv4 loopback for local Nexus URLs."""
+    parsed = urlparse(url)
+    if parsed.hostname != "localhost":
+        return url
+    try:
+        port = parsed.port
+    except ValueError:
+        return url
+    netloc = "127.0.0.1"
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def _is_loopback_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.hostname in {"localhost", "127.0.0.1", "::1"}
 
 
 class NexusApiClient:
@@ -39,9 +60,10 @@ class NexusApiClient:
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         resolved = url or os.environ.get("NEXUS_URL") or DEFAULT_BASE_URL
-        self._base_url = resolved.rstrip("/")
+        self._base_url = _normalize_loopback_url(resolved.rstrip("/"))
         self._api_key = api_key or os.environ.get("NEXUS_API_KEY", "")
         self._timeout = timeout
+        self._trust_env = not _is_loopback_url(self._base_url)
 
     def _headers(self) -> dict[str, str]:
         headers: dict[str, str] = {"Accept": "application/json"}
@@ -52,21 +74,39 @@ class NexusApiClient:
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """GET request. Returns parsed JSON response."""
         url = f"{self._base_url}{path}"
-        resp = httpx.get(url, headers=self._headers(), params=params, timeout=self._timeout)
+        resp = httpx.get(
+            url,
+            headers=self._headers(),
+            params=params,
+            timeout=self._timeout,
+            trust_env=self._trust_env,
+        )
         resp.raise_for_status()
         return resp.json()
 
     def put(self, path: str, json_body: dict[str, Any]) -> Any:
         """PUT request. Returns parsed JSON response."""
         url = f"{self._base_url}{path}"
-        resp = httpx.put(url, headers=self._headers(), json=json_body, timeout=self._timeout)
+        resp = httpx.put(
+            url,
+            headers=self._headers(),
+            json=json_body,
+            timeout=self._timeout,
+            trust_env=self._trust_env,
+        )
         resp.raise_for_status()
         return resp.json()
 
     def post(self, path: str, json_body: dict[str, Any] | None = None) -> Any:
         """POST request. Returns parsed JSON response."""
         url = f"{self._base_url}{path}"
-        resp = httpx.post(url, headers=self._headers(), json=json_body, timeout=self._timeout)
+        resp = httpx.post(
+            url,
+            headers=self._headers(),
+            json=json_body,
+            timeout=self._timeout,
+            trust_env=self._trust_env,
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -80,7 +120,13 @@ class NexusApiClient:
         from other failures without reaching into private internals.
         """
         url = f"{self._base_url}{path}"
-        resp = httpx.delete(url, headers=self._headers(), params=params, timeout=self._timeout)
+        resp = httpx.delete(
+            url,
+            headers=self._headers(),
+            params=params,
+            timeout=self._timeout,
+            trust_env=self._trust_env,
+        )
         resp.raise_for_status()
         if resp.status_code == 204 or not resp.content:
             return None

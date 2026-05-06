@@ -167,6 +167,7 @@ pub fn run() -> BenchResult<()> {
                     path: candidate.clone(),
                     source,
                 })?;
+            ensure_diff_compatible(&baseline_result, &candidate_result)?;
             let thresholds = ThresholdSet::load(&threshold)?;
             let diff = evaluate(&baseline_result, &candidate_result, &thresholds);
             write_markdown(&out_md, &render_diff_markdown(&diff))?;
@@ -179,6 +180,31 @@ pub fn run() -> BenchResult<()> {
             }
         }
     }
+}
+
+fn ensure_diff_compatible(
+    baseline: &BenchResultFile,
+    candidate: &BenchResultFile,
+) -> BenchResult<()> {
+    if baseline.schema_version != candidate.schema_version {
+        return Err(BenchError::Threshold(format!(
+            "baseline schema_version {} does not match candidate schema_version {}",
+            baseline.schema_version, candidate.schema_version
+        )));
+    }
+    if baseline.workload != candidate.workload {
+        return Err(BenchError::Threshold(format!(
+            "baseline workload {} does not match candidate workload {}",
+            baseline.workload, candidate.workload
+        )));
+    }
+    if baseline.target != candidate.target {
+        return Err(BenchError::Threshold(format!(
+            "baseline target {} does not match candidate target {}",
+            baseline.target, candidate.target
+        )));
+    }
+    Ok(())
 }
 
 fn replay_with_target<T: BenchTarget + Clone + 'static>(
@@ -221,4 +247,87 @@ fn git_sha() -> String {
         .map(|sha| sha.trim().to_string())
         .filter(|sha| !sha.is_empty())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metrics::{LatencySummary, OperationCounts, ThroughputSummary};
+    use std::collections::BTreeMap;
+
+    fn result(workload: &str, target: &str, schema_version: u32) -> BenchResultFile {
+        BenchResultFile {
+            schema_version,
+            workload: workload.to_string(),
+            target: target.to_string(),
+            git_sha: "abc".to_string(),
+            started_at: chrono::Utc::now(),
+            duration_ms: 1.0,
+            operations: OperationCounts {
+                total: 1,
+                succeeded: 1,
+                failed: 0,
+                by_kind: BTreeMap::new(),
+            },
+            throughput: ThroughputSummary {
+                ops_per_sec: 1.0,
+                read_bytes_per_sec: 0.0,
+                write_bytes_per_sec: 0.0,
+            },
+            latency_ms: LatencySummary {
+                min: 1.0,
+                p50: 1.0,
+                p90: 1.0,
+                p95: 1.0,
+                p99: 1.0,
+                max: 1.0,
+                mean: 1.0,
+            },
+            rpc_count: 1,
+            bytes_egress: 1,
+            logical_bytes_read: 1,
+            logical_bytes_written: 0,
+            cache_hit_rate: None,
+            errors: vec![],
+        }
+    }
+
+    #[test]
+    fn diff_compatibility_accepts_same_workload_target_and_schema() {
+        ensure_diff_compatible(
+            &result("agent-cold-start", "noop", 1),
+            &result("agent-cold-start", "noop", 1),
+        )
+        .expect("matching result files should compare");
+    }
+
+    #[test]
+    fn diff_compatibility_rejects_schema_mismatch() {
+        let err = ensure_diff_compatible(
+            &result("agent-cold-start", "noop", 1),
+            &result("agent-cold-start", "noop", 2),
+        )
+        .expect_err("schema mismatch must fail");
+        assert!(err.to_string().contains("schema_version"));
+    }
+
+    #[test]
+    fn diff_compatibility_rejects_workload_mismatch() {
+        let err = ensure_diff_compatible(
+            &result("agent-cold-start", "noop", 1),
+            &result("agent-warm-trace", "noop", 1),
+        )
+        .expect_err("workload mismatch must fail");
+        assert!(err.to_string().contains("workload"));
+    }
+
+    #[test]
+    fn diff_compatibility_rejects_target_mismatch() {
+        let err = ensure_diff_compatible(
+            &result("agent-cold-start", "noop", 1),
+            &result("agent-cold-start", "mount", 1),
+        )
+        .expect_err("target mismatch must fail");
+        assert!(err.to_string().contains("target"));
+    }
 }

@@ -65,12 +65,8 @@ pub fn evaluate(
         let base = metric_value(baseline, metric);
         let cand = metric_value(candidate, metric);
         let (percent_change, status) = match (base, cand) {
-            (Some(base), Some(cand)) if base != 0.0 => {
-                let change = if threshold.higher_is_better {
-                    ((base - cand) / base) * 100.0
-                } else {
-                    ((cand - base) / base) * 100.0
-                };
+            (Some(Some(base)), Some(Some(cand))) => {
+                let change = regression_percent(base, cand, threshold.higher_is_better);
                 let status = if change > threshold.max_regression_percent {
                     DiffStatus::Failed
                 } else {
@@ -78,12 +74,12 @@ pub fn evaluate(
                 };
                 (Some(change), status)
             }
-            _ => (None, DiffStatus::Skipped),
+            _ => (None, DiffStatus::Failed),
         };
         rows.push(DiffRow {
             metric: metric.clone(),
-            baseline: base,
-            candidate: cand,
+            baseline: base.flatten(),
+            candidate: cand.flatten(),
             percent_change,
             threshold_percent: threshold.max_regression_percent,
             status,
@@ -93,14 +89,28 @@ pub fn evaluate(
     DiffResult { passed, rows }
 }
 
-fn metric_value(result: &BenchResultFile, metric: &str) -> Option<f64> {
+fn regression_percent(base: f64, cand: f64, higher_is_better: bool) -> f64 {
+    if base == 0.0 {
+        if cand == 0.0 || (higher_is_better && cand > base) || (!higher_is_better && cand < base) {
+            0.0
+        } else {
+            f64::INFINITY
+        }
+    } else if higher_is_better {
+        ((base - cand) / base) * 100.0
+    } else {
+        ((cand - base) / base) * 100.0
+    }
+}
+
+fn metric_value(result: &BenchResultFile, metric: &str) -> Option<Option<f64>> {
     match metric {
-        "latency_ms.p95" => Some(result.latency_ms.p95),
-        "latency_ms.p99" => Some(result.latency_ms.p99),
-        "throughput.ops_per_sec" => Some(result.throughput.ops_per_sec),
-        "rpc_count" => Some(result.rpc_count as f64),
-        "bytes_egress" => Some(result.bytes_egress as f64),
-        "cache_hit_rate" => result.cache_hit_rate,
+        "latency_ms.p95" => Some(Some(result.latency_ms.p95)),
+        "latency_ms.p99" => Some(Some(result.latency_ms.p99)),
+        "throughput.ops_per_sec" => Some(Some(result.throughput.ops_per_sec)),
+        "rpc_count" => Some(Some(result.rpc_count as f64)),
+        "bytes_egress" => Some(Some(result.bytes_egress as f64)),
+        "cache_hit_rate" => Some(result.cache_hit_rate),
         _ => None,
     }
 }
@@ -167,5 +177,57 @@ mod tests {
         let diff = evaluate(&result(10.0, 100.0), &result(10.0, 80.0), &thresholds);
         assert!(!diff.passed);
         assert_eq!(diff.rows[0].status, DiffStatus::Failed);
+    }
+
+    #[test]
+    fn unsupported_metric_fails_closed() {
+        let thresholds =
+            ThresholdSet::from_json_str(r#"{"latency_ms.p50":{"max_regression_percent":20.0}}"#)
+                .unwrap();
+        let diff = evaluate(&result(10.0, 100.0), &result(10.0, 100.0), &thresholds);
+        assert!(!diff.passed);
+        assert_eq!(diff.rows[0].status, DiffStatus::Failed);
+        assert_eq!(diff.rows[0].percent_change, None);
+    }
+
+    #[test]
+    fn unavailable_optional_metric_fails_closed() {
+        let thresholds =
+            ThresholdSet::from_json_str(r#"{"cache_hit_rate":{"max_regression_percent":10.0}}"#)
+                .unwrap();
+        let diff = evaluate(&result(10.0, 100.0), &result(10.0, 100.0), &thresholds);
+        assert!(!diff.passed);
+        assert_eq!(diff.rows[0].status, DiffStatus::Failed);
+    }
+
+    #[test]
+    fn zero_baseline_nonzero_candidate_fails_for_lower_is_better() {
+        let thresholds =
+            ThresholdSet::from_json_str(r#"{"rpc_count":{"max_regression_percent":10.0}}"#)
+                .unwrap();
+        let mut baseline = result(10.0, 100.0);
+        baseline.rpc_count = 0;
+        let mut candidate = result(10.0, 100.0);
+        candidate.rpc_count = 5;
+
+        let diff = evaluate(&baseline, &candidate, &thresholds);
+        assert!(!diff.passed);
+        assert_eq!(diff.rows[0].status, DiffStatus::Failed);
+    }
+
+    #[test]
+    fn zero_baseline_equal_candidate_passes() {
+        let thresholds =
+            ThresholdSet::from_json_str(r#"{"rpc_count":{"max_regression_percent":10.0}}"#)
+                .unwrap();
+        let mut baseline = result(10.0, 100.0);
+        baseline.rpc_count = 0;
+        let mut candidate = result(10.0, 100.0);
+        candidate.rpc_count = 0;
+
+        let diff = evaluate(&baseline, &candidate, &thresholds);
+        assert!(diff.passed);
+        assert_eq!(diff.rows[0].status, DiffStatus::Passed);
+        assert_eq!(diff.rows[0].percent_change, Some(0.0));
     }
 }

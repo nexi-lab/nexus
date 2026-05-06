@@ -18,7 +18,10 @@ def test_docker_publish_startup_gate_uses_basic_health_probe() -> None:
         )
     ]
 
-    assert "http://127.0.0.1:2026/health" in start_step
+    assert (
+        "docker exec nexus-e2e curl --max-time 5 -sf http://127.0.0.1:2026/health"
+    ) in start_step
+    assert "if curl --max-time 5 -sf http://127.0.0.1:2026/health" not in start_step
     assert "/healthz/ready" not in start_step
 
 

@@ -223,15 +223,21 @@ jobs:
               docker logs nexus-e2e 2>&1 | tail -200 || true
               exit 1
             fi
-            if curl --max-time 5 -sf http://127.0.0.1:2026/health > /dev/null 2>&1; then
-              echo "Nexus is ready (${i}s)"
+            if docker exec nexus-e2e curl --max-time 5 -sf http://127.0.0.1:2026/health > /dev/null 2>&1; then
+              echo "Nexus is ready (attempt ${i}/180)"
               break
             fi
             sleep 1
           done
-          if ! curl --max-time 5 -sf http://127.0.0.1:2026/health > /dev/null 2>&1; then
-            echo "::error::nexus-e2e never became healthy within 180 seconds"
+          if ! docker exec nexus-e2e curl --max-time 5 -sf http://127.0.0.1:2026/health > /dev/null 2>&1; then
+            echo "::error::nexus-e2e never became healthy from inside the container"
             docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
+            echo "Container-internal health probe:"
+            docker exec nexus-e2e curl -v --max-time 5 http://127.0.0.1:2026/health || true
+            echo "Host-side health probe:"
+            curl -v --max-time 5 http://127.0.0.1:2026/health || true
+            echo "Container listen sockets:"
+            docker exec nexus-e2e sh -c 'ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || true' || true
             echo "Crash signatures from container logs:"
             docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
             echo "Last 200 container log lines:"

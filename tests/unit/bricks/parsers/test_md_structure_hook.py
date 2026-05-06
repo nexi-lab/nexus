@@ -34,12 +34,12 @@ class _StubMetastore:
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Any]] = {}
 
-    def metastore_set_file_metadata(self, path: str, key: str, value: Any) -> None:
+    def set_xattr(self, path: str, key: str, value: Any) -> None:
         if path not in self._data:
             self._data[path] = {}
         self._data[path][key] = value
 
-    def metastore_get_file_metadata(self, path: str, key: str) -> Any:
+    def get_xattr(self, path: str, key: str) -> Any:
         return self._data.get(path, {}).get(key)
 
 

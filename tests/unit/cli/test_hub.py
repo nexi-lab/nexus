@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock
 
 from click.testing import CliRunner
@@ -464,6 +465,290 @@ def test_hub_status_json_includes_expected_fields(monkeypatch):
     assert payload["qps_5m"] == 3.5
     assert payload["connections"] == 4
     assert payload["postgres"] == "ok"
+
+
+def test_hub_status_text_unchanged_without_detail(monkeypatch):
+    monkeypatch.setenv("NEXUS_MCP_HOST", "0.0.0.0")
+    monkeypatch.setenv("NEXUS_MCP_PORT", "8081")
+    monkeypatch.setenv("NEXUS_PROFILE", "full")
+
+    session = MagicMock()
+    session.execute.return_value.scalar.side_effect = [5, 2]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": 3.5, "connections": 4, "redis": "ok"},
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status"])
+    assert result.exit_code == 0, result.output
+    assert result.output == (
+        "endpoint:    http://0.0.0.0:8081/mcp\n"
+        "profile:     full\n"
+        "postgres:    ok\n"
+        "redis:       ok\n"
+        "tokens:      5 active, 2 revoked\n"
+        "connections: 4\n"
+        "qps (5m):    3.5\n"
+    )
+
+
+def test_hub_status_detail_json_includes_token_last_seen_and_zones(monkeypatch):
+    from datetime import datetime
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from nexus.storage.models import APIKeyModel, APIKeyZoneModel, Base, ZoneModel
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, future=True, expire_on_commit=False)
+    created = datetime(2026, 5, 5, 13, 0)
+    last_seen = datetime(2026, 5, 5, 14, 20, 10)
+
+    with Session() as s, s.begin():
+        s.add(ZoneModel(zone_id="eng", name="eng", phase="Active"))
+        s.add(ZoneModel(zone_id="ops", name="ops", phase="Active"))
+        s.add(
+            APIKeyModel(
+                key_id="kid_alice",
+                key_hash="hash_alice",
+                user_id="alice",
+                name="alice",
+                is_admin=0,
+                created_at=created,
+                last_used_at=last_seen,
+                revoked=0,
+            )
+        )
+        s.add(
+            APIKeyModel(
+                key_id="kid_aaron",
+                key_hash="hash_aaron",
+                user_id="aaron",
+                name="aaron",
+                is_admin=0,
+                created_at=created,
+                last_used_at=None,
+                revoked=0,
+            )
+        )
+        s.add(APIKeyZoneModel(key_id="kid_aaron", zone_id="ops", permissions="r"))
+        s.add(APIKeyZoneModel(key_id="kid_alice", zone_id="eng", permissions="rw"))
+        s.add(APIKeyZoneModel(key_id="kid_alice", zone_id="ops", permissions="r"))
+
+    monkeypatch.setattr("nexus.cli.commands.hub.get_session_factory", lambda: Session)
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": 0.0, "connections": 0, "redis": "ok"},
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_detail_stats",
+        lambda zone_ids: {
+            "zones": [
+                {"zone_id": zone_id, "clients": None, "qps_5m": None} for zone_id in zone_ids
+            ],
+            "rate_limits": {"window_seconds": 300, "hits_by_tier": {}},
+        },
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._collect_search_detail",
+        lambda zone_ids: {
+            "zones": [{"zone_id": zone_id, "txtai_queue_depth": None} for zone_id in zone_ids]
+        },
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status", "--detail", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert [row["zone_id"] for row in payload["zones"]] == ["eng", "ops"]
+    assert payload["tokens_detail"] == [
+        {
+            "key_id": "kid_aaron",
+            "name": "aaron",
+            "zones": ["ops"],
+            "admin": False,
+            "created": created.isoformat(),
+            "last_seen": None,
+            "revoked": False,
+            "revoked_at": None,
+        },
+        {
+            "key_id": "kid_alice",
+            "name": "alice",
+            "zones": ["eng", "ops"],
+            "admin": False,
+            "created": created.isoformat(),
+            "last_seen": last_seen.isoformat(),
+            "revoked": False,
+            "revoked_at": None,
+        },
+    ]
+
+
+def test_read_redis_detail_stats_aggregates_zone_and_rate_limit_counts(monkeypatch):
+    import nexus.cli.commands.hub as hub_module
+
+    class FakeRedis:
+        def __init__(self):
+            self.mget_calls = []
+            self.scard_calls = []
+            self.closed = False
+
+        def ping(self):
+            return True
+
+        def close(self):
+            self.closed = True
+
+        def mget(self, keys):
+            self.mget_calls.append(keys)
+            values = {
+                "nexus:hub:qps:zone:eng:100": b"120",
+                "nexus:hub:qps:zone:eng:99": b"30",
+                "nexus:hub:qps:zone:ops:100": b"60",
+                "nexus:hub:ratelimit:tier:anonymous:100": b"2",
+                "nexus:hub:ratelimit:tier:authenticated:100": b"4",
+            }
+            return [values.get(key) for key in keys]
+
+        def scard(self, key):
+            self.scard_calls.append(key)
+            return {"nexus:hub:active:zone:eng:100": 3, "nexus:hub:active:zone:ops:100": 1}.get(
+                key, 0
+            )
+
+    fake = FakeRedis()
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379")
+    monkeypatch.setattr("redis.from_url", lambda *_args, **_kwargs: fake)
+    monkeypatch.setattr(hub_module.time, "time", lambda: 100 * 60)
+
+    detail = hub_module._read_redis_detail_stats(["eng", "ops"])
+
+    assert detail["zones"] == [
+        {"zone_id": "eng", "clients": 3, "qps_5m": 0.5},
+        {"zone_id": "ops", "clients": 1, "qps_5m": 0.2},
+    ]
+    assert detail["rate_limits"] == {
+        "window_seconds": 300,
+        "hits_by_tier": {"anonymous": 2, "authenticated": 4, "premium": 0},
+    }
+    assert fake.closed is True
+
+
+def test_collect_search_detail_reports_zoekt_size_and_latest_mtime(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    import nexus.cli.commands.hub as hub_module
+
+    base = tmp_path / "zoekt"
+    eng = base / "eng"
+    eng.mkdir(parents=True)
+    one = eng / "one.idx"
+    two = eng / "two.idx"
+    one.write_bytes(b"1" * 10)
+    two.write_bytes(b"2" * 20)
+
+    one_ts = datetime(2026, 5, 5, 14, 17, tzinfo=UTC).timestamp()
+    two_dt = datetime(2026, 5, 5, 14, 18, tzinfo=UTC)
+    two_ts = two_dt.timestamp()
+    os.utime(one, (one_ts, one_ts))
+    os.utime(two, (two_ts, two_ts))
+    monkeypatch.setenv("NEXUS_ZOEKT_INDEX_DIR", str(base))
+
+    detail = hub_module._collect_search_detail(["eng", "ops"])
+
+    assert detail["zones"][0] == {
+        "zone_id": "eng",
+        "zoekt_index_size_bytes": 30,
+        "zoekt_index_size_display": "30 B",
+        "zoekt_last_indexed": two_dt.isoformat(),
+        "txtai_queue_depth": None,
+        "last_indexed": two_dt.isoformat(),
+    }
+    assert detail["zones"][1]["zone_id"] == "ops"
+    assert detail["zones"][1]["zoekt_index_size_bytes"] is None
+
+
+def test_collect_search_detail_reports_aggregate_zoekt_index(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    import nexus.cli.commands.hub as hub_module
+
+    base = tmp_path / "zoekt"
+    base.mkdir()
+    index_file = base / "index.zoekt"
+    index_file.write_bytes(b"x" * 12)
+    indexed_at = datetime(2026, 5, 5, 14, 22, tzinfo=UTC)
+    indexed_ts = indexed_at.timestamp()
+    os.utime(index_file, (indexed_ts, indexed_ts))
+    monkeypatch.delenv("NEXUS_ZOEKT_INDEX_DIR", raising=False)
+    monkeypatch.setenv("ZOEKT_INDEX_DIR", str(base))
+
+    detail = hub_module._collect_search_detail(["eng"])
+
+    assert detail["zones"] == [
+        {
+            "zone_id": "eng",
+            "zoekt_index_size_bytes": None,
+            "zoekt_index_size_display": None,
+            "zoekt_last_indexed": None,
+            "txtai_queue_depth": None,
+            "last_indexed": None,
+        },
+        {
+            "zone_id": "all",
+            "zoekt_index_size_bytes": 12,
+            "zoekt_index_size_display": "12 B",
+            "zoekt_last_indexed": indexed_at.isoformat(),
+            "txtai_queue_depth": None,
+            "last_indexed": indexed_at.isoformat(),
+        },
+    ]
+
+
+def test_hub_status_detail_flag_is_accepted(monkeypatch):
+    session = MagicMock()
+    session.execute.return_value.scalar.side_effect = [0, 0]
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub.get_session_factory",
+        lambda: _mock_session_ctx(session),
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_stats",
+        lambda: {"qps_5m": None, "connections": None, "redis": "n/a"},
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._collect_status_detail",
+        lambda _zone_ids, _tokens_detail, _redis_detail: {
+            "zones": [],
+            "tokens_detail": [],
+            "rate_limits": {"window_seconds": 300, "hits_by_tier": {}},
+            "search": {"zones": []},
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "nexus.cli.commands.hub._read_redis_detail_stats",
+        lambda _zone_ids: {
+            "zones": [],
+            "rate_limits": {"window_seconds": 300, "hits_by_tier": {}},
+        },
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(hub, ["status", "--detail", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["detail"] is True
 
 
 def test_hub_status_postgres_unreachable_marks_err(monkeypatch):

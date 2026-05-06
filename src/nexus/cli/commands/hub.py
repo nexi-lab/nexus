@@ -8,7 +8,10 @@ Remote admin is tracked as a follow-up to issue #3784.
 from __future__ import annotations
 
 import os
+import time
+from contextlib import suppress
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import click
@@ -510,8 +513,6 @@ def _read_redis_stats() -> dict[str, Any]:
 
     Returns a dict with `qps_5m`, `connections`, `redis` ∈ {"ok", "n/a"}.
     """
-    import time
-
     url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
     if not url:
         return {"qps_5m": None, "connections": None, "redis": "n/a"}
@@ -540,17 +541,108 @@ def _read_redis_stats() -> dict[str, Any]:
 
 @hub.command("status")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def hub_status(as_json: bool) -> None:
+@click.option(
+    "--detail",
+    is_flag=True,
+    help="Include per-zone, per-token, rate-limit, and search detail.",
+)
+def hub_status(as_json: bool, detail: bool) -> None:
     """Show hub health: postgres, redis, tokens, connections, qps."""
     import json as _json
 
-    host = os.environ.get("NEXUS_MCP_HOST", "0.0.0.0")
-    port = os.environ.get("NEXUS_MCP_PORT", "8081")
-    profile = os.environ.get("NEXUS_PROFILE", "full")
-    endpoint = f"http://{host}:{port}/mcp"
+    postgres_status = _collect_postgres_status(detail=detail)
+    payload = _base_status_payload(postgres_status)
+    if detail:
+        zone_ids = postgres_status["zone_ids"]
+        redis_detail = _read_redis_detail_stats(zone_ids)
+        payload["detail"] = True
+        payload.update(
+            _collect_status_detail(zone_ids, postgres_status["tokens_detail"], redis_detail)
+        )
 
+    if as_json:
+        click.echo(_json.dumps(payload, indent=2))
+    else:
+        _emit_base_status_text(payload)
+        if detail:
+            _emit_detail_status_text(payload)
+
+    # Postgres is the source of truth for tokens and zones. A broken
+    # auth DB must block rollout / trip paging — exit non-zero so
+    # shell-style health guards (`nexus hub status && …`) fail closed
+    # instead of reading "ok" off a silently-green exit code (#3784
+    # round 9). Redis is best-effort (metrics only) so we don't fail
+    # on `redis: n/a`.
+    if payload["postgres"] != "ok":
+        raise SystemExit(2)
+
+
+def _display_status_value(value: Any) -> str:
+    return "n/a" if value is None else str(value)
+
+
+def _iso_or_none(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
+
+
+def _collect_zone_ids(session: Any) -> list[str]:
+    rows = (
+        session.execute(
+            select(ZoneModel.zone_id)
+            .where(ZoneModel.phase == "Active")
+            .where(ZoneModel.deleted_at.is_(None))
+            .order_by(ZoneModel.zone_id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    return [str(zone_id) for zone_id in rows]
+
+
+def _token_zones_by_key(session: Any, key_ids: list[str]) -> dict[str, list[str]]:
+    if not key_ids:
+        return {}
+    rows = session.execute(
+        select(APIKeyZoneModel.key_id, APIKeyZoneModel.zone_id)
+        .where(APIKeyZoneModel.key_id.in_(key_ids))
+        .order_by(APIKeyZoneModel.granted_at.asc(), APIKeyZoneModel.zone_id.asc())
+    ).all()
+    zones_by_key: dict[str, list[str]] = {key_id: [] for key_id in key_ids}
+    for key_id, zone_id in rows:
+        zones_by_key.setdefault(key_id, []).append(zone_id)
+    return zones_by_key
+
+
+def _collect_token_detail(session: Any) -> list[dict[str, Any]]:
+    rows = (
+        session.execute(
+            select(APIKeyModel).order_by(APIKeyModel.created_at.desc(), APIKeyModel.key_id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    key_ids = [row.key_id for row in rows]
+    zones_by_key = _token_zones_by_key(session, key_ids)
+    return [
+        {
+            "key_id": row.key_id,
+            "name": row.name,
+            "zones": zones_by_key.get(row.key_id, []),
+            "admin": bool(row.is_admin),
+            "created": _iso_or_none(row.created_at),
+            "last_seen": _iso_or_none(row.last_used_at),
+            "revoked": bool(row.revoked),
+            "revoked_at": _iso_or_none(row.revoked_at),
+        }
+        for row in rows
+    ]
+
+
+def _collect_postgres_status(detail: bool = False) -> dict[str, Any]:
     pg_state = "ok"
     active = revoked = 0
+    zone_ids: list[str] = []
+    tokens_detail: list[dict[str, Any]] = []
     try:
         factory = get_session_factory()
         with factory() as session:
@@ -566,43 +658,288 @@ def hub_status(as_json: bool) -> None:
                 ).scalar()
                 or 0
             )
+            if detail:
+                zone_ids = _collect_zone_ids(session)
+                tokens_detail = _collect_token_detail(session)
     except Exception:  # noqa: BLE001
         pg_state = "err"
+    return {
+        "postgres": pg_state,
+        "tokens": {"active": int(active), "revoked": int(revoked)},
+        "zone_ids": zone_ids,
+        "tokens_detail": tokens_detail,
+    }
+
+
+def _base_status_payload(postgres_status: dict[str, Any]) -> dict[str, Any]:
+    host = os.environ.get("NEXUS_MCP_HOST", "0.0.0.0")
+    port = os.environ.get("NEXUS_MCP_PORT", "8081")
+    profile = os.environ.get("NEXUS_PROFILE", "full")
+    endpoint = f"http://{host}:{port}/mcp"
 
     redis_stats = _read_redis_stats()
-
-    payload = {
+    return {
         "endpoint": endpoint,
         "profile": profile,
-        "postgres": pg_state,
+        "postgres": postgres_status["postgres"],
         "redis": redis_stats["redis"],
-        "tokens": {"active": int(active), "revoked": int(revoked)},
+        "tokens": postgres_status["tokens"],
         "connections": redis_stats["connections"],
         "qps_5m": redis_stats["qps_5m"],
     }
 
-    if as_json:
-        click.echo(_json.dumps(payload, indent=2))
-    else:
-        click.echo(f"endpoint:    {payload['endpoint']}")
-        click.echo(f"profile:     {payload['profile']}")
-        click.echo(f"postgres:    {payload['postgres']}")
-        click.echo(f"redis:       {payload['redis']}")
-        click.echo(
-            f"tokens:      {payload['tokens']['active']} active, "
-            f"{payload['tokens']['revoked']} revoked"
-        )
-        click.echo(
-            "connections: "
-            f"{payload['connections'] if payload['connections'] is not None else 'n/a'}"
-        )
-        click.echo(f"qps (5m):    {payload['qps_5m'] if payload['qps_5m'] is not None else 'n/a'}")
 
-    # Postgres is the source of truth for tokens and zones. A broken
-    # auth DB must block rollout / trip paging — exit non-zero so
-    # shell-style health guards (`nexus hub status && …`) fail closed
-    # instead of reading "ok" off a silently-green exit code (#3784
-    # round 9). Redis is best-effort (metrics only) so we don't fail
-    # on `redis: n/a`.
-    if pg_state != "ok":
-        raise SystemExit(2)
+def _emit_base_status_text(payload: dict[str, Any]) -> None:
+    click.echo(f"endpoint:    {payload['endpoint']}")
+    click.echo(f"profile:     {payload['profile']}")
+    click.echo(f"postgres:    {payload['postgres']}")
+    click.echo(f"redis:       {payload['redis']}")
+    click.echo(
+        f"tokens:      {payload['tokens']['active']} active, {payload['tokens']['revoked']} revoked"
+    )
+    click.echo(f"connections: {_display_status_value(payload['connections'])}")
+    click.echo(f"qps (5m):    {_display_status_value(payload['qps_5m'])}")
+
+
+_RATE_LIMIT_TIERS = ("anonymous", "authenticated", "premium")
+
+
+def _decode_int(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _read_redis_detail_stats(zone_ids: list[str]) -> dict[str, Any]:
+    url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+    empty_zones = [{"zone_id": zone_id, "clients": None, "qps_5m": None} for zone_id in zone_ids]
+    empty = {
+        "zones": empty_zones,
+        "rate_limits": {
+            "window_seconds": 300,
+            "hits_by_tier": dict.fromkeys(_RATE_LIMIT_TIERS),
+        },
+    }
+    if not url:
+        return empty
+    try:
+        import redis
+    except ImportError:
+        return empty
+
+    client = None
+    try:
+        client = redis.from_url(url, socket_timeout=2)
+        client.ping()
+        now_min = int(time.time()) // 60
+        zones: list[dict[str, Any]] = []
+        for zone_id in zone_ids:
+            minute_keys = [f"nexus:hub:qps:zone:{zone_id}:{now_min - i}" for i in range(5)]
+            total = sum(_decode_int(v) for v in client.mget(minute_keys))
+            active = client.scard(f"nexus:hub:active:zone:{zone_id}:{now_min}")
+            zones.append(
+                {
+                    "zone_id": zone_id,
+                    "clients": int(active),
+                    "qps_5m": round(total / 300.0, 2),
+                }
+            )
+
+        hits_by_tier: dict[str, int] = {}
+        for tier in _RATE_LIMIT_TIERS:
+            minute_keys = [f"nexus:hub:ratelimit:tier:{tier}:{now_min - i}" for i in range(5)]
+            hits_by_tier[tier] = sum(_decode_int(v) for v in client.mget(minute_keys))
+
+        return {
+            "zones": zones,
+            "rate_limits": {"window_seconds": 300, "hits_by_tier": hits_by_tier},
+        }
+    except Exception:  # noqa: BLE001
+        return empty
+    finally:
+        if client is not None:
+            with suppress(Exception):
+                client.close()
+
+
+def _collect_status_detail(
+    zone_ids: list[str],
+    tokens_detail: list[dict[str, Any]],
+    redis_detail: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "zones": redis_detail["zones"],
+        "tokens_detail": tokens_detail,
+        "rate_limits": redis_detail["rate_limits"],
+        "search": _collect_search_detail(zone_ids),
+    }
+
+
+def _format_bytes(num_bytes: int | None) -> str | None:
+    if num_bytes is None:
+        return None
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    value = float(num_bytes)
+    for unit in ("KiB", "MiB", "GiB"):
+        value /= 1024.0
+        if value < 1024.0 or unit == "GiB":
+            return f"{value:.1f} {unit}"
+    return None
+
+
+def _zone_index_path(base: Path, zone_id: str) -> Path | None:
+    direct = base / zone_id
+    try:
+        if direct.exists():
+            return direct
+        if not base.is_dir():
+            return None
+        matches = [
+            child
+            for child in base.iterdir()
+            if child.name.startswith(f"{zone_id}.") or child.name.startswith(f"{zone_id}-")
+        ]
+    except OSError:
+        return None
+    return matches[0] if len(matches) == 1 else None
+
+
+def _index_path_stats(path: Path) -> tuple[int | None, str | None]:
+    try:
+        if path.is_file():
+            stat = path.stat()
+            return stat.st_size, datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+
+        total_size = 0
+        latest_mtime: float | None = None
+        for child in path.rglob("*"):
+            if not child.is_file():
+                continue
+            stat = child.stat()
+            total_size += stat.st_size
+            latest_mtime = (
+                stat.st_mtime if latest_mtime is None else max(latest_mtime, stat.st_mtime)
+            )
+    except OSError:
+        return None, None
+
+    last_indexed = (
+        datetime.fromtimestamp(latest_mtime, tz=UTC).isoformat()
+        if latest_mtime is not None
+        else None
+    )
+    return total_size, last_indexed
+
+
+def _zoekt_index_base() -> Path:
+    raw = (
+        os.environ.get("NEXUS_ZOEKT_INDEX_DIR")
+        or os.environ.get("ZOEKT_INDEX_DIR")
+        or "/app/data/.zoekt-index"
+    )
+    return Path(raw)
+
+
+def _search_detail_row(
+    zone_id: str,
+    size_bytes: int | None,
+    last_indexed: str | None,
+) -> dict[str, Any]:
+    return {
+        "zone_id": zone_id,
+        "zoekt_index_size_bytes": size_bytes,
+        "zoekt_index_size_display": _format_bytes(size_bytes),
+        "zoekt_last_indexed": last_indexed,
+        "txtai_queue_depth": None,
+        "last_indexed": last_indexed,
+    }
+
+
+def _collect_search_detail(zone_ids: list[str]) -> dict[str, Any]:
+    base = _zoekt_index_base()
+    zones = []
+    matched_zone_index = False
+    for zone_id in zone_ids:
+        index_path = _zone_index_path(base, zone_id)
+        size_bytes: int | None = None
+        last_indexed: str | None = None
+        if index_path is not None:
+            matched_zone_index = True
+            size_bytes, last_indexed = _index_path_stats(index_path)
+        zones.append(_search_detail_row(zone_id, size_bytes, last_indexed))
+    if not matched_zone_index and base.exists():
+        size_bytes, last_indexed = _index_path_stats(base)
+        if size_bytes is not None:
+            zones.append(_search_detail_row("all", size_bytes, last_indexed))
+    return {"zones": zones}
+
+
+def _emit_detail_status_text(payload: dict[str, Any]) -> None:
+    click.echo("")
+    click.echo("zones:")
+    click.echo(
+        format_table(
+            headers=["zone", "clients", "qps_5m"],
+            rows=[
+                [
+                    row["zone_id"],
+                    _display_status_value(row.get("clients")),
+                    _display_status_value(row.get("qps_5m")),
+                ]
+                for row in payload.get("zones", [])
+            ],
+        )
+    )
+    click.echo("")
+    click.echo("tokens:")
+    click.echo(
+        format_table(
+            headers=["key_id", "name", "zones", "admin", "last_seen"],
+            rows=[
+                [
+                    row["key_id"],
+                    row["name"],
+                    ",".join(row.get("zones", [])),
+                    "yes" if row.get("admin") else "no",
+                    _display_status_value(row.get("last_seen")),
+                ]
+                for row in payload.get("tokens_detail", [])
+            ],
+        )
+    )
+    click.echo("")
+    click.echo("rate limits:")
+    hits = payload.get("rate_limits", {}).get("hits_by_tier", {})
+    click.echo(
+        format_table(
+            headers=["tier", "hits_5m"],
+            rows=[[tier, _display_status_value(hits[tier])] for tier in sorted(hits)],
+        )
+    )
+    click.echo("")
+    click.echo("search:")
+    click.echo(
+        format_table(
+            headers=[
+                "zone",
+                "zoekt_size",
+                "zoekt_last_indexed",
+                "txtai_queue_depth",
+                "last_indexed",
+            ],
+            rows=[
+                [
+                    row["zone_id"],
+                    _display_status_value(row.get("zoekt_index_size_display")),
+                    _display_status_value(row.get("zoekt_last_indexed")),
+                    _display_status_value(row.get("txtai_queue_depth")),
+                    _display_status_value(row.get("last_indexed")),
+                ]
+                for row in payload.get("search", {}).get("zones", [])
+            ],
+        )
+    )

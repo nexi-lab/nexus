@@ -171,6 +171,28 @@ class TestDelete:
         assert store.load_view("user", "alice", "zone-b") is None
 
 
+class TestMissingTableRecovery:
+    """Tests for SQLite connection replacement and lazy table recovery."""
+
+    def test_load_view_recovers_missing_table_as_cache_miss(self, engine, store):
+        """If SQLite loses the table after init, load_view recreates it and misses."""
+        with engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE persistent_namespace_views")
+
+        assert store.load_view("user", "alice", None) is None
+
+    def test_save_view_recovers_missing_table_and_persists(self, engine, store):
+        """If SQLite loses the table after init, save_view recreates it before insert."""
+        with engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE persistent_namespace_views")
+
+        store.save_view("user", "alice", None, ["/workspace"], "hash_recovered12", 1)
+
+        view = store.load_view("user", "alice", None)
+        assert view is not None
+        assert view.mount_paths == ("/workspace",)
+
+
 # ---------------------------------------------------------------------------
 # Zone Isolation
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from unittest.mock import AsyncMock
 
 import pytest
@@ -34,6 +35,35 @@ async def test_record_metrics_increments_qps_and_sadds_active(monkeypatch):
     assert member == "kid_abc"  # subject_id is what identifies a client
 
     assert fake_client.expire.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_record_metrics_increments_per_zone_counters(monkeypatch):
+    monkeypatch.setenv("NEXUS_REDIS_URL", "redis://localhost:6379")
+
+    fake_client = AsyncMock()
+    fake_client.incr = AsyncMock(return_value=1)
+    fake_client.sadd = AsyncMock(return_value=1)
+    fake_client.expire = AsyncMock(return_value=True)
+    fake_client.close = AsyncMock()
+
+    monkeypatch.setattr(_redis_async, "from_url", lambda _url: fake_client)
+
+    await mw._record_metrics({"subject_id": "kid_abc", "token_hash": "deadbeef", "zone_id": "eng"})
+
+    assert fake_client.incr.await_count == 2
+    assert fake_client.sadd.await_count == 2
+
+    incr_keys = [call.args[0] for call in fake_client.incr.await_args_list]
+    sadd_keys = [call.args[0] for call in fake_client.sadd.await_args_list]
+    expire_keys = [call.args[0] for call in fake_client.expire.await_args_list]
+
+    assert sum(1 for key in incr_keys if re.fullmatch(r"nexus:hub:qps:\d+", key)) == 1
+    assert sum(1 for key in incr_keys if re.fullmatch(r"nexus:hub:qps:zone:eng:\d+", key)) == 1
+    assert sum(1 for key in sadd_keys if re.fullmatch(r"nexus:hub:active:\d+", key)) == 1
+    assert sum(1 for key in sadd_keys if re.fullmatch(r"nexus:hub:active:zone:eng:\d+", key)) == 1
+    assert fake_client.expire.await_count == 4
+    assert set(expire_keys) == set(incr_keys + sadd_keys)
 
 
 @pytest.mark.asyncio

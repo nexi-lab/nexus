@@ -15,8 +15,6 @@ import logging
 import os
 from collections.abc import Sequence
 
-import litellm
-
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +72,12 @@ class EmbeddingClient:
         return await self.embed_batch(texts)
 
     async def _call_with_retry(self, batch: list[str]) -> list[list[float]]:
+        # Lazy import: litellm lives in the optional ``sandbox`` extra. Keeping
+        # the import inside the call site means the module loads (and tests
+        # that touch the class without driving real embeddings can run)
+        # without litellm installed.
+        import litellm
+
         attempt = 0
         while True:
             try:

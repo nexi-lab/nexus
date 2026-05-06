@@ -219,12 +219,32 @@ def _resolve_runtime_connection(config: dict[str, Any]) -> dict[str, Any]:
     if not api_key:
         api_key = _resolve_admin_key(config)
 
+    http_port = ports.get("http", 2026)
+
     return {
-        "http_port": ports.get("http", 2026),
+        "http_port": http_port,
         "grpc_port": grpc_port,
-        "base_url": conn.get("NEXUS_URL", f"http://localhost:{ports.get('http', 2026)}"),
+        "base_url": _resolve_demo_http_url(config, conn, http_port),
         "api_key": api_key,
     }
+
+
+def _resolve_demo_http_url(
+    config: dict[str, Any],
+    conn: dict[str, str],
+    http_port: int,
+) -> str:
+    """Resolve the HTTP base URL used by demo/shared REST seeding helpers."""
+    if config.get("preset") in ("shared", "demo"):
+        env_url = os.environ.get("NEXUS_URL")
+        if env_url:
+            return env_url
+
+        server_url = config.get("server_url")
+        if server_url:
+            return str(server_url)
+
+    return conn.get("NEXUS_URL", f"http://localhost:{http_port}")
 
 
 def _resolve_admin_key(config: dict[str, Any]) -> str:
@@ -311,8 +331,7 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
 
         api_key = _resolve_admin_key(config)
 
-        # Use the scheme from resolve_connection_env (https if TLS)
-        url = conn.get("NEXUS_URL", f"http://localhost:{http_port}")
+        url = _resolve_demo_http_url(config, conn, http_port)
 
         # Prefer REST API for seeding: REST writes go through Python VFS hooks
         # which populate the PostgreSQL file_paths table (required for semantic

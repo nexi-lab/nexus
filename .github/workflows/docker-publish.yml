@@ -223,13 +223,13 @@ jobs:
               docker logs nexus-e2e 2>&1 | tail -200 || true
               exit 1
             fi
-            if curl -sf http://localhost:2026/healthz/ready > /dev/null 2>&1; then
+            if curl --max-time 5 -sf http://127.0.0.1:2026/healthz/ready > /dev/null 2>&1; then
               echo "Nexus is ready (${i}s)"
               break
             fi
             sleep 1
           done
-          if ! curl -sf http://localhost:2026/healthz/ready > /dev/null 2>&1; then
+          if ! curl --max-time 5 -sf http://127.0.0.1:2026/healthz/ready > /dev/null 2>&1; then
             echo "::error::nexus-e2e never became healthy within 180 seconds"
             docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
             echo "Crash signatures from container logs:"
@@ -244,7 +244,7 @@ jobs:
           # Container startup already runs docker-entrypoint.sh, initializes the
           # database, and writes /app/data/.admin-api-key. Re-running the
           # entrypoint via docker exec starts a second long-running server path.
-          ADMIN_KEY=$(curl -sf http://localhost:2026/api/admin/bootstrap 2>/dev/null \
+          ADMIN_KEY=$(curl --max-time 5 -sf http://127.0.0.1:2026/api/admin/bootstrap 2>/dev/null \
             | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || true)
           if [ -z "$ADMIN_KEY" ]; then
             echo "Bootstrap not available, reading admin key from container..."
@@ -264,17 +264,17 @@ jobs:
             docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' || true
             exit 1
           fi
-          echo "NEXUS_URL=http://localhost:2026" >> "$GITHUB_ENV"
+          echo "NEXUS_URL=http://127.0.0.1:2026" >> "$GITHUB_ENV"
           echo "NEXUS_API_KEY=${ADMIN_KEY}" >> "$GITHUB_ENV"
           echo "Admin key obtained: ${ADMIN_KEY:0:10}..."
 
       - name: Seed demo workspace
         run: |
           # nexus demo init needs a nexus.yaml — create a minimal one
-          docker exec nexus-e2e sh -c "printf 'preset: demo\nserver_url: http://localhost:2026\ndata_dir: /app/data\nports:\n  http: 2026\n  grpc: 2028\n' > /app/nexus.yaml"
+          docker exec nexus-e2e sh -c "printf 'preset: demo\nserver_url: http://127.0.0.1:2026\ndata_dir: /app/data\nports:\n  http: 2026\n  grpc: 2028\n' > /app/nexus.yaml"
           docker exec \
             -w /app \
-            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_PROFILE=remote \
             -e NEXUS_GRPC_PORT=2028 \
@@ -289,7 +289,7 @@ jobs:
       - name: Run permissions demo
         run: |
           docker exec \
-            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_PROFILE=remote \
             nexus-e2e bash /tmp/permissions_demo_enhanced.sh
@@ -305,7 +305,7 @@ jobs:
           # Step 1: Rebuild BM25 keyword index from MCL
           echo "Step 1: Rebuilding BM25 keyword index..."
           docker exec \
-            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_PROFILE=remote \
             nexus-e2e nexus reindex --target search || true
@@ -330,9 +330,9 @@ jobs:
 
           # Step 3: Show search daemon stats for diagnostics
           echo "Step 3: Search daemon stats..."
-          curl -sf \
+          curl --max-time 5 -sf \
             -H "Authorization: Bearer ${NEXUS_API_KEY}" \
-            http://localhost:2026/api/v2/search/stats 2>/dev/null \
+            http://127.0.0.1:2026/api/v2/search/stats 2>/dev/null \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(f\"  backend={d.get('backend')} bm25_docs={d.get('bm25_documents')} txtai_model={d.get('txtai_model')} last_refresh={d.get('last_index_refresh')}\")" 2>/dev/null || true
 
           # Step 4: Explicit search index (retry up to 3×).
@@ -342,7 +342,7 @@ jobs:
           echo "Step 4: Explicit search index (with 3-attempt retry)..."
           for i in $(seq 1 3); do
             idx_out=$(timeout 300s docker exec \
-              -e NEXUS_URL=http://localhost:2026 \
+              -e NEXUS_URL=http://127.0.0.1:2026 \
               -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
               -e NEXUS_PROFILE=remote \
               -e NEXUS_GRPC_PORT=2028 \
@@ -360,13 +360,13 @@ jobs:
 
           # Step 5: Final diagnostics and readiness check
           echo "Step 5: Final search daemon stats..."
-          curl -sf \
+          curl --max-time 5 -sf \
             -H "Authorization: Bearer ${NEXUS_API_KEY}" \
-            http://localhost:2026/api/v2/search/stats 2>/dev/null \
+            http://127.0.0.1:2026/api/v2/search/stats 2>/dev/null \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(f\"  backend={d.get('backend')} bm25={d.get('bm25_documents')} refresh={d.get('last_index_refresh')}\")" 2>/dev/null || true
           # Final status (non-fatal — test script enforces the HERB gate)
           timeout 30s docker exec \
-            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_PROFILE=remote \
             nexus-e2e nexus search query "Nexus Core" --path /workspace/demo/herb --mode hybrid --limit 1 || true
@@ -374,7 +374,7 @@ jobs:
       - name: Run build perf e2e
         run: |
           docker exec \
-            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_URL=http://127.0.0.1:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_PROFILE=remote \
             -e NEXUS_GRPC_PORT=2028 \

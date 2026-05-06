@@ -1,6 +1,7 @@
 """Factory adapters — NexusFSFileReader, DaemonSkeletonBM25, WorkflowLifecycleAdapter."""
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -235,6 +236,15 @@ class _NexusFSFileReader:
         self._nx = nx
         self._parse_fn = parse_fn
 
+    async def _sys_read(self, path: str, **kwargs: Any) -> Any:
+        read_fn = self._nx.sys_read
+        if inspect.iscoroutinefunction(read_fn):
+            return await read_fn(path, **kwargs)
+        result = await asyncio.to_thread(read_fn, path, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
     async def read_text(self, path: str) -> str:
         # Read with admin context so the search daemon can index all files
         # regardless of per-user ReBAC permissions.
@@ -246,9 +256,7 @@ class _NexusFSFileReader:
             is_admin=True,
             is_system=True,
         )
-        # sys_read blocks the event loop (Rust kernel pread + pipe waits).
-        # Run it in a worker thread.
-        content_raw = await asyncio.to_thread(self._nx.sys_read, path, context=admin_ctx)
+        content_raw = await self._sys_read(path, context=admin_ctx)
 
         # Look up the backend-tracked content_id (``file_paths.content_id``)
         # so the parse cache is keyed with the same string downstream
@@ -405,13 +413,7 @@ class _NexusFSFileReader:
             is_system=True,
         )
         try:
-            # sys_read is synchronous Rust; use a worker thread.
-            content = await asyncio.to_thread(
-                self._nx.sys_read,
-                path,
-                count=max_bytes,
-                context=admin_ctx,
-            )
+            content = await self._sys_read(path, count=max_bytes, context=admin_ctx)
             if isinstance(content, bytes):
                 return content
             return str(content).encode("utf-8", errors="ignore")

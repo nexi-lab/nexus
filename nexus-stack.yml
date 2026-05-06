@@ -295,7 +295,7 @@ services:
   # MCP Server (optional add-on)
   # ============================================================================
   mcp-server:
-    image: ${NEXUS_IMAGE_REF:-nexus-server:latest}
+    image: ${NEXUS_IMAGE_REF:-ghcr.io/nexi-lab/nexus:latest}
     restart: unless-stopped
     profiles:
       - mcp

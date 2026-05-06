@@ -1613,6 +1613,10 @@ impl Kernel {
         // -- UPDATE params (entry_type == 0) --
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        content_id: Option<&str>,
+        size: Option<u64>,
+        version: Option<u32>,
+        created_at_ms: Option<i64>,
         // -- DT_LINK params (entry_type == 6) --
         link_target: Option<&str>,
         // -- DT_MOUNT explicit source (entry_type == 2) --
@@ -1768,7 +1772,15 @@ impl Kernel {
             }
             0 => {
                 // UPDATE or IDEMPOTENT OPEN
-                self.setattr_update(path, mime_type, modified_at_ms)
+                self.setattr_update(
+                    path,
+                    mime_type,
+                    modified_at_ms,
+                    content_id,
+                    size,
+                    version,
+                    created_at_ms,
+                )
             }
             6 => {
                 // DT_LINK — VFS-internal symlink (KERNEL-ARCHITECTURE.md §4.5).
@@ -2173,17 +2185,28 @@ impl Kernel {
     }
 
     /// UPDATE or IDEMPOTENT OPEN: modify mutable fields on existing inode.
+    #[allow(clippy::too_many_arguments)]
     fn setattr_update(
         &self,
         path: &str,
         mime_type: Option<&str>,
         modified_at_ms: Option<i64>,
+        content_id: Option<&str>,
+        size: Option<u64>,
+        version: Option<u32>,
+        created_at_ms: Option<i64>,
     ) -> Result<SysSetAttrResult, KernelError> {
         let existing = self.metastore_get(path)?;
         let meta = existing.ok_or_else(|| KernelError::FileNotFound(path.to_string()))?;
 
         // No fields to update → idempotent open (no-op)
-        if mime_type.is_none() && modified_at_ms.is_none() {
+        if mime_type.is_none()
+            && modified_at_ms.is_none()
+            && content_id.is_none()
+            && size.is_none()
+            && version.is_none()
+            && created_at_ms.is_none()
+        {
             return Ok(SysSetAttrResult {
                 path: path.to_string(),
                 created: false,
@@ -2207,6 +2230,22 @@ impl Kernel {
         if let Some(ms) = modified_at_ms {
             new_meta.modified_at_ms = Some(ms);
             updated_fields.push("modified_at_ms".to_string());
+        }
+        if let Some(cid) = content_id {
+            new_meta.content_id = Some(cid.to_string());
+            updated_fields.push("content_id".to_string());
+        }
+        if let Some(s) = size {
+            new_meta.size = s;
+            updated_fields.push("size".to_string());
+        }
+        if let Some(v) = version {
+            new_meta.version = v;
+            updated_fields.push("version".to_string());
+        }
+        if let Some(ca) = created_at_ms {
+            new_meta.created_at_ms = Some(ca);
+            updated_fields.push("created_at_ms".to_string());
         }
 
         // metastore_put owns dcache coherence after PR #4027 collapsed
@@ -3559,6 +3598,10 @@ mod tests {
             None,  // write_fd
             None,  // mime_type
             None,  // modified_at_ms
+            None,  // content_id
+            None,  // size
+            None,  // version
+            None,  // created_at_ms
             None,  // link_target
             None,  // source
             None,  // remote_metastore
@@ -3662,6 +3705,10 @@ mod tests {
                 Some("text/plain"),
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
                 None, // source
                 None, // remote_metastore
             )
@@ -3727,6 +3774,10 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
                 None, // source
                 None, // remote_metastore
             )
@@ -3764,6 +3815,10 @@ mod tests {
             "root",
             false,
             0,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -4964,6 +5019,10 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
+                    None,
+                    None,
+                    None,
                     Some(target),
                     None,
                     None, // remote_metastore
@@ -5005,6 +5064,10 @@ mod tests {
                     "root",
                     false,
                     0,
+                    None,
+                    None,
+                    None,
+                    None,
                     None,
                     None,
                     None,
@@ -5217,6 +5280,10 @@ mod tests {
                     /* write_fd */ None,
                     /* mime_type */ None,
                     /* modified_at_ms */ None,
+                    /* content_id */ None,
+                    /* size */ None,
+                    /* version */ None,
+                    /* created_at_ms */ None,
                     /* link_target */ None,
                     /* source */ None,
                     /* remote_metastore */ None,
@@ -5271,6 +5338,10 @@ mod tests {
                         "root",
                         false,
                         65_536,
+                        None,
+                        None,
+                        None,
+                        None,
                         None,
                         None,
                         None,

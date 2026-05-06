@@ -2,7 +2,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nexus.bricks.search.embedding_client import EmbeddingClient
+# litellm ships in the optional ``sandbox`` extra. Skip the wrapper tests
+# entirely when the dependency is missing so unit runs without the extra
+# stay green; the wrapper is exercised end-to-end by the integration
+# benchmarks that pull in the extra.
+pytest.importorskip("litellm")
+
+from nexus.bricks.search.embedding_client import EmbeddingClient  # noqa: E402
 
 
 @pytest.mark.asyncio

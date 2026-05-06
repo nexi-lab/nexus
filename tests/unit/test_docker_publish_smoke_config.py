@@ -44,6 +44,10 @@ def test_entrypoint_startup_wait_uses_bounded_basic_health_probe() -> None:
     assert 'curl --max-time 5 -sf "http://localhost:${port}/health"' in wait_for_health
     assert 'curl -sf "http://localhost:${port}/health"' not in wait_for_health
     assert "/healthz/ready" not in wait_for_health
+    assert (
+        'echo -e "${YELLOW}⚠ Server health check timeout after ${max} attempts '
+        '(continuing anyway)${NC}"\n    return 0'
+    ) in wait_for_health
 
 
 def test_build_perf_smoke_uses_basic_health_probe() -> None:

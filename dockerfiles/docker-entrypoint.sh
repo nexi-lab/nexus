@@ -491,7 +491,7 @@ wait_for_health() {
         sleep 5
     done
     echo -e "${YELLOW}⚠ Server health check timeout after ${max} attempts (continuing anyway)${NC}"
-    return 1
+    return 0
 }
 
 load_saved_mounts_if_needed() {

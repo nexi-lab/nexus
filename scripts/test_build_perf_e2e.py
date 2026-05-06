@@ -170,12 +170,12 @@ def main() -> None:
     section("1. INFRA & STATUS")
     # =========================================================================
 
-    step("health endpoint GET /healthz/ready")
+    step("health endpoint GET /health")
     try:
-        resp = urllib.request.urlopen(f"{NEXUS_URL}/healthz/ready", timeout=5)
+        resp = urllib.request.urlopen(f"{NEXUS_URL}/health", timeout=5)
         health = resp.read().decode()
         print(f"    response: {health[:120]!r}", file=sys.stderr, flush=True)
-        check("Health endpoint", "ready" in health)
+        check("Health endpoint", "healthy" in health)
     except Exception as e:
         print(f"    error: {e}", file=sys.stderr, flush=True)
         check("Health endpoint", False, str(e))

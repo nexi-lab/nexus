@@ -348,7 +348,7 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
             from nexus.cli.api_client import NexusApiClient
 
             test_client = NexusApiClient(url=url, api_key=api_key)
-            test_client.get("/healthz/ready")
+            test_client.get("/health")
             logger.info("demo preset: server reachable at %s — using REST API for seeding", url)
             return _RestApiNexusClient(url, api_key)
         except _httpx.HTTPStatusError:
@@ -382,7 +382,7 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
         from nexus.cli.api_client import NexusApiClient
 
         test_client = NexusApiClient(url=base_url, api_key=api_key)
-        test_client.get("/healthz/ready")
+        test_client.get("/health")
         logger.info("Local server detected at %s — using REST API for demo seeding", base_url)
         return _RestApiNexusClient(base_url, api_key)
     except Exception:

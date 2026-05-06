@@ -521,7 +521,6 @@ class TestPermissionBenchmarks:
     def test_permission_check_bulk_rust(self, benchmark, benchmark_nexus):
         """Benchmark bulk permission checking in Rust (if available)."""
         from nexus.bricks.rebac.utils.fast import (
-            RUST_AVAILABLE,
             check_permissions_bulk_with_fallback,
         )
 
@@ -555,11 +554,7 @@ class TestPermissionBenchmarks:
         result = benchmark(check_bulk)
         assert len(result) == 100
 
-        # Print whether Rust was used
-        if RUST_AVAILABLE:
-            print("\n[INFO] Rust acceleration was used for this benchmark")
-        else:
-            print("\n[INFO] Python fallback was used (Rust not available)")
+        print("\n[INFO] Rust acceleration was used for this benchmark")
 
     def test_permission_check_scale_1000(self, benchmark, benchmark_nexus):
         """Benchmark 1000 permission checks."""

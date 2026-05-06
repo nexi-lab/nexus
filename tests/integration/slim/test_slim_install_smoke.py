@@ -175,6 +175,7 @@ def test_slim_base_connector_metadata_discovery_without_optional_deps(
     """Base slim install lists S3 and Slack metadata without connector extras."""
     script = """
 import sys
+from importlib.metadata import PackageNotFoundError, distribution
 
 for name in (
     "boto3",
@@ -185,6 +186,14 @@ for name in (
     "nexus.backends.connectors.slack.transport",
 ):
     sys.modules.pop(name, None)
+
+for package_name in ("boto3", "slack-sdk"):
+    try:
+        distribution(package_name)
+    except PackageNotFoundError:
+        pass
+    else:
+        sys.exit(f"{package_name} unexpectedly installed in slim base venv")
 
 import nexus
 import nexus.backends

@@ -312,7 +312,8 @@ class DirectoryExpander:
         # below honours the parameter for federated installs.
         if self._kernel is not None:
             try:
-                files = self._kernel.metastore_list(directory_path)
+                _page = self._kernel.metastore_list_paginated(directory_path, True, 100000, None)
+                files = _page["items"]
                 return [f.path for f in files]
             except (RuntimeError, OperationalError) as e:
                 logger.warning("[LEOPARD] Metadata store query failed: %s", e)

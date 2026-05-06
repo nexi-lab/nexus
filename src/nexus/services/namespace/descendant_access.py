@@ -205,7 +205,9 @@ class DescendantAccessChecker:
             prefix = ""
 
         try:
-            all_descendants = self._kernel.metastore_list(prefix)
+            all_descendants = self._kernel.metastore_list_paginated(prefix, True, 100000, None)[
+                "items"
+            ]
         except Exception as exc:
             # If metadata query fails, return False
             logger.debug("Metadata query failed for prefix %s: %s", prefix, exc)
@@ -444,9 +446,9 @@ class DescendantAccessChecker:
                 f"querying '{common_prefix}' once for {len(paths)} directories"
             )
             try:
-                all_descendants = self._kernel.metastore_list(
-                    common_prefix if common_prefix else "/"
-                )
+                all_descendants = self._kernel.metastore_list_paginated(
+                    common_prefix if common_prefix else "/", True, 100000, None
+                )["items"]
                 all_paths_set = {meta.path for meta in all_descendants}
                 logger.debug(
                     f"has_access_bulk: Got {len(all_paths_set)} paths from common ancestor"
@@ -486,7 +488,9 @@ class DescendantAccessChecker:
                     prefix = ""
 
                 try:
-                    descendants = self._kernel.metastore_list(prefix)
+                    descendants = self._kernel.metastore_list_paginated(prefix, True, 100000, None)[
+                        "items"
+                    ]
                     descendant_paths = [meta.path for meta in descendants]
                     path_to_descendants[path] = descendant_paths
 

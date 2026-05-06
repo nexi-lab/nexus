@@ -141,7 +141,7 @@ class TTLVolumeSweeper:
         now = time.time()
         expired_paths: list[str] = []
 
-        for meta in self._kernel.metastore_list(""):
+        for meta in self._kernel.metastore_list_paginated("", True, 100000, None)["items"]:
             if meta.ttl_seconds > 0 and meta.modified_at is not None:
                 # modified_at is a datetime; convert to epoch for comparison
                 modified_epoch = meta.modified_at.timestamp()

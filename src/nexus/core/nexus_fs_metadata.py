@@ -281,7 +281,8 @@ class MetadataMixin:
         """
         self._resolve_cred(context)
         names: set[str] = set()
-        for meta in self._kernel.metastore_list("/"):
+        _page = self._kernel.metastore_list_paginated("/", True, 100000, None)
+        for meta in _page["items"]:
             if not (meta.is_mount or meta.is_external_storage):
                 continue
             top = meta.path.lstrip("/").split("/")[0]

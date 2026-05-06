@@ -615,7 +615,9 @@ class MountService:
             # Delete all metadata entries (mount point + children)
             try:
                 dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
-                child_entries = list(kernel.metastore_list(dir_prefix))
+                child_entries = kernel.metastore_list_paginated(dir_prefix, True, 100000, None)[
+                    "items"
+                ]
                 paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
                 paths_to_delete.append(mount_point)  # Include mount point itself
                 for path in paths_to_delete:

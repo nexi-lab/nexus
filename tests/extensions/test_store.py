@@ -1318,34 +1318,35 @@ class TestConnectorPackageIsolationPilot:
         from nexus.extensions.store import get_store, reset_store
 
         reset_store()
-        store = get_store()
+        try:
+            store = get_store()
 
-        s3 = store.get("path_s3", kind="connector")
-        assert s3.metadata_complete is True
-        assert s3.service_name == "s3"
-        assert s3.module == "nexus.backends.storage.path_s3"
-        assert s3.factory == "PathS3Backend"
-        assert {d.name for d in s3.runtime_deps} == {"boto3"}
-        assert s3.import_probes == ("boto3",)
-        assert "bucket_name" in s3.connection_args
-        assert s3.connection_args["bucket_name"].config_key == "bucket"
-        assert "signed_url" in s3.capabilities
-        assert "multipart_upload" in s3.capabilities
+            s3 = store.get("path_s3", kind="connector")
+            assert s3.metadata_complete is True
+            assert s3.service_name == "s3"
+            assert s3.module == "nexus.backends.storage.path_s3"
+            assert s3.factory == "PathS3Backend"
+            assert {d.name for d in s3.runtime_deps} == {"boto3"}
+            assert s3.import_probes == ("boto3",)
+            assert "bucket_name" in s3.connection_args
+            assert s3.connection_args["bucket_name"].config_key == "bucket"
+            assert "signed_url" in s3.capabilities
+            assert "multipart_upload" in s3.capabilities
 
-        slack = store.get("slack_connector", kind="connector")
-        assert slack.metadata_complete is True
-        assert slack.service_name == "slack"
-        assert slack.module == "nexus.backends.connectors.slack.connector"
-        assert slack.factory == "PathSlackBackend"
-        assert {d.name for d in slack.runtime_deps} == {"slack-sdk", "token_manager"}
-        assert slack.import_probes == ("slack_sdk",)
-        assert slack.user_scoped is True
-        assert "token_manager_db" in slack.connection_args
-        assert slack.connection_args["provider"].default == "slack"
-        assert "oauth" in slack.capabilities
-        assert "readme_doc" in slack.capabilities
-
-        reset_store()
+            slack = store.get("slack_connector", kind="connector")
+            assert slack.metadata_complete is True
+            assert slack.service_name == "slack"
+            assert slack.module == "nexus.backends.connectors.slack.connector"
+            assert slack.factory == "PathSlackBackend"
+            assert {d.name for d in slack.runtime_deps} == {"slack-sdk", "token_manager"}
+            assert slack.import_probes == ("slack_sdk",)
+            assert slack.user_scoped is True
+            assert "token_manager_db" in slack.connection_args
+            assert slack.connection_args["provider"].default == "slack"
+            assert "oauth" in slack.capabilities
+            assert "readme_doc" in slack.capabilities
+        finally:
+            reset_store()
 
     def test_pilot_manifest_discovery_does_not_import_optional_sdks_or_impls(self):
         import sys
@@ -1360,18 +1361,25 @@ class TestConnectorPackageIsolationPilot:
             "nexus.backends.connectors.slack.connector",
             "nexus.backends.connectors.slack.transport",
         }
+        before = {name: sys.modules.get(name) for name in forbidden_modules}
         for module_name in forbidden_modules:
             sys.modules.pop(module_name, None)
 
         reset_store()
-        store = get_store()
-        assert store.get("path_s3", kind="connector").metadata_complete is True
-        assert store.get("slack_connector", kind="connector").metadata_complete is True
+        try:
+            store = get_store()
+            assert store.get("path_s3", kind="connector").metadata_complete is True
+            assert store.get("slack_connector", kind="connector").metadata_complete is True
 
-        imported = forbidden_modules.intersection(sys.modules)
-        assert imported == set()
-
-        reset_store()
+            imported = forbidden_modules.intersection(sys.modules)
+            assert imported == set()
+        finally:
+            reset_store()
+            for name, module in before.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
 
 
 class TestMalformedManifestIsolation:

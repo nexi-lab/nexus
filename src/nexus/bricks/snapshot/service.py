@@ -464,28 +464,33 @@ class TransactionalSnapshotService:
                     restored = self._restore_metadata_from_snapshot(
                         entry.path, entry.original_hash, entry.original_metadata
                     )
-                    self._kernel.metastore_put(restored)
+                    self._kernel.sys_setattr(
+                        entry.path,
+                        0,  # UPDATE existing entry
+                        content_id=restored.content_id,
+                        size=restored.size,
+                        version=restored.version,
+                        modified_at_ms=int(restored.modified_at.timestamp() * 1000)
+                        if restored.modified_at
+                        else None,
+                        created_at_ms=int(restored.created_at.timestamp() * 1000)
+                        if restored.created_at
+                        else None,
+                    )
                     logger.debug("Restored file: path=%s hash=%s", entry.path, entry.original_hash)
                 elif entry.original_hash is not None and entry.original_metadata is None:
                     # Restore with minimal metadata (original_metadata was not captured)
                     if self._metadata_factory is not None:
-                        current_meta = self._kernel.metastore_get(entry.path)
-                        restored = self._metadata_factory(
-                            path=entry.path,
-                            size=getattr(current_meta, "size", 0) if current_meta else 0,
+                        current_stat = self._kernel.sys_stat(entry.path, ROOT_ZONE_ID)
+                        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+                        self._kernel.sys_setattr(
+                            entry.path,
+                            0,  # UPDATE existing entry
                             content_id=entry.original_hash,
-                            created_at=getattr(current_meta, "created_at", None)
-                            or datetime.now(UTC),
-                            modified_at=datetime.now(UTC),
-                            version=(getattr(current_meta, "version", 1) if current_meta else 1),
-                            zone_id=getattr(current_meta, "zone_id", ROOT_ZONE_ID)
-                            if current_meta
-                            else "root",
-                            owner_id=getattr(current_meta, "owner_id", None)
-                            if current_meta
-                            else None,
+                            size=current_stat.get("size", 0) if current_stat else 0,
+                            version=current_stat.get("version", 1) if current_stat else 1,
+                            modified_at_ms=now_ms,
                         )
-                        self._kernel.metastore_put(restored)
                         logger.debug(
                             "Restored file (minimal): path=%s hash=%s",
                             entry.path,

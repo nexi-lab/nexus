@@ -345,12 +345,14 @@ class VersionService:
         # Update in-memory metadata store so subsequent reads return rolled-back content
         if result is not None:
             new_hash, new_size = result
-            meta = self._kernel.metastore_get(path)
-            if meta is not None:
-                from dataclasses import replace as dc_replace
-
-                updated_meta = dc_replace(meta, content_id=new_hash, size=new_size)
-                self._kernel.metastore_put(updated_meta)
+            stat = self._kernel.sys_stat(path, "root")
+            if stat is not None:
+                self._kernel.sys_setattr(
+                    path,
+                    0,  # UPDATE existing entry
+                    content_id=new_hash,
+                    size=new_size,
+                )
 
         # Cache invalidation is now handled inside the Rust ``LocalMetaStore``
         # impl on every ``put`` / ``delete`` (commit U); the Python-side

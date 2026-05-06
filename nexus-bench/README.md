@@ -51,6 +51,8 @@ cargo run --manifest-path nexus-bench/Cargo.toml -- diff \
   --out-md target/nexus-bench/diff.md
 ```
 
+CI uses `nexus-bench/thresholds/ci-noop.json` for the deterministic noop smoke replay. The default threshold set includes latency and throughput checks for benchmark runs where timing variance is meaningful.
+
 ## Metrics
 
 - `logical_bytes_read` and `logical_bytes_written` come from trace ranges.

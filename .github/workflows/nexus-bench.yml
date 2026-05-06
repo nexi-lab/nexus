@@ -54,12 +54,12 @@ jobs:
             --out-json /tmp/nexus-bench/agent-cold-start.json \
             --out-md /tmp/nexus-bench/agent-cold-start.md
 
-      - name: Check regression threshold plumbing
+      - name: Check deterministic smoke thresholds
         run: |
           cargo run --manifest-path nexus-bench/Cargo.toml -- diff \
             --baseline nexus-bench/baselines/develop-5698d0026-noop.json \
             --candidate /tmp/nexus-bench/agent-cold-start.json \
-            --threshold nexus-bench/thresholds/default.json \
+            --threshold nexus-bench/thresholds/ci-noop.json \
             --out-md /tmp/nexus-bench/diff.md
 
       - name: Upload benchmark artifacts

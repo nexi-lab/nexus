@@ -1,0 +1,4 @@
+{
+  "rpc_count": {"max_regression_percent": 10.0},
+  "bytes_egress": {"max_regression_percent": 10.0}
+}

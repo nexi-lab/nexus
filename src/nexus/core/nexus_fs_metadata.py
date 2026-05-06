@@ -1293,38 +1293,27 @@ class MetadataMixin:
         # we check if it's an implicit directory as a fallback.
         try:
             allowed_paths = list(allowed_set)
-            batch_meta = dict(
+            batch_stats = dict(
                 zip(
                     allowed_paths,
-                    self._kernel.metastore_get_batch(allowed_paths),
+                    self._kernel.stat_batch(allowed_paths, ROOT_ZONE_ID),
                     strict=True,
                 )
             )
-            for path, meta in batch_meta.items():
-                if meta is None:
-                    # Path not found in metadata - check if it's an implicit directory
-                    if self._kernel.metastore_is_implicit_directory(path):
-                        results[path] = {
-                            "size": 0,
-                            "content_id": None,
-                            "version": None,
-                            "gen": 0,
-                            "modified_at": None,
-                            "is_directory": True,
-                        }
-                    elif skip_errors:
+            for path, stat in batch_stats.items():
+                if stat is None:
+                    if skip_errors:
                         results[path] = None
                     else:
                         raise NexusFileNotFoundError(path)
                 else:
-                    modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
                     results[path] = {
-                        "size": meta.size,
-                        "content_id": meta.content_id,
-                        "version": meta.version,
-                        "gen": meta.gen,
-                        "modified_at": modified_at_str,
-                        "is_directory": False,
+                        "size": stat.get("size", 0),
+                        "content_id": stat.get("content_id"),
+                        "version": stat.get("version"),
+                        "gen": stat.get("gen", 0),
+                        "modified_at": stat.get("modified_at"),
+                        "is_directory": stat.get("is_directory", False),
                     }
         except NexusFileNotFoundError:
             raise
@@ -1440,22 +1429,22 @@ class MetadataMixin:
 
         # Batch fetch metadata from database
         if valid_paths:
-            batch_metadata = dict(
+            batch_stats = dict(
                 zip(
                     valid_paths,
-                    self._kernel.metastore_get_batch(list(valid_paths)),
+                    self._kernel.stat_batch(list(valid_paths), ROOT_ZONE_ID),
                     strict=True,
                 )
             )
         else:
-            batch_metadata = {}
+            batch_stats = {}
 
         # Process results with permission checks
         for path in valid_paths:
             try:
-                meta = batch_metadata.get(path)
+                stat = batch_stats.get(path)
 
-                if meta is None:
+                if stat is None:
                     results[path] = None
                     continue
 
@@ -1472,24 +1461,17 @@ class MetadataMixin:
                     results[path] = None
                     continue
 
-                # Check if it's a directory
-                is_dir = self.is_directory(path, context=context)
-
-                # ``backend_name``/``physical_path`` were removed from
-                # FileMetadata — the kernel resolves the physical
-                # location at read time via the mount/route layer, so
-                # batch metadata results no longer surface them.
                 results[path] = {
-                    "path": meta.path,
-                    "size": meta.size,
-                    "content_id": meta.content_id,
-                    "mime_type": meta.mime_type,
-                    "created_at": meta.created_at,
-                    "modified_at": meta.modified_at,
-                    "version": meta.version,
-                    "gen": meta.gen,
-                    "zone_id": meta.zone_id,
-                    "is_directory": is_dir,
+                    "path": stat.get("path", path),
+                    "size": stat.get("size", 0),
+                    "content_id": stat.get("content_id"),
+                    "mime_type": stat.get("mime_type"),
+                    "created_at": stat.get("created_at"),
+                    "modified_at": stat.get("modified_at"),
+                    "version": stat.get("version"),
+                    "gen": stat.get("gen", 0),
+                    "zone_id": stat.get("zone_id"),
+                    "is_directory": stat.get("is_directory", False),
                 }
             except Exception as exc:
                 logger.debug("Failed to build metadata result for %s: %s", path, exc)

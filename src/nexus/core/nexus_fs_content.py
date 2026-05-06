@@ -326,14 +326,14 @@ class ContentMixin:
         _rust_ctx = self._build_rust_ctx(context, is_admin)
 
         # Batch metadata lookup (needed for return_metadata=True)
-        batch_meta: dict[str, FileMetadata | None] | None = None
+        batch_meta: dict[str, dict[str, Any] | None] | None = None
         if return_metadata:
             meta_start = time.time()
             allowed_paths = list(allowed_set)
             batch_meta = dict(
                 zip(
                     allowed_paths,
-                    self._kernel.metastore_get_batch(allowed_paths),
+                    self._kernel.stat_batch(allowed_paths, ROOT_ZONE_ID),
                     strict=True,
                 )
             )
@@ -358,13 +358,13 @@ class ContentMixin:
                 content = bulk_content
                 if return_metadata:
                     assert batch_meta is not None
-                    meta = batch_meta.get(path)
+                    stat = batch_meta.get(path)
                     results[path] = {
                         "content": bulk_content,
-                        "content_id": meta.content_id if meta else None,
-                        "version": meta.version if meta else 0,
-                        "gen": meta.gen if meta else 0,
-                        "modified_at": meta.modified_at if meta else None,
+                        "content_id": stat["content_id"] if stat else None,
+                        "version": stat["version"] if stat else 0,
+                        "gen": stat.get("gen", 0) if stat else 0,
+                        "modified_at": stat["modified_at"] if stat else None,
                         "size": len(bulk_content),
                     }
                 else:

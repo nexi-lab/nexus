@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 use crate::{
     error::{BenchError, BenchResult},
     metrics::BenchResultFile,
+    threshold::{DiffResult, DiffStatus},
 };
 
 pub fn write_result_json(path: &Path, result: &BenchResultFile) -> BenchResult<()> {
@@ -63,6 +64,40 @@ fn human_bytes(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+pub fn render_diff_markdown(diff: &DiffResult) -> String {
+    let mut out = String::from(
+        "# Nexus Bench Diff\n\n| Metric | Baseline | Candidate | Change | Threshold | Status |\n|---|---:|---:|---:|---:|---|\n",
+    );
+    for row in &diff.rows {
+        let baseline = row
+            .baseline
+            .map(format_f64)
+            .unwrap_or_else(|| "n/a".to_string());
+        let candidate = row
+            .candidate
+            .map(format_f64)
+            .unwrap_or_else(|| "n/a".to_string());
+        let change = row
+            .percent_change
+            .map(|value| format!("{value:.2}%"))
+            .unwrap_or_else(|| "n/a".to_string());
+        let status = match row.status {
+            DiffStatus::Passed => "passed",
+            DiffStatus::Failed => "failed",
+            DiffStatus::Skipped => "skipped",
+        };
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {:.2}% | {} |\n",
+            row.metric, baseline, candidate, change, row.threshold_percent, status
+        ));
+    }
+    out
+}
+
+fn format_f64(value: f64) -> String {
+    format!("{value:.3}")
 }
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+pub mod http;
+pub mod mount;
 pub mod noop;
 
 use crate::{error::BenchResult, metrics::OperationMetrics, trace::TraceOp};

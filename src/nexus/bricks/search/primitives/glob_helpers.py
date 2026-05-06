@@ -36,12 +36,83 @@ def _match_python(path: str, pattern: str) -> bool:
     return fnmatch.fnmatch(path_for_match, pattern_for_match)
 
 
+def _brace_span(pattern: str) -> tuple[int, int] | None:
+    in_class = False
+    escaped = False
+    open_idx: int | None = None
+
+    for idx, char in enumerate(pattern):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == "[":
+            in_class = True
+            continue
+        if char == "]":
+            in_class = False
+            continue
+        if in_class:
+            continue
+        if char == "{" and open_idx is None:
+            open_idx = idx
+        elif char == "}" and open_idx is not None:
+            return open_idx, idx
+    return None
+
+
+def _split_brace_alternates(body: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    in_class = False
+    escaped = False
+
+    for idx, char in enumerate(body):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == "[":
+            in_class = True
+            continue
+        if char == "]":
+            in_class = False
+            continue
+        if char == "," and not in_class:
+            parts.append(body[start:idx])
+            start = idx + 1
+    parts.append(body[start:])
+    return parts
+
+
+def _expand_brace_alternates(pattern: str) -> list[str]:
+    span = _brace_span(pattern)
+    if span is None:
+        return [pattern]
+
+    start, end = span
+    choices = _split_brace_alternates(pattern[start + 1 : end])
+    if len(choices) <= 1:
+        return [pattern]
+
+    prefix = pattern[:start]
+    suffixes = _expand_brace_alternates(pattern[end + 1 :])
+    return [f"{prefix}{choice}{suffix}" for choice in choices for suffix in suffixes]
+
+
 def _glob_match_bulk_or_python(patterns: list[str], paths: list[str]) -> list[str]:
     from nexus._rust_compat import glob_match_bulk
 
     if glob_match_bulk is not None:
         return list(glob_match_bulk(patterns, paths))
-    return [path for path in paths if any(_match_python(path, pattern) for pattern in patterns)]
+    expanded_patterns = [p for pattern in patterns for p in _expand_brace_alternates(pattern)]
+    return [
+        path for path in paths if any(_match_python(path, pattern) for pattern in expanded_patterns)
+    ]
 
 
 def glob_match(path: str, patterns: list[str]) -> bool:

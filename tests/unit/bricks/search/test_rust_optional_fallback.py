@@ -59,3 +59,20 @@ def test_glob_helpers_fall_back_when_rust_glob_is_unavailable(monkeypatch) -> No
         include_patterns=["**/*.py"],
         exclude_patterns=["**/test_*.py"],
     ) == ["/src/main.py"]
+
+
+def test_glob_helpers_python_fallback_supports_brace_alternation(monkeypatch) -> None:
+    """The no-Rust fallback should preserve globset's {a,b} alternation."""
+    import nexus._rust_compat as rust_compat
+    from nexus.bricks.search.primitives import glob_helpers
+
+    monkeypatch.setattr(rust_compat, "glob_match_bulk", None)
+
+    paths = ["/src/main.py", "/src/app.ts", "/src/readme.md", "/src/app.test.ts"]
+
+    assert glob_helpers.glob_match("/src/main.py", ["**/*.{py,ts}"]) is True
+    assert glob_helpers.glob_filter(
+        paths,
+        include_patterns=["**/*.{py,ts}"],
+        exclude_patterns=["**/*.test.{py,ts}"],
+    ) == ["/src/main.py", "/src/app.ts"]

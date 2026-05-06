@@ -28,7 +28,9 @@ class SearchBrickManifest(BrickManifest):
         }
     )
     required_modules: tuple[str, ...] = (
-        "nexus.bricks.search.txtai_backend",
+        "nexus.bricks.search.pg_fts_backend",
+        "nexus.bricks.search.pg_vector_backend",
+        "nexus.bricks.search.sqlite_fts_backend",
         "nexus.bricks.search.daemon",
         "nexus.bricks.search.indexing_service",
         "nexus.bricks.search.chunking",

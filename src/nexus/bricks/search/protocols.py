@@ -1,19 +1,18 @@
 """Search brick protocols for dependency inversion (Issue #1520, #2075, #2663).
 
-Defines SearchableProtocol and re-exports SearchBackendProtocol.
-
-FileReaderProtocol has been moved to ``nexus.contracts.protocols.file_reader``
-(Issue #2036) for LEGO compliance.  It is re-exported here for backward
-compatibility within the brick.
+Defines SearchableProtocol (daemon-facing facade) and SearchBackend
+(backend-facing primitive). Re-exports FileReaderProtocol for backward compat
+within the brick.
 """
 
+from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.contracts.protocols.file_reader import FileReaderProtocol
 
 # Re-export for backward compat within the brick
-__all__ = ["FileReaderProtocol", "SearchableProtocol"]
+__all__ = ["FileReaderProtocol", "SearchableProtocol", "SearchBackend"]
 
 
 @runtime_checkable
@@ -34,3 +33,38 @@ class SearchableProtocol(Protocol):
         alpha: float = 0.5,
         **kwargs: Any,
     ) -> list[BaseSearchResult]: ...
+
+
+@runtime_checkable
+class SearchBackend(Protocol):
+    """Unified backend contract for keyword + semantic search.
+
+    Hybrid fusion is the daemon's responsibility (see fusion.rrf_fusion);
+    backends only expose the two single-mode primitives.
+    """
+
+    async def add(self, docs: Sequence[dict[str, Any]], *, zone_id: str) -> int: ...
+
+    async def upsert(self, docs: Sequence[dict[str, Any]], *, zone_id: str) -> int: ...
+
+    async def delete(self, ids: Sequence[str], *, zone_id: str) -> int: ...
+
+    async def keyword_search(
+        self,
+        query: str,
+        path: str,
+        k: int,
+        zone_id: str,
+    ) -> list[BaseSearchResult]: ...
+
+    async def semantic_search(
+        self,
+        query_vector: Sequence[float],
+        path: str,
+        k: int,
+        zone_id: str,
+    ) -> list[BaseSearchResult]: ...
+
+    async def startup(self) -> None: ...
+
+    async def shutdown(self) -> None: ...

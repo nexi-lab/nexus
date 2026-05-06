@@ -3818,9 +3818,21 @@ class SearchService:
             )
             return [_result_to_dict(r) for r in results]
 
-        # Delegate to SearchDaemon's txtai backend when wired (Issue #2965)
+        # Delegate to SearchDaemon when wired (Issue #2965).
+        # Pre-#3699 the daemon owned a single ``_backend`` (TxtaiBackend);
+        # post-#3699 it owns ``_fts_backend`` + ``_vector_backend``. Accept
+        # either layout so the daemon path is taken on both sides of the
+        # txtai cutover. The legacy ``_backend`` check stayed wired into
+        # this dispatcher, so on the new stack it always evaluated False
+        # and every query silently fell through to ``_sql_chunk_search``
+        # (SQL LIKE), defeating the path filter and the dense leg.
         daemon = getattr(self, "_search_daemon", None)
-        if daemon is not None and getattr(daemon, "_backend", None) is not None:
+        _has_legacy_backend = getattr(daemon, "_backend", None) is not None
+        _has_new_backends = (
+            getattr(daemon, "_fts_backend", None) is not None
+            or getattr(daemon, "_vector_backend", None) is not None
+        )
+        if daemon is not None and (_has_legacy_backend or _has_new_backends):
             # Over-fetch to compensate for permission filtering
             fetch_limit = limit * 3 if self._permission_enforcer else limit
             zone_id = getattr(context, "zone_id", None) if context else None

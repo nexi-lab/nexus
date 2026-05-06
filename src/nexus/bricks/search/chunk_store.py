@@ -56,6 +56,31 @@ class ChunkStore:
             )
             await session.commit()
 
+    async def delete_chunk_ids(self, chunk_ids: list[str]) -> int:
+        """Delete document_chunks rows by chunk_id (precise scope-purge path).
+
+        Used by ``scope_ops.purge_unscoped_embeddings`` after the txtai cutover
+        (Issue #3699) so we can drop only the chunks that fall outside the
+        new scope without nuking every chunk for a given path. Sibling chunks
+        on the same path that ARE still in scope must survive.
+
+        Postgres / SQLite both support ``IN (:list)`` via SQLAlchemy
+        ``expanding=True``. Returns the number of rows actually deleted so
+        callers can report real counts to the operator.
+        """
+        if not chunk_ids:
+            return 0
+        from sqlalchemy import bindparam
+
+        async with self._async_session_factory() as session:
+            stmt = text("DELETE FROM document_chunks WHERE chunk_id IN :ids").bindparams(
+                bindparam("ids", expanding=True)
+            )
+            result = await session.execute(stmt, {"ids": list(chunk_ids)})
+            await session.commit()
+        # rowcount is reliable on both pg + sqlite for plain DELETE…WHERE IN.
+        return int(getattr(result, "rowcount", 0) or 0)
+
     async def replace_document_chunks(self, path_id: str, chunks: list[ChunkRecord]) -> None:
         now = datetime.now(UTC).replace(tzinfo=None)
         async with self._async_session_factory() as session:

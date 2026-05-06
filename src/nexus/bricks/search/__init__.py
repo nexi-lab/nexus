@@ -1,17 +1,12 @@
-"""Search module for Nexus (Issue #2663 — txtai unified backend).
+"""Search module for Nexus (Issue #3699 — drop txtai, new backend stack).
 
 Provides:
-- Hybrid BM25+dense search via txtai (pgvector backend)
-- Semantic graph search via txtai
-- Cross-encoder reranking (configurable)
-- Zoekt trigram code search (optional, orthogonal to txtai)
+- Hybrid BM25+dense search via PgFtsBackend + PgVectorBackend
+- SQLite-backed search via SqliteFtsBackend
+- Zoekt trigram code search (optional)
 - Hot Search Daemon for sub-50ms response
 - Query expansion for improved recall
 - Pluggable backend registry
-
-Legacy modules (bm25s, vector_db*, fusion, ranking, graph_store,
-graph_retrieval, mobile_*, embeddings, query_service) have been
-replaced by txtai and deleted.
 """
 
 from nexus.bricks.search.chunking import (
@@ -40,6 +35,8 @@ from nexus.bricks.search.daemon import (
 from nexus.bricks.search.indexing import IndexingPipeline, IndexProgress, IndexResult
 from nexus.bricks.search.indexing_service import IndexingService
 from nexus.bricks.search.manifest import SearchBrickManifest, verify_imports
+from nexus.bricks.search.pg_fts_backend import PgFtsBackend
+from nexus.bricks.search.pg_vector_backend import PgVectorBackend
 from nexus.bricks.search.protocols import FileReaderProtocol
 from nexus.bricks.search.query_expansion import (
     CachedQueryExpander,
@@ -64,12 +61,7 @@ from nexus.bricks.search.query_router import (
 from nexus.bricks.search.result_builders import build_result_from_row, build_semantic_result
 from nexus.bricks.search.results import BaseSearchResult, detect_matched_field
 from nexus.bricks.search.search_service import SearchService
-from nexus.bricks.search.txtai_backend import (
-    SEARCH_BACKENDS,
-    SearchBackendProtocol,
-    TxtaiBackend,
-    create_backend,
-)
+from nexus.bricks.search.sqlite_fts_backend import SqliteFtsBackend
 from nexus.bricks.search.zoekt_client import (
     ZoektClient,
     ZoektIndexManager,
@@ -163,11 +155,10 @@ __all__ = [
     "ZoektClient",
     "ZoektIndexManager",
     "ZoektMatch",
-    # txtai backend (Issue #2663)
-    "TxtaiBackend",
-    "SearchBackendProtocol",
-    "SEARCH_BACKENDS",
-    "create_backend",
+    # Search backends (Issue #3699)
+    "PgFtsBackend",
+    "PgVectorBackend",
+    "SqliteFtsBackend",
     "detect_matched_field",
     # Search Service (moved from services/search/, Issue #1287)
     "SearchService",

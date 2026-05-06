@@ -3,8 +3,6 @@
 # Multi-stage build for optimal image size
 # 国内镜像支持：APT、pip、Rust、Go
 ARG USE_CHINA_MIRROR=false
-ARG TORCH_VARIANT=cpu
-ARG NEXUS_TXTAI_USE_API_EMBEDDINGS=false
 
 # Zoekt was previously built here as an independent Go stage and copied
 # into the final image, but it's disabled by default (ZOEKT_ENABLED=false
@@ -20,8 +18,6 @@ FROM python:3.14-slim AS builder
 
 # 设置国内镜像环境变量（默认 false，国外环境不使用）
 ARG USE_CHINA_MIRROR
-ARG TORCH_VARIANT
-ARG NEXUS_TXTAI_USE_API_EMBEDDINGS
 ARG TARGETARCH
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
@@ -74,38 +70,14 @@ COPY pyproject.toml uv.lock* README.md Cargo.toml Cargo.lock ./
 RUN mkdir -p src/nexus && echo '__version__ = "0.0.0"' > src/nexus/__init__.py
 ENV UV_HTTP_TIMEOUT=300
 # Select which pip extras to install at build time.
-# Default (full image): all,performance,compression,monitoring,docker,event-streaming,sentry,pay
+# Default (full image): all,performance,monitoring,docker,event-streaming,sentry,pay
 # Lean sandbox image:   sandbox
+# Issue #3699: torch / txtai / sentence-transformers / faiss-cpu / hnswlib
+# all dropped — direct pgvector + pg_search path replaces them.
 ARG NEXUS_PROFILE_EXTRAS=all,performance,monitoring,docker,event-streaming,sentry,pay
-# Pre-install torch ONLY when 'all' extras are selected — torch is ~300-2000 MB
-# and is only consumed by txtai, which itself is gated on 'all'. SANDBOX (Issue #3778)
-# and other lean extras skip it entirely.
-# TORCH_VARIANT=cpu  → CPU-only wheels (~300 MB, no CUDA)
-# TORCH_VARIANT=cuda → Default PyPI wheels with CUDA (~2 GB)
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=cache,target=/root/.cache/pip \
-    set -eux; \
-    case ",${NEXUS_PROFILE_EXTRAS}," in \
-      *,all,*) \
-        if [ "$TORCH_VARIANT" = "cpu" ]; then \
-            uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch; \
-        else \
-            uv pip install --system -i "$(cat /tmp/pip_index)" torch; \
-        fi ;; \
-      *) echo "Skipping torch pre-install for extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
-    esac; \
-    uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"; \
-    case ",${NEXUS_PROFILE_EXTRAS}," in \
-      *,all,*) \
-        uv pip install --system -i "$(cat /tmp/pip_index)" "txtai[ann]>=9.0"; \
-        if [ -z "${TARGETPLATFORM:-}" ] || [ "${TARGETPLATFORM:-}" = "linux/amd64" ]; then \
-          uv pip install --system -i "$(cat /tmp/pip_index)" "sentence-transformers>=5.3"; \
-        fi ;; \
-      *) echo "Skipping txtai/sentence-transformers for profile extras: ${NEXUS_PROFILE_EXTRAS}" ;; \
-    esac
-
-# NOTE: hnswlib removal moved to after the final pip install (line ~121)
-# to ensure it's not re-introduced by any subsequent install step.
+    uv pip install --system -i "$(cat /tmp/pip_index)" ".[${NEXUS_PROFILE_EXTRAS}]"
 
 # ---------- Build Rust extensions (Issue #3125) ----------
 # On arm64, disable SimSIMD SVE backends at compile time. Apple Silicon does
@@ -148,17 +120,6 @@ RUN rm -rf src/*.egg-info build/ && \
     find /usr/local/lib/python3.*/site-packages/nexus/ -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; \
     pip install --no-cache-dir --no-deps --force-reinstall .
 
-# On arm64, remove hnswlib LAST — after all pip installs are done.
-# hnswlib 0.8.0's C extension executes SVE2 instructions that SIGILL on
-# Apple Silicon Docker (M-chips do not implement SVE). txtai falls back
-# gracefully to faiss/pgvector ANN without hnswlib.
-ARG TARGETARCH
-RUN if [ "${TARGETARCH}" = "arm64" ]; then \
-        pip uninstall -y hnswlib && \
-        rm -f /usr/local/lib/python3.14/site-packages/hnswlib*.so && \
-        echo "✓ hnswlib removed (ARM64 SIGILL fix)"; \
-    fi
-
 # ---------- Production image ----------
 FROM python:3.14-slim
 
@@ -170,60 +131,15 @@ ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 ENV NEXUS_PROFILE_EXTRAS=${NEXUS_PROFILE_EXTRAS}
 
 # ---------- Runtime dependencies ----------
-# libgomp1: OpenMP runtime required by txtai, scikit-learn, numpy (Issue #2946)
+# libgomp1: OpenMP runtime required by scikit-learn / scipy / numpy.
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         curl \
         netcat-openbsd \
         ca-certificates \
         libgomp1 \
-        libjemalloc2 \
         gosu \
     && rm -rf /var/lib/apt/lists/*
-
-# PyTorch/txtai on slim Linux containers can fail with:
-# "cannot allocate memory in static TLS block" for libgomp or libc10.
-# Two-layer fix:
-#   1. LD_PRELOAD: load the system libgomp + torch libc10 early so they
-#      get TLS slots before the pool fills up.
-#   2. GLIBC_TUNABLES: expand the static-TLS reservation so that
-#      *additional* copies (e.g. faiss-cpu's bundled libgomp) still fit.
-RUN set -eux; \
-    if [ "${TARGETARCH}" = "arm64" ]; then \
-        ln -sf /usr/lib/aarch64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
-        ln -sf /usr/lib/aarch64-linux-gnu/libjemalloc.so.2 /usr/lib/libjemalloc.so.2; \
-    elif [ "${TARGETARCH}" = "amd64" ]; then \
-        ln -sf /usr/lib/x86_64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
-        ln -sf /usr/lib/x86_64-linux-gnu/libjemalloc.so.2 /usr/lib/libjemalloc.so.2; \
-    fi; \
-    # torch is only installed when extras include 'all' — skip symlink on SANDBOX (#3778).
-    if [ -f /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so ]; then \
-        ln -sf /usr/local/lib/python3.14/site-packages/torch/lib/libc10.so /usr/lib/libc10.so; \
-    fi
-# LD_PRELOAD: jemalloc first (intercepts allocator calls before any other lib),
-# then libgomp. When torch is installed, the entrypoint extends LD_PRELOAD to
-# include libc10.so (see docker-entrypoint.sh). The entrypoint also strips
-# jemalloc from LD_PRELOAD if the .so is missing at runtime (defensive — see T6).
-ENV LD_PRELOAD="/usr/lib/libjemalloc.so.2:/usr/lib/libgomp.so.1"
-ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
-
-# Issue #3997: cap glibc arenas (default 8*cpu_count -> 200-400 MB RSS bloat
-# on threaded Python) and lower trim threshold so free() returns pages to
-# the kernel.
-ENV MALLOC_ARENA_MAX=2 \
-    MALLOC_TRIM_THRESHOLD_=131072
-
-# Issue #3997: cap BLAS worker threads. numpy/torch/sentence-transformers spawn
-# cpu_count BLAS threads at first import; each = 8 MB pthread stack + glibc arena.
-# Caps must be set BEFORE Python imports numpy/torch -> Dockerfile ENV (entrypoint
-# is too late for some import paths). Users opting into local embeddings should
-# override at `docker run -e OMP_NUM_THREADS=N` for throughput.
-# OMP_NUM_THREADS and MKL_ENABLE_INSTRUCTIONS are set in docker-entrypoint.sh
-# (already at value 1) for compatibility with the faiss/torch SIMD-portability
-# defaults, so they are not duplicated here.
-ENV OPENBLAS_NUM_THREADS=1 \
-    NUMEXPR_NUM_THREADS=1 \
-    VECLIB_MAXIMUM_THREADS=1
 
 # ---------- CLI connectors: gws + gh (Issue #3148) ----------
 # gws: Google Workspace CLI for Gmail/Calendar/Drive/Sheets/Docs/Chat connectors
@@ -276,17 +192,11 @@ COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 
 
-# ---------- Build-time smoke tests (Issue #2946, #3125, #3134) ----------
+# ---------- Build-time smoke tests (Issue #3125, #3134) ----------
 # Verify critical native imports are installed correctly.
 # The SIMD test exercises simsimd code paths so that a cross-architecture
 # cache mismatch or mis-compiled SVE backend surfaces as a build failure
 # (SIGILL) instead of a runtime crash (Issue #3125).
-# On ARM64 (Apple Silicon Docker), PyTorch's libc10.so may fail with
-# "cannot allocate memory in static TLS block" — a known glibc/TLS
-# limitation on aarch64 (see pytorch/pytorch#76689, OpenContracts#230).
-# This does NOT affect runtime (the server starts fine); it only affects
-# this build-time import check. We split the check: non-torch imports
-# are fatal, torch-dependent imports (txtai) are best-effort on ARM64.
 # Always verifiable (present regardless of extras): Rust extensions.
 RUN python3 -c "\
 import nexus_runtime; \
@@ -306,10 +216,6 @@ assert abs(s - 1.0) < 0.01, f'cosine self-similarity failed: {s}'; \
 d = dot_product_f32([1.0, 2.0], [3.0, 4.0]); \
 assert abs(d - 11.0) < 0.01, f'dot product failed: {d}'; \
 print('✓ SIMD smoke test passed')"
-RUN python3 -c "\
-import txtai; \
-print('✓ txtai/torch import passed')" \
-    || echo '⚠ txtai import failed (expected on ARM64 Docker — runtime unaffected)'
 
 # ---------- Copy application files ----------
 WORKDIR /app
@@ -337,22 +243,16 @@ RUN mkdir -p /app/data && chown -R nexus:nexus /app
 USER nexus
 
 # ---------- Environment variables ----------
-# SIMD mitigations (FAISS_OPT_LEVEL, OMP_NUM_THREADS, MKL_ENABLE_INSTRUCTIONS)
-# are applied as portable defaults at runtime in docker-entrypoint.sh to avoid
-# faiss/torch SIGILL on diverse CPUs (Issue #3125).  Users with known-good
-# modern CPUs can override via `docker run -e <VAR>=<value>` for full SIMD
-# throughput.  GLIBC_TUNABLES is set unconditionally above.
+# nexus_runtime cdylib uses simsimd which exhausts the default static-TLS
+# pool on aarch64 ("cannot allocate memory in static TLS block"). Expanding
+# the reservation is harmless on platforms that don't need it.
+ENV GLIBC_TUNABLES="glibc.rtld.optional_static_tls=16384"
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
     NEXUS_PORT=2026 \
     NEXUS_PROFILE=full \
-    NEXUS_DATA_DIR=/app/data \
-    NEXUS_TXTAI_SPARSE=false
-# Issue #3997: NEXUS_TXTAI_RERANKER is no longer set by default — the
-# cross-encoder/ms-marco model loaded ~300 MB unconditionally. Operators
-# wanting reranking opt in:
-#   -e NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2
+    NEXUS_DATA_DIR=/app/data
 
 EXPOSE 2026 2126
 

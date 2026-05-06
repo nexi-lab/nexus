@@ -418,6 +418,19 @@ class TestPerLoopLocks:
 
 
 # =============================================================================
+# Protocol conformance
+# =============================================================================
+
+
+def test_satisfies_search_backend_protocol():
+    from nexus.bricks.search.protocols import SearchBackend
+    from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
+
+    backend = SqliteVecBackend(db_path=":memory:")
+    assert isinstance(backend, SearchBackend)
+
+
+# =============================================================================
 # Embedder kind detection + fastembed offline fallback
 # =============================================================================
 

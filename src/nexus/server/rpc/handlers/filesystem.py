@@ -309,7 +309,9 @@ async def handle_semantic_search_index(
                     del_err,
                 )
 
-        # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
+        # Single upsert through the daemon's IndexingPipeline → ChunkStore
+        # (BM25 via pg_textsearch / FTS5 + halfvec embeddings on
+        # document_chunks). Issue #3699 dropped the txtai/SPLADE leg.
         results: dict[str, int] = {}
         if documents:
             await daemon.index_documents(documents, zone_id=zone_id)

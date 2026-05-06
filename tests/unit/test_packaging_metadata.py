@@ -13,10 +13,15 @@ def test_semantic_search_stack_is_not_in_base_dependencies() -> None:
     base_dependencies = payload["project"]["dependencies"]
     semantic_search = payload["project"]["optional-dependencies"]["semantic-search"]
 
-    assert not any(dep.startswith("txtai[database,graph]") for dep in base_dependencies)
+    # Issue #3699 dropped txtai + faiss-cpu in favour of direct
+    # pgvector / pg_search SQL. The semantic-search extra now ships
+    # only the lightweight Python clients for those engines.
+    assert not any(dep.startswith("txtai") for dep in base_dependencies)
     assert not any(dep.startswith("faiss-cpu") for dep in base_dependencies)
-    assert any(dep.startswith("txtai[database,graph]") for dep in semantic_search)
-    assert any(dep.startswith("faiss-cpu") for dep in semantic_search)
+    assert not any(dep.startswith("txtai") for dep in semantic_search)
+    assert not any(dep.startswith("faiss-cpu") for dep in semantic_search)
+    assert any(dep.startswith("pgvector") for dep in semantic_search)
+    assert any(dep.startswith("sqlite-vec") for dep in semantic_search)
 
 
 def test_root_package_does_not_advertise_unpublished_nexus_runtime_extra() -> None:

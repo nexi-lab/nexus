@@ -10,6 +10,17 @@ Each function takes a ``SearchDaemon`` as the first argument and mutates
 its in-memory state under ``_refresh_lock`` while writing through to the
 database. The daemon exposes thin wrapper methods that delegate here.
 
+After the txtai cutover (Issue #3699), embeddings live in
+``document_chunks.embedding`` written by ``ChunkStore`` via the indexing
+pipeline. There is no parallel txtai/sections content store anymore.
+The scope ops therefore:
+
+* **Backfill** newly-in-scope paths by re-driving the indexing pipeline
+  (which writes fresh chunks + embeddings into ``document_chunks``).
+* **Purge** out-of-scope chunks by selecting from ``document_chunks`` and
+  calling ``ChunkStore.delete_chunk_ids`` — precise per-chunk deletion so
+  sibling chunks on the same path that remain in scope survive.
+
 See the 8 Issue #6 policies documented per function and in
 ``tests/unit/bricks/search/test_daemon_scope_crud.py``.
 """
@@ -19,7 +30,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import text as sa_text
 
@@ -71,7 +82,7 @@ class BackfillResult:
       - ``skewed``  — generation guard fired; a concurrent mutation
                        superseded this backfill. Caller should treat
                        as degraded and prompt operator retry.
-      - ``no_op``   — daemon has no DB session or backend; nothing
+      - ``no_op``   — daemon has no DB session or pipeline; nothing
                        to do, not an error.
     """
 
@@ -191,11 +202,11 @@ async def add_indexed_directory(
 
     logger.info("Registered indexed directory %s under zone %s", canonical, zone_id)
 
-    # Backfill OUTSIDE the refresh lock so the txtai upsert (which can
-    # take seconds) doesn't block other refreshes. Pass the captured
-    # generation so the backfill bails if scope changes mid-flight,
-    # AND pass the canonical directory_path so the SQL is prefix-
-    # scoped instead of scanning the whole zone.
+    # Backfill OUTSIDE the refresh lock so the indexing pipeline (which
+    # can take seconds for embedding API calls) doesn't block other
+    # refreshes. Pass the captured generation so the backfill bails if
+    # scope changes mid-flight, AND pass the canonical directory_path
+    # so the SQL is prefix-scoped instead of scanning the whole zone.
     result = await backfill_zone_from_chunks(
         daemon,
         zone_id,
@@ -252,7 +263,7 @@ def list_indexed_directories(daemon: SearchDaemon, zone_id: str) -> list[str]:
 
 
 class BackfillFailedError(IndexScopeError):
-    """Raised when a scope-expansion backfill fails to durably write txtai.
+    """Raised when a scope-expansion backfill fails to durably persist chunks.
 
     Distinct from "nothing to backfill" (returns 0) so callers can
     surface a partial-success / degraded state to operators instead of
@@ -270,48 +281,64 @@ async def backfill_zone_from_chunks(
     expected_generation: int | None = None,
     directory_path: str | None = None,
 ) -> BackfillResult:
-    """Re-upsert in-scope ``document_chunks`` for ``zone_id`` into txtai.
+    """Re-index in-scope file paths for ``zone_id`` through the pipeline.
 
     Called when scope expands (a directory is registered, or a zone
     flips from ``'scoped'`` back to ``'all'``). Without backfill, files
     that were previously skipped by the embedding pipeline would stay
     invisible to semantic search until they were re-written or the
-    daemon was restarted (because bootstrap is the only other path
-    that replays ``document_chunks`` into txtai).
+    daemon was restarted.
 
-    **Prefix scoping**: when ``directory_path`` is provided, the SQL
-    query is restricted to files under that prefix only — using the
-    same wildcard-escaping rules as the bootstrap path. This prevents
-    a single ``add_indexed_directory`` call from re-embedding the
-    entire zone (which would be a latency bomb on large workspaces
-    AND blow up embedding API budget). Without ``directory_path``,
-    falls back to a full-zone scan, which is the right behavior for
-    the ``scoped → all`` mode flip path.
+    Post-Issue #3699 architecture: ``document_chunks.embedding`` is the
+    canonical store and ``ChunkStore`` (driven by ``IndexingPipeline``)
+    is the sole writer. Backfill therefore drives the indexing pipeline
+    over each newly-in-scope path; the pipeline reads file content,
+    chunks it, calls the embedding provider, and writes
+    ``document_chunks`` rows with embeddings populated. Subsequent
+    semantic searches pick them up automatically via the JOIN-by-path-
+    prefix in ``PgVectorBackend.semantic_search`` /
+    ``SqliteVecBackend.semantic_search``.
 
-    **Skip when zone is in 'all' mode**: zones in ``'all'`` mode
-    embed everything by default — there is nothing to backfill on
-    register because the directory was already covered. Returns
+    **Prefix scoping**: when ``directory_path`` is provided, only paths
+    under that prefix are re-indexed. Without ``directory_path``, falls
+    back to a full-zone scan, which is the right behavior for the
+    ``scoped → all`` mode flip path.
+
+    **Skip when zone is in 'all' mode**: zones in ``'all'`` mode embed
+    everything by default — there is nothing to backfill on register
+    because the directory was already covered. Returns
     ``BackfillResult(status='ok', files=0)`` immediately.
 
     **Generation guard**: ``expected_generation`` should be captured by
     the caller while holding ``_refresh_lock`` immediately after the
     scope mutation that triggered this backfill. The backfill checks
-    ``daemon._scope_generation`` again immediately before issuing the
-    txtai upsert; if the generation has advanced (a concurrent
+    ``daemon._scope_generation`` again immediately before driving the
+    pipeline; if the generation has advanced (a concurrent
     unregister/mode-flip happened), the backfill bails with
     ``BackfillResult(status='skewed')`` so the caller can surface the
     superseded outcome instead of pretending it succeeded.
 
     Returns a ``BackfillResult``:
-      - ``ok`` — backfill ran to completion (``files`` may be 0 if
-        the zone genuinely had no in-scope chunks).
-      - ``skewed`` — concurrent scope mutation; we did not upsert.
-      - ``no_op`` — daemon has no DB or backend wired (test mode).
+      - ``ok`` — backfill ran to completion (``files`` may be 0 if the
+        zone genuinely had no in-scope paths).
+      - ``skewed`` — concurrent scope mutation; we did not re-index.
+      - ``no_op`` — daemon has no DB session, no indexing pipeline, or
+        no file reader (test mode / unconfigured deploy).
 
-    Hard failures (SELECT or upsert raise) propagate as
+    Hard failures (DB SELECT raises) propagate as
     ``BackfillFailedError``.
     """
-    if daemon._async_session is None or daemon._backend is None:
+    # Test scaffolding may construct a daemon without these attributes;
+    # default them to None so this function can early-exit cleanly
+    # rather than raising AttributeError.
+    indexing_pipeline = getattr(daemon, "_indexing_pipeline", None)
+    file_reader = getattr(daemon, "_file_reader", None)
+
+    if daemon._async_session is None:
+        return BackfillResult(status="no_op", files=0)
+    if indexing_pipeline is None or file_reader is None:
+        # No way to re-drive the pipeline — return no_op so callers can
+        # surface the unconfigured state without raising.
         return BackfillResult(status="no_op", files=0)
 
     from nexus.bricks.search.index_scope import (
@@ -330,7 +357,7 @@ async def backfill_zone_from_chunks(
     # directory adds no new files to embed. The mode-flip path
     # (``directory_path is None``) intentionally runs even in 'all'
     # mode because that's when previously-skipped files need to be
-    # replayed into txtai.
+    # replayed through the pipeline.
     current_mode = daemon._zone_indexing_modes.get(zone_id, INDEX_MODE_ALL)
     if directory_path is not None and current_mode == INDEX_MODE_ALL:
         logger.debug(
@@ -340,11 +367,6 @@ async def backfill_zone_from_chunks(
         )
         return BackfillResult(status="ok", files=0)
 
-    # Build the SELECT. When ``directory_path`` is set we push the
-    # prefix filter into SQL so we don't materialize the whole zone
-    # in Python. The escape pattern matches the bootstrap path so
-    # ``_`` and ``%`` in directory names cannot be interpreted as
-    # SQL wildcards.
     canonical_dir: str | None = None
     if directory_path is not None:
         try:
@@ -355,6 +377,10 @@ async def backfill_zone_from_chunks(
                 files_attempted=0,
             ) from exc
 
+    # Walk ``file_paths`` to find candidate paths. We drive the
+    # pipeline per-path so even files that don't yet have any chunks
+    # (e.g. previously out-of-scope, never indexed) get embedded on
+    # backfill.
     try:
         async with daemon._async_session() as session:
             if canonical_dir is None:
@@ -362,40 +388,31 @@ async def backfill_zone_from_chunks(
                     await session.execute(
                         sa_text(
                             """
-                            SELECT
-                                fp.virtual_path,
-                                c.chunk_index,
-                                c.chunk_text
-                            FROM document_chunks c
-                            JOIN file_paths fp ON c.path_id = fp.path_id
-                            WHERE fp.zone_id = :zid
-                              AND fp.deleted_at IS NULL
-                            ORDER BY fp.virtual_path, c.chunk_index
+                            SELECT virtual_path
+                            FROM file_paths
+                            WHERE zone_id = :zid
+                              AND deleted_at IS NULL
+                            ORDER BY virtual_path
                             """
                         ),
                         {"zid": zone_id},
                     )
                 ).fetchall()
             else:
-                # Prefix-scoped path. Match either the directory itself
-                # (rare — directories don't usually have chunks) OR a
-                # descendant via LIKE escape, identical to the bootstrap
+                # Prefix-scoped path. Match either the directory itself OR
+                # a descendant via LIKE escape, identical to the bootstrap
                 # rule that prevents '/src' from matching '/srcX/foo'.
                 rows = (
                     await session.execute(
                         sa_text(
                             r"""
-                            SELECT
-                                fp.virtual_path,
-                                c.chunk_index,
-                                c.chunk_text
-                            FROM document_chunks c
-                            JOIN file_paths fp ON c.path_id = fp.path_id
-                            WHERE fp.zone_id = :zid
-                              AND fp.deleted_at IS NULL
+                            SELECT virtual_path
+                            FROM file_paths
+                            WHERE zone_id = :zid
+                              AND deleted_at IS NULL
                               AND (
-                                fp.virtual_path = :dp
-                                OR fp.virtual_path LIKE
+                                virtual_path = :dp
+                                OR virtual_path LIKE
                                     REPLACE(
                                       REPLACE(
                                         REPLACE(:dp, '\', '\\'),
@@ -404,7 +421,7 @@ async def backfill_zone_from_chunks(
                                       '_', '\_'
                                     ) || '/%' ESCAPE '\'
                               )
-                            ORDER BY fp.virtual_path, c.chunk_index
+                            ORDER BY virtual_path
                             """
                         ),
                         {"zid": zone_id, "dp": canonical_dir},
@@ -417,87 +434,75 @@ async def backfill_zone_from_chunks(
             exc_info=True,
         )
         raise BackfillFailedError(
-            f"failed to read document_chunks for zone {zone_id!r}: {exc}",
+            f"failed to read file_paths for zone {zone_id!r}: {exc}",
             files_attempted=0,
         ) from exc
 
     if not rows:
         return BackfillResult(status="ok", files=0)
 
-    # Group chunks by virtual_path and filter through scope. Use the
-    # CURRENT scope (not the captured snapshot) so per-file filtering
-    # always reflects the latest in-memory state.
+    # Filter through the CURRENT scope (not the captured snapshot) so
+    # per-file checks always reflect the latest in-memory state.
     current_scope = daemon._current_index_scope()
     if current_scope is None:
         return BackfillResult(status="no_op", files=0)
-    grouped: dict[str, list[str]] = {}
+    in_scope_vpaths: list[str] = []
     for row in rows:
         vpath = row[0]
-        text = row[2] or ""
         if not vpath:
             continue
         try:
-            if not is_path_indexed(current_scope, zone_id, vpath):
-                continue
+            if is_path_indexed(current_scope, zone_id, vpath):
+                in_scope_vpaths.append(vpath)
         except ValueError:
             continue
-        grouped.setdefault(vpath, []).append(text)
 
-    if not grouped:
+    if not in_scope_vpaths:
         return BackfillResult(status="ok", files=0)
 
-    docs: list[dict[str, Any]] = []
-    for vpath, parts in grouped.items():
-        content = "\n".join(p for p in parts if p)
-        if not content.strip():
-            continue
-        doc_id = f"{zone_id}:{vpath}" if zone_id != ROOT_ZONE_ID else vpath
-        docs.append(
-            {
-                "id": doc_id,
-                "text": content,
-                "path": vpath,
-                "zone_id": zone_id,
-            }
-        )
-
-    if not docs:
-        return BackfillResult(status="ok", files=0)
-
-    # Generation check IMMEDIATELY before the upsert. If a concurrent
-    # unregister/mode-flip bumped the generation while we were
-    # SELECTing/grouping, bail without upserting — those documents
+    # Generation check IMMEDIATELY before driving the pipeline. If a
+    # concurrent unregister/mode-flip bumped the generation while we
+    # were SELECTing/filtering, bail without re-indexing — those files
     # have just become out-of-scope and we must not resurrect them.
     if expected_generation is not None and daemon._scope_generation != expected_generation:
         logger.info(
             "backfill_zone_from_chunks: scope generation advanced "
             "(%d → %d) for zone %s while backfilling; bailing without "
-            "upsert to avoid resurrecting newly out-of-scope files",
+            "re-index to avoid resurrecting newly out-of-scope files",
             expected_generation,
             daemon._scope_generation,
             zone_id,
         )
         return BackfillResult(status="skewed", files=0)
 
+    # Drive the daemon's refresh pipeline so the indexing pipeline owns
+    # the chunk + embedding write. We pass the zone-scoped path form
+    # (``/zone/{id}{vpath}``) when not the root zone so ``_refresh_indexes``
+    # / ``_file_reader`` can resolve the file the same way mutation
+    # consumers do.
+    paths_to_refresh = [
+        f"/zone/{zone_id}{vpath}" if zone_id != ROOT_ZONE_ID else vpath for vpath in in_scope_vpaths
+    ]
+
     try:
-        await daemon._backend.upsert(docs, zone_id=zone_id)
+        await daemon._refresh_indexes(paths_to_refresh)
     except Exception as exc:
         logger.warning(
-            "backfill_zone_from_chunks: txtai upsert failed for zone %s",
+            "backfill_zone_from_chunks: refresh pipeline failed for zone %s",
             zone_id,
             exc_info=True,
         )
         raise BackfillFailedError(
-            f"failed to upsert {len(docs)} files into txtai for zone {zone_id!r}: {exc}",
-            files_attempted=len(docs),
+            f"failed to refresh {len(paths_to_refresh)} files for zone {zone_id!r}: {exc}",
+            files_attempted=len(paths_to_refresh),
         ) from exc
 
     logger.info(
-        "backfilled %d in-scope files into txtai for zone %s",
-        len(docs),
+        "backfilled %d in-scope files for zone %s via indexing pipeline",
+        len(paths_to_refresh),
         zone_id,
     )
-    return BackfillResult(status="ok", files=len(docs))
+    return BackfillResult(status="ok", files=len(paths_to_refresh))
 
 
 async def rerun_backfill_for_directory(
@@ -583,9 +588,9 @@ async def set_zone_indexing_mode(
 
     # Backfill on widening (scoped → all) so previously excluded files
     # become searchable without waiting for the next write/restart.
-    # Done outside the refresh lock so the txtai upsert doesn't block
-    # other refreshes. Pass the captured generation so the backfill
-    # bails if scope changes mid-flight.
+    # Done outside the refresh lock so the indexing pipeline doesn't
+    # block other refreshes. Pass the captured generation so the
+    # backfill bails if scope changes mid-flight.
     if previous_mode == INDEX_MODE_SCOPED and mode == INDEX_MODE_ALL:
         return await backfill_zone_from_chunks(
             daemon, zone_id, expected_generation=backfill_generation
@@ -596,34 +601,32 @@ async def set_zone_indexing_mode(
 async def purge_unscoped_embeddings(
     daemon: SearchDaemon, zone_id: str | None = None
 ) -> dict[str, int]:
-    """Delete derived embedding artifacts for files now outside any scope.
+    """Delete chunks whose path is now outside any registered scope.
 
     Destructive admin operation. Only zones in ``'scoped'`` mode are
-    affected — zones in ``'all'`` mode keep all their embeddings.
+    affected — zones in ``'all'`` mode keep all their chunks.
 
-    **What gets deleted:** only the **derived** txtai artifacts
-    (``sections``, ``vectors``, and the in-memory txtai index) for rows
-    whose ``id`` corresponds to a file that no longer falls under any
-    registered ``indexed_directories`` row.
+    **What gets deleted:** rows in ``document_chunks`` whose joined
+    ``file_paths.virtual_path`` no longer falls under any registered
+    ``indexed_directories`` row for the target zone. Deletion uses
+    chunk_id precision via ``ChunkStore.delete_chunk_ids`` so other
+    chunks for paths that REMAIN in scope are unaffected.
 
-    **What does NOT get deleted:** the canonical ``document_chunks``
-    table. Those rows are the source-of-truth for semantic search and
-    are what ``_bootstrap_txtai_backend`` replays on every daemon
-    restart. Deleting them would turn a scope mode flip into permanent,
-    unrecoverable search-data loss: switching a zone back from
-    ``'scoped'`` to ``'all'`` could not re-populate those files without
-    a full re-embed (which may be impossible if the source file
-    contents have since changed).
+    **What does NOT get deleted:** ``file_paths`` rows. They are the
+    canonical filesystem index and are unrelated to semantic search
+    scope. A future re-registration or mode flip back to ``'all'`` can
+    rebuild semantic search by re-driving the indexing pipeline (see
+    :func:`backfill_zone_from_chunks`).
 
-    The txtai artifacts, by contrast, are cheap to rebuild from
-    ``document_chunks`` via the next bootstrap — so purging them only
-    reclaims memory and search-index space, not data.
-
-    Returns ``{"txtai_docs": M}`` where M is the number of stale
-    txtai rows removed. ``document_chunks`` is reported as 0 for
-    backward compat with the response shape but is never written to.
+    Returns ``{"vector_docs": M, "document_chunks": 0}`` where M is the
+    number of stale chunk rows removed. ``document_chunks`` is reported
+    as 0 for response-shape backward compat with the txtai era; the
+    new key ``vector_docs`` is the canonical count for the new
+    architecture. The legacy key ``txtai_docs`` is preserved as an
+    alias for the same value so older clients keep working — drop the
+    alias once all callers migrate.
     """
-    counts = {"document_chunks": 0, "txtai_docs": 0}
+    counts = {"document_chunks": 0, "vector_docs": 0, "txtai_docs": 0}
 
     if daemon._async_session is None:
         logger.debug("No session available; skipping purge")
@@ -632,85 +635,73 @@ async def purge_unscoped_embeddings(
     target_zones = [
         zid
         for zid, mode in daemon._zone_indexing_modes.items()
-        if mode == "scoped" and (zone_id is None or zid == zone_id)
+        if mode == INDEX_MODE_SCOPED and (zone_id is None or zid == zone_id)
     ]
     if not target_zones:
         return counts
 
+    chunk_store = getattr(daemon, "_chunk_store", None)
+
     async with daemon._refresh_lock:
+        from nexus.bricks.search.index_scope import is_path_indexed
+
+        scope = daemon._current_index_scope()
+
         for target_zone in target_zones:
-            # We purge ONLY the txtai content store (``sections``) plus
-            # the in-memory txtai index. The ``document_chunks`` table
-            # is the canonical rebuild source and MUST NOT be touched
-            # here — see the function docstring for rationale.
+            # Walk document_chunks JOIN file_paths so we only consider
+            # rows that exist. Selecting (chunk_id, virtual_path) keeps
+            # the in-memory footprint small and lets us evaluate scope
+            # in Python with the same is_path_indexed helper as the
+            # write-side gate. This matches the shapes already used by
+            # PgFtsBackend.keyword_search / PgVectorBackend.semantic_search
+            # — both JOIN file_paths on path_id and filter by zone +
+            # ``deleted_at IS NULL``.
             async with daemon._async_session() as session:
-                prefix_like = f"{target_zone}:%" if target_zone != "root" else None
-                candidate_sql = """
-                    SELECT id FROM sections
-                    WHERE (
-                        id LIKE '/%'
-                        OR id LIKE :zone_prefix
-                    )
-                """
-                txtai_rows = (
+                rows = (
                     await session.execute(
-                        sa_text(candidate_sql),
-                        {"zone_prefix": prefix_like or "__never_matches__"},
+                        sa_text(
+                            """
+                            SELECT c.chunk_id, fp.virtual_path
+                            FROM document_chunks c
+                            JOIN file_paths fp ON c.path_id = fp.path_id
+                            WHERE fp.zone_id = :zid
+                              AND fp.deleted_at IS NULL
+                            """
+                        ),
+                        {"zid": target_zone},
                     )
                 ).fetchall()
 
-                # Strip optional zone: prefix and evaluate scope in Python
-                # (simpler than rewriting the full path-match logic in SQL
-                # for the txtai id format).
-                from nexus.bricks.search.index_scope import is_path_indexed
+            if scope is None:
+                continue
 
-                scope = daemon._current_index_scope()
-                txtai_ids_to_delete: list[str] = []
-                for (sec_id,) in txtai_rows:
-                    if not isinstance(sec_id, str):
-                        continue
-                    # Extract the virtual_path portion.
-                    if ":" in sec_id and not sec_id.startswith("/"):
-                        zid_prefix, _, vpath = sec_id.partition(":")
-                        if zid_prefix != target_zone:
-                            continue
-                        candidate_vpath = vpath
-                    elif sec_id.startswith("/"):
-                        if target_zone != "root":
-                            # Unprefixed ids belong to the root zone.
-                            continue
-                        candidate_vpath = sec_id
-                    else:
-                        continue
-                    if scope is None:
-                        continue
-                    try:
-                        if not is_path_indexed(scope, target_zone, candidate_vpath):
-                            txtai_ids_to_delete.append(sec_id)
-                    except ValueError:
-                        continue
+            chunk_ids_to_delete: list[str] = []
+            for chunk_id, vpath in rows:
+                if not isinstance(vpath, str) or not vpath:
+                    continue
+                try:
+                    if not is_path_indexed(scope, target_zone, vpath):
+                        chunk_ids_to_delete.append(str(chunk_id))
+                except ValueError:
+                    continue
 
-            # Prune the txtai backend via its delete API so the in-memory
-            # index and pgvector rows both drop the entries.
+            # Drop stale chunks via ChunkStore.delete_chunk_ids so the
+            # HNSW / pg_textsearch indexes update automatically.
             #
-            # **Fail-closed**: do NOT swallow backend.delete failures.
-            # ``TxtaiBackend.delete`` raises if persistence to pgvector
-            # fails; we re-raise from here so the HTTP endpoint surfaces
-            # a 5xx and the caller knows the cleanup is not durable.
-            # Reporting partial counts on failure would let admins
-            # believe stale out-of-scope embeddings were removed when
-            # they were not — exactly the silent-failure mode the
-            # purge endpoint exists to prevent.
-            if daemon._backend is not None and txtai_ids_to_delete:
-                deleted = int(
-                    await daemon._backend.delete(txtai_ids_to_delete, zone_id=target_zone)
-                )
-                counts["txtai_docs"] += deleted
+            # **Fail-closed**: do NOT swallow delete failures. We re-raise
+            # from here so the HTTP endpoint surfaces a 5xx and the
+            # caller knows the cleanup is not durable. Reporting partial
+            # counts on failure would let admins believe stale out-of-
+            # scope embeddings were removed when they were not — exactly
+            # the silent-failure mode the purge endpoint exists to prevent.
+            if chunk_store is not None and chunk_ids_to_delete:
+                deleted = await chunk_store.delete_chunk_ids(chunk_ids_to_delete)
+                counts["vector_docs"] += int(deleted)
+                counts["txtai_docs"] += int(deleted)  # legacy alias
 
     logger.info(
-        "Purged unscoped txtai artifacts: %d docs across %d zones "
-        "(document_chunks preserved for rebuild)",
-        counts["txtai_docs"],
+        "Purged unscoped vector chunks: %d rows across %d zones (file_paths preserved for rebuild)",
+        counts["vector_docs"],
         len(target_zones),
     )
     return counts

@@ -16,10 +16,13 @@
 
 services:
   # ============================================================================
-  # PostgreSQL Database (with pgvector for semantic search)
+  # PostgreSQL Database (with pgvector + pg_search for hybrid search)
+  # paradedb image bundles pgvector (halfvec) + pg_search (BM25 via @@@ /
+  # paradedb.score) — both required by PgVectorBackend + PgFtsBackend
+  # since #3699 dropped the in-memory bm25s fallback.
   # ============================================================================
   postgres:
-    image: pgvector/pgvector:pg16
+    image: paradedb/paradedb:latest-pg17
     restart: unless-stopped
     profiles:
       - core
@@ -33,7 +36,7 @@ services:
       - ${NEXUS_PGVECTOR_INIT_SQL:-./001-enable-pgvector.sql}:/docker-entrypoint-initdb.d/001-enable-pgvector.sql:ro
     command: >
       postgres
-      -c shared_preload_libraries=pg_stat_statements
+      -c shared_preload_libraries=pg_stat_statements,pg_search
       -c pg_stat_statements.track=all
       -c effective_io_concurrency=16
       -c maintenance_io_concurrency=16

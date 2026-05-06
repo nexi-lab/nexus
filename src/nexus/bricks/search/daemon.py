@@ -34,6 +34,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -57,7 +58,6 @@ from nexus.lib.env import get_database_url
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    from nexus.bricks.search.bm25s_search import BM25SIndex
     from nexus.bricks.search.chunking import EntropyAwareChunker
     from nexus.bricks.search.index_scope import IndexScope
     from nexus.bricks.search.indexing import IndexingPipeline
@@ -71,8 +71,6 @@ class DaemonStats:
     """Runtime statistics for the search daemon."""
 
     startup_time_ms: float = 0.0
-    bm25_documents: int = 0
-    bm25_load_time_ms: float = 0.0
     db_pool_size: int = 0
     db_pool_warmup_time_ms: float = 0.0
     vector_warmup_time_ms: float = 0.0
@@ -110,10 +108,6 @@ class DaemonConfig:
     db_pool_max_size: int = 50
     db_pool_recycle: int = 1800  # 30 minutes
 
-    # BM25S settings
-    bm25s_index_dir: str = ".nexus-data/bm25s"
-    bm25s_mmap: bool = True  # Memory-mapped for instant loading
-
     # Vector search settings
     vector_warmup_enabled: bool = True
     vector_ef_search: int = 100  # HNSW recall parameter
@@ -133,26 +127,27 @@ class DaemonConfig:
     entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
 
-    # txtai backend config (Issue #2663). ``None`` disables the txtai backend
-    # and uses the daemon's legacy BM25/FTS keyword path only. This is the
-    # default when there is no API key and no explicit local model, avoiding
-    # native txtai/faiss startup in default Docker deployments.
-    txtai_model: str | None = "sentence-transformers/all-MiniLM-L6-v2"
+    # Legacy txtai-era config fields kept on the dataclass for backward
+    # compatibility with code paths that still pass them as kwargs (the
+    # FastAPI lifespan in particular). Issue #3699 dropped the txtai
+    # backend, so the default for ``txtai_model`` is now ``None`` —
+    # the previous "sentence-transformers/all-MiniLM-L6-v2" default
+    # was 384-dim while EmbeddingClient defaults to 1536-dim, which
+    # would crash pgvector if accidentally consumed. Operators must
+    # set ``embedding_model`` (or supply a compatible ``txtai_model``
+    # via lifespan) explicitly.
+    txtai_model: str | None = None
     txtai_vectors: dict[str, Any] | None = None
-    txtai_reranker: str | None = None  # e.g. "cross-encoder/ms-marco-MiniLM-L-2-v2"
-    txtai_sparse: bool = False  # Enable SPLADE learned sparse retrieval
-    # Semantic graph: disabled by default because txtai's graph upsert path
-    # calls ``grand.backends._sqlbackend.add_edges_from`` which issues
-    # ``INSERT INTO edges DEFAULT VALUES``, failing the NOT NULL constraint
-    # on the ``ID`` column. That tears down the enclosing transaction and
-    # drops every co-batched document write. The graph is only consumed by
-    # the rarely-used ``graph_mode`` query parameter (low/high/dual/auto)
-    # on ``/api/v2/search/query`` — default ``graph_mode=none`` does not
-    # need it. Operators who want the feature can flip this in config.
-    txtai_graph: bool = False  # Enable semantic graph (opt-in; see note above)
+    txtai_reranker: str | None = None
+    txtai_sparse: bool = False
+    txtai_graph: bool = False
+    # Modern names (preferred). Default model is ``None`` so unconfigured
+    # deploys stay in keyword-only mode.
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = 1536
 
     # Page-level aggregation for chunked retrieval (Issue #3980).
-    # txtai's pgtext BM25 scores at chunk granularity; for rare-phrase queries
+    # Per-chunk BM25 scoring dilutes rare-phrase signal; for those queries
     # the literal-match chunk's signal gets diluted across the page's other
     # chunks (e.g. a "40 Under 40" mention buried at chunk-rank 33 instead of
     # top-5). Aggregating chunk scores up to page level via max-pool fixes
@@ -247,7 +242,6 @@ class SearchDaemon:
         self._path_context_engines_by_loop: dict[Any, Any] = {}
 
         # Search components (initialized on startup)
-        self._bm25s_index: BM25SIndex | None = None
         self._async_engine: AsyncEngine | None = None
         self._async_session: Any | None = None  # async_sessionmaker (Issue #1597)
         self._async_search: Any | None = None  # AsyncSemanticSearch (legacy)
@@ -283,9 +277,7 @@ class SearchDaemon:
         self._consumer_failures: dict[str, int] = {}
         self._consumer_last_error: dict[str, str | None] = {}
         self._consumer_last_sequence: dict[str, int] = {}
-        self._checkpoint_file = (
-            Path(self.config.bm25s_index_dir).parent / "mutation-checkpoints.json"
-        )
+        self._checkpoint_file = Path(".nexus-data") / "mutation-checkpoints.json"
         self._checkpoint_lock = asyncio.Lock()
         self._shared_mutation_lock = asyncio.Lock()
         self._shared_mutation_events: list[SearchMutationEvent] = []
@@ -299,10 +291,13 @@ class SearchDaemon:
         # SPLADE learned sparse retrieval (optional, initialized in startup)
         self._splade: Any = None
 
-        # txtai backend (Issue #2663) — used for semantic/hybrid search + graph
-        self._backend: Any = None
-        self._txtai_bootstrap_task: asyncio.Task[None] | None = None
-        self._txtai_bootstrapped = False
+        # Search backends (Issue #3699: replaced txtai). The daemon picks
+        # PgFtsBackend + PgVectorBackend for postgresql URLs and
+        # SqliteFtsBackend + SqliteVecBackend otherwise. Each backend is
+        # storage-only; query embedding is shared via ``_embedding_client``.
+        self._fts_backend: Any = None
+        self._vector_backend: Any = None
+        self._embedding_client: Any = None
         self.last_search_timing: dict[str, float] = {}
 
         # Skeleton index (Issue #3725) — in-memory BM25-lite for /locate endpoint.
@@ -364,9 +359,9 @@ class SearchDaemon:
         """Populate ``_zone_indexing_modes`` and ``_indexed_directories``
         from the database at startup.
 
-        Runs once from ``startup()`` before the txtai backend bootstrap
-        and before the mutation consumers spin up so the very first
-        refresh already respects scope.
+        Runs once from ``startup()`` before the search backends are
+        initialised and before the mutation consumers spin up so the very
+        first refresh already respects scope.
 
         **Fail-closed contract:** on any error fetching scope metadata
         we raise ``IndexScopeLoadError``, which propagates out of
@@ -514,12 +509,16 @@ class SearchDaemon:
                 for zid in sorted(shrunk_zones):
                     try:
                         purged = await self.purge_unscoped_embeddings(zid)
-                        if purged.get("txtai_docs", 0):
+                        # ``vector_docs`` is the canonical key after Issue #3699;
+                        # ``txtai_docs`` is preserved as a deprecated alias for
+                        # older clients reading the response shape directly.
+                        purged_count = purged.get("vector_docs", 0) or purged.get("txtai_docs", 0)
+                        if purged_count:
                             logger.info(
                                 "scope refresh tick: zone %s shrank — "
-                                "self-healed by purging %d stale txtai docs",
+                                "self-healed by purging %d stale vector docs",
                                 zid,
-                                purged.get("txtai_docs", 0),
+                                purged_count,
                             )
                     except Exception:
                         logger.warning(
@@ -612,6 +611,55 @@ class SearchDaemon:
 
         return await scope_ops.set_zone_indexing_mode(self, zone_id, mode)
 
+    def _build_backends(self, database_url: str) -> tuple[Any, Any]:
+        """Pick (fts_backend, vector_backend) by profile (Issue #3699).
+
+        * Postgres URL → ``PgFtsBackend`` + ``PgVectorBackend`` reading the
+          existing pg_textsearch BM25 index and pgvector halfvec(1536) HNSW
+          index on ``document_chunks``.
+        * Anything else (SQLite) → ``SqliteFtsBackend`` (FTS5 native bm25)
+          + ``SqliteVecBackend`` (sqlite-vec extension, KNN over float32 packed
+          embeddings).
+
+        Imports are deferred so the daemon module can be imported on
+        environments missing the optional sqlite-vec / litellm wheel until
+        the SANDBOX path is actually exercised.
+        """
+        if "postgresql" in database_url:
+            from nexus.bricks.search.pg_fts_backend import PgFtsBackend
+            from nexus.bricks.search.pg_vector_backend import PgVectorBackend
+
+            if self._async_engine is None:
+                raise RuntimeError(
+                    "_build_backends: postgres profile requires an initialised "
+                    "_async_engine; got None"
+                )
+            engine = self._async_engine
+            return (
+                PgFtsBackend(engine=engine, chunk_store=self._chunk_store),
+                PgVectorBackend(engine=engine, chunk_store=self._chunk_store),
+            )
+
+        from nexus.bricks.search.sqlite_fts_backend import SqliteFtsBackend
+        from nexus.bricks.search.sqlite_vec_backend import SqliteVecBackend
+
+        sqlite_path = self._sqlite_path_from_url(database_url)
+        return (
+            SqliteFtsBackend(db_path=sqlite_path, chunk_store=self._chunk_store),
+            SqliteVecBackend(db_path=sqlite_path),
+        )
+
+    @staticmethod
+    def _sqlite_path_from_url(database_url: str) -> str:
+        """Extract the on-disk path from a sqlite:/// or sqlite+aiosqlite:/// URL."""
+        prefixes = ("sqlite+aiosqlite:///", "sqlite:///")
+        for prefix in prefixes:
+            if database_url.startswith(prefix):
+                return database_url[len(prefix) :]
+        # Fall back to "":memory:" when nothing matches; SqliteVecBackend
+        # will fail loudly if the path is unusable.
+        return database_url or ":memory:"
+
     async def startup(self) -> None:
         """Initialize and pre-warm all search indexes.
 
@@ -629,12 +677,8 @@ class SearchDaemon:
         start_time = time.perf_counter()
         logger.info("Starting SearchDaemon - pre-warming indexes...")
 
-        # Run warmup tasks in parallel where possible
-        await asyncio.gather(
-            self._init_bm25s_index(),
-            self._init_database_pool(),
-            return_exceptions=True,
-        )
+        # Initialize database pool
+        await self._init_database_pool()
 
         # Vector warmup needs DB pool to be ready
         if self.config.vector_warmup_enabled and self._async_engine:
@@ -645,60 +689,68 @@ class SearchDaemon:
         await self._check_embedding_cache()
 
         # Load per-directory semantic index scope (Issue #3698) BEFORE
-        # initializing the txtai backend or spawning the bootstrap task.
-        # The bootstrap snapshots ``_zone_indexing_modes`` to decide whether
-        # to push the SQL scope filter; if bootstrap races the scope load,
-        # it sees an empty mode map, takes the legacy fast path, and
-        # replays every document_chunks row (including out-of-scope ones)
-        # into the txtai backend. Loading scope first is the only
-        # reliable way to prevent that leak across restarts. Must run
-        # synchronously — do NOT kick off as a background task.
+        # initializing the search backends. The scope snapshot governs
+        # whether the embedding pipeline writes for a given path; loading
+        # it first guarantees the very first refresh tick respects scope.
+        # Must run synchronously — do NOT kick off as a background task.
         await self._load_index_scope()
 
-        # Initialize txtai backend for semantic/hybrid/graph search (Issue #2663).
-        # ``txtai_model=None`` means BM25-only mode: avoid importing txtai/faiss
-        # at all, because native FAISS wheels can SIGILL on older CI/edge CPUs.
-        if self.config.txtai_model is None:
-            self._backend = None
-            self._txtai_bootstrap_task = None
-            self._txtai_bootstrapped = True
-            logger.info("txtai backend disabled; using BM25/FTS keyword search only")
-        else:
-            try:
-                from nexus.bricks.search.txtai_backend import TxtaiBackend
+        # Initialize search backends by profile (Issue #3699). The daemon
+        # picks PgFtsBackend + PgVectorBackend for Postgres deployments and
+        # SqliteFtsBackend + SqliteVecBackend on SQLite. Each backend is
+        # storage-only — query embedding is owned by ``_embedding_client``.
+        try:
+            url = self.config.database_url or ""
+            self._fts_backend, self._vector_backend = self._build_backends(url)
+            await self._fts_backend.startup()
+            await self._vector_backend.startup()
+            logger.info(
+                "search backends ready: fts=%s vector=%s",
+                type(self._fts_backend).__name__,
+                type(self._vector_backend).__name__,
+            )
+        except Exception:
+            logger.warning(
+                "search backend init failed; keyword/FTS fallback will still work",
+                exc_info=True,
+            )
+            self._fts_backend = None
+            self._vector_backend = None
 
-                # Pass embedding cache so txtai can skip redundant API calls
-                _emb_cache = None
-                if self._cache_brick:
-                    import contextlib
+        # Embedding client for query-time vectors. Also wired as the
+        # ``_embedding_provider`` so the durable mutation consumer +
+        # IndexingPipeline can run their batched calls (which use
+        # ``embed_texts_batched``). Without this assignment the embedding
+        # consumer no-ops on ``self._embedding_provider is None`` and
+        # auto-index-on-edit silently drops every update — Issue #3699.
+        try:
+            from nexus.bricks.search.embedding_client import EmbeddingClient
 
-                    with contextlib.suppress(Exception):
-                        _emb_cache = self._cache_brick.embedding_cache
-
-                self._backend = TxtaiBackend(
-                    database_url=self.config.database_url,
-                    model=self.config.txtai_model,
-                    vectors=self.config.txtai_vectors,
-                    hybrid=True,
-                    graph=self.config.txtai_graph,
-                    reranker_model=self.config.txtai_reranker,
-                    sparse=self.config.txtai_sparse,
-                    embedding_cache=_emb_cache,
-                    data_path=self.config.data_path if hasattr(self.config, "data_path") else None,
-                    page_aggregation=self.config.page_aggregation,
-                    chunks_per_page=self.config.chunks_per_page,
-                    page_bm25=self.config.page_bm25,
-                    page_bm25_rrf_k=self.config.page_bm25_rrf_k,
+            embedding_model = getattr(self.config, "embedding_model", None) or getattr(
+                self.config, "txtai_model", None
+            )
+            # Default to text-embedding-3-small when an OpenAI key is in
+            # env but the model name was not pinned. Without a default,
+            # operators who set OPENAI_API_KEY but forget the model name
+            # silently get keyword-only auto-indexing — naive FTS chunks
+            # with no embeddings. Issue #3699.
+            if not embedding_model and os.environ.get("OPENAI_API_KEY"):
+                embedding_model = "text-embedding-3-small"
+                logger.info(
+                    "embedding_model defaulting to %s (OPENAI_API_KEY present, "
+                    "no NEXUS_EMBEDDING_MODEL set)",
+                    embedding_model,
                 )
-                self._backend.kickoff_startup()
-                self._txtai_bootstrap_task = asyncio.create_task(self._bootstrap_txtai_backend())
-                logger.info("txtai backend startup kicked off in background")
-            except Exception:
-                logger.warning(
-                    "txtai backend init failed, falling back to legacy search", exc_info=True
+            if embedding_model:
+                self._embedding_client = EmbeddingClient(
+                    model=embedding_model,
+                    dim=getattr(self.config, "embedding_dimensions", 1536) or 1536,
                 )
-                self._backend = None
-                self._txtai_bootstrapped = False
+                if self._embedding_provider is None:
+                    self._embedding_provider = self._embedding_client
+        except Exception:
+            logger.warning("EmbeddingClient init failed", exc_info=True)
+            self._embedding_client = None
 
         # Initialize entropy-aware chunker if enabled (Issue #1024)
         if self.config.entropy_filtering:
@@ -771,29 +823,12 @@ class SearchDaemon:
             # Chain warmup probe as a non-blocking follow-on
             asyncio.create_task(self._warm_skeleton_index())
 
-        # If BM25S not loaded, count existing DB documents for stats
-        if not self._bm25s_index and self._async_session:
-            try:
-                from sqlalchemy import text as sa_text
-
-                session_factory = self._async_session
-                async with session_factory() as sess:
-                    row = (
-                        await sess.execute(
-                            sa_text("SELECT COUNT(DISTINCT path_id) FROM document_chunks")
-                        )
-                    ).first()
-                    self.stats.bm25_documents = int(row[0]) if row else 0
-            except Exception:
-                logger.debug("Could not count DB documents at startup")
-
         self._initialized = True
         self.stats.startup_time_ms = (time.perf_counter() - start_time) * 1000
 
         logger.info(
-            "SearchDaemon ready in %.1fms - keyword docs: %d, DB pool: %d connections",
+            "SearchDaemon ready in %.1fms - DB pool: %d connections",
             self.stats.startup_time_ms,
-            self.stats.bm25_documents,
             self.stats.db_pool_size,
         )
 
@@ -811,11 +846,6 @@ class SearchDaemon:
         # Cancel refresh task
         for task in self._consumer_tasks.values():
             task.cancel()
-        if self._txtai_bootstrap_task and not self._txtai_bootstrap_task.done():
-            self._txtai_bootstrap_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._txtai_bootstrap_task
-        self._txtai_bootstrap_task = None
 
         if self._skeleton_bootstrap_task and not self._skeleton_bootstrap_task.done():
             self._skeleton_bootstrap_task.cancel()
@@ -837,14 +867,16 @@ class SearchDaemon:
             self._scope_refresh_task = None
         self._consumer_tasks.clear()
 
-        # Shutdown txtai backend (Issue #2663)
-        if self._backend is not None:
-            try:
-                await self._backend.shutdown()
-            except Exception as e:
-                logger.debug("txtai backend shutdown error: %s", e)
-            self._backend = None
-        self._txtai_bootstrapped = False
+        # Shutdown search backends (Issue #3699)
+        for backend_attr in ("_fts_backend", "_vector_backend"):
+            backend = getattr(self, backend_attr, None)
+            if backend is not None:
+                try:
+                    await backend.shutdown()
+                except Exception as e:
+                    logger.debug("%s shutdown error: %s", backend_attr, e)
+                setattr(self, backend_attr, None)
+        self._embedding_client = None
 
         # Close database connections (only if we created them).
         # Issue #3775: aclose() disposes async engines on this loop (their
@@ -916,41 +948,6 @@ class SearchDaemon:
     # =========================================================================
     # Initialization Methods
     # =========================================================================
-
-    async def _init_bm25s_index(self) -> None:
-        """Load BM25S index with memory mapping for instant access."""
-        start = time.perf_counter()
-
-        try:
-            from nexus.bricks.search.bm25s_search import BM25SIndex, is_bm25s_available
-
-            if not is_bm25s_available():
-                logger.warning("BM25S not available (bm25s package not installed)")
-                return
-
-            self._bm25s_index = BM25SIndex(
-                index_dir=self.config.bm25s_index_dir,
-            )
-
-            # Initialize with mmap=True for instant loading
-            if await self._bm25s_index.initialize():
-                # Access document count if available
-                doc_count = (
-                    len(self._bm25s_index._corpus) if hasattr(self._bm25s_index, "_corpus") else 0
-                )
-                self.stats.bm25_documents = doc_count
-                self.stats.bm25_load_time_ms = (time.perf_counter() - start) * 1000
-                logger.info(
-                    f"BM25S index loaded: {doc_count} documents in "
-                    f"{self.stats.bm25_load_time_ms:.1f}ms (mmap={self.config.bm25s_mmap})"
-                )
-            else:
-                logger.warning("BM25S index initialization failed")
-
-        except ImportError:
-            logger.debug("BM25S not available")
-        except Exception as e:
-            logger.error(f"Failed to initialize BM25S index: {e}")
 
     async def _init_database_pool(self) -> None:
         """Initialize and warm the database connection pool."""
@@ -1304,7 +1301,7 @@ class SearchDaemon:
         batch, then performs pure in-memory lookups (Issue #3773 review).
 
         ``zone_id`` is the effective zone scope of the caller's search.
-        Many backend paths (txtai, legacy BM25) construct ``SearchResult``
+        Many backend paths (PgFtsBackend, legacy BM25) construct ``SearchResult``
         without populating ``result.zone_id``, so we cannot rely on the
         per-result field. Use the caller-supplied ``zone_id`` as the
         authoritative fallback, otherwise non-root zone searches silently
@@ -1435,10 +1432,9 @@ class SearchDaemon:
         try:
             if search_type == "keyword":
                 # Keyword mode should use the daemon's keyword stack first.
-                # The txtai backend search path is zone-aware, but its SQL
-                # builder uses `similar(...)`; it is not a deterministic BM25
-                # keyword query. `_keyword_search` only uses Zoekt/BM25S when
-                # zone-safe and otherwise falls through to zone-aware FTS.
+                # The new fts backend is the canonical BM25 path. We still
+                # try `_keyword_search` (Zoekt/BM25S/inline FTS) first when
+                # zone-safe to preserve the existing fast-path semantics.
                 keyword_start = time.perf_counter()
                 keyword_results = await self._keyword_search(
                     query,
@@ -1465,45 +1461,28 @@ class SearchDaemon:
                 )
                 hybrid_keyword_ms = (time.perf_counter() - keyword_start) * 1000
 
-            # Delegate to txtai backend for all search types (Issue #2663)
-            if self._backend is not None and (
-                self._txtai_bootstrapped or self._txtai_bootstrap_task is None
-            ):
+            # Delegate to the new search backends (Issue #3699). The daemon
+            # now owns hybrid composition: chunk-BM25 + page-BM25 + dense,
+            # fused via the fusion module. SQLite drops the page-BM25 leg.
+            if self._fts_backend is not None and self._vector_backend is not None:
                 backend_start = time.perf_counter()
-                backend_results = await self._backend.search(
+                backend_results = await self._search_via_backends(
                     query,
-                    limit=limit,
-                    zone_id=effective_zone_id,
                     search_type=search_type,
+                    limit=limit,
                     path_filter=path_filter,
+                    zone_id=effective_zone_id,
                 )
                 backend_ms = (time.perf_counter() - backend_start) * 1000
-                rerank_ms = getattr(self._backend, "last_rerank_ms", 0.0)
                 self.last_search_timing = {
                     "backend_ms": backend_ms,
-                    "rerank_ms": rerank_ms,
+                    "rerank_ms": 0.0,
                 }
                 if hybrid_keyword_ms:
                     self.last_search_timing["keyword_ms"] = hybrid_keyword_ms
 
                 if backend_results:
-                    results = [
-                        SearchResult(
-                            path=r.path,
-                            chunk_index=r.chunk_index,
-                            chunk_text=r.chunk_text,
-                            score=r.score,
-                            start_offset=r.start_offset,
-                            end_offset=r.end_offset,
-                            line_start=r.line_start,
-                            line_end=r.line_end,
-                            keyword_score=r.keyword_score,
-                            vector_score=r.vector_score,
-                            reranker_score=r.reranker_score,
-                            search_type=search_type,
-                        )
-                        for r in backend_results
-                    ]
+                    results = backend_results
                     if search_type == "hybrid" and hybrid_keyword_results:
                         results = self._fuse_ranked_results(
                             hybrid_keyword_results,
@@ -1515,9 +1494,10 @@ class SearchDaemon:
                     self._track_latency(latency_ms)
                     await self._attach_path_contexts(results, zone_id=effective_zone_id)
                     return results
-                # txtai returned empty — fall through to legacy search
+                # Backend returned empty — fall through to the legacy stack
+                # so Zoekt / BM25S / inline FTS can still serve the query.
 
-            # Legacy fallback (txtai backend not available or returned no results)
+            # Legacy fallback (no search backends available, or empty result)
             if search_type == "keyword":
                 results = await self._keyword_search(query, limit, path_filter, zone_id=zone_id)
             elif search_type == "semantic":
@@ -1544,6 +1524,130 @@ class SearchDaemon:
         except TimeoutError:
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
             return []
+
+    async def _search_via_backends(
+        self,
+        query: str,
+        *,
+        search_type: str,
+        limit: int,
+        path_filter: str | None,
+        zone_id: str,
+    ) -> list[SearchResult]:
+        """Run keyword / semantic / hybrid via the new search backends.
+
+        Hybrid mode performs 3-way RRF on Postgres (chunk-BM25 + page-BM25 +
+        dense) and 2-way RRF on SQLite (chunk-BM25 + dense — there is no
+        page-level BM25 leg yet on the FTS5 vtable).
+        """
+        from nexus.bricks.search.fusion import rrf_fusion
+        from nexus.bricks.search.pg_fts_backend import PgFtsBackend
+
+        path = path_filter or "/"
+
+        if search_type == "keyword":
+            results = await self._fts_backend.keyword_search(query, path, limit, zone_id)
+            return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
+
+        if search_type == "semantic":
+            qvec = await self._embed_query(query)
+            if qvec is None:
+                return []
+            results = await self._vector_backend.semantic_search(qvec, path, limit, zone_id)
+            return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
+
+        # Hybrid: 3-way RRF on PG, 2-way on SQLite.
+        qvec = await self._embed_query(query)
+        if qvec is None:
+            # Without an embedding we still want a useful result — fall back
+            # to keyword-only and let the caller decide if that's enough.
+            results = await self._fts_backend.keyword_search(query, path, limit, zone_id)
+            return [self._coerce_to_search_result(r, search_type=search_type) for r in results]
+
+        is_pg = isinstance(self._fts_backend, PgFtsBackend)
+        if is_pg:
+            chunk_kw, page_kw, dense = await asyncio.gather(
+                self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
+                self._fts_backend.keyword_search_pages(query, path, limit * 2, zone_id),
+                self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                return_exceptions=False,
+            )
+        else:
+            chunk_kw, dense = await asyncio.gather(
+                self._fts_backend.keyword_search(query, path, limit * 2, zone_id),
+                self._vector_backend.semantic_search(qvec, path, limit * 2, zone_id),
+                return_exceptions=False,
+            )
+            page_kw = []
+
+        # Fuse keyword legs first (chunk + page), then RRF that with dense.
+        kw_fused = rrf_fusion(chunk_kw, page_kw, k=60, limit=limit * 2, id_key=None)
+        fused = rrf_fusion(kw_fused, dense, k=60, limit=limit, id_key=None)
+        return [self._coerce_to_search_result(item, search_type="hybrid") for item in fused]
+
+    async def _embed_query(self, query: str) -> list[float] | None:
+        """Embed a query string for the new vector backends.
+
+        Prefers the EmbeddingClient instantiated at startup; falls back to
+        the legacy ``_embedding_provider`` path so deployments that don't
+        configure the new client still function.
+        """
+        if self._embedding_client is not None:
+            try:
+                vec: list[float] = await self._embedding_client.embed_query(query)
+                return vec
+            except Exception as exc:
+                logger.debug("EmbeddingClient.embed_query failed: %s", exc)
+        return await self._get_query_embedding(query)
+
+    @staticmethod
+    def _coerce_to_search_result(
+        raw: Any,
+        *,
+        search_type: str,
+    ) -> SearchResult:
+        """Normalise BaseSearchResult / dict outputs into SearchResult."""
+        if isinstance(raw, SearchResult):
+            return raw
+        if isinstance(raw, BaseSearchResult):
+            return SearchResult(
+                path=raw.path,
+                chunk_index=raw.chunk_index,
+                chunk_text=raw.chunk_text,
+                score=raw.score,
+                start_offset=raw.start_offset,
+                end_offset=raw.end_offset,
+                line_start=raw.line_start,
+                line_end=raw.line_end,
+                keyword_score=raw.keyword_score,
+                vector_score=raw.vector_score,
+                reranker_score=raw.reranker_score,
+                zone_id=raw.zone_id,
+                search_type=search_type,
+            )
+        if isinstance(raw, dict):
+            return SearchResult(
+                path=str(raw.get("path", "")),
+                chunk_index=int(raw.get("chunk_index", 0)),
+                chunk_text=str(raw.get("chunk_text", "")),
+                score=float(raw.get("score", 0.0)),
+                start_offset=raw.get("start_offset"),
+                end_offset=raw.get("end_offset"),
+                line_start=raw.get("line_start"),
+                line_end=raw.get("line_end"),
+                keyword_score=raw.get("keyword_score"),
+                vector_score=raw.get("vector_score"),
+                reranker_score=raw.get("reranker_score"),
+                zone_id=raw.get("zone_id"),
+                search_type=search_type,
+            )
+        # Unknown shape — best-effort fallback.
+        return SearchResult(
+            path=getattr(raw, "path", ""),
+            chunk_text=getattr(raw, "chunk_text", ""),
+            score=float(getattr(raw, "score", 0.0)),
+            search_type=search_type,
+        )
 
     @staticmethod
     def _fuse_ranked_results(
@@ -1609,14 +1713,27 @@ class SearchDaemon:
         from nexus.contracts.constants import ROOT_ZONE_ID
 
         effective_zone_id = zone_id or ROOT_ZONE_ID
-        if self._backend is None:
-            return [[] for _ in queries]
-
-        backend_batch = getattr(self._backend, "batch_search", None)
-        if backend_batch is None:
-            return [[] for _ in queries]
-
-        results: list[list[Any]] = await backend_batch(queries, zone_id=effective_zone_id)
+        # Issue #3699: dedicated backend.batch_search is gone with txtai; we
+        # fan out per-query through the new backend stack instead. This is
+        # functionally equivalent for callers, just without the single-call
+        # embedding amortisation. T9 keeps the API surface intact.
+        results: list[list[Any]] = []
+        for q in queries:
+            if not isinstance(q, dict):
+                results.append([])
+                continue
+            try:
+                hits = await self.search(
+                    str(q.get("query", "")),
+                    search_type=q.get("search_type", "hybrid"),
+                    limit=int(q.get("limit", 10)),
+                    path_filter=q.get("path_filter"),
+                    zone_id=effective_zone_id,
+                )
+            except Exception as exc:
+                logger.warning("batch_search inner search failed: %s", exc)
+                hits = []
+            results.append(hits)
         # Issue #3773: attach admin-configured path contexts. The whole batch
         # is single-zone by design (``zone_id=effective_zone_id`` above), so
         # refresh once against that zone and do pure in-memory lookups on
@@ -1689,269 +1806,95 @@ class SearchDaemon:
 
         This powers ``POST /api/v2/search/index`` for synthetic or externally
         generated documents that do not rely on the file-refresh pipeline.
+
+        Issue #3699: writes are owned by ``ChunkStore.replace_document_chunks``
+        via the indexing pipeline. Each document is treated as ``(path,
+        text)`` — we resolve ``path_id`` from ``file_paths`` and dispatch
+        to ``IndexingPipeline.index_document`` which chunks, embeds, and
+        bulk-inserts into ``document_chunks``. Failures bubble up so the
+        HTTP boundary returns 500 (Decision #18) instead of silently
+        returning count=0.
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
 
-        if not documents or self._backend is None:
+        if not documents:
             return 0
 
-        from nexus.contracts.constants import ROOT_ZONE_ID
-
-        effective_zone_id = zone_id or ROOT_ZONE_ID
-
-        # Strip NUL bytes from EVERY string in the document tree, not just
-        # top-level fields — txtai persists the full document object and
-        # nested metadata (e.g. {"metadata": {"title": "a\x00b"}}) would
-        # otherwise leak NULs into Postgres TEXT and reproduce the
-        # PendingRollbackError this fix is closing (Issue #3989, codex r2).
-        def _scrub(value: Any) -> Any:
-            if isinstance(value, str):
-                return value.replace("\x00", "") if "\x00" in value else value
-            if isinstance(value, dict):
-                # Scrub keys AND values — txtai persists the full document
-                # object, so a NUL-bearing metadata key would still poison
-                # Postgres TEXT/JSON storage (codex r4, finding 3).
-                return {_scrub(k): _scrub(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [_scrub(v) for v in value]
-            if isinstance(value, tuple):
-                return tuple(_scrub(v) for v in value)
-            return value
-
-        scrubbed: list[dict[str, Any]] = [_scrub(doc) for doc in documents]
-        count = int(await self._backend.upsert(scrubbed, zone_id=effective_zone_id))
-        if count:
-            self.stats.last_index_refresh = time.time()
-        return count
-
-    async def _bootstrap_txtai_backend(self) -> None:
-        """Populate txtai from canonical SQL chunks so restarts keep semantic search.
-
-        Per-directory semantic index scoping (Issue #3698): zones in
-        ``'scoped'`` mode only replay chunks whose ``virtual_path`` falls
-        under a registered ``indexed_directories`` row. The filter is
-        pushed into SQL so we never materialize out-of-scope rows in
-        Python memory — critical for large workspaces.
-
-        Issue #3704: uses keyset-paginated ``session.execute()`` so the
-        read cursor is closed **before** each call to ``_backend.upsert()``.
-        On PostgreSQL this prevents the long-lived read snapshot that the
-        old ``session.stream()`` approach caused, which blocked autovacuum
-        on ``document_chunks`` / ``file_paths`` during large restarts.
-
-        Each page selects at most ``_PAGE_FILES`` complete files via a
-        subquery, guaranteeing no file is split across pages.  Within each
-        page a running-accumulator assembles chunks; a per-doc cap
-        (``_MAX_CHUNKS_PER_DOC``) prevents one pathological file from
-        spiking transient memory.
-        """
-        if self._backend is None or self._async_session is None:
-            self._txtai_bootstrapped = self._backend is None
-            return
-
-        from sqlalchemy import bindparam
-        from sqlalchemy import text as sa_text
-
-        # Distinct files fetched per DB round-trip.  Each page is a
-        # bounded ``fetchall()``; the cursor closes before any upsert.
-        _PAGE_FILES = 200
-
-        # Per-document chunk truncation cap.  Files with more chunks than
-        # this are indexed with only their first _MAX_CHUNKS_PER_DOC chunks.
-        # Prevents a single giant JSONL/log file from spiking transient
-        # allocation during the join + "\n".join() step.
-        _MAX_CHUNKS_PER_DOC = 500
-
-        # Maximum assembled docs buffered per zone before flushing to txtai.
-        _UPSERT_BATCH = 200
-
-        try:
-            scoped_zone_ids = sorted(
-                zid for zid, mode in self._zone_indexing_modes.items() if mode == "scoped"
+        if self._indexing_pipeline is None:
+            raise RuntimeError(
+                "index_documents: indexing pipeline is not initialised. "
+                "Daemon must complete startup() before serving writes."
             )
 
-            # Build the per-page query.  The inner subquery selects the next
-            # _PAGE_FILES distinct (zone_id, virtual_path) pairs after the
-            # keyset (kz, kp), guaranteeing that every file in the outer
-            # result is complete — no file spans a page boundary.
-            if not scoped_zone_ids:
-                # Fast path: no scope filter.
-                page_stmt = sa_text(
-                    """
-                    SELECT fp.zone_id, fp.virtual_path, c.chunk_index, c.chunk_text
-                    FROM document_chunks c
-                    JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE fp.deleted_at IS NULL
-                      AND fp.path_id IN (
-                          SELECT path_id FROM file_paths
-                          WHERE deleted_at IS NULL
-                            AND (zone_id > :kz OR (zone_id = :kz AND virtual_path > :kp))
-                          ORDER BY zone_id, virtual_path
-                          LIMIT :n_files
-                      )
-                    ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
-                    """
-                )
-                base_params: dict[str, Any] = {}
-            else:
-                # Scoped path: inner subquery applies the same scope filter
-                # so out-of-scope files are excluded from the page count.
-                #
-                # WILDCARD ESCAPING: ``LIKE`` interprets ``_`` and ``%``
-                # as wildcards. A directory like ``/team_a`` would
-                # otherwise match ``/teamXa/foo`` and reintroduce
-                # out-of-scope rows after restart. We escape the pattern
-                # via nested REPLACE() so the match is a literal prefix
-                # only, with ``ESCAPE '\'`` honoured by both Postgres and
-                # SQLite.
-                page_stmt = sa_text(
-                    r"""
-                    SELECT fp.zone_id, fp.virtual_path, c.chunk_index, c.chunk_text
-                    FROM document_chunks c
-                    JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE fp.deleted_at IS NULL
-                      AND fp.path_id IN (
-                          SELECT fp2.path_id FROM file_paths fp2
-                          WHERE fp2.deleted_at IS NULL
-                            AND (fp2.zone_id > :kz OR (fp2.zone_id = :kz AND fp2.virtual_path > :kp))
-                            AND (
-                              fp2.zone_id NOT IN :scoped_zones
-                              OR EXISTS (
-                                  SELECT 1 FROM indexed_directories d
-                                  WHERE d.zone_id = fp2.zone_id
-                                    AND (
-                                      d.directory_path = '/'
-                                      OR fp2.virtual_path = d.directory_path
-                                      OR fp2.virtual_path LIKE
-                                          REPLACE(
-                                            REPLACE(
-                                              REPLACE(d.directory_path, '\', '\\'),
-                                              '%', '\%'
-                                            ),
-                                            '_', '\_'
-                                          ) || '/%' ESCAPE '\'
-                                    )
-                              )
-                            )
-                          ORDER BY fp2.zone_id, fp2.virtual_path
-                          LIMIT :n_files
-                      )
-                    ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
-                    """
-                ).bindparams(
-                    # expanding=True lets SQLAlchemy render an IN-list
-                    # from a Python sequence for both Postgres and SQLite.
-                    bindparam("scoped_zones", expanding=True),
-                )
-                base_params = {"scoped_zones": scoped_zone_ids}
+        target_zone = zone_id or ROOT_ZONE_ID
 
-            total = 0
-            kz: str = ""  # keyset zone  — '' sorts before all real zone_ids
-            kp: str = ""  # keyset path  — '' sorts before all real paths
+        def _scrub(value: str) -> str:
+            return value.replace("\x00", "") if "\x00" in value else value
 
-            while True:
-                page_params = {**base_params, "kz": kz, "kp": kp, "n_files": _PAGE_FILES}
+        indexed = 0
+        for doc in documents:
+            if not isinstance(doc, dict):
+                continue
+            text_field = doc.get("text") or doc.get("content")
+            virtual_path = doc.get("path") or doc.get("id")
+            if not isinstance(text_field, str) or not text_field.strip():
+                continue
+            if not isinstance(virtual_path, str) or not virtual_path:
+                continue
 
-                # --- Read phase: cursor opens and closes here ---
+            text_clean = _scrub(text_field)
+            vp_clean = strip_zone_prefix(virtual_path)
+
+            # Resolve path_id from file_paths so the indexing pipeline can
+            # write document_chunks. Without a path_id we cannot persist —
+            # surface that as an exception so the caller (router) returns
+            # 500 instead of silently dropping the doc.
+            path_id: str | None = None
+            if self._async_session is not None:
                 async with self._async_session() as session:
-                    result = await session.execute(page_stmt, page_params)
-                    rows = result.fetchall()
-                # Cursor is fully released before any upsert call.
-
-                if not rows:
-                    break
-
-                # --- Assemble + Upsert phase (no DB connection held) ---
-                cur_zone: str | None = None
-                cur_path: str | None = None
-                cur_chunks: list[str] = []
-                docs_batch: dict[str, list[dict[str, Any]]] = {}
-
-                for row in rows:
-                    zone = row.zone_id or ROOT_ZONE_ID
-                    path = row.virtual_path
-
-                    if (zone, path) != (cur_zone, cur_path):
-                        # Completed document — push to batch.
-                        if cur_path is not None and cur_zone is not None and cur_chunks:
-                            content = "\n".join(c for c in cur_chunks if c)
-                            if content.strip():
-                                doc_id = (
-                                    f"{cur_zone}:{cur_path}" if cur_zone != "root" else cur_path
-                                )
-                                docs_batch.setdefault(cur_zone, []).append(
-                                    {
-                                        "id": doc_id,
-                                        "text": content,
-                                        "path": cur_path,
-                                        "zone_id": cur_zone,
-                                    }
-                                )
-                                # Mid-page flush: only cur_zone just grew, so
-                                # check only that zone — O(1) not O(zones).
-                                if len(docs_batch[cur_zone]) >= _UPSERT_BATCH:
-                                    total += int(
-                                        await self._backend.upsert(
-                                            docs_batch.pop(cur_zone), zone_id=cur_zone
-                                        )
-                                    )
-
-                        # Zone boundary: flush the completed zone immediately.
-                        # ORDER BY ensures zones are monotonically non-decreasing
-                        # within a page, so no rows for cur_zone can appear later.
-                        if cur_zone is not None and zone != cur_zone:
-                            zone_docs = docs_batch.pop(cur_zone, [])
-                            if zone_docs:
-                                total += int(
-                                    await self._backend.upsert(zone_docs, zone_id=cur_zone)
-                                )
-
-                        cur_zone = zone
-                        cur_path = path
-                        cur_chunks = []
-
-                    # Per-doc chunk cap: silently truncate pathological files
-                    # so one huge file cannot spike transient memory.
-                    if len(cur_chunks) < _MAX_CHUNKS_PER_DOC:
-                        cur_chunks.append(row.chunk_text or "")
-
-                # Flush the final in-flight document.
-                if cur_path is not None and cur_zone is not None and cur_chunks:
-                    content = "\n".join(c for c in cur_chunks if c)
-                    if content.strip():
-                        doc_id = f"{cur_zone}:{cur_path}" if cur_zone != "root" else cur_path
-                        docs_batch.setdefault(cur_zone, []).append(
-                            {
-                                "id": doc_id,
-                                "text": content,
-                                "path": cur_path,
-                                "zone_id": cur_zone,
-                            }
+                    row = (
+                        await session.execute(
+                            sa_text(
+                                "SELECT path_id FROM file_paths "
+                                "WHERE virtual_path = :vp "
+                                "  AND zone_id = :zid "
+                                "  AND deleted_at IS NULL "
+                                "LIMIT 1"
+                            ),
+                            {"vp": vp_clean, "zid": target_zone},
                         )
+                    ).first()
+                    if row is not None:
+                        path_id = str(row[0])
 
-                # Flush all remaining zones for this page.
-                for zid, docs in list(docs_batch.items()):
-                    if docs:
-                        total += int(await self._backend.upsert(docs, zone_id=zid))
+            if path_id is None:
+                # No file_paths row — this happens for synthetic docs
+                # (skill READMEs, connector schemas) that aren't backed
+                # by NexusFS. Skip rather than fail so best-effort callers
+                # in mount/connector wiring don't error out.
+                logger.debug(
+                    "index_documents: no file_paths row for %s in zone %s; skipping",
+                    vp_clean,
+                    target_zone,
+                )
+                continue
 
-                # Advance keyset cursor using raw DB values — must not
-                # normalise zone_id here because the SQL predicate compares
-                # against the raw column values.  Normalising "" → "root"
-                # would break the cursor on deployments with legacy empty-string
-                # zone_ids and cause infinite re-fetching of those rows.
-                kz = rows[-1].zone_id
-                kp = rows[-1].virtual_path
+            # Drive the canonical write path. Pass the zone-scoped form
+            # so the pipeline's scope filter sees the same shape mutation
+            # consumers use.
+            scoped_path = (
+                f"/zone/{target_zone}{vp_clean}" if target_zone != ROOT_ZONE_ID else vp_clean
+            )
+            result = await self._indexing_pipeline.index_document(scoped_path, text_clean, path_id)
+            if result.error:
+                # Surface pipeline errors so the router returns 500.
+                raise RuntimeError(
+                    f"index_documents: pipeline failed for {vp_clean!r}: {result.error}"
+                )
+            indexed += 1
 
-            self._txtai_bootstrapped = True
-            if total:
-                self.stats.last_index_refresh = time.time()
-            logger.info("txtai bootstrap indexed %d existing documents", total)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self._txtai_bootstrapped = False
-            logger.warning("txtai bootstrap failed, continuing with legacy search: %s", exc)
+        return indexed
 
     async def delete_documents(
         self,
@@ -1959,20 +1902,56 @@ class SearchDaemon:
         *,
         zone_id: str | None = None,
     ) -> int:
-        """Delete indexed documents from the active search backend."""
+        """Delete indexed documents by virtual path.
+
+        Issue #3699: deletes are owned by ``ChunkStore.delete_document_chunks``.
+        Each ``id`` is resolved to a ``path_id`` (stripping any ``/zone/{id}/``
+        prefix) and the chunk store drops every row keyed by that path. Returns
+        the count of paths that had chunks removed (best-effort — a path with
+        no rows is not an error).
+        """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
 
-        if not ids or self._backend is None:
+        if not ids:
+            return 0
+        if self._chunk_store is None or self._async_session is None:
+            logger.debug("delete_documents: no chunk_store or session, skipping (%d ids)", len(ids))
             return 0
 
-        from nexus.contracts.constants import ROOT_ZONE_ID
+        target_zone = zone_id or ROOT_ZONE_ID
 
-        effective_zone_id = zone_id or ROOT_ZONE_ID
-        count = int(await self._backend.delete(ids, zone_id=effective_zone_id))
-        if count:
-            self.stats.last_index_refresh = time.time()
-        return count
+        deleted = 0
+        for raw_id in ids:
+            if not isinstance(raw_id, str) or not raw_id:
+                continue
+            # Allow callers to pass either a virtual path or the txtai-era
+            # "{zone_id}:{path}" id form. Strip the zone prefix in either
+            # case so file_paths lookup stays zone-scoped via :zid.
+            if ":" in raw_id and not raw_id.startswith("/"):
+                _, _, vp = raw_id.partition(":")
+            else:
+                vp = raw_id
+            vp_clean = strip_zone_prefix(vp)
+
+            async with self._async_session() as session:
+                row = (
+                    await session.execute(
+                        sa_text(
+                            "SELECT path_id FROM file_paths "
+                            "WHERE virtual_path = :vp "
+                            "  AND zone_id = :zid "
+                            "LIMIT 1"
+                        ),
+                        {"vp": vp_clean, "zid": target_zone},
+                    )
+                ).first()
+            if row is None:
+                continue
+            await self._chunk_store.delete_document_chunks(str(row[0]))
+            deleted += 1
+
+        return deleted
 
     async def _keyword_search(
         self,
@@ -1998,12 +1977,6 @@ class SearchDaemon:
             if zoekt_results:
                 return zoekt_results
 
-        # Fall back to BM25S (in-memory, very fast).
-        if self._bm25s_index and is_zone_safe:
-            bm25s_results = await self._search_bm25s(query, limit, path_filter)
-            if bm25s_results:
-                return bm25s_results
-
         # Final fallback: database FTS (zone-aware)
         if self._async_engine:
             return await self._search_fts(query, limit, path_filter, zone_id=zone_id)
@@ -2018,75 +1991,31 @@ class SearchDaemon:
         *,
         zone_id: str | None = None,
     ) -> list[SearchResult]:
-        """Vector similarity search using pgvector."""
-        if not self._async_engine or not self._async_session:
-            logger.warning("Semantic search requires database connection")
+        """Vector similarity search via the active ``_vector_backend`` (Issue #3699).
+
+        The previous inline halfvec SQL block has been moved into
+        ``PgVectorBackend.semantic_search`` (and its SQLite counterpart
+        in ``SqliteVecBackend``). This wrapper keeps the legacy method
+        signature so existing callers (legacy fallback path in
+        :meth:`search`) work unchanged.
+        """
+        if self._vector_backend is None:
             return []
 
         try:
-            # Get query embedding
-            embedding = await self._get_query_embedding(query)
+            embedding = await self._embed_query(query)
             if not embedding:
-                if self._embedding_provider is None:
-                    logger.debug(
-                        "Legacy semantic search unavailable: no embedding provider configured"
-                    )
-                else:
-                    logger.warning("Could not generate query embedding")
+                logger.debug("Semantic search: no query embedding available")
                 return []
 
-            from sqlalchemy import text
+            from nexus.contracts.constants import ROOT_ZONE_ID
 
-            # Convert embedding list to pgvector string format for asyncpg
-            embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
-
-            async with self._async_session() as session:
-                # Build WHERE clause dynamically to avoid asyncpg
-                # AmbiguousParameterError with IS NULL patterns
-                where_parts = ["c.embedding IS NOT NULL"]
-                params: dict[str, Any] = {
-                    "embedding": embedding_str,
-                    "limit": limit,
-                }
-                if path_filter:
-                    where_parts.append("fp.virtual_path LIKE :path_pattern")
-                    params["path_pattern"] = f"{path_filter}%"
-                if zone_id:
-                    where_parts.append("fp.zone_id = :zone_id")
-                    params["zone_id"] = zone_id
-
-                where_clause = " AND ".join(where_parts)
-                sql = text(f"""
-                    SELECT
-                        c.chunk_index, c.chunk_text,
-                        c.start_offset, c.end_offset, c.line_start, c.line_end,
-                        fp.virtual_path,
-                        1 - (c.embedding <=> CAST(:embedding AS halfvec)) as score
-                    FROM document_chunks c
-                    JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE {where_clause}
-                    ORDER BY c.embedding <=> CAST(:embedding AS halfvec)
-                    LIMIT :limit
-                """)
-
-                result = await session.execute(sql, params)
-
-                return [
-                    SearchResult(
-                        path=row.virtual_path,
-                        chunk_index=row.chunk_index,
-                        chunk_text=row.chunk_text,
-                        score=float(row.score),
-                        start_offset=row.start_offset,
-                        end_offset=row.end_offset,
-                        line_start=row.line_start,
-                        line_end=row.line_end,
-                        vector_score=float(row.score),
-                        search_type="semantic",
-                    )
-                    for row in result
-                ]
-
+            effective_zone_id = zone_id or ROOT_ZONE_ID
+            path = path_filter or "/"
+            results = await self._vector_backend.semantic_search(
+                embedding, path, limit, effective_zone_id
+            )
+            return [self._coerce_to_search_result(r, search_type="semantic") for r in results]
         except Exception as e:
             logger.error(f"Semantic search error: {e}")
             return []
@@ -2225,39 +2154,6 @@ class SearchDaemon:
             logger.debug(f"Zoekt search failed: {e}")
             return []
 
-    async def _search_bm25s(
-        self,
-        query: str,
-        limit: int,
-        path_filter: str | None,
-    ) -> list[SearchResult]:
-        """Search using BM25S in-memory index."""
-        if not self._bm25s_index:
-            return []
-
-        try:
-            bm25s_results = await self._bm25s_index.search(
-                query=query,
-                limit=limit,
-                path_filter=path_filter,
-            )
-
-            return [
-                SearchResult(
-                    path=r.path,
-                    chunk_index=0,
-                    chunk_text=r.content_preview,
-                    score=r.score,
-                    keyword_score=r.score,
-                    search_type="keyword",
-                )
-                for r in bm25s_results
-            ]
-
-        except Exception as e:
-            logger.debug(f"BM25S search failed: {e}")
-            return []
-
     async def _search_fts(
         self,
         query: str,
@@ -2326,8 +2222,9 @@ class SearchDaemon:
     async def _get_query_embedding(self, query: str) -> list[float] | None:
         """Get embedding for query text (legacy fallback path).
 
-        Note: With txtai backend active, this method is only called
-        by the legacy _semantic_search path which is bypassed.
+        Note: this is the legacy embedding path used as a fallback when no
+        ``EmbeddingClient`` is configured. The new search backends call
+        :meth:`_embed_query` which prefers ``EmbeddingClient`` first.
         """
         if self._embedding_provider:
             result = await self._embedding_provider.embed_text(query)
@@ -2364,10 +2261,8 @@ class SearchDaemon:
     async def _index_refresh_loop(self) -> None:
         """Background task to drive durable per-indexer mutation consumers."""
         consumer_specs = {
-            "bm25": self._consume_bm25_mutations,
             "fts": self._consume_fts_mutations,
             "embedding": self._consume_embedding_mutations,
-            "txtai": self._consume_txtai_mutations,
         }
         self._consumer_names = tuple(consumer_specs.keys())
         # #4016: reconcile pre-existing unindexed files BEFORE consumers
@@ -2460,22 +2355,10 @@ class SearchDaemon:
                 len(resolved),
             )
 
-        if self._backend is not None:
-            deletes_by_zone: dict[str, list[str]] = {}
-            for mutation in resolved:
-                deletes_by_zone.setdefault(mutation.zone_id, []).append(mutation.doc_id)
-            for zone_id, ids in deletes_by_zone.items():
-                await self._backend.delete(ids, zone_id=zone_id)
-                logger.debug(
-                    "delete-propagation: backend dropped %d ids for zone=%s",
-                    len(ids),
-                    zone_id,
-                )
-
-        if self._bm25s_index is not None and hasattr(self._bm25s_index, "delete_document"):
-            for mutation in resolved:
-                with contextlib.suppress(Exception):
-                    await self._bm25s_index.delete_document(mutation.path_id)
+        # Issue #3699: txtai backend delete propagation is gone — chunk_store
+        # above already cascades into the FTS5 / pg_textsearch / pgvector
+        # indexes via DB triggers / index maintenance. The new search
+        # backends don't own write paths, so no second delete leg is needed.
 
         # Codex review R8 #4 (high): the legacy refresh path is the
         # fallback delete carrier when the durable op-log consumer
@@ -2831,10 +2714,8 @@ class SearchDaemon:
             return
 
         handlers_by_name: dict[str, Any] = {
-            "bm25": self._consume_bm25_mutations,
             "fts": self._consume_fts_mutations,
             "embedding": self._consume_embedding_mutations,
-            "txtai": self._consume_txtai_mutations,
         }
         pending: list[tuple[str, Any]] = []
         for name in self._consumer_names:
@@ -2898,14 +2779,10 @@ class SearchDaemon:
         we don't write a reconciliation marker for a consumer whose
         handler would silently no-op (Codex round-2).
         """
-        if consumer_name == "bm25":
-            return self._bm25s_index is not None
         if consumer_name == "fts":
             return self._chunk_store is not None
         if consumer_name == "embedding":
             return self._indexing_pipeline is not None and self._embedding_provider is not None
-        if consumer_name == "txtai":
-            return self._backend is not None
         return False
 
     async def _fetch_unindexed_path_events(self) -> list[SearchMutationEvent]:
@@ -3142,62 +3019,6 @@ class SearchDaemon:
         collapsed.reverse()
         return collapsed
 
-    async def _consume_bm25_mutations(self, events: list[SearchMutationEvent]) -> None:
-        if self._bm25s_index is None:
-            return
-        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
-        for mutation in resolved:
-            # Codex review R8 #2 / R9 #1 / R10 #1: handle delete-shaped
-            # operations. The resolver now exposes ``content_resolved``
-            # to distinguish "truly empty" (resolver successfully read
-            # an empty file) from "couldn't read" (file_reader failed
-            # AND content_cache had no entry). With that signal:
-            #   * UPSERT + content_resolved=False → raise (don't
-            #     checkpoint a transient read failure).
-            #   * UPSERT + content_resolved=True + content="" → real
-            #     truncation; treat as DELETE.
-            #   * DELETE → prune.
-            #   * UPSERT + content → index.
-            if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
-                raise RuntimeError(
-                    f"BM25 mutation content unresolved for "
-                    f"event_id={mutation.event.event_id} "
-                    f"path={mutation.event.path} — refusing to checkpoint "
-                    "so the consumer retries on next pass"
-                )
-            is_delete_shaped = mutation.event.op == SearchMutationOp.DELETE or (
-                mutation.event.op == SearchMutationOp.UPSERT and mutation.content == ""
-            )
-            if is_delete_shaped:
-                if not self._has_resolved_path_id(mutation):
-                    continue
-                # Codex review R9 #2 (high): do NOT swallow delete
-                # failures. ``_run_mutation_consumer`` advances the
-                # checkpoint when this handler returns successfully, so
-                # silent failure here means stale postings live forever.
-                # Let exceptions propagate; raise on a falsey return so
-                # the consumer retries on the next pass.
-                if hasattr(self._bm25s_index, "delete_document"):
-                    deleted = await self._bm25s_index.delete_document(mutation.path_id)
-                    if not deleted:
-                        raise RuntimeError(
-                            f"BM25 delete_document returned False for "
-                            f"path_id={mutation.path_id} — refusing to "
-                            "checkpoint so the consumer retries"
-                        )
-                continue
-            # Past the gates above, ``mutation.content`` is a non-empty
-            # string (we raised on unresolved + None, branched on
-            # DELETE/empty-content above). Assert for mypy + as a
-            # defensive guard if a future caller drops a gate.
-            if mutation.content is None:
-                continue
-            await self._bm25s_index.index_document(
-                mutation.path_id,
-                mutation.virtual_path,
-                mutation.content,
-            )
-
     async def _consume_fts_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._chunk_store is None:
             return
@@ -3207,7 +3028,7 @@ class SearchDaemon:
         resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
             # Codex review R10 #1 (high): refuse to checkpoint
-            # unresolved-content UPSERTs — see ``_consume_bm25_mutations``
+            # unresolved-content UPSERTs — see commit history for rationale
             # for the rationale.
             if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
                 raise RuntimeError(
@@ -3274,7 +3095,7 @@ class SearchDaemon:
         resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
             # Codex review R10 #1 (high): refuse to checkpoint
-            # unresolved-content UPSERTs — see ``_consume_bm25_mutations``
+            # unresolved-content UPSERTs — see commit history for rationale
             # for the rationale.
             if mutation.event.op == SearchMutationOp.UPSERT and not mutation.content_resolved:
                 raise RuntimeError(
@@ -3344,41 +3165,6 @@ class SearchDaemon:
                     self._build_naive_chunks(mutation.content),
                 )
 
-    async def _consume_txtai_mutations(self, events: list[SearchMutationEvent]) -> None:
-        if self._backend is None:
-            return
-
-        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
-        deletes_by_zone: dict[str, list[str]] = {}
-        upserts_by_zone: dict[str, list[dict[str, Any]]] = {}
-
-        for mutation in resolved:
-            if mutation.event.op == SearchMutationOp.DELETE:
-                # Deletes are NEVER filtered by scope (Issue #3698) — a
-                # file that was in scope when first indexed must still
-                # be cleaned up if it's later deleted, even if it now
-                # falls outside the scope definition.
-                deletes_by_zone.setdefault(mutation.zone_id, []).append(mutation.doc_id)
-                continue
-            if mutation.content:
-                # Scope-filter upserts (Issue #3698). The helper takes the
-                # raw event path; it handles zone extraction internally.
-                if not self._is_path_in_scope(mutation.event.path):
-                    continue
-                upserts_by_zone.setdefault(mutation.zone_id, []).append(
-                    {
-                        "id": mutation.doc_id,
-                        "text": mutation.content,
-                        "path": mutation.virtual_path,
-                        "zone_id": mutation.zone_id,
-                    }
-                )
-
-        for zone_id, ids in deletes_by_zone.items():
-            await self._backend.delete(ids, zone_id=zone_id)
-        for zone_id, docs in upserts_by_zone.items():
-            await self._backend.upsert(docs, zone_id=zone_id)
-
     async def _refresh_indexes(self, paths: list[str]) -> None:
         """Refresh indexes for a batch of changed files.
 
@@ -3393,8 +3179,6 @@ class SearchDaemon:
             return
 
         indexed_count = 0
-        # Collect documents for batched txtai upsert (Issue #2663)
-        _txtai_batch: dict[str, list[dict]] = {}  # zone_id -> docs
 
         for path in paths:
             try:
@@ -3455,8 +3239,8 @@ class SearchDaemon:
                 # Scrub NUL bytes — PG TEXT rejects them (SQLSTATE 22021) and
                 # this legacy refresh path bypasses MutationResolver's central
                 # scrub (Issue #3989). Done once here so every downstream
-                # consumer below (BM25S, embedding pipeline, naive FTS chunks,
-                # txtai batch) sees clean content.
+                # consumer below (BM25S, embedding pipeline, naive FTS chunks)
+                # sees clean content.
                 if "\x00" in content:
                     content = content.replace("\x00", "")
 
@@ -3493,10 +3277,6 @@ class SearchDaemon:
                     except Exception as e:
                         logger.debug("path_id lookup failed for %s: %s", virtual_path, e)
 
-                # Index to BM25S if available
-                if self._bm25s_index:
-                    await self._bm25s_index.index_document(path_id, virtual_path, content)
-
                 # Single-writer policy for document_chunks (Issue #3708):
                 # when embedding pipeline is active AND the path is in
                 # scope, let the pipeline be the sole writer (semantic
@@ -3530,184 +3310,16 @@ class SearchDaemon:
 
                 indexed_count += 1
 
-                # Collect for batched txtai upsert (Issue #2663)
-                if self._backend is not None and path_in_scope:
-                    # Fixed DRY bug (Issue #3698): use the shared
-                    # extract_zone_id helper instead of an inline regex.
-                    _doc_id = f"{zone_id}:{virtual_path}" if zone_id != "root" else virtual_path
-                    _txtai_batch.setdefault(zone_id, []).append(
-                        {
-                            "id": _doc_id,
-                            "text": content,
-                            "path": virtual_path,
-                            "zone_id": zone_id,
-                        }
-                    )
-
             except Exception as e:
                 logger.warning("Failed to refresh index for %s: %s", path, e)
 
-        # Batched txtai upsert — one call per zone with all docs (Issue #2663)
-        if self._backend is not None and _txtai_batch:
-            for zone_id, docs in _txtai_batch.items():
-                try:
-                    await self._backend.upsert(docs, zone_id=zone_id)
-                    logger.debug("txtai batch upsert: %d docs for zone %s", len(docs), zone_id)
-                except Exception as te:
-                    logger.warning("txtai batch upsert failed for zone %s: %s", zone_id, te)
+        # Issue #3699: txtai batch upsert is gone. Chunks + embeddings are
+        # written by ChunkStore.replace_document_chunks via the indexing
+        # pipeline above; the new search backends index from the same
+        # ``document_chunks`` table automatically.
 
         if indexed_count > 0:
             logger.info("[DAEMON] Indexed %d/%d files", indexed_count, len(paths))
-
-        # Update document count (BM25S index or DB FTS fallback)
-        if self._bm25s_index:
-            corpus_len = (
-                len(self._bm25s_index._corpus) if hasattr(self._bm25s_index, "_corpus") else 0
-            )
-            delta_len = (
-                len(self._bm25s_index._delta_corpus)
-                if hasattr(self._bm25s_index, "_delta_corpus")
-                else 0
-            )
-            self.stats.bm25_documents = corpus_len + delta_len
-        elif self._async_session and indexed_count > 0:
-            # BM25S not available — count from DB document_chunks table
-            session_factory = self._async_session
-            try:
-                async with session_factory() as sess:
-                    row = (
-                        await sess.execute(
-                            sa_text("SELECT COUNT(DISTINCT path_id) FROM document_chunks")
-                        )
-                    ).first()
-                    self.stats.bm25_documents = int(row[0]) if row else 0
-            except Exception:
-                # If count fails, at least track that we indexed something
-                self.stats.bm25_documents += indexed_count
-
-    # =========================================================================
-    # Bulk Embedding (decoupled from BM25)
-    # =========================================================================
-
-    async def bulk_embed_from_bm25s(self, batch_size: int = 50) -> int:
-        """Bulk-generate embeddings for documents found in the BM25S index.
-
-        BM25 and embedding are independent search backends — this method
-        uses the BM25S corpus only as a convenient content source to discover
-        which files need embedding.  The actual flow:
-
-        1. Read file list + content from BM25S metadata
-        2. Register files in file_paths (the canonical file registry)
-        3. Embed via the standard IndexingPipeline (document_chunks)
-
-        Args:
-            batch_size: Number of documents per embedding batch
-
-        Returns:
-            Number of documents successfully embedded
-        """
-        import uuid
-        from datetime import UTC, datetime
-
-        if not self._bm25s_index:
-            logger.warning("[BULK-EMBED] No BM25S index available")
-            return 0
-        if not self._indexing_pipeline:
-            logger.warning("[BULK-EMBED] No indexing pipeline available")
-            return 0
-        if not self._async_session:
-            logger.warning("[BULK-EMBED] No database session available")
-            return 0
-
-        # Read BM25S corpus
-        corpus = getattr(self._bm25s_index, "_corpus", [])
-        paths = getattr(self._bm25s_index, "_paths", [])
-        total = len(corpus)
-        if total == 0:
-            logger.info("[BULK-EMBED] BM25S corpus is empty")
-            return 0
-
-        logger.info(f"[BULK-EMBED] Processing {total} documents from BM25S corpus")
-
-        # Step 1: Build deterministic UUID5 path_ids for each virtual path
-        ns = uuid.UUID("12345678-1234-5678-1234-567812345678")
-        path_id_map: dict[str, str] = {}
-        now = datetime.now(UTC).replace(tzinfo=None)
-
-        unique_vpaths: list[str] = []
-        for i in range(total):
-            vpath = paths[i] if i < len(paths) else f"doc_{i}"
-            if vpath not in path_id_map:
-                path_id_map[vpath] = str(uuid.uuid5(ns, vpath))
-                unique_vpaths.append(vpath)
-
-        # Query which paths already exist in file_paths
-        from sqlalchemy import text
-
-        existing_pids: dict[str, str] = {}
-        async with self._async_session() as session:
-            for batch_start in range(0, len(unique_vpaths), 100):
-                batch_vpaths = unique_vpaths[batch_start : batch_start + 100]
-                where_clauses = []
-                params: dict[str, str] = {}
-                for idx, vpath in enumerate(batch_vpaths):
-                    where_clauses.append(f"virtual_path = :vpath_{idx}")
-                    params[f"vpath_{idx}"] = vpath
-                result = await session.execute(
-                    text(
-                        "SELECT path_id, virtual_path FROM file_paths "
-                        "WHERE deleted_at IS NULL AND (" + " OR ".join(where_clauses) + ")"
-                    ),
-                    params,
-                )
-                for row in result.fetchall():
-                    existing_pids[row[1]] = row[0]
-
-        # Use existing path_ids where they exist
-        for vpath, existing_pid in existing_pids.items():
-            path_id_map[vpath] = existing_pid
-
-        # Insert only new files into file_paths
-        new_vpaths = [v for v in unique_vpaths if v not in existing_pids]
-        if new_vpaths:
-            async with self._async_session() as session:
-                for vpath in new_vpaths:
-                    pid = path_id_map[vpath]
-                    await session.execute(
-                        text(
-                            "INSERT INTO file_paths (path_id, virtual_path, zone_id, created_at, updated_at) "
-                            "VALUES (:pid, :vpath, 'default', :now, :now) "
-                            "ON CONFLICT (path_id) DO NOTHING"
-                        ),
-                        {"pid": pid, "vpath": vpath, "now": now},
-                    )
-                await session.commit()
-            logger.info(f"[BULK-EMBED] Registered {len(new_vpaths)} new files in file_paths")
-
-        # Step 2: Feed to standard indexing pipeline with UUID path_ids
-        docs_to_embed: list[tuple[str, str, str]] = []
-        for i in range(total):
-            vpath = paths[i] if i < len(paths) else f"doc_{i}"
-            content = corpus[i]
-            embed_pid = path_id_map.get(vpath)
-            if embed_pid is not None and content:
-                docs_to_embed.append((vpath, content, embed_pid))
-
-        embedded = 0
-        for batch_start in range(0, len(docs_to_embed), batch_size):
-            batch = docs_to_embed[batch_start : batch_start + batch_size]
-            try:
-                await self._indexing_pipeline.index_documents(
-                    [(vpath, content, path_id) for vpath, content, path_id in batch]
-                )
-                embedded += len(batch)
-                if batch_start % (batch_size * 5) == 0:
-                    logger.info(f"[BULK-EMBED] Progress: {embedded}/{len(docs_to_embed)}")
-            except Exception as e:
-                logger.warning(f"[BULK-EMBED] Batch failed at {batch_start}: {e}")
-
-        logger.info(f"[BULK-EMBED] Complete: {embedded}/{len(docs_to_embed)} documents embedded")
-        return embedded
 
     # =========================================================================
     # Statistics
@@ -3739,8 +3351,6 @@ class SearchDaemon:
         return {
             "initialized": self._initialized,
             "startup_time_ms": self.stats.startup_time_ms,
-            "bm25_documents": self.stats.bm25_documents,
-            "bm25_load_time_ms": self.stats.bm25_load_time_ms,
             "db_pool_size": self.stats.db_pool_size,
             "db_pool_warmup_time_ms": self.stats.db_pool_warmup_time_ms,
             "vector_warmup_time_ms": self.stats.vector_warmup_time_ms,
@@ -3756,11 +3366,19 @@ class SearchDaemon:
                 "threshold": self.config.entropy_threshold,
                 "alpha": self.config.entropy_alpha,
             },
-            # Issue #2663: txtai backend
-            "backend": "txtai" if self._backend is not None else "legacy",
-            # Issue #3997: ``None`` (serialised as JSON ``null``) means no
-            # embedding model was configured, so the txtai/faiss backend is
-            # not imported and queries use legacy BM25/FTS keyword search.
+            # Issue #3699: search backends (replaced txtai).
+            "backend": (
+                type(self._fts_backend).__name__ if self._fts_backend is not None else "legacy"
+            ),
+            "vector_backend": (
+                type(self._vector_backend).__name__ if self._vector_backend is not None else None
+            ),
+            # ``None`` means no embedding model configured — keyword-only mode.
+            "embedding_model": getattr(self.config, "embedding_model", None)
+            or getattr(self.config, "txtai_model", None),
+            # Backward-compatible aliases for tooling that still reads the
+            # txtai_* keys. txtai is gone (Issue #3699), but stats consumers
+            # such as /search/stats dashboards may key off these names.
             "txtai_model": self.config.txtai_model,
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,
@@ -3778,17 +3396,15 @@ class SearchDaemon:
         Returns:
             Health status dictionary
         """
-        # Keyword search is available via BM25S, Zoekt, or DB FTS fallback
-        keyword_ready = (
-            self._bm25s_index is not None
-            or self.stats.zoekt_available
-            or self._async_engine is not None
-        )
+        # Keyword search is available via Zoekt or DB FTS fallback
+        keyword_ready = self.stats.zoekt_available or self._async_engine is not None
         return {
             "status": "healthy" if self._initialized else "starting",
             "initialized": self._initialized,
             "daemon_initialized": self._initialized,
-            "backend": "txtai" if self._backend is not None else "legacy",
+            "backend": (
+                type(self._fts_backend).__name__ if self._fts_backend is not None else "legacy"
+            ),
             "bm25_index_loaded": keyword_ready,
             "db_pool_ready": self._async_engine is not None,
             "zoekt_available": self.stats.zoekt_available,
@@ -3797,7 +3413,6 @@ class SearchDaemon:
 
 async def create_and_start_daemon(
     database_url: str | None = None,
-    bm25s_index_dir: str | None = None,
     *,
     async_session_factory: Any | None = None,
 ) -> SearchDaemon:
@@ -3807,7 +3422,6 @@ async def create_and_start_daemon(
 
     Args:
         database_url: Database URL (from env if not provided)
-        bm25s_index_dir: BM25S index directory
         async_session_factory: Injected async_sessionmaker from RecordStoreABC.
 
     Returns:
@@ -3815,7 +3429,6 @@ async def create_and_start_daemon(
     """
     config = DaemonConfig(
         database_url=database_url or get_database_url(),
-        bm25s_index_dir=bm25s_index_dir or ".nexus-data/bm25s",
     )
 
     daemon = SearchDaemon(config, async_session_factory=async_session_factory)

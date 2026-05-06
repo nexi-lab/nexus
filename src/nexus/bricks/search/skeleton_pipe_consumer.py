@@ -92,11 +92,23 @@ class SkeletonPipeConsumer:
 
         path_id may be None when called from a VFS hook (e.g. _SkeletonWriteHook
         in search.py lifespan) — SkeletonIndexer resolves it from DB in that case.
+
+        Skip the consumer's own pipe path: ``start()`` calls ``sys_setattr``
+        to create the pipe inode, which fires the VFS write hook *before*
+        ``_pipe_ready`` flips to True. Without this guard the pipe-self-write
+        falls through to the fallback dispatch — an ``asyncio.Task`` that
+        runs ``read_head`` → ``sys_read`` on the pipe path, blocking the
+        event loop for the pipe-read timeout (5s). Same reason for
+        ``notify_delete`` / ``notify_rename`` below.
         """
+        if path == _SKELETON_PIPE_PATH:
+            return
         self._buffer({"type": "write", "path": path, "path_id": path_id, "zone_id": zone_id})
 
     def notify_delete(self, path: str, path_id: str | None, zone_id: str) -> None:
         """Buffer a delete event for async processing.  path_id may be None."""
+        if path == _SKELETON_PIPE_PATH:
+            return
         self._buffer({"type": "delete", "path": path, "path_id": path_id, "zone_id": zone_id})
 
     def notify_rename(
@@ -110,6 +122,8 @@ class SkeletonPipeConsumer:
 
         path_id may be None when called from VFS hooks.
         """
+        if old_path == _SKELETON_PIPE_PATH or new_path == _SKELETON_PIPE_PATH:
+            return
         self._buffer(
             {
                 "type": "rename",
@@ -232,7 +246,16 @@ class SkeletonPipeConsumer:
             if not pending:
                 while True:
                     try:
-                        data = nx.sys_read(_SKELETON_PIPE_PATH, context=self._pipe_context)
+                        # Issue #3699: timeout_ms=0 (O_NONBLOCK) so empty
+                        # pipe returns instantly. Without this, each empty
+                        # poll blocks the asyncio event loop for the
+                        # kernel's 5 s pipe-read default, starving
+                        # uvicorn's accept loop.
+                        data = nx.sys_read(
+                            _SKELETON_PIPE_PATH,
+                            context=self._pipe_context,
+                            timeout_ms=0,
+                        )
                     except NexusFileNotFoundError:
                         logger.debug("[SKELETON] pipe closed, consumer exiting")
                         return
@@ -250,7 +273,11 @@ class SkeletonPipeConsumer:
                 if remaining <= 0:
                     break
                 try:
-                    data = nx.sys_read(_SKELETON_PIPE_PATH, context=self._pipe_context)
+                    data = nx.sys_read(
+                        _SKELETON_PIPE_PATH,
+                        context=self._pipe_context,
+                        timeout_ms=0,
+                    )
                 except NexusFileNotFoundError:
                     break
                 except Exception:

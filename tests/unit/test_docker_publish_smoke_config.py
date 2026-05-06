@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DOCKER_PUBLISH = ROOT / ".github/workflows/docker-publish.yml"
 DOCKERFILE = ROOT / "Dockerfile"
+DOCKER_ENTRYPOINT = ROOT / "dockerfiles/docker-entrypoint.sh"
 BUILD_PERF = ROOT / "scripts/test_build_perf_e2e.py"
 
 
@@ -32,6 +33,17 @@ def test_image_healthcheck_uses_bounded_basic_health_probe() -> None:
     assert "curl --max-time 5 -f" in healthcheck
     assert "/health" in healthcheck
     assert "/healthz/ready" not in healthcheck
+
+
+def test_entrypoint_startup_wait_uses_bounded_basic_health_probe() -> None:
+    text = DOCKER_ENTRYPOINT.read_text()
+    wait_for_health = text[
+        text.index("wait_for_health()") : text.index("load_saved_mounts_if_needed()")
+    ]
+
+    assert 'curl --max-time 5 -sf "http://localhost:${port}/health"' in wait_for_health
+    assert 'curl -sf "http://localhost:${port}/health"' not in wait_for_health
+    assert "/healthz/ready" not in wait_for_health
 
 
 def test_build_perf_smoke_uses_basic_health_probe() -> None:

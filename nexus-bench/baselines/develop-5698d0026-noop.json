@@ -2,7 +2,7 @@
   "schema_version": 1,
   "workload": "agent-cold-start",
   "target": "noop",
-  "git_sha": "2cdf95186",
+  "git_sha": "5698d0026",
   "started_at": "2026-05-06T08:10:35.733026Z",
   "duration_ms": 22.040375,
   "operations": {

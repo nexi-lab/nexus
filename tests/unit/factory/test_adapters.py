@@ -1,5 +1,7 @@
 """Tests for factory adapters — Issue #2180."""
 
+import asyncio
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +11,43 @@ from nexus.factory.adapters import _NexusFSFileReader
 
 class TestNexusFSFileReader:
     """_NexusFSFileReader adapter tests."""
+
+    @pytest.mark.asyncio
+    async def test_read_text_does_not_block_event_loop_during_sys_read(self) -> None:
+        class BlockingNx:
+            _kernel = MagicMock()
+
+            def sys_read(self, _path: str, **_kwargs: object) -> bytes:
+                time.sleep(0.2)
+                return b"hello world"
+
+            def SessionLocal(self) -> object:
+                raise RuntimeError("database unavailable")
+
+        reader = _NexusFSFileReader(BlockingNx())
+
+        task = asyncio.create_task(reader.read_text("/test.txt"))
+        start = time.perf_counter()
+        await asyncio.sleep(0.02)
+
+        assert time.perf_counter() - start < 0.12
+        assert await task == "hello world"
+
+    @pytest.mark.asyncio
+    async def test_read_head_does_not_block_event_loop_during_sys_read(self) -> None:
+        class BlockingNx:
+            def sys_read(self, _path: str, **_kwargs: object) -> bytes:
+                time.sleep(0.2)
+                return b"hello"
+
+        reader = _NexusFSFileReader(BlockingNx())
+
+        task = asyncio.create_task(reader.read_head("/test.txt", 5))
+        start = time.perf_counter()
+        await asyncio.sleep(0.02)
+
+        assert time.perf_counter() - start < 0.12
+        assert await task == b"hello"
 
     @pytest.mark.asyncio
     async def test_read_text_bytes_decoded(self) -> None:

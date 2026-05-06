@@ -416,15 +416,10 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     )
                     app.state.directory_grant_expander = expander
 
-                    # Q3 BackgroundService — kernel auto-calls start()
-                    nx = svc.nexus_fs if hasattr(svc, "nexus_fs") else svc
-                    if hasattr(nx, "sys_setattr"):
-                        nx.sys_setattr(
-                            "/__sys__/services/directory_grant_expander",
-                            service=expander,
-                        )
-                    else:
-                        await expander.start()
+                    # Do not register through sys_setattr here: the kernel
+                    # auto-lifecycle path calls async BackgroundService.start()
+                    # via asyncio.run(), which fails inside FastAPI's loop.
+                    await expander.start()
                     logger.info("DirectoryGrantExpander worker started for large folder grants")
                 except Exception as e:
                     logger.debug("DirectoryGrantExpander startup skipped: %s", e)

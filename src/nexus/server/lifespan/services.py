@@ -4,6 +4,7 @@ Extracted from fastapi_server.py (#1602).
 """
 
 import asyncio
+import inspect
 import logging
 import os
 from contextlib import suppress
@@ -117,7 +118,9 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
     # Stop DirectoryGrantExpander worker
     if app.state.directory_grant_expander:
         try:
-            app.state.directory_grant_expander.stop()
+            result = app.state.directory_grant_expander.stop()
+            if inspect.isawaitable(result):
+                await result
             logger.info("DirectoryGrantExpander worker stopped")
         except Exception as e:
             logger.warning("Error stopping DirectoryGrantExpander: %s", e, exc_info=True)

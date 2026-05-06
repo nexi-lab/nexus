@@ -246,7 +246,7 @@ class _NexusFSFileReader:
             is_admin=True,
             is_system=True,
         )
-        content_raw = self._nx.sys_read(path, context=admin_ctx)
+        content_raw = await asyncio.to_thread(self._nx.sys_read, path, context=admin_ctx)
 
         # Look up the backend-tracked content_id (``file_paths.content_id``)
         # so the parse cache is keyed with the same string downstream
@@ -258,7 +258,7 @@ class _NexusFSFileReader:
         # of the raw bytes.
         observed_content_id: str | None = None
         try:
-            lookup = self.get_content_hash(path)
+            lookup = await asyncio.to_thread(self.get_content_hash, path)
             if isinstance(lookup, str):
                 observed_content_id = lookup
         except Exception:
@@ -403,7 +403,12 @@ class _NexusFSFileReader:
             is_system=True,
         )
         try:
-            content = await self._nx.sys_read(path, count=max_bytes, context=admin_ctx)
+            content = await asyncio.to_thread(
+                self._nx.sys_read,
+                path,
+                count=max_bytes,
+                context=admin_ctx,
+            )
             if isinstance(content, bytes):
                 return content
             return str(content).encode("utf-8", errors="ignore")

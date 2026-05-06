@@ -287,7 +287,9 @@ class WorkspaceManager:
                 workspace_prefix += "/"
 
             # Get current workspace files
-            current_files = self._kernel.metastore_list(workspace_prefix)
+            current_files = self._kernel.metastore_list_paginated(
+                workspace_prefix, True, 100000, None
+            )["items"]
             current_paths = {
                 f.path[len(workspace_prefix) :]
                 for f in current_files

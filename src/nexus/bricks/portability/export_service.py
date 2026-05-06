@@ -360,7 +360,7 @@ class ZoneExportService:
         prefix = options.path_prefix or ""
         if self._kernel is None:
             raise RuntimeError("ZoneExportService requires a kernel-backed NexusFS")
-        all_files = list(self._kernel.metastore_list(prefix))
+        all_files = self._kernel.metastore_list_paginated(prefix, True, 100000, None)["items"]
 
         # Apply zone filter if metadata store doesn't do it
         # (In a real implementation, this would be done at the database level)

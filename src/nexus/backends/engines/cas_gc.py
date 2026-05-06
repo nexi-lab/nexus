@@ -215,9 +215,9 @@ class CASGarbageCollector:
 
         # Scan all entries in metastore for content_ids
         try:
-            all_entries = kernel.metastore_list("")
+            all_entries = kernel.metastore_list_paginated("", True, 100000, None)["items"]
         except Exception:
-            logger.warning("CAS GC: kernel.metastore_list() failed", exc_info=True)
+            logger.warning("CAS GC: kernel.metastore_list_paginated() failed", exc_info=True)
             return
 
         for entry in all_entries:

@@ -266,7 +266,8 @@ class DirectoryGrantExpander:
             # public-API contract but the underlying call ignores it (matches
             # the pre-W1.5 proxy ``list(prefix=, zone_id=)`` behavior).
             del zone_id
-            files = self._kernel.metastore_list(directory_path)
+            _page = self._kernel.metastore_list_paginated(directory_path, True, 100000, None)
+            files = _page["items"]
             return [f.path for f in files if f.path]
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to list directory: {e}")

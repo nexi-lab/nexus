@@ -1119,7 +1119,7 @@ class SearchService:
         # in federation mode), so ``list_zone_id`` is intentionally not
         # passed to the kernel call here — it's still used by the
         # zone-revision check below.
-        all_files = self._kernel.metastore_list(list_prefix)
+        all_files = self._kernel.metastore_list_paginated(list_prefix, True, 100000, None)["items"]
         logger.info(
             f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
             f"{len(all_files)} files"
@@ -1175,7 +1175,9 @@ class SearchService:
                         "[PREDICATE-PUSHDOWN] Revision changed, re-running without filter"
                     )
                     _meta_start = _time.time()
-                    all_files = self._kernel.metastore_list(list_prefix)
+                    all_files = self._kernel.metastore_list_paginated(
+                        list_prefix, True, 100000, None
+                    )["items"]
                     # Fix nexi-lab/nexus#3733 Bug B: same synthetic-entry
                     # guard as the primary list path above.
                     all_files = [f for f in all_files if f.path.startswith("/")]

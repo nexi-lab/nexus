@@ -80,17 +80,14 @@ def metastore_list(
     prefix: str = "",
     recursive: bool = True,
 ) -> list[FileMetadata]:
-    """List with Python-side ``recursive=False`` post-filter.
+    """List with pagination — delegates to ``metastore_list_paginated``.
 
-    The Rust ``metastore_list`` is prefix-only — it returns every entry
-    whose path starts with ``prefix``. When the caller asks for
-    ``recursive=False`` we drop entries that sit deeper than one
-    separator below the prefix.
+    Returns all entries matching ``prefix``.  ``recursive=False`` is now
+    handled natively by the Rust kernel (no Python post-filter needed).
     """
-    result: list[FileMetadata] = kernel.metastore_list(prefix)
-    if recursive:
-        return result
-    return [e for e in result if _is_direct_child(e.path, prefix)]
+    page = kernel.metastore_list_paginated(prefix, recursive, 100000, None)
+    items: list[FileMetadata] = page["items"]
+    return items
 
 
 def metastore_list_iter(
@@ -98,16 +95,18 @@ def metastore_list_iter(
     prefix: str = "",
     recursive: bool = True,
 ) -> Iterator[FileMetadata]:
-    """Streaming variant of :func:`metastore_list`.
+    """Streaming variant of :func:`metastore_list` using paginated reads.
 
-    Yields entries one at a time, honouring the same ``recursive=False``
-    post-filter. The Rust call still materialises the full prefix list
-    today; the helper exists so future kernel-side streaming is a
-    drop-in here without rewiring call sites.
+    Yields entries one page at a time via cursor-based pagination, avoiding
+    materializing the full prefix list in memory.
     """
-    for e in kernel.metastore_list(prefix):
-        if recursive or _is_direct_child(e.path, prefix):
-            yield e
+    cursor: str | None = None
+    while True:
+        page = kernel.metastore_list_paginated(prefix, recursive, 1000, cursor)
+        yield from page["items"]
+        if not page["has_more"]:
+            break
+        cursor = page["next_cursor"]
 
 
 def metastore_list_paginated(

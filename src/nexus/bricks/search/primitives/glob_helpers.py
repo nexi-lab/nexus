@@ -6,7 +6,7 @@ query-side concerns (static-prefix extraction for directory pruning,
 include/exclude filter composition, single-pattern matching) that
 belong in the search brick rather than as kernel surface.
 
-The Rust-accelerated primitives go through `nexus_runtime` directly:
+The Rust-accelerated primitives go through `nexus._rust_compat`:
 
     from nexus._rust_compat import glob_match_bulk
 
@@ -18,6 +18,7 @@ internals need.
 
 from __future__ import annotations
 
+import fnmatch
 import re
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,20 @@ if TYPE_CHECKING:
 
 # Glob special characters that indicate a non-static part of the pattern
 _GLOB_SPECIAL_CHARS = re.compile(r"[*?\[\]{}]")
+
+
+def _match_python(path: str, pattern: str) -> bool:
+    path_for_match = path[1:] if path.startswith("/") else path
+    pattern_for_match = pattern[1:] if pattern.startswith("/") else pattern
+    return fnmatch.fnmatch(path_for_match, pattern_for_match)
+
+
+def _glob_match_bulk_or_python(patterns: list[str], paths: list[str]) -> list[str]:
+    from nexus._rust_compat import glob_match_bulk
+
+    if glob_match_bulk is not None:
+        return list(glob_match_bulk(patterns, paths))
+    return [path for path in paths if any(_match_python(path, pattern) for pattern in patterns)]
 
 
 def glob_match(path: str, patterns: list[str]) -> bool:
@@ -41,9 +56,7 @@ def glob_match(path: str, patterns: list[str]) -> bool:
     if not patterns:
         return False
 
-    from nexus._rust_compat import glob_match_bulk
-
-    matches = glob_match_bulk(patterns, [path])
+    matches = _glob_match_bulk_or_python(patterns, [path])
     return len(matches) > 0
 
 
@@ -63,15 +76,13 @@ def glob_filter(
     if not paths:
         return []
 
-    from nexus._rust_compat import glob_match_bulk
-
     result = paths
 
     if include_patterns:
-        result = list(glob_match_bulk(include_patterns, result))
+        result = _glob_match_bulk_or_python(include_patterns, result)
 
     if exclude_patterns:
-        excluded = set(glob_match_bulk(exclude_patterns, result))
+        excluded = set(_glob_match_bulk_or_python(exclude_patterns, result))
         result = [p for p in result if p not in excluded]
 
     return result

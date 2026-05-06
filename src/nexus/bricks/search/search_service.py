@@ -1785,7 +1785,14 @@ class SearchService:
             rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
             from nexus._rust_compat import glob_match_bulk
 
-            matches = glob_match_bulk([rust_pattern], accessible_files)
+            if glob_match_bulk is not None:
+                matches = list(glob_match_bulk([rust_pattern], accessible_files))
+            else:
+                strategy = (
+                    GlobStrategy.REGEX_COMPILED
+                    if "**" in full_pattern
+                    else GlobStrategy.FNMATCH_SIMPLE
+                )
 
         if strategy == GlobStrategy.REGEX_COMPILED and not matches:
             matches = self._glob_regex_match(full_pattern, accessible_files)
@@ -1888,7 +1895,12 @@ class SearchService:
                 rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
                 from nexus._rust_compat import glob_match_bulk
 
-                results[pattern] = sorted(glob_match_bulk([rust_pattern], accessible_files))
+                if glob_match_bulk is not None:
+                    results[pattern] = sorted(glob_match_bulk([rust_pattern], accessible_files))
+                else:
+                    results[pattern] = sorted(
+                        glob_helpers.glob_filter(accessible_files, include_patterns=[rust_pattern])
+                    )
             except Exception:
                 logger.debug("glob_batch pattern failed: %s", pattern, exc_info=True)
                 results[pattern] = []
@@ -2481,8 +2493,6 @@ class SearchService:
         fallback) does honour.
         """
         results: builtins.list[dict[str, Any]] = []
-        mmap_used = False
-
         # Try mmap-accelerated grep first (Issue #893). Skipped when the
         # caller asked for context/invert flags — mmap doesn't honour
         # them and would silently drop them.
@@ -2506,7 +2516,6 @@ class SearchService:
                             disk_path = match.get("file", "")
                             match["file"] = disk_to_virtual.get(disk_path, disk_path)
                         results.extend(mmap_results)
-                        mmap_used = True
                         files_needing_raw = [f for f in files_needing_raw if f not in disk_paths]
                         remaining_results = remaining_results - len(results)
             except Exception as e:
@@ -2522,17 +2531,19 @@ class SearchService:
             }
             from nexus._rust_compat import grep_bulk
 
-            rust_results = grep_bulk(
-                pattern,
-                file_contents,
-                ignore_case=ignore_case,
-                max_results=remaining_results,
-            )
-            if rust_results is not None:
-                results.extend(rust_results)
+            if grep_bulk is not None:
+                rust_results = grep_bulk(
+                    pattern,
+                    file_contents,
+                    ignore_case=ignore_case,
+                    max_results=remaining_results,
+                )
+                if rust_results is not None:
+                    results.extend(rust_results)
+                    files_needing_raw = []
 
         # Python sequential fallback
-        elif not mmap_used and files_needing_raw:
+        if files_needing_raw:
             for file_path in files_needing_raw:
                 if len(results) >= remaining_results:
                     break
@@ -2928,7 +2939,10 @@ class SearchService:
             if zoekt_available:
                 return SearchStrategy.ZOEKT_INDEX
         # Issue #3711: Rust bulk (400x) >> Python parallel pool (4x).
-        # Rust grep is always available (kernel binary is mandatory).
+        from nexus._rust_compat import grep_bulk
+
+        if grep_bulk is None:
+            return SearchStrategy.SEQUENTIAL
         return SearchStrategy.RUST_BULK
 
     def _select_glob_strategy(self, pattern: str, file_count: int) -> GlobStrategy:

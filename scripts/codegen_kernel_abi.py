@@ -221,6 +221,20 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     "hash": ("hash_content_py", "hash_content_smart_py"),
     "io": ("read_file", "read_files_bulk"),
     "search": ("grep_bulk", "grep_files_mmap", "glob_match_bulk"),
+    "trigram": (
+        "build_trigram_index",
+        "build_trigram_index_from_entries",
+        "invalidate_trigram_cache",
+        "trigram_grep",
+        "trigram_index_stats",
+        "trigram_search_candidates",
+    ),
+    "rebac": (
+        "compute_permission_single",
+        "compute_permissions_bulk",
+        "expand_subjects",
+        "list_objects_for_subject",
+    ),
     "storage": (
         "BloomFilter",
         "BlobPackEngine",
@@ -229,7 +243,16 @@ CAPABILITY_GROUP_CONFIG: dict[str, tuple[str, ...]] = {
     # (rebac visibility, descendant_access, enforcer batch). Gating them here
     # ensures stale/version-skew binaries fall back to the Python implementation
     # in _prefix_helpers.py instead of silently returning wrong auth results.
-    "prefix": ("any_path_starts_with", "batch_prefix_check"),
+    "prefix": ("any_path_starts_with", "batch_prefix_check", "filter_paths_by_prefix"),
+    "tiger": (
+        "any_path_accessible_tiger_cache",
+        "check_permission_bitmap",
+        "check_permission_bitmap_batch",
+        "filter_paths_with_tiger_cache",
+        "filter_paths_with_tiger_cache_parallel",
+        "intersect_paths_with_tiger_cache",
+        "tiger_cache_bitmap_stats",
+    ),
 }
 
 # ── Return-type overrides ──────────────────────────────────────────
@@ -5628,6 +5651,23 @@ async def dispatch_kernel_syscall(
 # ── Main ──────────────────────────────────────────────────────────
 
 
+def _ruff_cmd() -> list[str] | None:
+    """Return a ruff command usable from plain and pre-commit hook envs."""
+    import shutil
+
+    ruff = shutil.which("ruff")
+    if ruff:
+        return [ruff]
+    uv = shutil.which("uv")
+    if not uv:
+        uv_path = Path.home() / ".local" / "bin" / "uv"
+        if uv_path.exists():
+            uv = str(uv_path)
+    if uv:
+        return [uv, "run", "--extra", "dev", "ruff"]
+    return None
+
+
 def main() -> int:
     check_mode = "--check" in sys.argv
 
@@ -5654,7 +5694,7 @@ def main() -> int:
         import subprocess
         import tempfile
 
-        ruff = shutil.which("ruff")
+        ruff = _ruff_cmd()
 
         rustfmt = shutil.which("rustfmt")
 
@@ -5669,7 +5709,7 @@ def main() -> int:
                 with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False) as f:
                     f.write(content.encode("utf-8"))
                     f.flush()
-                    subprocess.run([ruff, "format", f.name], capture_output=True)
+                    subprocess.run([*ruff, "format", f.name], capture_output=True)
                     return Path(f.name).read_bytes().decode("utf-8")
             if rustfmt and suffix == ".rs":
                 with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False) as f:
@@ -5690,8 +5730,11 @@ def main() -> int:
             if actual != expected:
                 print(f"STALE: {path.relative_to(ROOT)}")
                 # Show first differing line
+                from itertools import zip_longest
+
                 for i, (a, e) in enumerate(
-                    zip(actual.splitlines(), expected.splitlines(), strict=False), 1
+                    zip_longest(actual.splitlines(), expected.splitlines(), fillvalue=""),
+                    1,
                 ):
                     if a != e:
                         print(f"  line {i}:")
@@ -5716,14 +5759,12 @@ def main() -> int:
                 py_files.append(path)
         # Auto-format generated Python files so codegen --check matches ruff format
         if py_files:
-            import shutil
-
-            ruff = shutil.which("ruff")
+            ruff = _ruff_cmd()
             if ruff:
                 import subprocess
 
                 subprocess.run(
-                    [ruff, "format", *[str(p) for p in py_files]],
+                    [*ruff, "format", *[str(p) for p in py_files]],
                     capture_output=True,
                 )
         # Auto-format generated Rust files so codegen --check matches cargo fmt

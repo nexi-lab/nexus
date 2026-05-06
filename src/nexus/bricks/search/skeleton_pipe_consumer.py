@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SKELETON_PIPE_PATH = "/nexus/pipes/skeleton-writes"
+_INTERNAL_PIPE_PREFIX = "/nexus/pipes/"
 _SKELETON_PIPE_CAPACITY = 65_536  # 64KB
 
 # Number of events processed concurrently in a single asyncio.gather call (15A).
@@ -230,37 +231,50 @@ class SkeletonPipeConsumer:
     # Background consumer with debounce + micro-batching (15A)
     # ------------------------------------------------------------------
 
+    async def _read_pipe(self) -> bytes:
+        nx = self._nx
+        assert nx is not None
+
+        def _read() -> bytes:
+            try:
+                return nx.sys_read(
+                    _SKELETON_PIPE_PATH,
+                    context=self._pipe_context,
+                    timeout_ms=0,
+                )
+            except TypeError as exc:
+                if "timeout_ms" not in str(exc):
+                    raise
+                return nx.sys_read(_SKELETON_PIPE_PATH, context=self._pipe_context)
+
+        return await asyncio.to_thread(_read)
+
     async def _consume(self) -> None:
         # sys_read returns b"" for empty DT_PIPE (POSIX non-blocking semantics).
         # NexusFileNotFoundError signals pipe destroyed (stop() signal).
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         assert self._nx is not None
-        nx = self._nx
         _POLL = 0.01  # 10ms poll interval
 
         pending: list[dict[str, Any]] = []
+        read_task: asyncio.Task[bytes] | None = None
 
         while True:
             # Block until first event: poll with sleep
             if not pending:
                 while True:
+                    if read_task is None:
+                        read_task = asyncio.create_task(self._read_pipe())
                     try:
-                        # Issue #3699: timeout_ms=0 (O_NONBLOCK) so empty
-                        # pipe returns instantly. Without this, each empty
-                        # poll blocks the asyncio event loop for the
-                        # kernel's 5 s pipe-read default, starving
-                        # uvicorn's accept loop.
-                        data = nx.sys_read(
-                            _SKELETON_PIPE_PATH,
-                            context=self._pipe_context,
-                            timeout_ms=0,
-                        )
+                        data = await read_task
                     except NexusFileNotFoundError:
                         logger.debug("[SKELETON] pipe closed, consumer exiting")
                         return
                     except Exception:
                         return
+                    finally:
+                        read_task = None
                     if data:
                         pending.append(json.loads(data))
                         break
@@ -272,16 +286,20 @@ class SkeletonPipeConsumer:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
                     break
+                if read_task is None:
+                    read_task = asyncio.create_task(self._read_pipe())
+                done, _ = await asyncio.wait({read_task}, timeout=remaining)
+                if read_task not in done:
+                    break
                 try:
-                    data = nx.sys_read(
-                        _SKELETON_PIPE_PATH,
-                        context=self._pipe_context,
-                        timeout_ms=0,
-                    )
+                    data = read_task.result()
                 except NexusFileNotFoundError:
+                    read_task = None
                     break
                 except Exception:
+                    read_task = None
                     break
+                read_task = None
                 if data:
                     pending.append(json.loads(data))
                 else:
@@ -308,6 +326,12 @@ class SkeletonPipeConsumer:
     async def _dispatch_single(self, msg: dict[str, Any]) -> None:
         """Route a single event to the appropriate SkeletonIndexer method."""
         t = msg.get("type")
+        if _message_targets_internal_pipe(msg):
+            logger.debug(
+                "[SKELETON] skipping internal pipe event for %s",
+                msg.get("path") or msg.get("new_path") or msg.get("old_path", "?"),
+            )
+            return
         try:
             if t == "write":
                 await self._indexer.index_file(
@@ -338,3 +362,12 @@ class SkeletonPipeConsumer:
                 logger.debug("[SKELETON] unknown event type: %s", t)
         except Exception as e:
             logger.warning("[SKELETON] dispatch error for %s: %s", t, e)
+
+
+def _message_targets_internal_pipe(msg: dict[str, Any]) -> bool:
+    """Return True for VFS events that target Nexus internal pipe paths."""
+    for key in ("path", "old_path", "new_path"):
+        value = msg.get(key)
+        if isinstance(value, str) and value.startswith(_INTERNAL_PIPE_PREFIX):
+            return True
+    return False

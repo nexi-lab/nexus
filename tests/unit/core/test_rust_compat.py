@@ -208,6 +208,95 @@ class TestNonCoreMissing:
         assert compat.RUST_AVAILABLE is True
 
 
+class TestOptionalAcceleratorGroups:
+    """Optional accelerator groups degrade independently when stale."""
+
+    def test_trigram_group_is_declared_and_reexported(self) -> None:
+        from nexus._kernel_api_groups import MODULE_CAPABILITY_GROUPS
+
+        assert MODULE_CAPABILITY_GROUPS["trigram"] == (
+            "build_trigram_index",
+            "build_trigram_index_from_entries",
+            "invalidate_trigram_cache",
+            "trigram_grep",
+            "trigram_index_stats",
+            "trigram_search_candidates",
+        )
+
+        mod = _make_fake_module()
+        compat = _reload_rust_compat(mod)
+        assert compat.trigram_grep is not None
+        assert compat.build_trigram_index_from_entries is not None
+
+    def test_missing_trigram_symbol_disables_only_trigram_group(self) -> None:
+        mod = _make_fake_module(missing_module_symbols=["trigram_grep"])
+        compat = _reload_rust_compat(mod)
+
+        assert compat.RUST_AVAILABLE is True
+        assert compat.trigram_grep is None
+        assert compat.trigram_search_candidates is None
+        assert compat.grep_bulk is not None
+        assert compat.batch_prefix_check is not None
+
+    def test_rebac_group_is_declared_and_reexported(self) -> None:
+        from nexus._kernel_api_groups import MODULE_CAPABILITY_GROUPS
+
+        assert MODULE_CAPABILITY_GROUPS["rebac"] == (
+            "compute_permission_single",
+            "compute_permissions_bulk",
+            "expand_subjects",
+            "list_objects_for_subject",
+        )
+
+        mod = _make_fake_module()
+        compat = _reload_rust_compat(mod)
+        assert compat.compute_permissions_bulk is not None
+        assert compat.list_objects_for_subject is not None
+
+    def test_missing_rebac_symbol_disables_only_rebac_group(self) -> None:
+        mod = _make_fake_module(missing_module_symbols=["compute_permissions_bulk"])
+        compat = _reload_rust_compat(mod)
+
+        assert compat.RUST_AVAILABLE is True
+        assert compat.compute_permissions_bulk is None
+        assert compat.compute_permission_single is None
+        assert compat.trigram_grep is not None
+        assert compat.batch_prefix_check is not None
+
+    def test_tiger_group_is_declared_and_reexported(self) -> None:
+        from nexus._kernel_api_groups import MODULE_CAPABILITY_GROUPS
+
+        assert MODULE_CAPABILITY_GROUPS["prefix"] == (
+            "any_path_starts_with",
+            "batch_prefix_check",
+            "filter_paths_by_prefix",
+        )
+        assert MODULE_CAPABILITY_GROUPS["tiger"] == (
+            "any_path_accessible_tiger_cache",
+            "check_permission_bitmap",
+            "check_permission_bitmap_batch",
+            "filter_paths_with_tiger_cache",
+            "filter_paths_with_tiger_cache_parallel",
+            "intersect_paths_with_tiger_cache",
+            "tiger_cache_bitmap_stats",
+        )
+
+        mod = _make_fake_module()
+        compat = _reload_rust_compat(mod)
+        assert compat.filter_paths_with_tiger_cache is not None
+        assert compat.tiger_cache_bitmap_stats is not None
+
+    def test_missing_tiger_symbol_disables_only_tiger_group(self) -> None:
+        mod = _make_fake_module(missing_module_symbols=["filter_paths_with_tiger_cache"])
+        compat = _reload_rust_compat(mod)
+
+        assert compat.RUST_AVAILABLE is True
+        assert compat.filter_paths_with_tiger_cache is None
+        assert compat.tiger_cache_bitmap_stats is None
+        assert compat.batch_prefix_check is not None
+        assert compat.compute_permissions_bulk is not None
+
+
 # ---------------------------------------------------------------------------
 # Tests: Kernel class method validation (the Issue #3712 regression case)
 # ---------------------------------------------------------------------------

@@ -1,18 +1,27 @@
 """
 Fast ReBAC permission checking with Rust acceleration.
 
-This module provides Rust-accelerated permission checking via nexus_runtime.
+This module provides a drop-in replacement for Python-based permission checking
+with significant performance improvements for bulk operations.
 
 Performance characteristics:
 - Single check: ~50x speedup (but Python overhead may dominate)
 - 10-100 checks: ~70-80x speedup
 - 1000+ checks: ~85x speedup (~6µs per check vs ~500µs in Python)
+
+The module automatically falls back to Python implementation if Rust is unavailable.
 """
 
 import logging
 from typing import TYPE_CHECKING, Any
 
-import nexus_runtime as _rust_module
+# RUST_FALLBACK: rebac — optional Rust symbols are routed through
+# nexus._rust_compat so absent/stale binaries fall back at call time
+# instead of failing during module import.
+from nexus._rust_compat import compute_permission_single as _compute_permission_single
+from nexus._rust_compat import compute_permissions_bulk as _compute_permissions_bulk
+from nexus._rust_compat import expand_subjects as _expand_subjects
+from nexus._rust_compat import list_objects_for_subject as _list_objects_for_subject
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import Entity
@@ -23,9 +32,20 @@ NamespaceConfigDict = dict[str, Any]  # Contains 'relations' and 'permissions' k
 
 logger = logging.getLogger(__name__)
 
-_internal_module: Any = _rust_module
-_external_module: Any = _rust_module
-logger.info("Rust acceleration available (nexus_runtime)")
+RUST_AVAILABLE = _compute_permissions_bulk is not None
+if RUST_AVAILABLE:
+    logger.info("Rust acceleration available (nexus_runtime)")
+else:
+    logger.debug("Rust acceleration unavailable; using Python ReBAC fallback")
+
+
+def is_rust_available() -> bool:
+    """Check if Rust acceleration is available.
+
+    Returns:
+        True if nexus_runtime Rust extension is loaded, False otherwise
+    """
+    return RUST_AVAILABLE
 
 
 def check_permissions_bulk_rust(
@@ -74,22 +94,25 @@ def check_permissions_bulk_rust(
         RuntimeError: If Rust extension is not available
         ValueError: If input data format is invalid
     """
+    if not RUST_AVAILABLE:
+        raise RuntimeError(
+            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
+        )
+
     try:
-        # Prefer internal module (faster), fallback to external
-        module = _internal_module or _external_module
-        if module is None:
-            raise RuntimeError("No Rust module available")
+        if _compute_permissions_bulk is None:
+            raise RuntimeError("Rust bulk permission check not available")
 
         # Try with tuple_version first (newer API)
         try:
-            result: Any = module.compute_permissions_bulk(
+            result: Any = _compute_permissions_bulk(
                 checks, tuples, namespace_configs, tuple_version
             )
         except TypeError as te:
             # Fallback to old API without tuple_version parameter
             if "takes 3 positional arguments" in str(te):
                 logger.debug("Rust module uses old API (3 args), calling without tuple_version")
-                result = module.compute_permissions_bulk(checks, tuples, namespace_configs)
+                result = _compute_permissions_bulk(checks, tuples, namespace_configs)
             else:
                 raise
 
@@ -132,7 +155,7 @@ def check_permissions_bulk_with_fallback(
         >>> results = check_permissions_bulk_with_fallback(checks, tuples, configs)
         >>> results[("user", "alice", "read", "file", "doc1")]  # True/False
     """
-    if not force_python:
+    if RUST_AVAILABLE and not force_python:
         try:
             import time
 
@@ -263,9 +286,9 @@ def get_performance_stats() -> dict[str, Any]:
         Dict with performance metrics
     """
     return {
-        "rust_available": True,
-        "expected_speedup": "85x for bulk operations",
-        "recommended_batch_size": "100-10000 checks",
+        "rust_available": RUST_AVAILABLE,
+        "expected_speedup": "85x for bulk operations" if RUST_AVAILABLE else "N/A",
+        "recommended_batch_size": "100-10000 checks" if RUST_AVAILABLE else "N/A",
     }
 
 
@@ -304,8 +327,12 @@ def check_permission_single_rust(
     Raises:
         RuntimeError: If Rust extension is not available
     """
-    # compute_permission_single is only in the external module
-    if _external_module is None:
+    if not RUST_AVAILABLE:
+        raise RuntimeError(
+            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
+        )
+
+    if _compute_permission_single is None:
         raise RuntimeError(
             "Rust single permission check not available. "
             "Install nexus_runtime: cd rust/kernel && maturin develop"
@@ -315,7 +342,7 @@ def check_permission_single_rust(
         import time
 
         start = time.perf_counter()
-        result: bool = _external_module.compute_permission_single(
+        result: bool = _compute_permission_single(
             subject_type,
             subject_id,
             permission,
@@ -365,7 +392,7 @@ def check_permission_single_with_fallback(
     Returns:
         True if permission is granted, False otherwise
     """
-    if _external_module is not None and not force_python:
+    if _compute_permission_single is not None and not force_python:
         try:
             return check_permission_single_rust(
                 subject_type,
@@ -398,6 +425,9 @@ def estimate_speedup(num_checks: int) -> float:
     Returns:
         Expected speedup factor (e.g., 85.0 means 85x faster)
     """
+    if not RUST_AVAILABLE:
+        return 1.0
+
     # Empirical speedup curve
     if num_checks < 10:
         return 20.0  # ~20x for small batches (Python overhead)
@@ -434,8 +464,12 @@ def expand_subjects_rust(
     Raises:
         RuntimeError: If Rust extension is not available
     """
-    # Use external module which has expand_subjects
-    if _external_module is None:
+    if not RUST_AVAILABLE:
+        raise RuntimeError(
+            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
+        )
+
+    if _expand_subjects is None:
         raise RuntimeError(
             "Rust expand_subjects not available. "
             "Install nexus_runtime: cd rust/kernel && maturin develop"
@@ -445,7 +479,7 @@ def expand_subjects_rust(
         import time
 
         start = time.perf_counter()
-        result = _external_module.expand_subjects(
+        result = _expand_subjects(
             permission,
             object_type,
             object_id,
@@ -489,7 +523,7 @@ def expand_subjects_with_fallback(
     Returns:
         List of (subject_type, subject_id) tuples
     """
-    if _external_module is not None and not force_python:
+    if _expand_subjects is not None and not force_python:
         try:
             return expand_subjects_rust(
                 permission,
@@ -547,8 +581,12 @@ def list_objects_for_subject_rust(
     Raises:
         RuntimeError: If Rust extension is not available
     """
-    # Use external module which has list_objects_for_subject
-    if _external_module is None:
+    if not RUST_AVAILABLE:
+        raise RuntimeError(
+            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
+        )
+
+    if _list_objects_for_subject is None:
         raise RuntimeError(
             "Rust list_objects_for_subject not available. "
             "Install nexus_runtime: cd rust/kernel && maturin develop"
@@ -558,7 +596,7 @@ def list_objects_for_subject_rust(
         import time
 
         start = time.perf_counter()
-        result = _external_module.list_objects_for_subject(
+        result = _list_objects_for_subject(
             subject_type,
             subject_id,
             permission,
@@ -615,7 +653,7 @@ def list_objects_for_subject_with_fallback(
     Returns:
         List of (object_type, object_id) tuples
     """
-    if _external_module is not None and not force_python:
+    if _list_objects_for_subject is not None and not force_python:
         try:
             return list_objects_for_subject_rust(
                 subject_type,

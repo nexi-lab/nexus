@@ -1338,7 +1338,7 @@ class TestConnectorPackageIsolationPilot:
             assert slack.service_name == "slack"
             assert slack.module == "nexus.backends.connectors.slack.connector"
             assert slack.factory == "PathSlackBackend"
-            assert {d.name for d in slack.runtime_deps} == {"slack-sdk", "token_manager"}
+            assert {d.name for d in slack.runtime_deps} == {"slack-sdk"}
             assert slack.import_probes == ("slack_sdk",)
             assert slack.user_scoped is True
             assert "token_manager_db" in slack.connection_args

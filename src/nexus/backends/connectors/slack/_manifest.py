@@ -24,7 +24,6 @@ MANIFEST = ConnectorManifest(
             extras=("slack",),
             install_hint="pip install nexus-fs[slack]",
         ),
-        RuntimeDep(kind="service", name="token_manager"),
     ),
     import_probes=("slack_sdk",),
     capabilities=frozenset({"user_scoped", "token_manager", "oauth", "readme_doc"}),

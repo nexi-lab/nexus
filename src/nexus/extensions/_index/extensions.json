@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-06T01:10:47Z",
+  "generated_at": "2026-05-06T06:30:29Z",
   "manifests": [
     {
       "config_schema": null,
@@ -235,12 +235,6 @@
           "install_hint": "pip install nexus-fs[slack]",
           "kind": "python",
           "name": "slack-sdk"
-        },
-        {
-          "extras": [],
-          "install_hint": null,
-          "kind": "service",
-          "name": "token_manager"
         }
       ],
       "service_name": "slack",

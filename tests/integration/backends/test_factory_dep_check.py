@@ -155,9 +155,7 @@ class TestFactoryDepCheck:
         assert "boto3" in msg
         assert "pip install nexus-fs[s3]" in msg
 
-    def test_slack_missing_sdk_and_token_manager_are_enumerated(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_slack_missing_sdk_uses_slack_extra_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import importlib.util
 
         real_find_spec = importlib.util.find_spec
@@ -172,11 +170,6 @@ class TestFactoryDepCheck:
             "nexus.backends.base.runtime_deps._nexus_fs_extras_available",
             lambda: True,
         )
-        monkeypatch.setattr(
-            "nexus.backends.base.runtime_deps._service_available",
-            lambda name: name != "token_manager",
-        )
-
         with pytest.raises(MissingDependencyError) as exc_info:
             BackendFactory.create("slack_connector", {"token_manager_db": "tokens.db"})
 
@@ -184,4 +177,4 @@ class TestFactoryDepCheck:
         assert "slack_connector" in msg
         assert "slack_sdk" in msg
         assert "pip install nexus-fs[slack]" in msg
-        assert "service 'token_manager'" in msg
+        assert "service 'token_manager'" not in msg

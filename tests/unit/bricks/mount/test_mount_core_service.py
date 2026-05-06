@@ -28,10 +28,16 @@ def _mock_nexus_fs(*, permission_ok: bool = True) -> MagicMock:
     rebac_svc.rebac_check_sync.return_value = permission_ok
     rebac_svc.rebac_delete_object_tuples_sync.return_value = 0
     nx.service.return_value = rebac_svc
-    # kernel.metastore_* mocks (post-W1.5: mount_service routes everything
-    # through the kernel boundary, no longer through ``nx.metadata``)
-    nx._kernel.metastore_list.return_value = []
-    nx._kernel.metastore_get.return_value = None
+    # kernel mocks (post-C10a/C11: mount_service routes through
+    # access, metastore_list_paginated, sys_unlink instead of the
+    # legacy metastore_get / metastore_list / metastore_delete)
+    nx._kernel.metastore_list_paginated.return_value = {
+        "items": [],
+        "has_more": False,
+        "next_cursor": None,
+        "total_count": 0,
+    }
+    nx._kernel.access.return_value = False
     nx._kernel.metastore_delete.return_value = True
     nx._record_store = None
     return nx
@@ -217,9 +223,9 @@ class TestRemoveMountErrorCollection:
     """Tests that remove_mount_sync collects all cleanup errors."""
 
     def test_metadata_failure_does_not_block_permission_cleanup(self) -> None:
-        """Even if metadata delete fails, permission cleanup still runs."""
+        """Even if metadata list fails, permission cleanup still runs."""
         service, nx = _build_service()
-        nx._kernel.metastore_list.side_effect = RuntimeError("metadata DB error")
+        nx._kernel.metastore_list_paginated.side_effect = RuntimeError("metadata DB error")
 
         result = service.remove_mount_sync("/mnt/test")
 
@@ -230,8 +236,8 @@ class TestRemoveMountErrorCollection:
     def test_all_cleanup_errors_collected(self) -> None:
         """Multiple cleanup failures are all reported in result["errors"]."""
         service, nx = _build_service()
-        # Metadata list failure
-        nx._kernel.metastore_list.side_effect = RuntimeError("metadata failure")
+        # Metadata list_paginated failure
+        nx._kernel.metastore_list_paginated.side_effect = RuntimeError("metadata failure")
         # Directory-index cleanup is now a no-op (W1.5: kernel doesn't expose
         # ``delete_directory_entries_recursive``); the side-effect is no
         # longer reachable but kept here as a documentation marker.

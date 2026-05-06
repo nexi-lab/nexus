@@ -35,8 +35,11 @@ async def nexus_fs(isolated_db, tmp_path):
 
 
 def get_metadata(nexus_fs, path):
-    """Get full metadata including created_at from metadata store."""
-    return nexus_fs._kernel.metastore_get(path)
+    """Get full metadata including created_at from metadata store.
+
+    Returns a dict with ISO-string timestamps (from sys_stat).
+    """
+    return nexus_fs._kernel.sys_stat(path, "root")
 
 
 class TestCreatedAtStability:
@@ -53,9 +56,9 @@ class TestCreatedAtStability:
 
         meta = get_metadata(nexus_fs, path)
 
-        assert meta.created_at is not None
-        # Handle both naive and aware datetimes
-        created_at = meta.created_at
+        assert meta["created_at"] is not None
+        # sys_stat returns ISO string; parse back to datetime for boundary check
+        created_at = datetime.fromisoformat(meta["created_at"])
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=UTC)
         # Kernel metastore stores created_at_ms (millisecond precision); truncate
@@ -65,7 +68,7 @@ class TestCreatedAtStability:
             <= created_at
             <= _floor_ms(after_write) + timedelta(milliseconds=1)
         )
-        print(f"✓ created_at set correctly: {meta.created_at}")
+        print(f"created_at set correctly: {meta['created_at']}")
 
     @pytest.mark.asyncio
     async def test_created_at_preserved_on_update(self, nexus_fs):
@@ -75,7 +78,7 @@ class TestCreatedAtStability:
         # Initial write
         nexus_fs.write(path, b"initial content")
         meta1 = get_metadata(nexus_fs, path)
-        original_created_at = meta1.created_at
+        original_created_at = meta1["created_at"]
 
         # Wait a bit to ensure timestamps would differ
         time.sleep(0.1)
@@ -84,8 +87,8 @@ class TestCreatedAtStability:
         nexus_fs.write(path, b"updated content")
         meta2 = get_metadata(nexus_fs, path)
 
-        assert meta2.created_at == original_created_at
-        print(f"✓ created_at preserved after update: {original_created_at} == {meta2.created_at}")
+        assert meta2["created_at"] == original_created_at
+        print(f"created_at preserved after update: {original_created_at} == {meta2['created_at']}")
 
     @pytest.mark.asyncio
     async def test_created_at_preserved_after_multiple_updates(self, nexus_fs):
@@ -95,7 +98,7 @@ class TestCreatedAtStability:
         # Initial write
         nexus_fs.write(path, b"v1")
         meta1 = get_metadata(nexus_fs, path)
-        original_created_at = meta1.created_at
+        original_created_at = meta1["created_at"]
 
         # Multiple updates
         for i in range(5):
@@ -104,8 +107,8 @@ class TestCreatedAtStability:
 
         meta_final = get_metadata(nexus_fs, path)
 
-        assert meta_final.created_at == original_created_at
-        print(f"✓ created_at stable after 5 updates: {original_created_at}")
+        assert meta_final["created_at"] == original_created_at
+        print(f"created_at stable after 5 updates: {original_created_at}")
 
 
 class TestModifiedAtOnReads:
@@ -119,7 +122,7 @@ class TestModifiedAtOnReads:
         # Create file
         nexus_fs.write(path, b"test content")
         meta1 = get_metadata(nexus_fs, path)
-        original_modified_at = meta1.modified_at
+        original_modified_at = meta1["modified_at"]
 
         time.sleep(0.1)
 
@@ -130,8 +133,8 @@ class TestModifiedAtOnReads:
         # Check modified_at unchanged
         meta2 = get_metadata(nexus_fs, path)
 
-        assert meta2.modified_at == original_modified_at
-        print(f"✓ modified_at unchanged after read: {original_modified_at}")
+        assert meta2["modified_at"] == original_modified_at
+        print(f"modified_at unchanged after read: {original_modified_at}")
 
     @pytest.mark.asyncio
     async def test_modified_at_unchanged_after_multiple_reads(self, nexus_fs):
@@ -141,7 +144,7 @@ class TestModifiedAtOnReads:
         # Create file
         nexus_fs.write(path, b"test content for multiple reads")
         meta1 = get_metadata(nexus_fs, path)
-        original_modified_at = meta1.modified_at
+        original_modified_at = meta1["modified_at"]
 
         # Multiple reads
         for _ in range(10):
@@ -150,8 +153,8 @@ class TestModifiedAtOnReads:
 
         meta_final = get_metadata(nexus_fs, path)
 
-        assert meta_final.modified_at == original_modified_at
-        print(f"✓ modified_at unchanged after 10 reads: {original_modified_at}")
+        assert meta_final["modified_at"] == original_modified_at
+        print(f"modified_at unchanged after 10 reads: {original_modified_at}")
 
     @pytest.mark.asyncio
     async def test_modified_at_unchanged_after_stat(self, nexus_fs):
@@ -161,7 +164,7 @@ class TestModifiedAtOnReads:
         # Create file
         nexus_fs.write(path, b"test content")
         meta1 = get_metadata(nexus_fs, path)
-        original_modified_at = meta1.modified_at
+        original_modified_at = meta1["modified_at"]
 
         time.sleep(0.1)
 
@@ -171,8 +174,8 @@ class TestModifiedAtOnReads:
 
         meta_final = get_metadata(nexus_fs, path)
 
-        assert meta_final.modified_at == original_modified_at
-        print(f"✓ modified_at unchanged after stat calls: {original_modified_at}")
+        assert meta_final["modified_at"] == original_modified_at
+        print(f"modified_at unchanged after stat calls: {original_modified_at}")
 
     @pytest.mark.asyncio
     async def test_modified_at_unchanged_after_list(self, nexus_fs):
@@ -183,7 +186,7 @@ class TestModifiedAtOnReads:
         # Create file
         nexus_fs.write(path, b"test content")
         meta1 = get_metadata(nexus_fs, path)
-        original_modified_at = meta1.modified_at
+        original_modified_at = meta1["modified_at"]
 
         time.sleep(0.1)
 
@@ -193,8 +196,8 @@ class TestModifiedAtOnReads:
 
         meta_final = get_metadata(nexus_fs, path)
 
-        assert meta_final.modified_at == original_modified_at
-        print(f"✓ modified_at unchanged after list calls: {original_modified_at}")
+        assert meta_final["modified_at"] == original_modified_at
+        print(f"modified_at unchanged after list calls: {original_modified_at}")
 
 
 class TestModifiedAtOnWrites:
@@ -208,7 +211,7 @@ class TestModifiedAtOnWrites:
         # Create file
         nexus_fs.write(path, b"initial content")
         meta1 = get_metadata(nexus_fs, path)
-        original_modified_at = meta1.modified_at
+        original_modified_at = meta1["modified_at"]
 
         time.sleep(0.1)
 
@@ -216,8 +219,8 @@ class TestModifiedAtOnWrites:
         nexus_fs.write(path, b"updated content")
         meta2 = get_metadata(nexus_fs, path)
 
-        assert meta2.modified_at > original_modified_at
-        print(f"✓ modified_at updated on write: {original_modified_at} -> {meta2.modified_at}")
+        assert meta2["modified_at"] > original_modified_at
+        print(f"modified_at updated on write: {original_modified_at} -> {meta2['modified_at']}")
 
     @pytest.mark.asyncio
     async def test_modified_at_updates_each_write(self, nexus_fs):
@@ -228,19 +231,19 @@ class TestModifiedAtOnWrites:
 
         # Create file
         nexus_fs.write(path, b"v1")
-        timestamps.append(get_metadata(nexus_fs, path).modified_at)
+        timestamps.append(get_metadata(nexus_fs, path)["modified_at"])
 
         # Multiple writes
         for i in range(3):
             time.sleep(0.1)
             nexus_fs.write(path, f"v{i + 2}".encode())
-            timestamps.append(get_metadata(nexus_fs, path).modified_at)
+            timestamps.append(get_metadata(nexus_fs, path)["modified_at"])
 
         # Each timestamp should be greater than the previous
         for i in range(1, len(timestamps)):
             assert timestamps[i] > timestamps[i - 1], f"Timestamp {i} should be > timestamp {i - 1}"
 
-        print(f"✓ modified_at updated on each write: {timestamps}")
+        print(f"modified_at updated on each write: {timestamps}")
 
 
 class TestTimestampsCombined:
@@ -261,9 +264,9 @@ class TestTimestampsCombined:
         nexus_fs.sys_read(path)
         meta2 = get_metadata(nexus_fs, path)
 
-        assert meta2.created_at == meta1.created_at
-        assert meta2.modified_at == meta1.modified_at
-        print("✓ Both timestamps preserved after read")
+        assert meta2["created_at"] == meta1["created_at"]
+        assert meta2["modified_at"] == meta1["modified_at"]
+        print("Both timestamps preserved after read")
 
     @pytest.mark.asyncio
     async def test_write_updates_only_modified_at(self, nexus_fs):
@@ -280,9 +283,9 @@ class TestTimestampsCombined:
         nexus_fs.write(path, b"updated content")
         meta2 = get_metadata(nexus_fs, path)
 
-        assert meta2.created_at == meta1.created_at, "created_at should NOT change"
-        assert meta2.modified_at > meta1.modified_at, "modified_at SHOULD change"
-        print("✓ Write correctly updates only modified_at")
+        assert meta2["created_at"] == meta1["created_at"], "created_at should NOT change"
+        assert meta2["modified_at"] > meta1["modified_at"], "modified_at SHOULD change"
+        print("Write correctly updates only modified_at")
 
 
 class TestCacheDoesNotAffectTimestamps:
@@ -302,9 +305,9 @@ class TestCacheDoesNotAffectTimestamps:
         # Second get (might use cache)
         meta2 = get_metadata(nexus_fs, path)
 
-        assert meta1.created_at == meta2.created_at
-        assert meta1.modified_at == meta2.modified_at
-        print("✓ Cached timestamps are consistent")
+        assert meta1["created_at"] == meta2["created_at"]
+        assert meta1["modified_at"] == meta2["modified_at"]
+        print("Cached timestamps are consistent")
 
     @pytest.mark.asyncio
     async def test_timestamps_correct_after_cache_invalidation(self, nexus_fs):
@@ -322,9 +325,9 @@ class TestCacheDoesNotAffectTimestamps:
         meta2 = get_metadata(nexus_fs, path)
 
         # Verify cache was invalidated and new timestamps are correct
-        assert meta2.created_at == meta1.created_at, "created_at should be preserved"
-        assert meta2.modified_at > meta1.modified_at, "modified_at should be updated"
-        print("✓ Timestamps correct after cache invalidation")
+        assert meta2["created_at"] == meta1["created_at"], "created_at should be preserved"
+        assert meta2["modified_at"] > meta1["modified_at"], "modified_at should be updated"
+        print("Timestamps correct after cache invalidation")
 
 
 class TestDatabaseDirectAccess:
@@ -342,9 +345,9 @@ class TestDatabaseDirectAccess:
         # on writes, so no explicit clear is needed. Reads below go through
         # the same kernel boundary the production path uses.
 
-        meta1 = nexus_fs._kernel.metastore_get(path)
-        original_modified = meta1.modified_at
-        original_created = meta1.created_at
+        meta1 = nexus_fs._kernel.sys_stat(path, "root")
+        original_modified = meta1["modified_at"]
+        original_created = meta1["created_at"]
 
         time.sleep(0.1)
 
@@ -352,11 +355,11 @@ class TestDatabaseDirectAccess:
         for _ in range(5):
             nexus_fs.sys_read(path)
 
-        meta2 = nexus_fs._kernel.metastore_get(path)
+        meta2 = nexus_fs._kernel.sys_stat(path, "root")
 
-        assert meta2.created_at == original_created, "created_at changed after reads!"
-        assert meta2.modified_at == original_modified, "modified_at changed after reads!"
-        print("✓ Database timestamps unchanged after reads (no cache)")
+        assert meta2["created_at"] == original_created, "created_at changed after reads!"
+        assert meta2["modified_at"] == original_modified, "modified_at changed after reads!"
+        print("Database timestamps unchanged after reads (no cache)")
 
 
 if __name__ == "__main__":

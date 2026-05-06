@@ -77,13 +77,20 @@ class _FakeMeta:
 def _build_fs(entries: list[_FakeMeta]) -> NexusFS:
     """Create a NexusFS with a mocked kernel returning *entries*.
 
-    Post-W3b ``sys_readdir`` reaches the metastore via
+    Post-C11 ``sys_readdir`` reaches the metastore via
     ``kernel_helpers.metastore_list_iter(self._kernel, …)`` which
-    iterates ``kernel.metastore_list(prefix)``. Mock that path.
+    iterates ``kernel.metastore_list_paginated(prefix, recursive, limit, cursor)``.
+    Mock that path.
     """
     kernel = MagicMock()
-    kernel.metastore_list.return_value = list(entries)
-    kernel.metastore_is_implicit_directory.return_value = False
+    kernel.metastore_list_paginated.return_value = {
+        "items": list(entries),
+        "has_more": False,
+        "next_cursor": None,
+        "total_count": len(entries),
+    }
+    # _entry_to_detail_dict calls sys_stat for implicit directory detection
+    kernel.sys_stat.return_value = None
     # Force the slow-path branch: when ``readdir`` raises, sys_readdir
     # falls through to ``metastore_list_iter`` which is what these
     # filter-correctness tests are exercising.

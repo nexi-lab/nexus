@@ -79,10 +79,10 @@ class TestWriteConsistency:
         result = nx.write("/test.txt", b"hello world")
 
         # Metastore has the file
-        meta = nx._kernel.metastore_get("/test.txt")
+        meta = nx._kernel.sys_stat("/test.txt", "root")
         assert meta is not None
-        assert meta.content_id == result["content_id"]
-        assert meta.size == len(b"hello world")
+        assert meta["content_id"] == result["content_id"]
+        assert meta["size"] == len(b"hello world")
 
         # RecordStore has the file
         with record_store.session_factory() as session:
@@ -105,7 +105,7 @@ class TestWriteConsistency:
         """All overlapping fields should match between Metastore and RecordStore."""
         nx.write("/consistent.txt", b"data")
 
-        meta = nx._kernel.metastore_get("/consistent.txt")
+        meta = nx._kernel.sys_stat("/consistent.txt", "root")
         assert meta is not None
 
         with record_store.session_factory() as session:
@@ -119,10 +119,10 @@ class TestWriteConsistency:
             )
 
             # Field-by-field consistency check
-            assert fp.virtual_path == meta.path
-            assert fp.content_id == meta.content_id
-            assert fp.size_bytes == meta.size
-            assert fp.current_version == meta.version
+            assert fp.virtual_path == meta["path"]
+            assert fp.content_id == meta["content_id"]
+            assert fp.size_bytes == meta["size"]
+            assert fp.current_version == meta["version"]
 
     @pytest.mark.asyncio
     async def test_update_version_consistency(
@@ -133,9 +133,9 @@ class TestWriteConsistency:
         nx.write("/ver.txt", b"v2")
         nx.write("/ver.txt", b"v3")
 
-        meta = nx._kernel.metastore_get("/ver.txt")
+        meta = nx._kernel.sys_stat("/ver.txt", "root")
         assert meta is not None
-        assert meta.version == 3
+        assert meta["version"] == 3
 
         with record_store.session_factory() as session:
             fp = (
@@ -176,7 +176,7 @@ class TestDeleteConsistency:
         nx.write("/del.txt", b"content")
         nx.sys_unlink("/del.txt")
 
-        assert nx._kernel.metastore_get("/del.txt") is None
+        assert nx._kernel.sys_stat("/del.txt", "root") is None
 
     @pytest.mark.asyncio
     async def test_delete_soft_deletes_in_record_store(
@@ -225,10 +225,10 @@ class TestRenameConsistency:
         nx.write("/old.txt", b"content")
         nx.sys_rename("/old.txt", "/new.txt")
 
-        assert nx._kernel.metastore_get("/old.txt") is None
-        meta = nx._kernel.metastore_get("/new.txt")
+        assert nx._kernel.sys_stat("/old.txt", "root") is None
+        meta = nx._kernel.sys_stat("/new.txt", "root")
         assert meta is not None
-        assert meta.path == "/new.txt"
+        assert meta["path"] == "/new.txt"
 
     @pytest.mark.asyncio
     async def test_rename_audit_trail(
@@ -267,9 +267,9 @@ class TestBatchWriteConsistency:
 
         # All files in Metastore
         for path, content in files:
-            meta = nx._kernel.metastore_get(path)
+            meta = nx._kernel.sys_stat(path, "root")
             assert meta is not None, f"{path} missing from Metastore"
-            assert meta.size == len(content)
+            assert meta["size"] == len(content)
 
         # All files in RecordStore
         with record_store.session_factory() as session:

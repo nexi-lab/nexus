@@ -41,15 +41,27 @@ class _StubBackend:
 def _clean_registry() -> Any:
     # Snapshot + restore so real connector registration does not leak across
     # tests. BackendFactory.create("path_s3", config) triggers optional backend
-    # registration, so restore both the registry contents and the one-shot flag.
+    # registration, so restore the registry contents, one-shot flag, and module
+    # imports that control whether connector decorators rerun.
+    import sys
+
     import nexus.backends as backends_mod
+    from nexus.backends._manifest import CONNECTOR_MANIFEST
 
     items_before = dict(ConnectorRegistry._base._items)
     registered_before = backends_mod._optional_backends_registered
+    modules_before = {
+        entry.module_path: sys.modules.get(entry.module_path) for entry in CONNECTOR_MANIFEST
+    }
     yield
     ConnectorRegistry._base._items.clear()
     ConnectorRegistry._base._items.update(items_before)
     backends_mod._optional_backends_registered = registered_before
+    for module_path, module in modules_before.items():
+        if module is None:
+            sys.modules.pop(module_path, None)
+        else:
+            sys.modules[module_path] = module
 
 
 class TestFactoryDepCheck:

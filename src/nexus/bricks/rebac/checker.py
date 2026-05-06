@@ -144,7 +144,7 @@ class PermissionChecker:
         from nexus.lib.virtual_views import parse_virtual_path
 
         def metadata_exists(check_path: str) -> bool:
-            return bool(self._kernel.metastore_exists(check_path))
+            return bool(self._kernel.access(check_path, ROOT_ZONE_ID))
 
         original_path, view_type, _ = parse_virtual_path(path, metadata_exists)
         if view_type == "md":

@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import Permission
 from nexus.contracts.vfs_hooks import VFSPathResolver
@@ -122,7 +123,7 @@ class VirtualViewResolver(VFSPathResolver):
         _ = context
         from nexus.lib.virtual_views import parse_virtual_path
 
-        _, view_type, _ = parse_virtual_path(path, self._kernel.metastore_exists)
+        _, view_type, _ = parse_virtual_path(path, lambda p: self._kernel.access(p, ROOT_ZONE_ID))
         if view_type == "md":
             raise NexusFileNotFoundError(
                 f"Cannot write to virtual view: {path} ({len(content)} bytes)"
@@ -134,7 +135,7 @@ class VirtualViewResolver(VFSPathResolver):
         from nexus.lib.virtual_views import parse_virtual_path
 
         _ = context
-        _, view_type, _ = parse_virtual_path(path, self._kernel.metastore_exists)
+        _, view_type, _ = parse_virtual_path(path, lambda p: self._kernel.access(p, ROOT_ZONE_ID))
         if view_type == "md":
             raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
         return None

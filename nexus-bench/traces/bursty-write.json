@@ -1,0 +1,6 @@
+[
+  {"timestamp_ns":0,"op":"write","path":"/tmp/burst-000.bin","offset":0,"length":1024,"payload_seed":1,"parallel_group":"burst-1"},
+  {"timestamp_ns":100000,"op":"write","path":"/tmp/burst-001.bin","offset":0,"length":1024,"payload_seed":2,"parallel_group":"burst-1"},
+  {"timestamp_ns":200000,"op":"write","path":"/tmp/burst-002.bin","offset":0,"length":1024,"payload_seed":3,"parallel_group":"burst-1"},
+  {"timestamp_ns":300000,"op":"write","path":"/tmp/burst-003.bin","offset":0,"length":1024,"payload_seed":4,"parallel_group":"burst-1"}
+]

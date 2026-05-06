@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "workload": "agent-cold-start",
+  "target": "noop",
+  "git_sha": "2cdf95186",
+  "started_at": "2026-05-06T08:10:35.733026Z",
+  "duration_ms": 22.040375,
+  "operations": {
+    "total": 6,
+    "succeeded": 6,
+    "failed": 0,
+    "by_kind": {
+      "getattr": 1,
+      "lookup": 1,
+      "read": 3,
+      "readdir": 1
+    }
+  },
+  "throughput": {
+    "ops_per_sec": 272.22767307725024,
+    "read_bytes_per_sec": 2601770.614156973,
+    "write_bytes_per_sec": 0.0
+  },
+  "latency_ms": {
+    "min": 0.0,
+    "p50": 0.000042,
+    "p90": 0.010792,
+    "p95": 0.010792,
+    "p99": 0.010792,
+    "max": 0.010792,
+    "mean": 0.0018331666666666668
+  },
+  "rpc_count": 6,
+  "bytes_egress": 57344,
+  "logical_bytes_read": 57344,
+  "logical_bytes_written": 0,
+  "cache_hit_rate": null,
+  "errors": []
+}

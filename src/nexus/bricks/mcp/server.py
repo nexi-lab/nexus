@@ -6,6 +6,7 @@ Nexus functionality to AI agents and tools using the fastmcp framework.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 import inspect
@@ -449,7 +450,7 @@ async def create_mcp_server(
             File content as string (full file, or section/block subset for markdown)
         """
         nx_instance = _get_nexus_instance(ctx)
-        content = nx_instance.sys_read(path)
+        content = await asyncio.to_thread(nx_instance.sys_read, path)
         content_bytes = content if isinstance(content, bytes) else str(content).encode("utf-8")
 
         # Partial read for markdown files when section is requested.
@@ -497,7 +498,7 @@ async def create_mcp_server(
         nx_instance = _get_nexus_instance(ctx)
         # Permission gate + content fetch for lazy index rebuild.
         try:
-            raw = nx_instance.sys_read(path)
+            raw = await asyncio.to_thread(nx_instance.sys_read, path)
         except Exception as e:
             return tool_error("access_denied", f"Cannot access {path}: {e}")
         content = raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
@@ -604,7 +605,7 @@ async def create_mcp_server(
             Success message or error
         """
         nx_instance = _get_nexus_instance(ctx)
-        nx_instance.sys_unlink(path)
+        await asyncio.to_thread(nx_instance.sys_unlink, path)
         return f"Successfully deleted {path}"
 
     @mcp.tool(
@@ -663,7 +664,9 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            all_files = nx_instance.sys_readdir(path, recursive=recursive, details=details)
+            all_files = await asyncio.to_thread(
+                nx_instance.sys_readdir, path, recursive=recursive, details=details
+            )
         except FileNotFoundError:
             return tool_error(
                 "not_found",
@@ -722,7 +725,7 @@ async def create_mcp_server(
         # Try to get size if it's a file
         if not is_dir:
             try:
-                content = nx_instance.sys_read(path)
+                content = await asyncio.to_thread(nx_instance.sys_read, path)
                 if isinstance(content, bytes):
                     info_dict["size"] = len(content)
             except Exception as e:
@@ -813,7 +816,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.sys_rename(old_path, new_path)
+            await asyncio.to_thread(nx_instance.sys_rename, old_path, new_path)
         except FileExistsError:
             return tool_error(
                 "invalid_input",
@@ -1539,7 +1542,7 @@ async def create_mcp_server(
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            content = nx_instance.sys_read(path)
+            content = await asyncio.to_thread(nx_instance.sys_read, path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)

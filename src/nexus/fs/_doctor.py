@@ -254,7 +254,15 @@ async def check_mount_connectivity(mount_point: str, kernel: Any) -> DoctorCheck
 
     start = time.perf_counter()
     try:
-        list(kernel.sys_readdir(mount_point, recursive=False, details=False, context=LOCAL_CONTEXT))
+        list(
+            await asyncio.to_thread(
+                kernel.sys_readdir,
+                mount_point,
+                recursive=False,
+                details=False,
+                context=LOCAL_CONTEXT,
+            )
+        )
         latency_ms = (time.perf_counter() - start) * 1000
         return DoctorCheckResult(
             name=mount_point,

@@ -46,7 +46,7 @@ class ContextualNexusFS:
         )
 
     async def read(self, path: str) -> bytes:
-        return cast(bytes, self._kernel.sys_read(path, context=self._ctx))
+        return cast(bytes, await asyncio.to_thread(self._kernel.sys_read, path, context=self._ctx))
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
         return cast(bytes, self._kernel.read_range(path, start, end, context=self._ctx))
@@ -67,7 +67,8 @@ class ContextualNexusFS:
 
         result = cast(
             list[str] | list[dict[str, Any]],
-            self._kernel.sys_readdir(
+            await asyncio.to_thread(
+                self._kernel.sys_readdir,
                 path,
                 recursive=recursive,
                 details=detail,
@@ -86,7 +87,7 @@ class ContextualNexusFS:
         try:
             result = cast(
                 "dict[str, Any] | None",
-                self._kernel.sys_stat(path, context=self._ctx),
+                await asyncio.to_thread(self._kernel.sys_stat, path, context=self._ctx),
             )
             if result is not None:
                 return result
@@ -101,10 +102,10 @@ class ContextualNexusFS:
         self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
 
     async def delete(self, path: str) -> None:
-        self._kernel.sys_unlink(path, context=self._ctx)
+        await asyncio.to_thread(self._kernel.sys_unlink, path, context=self._ctx)
 
     async def rename(self, old_path: str, new_path: str) -> None:
-        self._kernel.sys_rename(old_path, new_path, context=self._ctx)
+        await asyncio.to_thread(self._kernel.sys_rename, old_path, new_path, context=self._ctx)
 
     def exists(self, path: str) -> bool:
         return cast(bool, self._kernel.access(path, context=self._ctx))

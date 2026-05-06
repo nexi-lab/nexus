@@ -181,9 +181,12 @@ class TaskDispatchPipeConsumer:
         assert self._nx is not None
         nx = self._nx
 
+        # nx.sys_read() is a synchronous Rust kernel call that blocks for up
+        # to 5s waiting for DT_PIPE data. Run in a worker thread so the
+        # event loop isn't wedged by empty-pipe polls.
         while True:
             try:
-                data = nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
+                data = await asyncio.to_thread(nx.sys_read, _TASK_DISPATCH_PIPE_PATH)
             except NexusFileNotFoundError:
                 logger.debug("[TASK-DISPATCH] pipe closed, consumer exiting")
                 break

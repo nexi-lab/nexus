@@ -38,6 +38,7 @@ EXCEPTIONS = [
     "src/nexus/bricks/search/daemon.py",  # ~2,300 lines - Issue #3698 additions; split tracked as follow-up
     "src/nexus/bricks/mcp/server.py",  # 2,157 lines - was 2,136 pre-#3731; auth helpers extracted to auth_bridge.py
     "src/nexus/bricks/auth/postgres_profile_store.py",  # 2,009 lines - #3818 read-path additions; split tracked as follow-up
+    "src/nexus/server/api/v2/routers/async_files.py",  # 2,006 lines - asyncio.to_thread wrappers for #4069; split tracked as follow-up
 ]
 
 

@@ -1064,7 +1064,7 @@ def create_async_files_router(
 
             # Get metadata first for ETag check
             if if_none_match:
-                meta = fs.sys_stat(path)
+                meta = await asyncio.to_thread(fs.sys_stat, path)
                 if meta and meta.content_id:
                     client_etag = if_none_match.strip('"')
                     if client_etag == meta.content_id:
@@ -1346,7 +1346,7 @@ def create_async_files_router(
                     except Exception:
                         _original_hash = None
 
-            fs.sys_unlink(path, context=context)
+            await asyncio.to_thread(fs.sys_unlink, path, context=context)
 
             if (
                 _ss is not None
@@ -1453,7 +1453,8 @@ def create_async_files_router(
             # while sys_readdir(details=True) returns detail dicts. We use
             # sys_readdir as the primary path and only fall back to search
             # for connector mounts where metastore-first listing is needed.
-            result = fs.sys_readdir(
+            result = await asyncio.to_thread(
+                fs.sys_readdir,
                 path,
                 recursive=False,
                 details=True,
@@ -1582,7 +1583,8 @@ def create_async_files_router(
 
                 # If filtering emptied the page but more data exists, keep fetching
                 while not file_items and has_more and next_cursor_raw:
-                    result = fs.sys_readdir(
+                    result = await asyncio.to_thread(
+                        fs.sys_readdir,
                         path,
                         recursive=False,
                         details=True,
@@ -1688,7 +1690,7 @@ def create_async_files_router(
         context = _apply_zone_override(context, zone, auth_result)
         try:
             fs = await _get_fs()
-            meta = fs.sys_stat(path, context=context)
+            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -1895,7 +1897,7 @@ def create_async_files_router(
 
         try:
             fs = await _get_fs()
-            meta = fs.sys_stat(path, context=context)
+            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -1908,7 +1910,7 @@ def create_async_files_router(
 
             async def _full_generator() -> AsyncIterator[bytes]:
                 """Sync generator wrapping NexusFS.read()."""
-                data = fs.sys_read(path, context=context)
+                data = await asyncio.to_thread(fs.sys_read, path, context=context)
                 if isinstance(data, bytes):
                     for i in range(0, len(data), chunk_size):
                         yield data[i : i + chunk_size]
@@ -1956,7 +1958,9 @@ def create_async_files_router(
         """
         try:
             fs = await _get_fs()
-            fs.sys_rename(request.source, request.destination, context=context)
+            await asyncio.to_thread(
+                fs.sys_rename, request.source, request.destination, context=context
+            )
             return RenameResponse(
                 success=True,
                 source=request.source,
@@ -1994,7 +1998,7 @@ def create_async_files_router(
             fs = await _get_fs()
 
             # Check source exists and get size
-            meta = fs.sys_stat(request.source, context=context)
+            meta = await asyncio.to_thread(fs.sys_stat, request.source, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=request.source)
 
@@ -2002,8 +2006,8 @@ def create_async_files_router(
 
             if file_size < STREAMING_COPY_THRESHOLD:
                 # Small file: read all then write all
-                content = fs.sys_read(request.source, context=context)
-                fs.write(request.destination, buf=content, context=context)
+                content = await asyncio.to_thread(fs.sys_read, request.source, context=context)
+                await asyncio.to_thread(fs.write, request.destination, buf=content, context=context)
                 bytes_copied = len(content)
             else:
                 # Large file: streaming copy
@@ -2096,7 +2100,7 @@ def create_async_files_router(
 
             for op in request.operations:
                 try:
-                    meta = fs.sys_stat(op.source, context=context)
+                    meta = await asyncio.to_thread(fs.sys_stat, op.source, context=context)
                     if meta is None:
                         results.append(
                             BulkCopyResult(
@@ -2111,8 +2115,10 @@ def create_async_files_router(
                     file_size = meta.get("size", 0) or 0
 
                     if file_size < STREAMING_COPY_THRESHOLD:
-                        content = fs.sys_read(op.source, context=context)
-                        fs.write(op.destination, buf=content, context=context)
+                        content = await asyncio.to_thread(fs.sys_read, op.source, context=context)
+                        await asyncio.to_thread(
+                            fs.write, op.destination, buf=content, context=context
+                        )
                         bytes_copied = len(content)
                     else:
                         chunks = await asyncio.to_thread(fs.stream, op.source, context=context)
@@ -2170,8 +2176,9 @@ def create_async_files_router(
             fs = await _get_fs()
 
             # List all files under the base path
-            # sys_readdir is async — call directly, not via to_thread
-            all_paths = fs.sys_readdir(path, recursive=True, context=context)
+            all_paths = await asyncio.to_thread(
+                fs.sys_readdir, path, recursive=True, context=context
+            )
 
             # Apply glob pattern filter
             matched = await asyncio.to_thread(glob_filter, all_paths, include_patterns=[pattern])
@@ -2220,8 +2227,9 @@ def create_async_files_router(
             fs = await _get_fs()
 
             # List all files under the base path
-            # sys_readdir is async — call directly, not via to_thread
-            all_paths = fs.sys_readdir(path, recursive=True, context=context)
+            all_paths = await asyncio.to_thread(
+                fs.sys_readdir, path, recursive=True, context=context
+            )
 
             # Try Rust mmap grep first
             results = await asyncio.to_thread(

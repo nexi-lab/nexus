@@ -4,6 +4,7 @@ Extracted from fastapi_server.py (#1602). Provides rsync-style incremental
 file updates via binary diffs (bsdiff4).
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -36,7 +37,7 @@ async def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> d
     from nexus.core.hash_fast import hash_content
 
     # Read current file content — sys_read (Tier 1) always returns bytes
-    content = nexus_fs.sys_read(params.path, context=context)
+    content = await asyncio.to_thread(nexus_fs.sys_read, params.path, context=context)
     if isinstance(content, str):
         content = content.encode("utf-8")
     # delta handler operates on DT_REG; the dict shape is DT_STREAM-only.
@@ -139,7 +140,7 @@ async def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> 
 
     try:
         # sys_read (Tier 1) always returns bytes
-        current_content = nexus_fs.sys_read(params.path, context=context)
+        current_content = await asyncio.to_thread(nexus_fs.sys_read, params.path, context=context)
         if isinstance(current_content, str):
             current_content = current_content.encode("utf-8")
     except Exception as e:

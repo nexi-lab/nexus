@@ -6,6 +6,7 @@ sys_readdir on /__sys__/locks/) via REST endpoints for the TUI.
 Issue #3250: TUI Locks tab.
 """
 
+import asyncio
 import logging
 import time
 import uuid
@@ -138,7 +139,9 @@ async def list_locks(
     nx = _get_nexus_fs(request)
     if nx and hasattr(nx, "sys_readdir"):
         try:
-            kernel_locks = nx.sys_readdir("/__sys__/locks/", details=True, context=ctx)
+            kernel_locks = await asyncio.to_thread(
+                nx.sys_readdir, "/__sys__/locks/", details=True, context=ctx
+            )
             locks = [
                 {
                     "lock_id": holder.get("lock_id", ""),

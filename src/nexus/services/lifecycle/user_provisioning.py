@@ -7,6 +7,7 @@ deprovision_user tears everything down.
 Issue #2033 — Phase 2.2 of LEGO microkernel decomposition.
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -537,7 +538,9 @@ class UserProvisioningService:
             return False
 
         try:
-            result = self._vfs.sys_readdir(dir_path, recursive=False, context=context)
+            result = await asyncio.to_thread(
+                self._vfs.sys_readdir, dir_path, recursive=False, context=context
+            )
             if isinstance(result, dict) and "files" in result:
                 children = result["files"]
             elif isinstance(result, list):
@@ -555,7 +558,9 @@ class UserProvisioningService:
                 if isinstance(item, str):
                     child_path = item
                     try:
-                        self._vfs.sys_readdir(child_path, recursive=False, context=context)
+                        await asyncio.to_thread(
+                            self._vfs.sys_readdir, child_path, recursive=False, context=context
+                        )
                         is_dir = True
                     except Exception:
                         is_dir = False  # readdir failed → treat as file
@@ -572,7 +577,7 @@ class UserProvisioningService:
                     if is_dir:
                         await self._delete_directory_recursive(child_path, context)
                     else:
-                        self._vfs.sys_unlink(child_path, context=context)
+                        await asyncio.to_thread(self._vfs.sys_unlink, child_path, context=context)
                 except Exception as e:
                     logger.warning("Failed to delete %s: %s", child_path, e)
 
@@ -585,7 +590,7 @@ class UserProvisioningService:
                     logger.debug("rmdir failed for %s (will try unlink): %s", dir_path, e)
             if not directory_removed:
                 try:
-                    self._vfs.sys_unlink(dir_path, context=context)
+                    await asyncio.to_thread(self._vfs.sys_unlink, dir_path, context=context)
                     directory_removed = True
                 except Exception as e:
                     logger.debug("unlink fallback also failed for %s: %s", dir_path, e)

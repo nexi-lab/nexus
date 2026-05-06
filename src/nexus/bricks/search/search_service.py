@@ -487,8 +487,10 @@ class SearchService:
                 # Derive mount point from first path segments
                 _parts = path.strip("/").split("/")
                 _mp_guess = "/" + "/".join(_parts[:2]) if len(_parts) >= 2 else "/" + _parts[0]
-                _mount_meta = self._kernel.metastore_get(_mp_guess) if self._kernel else None
-                _is_ext = getattr(_mount_meta, "is_external_storage", False)
+                _mount_stat = (
+                    self._kernel.sys_stat(_mp_guess, ROOT_ZONE_ID) if self._kernel else None
+                )
+                _is_ext = _mount_stat is not None and _mount_stat.get("entry_type") == 5
                 if _is_ext:
                     _bp = path[len(_mp_guess) :].lstrip("/")
 
@@ -937,48 +939,21 @@ class SearchService:
         """Build detailed results for dynamic connector paths."""
         results_with_details = []
         for entry_path in all_paths:
-            file_meta = self._kernel.metastore_get(entry_path)
-            is_dir = bool(
-                file_meta
-                and (
-                    getattr(file_meta, "is_dir", False)
-                    or getattr(file_meta, "is_mount", False)
-                    or (
-                        hasattr(file_meta, "mime_type") and file_meta.mime_type == "inode/directory"
-                    )
-                )
-            )
+            file_stat = self._kernel.sys_stat(entry_path, ROOT_ZONE_ID)
+            is_dir = bool(file_stat and file_stat.get("is_directory", False))
             name = entry_path.rstrip("/").split("/")[-1]
             results_with_details.append(
                 {
                     "path": entry_path,
-                    "size": file_meta.size if file_meta and hasattr(file_meta, "size") else 0,
-                    "modified_at": (
-                        file_meta.updated_at.isoformat()
-                        if file_meta and hasattr(file_meta, "updated_at") and file_meta.updated_at
-                        else None
-                    ),
-                    "created_at": (
-                        file_meta.created_at.isoformat()
-                        if file_meta and hasattr(file_meta, "created_at") and file_meta.created_at
-                        else None
-                    ),
-                    "content_id": file_meta.content_id
-                    if file_meta and hasattr(file_meta, "content_id")
-                    else None,
-                    "mime_type": (
-                        file_meta.mime_type
-                        if file_meta and hasattr(file_meta, "mime_type")
-                        else None
-                    ),
+                    "size": file_stat.get("size", 0) if file_stat else 0,
+                    "modified_at": file_stat.get("modified_at") if file_stat else None,
+                    "created_at": file_stat.get("created_at") if file_stat else None,
+                    "content_id": file_stat.get("content_id") if file_stat else None,
+                    "mime_type": file_stat.get("mime_type") if file_stat else None,
                     "is_directory": is_dir,
                     "name": name,
                     "type": "directory" if is_dir else "file",
-                    "updated_at": (
-                        file_meta.updated_at.isoformat()
-                        if file_meta and hasattr(file_meta, "updated_at") and file_meta.updated_at
-                        else None
-                    ),
+                    "updated_at": file_stat.get("modified_at") if file_stat else None,
                 }
             )
         return results_with_details

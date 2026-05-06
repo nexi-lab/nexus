@@ -21,6 +21,7 @@ import json
 from typing import Any
 
 from nexus.contracts.auth_store_types import SystemSettingDTO
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 
 _CFG_PREFIX = "cfg:"
@@ -39,11 +40,11 @@ class MetastoreSettingsStore:
         self._kernel = metastore
 
     def get_setting(self, key: str) -> SystemSettingDTO | None:
-        fm = self._kernel.metastore_get(f"{_CFG_PREFIX}{key}")
-        if fm is None or not fm.content_id:
+        stat = self._kernel.sys_stat(f"{_CFG_PREFIX}{key}", ROOT_ZONE_ID)
+        if stat is None or not stat.get("content_id"):
             return None
         try:
-            payload = json.loads(fm.content_id)
+            payload = json.loads(stat["content_id"])
         except (json.JSONDecodeError, TypeError):
             return None
         if not isinstance(payload, dict) or "v" not in payload:

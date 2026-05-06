@@ -177,8 +177,10 @@ def cat(
                         file_size = 0
                         if hasattr(nx, "metadata"):
                             try:
-                                file_meta = nx._kernel.metastore_get(path)
-                                file_size = file_meta.size if file_meta else 0
+                                from nexus.contracts.constants import ROOT_ZONE_ID
+
+                                file_stat = nx._kernel.sys_stat(path, ROOT_ZONE_ID)
+                                file_size = file_stat["size"] if file_stat else 0
                             except Exception:
                                 file_size = 0
 

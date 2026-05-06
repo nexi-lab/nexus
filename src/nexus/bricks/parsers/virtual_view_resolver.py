@@ -83,9 +83,11 @@ class VirtualViewResolver(VFSPathResolver):
         """Read virtual parsed view, or return None if not a virtual view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
-        # Single metastore lookup: kernel.metastore_get returns FileMetadata (truthy)
-        # or None (falsy). parse_virtual_path passes the result through.
-        original_path, view_type, meta = parse_virtual_path(path, self._kernel.metastore_get)
+        # Single kernel lookup: sys_stat returns dict (truthy) or None (falsy).
+        # parse_virtual_path passes the result through.
+        original_path, view_type, meta = parse_virtual_path(
+            path, lambda p: self._kernel.sys_stat(p, ROOT_ZONE_ID)
+        )
         if view_type != "md":
             return None
 
@@ -95,7 +97,7 @@ class VirtualViewResolver(VFSPathResolver):
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
 
         # Route and read original file content
-        if meta is None or meta.content_id is None:
+        if meta is None or meta.get("content_id") is None:
             raise NexusFileNotFoundError(original_path)
 
         # Read content via kernel syscall — sys_read_raw raises on missing path.

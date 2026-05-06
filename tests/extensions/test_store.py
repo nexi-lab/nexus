@@ -1283,7 +1283,7 @@ class TestLegacyAdapterMetadataCompleteness:
         reset_store()
         store = get_store()
         # Pick a connector that's only in the legacy inventory (not migrated).
-        m = store.get("path_s3", kind="connector")
+        m = store.get("path_gcs", kind="connector")
         assert m.metadata_complete is False, "legacy adapter must flag records as partial"
         reset_store()
 

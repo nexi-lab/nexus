@@ -204,6 +204,24 @@ fn ensure_diff_compatible(
             baseline.target, candidate.target
         )));
     }
+    ensure_result_succeeded("baseline", baseline)?;
+    ensure_result_succeeded("candidate", candidate)?;
+    Ok(())
+}
+
+fn ensure_result_succeeded(label: &str, result: &BenchResultFile) -> BenchResult<()> {
+    if result.operations.failed > 0 {
+        return Err(BenchError::Threshold(format!(
+            "{label} result has {} failed operation(s)",
+            result.operations.failed
+        )));
+    }
+    if !result.errors.is_empty() {
+        return Err(BenchError::Threshold(format!(
+            "{label} result has {} recorded error(s)",
+            result.errors.len()
+        )));
+    }
     Ok(())
 }
 
@@ -329,5 +347,27 @@ mod tests {
         )
         .expect_err("target mismatch must fail");
         assert!(err.to_string().contains("target"));
+    }
+
+    #[test]
+    fn diff_compatibility_rejects_failed_baseline_result() {
+        let mut baseline = result("agent-cold-start", "noop", 1);
+        baseline.operations.failed = 1;
+
+        let err = ensure_diff_compatible(&baseline, &result("agent-cold-start", "noop", 1))
+            .expect_err("failed baseline replay must not compare");
+        assert!(err.to_string().contains("baseline"));
+        assert!(err.to_string().contains("failed"));
+    }
+
+    #[test]
+    fn diff_compatibility_rejects_failed_candidate_result() {
+        let mut candidate = result("agent-cold-start", "noop", 1);
+        candidate.errors.push("read failed".to_string());
+
+        let err = ensure_diff_compatible(&result("agent-cold-start", "noop", 1), &candidate)
+            .expect_err("failed candidate replay must not compare");
+        assert!(err.to_string().contains("candidate"));
+        assert!(err.to_string().contains("failed"));
     }
 }

@@ -100,6 +100,7 @@ fn write_range(path: &Path, op: &TraceOp) -> BenchResult<OperationMetrics> {
     let mut file = OpenOptions::new()
         .create(true)
         .write(true)
+        .truncate(false)
         .open(path)
         .map_err(|source| BenchError::Io {
             path: path.to_path_buf(),

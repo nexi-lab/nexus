@@ -6,6 +6,8 @@ on:
     paths:
       - "nexus-bench/**"
       - "nexus-fuse/**"
+      - "packages/nexus-fs/**"
+      - "src/nexus/**"
       - "rust/kernel/**"
       - "rust/backends/**"
       - "rust/transport/**"
@@ -15,6 +17,8 @@ on:
     paths:
       - "nexus-bench/**"
       - "nexus-fuse/**"
+      - "packages/nexus-fs/**"
+      - "src/nexus/**"
       - "rust/kernel/**"
       - "rust/backends/**"
       - "rust/transport/**"

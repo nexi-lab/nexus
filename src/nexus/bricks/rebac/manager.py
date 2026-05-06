@@ -3641,10 +3641,8 @@ class ReBACManager:
                     SELECT subject_type, subject_id, subject_relation,
                            relation, object_type, object_id
                     FROM rebac_tuples
-                    WHERE (expiration_time IS NULL OR expiration_time > ?)
                     """
                 ),
-                (datetime.now(UTC),),
             )
 
             tuples = []

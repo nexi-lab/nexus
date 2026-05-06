@@ -185,7 +185,11 @@ class TaskDispatchPipeConsumer:
 
         while True:
             try:
-                data = self._nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
+                data = await asyncio.to_thread(
+                    self._nx.sys_read,
+                    _TASK_DISPATCH_PIPE_PATH,
+                    timeout_ms=0,
+                )
             except NexusFileNotFoundError:
                 logger.debug("[TASK-DISPATCH] pipe closed, consumer exiting")
                 break

@@ -16,9 +16,11 @@ Tests cover:
 
 import asyncio
 import tempfile
+import time
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -70,6 +72,32 @@ def _insert_undelivered(
         session.add(record)
         session.commit()
     return op_id
+
+
+class _EmptyResult:
+    def scalars(self) -> "_EmptyResult":
+        return self
+
+    def __iter__(self):
+        return iter(())
+
+
+class _BlockingSession:
+    def __enter__(self) -> "_BlockingSession":
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        return None
+
+    def execute(self, _stmt: object) -> _EmptyResult:
+        time.sleep(0.5)
+        return _EmptyResult()
+
+
+class _BlockingRecordStore:
+    @staticmethod
+    def session_factory() -> _BlockingSession:
+        return _BlockingSession()
 
 
 # =========================================================================
@@ -307,6 +335,17 @@ class TestDispatchFailure:
 
 class TestLifecycle:
     """Test start() and stop() lifecycle with asyncio tasks."""
+
+    @pytest.mark.asyncio
+    async def test_empty_poll_does_not_block_event_loop(self) -> None:
+        """Polling an empty outbox should not freeze unrelated request handling."""
+        worker = EventDeliveryWorker(cast(Any, _BlockingRecordStore()))
+
+        started_at = time.perf_counter()
+        poll_task = asyncio.create_task(worker._poll_and_dispatch())
+        await asyncio.sleep(0.01)
+        assert time.perf_counter() - started_at < 0.25
+        assert await poll_task == 0
 
     @pytest.mark.asyncio
     async def test_start_creates_consumer_task(self, record_store: SQLAlchemyRecordStore) -> None:

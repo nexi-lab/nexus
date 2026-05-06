@@ -77,6 +77,10 @@ services:
       NEXUS_HOST: "0.0.0.0"
       NEXUS_PORT: "2026"
       NEXUS_DATA_DIR: /app/data
+      # uvloop remains opt-in in Docker: Python 3.14 + uvloop can hang
+      # HTTP request servicing after startup on some local container runtimes.
+      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-false}
+      NEXUS_DEBUG_STACK_DUMP: ${NEXUS_DEBUG_STACK_DUMP:-false}
       # Database
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       # Auth

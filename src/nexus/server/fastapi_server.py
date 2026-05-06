@@ -1365,11 +1365,18 @@ def run_server(
     import uvicorn
 
     from nexus.core import setup_uvloop
+    from nexus.server.debug_stacks import install_stack_dump_signal
 
     # Install uvloop for better async performance (2-4x faster)
-    # This must be called before uvicorn creates its event loop
-    if setup_uvloop():
+    # This must be called before uvicorn creates its event loop.  Also pass
+    # the resolved loop explicitly to uvicorn: its default "auto" mode will
+    # otherwise import uvloop whenever it is installed, even when
+    # NEXUS_USE_UVLOOP=false disabled our setup hook.
+    uvloop_enabled = setup_uvloop()
+    if uvloop_enabled:
         logger.info("uvloop installed as default event loop policy")
+    uvicorn_loop = "uvloop" if uvloop_enabled else "asyncio"
+    install_stack_dump_signal()
 
     # Get workers from parameter or environment variable
     if workers is None:
@@ -1391,6 +1398,7 @@ def run_server(
         host=host,
         port=port,
         log_level=log_level,
+        loop=uvicorn_loop,
         workers=workers if workers > 1 else None,
     )
 

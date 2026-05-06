@@ -217,6 +217,7 @@ class TestBuildConfig:
         assert "nexus" in cfg["services"]
         assert "postgres" in cfg["services"]
         assert "http" in cfg["ports"]
+        assert "approvals" in cfg["ports"]
         assert cfg["compose_profiles"] == ["core", "cache"]
         assert "compose_file" in cfg
         # data_dir is absolute

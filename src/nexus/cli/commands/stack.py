@@ -34,6 +34,7 @@ from nexus.cli.commands.init_cmd import (
 )
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.port_utils import (
+    DEFAULT_PORTS,
     VALID_STRATEGIES,
     check_port_available,
     resolve_ports,
@@ -110,6 +111,7 @@ def _derive_project_env(
         "COMPOSE_PROJECT_NAME": project_name,
         "NEXUS_PORT": str(ports.get("http", 2026)),
         "NEXUS_GRPC_PORT": str(ports.get("grpc", 2028)),
+        "NEXUS_APPROVALS_GRPC_PORT": str(ports.get("approvals", 2029)),
         "POSTGRES_PORT": str(ports.get("postgres", 5432)),
         "DRAGONFLY_PORT": str(ports.get("dragonfly", 6379)),
         "NEXUS_HOST_DATA_DIR": data_dir,
@@ -809,7 +811,7 @@ def up(
 
     # Port resolution: reuse previous state.json ports if OUR containers
     # still own them, otherwise resolve from config defaults.
-    ports = config.get("ports", {})
+    ports = {**DEFAULT_PORTS, **config.get("ports", {})}
     active_services = config.get("services", [])
 
     prev_ports = prev_state.get("ports", {})

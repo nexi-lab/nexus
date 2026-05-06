@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -53,6 +56,31 @@ def _make_service(
         enable_workflows=enable_workflows,
     )
     return svc, mock_nx
+
+
+class _BlockingReadNx:
+    def __init__(self) -> None:
+        self.closed = False
+        self.read_started = threading.Event()
+        self.read_timeouts: list[int | None] = []
+        self.setattr_calls: list[tuple[str, dict[str, object]]] = []
+
+    def sys_setattr(self, path: str, **attrs: object) -> None:
+        self.setattr_calls.append((path, attrs))
+
+    def sys_read(self, path: str, *, timeout_ms: int | None = None) -> bytes:
+        self.read_started.set()
+        self.read_timeouts.append(timeout_ms)
+        time.sleep(0.5)
+        if self.closed:
+            raise NexusFileNotFoundError(path)
+        return b""
+
+    def sys_write(self, path: str, data: bytes) -> dict[str, object]:  # noqa: ARG002
+        return {"path": path, "bytes_written": len(data)}
+
+    def pipe_close(self, path: str) -> None:  # noqa: ARG002
+        self.closed = True
 
 
 # ======================================================================
@@ -185,6 +213,31 @@ class TestConsumer:
         await svc.stop()
 
         assert svc._workflow_engine.fire_event.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_blocking_pipe_read_does_not_block_event_loop(self) -> None:
+        """Blocking pipe reads should not freeze unrelated HTTP request handling."""
+        nx = _BlockingReadNx()
+        engine = AsyncMock()
+        svc = WorkflowDispatchService(
+            nx=cast(Any, nx),
+            workflow_engine=engine,
+            enable_workflows=True,
+        )
+
+        await svc.start()
+        try:
+
+            async def _wait_for_read() -> None:
+                while not nx.read_started.is_set():
+                    await asyncio.sleep(0.01)
+
+            started_at = time.perf_counter()
+            await asyncio.wait_for(_wait_for_read(), timeout=1.0)
+            assert time.perf_counter() - started_at < 0.25
+            assert nx.read_timeouts == [0]
+        finally:
+            await svc.stop()
 
 
 # ======================================================================

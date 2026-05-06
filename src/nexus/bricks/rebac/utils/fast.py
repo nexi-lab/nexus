@@ -1,21 +1,17 @@
 """
 Fast ReBAC permission checking with Rust acceleration.
 
-This module provides a drop-in replacement for Python-based permission checking
-with significant performance improvements for bulk operations.
+This module provides Rust-accelerated permission checking via nexus_runtime.
 
 Performance characteristics:
 - Single check: ~50x speedup (but Python overhead may dominate)
 - 10-100 checks: ~70-80x speedup
 - 1000+ checks: ~85x speedup (~6µs per check vs ~500µs in Python)
-
-The module automatically falls back to Python implementation if Rust is unavailable.
 """
 
 import logging
 from typing import TYPE_CHECKING, Any
 
-# RUST_FALLBACK: rebac — compute_permissions_bulk, etc. from nexus_runtime
 import nexus_runtime as _rust_module
 
 if TYPE_CHECKING:
@@ -29,17 +25,7 @@ logger = logging.getLogger(__name__)
 
 _internal_module: Any = _rust_module
 _external_module: Any = _rust_module
-RUST_AVAILABLE = True
 logger.info("Rust acceleration available (nexus_runtime)")
-
-
-def is_rust_available() -> bool:
-    """Check if Rust acceleration is available.
-
-    Returns:
-        True if nexus_runtime Rust extension is loaded, False otherwise
-    """
-    return RUST_AVAILABLE
 
 
 def check_permissions_bulk_rust(
@@ -88,11 +74,6 @@ def check_permissions_bulk_rust(
         RuntimeError: If Rust extension is not available
         ValueError: If input data format is invalid
     """
-    if not RUST_AVAILABLE:
-        raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
-        )
-
     try:
         # Prefer internal module (faster), fallback to external
         module = _internal_module or _external_module
@@ -151,7 +132,7 @@ def check_permissions_bulk_with_fallback(
         >>> results = check_permissions_bulk_with_fallback(checks, tuples, configs)
         >>> results[("user", "alice", "read", "file", "doc1")]  # True/False
     """
-    if RUST_AVAILABLE and not force_python:
+    if not force_python:
         try:
             import time
 
@@ -282,9 +263,9 @@ def get_performance_stats() -> dict[str, Any]:
         Dict with performance metrics
     """
     return {
-        "rust_available": RUST_AVAILABLE,
-        "expected_speedup": "85x for bulk operations" if RUST_AVAILABLE else "N/A",
-        "recommended_batch_size": "100-10000 checks" if RUST_AVAILABLE else "N/A",
+        "rust_available": True,
+        "expected_speedup": "85x for bulk operations",
+        "recommended_batch_size": "100-10000 checks",
     }
 
 
@@ -323,11 +304,6 @@ def check_permission_single_rust(
     Raises:
         RuntimeError: If Rust extension is not available
     """
-    if not RUST_AVAILABLE:
-        raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
-        )
-
     # compute_permission_single is only in the external module
     if _external_module is None:
         raise RuntimeError(
@@ -422,9 +398,6 @@ def estimate_speedup(num_checks: int) -> float:
     Returns:
         Expected speedup factor (e.g., 85.0 means 85x faster)
     """
-    if not RUST_AVAILABLE:
-        return 1.0
-
     # Empirical speedup curve
     if num_checks < 10:
         return 20.0  # ~20x for small batches (Python overhead)
@@ -461,11 +434,6 @@ def expand_subjects_rust(
     Raises:
         RuntimeError: If Rust extension is not available
     """
-    if not RUST_AVAILABLE:
-        raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
-        )
-
     # Use external module which has expand_subjects
     if _external_module is None:
         raise RuntimeError(
@@ -579,11 +547,6 @@ def list_objects_for_subject_rust(
     Raises:
         RuntimeError: If Rust extension is not available
     """
-    if not RUST_AVAILABLE:
-        raise RuntimeError(
-            "Rust acceleration not available. Install with: cd rust/kernel && maturin develop"
-        )
-
     # Use external module which has list_objects_for_subject
     if _external_module is None:
         raise RuntimeError(

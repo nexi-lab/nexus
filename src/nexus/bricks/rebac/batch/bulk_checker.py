@@ -689,14 +689,11 @@ class BulkPermissionChecker:
         """Phase 2a: Try Rust acceleration. Returns True if successful."""
         from nexus.bricks.rebac.utils.fast import (
             check_permissions_bulk_with_fallback,
-            is_rust_available,
         )
 
-        rust_available = is_rust_available()
         logger.debug(
-            "[BULK] cache_misses=%d, rust_available=%s, tuples_graph=%d",
+            "[BULK] cache_misses=%d, tuples_graph=%d",
             len(cache_misses),
-            rust_available,
             len(tuples_graph),
         )
 
@@ -704,7 +701,7 @@ class BulkPermissionChecker:
             logger.debug("[BULK] Skipping Rust acceleration for conditioned tuples")
             return False
 
-        if not (rust_available and len(cache_misses) >= 1):
+        if len(cache_misses) < 1:
             return False
 
         try:

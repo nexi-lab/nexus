@@ -11,6 +11,7 @@ Operations:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -618,7 +619,8 @@ class MountService:
                 paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
                 paths_to_delete.append(mount_point)  # Include mount point itself
                 for path in paths_to_delete:
-                    kernel.metastore_delete(path)
+                    with contextlib.suppress(Exception):
+                        self.nexus_fs.sys_unlink(path, context=context)
                 result["files_deleted"] = len(paths_to_delete)
                 logger.info(f"Deleted {len(paths_to_delete)} metadata entries for {mount_point}")
             except Exception as e:
